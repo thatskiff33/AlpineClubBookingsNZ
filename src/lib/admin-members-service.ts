@@ -360,8 +360,9 @@ export async function listAdminMembers(
     loadMembershipLockoutSettings(),
   ]);
   // #2149/#5190: the SQL exempt-filter derives from the SAME rule and settings as
-  // the displayed flag (`isSubscriptionNotRequiredForMembershipType`): the access
-  // side of the shared liability rule. See `subscriptionNotRequiredMemberConditions`.
+  // the displayed flag (`isSubscriptionNotRequiredForMembershipType`): the shared
+  // liability rule on the billing side until the club chooses (#5190 Q2). See
+  // `subscriptionNotRequiredMemberConditions`.
   const notRequiredSubscriptionConditions = subscriptionNotRequiredMemberConditions({
     seasonYear: currentSeasonYear,
     ageTierSettings,

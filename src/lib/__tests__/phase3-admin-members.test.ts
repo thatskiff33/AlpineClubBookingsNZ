@@ -922,17 +922,31 @@ describe("Phase 3: Admin Member Management", () => {
                 { role: { in: ["ADMIN", "LODGE", "NON_MEMBER", "SCHOOL"] } },
               ],
             },
-            { ageTier: { in: expect.arrayContaining(["INFANT", "CHILD"]) } },
+            // #5190 Q2: while NOT_CHOSEN the lists follow billing, which lets
+            // an exempt age tier exempt only a BASED_ON_AGE_TIER assignment.
+            {
+              AND: [
+                {
+                  seasonalMembershipAssignments: {
+                    some: {
+                      seasonYear: 2026,
+                      membershipType: { subscriptionBehavior: "BASED_ON_AGE_TIER" },
+                    },
+                  },
+                },
+                expect.anything(),
+              ],
+            },
           ]),
         },
       ]));
     });
 
-    // #2041/#2149: the mid-season tier-promotion shape — a BASED_ON_AGE_TIER
-    // assignment with a NOT_REQUIRED current-season row on a subscription-liable
-    // age tier — is badged NOT_REQUIRED by the displayed flag (row dominance).
-    // The list SQL must carry the matching fourth OR clause so the filter cannot
-    // disagree with the flag.
+    // #2041/#2149/#5190 Q2: the mid-season tier-promotion shape — a
+    // BASED_ON_AGE_TIER assignment with a NOT_REQUIRED current-season row on a
+    // subscription-liable age tier. Booking access still honours the row while
+    // the club is NOT_CHOSEN, but the lists follow billing, which bills that
+    // member, so neither the flag nor the list SQL carries the row clause.
     const tierPromotionExemptClause = {
       seasonalMembershipAssignments: {
         some: {
@@ -945,19 +959,22 @@ describe("Phase 3: Admin Member Management", () => {
       },
     };
 
-    it("NOT_REQUIRED filter includes the BASED_ON_AGE_TIER + NOT_REQUIRED-row (tier promotion) clause", async () => {
+    it("NOT_REQUIRED filter leaves out the BASED_ON_AGE_TIER + NOT_REQUIRED-row (tier promotion) clause while NOT_CHOSEN", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
       mockSessionAndMemberListCounts(0);
 
       await getMembers(new NextRequest("http://localhost/api/admin/members?subscription=NOT_REQUIRED"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
-      expect(call.where?.AND).toEqual(expect.arrayContaining([
-        { OR: expect.arrayContaining([tierPromotionExemptClause]) },
-      ]));
+      const andConditions = call.where?.AND as Array<Record<string, unknown>>;
+      const orCondition = andConditions.find((c) => "OR" in c) as
+        | { OR: Array<Record<string, unknown>> }
+        | undefined;
+      expect(orCondition?.OR.length).toBeGreaterThan(0);
+      expect(orCondition?.OR).not.toContainEqual(tierPromotionExemptClause);
     });
 
-    it("owing filters (NONE, UNPAID) exclude the tier-promotion clause via NOT, so it cannot appear in both sets", async () => {
+    it("owing filters (NONE, UNPAID) negate the same OR list, without the tier-promotion clause while NOT_CHOSEN", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       for (const filter of ["NONE", "UNPAID"]) {
         vi.mocked(prisma.member.findMany).mockClear();
@@ -971,9 +988,8 @@ describe("Phase 3: Admin Member Management", () => {
         const notCondition = andConditions.find((c) => "NOT" in c) as
           | { NOT: { OR: Array<Record<string, unknown>> } }
           | undefined;
-        expect(notCondition?.NOT.OR).toEqual(
-          expect.arrayContaining([tierPromotionExemptClause]),
-        );
+        expect(notCondition?.NOT.OR.length).toBeGreaterThan(0);
+        expect(notCondition?.NOT.OR).not.toContainEqual(tierPromotionExemptClause);
       }
     });
 
@@ -1560,38 +1576,51 @@ describe("Phase 3: Admin Member Management", () => {
                 { role: { in: ["ADMIN", "LODGE", "NON_MEMBER", "SCHOOL"] } },
               ],
             },
-            { ageTier: { in: expect.arrayContaining(["INFANT", "CHILD"]) } },
+            // #5190 Q2: while NOT_CHOSEN the lists follow billing, which lets
+            // an exempt age tier exempt only a BASED_ON_AGE_TIER assignment.
+            {
+              AND: [
+                {
+                  seasonalMembershipAssignments: {
+                    some: {
+                      seasonYear: 2026,
+                      membershipType: { subscriptionBehavior: "BASED_ON_AGE_TIER" },
+                    },
+                  },
+                },
+                expect.anything(),
+              ],
+            },
           ]),
         },
       ]));
     });
 
-    it("export NOT_REQUIRED filter mirrors the list — includes the tier-promotion clause", async () => {
-      // #2041/#2149: the export SQL must carry the same BASED_ON_AGE_TIER +
-      // NOT_REQUIRED-row exempt clause as the members list so the CSV roster
-      // cannot disagree with the on-screen NOT_REQUIRED badge.
+    it("export NOT_REQUIRED filter mirrors the list — no tier-promotion clause while NOT_CHOSEN", async () => {
+      // #2041/#2149/#5190 Q2: the export SQL is the members list's, so the CSV
+      // roster cannot disagree with the on-screen badge. Both follow billing
+      // while NOT_CHOSEN, which ignores a saved NOT_REQUIRED row.
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
 
       await exportMembers(new NextRequest("http://localhost/api/admin/members/export?subscription=NOT_REQUIRED"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
-      expect(call.where?.AND).toEqual(expect.arrayContaining([
-        {
-          OR: expect.arrayContaining([
-            {
-              seasonalMembershipAssignments: {
-                some: {
-                  seasonYear: 2026,
-                  membershipType: { subscriptionBehavior: "BASED_ON_AGE_TIER" },
-                },
-              },
-              subscriptions: {
-                some: { seasonYear: 2026, status: "NOT_REQUIRED" },
-              },
-            },
-          ]),
+      const andConditions = call.where?.AND as Array<Record<string, unknown>>;
+      const orCondition = andConditions.find((c) => "OR" in c) as
+        | { OR: Array<Record<string, unknown>> }
+        | undefined;
+      expect(orCondition?.OR.length).toBeGreaterThan(0);
+      expect(orCondition?.OR).not.toContainEqual({
+        seasonalMembershipAssignments: {
+          some: {
+            seasonYear: 2026,
+            membershipType: { subscriptionBehavior: "BASED_ON_AGE_TIER" },
+          },
         },
-      ]));
+        subscriptions: {
+          some: { seasonYear: 2026, status: "NOT_REQUIRED" },
+        },
+      });
     });
 
     it("exports admin subscription status as not required", async () => {

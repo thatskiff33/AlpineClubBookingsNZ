@@ -133,6 +133,17 @@ export function hasChosenLiabilityRule(
 /** Who is asking: the subscription billing run, or a booking-access gate. */
 export type SubscriptionLiabilitySide = "billing" | "access";
 
+/**
+ * The side the admin members list, its CSV export and the subscriptions list
+ * show (owner decision Q2 on #5190, 22 Nov 2026): billing. While the club is
+ * `NOT_CHOSEN` the lists say who the billing run charges, so an organisation or
+ * school account (`NOT_APPLICABLE` tier) on a `REQUIRED` type shows as owing even
+ * though booking access lets it book. Once the club has chosen, both sides are
+ * the same rule. The display flag and its SQL filter both read this, so they
+ * cannot pick different sides.
+ */
+export const ADMIN_LIST_LIABILITY_SIDE: SubscriptionLiabilitySide = "billing";
+
 /** Which age a side reads: a DOB-derived tier on a fixed day, or the stored one. */
 export type LiabilityAgeTierSource = ChoosableLiabilityAgeSource | "STORED_TIER";
 

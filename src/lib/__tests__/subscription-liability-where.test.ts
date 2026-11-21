@@ -17,7 +17,7 @@ import { subscriptionNotRequiredMemberConditions } from "@/lib/subscription-liab
 
 // #5190: the admin members list, its CSV export and the subscriptions list
 // filter "subscription not required" in SQL and then show the shared rule's own
-// answer per row. If the two disagree, a member is listed under the wrong filter.
+// answer per row (billing side until the club chooses, owner decision Q2). If the two disagree, a member is listed under the wrong filter.
 // This holds the SQL form to the rule over the same members, for every setting.
 
 const SEASON = 2026;
@@ -148,6 +148,35 @@ describe("subscriptionNotRequiredMemberConditions matches the shared liability r
       }
     },
   );
+
+  // Owner decision Q2 (#5190, 22 Nov 2026): the lists follow billing until the
+  // club chooses. An organisation or school account carries the NOT_APPLICABLE
+  // tier and no date of birth; on a REQUIRED type it is listed as owing while
+  // NOT_CHOSEN (booking access would let it book), then follows the choice.
+  it("lists an organisation on a REQUIRED type as owing while NOT_CHOSEN, then follows the club's choice", () => {
+    const organisation: FakeMember = {
+      role: "USER",
+      ageTier: "NOT_APPLICABLE",
+      dateOfBirth: null,
+      assignment: "REQUIRED",
+      rowStatus: null,
+    };
+    const listedNotRequired = (liabilitySettings: SubscriptionLiabilitySettings) => {
+      const sql = matchesWhere(asRow(organisation), {
+        OR: subscriptionNotRequiredMemberConditions({
+          seasonYear: SEASON,
+          ageTierSettings: AGE_TIER_SETTINGS,
+          liabilitySettings,
+        }),
+      });
+      expect(sql).toBe(ruleSaysNotRequired(organisation, liabilitySettings, null));
+      return sql;
+    };
+    expect(listedNotRequired({ requiredTypeAgeRule: "NOT_CHOSEN", liabilityAgeSource: "NOT_CHOSEN" })).toBe(false);
+    expect(listedNotRequired({ requiredTypeAgeRule: "AGE_TIER_EXEMPTS", liabilityAgeSource: "SEASON_START" })).toBe(true);
+    expect(listedNotRequired({ requiredTypeAgeRule: "AGE_TIER_EXEMPTS", liabilityAgeSource: "SEASON_END" })).toBe(true);
+    expect(listedNotRequired({ requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_START" })).toBe(false);
+  });
 
   // The members list and CSV export ask for owing members with `NOT: { OR }`.
   // A NULL comparison inside that negation is unknown in PostgreSQL and drops

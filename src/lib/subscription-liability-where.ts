@@ -8,6 +8,7 @@ import {
   type AgeTierSettingData,
 } from "@/lib/policies/age-tier";
 import {
+  ADMIN_LIST_LIABILITY_SIDE,
   getSeasonEndCalendarDate,
   liabilityRuleFor,
   type LiabilityAgeTierSource,
@@ -16,8 +17,9 @@ import {
 
 /**
  * The SQL form of "this member owes no subscription this season" (#5190): the
- * access side of the shared liability rule (`resolveMemberSubscriptionLiability`)
- * as a Prisma `OR` list, for the admin members list, its CSV export and the
+ * shared liability rule (`resolveMemberSubscriptionLiability`) on the side the
+ * admin lists show (`ADMIN_LIST_LIABILITY_SIDE`, billing until the club chooses
+ * a rule — owner decision Q2, 22 Nov 2026) as a Prisma `OR` list, for the admin members list, its CSV export and the
  * subscriptions list, which filter in the database and then display the rule's
  * own answer per row. Built from the same settings as the rule, and held to it
  * by `subscription-liability-where.test.ts`, which evaluates both over the same
@@ -32,14 +34,16 @@ export function subscriptionNotRequiredMemberConditions(input: {
   ageTierSettings: AgeTierSettingData[];
   liabilitySettings: SubscriptionLiabilitySettings;
   /**
-   * Whether to include the saved-row exemption clause (which only applies while
-   * the club has not chosen). A caller that judges rows separately (the
-   * subscriptions list) leaves it out.
+   * Whether to include the saved-row exemption clause, for a side whose rule
+   * lets a saved row exempt (only booking access while the club has not
+   * chosen, so never the lists' billing side today; kept so the SQL mirrors the
+   * rule on any side). A caller that judges rows separately (the subscriptions
+   * list) leaves it out.
    */
   includeSeasonRowExemption?: boolean;
 }): Prisma.MemberWhereInput[] {
   const { seasonYear } = input;
-  const rule = liabilityRuleFor("access", input.liabilitySettings);
+  const rule = liabilityRuleFor(ADMIN_LIST_LIABILITY_SIDE, input.liabilitySettings);
   const assignedBehavior = (subscriptionBehavior: "NOT_REQUIRED" | "BASED_ON_AGE_TIER") => ({
     seasonalMembershipAssignments: {
       some: { seasonYear, membershipType: { subscriptionBehavior } },

@@ -104,8 +104,9 @@ function isNotRequiredMember(
   seasonSubscriptionStatus?: SubscriptionStatus
 ) {
   // #2149/#5190: membership type is the sole authority (role carries no
-  // exemption), through the shared liability rule, so this admin list agrees
-  // with the members list, export, profile, and the booking gate.
+  // exemption), through the shared liability rule on the lists' side (billing
+  // until the club chooses, #5190 Q2), so this admin list agrees with the
+  // members list and export.
   return isSubscriptionNotRequiredForMembershipType({
     subscriptionBehavior: effectiveSubscriptionBehavior(
       member.seasonalMembershipAssignments?.[0]?.membershipType

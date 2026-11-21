@@ -226,7 +226,7 @@ describe("built-in membership type seed helpers", () => {
       subscriptionBehavior: Parameters<
         typeof isSubscriptionNotRequiredForMembershipType
       >[0]["subscriptionBehavior"];
-      ageTier: "CHILD" | "YOUTH" | "ADULT";
+      ageTier: "CHILD" | "YOUTH" | "ADULT" | "NOT_APPLICABLE";
       exemptTiers?: ReadonlyArray<string>;
       seasonRowStatus?: "NOT_REQUIRED";
       liabilitySettings?: Parameters<
@@ -265,22 +265,51 @@ describe("built-in membership type seed helpers", () => {
       }
     });
 
-    it("while NOT_CHOSEN, exempts an age-tier-exempt member regardless of type, and honours a BASED_ON_AGE_TIER NOT_REQUIRED row", () => {
-      // Age-tier exemption applies even to a REQUIRED type.
+    it("while NOT_CHOSEN, follows billing (#5190 Q2): a REQUIRED type owes whatever the tier, and a saved NOT_REQUIRED row exempts nobody", () => {
+      // Billing never tier-exempts a REQUIRED type while the club has not chosen.
       expect(
         judge({ subscriptionBehavior: "REQUIRED", ageTier: "CHILD", exemptTiers: ["CHILD"] }),
-      ).toBe(true);
-      // BASED_ON_AGE_TIER + NOT_REQUIRED row dominates a promoted stored tier.
+      ).toBe(false);
+      // Billing ignores a saved NOT_REQUIRED row on a BASED_ON_AGE_TIER type.
       expect(
         judge({
           subscriptionBehavior: "BASED_ON_AGE_TIER",
           ageTier: "YOUTH",
           seasonRowStatus: "NOT_REQUIRED",
         }),
+      ).toBe(false);
+      // BASED_ON_AGE_TIER defers to the tier: exempt here, liable below.
+      expect(
+        judge({ subscriptionBehavior: "BASED_ON_AGE_TIER", ageTier: "CHILD", exemptTiers: ["CHILD"] }),
       ).toBe(true);
-      // BASED_ON_AGE_TIER without a row defers to the tier (here liable).
       expect(
         judge({ subscriptionBehavior: "BASED_ON_AGE_TIER", ageTier: "YOUTH" }),
+      ).toBe(false);
+    });
+
+    it("shows an organisation or school account (NOT_APPLICABLE tier) on a REQUIRED type as owing while NOT_CHOSEN, then follows the club's choice (#5190 Q2)", () => {
+      const organisation = {
+        subscriptionBehavior: "REQUIRED",
+        ageTier: "NOT_APPLICABLE",
+      } as const;
+      expect(judge(organisation)).toBe(false);
+      expect(
+        judge({
+          ...organisation,
+          liabilitySettings: {
+            requiredTypeAgeRule: "AGE_TIER_EXEMPTS",
+            liabilityAgeSource: "SEASON_START",
+          },
+        }),
+      ).toBe(true);
+      expect(
+        judge({
+          ...organisation,
+          liabilitySettings: {
+            requiredTypeAgeRule: "ALWAYS_OWES",
+            liabilityAgeSource: "SEASON_START",
+          },
+        }),
       ).toBe(false);
     });
 

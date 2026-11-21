@@ -8,6 +8,7 @@ import type {
 } from "@prisma/client";
 import type { AgeTierSettingData } from "@/lib/policies/age-tier";
 import {
+  ADMIN_LIST_LIABILITY_SIDE,
   liabilityRuleFor,
   resolveMemberSubscriptionLiability,
   type SubscriptionLiabilitySettings,
@@ -521,12 +522,12 @@ export function effectiveSubscriptionBehavior(
 /**
  * Shared "subscription not required" (exempt) decision for display surfaces
  * (#2149): the admin members list, its CSV export and the subscriptions list.
- * It is the access side of the ONE liability rule (#5190,
- * `resolveMemberSubscriptionLiability`), so the flag a list shows is the answer
- * the booking gates act on. The booking gate additionally layers the
- * Xero-enforcement bypass and the no-invoice coverage, which display surfaces
- * deliberately omit. Their SQL filters are built from the same settings by
- * `subscriptionNotRequiredMemberConditions`.
+ * It is the ONE liability rule (#5190, `resolveMemberSubscriptionLiability`) on
+ * the side `ADMIN_LIST_LIABILITY_SIDE` names: billing (owner decision Q2,
+ * 22 Nov 2026). While the club is `NOT_CHOSEN` the flag says who the billing
+ * run charges, which can differ from who booking access lets book; once the
+ * club has chosen, the two are the same rule. Their SQL filters are built from
+ * the same settings and side by `subscriptionNotRequiredMemberConditions`.
  */
 export function isSubscriptionNotRequiredForMembershipType(params: {
   subscriptionBehavior: MembershipTypeSubscriptionBehavior | null | undefined;
@@ -541,7 +542,7 @@ export function isSubscriptionNotRequiredForMembershipType(params: {
     member: params.member,
     seasonRowStatus: params.seasonRowStatus,
     seasonYear: params.seasonYear,
-    rule: liabilityRuleFor("access", params.liabilitySettings),
+    rule: liabilityRuleFor(ADMIN_LIST_LIABILITY_SIDE, params.liabilitySettings),
     ageTierSettings: params.ageTierSettings,
   }).owes;
 }

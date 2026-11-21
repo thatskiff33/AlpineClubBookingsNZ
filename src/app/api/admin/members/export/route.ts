@@ -76,8 +76,9 @@ export async function GET(req: NextRequest) {
     getAgeTierSettings(),
     loadMembershipLockoutSettings(),
   ]);
-  // #2149/#5190: mirror the members-list filter exactly — the access side of the
-  // shared liability rule, from the same settings as the per-row column below.
+  // #2149/#5190: mirror the members-list filter exactly — the shared liability
+  // rule on the billing side until the club chooses (Q2), from the same settings
+  // as the per-row column below.
   const notRequiredSubscriptionConditions = subscriptionNotRequiredMemberConditions({
     seasonYear: currentSeasonYear,
     ageTierSettings,

@@ -848,7 +848,8 @@ check the others.
   concept** and grants no exemption of its own — the retired
   `roleNeverRequiresSubscription` short-circuit is gone from every derivation
   (booking gate, profile, subscriptions list, admin members list + its SQL
-  filters, CSV export, member-guest booking block, and the Xero sync). Operational
+  filters, CSV export, member-guest booking block, Xero sync). Admin lists
+  show billing until the club chooses (#5190 Q2). Operational
   and non-member accounts are exempt only because they resolve to a `NOT_REQUIRED`
   membership type: a member with no explicit season assignment falls back through
   `defaultMembershipTypeKeyForRole`, which maps `ADMIN`→built-in `ADMIN`
@@ -887,9 +888,11 @@ check the others.
   at season start) stays authoritative through a mid-season tier promotion. Once
   the club chooses, its pair decides and the row exempts nobody.
   Booking (`findUnpaidMemberGuests` and the owner gate), notices,
-  `/api/member/subscription-status`, the admin members list and export, the
-  subscriptions list and the Xero sync (`checkMembershipStatus`) all resolve
-  paid-up through that rule and the settlement loader, never a copy.
+  `/api/member/subscription-status` and the Xero sync (`checkMembershipStatus`)
+  all resolve paid-up through that rule and the settlement loader, never a copy.
+  The admin members list and export and the subscriptions list call the same
+  rule on its billing side, so while `NOT_CHOSEN` the two pre-#5190 access facts
+  above do not exempt anyone there (#5190 Q2).
   Nomination deliberately honours ONLY the membership-type `NOT_REQUIRED` rule,
   NOT the junior age-tier exemption (`requiresPaidSubscriptionForAgeTier`):
   nominating is an adult-member act and widening it to un-subscribed junior
