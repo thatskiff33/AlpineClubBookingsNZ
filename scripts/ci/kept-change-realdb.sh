@@ -16,6 +16,10 @@ export CONCURRENCY_RACE_DATABASE_URL="$DATABASE_URL"
 export RUN_CONCURRENCY_RACE_TESTS=1
 export TMPDIR=/tmp/scratch
 export NODE_OPTIONS=--max-old-space-size=1800
+# The client this job's suites import must match this checkout's schema: a
+# workspace set up before a merge that changed it would run a stale one, and
+# Prisma then rejects the new enum values the code writes.
+pnpm run db:generate
 pnpm run db:migrate
 files=(
   # #4069: cash-cover evidence and snapshot coherence over the real writers.
