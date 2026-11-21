@@ -217,8 +217,7 @@ export async function repairRefundedPaymentBusinessState(input: {
   const repairOne = async (payment: RepairedPayment): Promise<"updated" | "unchanged" | "lost" | "recount"> => {
     const currentDirectRefundContributionCents =
       currentDirectRefundPaymentId === payment.id ? currentCreditNoteAmountCents(payment.id) ?? 0 : 0;
-    // #4444: a note counted above as this payment's own refund or account note is never counted again by its allocation.
-    const currentModificationRefundContributionCents =
+    const currentModificationRefundContributionCents = // #4444: a note counted above as the payment's own is not counted again by its allocation
       includesCurrentCreditNoteContribution(payment.id) && currentDirectRefundPaymentId !== payment.id
         ? input.modificationRefundAmountsByPaymentId.get(payment.id) ?? 0
         : 0;
