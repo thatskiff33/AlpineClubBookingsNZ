@@ -30,16 +30,18 @@
 import logger from "@/lib/logger";
 import type { ClubFormat } from "@/lib/club-format";
 import { repairRefundedPaymentBusinessState } from "./credit-note-repairs";
-import { type BankTransferFloorAlert, sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
+import { sendOwedKeptFloorAlerts } from "./kept-settle-floor-alert";
 import type { AppliedCreditNote } from "./settle-from-cash";
 
-/** What a bank-transfer settle leaves for after it commits (#4095, #4449). */
-export type KeptSettleFollowUp = { correctionNotes: AppliedCreditNote[]; floorAlert: BankTransferFloorAlert | null };
+/** What a bank-transfer settle leaves for after it commits (#4095). */
+export type KeptSettleFollowUp = { correctionNotes: AppliedCreditNote[] };
 
 /**
- * After a settle commits: alert a whole refunded total its keep held at the
- * bank-transfer floor (`INV-ADDPAY-021`), then run the recount below. Returns
- * the correction ids it could not recount.
+ * After a settle commits: send any floor alert still owed on the payment
+ * (#5289 F, owner decision D4: recorded in the settle's transaction when its
+ * keep held the total at the bank-transfer floor, `INV-ADDPAY-021`; an earlier
+ * delivery's that never went out included), then run the recount below.
+ * Returns the correction ids it could not recount.
  */
 export async function afterKeptSettleCommits(
   invoiceId: string,
@@ -47,7 +49,12 @@ export async function afterKeptSettleCommits(
   followUp: KeptSettleFollowUp,
   format: ClubFormat,
 ): Promise<string[]> {
-  if (followUp.floorAlert) await sendBankTransferFloorAlert(followUp.floorAlert, format);
+  try {
+    await sendOwedKeptFloorAlerts({ paymentId }, format);
+  } catch (err) {
+    // The marker stays owed: a later delivery or the inbound cron sends it.
+    logger.error({ err, invoiceId, paymentId }, "Could not send a kept settle's owed floor alert after its commit (#5289)");
+  }
   return recountCorrectionsAfterKeptSettle(invoiceId, paymentId, followUp.correctionNotes);
 }
 

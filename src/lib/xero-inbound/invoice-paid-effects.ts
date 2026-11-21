@@ -61,6 +61,7 @@ import {
 } from "@/lib/xero-inbound/settle-from-cash";
 import { IB_RECEIPT_KEPT_REASON } from "@/lib/xero-inbound/ib-receipt-reasons";
 import { afterKeptSettleCommits, type KeptSettleFollowUp } from "@/lib/xero-inbound/kept-settle-correction-recount";
+import { recordKeptFloorAlertInTransaction } from "@/lib/xero-inbound/kept-settle-floor-alert";
 import {
   cashSettlementMarkerInTransaction,
   raiseCashSettlementAlert,
@@ -331,14 +332,14 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     // #3979: written inside the transaction, alerted only after it commits.
     // Declared through `as` so the read after the await is not narrowed to null.
     let cashSettlementMarker = null as CashSettlementMarker | null;
-    let keptFollowUp = { correctionNotes: [], floorAlert: null } as KeptSettleFollowUp;
+    let keptFollowUp = { correctionNotes: [] } as KeptSettleFollowUp;
     const outcome = await prisma.$transaction(async (tx) => {
       // #4516 (M4b): the PRIMARY rows this delivery moved to captured, the only receipts its hook may collect.
       // Null until the receipt is written: an arm that returns before it posts nothing.
       let receiptRowIds = null as string[] | null;
       const settled = await (async () => {
       cashSettlementMarker = null;
-      keptFollowUp = { correctionNotes: [], floorAlert: null };
+      keptFollowUp = { correctionNotes: [] };
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
       // Pre-lock read: only the lodge key, which is immutable. The booking's
@@ -448,7 +449,11 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         secondInstrument: secondInstrument !== null,
         invoice: invoiceFacts,
       });
-      keptFollowUp = { correctionNotes: receiptFigure.plan.kind !== "rewrite" ? receiptFigure.appliedCorrectionNotes : [], floorAlert: receiptFigure.floorAlert };
+      keptFollowUp = { correctionNotes: receiptFigure.plan.kind !== "rewrite" ? receiptFigure.appliedCorrectionNotes : [] };
+      // #5289 F (D4): a keep held at the bank-transfer floor owes its alert; recorded with the total, sent after the commit.
+      if (receiptFigure.floorAlert) {
+        await recordKeptFloorAlertInTransaction(tx, { bookingId: fresh.bookingId, invoiceId, invoiceNumber, alert: receiptFigure.floorAlert });
+      }
       const cashSettlementNotice = await readCashSettlementNotice(tx, {
         plan: receiptFigure.plan,
         recordedCents: receiptFigure.receiptCents,
@@ -1332,6 +1337,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     // #4095 (`INV-PAY-126`): a kept receipt holds the stored figure, so a
     // correction already synced against it is recounted now; a replay recounts
     // again, so an event retried for one left unrecounted finishes it (#4449: a backstop).
+    // #5289 F: first any floor alert the payment still owes, this keep's or an earlier one's.
     result.unrecountedCorrectionNoteIds.push(...(await afterKeptSettleCommits(invoiceId, outcome.payment.id, keptFollowUp, format)));
 
     // #3979 (`INV-PAY-125`): a kept figure, or cash that disagrees with what

@@ -208,6 +208,43 @@ export function asIbSettlementFigureCheckSnapshot(
 }
 
 /**
+ * #5289 F (owner decision D4, `INV-ADDPAY-021`): a KEPT bank-transfer settle
+ * moved the payment's refunded total and held it at the bank-transfer floor,
+ * so the refunds Xero accounts for on it are less than the club recorded.
+ * Written in the settle's own transaction, so the alert it owes commits with
+ * the total; the alert follows the commit, claimed first (`alertClaimedAt`) so
+ * only one sender sends it, and is recorded here once sent. A retried delivery
+ * and the inbound cron send one still owed. Cancels nothing.
+ */
+export const IB_KEPT_SETTLE_FLOOR_ALERT_EVENT_KIND = "ib_kept_settle_floor_alert" as const;
+
+export const IB_KEPT_SETTLE_FLOOR_ALERT_EVENT_REASON =
+  "Xero reported this booking's bank-transfer invoice paid, and the refunds Xero accounts for on the payment came to less than the refunds the club recorded, so the recorded refunds were kept. The booking was not cancelled.";
+
+export interface IbKeptSettleFloorAlertEventSnapshot {
+  kind: typeof IB_KEPT_SETTLE_FLOOR_ALERT_EVENT_KIND;
+  paymentId: string;
+  invoiceId: string;
+  invoiceNumber: string | null;
+  /** The floor's alert as the keep returned it (`BankTransferFloorAlert`), in integer cents. */
+  creditNoteId: string | null;
+  creditNoteNumber: string | null;
+  xeroDerivedCents: number;
+  floorCents: number;
+  /** When a sender claimed the alert (ISO), or null; a claim older than the in-flight window is free again. */
+  alertClaimedAt: string | null;
+  /** When the alert was sent (ISO), or null while it is owed. */
+  alertSentAt: string | null;
+}
+
+export function asIbKeptSettleFloorAlertSnapshot(value: unknown): IbKeptSettleFloorAlertEventSnapshot | null {
+  if (value && typeof value === "object" && (value as { kind?: unknown }).kind === IB_KEPT_SETTLE_FLOOR_ALERT_EVENT_KIND) {
+    return value as IbKeptSettleFloorAlertEventSnapshot;
+  }
+  return null;
+}
+
+/**
  * #3672 (`INV-PAY-109`): the payer switch. An organiser-pays group's
  * settlement was paid without this joiner on the bill, so the booking now pays
  * for itself. Written inside the switch transaction, so every switched joiner
@@ -280,6 +317,12 @@ export const SETTLEMENT_MARKERS = [
     kind: IB_SETTLEMENT_FIGURE_CHECK_EVENT_KIND,
     reason: IB_SETTLEMENT_FIGURE_CHECK_EVENT_REASON,
     adminTitle: "Bank-transfer amount needs checking",
+    tone: "warning",
+  },
+  {
+    kind: IB_KEPT_SETTLE_FLOOR_ALERT_EVENT_KIND,
+    reason: IB_KEPT_SETTLE_FLOOR_ALERT_EVENT_REASON,
+    adminTitle: "Bank-transfer refunds kept above what Xero shows",
     tone: "warning",
   },
   {

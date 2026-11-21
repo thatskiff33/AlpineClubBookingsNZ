@@ -17,6 +17,11 @@
  * (`repairRefundedPaymentBusinessState` with no note being synced). The
  * `refund-ledger-divergence` alerts the floor sends are counted.
  *
+ * #5289 F (owner decision D4): a keep held at the floor records its alert in
+ * its own transaction (`ib_kept_settle_floor_alert`), and a sender claims the
+ * marker before it sends, so a process stopped after the commit still alerts
+ * once, from the retried delivery or the inbound cron, never from both.
+ *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions,
  * which imports this file so CI reaches it; it cleans its own `race-5289d-`
@@ -107,7 +112,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
      * `captured: false` leaves the receipt for the settle, the refund recorded
      * on a captured additional bank-transfer row instead.
      */
-    async function seed(options: { captured?: boolean; queued?: boolean } = {}) {
+    async function seed(options: { captured?: boolean; queued?: boolean; correction?: boolean } = {}) {
       const captured = options.captured !== false;
       await prisma.booking.create({
         data: { id: BOOKING_ID, memberId: MEMBER_ID, lodgeId: LODGE_ID, checkIn: CHECK_IN, checkOut: CHECK_OUT, status: captured ? "PAID" : "CONFIRMED", totalPriceCents: 40_000, finalPriceCents: 40_000 },
@@ -133,6 +138,8 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       await prisma.xeroObjectLink.create({
         data: { localModel: "Payment", localId: PAYMENT_ID, xeroObjectType: "INVOICE", xeroObjectId: INVOICE_ID, role: "PRIMARY_INVOICE", active: true },
       });
+      // #5289 F: no correction at all - $100 of the stored $300 is a refund the rows never recorded.
+      if (options.correction === false) return;
       await prisma.bookingModification.create({
         data: { id: MODIFICATION_ID, bookingId: BOOKING_ID, memberId: MEMBER_ID, modificationType: "BATCH_MODIFY", previousData: {}, newData: {}, priceDiffCents: -CORRECTION_CENTS, changeFeeCents: 0 },
       });
@@ -211,6 +218,75 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       await syncInternetBankingPaymentsForPaidInvoice(invoice, [PAYMENT_ID], CLUB_FORMAT_TEST);
       expect(await refunded()).toBe(CORRECTION_CENTS + BANK_REFUND_CENTS);
       expect(floorAlerts).toEqual([]);
+    });
+    /** The kept settle of the invoice, paid with an unquantifiable amount and no note applied. */
+    async function settleKeptPlain() {
+      const { syncInternetBankingPaymentsForPaidInvoice } = await import("@/lib/xero-inbound/invoice-paid-effects");
+      const invoice = {
+        invoiceID: INVOICE_ID, invoiceNumber: "INV-5289D", status: "PAID", amountPaid: "degraded", total: 500,
+        payments: [{ paymentID: `${P}-xpay`, amount: 0, status: "AUTHORISED" }], creditNotes: [],
+      } as unknown as Invoice;
+      return syncInternetBankingPaymentsForPaidInvoice(invoice, [PAYMENT_ID], CLUB_FORMAT_TEST);
+    }
+
+    const floorMarkers = () =>
+      prisma.bookingEvent.findMany({ where: { bookingId: BOOKING_ID, snapshot: { path: ["kind"], equals: "ib_kept_settle_floor_alert" } }, select: { id: true, type: true, snapshot: true } });
+
+    /** A keep that lowers $300 to the $200 detail and is held there; the process stops after its commit, before the alert. */
+    async function keepHeldAtFloorThenStop() {
+      await seed({ captured: false, queued: false, correction: false });
+      const followUp = await import("@/lib/xero-inbound/kept-settle-floor-alert");
+      const stopped = new Error("race-5289d process stopped after the commit");
+      const spy = vi.spyOn(followUp, "sendOwedKeptFloorAlerts").mockRejectedValueOnce(stopped);
+      await settleKeptPlain();
+      spy.mockRestore();
+      expect(await refunded()).toBe(BANK_REFUND_CENTS);
+      expect(floorAlerts).toEqual([]);
+    }
+
+    it("MUTATION (D4 record): a keep held at the floor records its alert with the total; stopped before the send, the retried delivery sends it once, and never again", async () => {
+      await keepHeldAtFloorThenStop();
+      const [marker] = await floorMarkers();
+      expect(marker).toMatchObject({ type: "CANCELLED", snapshot: { paymentId: PAYMENT_ID, xeroDerivedCents: 0, floorCents: BANK_REFUND_CENTS, alertSentAt: null } });
+
+      // The retried delivery: a replay now, whose keep moves nothing; before #5289 nothing alerted the officer at all.
+      await settleKeptPlain();
+      expect(floorAlerts).toHaveLength(1);
+      expect(floorAlerts[0]).toContain(PAYMENT_ID);
+      expect((await floorMarkers())[0]!.snapshot).toMatchObject({ alertSentAt: expect.any(String) });
+
+      await settleKeptPlain();
+      const { retryCashSettlementAlerts } = await import("@/lib/xero-inbound/cash-settlement-alert-retry");
+      await prisma.bookingEvent.updateMany({ where: { id: marker!.id }, data: { createdAt: new Date("2026-06-30T00:00:00.000Z") } });
+      await retryCashSettlementAlerts(CLUB_FORMAT_TEST);
+      expect(floorAlerts).toHaveLength(1);
+    });
+
+    it("MUTATION (D4 claim): a retried delivery and the inbound cron racing for the owed alert send it exactly once", async () => {
+      await keepHeldAtFloorThenStop();
+      const [marker] = await floorMarkers();
+      // Old enough for the cron's sweep, which leaves recent markers to their after-commit sender.
+      await prisma.bookingEvent.updateMany({ where: { id: marker!.id }, data: { createdAt: new Date("2026-06-30T00:00:00.000Z") } });
+      const { retryCashSettlementAlerts } = await import("@/lib/xero-inbound/cash-settlement-alert-retry");
+      await Promise.all([settleKeptPlain(), retryCashSettlementAlerts(CLUB_FORMAT_TEST), retryCashSettlementAlerts(CLUB_FORMAT_TEST)]);
+      expect(floorAlerts).toHaveLength(1);
+    });
+
+    it("a marker claimed by a sender still within its window is left to that sender; a failed send gives the claim back for the next", async () => {
+      await keepHeldAtFloorThenStop();
+      const [marker] = await floorMarkers();
+      const claimed = { ...(marker!.snapshot as object), alertClaimedAt: new Date().toISOString() };
+      await prisma.bookingEvent.update({ where: { id: marker!.id }, data: { snapshot: claimed } });
+      await settleKeptPlain();
+      expect(floorAlerts).toEqual([]);
+
+      await prisma.bookingEvent.update({ where: { id: marker!.id }, data: { snapshot: { ...claimed, alertClaimedAt: null } } });
+      const alerts = await import("@/lib/xero-error-alert");
+      vi.mocked(alerts.notifyXeroSyncError).mockRejectedValueOnce(new Error("mail down"));
+      await settleKeptPlain();
+      expect((await floorMarkers())[0]!.snapshot).toMatchObject({ alertClaimedAt: null, alertSentAt: null });
+      await settleKeptPlain();
+      expect(floorAlerts).toHaveLength(1);
     });
   },
 );

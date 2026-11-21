@@ -27,6 +27,7 @@ import {
   type Prisma,
 } from "@prisma/client";
 import type { Invoice } from "xero-node";
+import logger from "@/lib/logger";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import {
   deriveAggregatePaymentStatus,
@@ -208,6 +209,13 @@ async function keptRefundedTotal(
   // record whose note is still in the outbox is not a shortfall in Xero. A keep that moves the
   // total and is held at the floor does alert.
   const moved = decided.refundedAmountCents !== payment.refundedAmountCents;
+  // #5289 G: a keep that lowers the stored total (an older fold its links no longer record) is never silent.
+  if (decided.refundedAmountCents < payment.refundedAmountCents) {
+    logger.warn(
+      { paymentId: payment.id, invoiceId: input.invoiceId, storedRefundedAmountCents: payment.refundedAmountCents, keptRefundedAmountCents: decided.refundedAmountCents },
+      "A kept bank-transfer settle lowered the payment's refunded total to what its links record (#4449)",
+    );
+  }
   return { refundedAmountCents: decided.refundedAmountCents, status: decided.status ?? PaymentStatus.SUCCEEDED, floorAlert: moved ? decided.floorAlert : null };
 }
 

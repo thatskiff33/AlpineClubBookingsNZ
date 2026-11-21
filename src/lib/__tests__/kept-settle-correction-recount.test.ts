@@ -11,13 +11,15 @@ const mocks = vi.hoisted(() => ({
   repair: vi.fn(),
   readModificationNoteCash: vi.fn(),
   loggerError: vi.fn(),
+  loggerWarn: vi.fn(),
   decideLinked: vi.fn(),
   floor: vi.fn(),
   sendFloorAlert: vi.fn(),
+  sendOwed: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: { xeroObjectLink: { findFirst: mocks.linkFindFirst, findMany: mocks.linkFindMany } } }));
-vi.mock("@/lib/logger", () => ({ default: { error: mocks.loggerError, warn: vi.fn(), info: vi.fn() } }));
+vi.mock("@/lib/logger", () => ({ default: { error: mocks.loggerError, warn: mocks.loggerWarn, info: vi.fn() } }));
 vi.mock("@/lib/xero-inbound/credit-note-repairs", () => ({ repairRefundedPaymentBusinessState: mocks.repair }));
 // The whole-total decision and its floor are the repair's own, pinned in
 // `xero-credit-note-repairs.test.ts` and driven for real by the realdb suites.
@@ -26,6 +28,8 @@ vi.mock("@/lib/xero-inbound/credit-note-bank-transfer-floor", () => ({
   bankTransferFloorCents: mocks.floor,
   sendBankTransferFloorAlert: mocks.sendFloorAlert,
 }));
+// #5289 F: the owed floor alert's claim and send, pinned against PostgreSQL in bank-transfer-floor-corrections.realdb.test.ts.
+vi.mock("@/lib/xero-inbound/kept-settle-floor-alert", () => ({ sendOwedKeptFloorAlerts: mocks.sendOwed }));
 vi.mock("@/lib/xero-inbound/account-credit-modification-notes", () => ({
   readModificationNoteCash: mocks.readModificationNoteCash,
 }));
@@ -94,24 +98,28 @@ describe("recountCorrectionsAfterKeptSettle (#4095 items 5 and 12)", () => {
 describe("afterKeptSettleCommits (#4449)", () => {
   const format = {} as Parameters<typeof afterKeptSettleCommits>[3];
 
-  it("alerts a floor the keep held, then recounts its corrections", async () => {
-    const floorAlert = { paymentId: PAYMENT_ID } as unknown as NonNullable<Parameters<typeof afterKeptSettleCommits>[2]["floorAlert"]>;
+  it("MUTATION (#5289 F): sends the payment's owed floor alerts, then recounts its corrections", async () => {
     const order: string[] = [];
-    mocks.sendFloorAlert.mockImplementation(async () => void order.push("alert"));
+    mocks.sendOwed.mockImplementation(async () => (order.push("alert"), 1));
     mocks.repair.mockImplementation(async () => (order.push("recount"), { matchedPayments: 1, updatedPayments: 1 }));
 
-    await expect(
-      afterKeptSettleCommits(INVOICE_ID, PAYMENT_ID, { correctionNotes: [{ id: "note-1", appliedCents: 10_000 }], floorAlert }, format),
-    ).resolves.toEqual([]);
+    await expect(afterKeptSettleCommits(INVOICE_ID, PAYMENT_ID, { correctionNotes: [{ id: "note-1", appliedCents: 10_000 }] }, format)).resolves.toEqual([]);
 
-    expect(mocks.sendFloorAlert).toHaveBeenCalledWith(floorAlert, format);
+    expect(mocks.sendOwed).toHaveBeenCalledWith({ paymentId: PAYMENT_ID }, format);
     expect(order).toEqual(["alert", "recount"]);
   });
 
-  it("sends no alert and recounts nothing when the keep left neither", async () => {
-    await expect(afterKeptSettleCommits(INVOICE_ID, PAYMENT_ID, { correctionNotes: [], floorAlert: null }, format)).resolves.toEqual([]);
-    expect(mocks.sendFloorAlert).not.toHaveBeenCalled();
+  it("asks for owed alerts even with no correction to recount (a replay), and recounts nothing", async () => {
+    await expect(afterKeptSettleCommits(INVOICE_ID, PAYMENT_ID, { correctionNotes: [] }, format)).resolves.toEqual([]);
+    expect(mocks.sendOwed).toHaveBeenCalledWith({ paymentId: PAYMENT_ID }, format);
     expect(mocks.repair).not.toHaveBeenCalled();
+  });
+
+  it("a failure to send is logged and never stops the recount", async () => {
+    mocks.sendOwed.mockRejectedValue(new Error("db down"));
+    await expect(afterKeptSettleCommits(INVOICE_ID, PAYMENT_ID, { correctionNotes: [{ id: "note-1", appliedCents: 10_000 }] }, format)).resolves.toEqual([]);
+    expect(mocks.loggerError).toHaveBeenCalled();
+    expect(mocks.repair).toHaveBeenCalled();
   });
 });
 
@@ -252,6 +260,17 @@ describe("a keep sets the whole refunded total its links decide, in its own tran
     mocks.floor.mockResolvedValueOnce({ cents: 4_000, alert });
     await expect(decide({})).resolves.toMatchObject({ paymentColumns: { refundedAmountCents: 4_000 }, floorAlert: alert });
     expect(mocks.floor).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ xeroDerivedCents: 10_000, creditNoteId: null }));
+  });
+
+  it("MUTATION (#5289 G): a keep that lowers a refunded total to $0 writes $0 and SUCCEEDED, and logs it at warn", async () => {
+    await expect(decide({ refundedAmountCents: 5_000, linkedCents: 0 })).resolves.toMatchObject({
+      paymentColumns: { refundedAmountCents: 0, status: "SUCCEEDED" },
+      floorAlert: null,
+    });
+    expect(mocks.loggerWarn).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: PAYMENT_ID, storedRefundedAmountCents: 5_000, keptRefundedAmountCents: 0 }),
+      expect.stringContaining("lowered the payment's refunded total"),
+    );
   });
 
   it("MUTATION (#5289 D): the corrections the links count go to the floor, which adds them to the refund detail", async () => {
