@@ -1,4 +1,4 @@
-// #4988 (`INV-PAY-156`): previewing, posting and reversing an opening-credit
+// #4988 (`INV-PAY-162`): previewing, posting and reversing an opening-credit
 // batch. The transaction client exposes only the delegates the writer may
 // touch, so a stray write — a booking, an email row, a Xero outbox row — fails
 // the test rather than passing silently.

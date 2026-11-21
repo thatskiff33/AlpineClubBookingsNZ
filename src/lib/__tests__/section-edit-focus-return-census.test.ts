@@ -36,8 +36,8 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 const SECTION_EDIT_ADOPTERS = [
   "src/app/(admin)/admin/finance/xero/_components/webhook-health-panel.tsx",
-  "src/app/(admin)/admin/lodges/[id]/_components/lodge-central-lodge-card.tsx",
-  "src/app/(admin)/admin/lodges/[id]/_components/lodge-roster-settings-card.tsx",
+  "src/app/(admin)/admin/lodge-ops/lodges/[id]/_components/lodge-central-lodge-card.tsx",
+  "src/app/(admin)/admin/lodge-ops/lodges/[id]/_components/lodge-roster-settings-card.tsx",
   "src/app/(admin)/admin/membership/member-fields/page.tsx",
   "src/app/(admin)/admin/privacy-retention/privacy-retention-client.tsx",
   "src/app/(admin)/admin/system/backups/backups-client.tsx",
@@ -51,6 +51,7 @@ const SECTION_EDIT_ADOPTERS = [
   "src/components/admin/booking-policies/public-booking-requests-section.tsx",
   "src/components/admin/club-identity-panel.tsx",
   "src/components/admin/club-posts/club-post-retention-section.tsx",
+  "src/components/admin/food-orders/food-order-settings-section.tsx",
   "src/components/admin/google-security-card.tsx",
   "src/components/admin/magic-link-security-card.tsx",
   "src/components/admin/maintenance/maintenance-questions-section.tsx",

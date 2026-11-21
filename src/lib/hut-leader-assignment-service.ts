@@ -18,6 +18,7 @@ import {
   hutLeaderStayRefusalBody,
   isHutLeaderStayCheckExempt,
 } from "@/lib/hut-leader-stayed-nights";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * The two hut-leader assignment writes that decide something under a lock: the
@@ -288,7 +289,7 @@ export async function applyHutLeaderAssignmentEditUnderLocks(input: {
       });
     }
     return null;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 /**

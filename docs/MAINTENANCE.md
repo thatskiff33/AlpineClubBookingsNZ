@@ -55,8 +55,9 @@ CI also runs independent static and container checks:
   `pnpm audit --audit-level=high --json` and reports which of three things
   happened — see "When the advisory service is down" below — plus a fourth
   passing verdict, MITIGATED (never CLEAN), for a reviewed unfixed advisory
-  under an expiring owner-approved record (introduced in #3843; none is live
-  since #3851 — see "Mitigated advisories" below). It runs from a bare
+  under an expiring owner-approved record (introduced in #3843; the live
+  records are listed in the mitigations README — see "Mitigated advisories"
+  below). It runs from a bare
   checkout with no install: measured on npm 11.16.0 / Node 24 the audit built
   its tree from `package-lock.json` and returned the same verdict with or without
   `node_modules`, and `pnpm audit` likewise reads `pnpm-lock.yaml` alone (#3673).
@@ -141,7 +142,7 @@ output names the case**:
 | First line | What it means | What to do |
 | --- | --- | --- |
 | `Dependency audit: CLEAN - ...` | The advisory service answered and this branch has nothing at high or above. | Nothing. The job exits 0. |
-| `Dependency audit: MITIGATED — NOT CLEAN ...` | One reviewed, unfixed high advisory is still reported, and an owner-approved record in `dependency-mitigations.d/` says a reviewed patch covers the copy the audit sees. The raw advisory, the record's scope (including copies it does **not** cover) and the unfiltered pnpm report are printed underneath. | Nothing until the record expires or a fixed release ships; then retire it ([`dependency-mitigations.d/README.md`](../dependency-mitigations.d/README.md) -> "Retiring a record"). The job exits 0 and raises a warning annotation. |
+| `Dependency audit: MITIGATED — NOT CLEAN ...` | One reviewed, unfixed high advisory is still reported, and an owner-approved record in `dependency-mitigations.d/` says reviewed patches cover every copy the audit sees. The raw advisory, the record's scope (including copies it does **not** cover) and the unfiltered pnpm report are printed underneath. | Nothing until the record expires or a fixed release ships; then retire it ([`dependency-mitigations.d/README.md`](../dependency-mitigations.d/README.md) -> "Retiring a record"). The job exits 0 and raises a warning annotation. |
 | `Dependency audit: FAILED - VULNERABILITY FOUND ...` | A real finding. The service answered; the packages are listed underneath. When a mitigation record exists but does not apply, each reason is printed as `Mitigation record NOT applied: ...`. | Upgrade the dependency, or add a deliberate override with its reasoning to the register above. When a record was refused (expired, or its patch or dependency inputs changed), extend or retire it per [`dependency-mitigations.d/README.md`](../dependency-mitigations.d/README.md). **Re-running will not help.** |
 | `Dependency audit: FAILED - ADVISORY SERVICE UNREACHABLE ...` | npmjs.org did not answer, after four attempts. Nothing is known to be wrong with the branch - but it has not been cleared either. | Check <https://status.npmjs.org>, then re-run the job once the service has recovered. |
 | `Dependency audit: FAILED - THE AUDIT COULD NOT RUN ...` | pnpm answered with something that is not a readable audit report - usually a missing or malformed `pnpm-lock.yaml`, or a report whose severity counts are missing or non-numeric. | Read the pnpm output above the verdict. The verdict names which severities it could not read when that is the cause. |
@@ -183,14 +184,15 @@ goes red again the moment anything the approval relied on changes.
 
 The pieces, all in one reviewed pull request:
 
-- a reviewed patch under `patches/`, registered for exactly the affected
-  `package@version` in `patchedDependencies` in `pnpm-workspace.yaml` (pnpm
-  records its hash in `pnpm-lock.yaml`), and copied into the Docker `deps`
-  stage before its frozen install;
+- a reviewed patch under `patches/` for each affected installed copy,
+  registered for exactly that `package@version` in `patchedDependencies` in
+  `pnpm-workspace.yaml` (pnpm records its hash in `pnpm-lock.yaml`), and copied
+  into the Docker `deps` stage before its frozen install;
 - one record in [`dependency-mitigations.d/`](../dependency-mitigations.d/README.md)
-  binding the GHSA, version, dependency path, the owner-decision comment URLs,
-  an expiry, the patch's SHA256, and the SHA256 of the exact reviewed
-  `pnpm-workspace.yaml` and `pnpm-lock.yaml`.
+  binding the GHSA, each covered copy (exact version, dev flag, its patch's
+  SHA256, and the exact set of dependency paths the audit reports for it, since
+  #5252), the owner-decision comment URLs, an expiry, and the SHA256 of the
+  exact reviewed `pnpm-workspace.yaml` and `pnpm-lock.yaml`.
 
 Exactly when the wrapper accepts a record, who authorises one, the 14-day
 expiry cap, the warning annotation a MITIGATED pass raises, and the retirement
@@ -220,9 +222,12 @@ altogether.
 ### The override register
 
 Every row below was verified by removing that entry and re-resolving (#2863),
-and re-checked for #3673 against the ranges the installed parents declare. Two
-bind today: `postcss` (`next` pins 8.5.23 exactly) and the `nodemailer` pair
-(`next-auth`'s optional peer stops at `^8`). The `mysql2` override retired in
+and re-checked for #3673 against the ranges the installed parents declare. Five
+bind today: `postcss` (`next` pins 8.5.23 exactly), the `nodemailer` pair
+(`next-auth`'s optional peer stops at `^8`), and, since #5252, `qs` and
+`minimatch`, which hold development tooling outside its parents' declared
+ranges and say why in their rows, and, since #5293, `effect`, held above
+`@prisma/config`'s exact pin. The `mysql2` override retired in
 #4363, once `prisma` 7.10.1 pinned mysql2 3.24.4.
 `eslint-plugin-react-hooks` is a deliberate hold that is currently non-binding.
 `browserslist` is a security floor its parents' ranges do not guarantee
@@ -253,6 +258,9 @@ than the last install. Scope an override to its parent (`parent>name`) instead.
 | `eslint-plugin-react-hooks` | **Compatibility hold**, not security — `b1989558f` introduced it as "hold eslint-plugin-react-hooks at 7.0.1", and it has since been stepped forward to 7.1.1. Currently non-binding: natural resolution lands on 7.1.1 with or without it. | The hold is reviewed and lifted on purpose. |
 | `browserslist` (`^4.28.7`) | **Security.** Two high advisories against `browserslist <= 4.28.6` — unbounded memory growth with no cache eviction (GHSA-c83g-rgw3-j3cx), and an uncaught crash / prototype write via untrusted `browserslist-stats.json` (GHSA-73wf-gq98-2v4g). Transitive only; nothing declares it directly. A **range**, not a pin, so it keeps floating with future patches. | every package that depends on browserslist (today `webpack` `^4.28.1`, `@babel/helper-compilation-targets` `^4.24.0`, and `update-browserslist-db`'s peer `>= 4.21.0`) *requires* 4.28.7 or later, meaning the lowest version its range accepts is 4.28.7 or higher (e.g. `^4.28.7`). A range that only *includes* 4.28.7 does not count, and `pnpm audit` cannot show this because highest-version resolution clears the advisory with or without the override. |
 | `ajv>fast-uri` (`^3.1.9`) | **Security, in build tooling only.** `fast-uri < 3.1.9` carries four advisories (GHSA-w74x-v6f9-j3xg, GHSA-xhq7-xmqj-769h, GHSA-wjr9-j795-jxcr, GHSA-333x-w4r6-6crp). It arrives only through `ajv@8` under Prisma's dev tooling (`prisma > @prisma/dev > @prisma/streams-local`), which the running application never loads. `ajv@8.20.0` accepts any `fast-uri@^3.0.1`, so the pin does not conflict with its range; remove it when the resolved version is at least 3.1.9 without it (#4326). |
+| `typed-rest-client>qs` (`^6.16.1`) | **Security, in development tooling only.** `qs 6.15.1` carries four moderate advisories (GHSA-q8mj-m7cp-5q26, GHSA-x5fp-wj9c-mxmx, GHSA-4mjr-xmp4-gh2g, GHSA-6pq8-jhm2-2vcw; all fixed by 6.16.1). It arrives only through `@stryker-mutator/core > typed-rest-client@2.3.1`, which pins qs at **exactly** 6.15.1, so this override sits outside the parent's declared range. Checked for #5252: typed-rest-client calls qs only in `Util.getUrlWithParsedQueryParams` (`qs.stringify` with standard options), reached by Stryker's dashboard reporter (not configured here) and `stryker init`; qs's changelog from 6.15.1 to 6.17.1 lists fixes and one new opt-in format, no breaking change; the call returns the same query strings on 6.17.1; and typed-rest-client 3.1.x itself declares `^6.16.1`. Cleared with the overrides that let the #5252 mitigation record apply. | `@stryker-mutator/core` depends on a `typed-rest-client` whose own qs range requires 6.16.1 or later (3.1.x does; Stryker 10.1.1 asks for `~2.3.0`). |
+| `minimatch@>=7.0.0 <11.0.1` (`^11.0.5`) | **Security, in development tooling only.** GHSA-g3hv-75wg-m249 (moderate) covers minimatch `>=7.0.0 <11.0.1` with no 10.x fix. The selector is the advisory's own range, so `minimatch@3.1.5` (under `eslint-plugin-import`, `-jsx-a11y` and `-react`, outside the range and on a different API) is untouched. It moves `eslint@10.14.0` (`^10.2.6`), `@eslint/config-array@0.23.5` (`^10.2.4`), `@typescript-eslint/typescript-estree@8.62.1` (`^10.2.2`) and `@stryker-mutator/core@10.1.1` (`~10.2.4`) **outside their declared ranges** onto the 11.0.5 that `glob` already used. Checked for #5252: 11.0's breaking changes remove `makeRe`, `Minimatch#regexp`, `AST`, `debug` and `matchOne` and change what `Minimatch.set` holds; none of the four parents uses any of them (they call `minimatch()`, `new Minimatch()`, `.match(path[, partial])`, `.negate`, `.pattern` and `.hasMagic()`); a differential of 10.2.6 against 11.0.5 over every glob in the repository's tool configs and every tracked path, in each parent's call shape, found no difference; and eslint, knip, vitest and the production build ran. | Each of those four parents requires 11.0.1 or later. eslint 10.15.0, `@eslint/config-array` 0.23.6 and typescript-eslint 8.73.0 already do, but were younger than the seven-day release age on 18 Nov 2026; Stryker 10.1.1 does not. |
+| `@prisma/config>effect` (`^3.22.1`) | **Security, in Prisma's configuration tooling.** GHSA-7589-6fvf-x4pw (high, CVE-2026-121707): `effect <=3.22.0` compiles `Schema.TemplateLiteral` templates with two or more string spans to a backtracking regular expression; fixed in 3.22.1. The installed `effect` arrives only through `prisma > @prisma/config`, and `@prisma/config@7.10.1`, the newest 7.x release, pins it at **exactly** 3.20.0, so this override takes `effect` **outside its parent's exact pin** (to 3.22.4). Checked for #5293: `@prisma/config` imports only `Schema.Struct`, `String`, `optional`, `Array`, `Boolean`, `NullOr`, `NonEmptyString`, `Any`, `mutable`, `decodeUnknownEither` and a schema's `make`, plus `Either` and `pipe` from `effect/Function`, never `Schema.TemplateLiteral`, and decodes only this repository's `prisma.config.ts`; Effect's changelog from 3.20.0 to 3.22.4 changes none of them (its one behaviour change, how a serialised `Cause.Fail` is named, is not used: `@prisma/config` throws the `ParseError` itself); the config still loads, an excess key is still refused with Effect's parse message, and Prisma generate, `migrate deploy`, the drift check, `prisma validate`, the data-migration verification suite and four real-database suites passed on PostgreSQL 16. **Not reached by this override:** the `prisma` command-line tool also bundles its own copy of `effect` 3.20.0 inside `build/cli.js`, which neither this override nor `pnpm audit` can reach. It loads `prisma.config.ts` through the installed `@prisma/config` (on 3.22.4), and the security review for #5293 found its bundled copy never builds a `Schema.TemplateLiteral` schema, so the weakness is not reachable through it. It is replaced when Prisma ships a release built on a fixed `effect`. | Prisma ships a release whose `@prisma/config` requires, and whose command-line tool bundles, `effect` 3.22.1 or later (keep `prisma`, `@prisma/client`, `@prisma/config` and `@prisma/adapter-pg` on one version). |
 
 ### The direct-dependency hold register
 
@@ -2055,13 +2063,16 @@ frozen booking through the same writer a review closure uses. It moves no cash,
 card charge, account credit or Xero document. A second apply changes nothing.
 
 Run it only from the image that contains this change, after that colour is the
-only one serving, and never during a mixed-colour window. Point `DATABASE_URL`
-at a non-production copy for the dry-run. Name the database yourself:
+only one serving, and never during a mixed-colour window. The census and the
+dry-run write nothing (the dry-run's preview is rolled back), so either can be
+pointed at a non-production copy or at the live database. The apply writes, and
+it settles only the database `DATABASE_URL` names, so it is run against the live
+database. Name the database yourself:
 
 ```bash
-DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup
-DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup -- --dry-run
-DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup -- --apply --actor <memberId>
+DATABASE_URL=<database> pnpm run bookings:edit-review-cleanup
+DATABASE_URL=<database> pnpm run bookings:edit-review-cleanup -- --dry-run
+DATABASE_URL=<live database> pnpm run bookings:edit-review-cleanup -- --apply --actor <memberId>
 ```
 
 The before-values are on the booking's `PRICE_REBASE` history row and the audit
@@ -2823,6 +2834,136 @@ pnpm run xero:bank-refund-void-count --json
 The buckets and what each one leads to are in
 [`xero/ARCHITECTURE.md` -> "Voided bank-transfer refund notes (#4162)"](xero/ARCHITECTURE.md#voided-bank-transfer-refund-notes-4162).
 
+### Find refund notes Xero voided that the app still counts (#4336)
+
+Before #4288 (PR #4341), an older "live" reading of a refund credit note could
+be written after the treasurer voided the note in Xero, and the write erased
+the app's record of the void. The app then counts the refund as documented
+while Xero credits nothing. No local data can find these, so
+`scripts/xero-revived-refund-note-report.ts` asks Xero again.
+
+**When to run it:** once, on the live deployment, after upgrading from any
+version before #4341 (v0.13.2 or earlier). Run it from the app's own
+environment: it needs the app's `AUTH_SECRET` and `DATABASE_URL` to read the
+stored Xero login, and refuses before reading anything if it cannot.
+
+```bash
+pnpm run xero:revived-refund-note-report                      # counts, and cents per payment source
+pnpm run xero:revived-refund-note-report --list               # also each payment, booking and note
+pnpm run xero:revived-refund-note-report --json               # JSON on stdout; logs go to stderr
+pnpm run xero:revived-refund-note-report --resume-from <id>   # carry on a run that stopped early
+```
+
+**What it reads.** Every active refund-note link (both the payment's own role
+and a refund request's), outside any transaction, then each distinct note once
+from Xero, one call every 1.5 seconds, in note-id order. Each listed line shows:
+
+- the payment, booking and payment source;
+- the link role, and the refund request for a request's own note;
+- the note's number and id;
+- Xero's status and `UpdatedDateUTC`, and the status the app records;
+- for the payment's own note, the cents the app counts toward its refunded
+  total; for a refund request's own note, the note's value instead, shown
+  apart because the refunded total never counts it;
+- whether `Payment.xeroRefundCreditNoteId` names the note.
+
+The list comes first; the run ends with the count and the cents per payment
+source. A note Xero reports live is not listed. A link the app already records
+as VOIDED or DELETED is counted in its own line, outside the list and its
+totals. It needs no action: the app already treats the note as cancelled, and
+for the payment's own refund note the nightly link cleanup (#4161) also
+retires the link. A note Xero cannot find, or that could not be read, goes on
+a separate "could not read" list.
+
+**What it writes.** It changes no booking, payment, credit, link or Xero
+record. It can write API-usage rows and, if the Xero token needs refreshing,
+the new token, its refresh lease and a credential audit row; a failed refresh
+alerts the admins, as it would for the app.
+
+**Limits, and carrying on.** A minute rate limit waits and retries. The run
+stops, printing what it read so far, on Xero's daily limit or once the app's
+own share of it is used (85% of the app's 1,000-call daily budget, counting
+everything else the app called that day, which leaves the rest to the outbox
+and the inbound sync), if Xero needs reconnecting, or after three failed reads
+in a row. Its reads never arm the outage pause; that pause lives in memory in
+each process, so the report and the running app never see each other's.
+
+Whenever a run leaves a note unread (a failed read, or a stop before the note
+was reached), the output says **THE LIST IS INCOMPLETE** and prints
+`To carry on, run again with --resume-from <id>` (`resumeFrom` in the JSON).
+That id is the earliest note the run did not read, so the next run retries
+every failed read before it moves on; a note after it that was already read
+can be read and listed again, and the later run's line is the one to act on.
+A note Xero answers for, even "no such note", counts as read and is not
+retried. A club with more distinct refund notes than one day's share, roughly
+600 to 800 on a quiet day, takes several days.
+
+How to finish a multi-day walk:
+
+1. Run the report. If it says **THE LIST IS INCOMPLETE**, keep its output and
+   run it again the next day with the `--resume-from` id it printed.
+2. A resumed run says its output, totals included, is **this run only**: keep
+   every day's output together. Do not add the parts' totals together: a note
+   read again after an earlier failure appears in two parts. For a grand
+   total, count each note id once across the parts, using the latest part's
+   line.
+3. The walk is finished when a resumed run prints "This was the last part:
+   every note from <id> to the end was read; the notes before it were covered
+   by earlier runs", with no **THE LIST IS INCOMPLETE** line (exit code 0,
+   `walkFinished: true` in the JSON). A run from the beginning that reads
+   everything says neither and has `complete: true`.
+4. If a run prints **NO PROGRESS**, check its "Read from Xero" count. If it is
+   0 and the run stopped on the daily limit, wait until tomorrow and run the
+   same command. Otherwise the note it resumed from is stuck: do not re-run
+   with the same id. Ask a maintainer, giving the note id privately. A
+   maintainer can move past it by resuming from the next note id in the
+   `--list` output; the stuck note is then checked by hand.
+
+If the note a resume id names has since left the active set (handled with
+**Sync from Xero now**, say), the run starts at the next note after it and
+says so; every note before the id was covered by earlier runs. An id that was
+never a refund note on any link is refused. Exit code 0 means nothing in this
+run's scope is left to read; 2 means a note is; 1 is an error or a refused
+argument.
+
+**Could not read.** A read that failed is retried by the next run (above). A
+note Xero sent without a status is reported and not retried: ask a
+maintainer. A note **Xero says does not exist** will never be readable, so do
+not wait for it. First check that Xero is connected to the organisation the
+note was raised in (**Admin → Finance → Xero Sync**). If it is, the app's link
+points at nothing: **Sync from Xero now** on that booking fails, reporting
+the note was not found, and no tool in the app retires such a link yet
+(#5233, which needs an owner decision on the rule). Ask a maintainer to look
+at it, giving the payment and note ids privately.
+
+**Privacy.** The output names members' payments and refunds by id and amount.
+It goes to your terminal only. Never post it in an issue, a pull request or
+any public place.
+
+**What to do with each line.** Open the booking and use **Sync from Xero now**
+([guide](guides/xero.md#pick-up-a-change-made-in-xero-now)). It re-reads every
+credit note on an active link of the booking's payment, in both roles, and a
+VOIDED or DELETED reading always applies (#4288). Then:
+
+- the link goes inactive, and if `Payment.xeroRefundCreditNoteId` named the
+  note it is moved to another live refund note or cleared;
+- **bank transfer:** the recount never takes the refunded total below the
+  payment's own refund history. The nightly voided-note follow-up (#4162) picks
+  the void up the night after and, with `XERO_ENABLE_BANK_REFUND_VOID_WRITES`
+  set, puts the refund back on the treasurer's list
+  ([runbook](xero/ARCHITECTURE.md#voided-bank-transfer-refund-notes-4162));
+- **card:** the refunded total is raise-only, so it stays. Where the remaining
+  notes no longer cover it, the refund-ledger-divergence alert fires, and the
+  nightly credit reconciliation can then raise a fresh refund note for the
+  uncovered amount, subject to its usual checks;
+- **a refund request's own note:** no total is recounted and nothing re-raises
+  it. An officer decides whether to raise a fresh note (#4214).
+
+The sync may answer **Already in step** even when it changed a link, because it
+compares money records, not links. Run the report again afterwards: a handled
+line no longer appears. **Sync everything from Xero now** does not revisit
+these notes.
+
 ### Audit bank-transfer receipts settled at a stale figure (#3979)
 
 Before #3979 the inbound Xero settle kept the figure an Internet Banking payment
@@ -3383,11 +3524,17 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
      "Published release notes". The documentation hub links the index, not a
      version, so it needs no edit.
    - **The runbook stays release-agnostic.**
-     `docs/PRODUCTION_UPGRADE_RUNBOOK.md` names no release pair; its §7 and §8
-     are blank templates an operator fills in offline. If it has been
-     re-scoped to one release, re-scope it to the new tag, templates included.
-     Never write a rehearsal date, result or "confirmed by" into it: only the
-     owner attests a rehearsal, and not in the public repository.
+     `docs/PRODUCTION_UPGRADE_RUNBOOK.md` names no release pair and keeps
+     reusable operator templates. If it has been re-scoped to one release,
+     re-scope it to the new tag, templates included.
+     It may record example rehearsal transcripts, including their dates and
+     results. Record nothing that the public-writing rule bars
+     ([writing in the open](agents/ISSUE_WORKFLOW.md#writing-in-the-open)):
+     in particular secrets, credentials, production data, personal data, IP
+     addresses, hostnames, and anything else identifying a club's production
+     environment. An example does not attest any operator's upgrade, so it
+     carries no "Confirmed by" owner confirmation. Operators fill in their own
+     §7 and §8 records offline.
    - **Every windowed migration is reached.** A census
      (`src/lib/__tests__/upgrade-docs-scope.test.ts`) fails a pull request when
      a windowed ledger row is not named in the runbook's

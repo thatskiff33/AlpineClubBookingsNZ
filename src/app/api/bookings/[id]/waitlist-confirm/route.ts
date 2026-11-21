@@ -7,6 +7,7 @@ import { auth } from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { isTransactionContention } from "@/lib/prisma-errors";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { BookingStatus } from "@prisma/client";
 import { confirmWaitlistOffer } from "@/lib/waitlist";
 import {
@@ -38,6 +39,7 @@ import {
 import { clubFormatValues } from "@/lib/club-format-server";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * #2623 T4 — budgets for the compensating offer release.
@@ -50,11 +52,11 @@ import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@
  * offer already consumed.
  *
  * These are deliberately generous against those defaults but TIGHTER than the
- * admin precedents (`saveClubTheme` 10s/15s, `assignBedRange` 10s/30s), because
+ * shared lock(1) budget, `LOCK1_HOLDER_TRANSACTION_BUDGET` (`INV-LOCK-006`), because
  * a member is watching this request rather than an officer: two attempts cap the
  * member-visible wait at roughly 30s. Going higher would buy little — the
- * longest-lived holder of `lock(1)` in the tree is `assignBedRange`, which takes
- * it inside a `timeout: 30_000` transaction — so a budget that always beat the
+ * longest-lived holders of `lock(1)` in the tree, such as `assignBedRange`, run on
+ * that shared budget themselves — so a budget that always beat the
  * worst contender would mean a member waiting a minute for a failure they cannot
  * act on. That is why the guard and the operator door below exist instead of a
  * bigger number.
@@ -99,7 +101,20 @@ export async function POST(
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
 
-  const result = await confirmWaitlistOffer(bookingId, session.user.id, format);
+  let result: Awaited<ReturnType<typeof confirmWaitlistOffer>>;
+  try {
+    result = await confirmWaitlistOffer(bookingId, session.user.id, format);
+  } catch (err) {
+    // Phase one's claim (or the cross-lodge create) is the first write, and it
+    // rolled back (INV-LOCK-006); the offer still stands.
+    const contended = transactionContendedResponse(
+      err,
+      "Waitlist offer confirm contended for the lock(1) budget",
+      { context: { bookingId } },
+    );
+    if (contended) return contended;
+    throw err;
+  }
 
   if (!result.success) {
     const status = result.error === "Forbidden" ? 403
@@ -314,7 +329,7 @@ export async function POST(
         },
       });
       return { ok: true as const };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     // Phase one already consumed the offer and committed PAYMENT_PENDING. Any
     // phase-two failure rolls phase two back, so compensate under the same
@@ -350,6 +365,9 @@ export async function POST(
           }
           return restored.count === 1;
         },
+        // INV-LOCK-006 exception: a bounded retry loop a member is waiting on
+        // (see the budget's comment above); two attempts on the shared lock(1)
+        // budget would hold the request for a minute.
         { maxWait: OFFER_RELEASE_MAX_WAIT_MS, timeout: OFFER_RELEASE_TIMEOUT_MS },
       );
 

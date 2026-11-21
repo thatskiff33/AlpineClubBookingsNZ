@@ -39,6 +39,10 @@ home for that explanation and is not repeated here.
 - **Where the operator does have to act, the unconfigured state is visible** —
   the readiness badge, the setup checklist or the system health page — instead
   of failing silently at the point of use.
+- **Published images contain no club-varying browser configuration.** Deliver
+  such values from the deployment at runtime, never through `NEXT_PUBLIC_*`
+  build arguments. Browser Sentry uses a public no-store endpoint; missing or
+  unavailable configuration means no browser reports or replay (#4982).
 - Decided on #2717 (a distinct configurable Xero EXPENSE mapping with a safe
   fallback), generalised in #2720. Those issues hold the narrative, the options
   and the rejected alternatives; this entry holds only the rule.
@@ -225,13 +229,13 @@ home for that explanation and is not repeated here.
   installation that cannot say what it is has not earned one.
 - **"Retryable" holds only while the row still carries a body, and a row nothing
   can replay is landed where an operator sees it.** No rendered body is persisted
-  for the twenty-six `SENSITIVE_EMAIL_LOG_TEMPLATES`, nor for any message whose
+  for the `SENSITIVE_EMAIL_LOG_TEMPLATES`, nor for any message whose
   logged recipient is redacted, because a live sign-in link, a door code or a
   payment link must not sit at rest — and the retry cron selects only rows that
   still hold one. Such a row is therefore written AT the retry ceiling, which
   drops it out of the retry query and into the `attempts >= 3` operator
-  email-failure review queue, and every operator sentence about it says it must be
-  re-sent by hand rather than claiming it will self-heal. Retaining the body for
+  email-failure review queue, and the queue says it cannot be resent there and
+  links its booking or member, never that it will self-heal. Retaining the body for
   those templates is not an acceptable alternative: that is the hazard they are
   excluded for.
 - **A `deliveryBlockReason` describes the row as it stands, and is cleared the
@@ -417,24 +421,35 @@ home for that explanation and is not repeated here.
 
 ## INV-CONFIG-007
 
-- **The club's GST treatment is one setting, with today's treatment as its
-  default.** `ClubTaxSettings` (id `"default"`) records whether the club is
-  GST-registered, the rate in basis points, and the club civil date it applies
-  from (#4626, decision D3 in
+- **The club's GST treatment is a schedule of dated periods, not one flag.**
+  `ClubTaxSettings` holds the periods — whether the club is GST-registered, the
+  rate in basis points, and the Xero tax type its revenue carries — each one
+  naming the club civil date it starts from (#4626/#4632, decision D3 in
   [`member-money-ledger.md`](../design/member-money-ledger.md#d3-tax-and-recognition-keep-each-charges-actual-treatment)).
-  It is read through `loadClubTaxSettings` in
-  [`club-tax-settings.ts`](../../src/lib/club-tax-settings.ts). An absent row
-  means registered at 1500 basis points from 2010-10-01, which is the
-  GST-inclusive 15% treatment the Xero documents already render. Prices are
-  GST-inclusive, so "inclusive" is the treatment itself, not a setting.
-- **A date before the setting starts has no treatment.** A posting that needs a
-  fresh tax split on such a date is refused, never guessed. Postings that need
-  no split go ahead.
-- **Nothing writes the row yet.** The Xero renderers still hard-code the
-  inclusive OUTPUT2 code (#4632), so a second answer must not appear until Xero
-  reads this setting. `club-tax-settings-writer-census.test.ts` fails on any
-  writer. So the journal (M3b, #4627) posts every club's charges at the default
-  treatment; a non-registered club's tax legs are wrong until #4632, and no
-  reader uses them yet.
+  `loadClubTaxSchedule` in
+  [`club-tax-settings.ts`](../../src/lib/club-tax-settings.ts) is the one
+  reader. An absent `"default"` row means registered at 1500 basis points,
+  Xero code `OUTPUT2`, from 2010-10-01 — the GST-inclusive 15% treatment every
+  Xero document already rendered. Prices are GST-inclusive everywhere, so
+  "inclusive" is the treatment itself, not a setting.
+- **One reader, one renderer, one answer.** The member-money journal and every
+  Xero document resolve the same schedule through the same helpers
+  ([`xero-tax-rendering.ts`](../../src/lib/xero-tax-rendering.ts),
+  [`xero-tax-anchors.ts`](../../src/lib/xero-tax-anchors.ts)), never a
+  hard-coded tax code.
+- **Which period a charge takes is fixed by its own anchor, never the render
+  or post date** (owner decision A, 11 Nov 2026): a booking's anchor is its own
+  `createdAt` (a group place's, its organiser's booking's), so it keeps the
+  treatment in force when made for its whole life; the journal and Xero read
+  the one `readBookingTaxAnchorInstant`.
+  A date the schedule does not cover refuses only a fresh split, never a guess.
+- **The one writer is behind Full Admin, audited:**
+  `scheduleClubTaxChange`/`cancelScheduledClubTaxChange`
+  ([`club-tax-settings-write.ts`](../../src/lib/club-tax-settings-write.ts)),
+  reached through `PUT`/`DELETE /api/admin/club-tax`. History is append-only —
+  a change only ever adds a period starting from a future club date, checked
+  against Xero's own tax-rate list before it saves — and a period already in
+  force or already rendered is never edited.
+  `club-tax-settings-one-writer-census.test.ts` holds every other path to reads.
 - **It is instance-local:** a legal fact about this club, excluded from config
   transfer.

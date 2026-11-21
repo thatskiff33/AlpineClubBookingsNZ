@@ -91,10 +91,15 @@ does not record a refund (#4315).
    run may already have created a document. **Reset stale running** does the
    same for every stuck operation at once.
    A stuck inbound `WEBHOOK_RECONCILE` operation needs none of this: **Replay** its
-   event and that attempt takes the operation over. A crashed event stays
-   Processing and is not retried by itself, so it waits for a Replay. The
-   automatic retry takes the operation over only for an event that has already
-   ended Failed. Mark failed still works on it.
+   event and that attempt takes the operation over. An event whose worker
+   crashed is no longer left waiting: once it has been **Processing** for 15
+   minutes the automatic worker resets it and processes it again, taking the
+   operation over too. **Replay** does the same at once for an event already
+   past those 15 minutes, and is refused while it is still being processed.
+   An event that has stopped the server three times running is not retried by
+   itself again: it stays **Processing**, an error is logged on each run, and
+   only **Replay** retries it. Mark failed still works on the operation, and
+   lets the automatic retry start counting again.
    Mark one **resolved** only after you have fixed it in Xero yourself: it is
    then treated as done and is never retried or recreated automatically,
    though the repair tool still lists it for information. You cannot resolve
@@ -344,6 +349,36 @@ says what it would have done.
    invalidates any prior dry-run. For the full cutover procedure, follow the
    [Xero member grouping runbook](../XERO_MEMBER_GROUPING_RUNBOOK.md).
 
+### Change the club's GST treatment
+
+The **GST / tax treatment** card on **Finance → Xero** shows how the club's
+prices are taxed on Xero documents and in the member-money journal: whether the
+club is GST-registered, the rate, and the Xero tax code. Prices members pay
+never change; only how much of each price is GST does.
+
+1. A Full Admin chooses **Edit**, sets the new treatment and a **Takes effect
+   from** date (tomorrow at the earliest), ticks the confirmation, and saves.
+   Other officers see the card read-only.
+2. A GST-registered treatment is checked against Xero's tax rates before it is
+   saved, so the tax code must be active in Xero and usable on revenue. If Xero
+   cannot be read, the change waits until the connection works.
+3. Bookings, subscriptions and entrance fees made on or after the date use the
+   new treatment. A booking already made keeps the treatment in force when it
+   was made for its whole life, including later edits, credit notes and
+   refunds; the card counts how many have nights after the date. A place in a
+   group booking takes the organiser's booking's treatment, as the group's
+   combined invoice does. Nothing already in Xero or the journal changes.
+4. A scheduled change can be cancelled before it starts. Saving and cancelling
+   are both in the audit log.
+
+The Xero health check warns if the tax code in force is missing or inactive in
+Xero, its rate differs, or Xero's GST registration disagrees with the card. How
+it works: [Tax treatment](../xero/ARCHITECTURE.md#tax-treatment).
+It checks only today's treatment. Bookings made under an earlier treatment
+still use that treatment's tax code on their later edits, credit notes and
+refunds, so keep an earlier code active in Xero while such bookings remain:
+archiving it makes those documents fail in Xero.
+
 ## Settings reference
 
 | Area | What it does | Notes / constraints |
@@ -354,6 +389,7 @@ says what it would have done.
 | Xero Operations | Filter and page outbound work; retry / reset / mark non-replayable / resolve it | Dataset Reset keeps the section and Inbound state; write actions need finance edit and are idempotent |
 | Inbound Events | Filter and page stored webhooks; replay an event | Dataset Reset keeps the section and Operations state; Replay needs finance edit |
 | Xero Setup → Mappings | Account/item code mappings and hut/joining fee item codes | Finance edit; joining-fee amounts live in [Fees](fees.md) |
+| GST / tax treatment | Schedule a change to GST registration, rate or Xero tax code from a future date | Full Admin only; checked against Xero; bookings already made keep their treatment |
 | Member grouping | Grouping mode + rules, dry-run, bulk re-sync | Finance edit; never auto-re-groups; runbook-driven cutover |
 | Members with no Xero contact | Dry run over unlinked members, then create or link in small batches | Finance edit to create; needs a Contact Sync first; schools and ambiguous rows are never acted on; the batch size is shown on the button |
 | API budget / Usage | Daily call volume, rate limits, recent failures | Read-only meter |
@@ -437,6 +473,14 @@ Attention** entry and a Stuck States item. The default is 24 hours. Use
 **Edit → Save/Cancel** to choose 1–720 hours. A connection that has never received
 a webhook gets the full threshold from its connection time. No quiet-period
 warning appears while disconnected or while the Xero module is disabled.
+
+**Refund notes voided before #4288 (#4336).** A club that ran a version before
+#4341 may hold refund credit notes that Xero voided but the app still counts.
+The owner finds them with the read-only report
+`pnpm run xero:revived-refund-note-report`, then uses **Sync from Xero now** on
+each listed booking. **Sync everything from Xero now** does not revisit them.
+What each line needs and what happens next:
+[MAINTENANCE.md](../MAINTENANCE.md#find-refund-notes-xero-voided-that-the-app-still-counts-4336).
 
 Webhook receipt history and the quiet-period policy remain local to each
 installation during configuration transfer, like the Xero connection itself.

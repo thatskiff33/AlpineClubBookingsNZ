@@ -87,6 +87,7 @@ const h = vi.hoisted(() => {
   return { state, mappingRows, prismaStub };
 });
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => ({ prisma: h.prismaStub }));
 vi.mock("@/lib/member-credit", () => ({ lockMemberCreditLedger: vi.fn() }));
 vi.mock("@/lib/xero-credit-notes", () => ({
@@ -292,7 +293,7 @@ describe("a noteless lot that is NOT goodwill stays on hutFeeRefunds (#2717)", (
 
   it("posts a spent opening credit to the refund account, though it is an ADMIN_ADJUSTMENT (#4988)", async () => {
     // An opening credit is money the member already held in the club's old
-    // system (INV-PAY-156), not a grant the club chose to give.
+    // system (INV-PAY-162), not a grant the club chose to give.
     const lines = await mintedLines([
       {
         id: "c1",
@@ -326,7 +327,7 @@ describe("a noteless lot that is NOT goodwill stays on hutFeeRefunds (#2717)", (
  * optional `openingCredits` mapping (a club's member-credits-held liability,
  * say), and to exactly where it posted before while that mapping is unset.
  */
-describe("opening credit spent on a booking (#4988, INV-PAY-156)", () => {
+describe("opening credit spent on a booking (#4988, INV-PAY-162)", () => {
   const openingLot = {
     id: "c1",
     amountCents: 3000,

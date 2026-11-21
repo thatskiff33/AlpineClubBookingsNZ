@@ -1,9 +1,14 @@
 import path from "path";
 import { describe, expect, it } from "vitest";
 
-import { ADVISORY_LOCK_CALL, lockCensusSources, maskedSource } from "./support/advisory-lock-source";
-import { balancedBrackets } from "./support/balanced-brackets";
-import { blankLiterals, blankLiteralsWithSpans } from "./support/strip-comments";
+import { lockCensusSources, maskedSource } from "./support/advisory-lock-source";
+import {
+  collectAdvisoryLockSites,
+  countCodeOccurrences,
+  indexSitesByKey,
+  symbolOfKey,
+} from "./support/advisory-lock-scan";
+import { blankLiterals, blankLiteralsWithSpans, stripComments } from "./support/strip-comments";
 
 // #182 guard (process follow-up to upstream PR #1911 review finding H1): a
 // capacity ADMISSION path must use the per-lodge lock, while global-cohort
@@ -36,36 +41,6 @@ import { blankLiterals, blankLiteralsWithSpans } from "./support/strip-comments"
 
 const SRC_DIR = path.join(process.cwd(), "src");
 
-/**
- * Which tier a raw advisory-lock statement takes, decided from the call itself.
- *
- * `GLOBAL` is the literal key `1` — the one Tier-2 key — in either the blocking
- * or the fail-fast form. `SCOPED` is a `hashtext`/`hashtextextended` key:
- * per-lodge, per-member, per-date, and the policy/singleton keyspaces.
- * `UNCLASSIFIED` is anything this scan cannot read, and it FAILS the census
- * rather than being counted as scoped — see `classifyLockArgument`.
- *
- * Deciding the tier from the CALL rather than from the registry is what makes
- * "a registered site quietly changed tier" a failure rather than a silent
- * re-approval.
- */
-type LockTier = "GLOBAL" | "SCOPED" | "UNCLASSIFIED";
-
-interface AdvisoryLockSite {
-  /** Repository-relative path. Reported in failures; NOT part of the identity. */
-  readonly rel: string;
-  /** 1-based line. Reported in failures; NOT part of the identity. */
-  readonly line: number;
-  /** Nearest enclosing top-level declaration. */
-  readonly symbol: string;
-  /** 1-based index of this site among the advisory sites of that symbol. */
-  readonly ordinal: number;
-  readonly tier: LockTier;
-  /** Preferred identity — see SITE IDENTITY below. */
-  readonly key: string;
-  /** Always-unique fallback identity, used where `key` is ambiguous. */
-  readonly qualifiedKey: string;
-}
 
 /**
  * SITE IDENTITY, and why it survives a file split (the property #2688 needs).
@@ -159,13 +134,6 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     tier: "GLOBAL",
     reason:
       "Claim-first PENDING -> CONFIRMED before the Stripe charge (#1418). The claim must exclude the cron's bump and the settlement paths, which serialise on this key, so a successful charge can no longer race a cancel into markBookingPaymentSucceeded's not-payable throw.",
-    invariant: "INV-LOCK-002",
-  },
-  {
-    site: "POST /api/admin/bookings/[id]/confirm-pending-guests#3",
-    tier: "GLOBAL",
-    reason:
-      "Releasing a charge claim that never captured hands the beds back, so the release has to serialise with the same cancel/settlement cohort the claim did before re-taking the lodge key for the guarded release.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -271,13 +239,6 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     tier: "GLOBAL",
     reason:
       "#3267: the saved-card charge claim (PENDING -> CONFIRMED) joins the cancel/settlement cohort before taking the lodge tier, exactly as the cron's resolveHoldWindowUnderLock and the admin confirm-pending-guests charge branch do — and now also writes the charge ATTEMPT row under both, which is the double-charge guard the shared Stripe key used to stand in for (INV-PAY-055). Until #3267 this route charged with no claim at all.",
-    invariant: "INV-LOCK-002",
-  },
-  {
-    site: "POST /api/payments/charge-saved-method#2",
-    tier: "GLOBAL",
-    reason:
-      "#3267: releasing that claim when the charge did not capture (CONFIRMED -> PENDING, hold restored, beds reconciled; the non-captured branch also records Stripe's answer on the attempt row in the same transaction) serialises with the same cohort the claim did before re-taking the lodge key — the cron's releaseChargeClaim shape.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -582,7 +543,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "resolveManualRefundTask#1",
     tier: "GLOBAL",
     reason:
-      "#3582: an EDIT_FINANCIAL_REVIEW closure posts booking-ledger lines, and whether the booking is confirmed on the ledger must be asked under the key the settle asks it under, or a closure and a first settle could both see 'not yet' and both post. Taken only for that task kind, as the transaction's first lock — before the claim, the payment-row allocation and the re-price's promotion key — so it orders global before anything narrower as every edit door does; the Stripe refund and the Xero leg run after the commit, so it is never held across a provider round trip. Order: global → member-credit (#3791, account-credit route only) → the per-anchor xero-supplementary-invoice key LAST (#3947, owner decision 22 Oct 2026: an invoice-route review charge queues its edit's supplementary invoice in this transaction through enqueueEditReviewChargeInvoiceInTransaction, so the next share, behind it on this key, sees it; only the outbox row is written, the kick runs after the commit, and no holder of that key takes another). #4042: also taken for a group organiser's hand-back, which each later joiner's claim grows under this key while it is OPEN, so a growth and a completion never interleave. #3949 (INV-PAY-137): an edit's or appeal's hand-back on a joiner the organiser paid for by Internet Banking then takes the child's Payment row (lockPaymentForRefundedTotal) before its cap read and holds it to the mirror write - global, then the row.",
+      "#3582: an EDIT_FINANCIAL_REVIEW closure posts booking-ledger lines, and whether the booking is confirmed on the ledger must be asked under the key the settle asks it under, or a closure and a first settle could both see 'not yet' and both post. Taken for that task kind, a group organiser's hand-back, a non-cancellation hand-back, a late-capture approval and a journal hand-back (#4516 M4d), as the transaction's first lock — before the booking row (edit review, late-capture approval and journal hand-back), the claim, the payment-row allocation and the re-price's promotion key — so it orders global before anything narrower as every edit door does; the Stripe refund and the Xero leg run after the commit, so it is never held across a provider round trip. Order: global → member-credit (#3791, account-credit route only) → the per-anchor xero-supplementary-invoice key LAST (#3947, owner decision 22 Oct 2026: an invoice-route review charge queues its edit's supplementary invoice in this transaction through enqueueEditReviewChargeInvoiceInTransaction, so the next share, behind it on this key, sees it; only the outbox row is written, the kick runs after the commit, and no holder of that key takes another). #4042: also taken for a group organiser's hand-back, which each later joiner's claim grows under this key while it is OPEN, so a growth and a completion never interleave. #3949 (INV-PAY-137): an edit's or appeal's hand-back on a joiner the organiser paid for by Internet Banking then takes the child's Payment row (lockPaymentForRefundedTotal) before its cap read and holds it to the mirror write - global, then the row.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -651,24 +612,16 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "runSavedCardClaimRelease#1",
+    tier: "GLOBAL",
+    reason: "#4993: normal compensation and stale-claim recovery both return CONFIRMED bookings to PENDING and reconcile beds. Global then lodge excludes the webhook's capture/PAID promotion and cancellation; a locked re-read and guarded marker release prevent clobbering either winner.",
+    invariant: "INV-LOCK-002",
+  },
+  {
     site: "resolveHoldWindowUnderLock#1",
     tier: "GLOBAL",
     reason:
       "The hold-window resolution claims a PENDING booking for charge or releases it, so it must exclude cancel and settlement before taking the booking's lodge key; only the lock key is read before the lock.",
-    invariant: "INV-LOCK-002",
-  },
-  {
-    site: "releaseChargeClaim#1",
-    tier: "GLOBAL",
-    reason:
-      "Releasing a claim taken for a charge that did not capture hands the beds back, so it serialises with the same cohort the claim did before re-taking the lodge key.",
-    invariant: "INV-LOCK-002",
-  },
-  {
-    site: "confirmPendingBookings#1",
-    tier: "GLOBAL",
-    reason:
-      "The bump branch releases a PENDING booking that could not be charged; the global tier keeps that release out of a concurrent capture or cancel of the same booking.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -1029,6 +982,14 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     reason:
       "DISMISSED -> OPEN re-arms assertNoPendingEditFinancialReview RETROACTIVELY, against money-affecting edits already in flight - unlike the closure it mirrors, which only relaxes that fence. Unlocked, an edit that read the fence while the task was dismissed can settle a credit under its own modification while the reopen commits, leaving an OPEN task whose context still points at the earlier anchor and whose completion credits the member twice. It makes no provider call, so the bounded exception that keeps resolveManualRefundTask lock-free does not apply. #4124: an approved appeal's task is measured by the appeal's ceiling, which nets the payment's open card refund debts, so for that task it takes the Payment row (lockPaymentForRefundedTotal) after this key and before the ceiling's reads, as the approval does. #4343: an EDIT_FINANCIAL_REVIEW is refused before the claim, so that kind cannot re-arm the fence; every other dismissed kind still can.",
     invariant: "INV-LOCK-001",
+  },
+  // ── Reducing a disputed card payment's hand-back by a dispute lost for part of it ──
+  {
+    site: "reduceDisputedHandBack#1",
+    tier: "GLOBAL",
+    reason:
+      "#4516 (owner decision, 15 Nov 2026, comment 6893252570): reducing a disputed card payment's hand-back lowers the task's amountCents, which every edit, acceptance, paid cancel and refund appeal reads beside refundedAmountCents to size a refund net of what is still promised back (refundableCashNetOfOpenHandBacks), and it must exclude that hand-back's completion and dismissal, which take this key first. The same order as that dismissal: this key, then the booking row (lockBookingRowForOwnerRead), the task re-read, then the Payment row and the booking's disputes re-read (decideJournalHandBackDismissal), then the claim guarded on status OPEN and the amount read, then the journal's part withdrawal (under the Payment row) and the audit row. A lost claim writes nothing. No provider call; no new key.",
+    invariant: "INV-LOCK-002",
   },
   {
     site: "editReviewHeadlineRebase#1",
@@ -1534,6 +1495,11 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // writer and "Paid another way". See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Member-money applications and refund reservations" and the M4c paragraph.
   "src/lib/member-money/internal/application-read.ts": 1,
+  // #4525 (Ledger M13): the capture-receipt recorder takes the capture's PaymentTransaction
+  // row (`SELECT 1 … FOR NO KEY UPDATE`, by its unique intent) in a short transaction of its
+  // own holding nothing else, so two receipts of one capture plan in turn. No advisory key.
+  // See docs/CONCURRENCY_AND_LOCKING.md -> "Capture-receipt manifest".
+  "src/lib/member-money/internal/capture-receipt-manifest.ts": 1,
   // #4823: member merge re-points `Payment.manuallyMarkedPaidByMemberId` with one
   // sorted `SELECT 1 … ORDER BY "id" FOR NO KEY UPDATE NOWAIT` over every row
   // naming the duplicate, then the update. Merge takes no lock(1) and holds
@@ -1735,8 +1701,15 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // hand-back route (after its completion's lock(1), before the cap read and
   // the mirror write) and the organiser cancel's recovery replay (no lock(1),
   // before it reads whether the plan's share is written). #4516 (M4c review F2):
-  // and by a late capture's approval or keep (`prepareLateCaptureDecision`, no
-  // lock(1)) before its task's claim, the order a "Paid another way" close takes
+  // and by a late capture's approval or keep (`prepareLateCaptureDecision`) before
+  // its task's claim. #4516 (M4d): that resolution holds lock(1) and the booking
+  // row first, so this Payment row is after them; so does a cancellation
+  // hand-back's completion (`lockCancellationHandBackBeforeClaim`) and (owner
+  // decisions 15 Nov 2026) the dismissal of a card shortfall's part to check or
+  // a disputed card payment's hand-back, a cancellation's or (owner decision,
+  // 18 Nov 2026) a dispute-held edit's (`decideJournalHandBackDismissal`, which
+  // then re-reads the booking's disputes and the payment's tasks), whose R05 withdrawal after the claim
+  // re-takes it. The order a "Paid another way" close takes
   // the Payment row and that task's row in; #4824: an approval's plan
   // (`planLateCaptureApprovalRefund`) takes it first, before it reads what the
   // capture holds; #4838: so does a #2700 hand-back's still-owed check
@@ -1745,10 +1718,19 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // "Try the card again" (`lockDeadCardRefundRow`), after their lock(1) and
   // before the payment is read, as "Paid another way" takes it. #4851: and by
   // `closeGroupCardRefundPaidAnotherWay` and `tryOrganiserChildCardRefundAgain`,
-  // the same helper, no new key.
+  // the same helper, no new key. #4879: and by the edit review's card arm
+  // (`chooseEditReviewSettlementRoute` through `planEditReviewCardRefund`),
+  // after its lock(1), booking row and the
+  // owner's member-credit key, before it reads the superseded-capture hold-back
+  // and plans; its still-owed preview takes no row lock; no new key.
   // Order: lock(1) -> lodge -> member credit -> Payment -> refund, recovery and
   // transaction rows. See docs/CONCURRENCY_AND_LOCKING.md -> the #3640
   // paragraph and its #4217 sequel.
+  // #4449: the helper is also taken by the inbound credit-note sync's
+  // allocation write for a modification note on the one bank-transfer payment
+  // of its invoice (`writeCurrentCreditNoteAllocation`, no lock(1), lodge or
+  // member key), before its allocation row, so the Internet Banking settle
+  // (lock(1) -> lodge -> member -> this row) and the write serialise here.
   "src/lib/payment-transactions.ts": 1,
   // #4161 / #4192: the nightly link cleanup's refund-note heal takes two
   // lock-only statements: the one `XeroObjectLink` row it is about to re-write
@@ -1795,8 +1777,15 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // one it no longer lists, each lock that one XeroObjectLink row, re-read its
   // stamp, then write through the link funnel in the same transaction. A
   // still-listed invoice reserves a missing row first; a removal does not. No
-  // other lock and no advisory key. See docs/CONCURRENCY_AND_LOCKING.md, "An
-  // allocation Xero no longer lists (#4447)".
+  // advisory key. #4449: a modification note's write on the one bank-transfer
+  // payment of its invoice takes that Payment row FIRST, through
+  // `lockPaymentForRefundedTotal` (still the one statement in
+  // payment-transactions.ts), then this row, and decides the payment's
+  // refunded total under both with a guarded claim; no writer takes an
+  // allocation row and then a Payment row. Pinned below ("keeps the credit-note
+  // allocation write on ..."). See docs/CONCURRENCY_AND_LOCKING.md, "An
+  // allocation Xero no longer lists (#4447)" and "The allocation write decides
+  // a bank-transfer total (#4449)".
   "src/lib/xero-inbound/retire-unlisted-credit-note-allocations.ts": 1,
   // #4911 (`INV-PAY-154`): a dispute event locks its own StripeDispute row
   // (`SELECT 1 … FOR NO KEY UPDATE`), re-reads it and merges the event, so two
@@ -1807,197 +1796,6 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
 };
 
 const CAPACITY_LOCK_MINT = "src/lib/lodge-capacity-lock.ts";
-
-/**
- * Count occurrences of `needle` in `source`, ignoring comments and the contents
- * of every literal but a raw statement (see {@link maskedSource}).
- */
-function countCodeOccurrences(source: string, needle: string | RegExp): number {
-  const masked = maskedSource(source);
-  if (typeof needle !== "string") return (masked.match(needle) ?? []).length;
-  let count = 0;
-  let idx = masked.indexOf(needle);
-  while (idx !== -1) {
-    count += 1;
-    idx = masked.indexOf(needle, idx + needle.length);
-  }
-  return count;
-}
-
-/**
- * The nearest enclosing top-level declaration is the site's symbol. Column 0 is
- * deliberate: a raw lock statement always sits inside some top-level function, so
- * the last column-0 declaration above it names the unit that a refactor moves.
- */
-const TOP_LEVEL_DECLARATION =
-  /^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\s+(\w+)|(?:const|let|var|class)\s+(\w+))/;
-
-/** Framework-mandated handler names, which are not identities on their own. */
-const ROUTE_HANDLER_SYMBOLS = new Set([
-  "GET",
-  "POST",
-  "PUT",
-  "PATCH",
-  "DELETE",
-  "HEAD",
-  "OPTIONS",
-]);
-
-/** `src/app/api/x/[id]/route.ts` -> `/api/x/[id]`; anything else -> `null`. */
-function routePathOf(rel: string): string | null {
-  const match = /^src\/app\/(.*)\/route\.tsx?$/.exec(rel);
-  if (!match) return null;
-  const segments = (match[1] ?? "")
-    .split("/")
-    .filter((segment) => segment.length > 0 && !/^\(.*\)$/.test(segment));
-  return `/${segments.join("/")}`;
-}
-
-/**
- * The first argument of a lock call, read across line breaks from the opening
- * parenthesis. Returns `null` when the call cannot be parsed — an unbalanced or
- * unterminated argument list — which the caller must treat as unclassifiable
- * rather than as anything in particular.
- *
- * Reading ACROSS lines is load-bearing, not tidiness. Both `pg_try_` sites this
- * repository already ships are written over three lines, so a line-local reader
- * is not an edge case here: it is the shape the codebase actually uses, and it
- * would score `SELECT pg_advisory_xact_lock(\n  1\n)` as a scoped key.
- */
-function firstLockArgument(text: string, openParenIndex: number): string | null {
-  try {
-    // `text` is already masked (`maskedSource`), and a raw statement it restored
-    // must be read as code, so it is its own structure.
-    return balancedBrackets(text, openParenIndex, text).parts[0] ?? "";
-  } catch {
-    return null;
-  }
-}
-
-/**
- * FAIL CLOSED. An argument this scan cannot read is `UNCLASSIFIED`, which fails
- * the census, and is never quietly `SCOPED`.
- *
- * The direction matters because the two failure modes are not symmetric. Calling
- * a scoped key global costs a build failure and one line of registry. Calling a
- * global key scoped costs nothing at all at the time — it lands in a per-file
- * COUNT, which is the approval model #2722 exists to abolish, and the guard's own
- * remediation message is what tells the author to bump it. Only two shapes are
- * recognised, and everything else is handed to a human.
- */
-function classifyLockArgument(argument: string | null): LockTier {
-  if (argument === null) return "UNCLASSIFIED";
-  const normalised = argument.replace(/\s+/g, "").replace(/::[A-Za-z0-9_]+$/, "");
-  if (normalised === "1") return "GLOBAL";
-  if (/^hashtext(?:extended)?\(/.test(normalised)) return "SCOPED";
-  return "UNCLASSIFIED";
-}
-
-/**
- * Every raw advisory-lock acquisition in non-test `src/`, with its tier and its
- * stable identity.
- *
- * `pg_try_advisory_xact_lock` is scanned by the SAME matcher and classified by
- * the same argument reader as the blocking form, deliberately: a fail-fast
- * acquisition of key `1` is a Tier-2 acquisition. Matching the blocking spelling
- * alone left it in neither census — the tier test did not see it because the
- * anchored pattern failed, and the scoped count did not see it because
- * `pg_try_advisory_xact_lock(` does not contain the substring
- * `pg_advisory_xact_lock(`. Both censuses now derive from this one function, so
- * the two cannot disagree about what a site is again.
- */
-function collectAdvisoryLockSites(
-  sources: ReadonlyArray<{ rel: string; text: string }>,
-): AdvisoryLockSite[] {
-  const sites: AdvisoryLockSite[] = [];
-  for (const { rel, text } of sources) {
-    const routePath = routePathOf(rel);
-    const ordinals = new Map<string, number>();
-
-    // One masked copy of the whole file. It is the SAME LENGTH as the original
-    // and every line break is where it was, so an offset in it still names a
-    // line while the argument reader can cross line breaks.
-    const maskedText = maskedSource(text);
-    const maskedLines = maskedText.split("\n");
-    const lineStarts: number[] = [];
-    let offset = 0;
-    for (const maskedLine of maskedLines) {
-      lineStarts.push(offset);
-      offset += maskedLine.length + 1;
-    }
-    const lineOf = (index: number): number => {
-      let low = 0;
-      let high = lineStarts.length - 1;
-      while (low < high) {
-        const middle = Math.ceil((low + high) / 2);
-        if ((lineStarts[middle] ?? 0) <= index) low = middle;
-        else high = middle - 1;
-      }
-      return low;
-    };
-
-    // The symbol is read line by line from the MASKED lines, which is what stops
-    // a declaration written inside a comment opening a symbol: the comment is
-    // spaces, and a column-0 anchor cannot match spaces. Re-testing the RAW line
-    // for comment-ness — what this did before #3196 — only ever caught a comment
-    // the private scanner recognised, and it recognised neither a trailing one
-    // nor a block-comment body line without a leading star.
-    const symbolByLine: string[] = [];
-    let symbol = "(module scope)";
-    maskedLines.forEach((maskedLine, index) => {
-      const declaration = TOP_LEVEL_DECLARATION.exec(maskedLine);
-      if (declaration) {
-        symbol = declaration[1] ?? declaration[2] ?? symbol;
-      }
-      symbolByLine[index] = symbol;
-    });
-
-    for (const match of maskedText.matchAll(ADVISORY_LOCK_CALL)) {
-      const index = match.index ?? 0;
-      const lineIndex = lineOf(index);
-      const siteSymbol = symbolByLine[lineIndex] ?? "(module scope)";
-      const tier = classifyLockArgument(
-        firstLockArgument(maskedText, index + match[0].length - 1),
-      );
-      const ordinal = (ordinals.get(siteSymbol) ?? 0) + 1;
-      ordinals.set(siteSymbol, ordinal);
-      const key =
-        routePath !== null && ROUTE_HANDLER_SYMBOLS.has(siteSymbol)
-          ? `${siteSymbol} ${routePath}#${ordinal}`
-          : `${siteSymbol}#${ordinal}`;
-      sites.push({
-        rel,
-        line: lineIndex + 1,
-        symbol: siteSymbol,
-        ordinal,
-        tier,
-        key,
-        qualifiedKey: `${rel}::${siteSymbol}#${ordinal}`,
-      });
-    }
-  }
-  return sites;
-}
-
-/** The symbol half of a site key or a registry entry — the key without `#n`. */
-function symbolOfKey(key: string): string {
-  return key.replace(/#\d+$/, "");
-}
-
-/** Both accepted spellings of every site, so an entry may use either form. */
-function indexSitesByKey(sites: readonly AdvisoryLockSite[]): Map<string, AdvisoryLockSite[]> {
-  const byKey = new Map<string, AdvisoryLockSite[]>();
-  const add = (key: string, site: AdvisoryLockSite) => {
-    const existing = byKey.get(key);
-    if (existing) existing.push(site);
-    else byKey.set(key, [site]);
-  };
-  for (const site of sites) {
-    add(site.key, site);
-    if (site.qualifiedKey !== site.key) add(site.qualifiedKey, site);
-  }
-  return byKey;
-}
 
 /**
  * Every raw row-lock strength PostgreSQL offers, not just `FOR UPDATE` (#2623
@@ -2209,6 +2007,76 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
         "their counterpart writers and order against advisory and row locks " +
         "in docs/CONCURRENCY_AND_LOCKING.md.",
     ).toEqual(ROW_LOCK_SITE_INVENTORY);
+  });
+
+  // #4449 (INV-LOCK-002, INV-LOCK-003): the credit-note allocation write is a
+  // refunded-total writer with no advisory key. It must take the Payment row
+  // before the allocation row (#4200's "Payment first"), re-read the payment
+  // under it, claim with a guarded updateMany, and send no alert inside.
+  it("keeps the credit-note allocation write on Payment row -> allocation row -> re-read -> guarded claim", () => {
+    const raw = sources.find(({ rel }) => rel === "src/lib/xero-inbound/retire-unlisted-credit-note-allocations.ts")?.text;
+    expect(raw).toBeDefined();
+    const text = stripComments(raw ?? "");
+    const between = (start: string, end: string) => {
+      const from = text.indexOf(start);
+      const to = text.indexOf(end, from + start.length);
+      expect(from, `${start} is missing`).toBeGreaterThanOrEqual(0);
+      expect(to, `${end} is missing after ${start}`).toBeGreaterThan(from);
+      return text.slice(from, to);
+    };
+    const inOrder = (body: string, markers: string[]) => {
+      const at = markers.map((marker) => body.indexOf(marker));
+      markers.forEach((marker, i) => expect(at[i], `${marker} is missing`).toBeGreaterThanOrEqual(0));
+      for (let i = 1; i < at.length; i += 1) {
+        expect(at[i], `${markers[i]} must follow ${markers[i - 1]}`).toBeGreaterThan(at[i - 1]);
+      }
+    };
+
+    expect(text).not.toMatch(/pg_advisory|acquireLodgeCapacityLock|lockMemberCreditLedger/);
+    const write = between("export async function writeCurrentCreditNoteAllocation(", "async function writeLockedAllocation(");
+    inOrder(write, [
+      "prisma.$transaction(",
+      "lockPaymentForRefundedTotal(tx, payment.id)",
+      "writeLockedAllocation(tx, link, readingAt)",
+      "decideBankTransferRefundedTotal(tx, payment, written)",
+      "PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS",
+    ]);
+    expect(write).not.toMatch(/sendBankTransferFloorAlert|sendFloorAlerts|getClubFormat|notifyXeroSyncError/);
+    inOrder(between("async function writeLockedAllocation(", "async function decideBankTransferRefundedTotal("), [
+      "tx.xeroObjectLink.createMany(",
+      "FOR UPDATE",
+      "tx.xeroObjectLink.findUnique(",
+      "upsertXeroObjectLink(link, { store: tx })",
+    ]);
+    // #4449 review: re-read under the lock, the one payment of the invoice re-counted there, the
+    // shared columns step, and a claim on the row as re-read that also moves updatedAt.
+    const decide = between("async function decideBankTransferRefundedTotal(", "async function bankTransferPaymentIdsByInvoiceId(");
+    inOrder(decide, [
+      "tx.payment.findUnique(",
+      "tx.payment.count({ where: { xeroInvoiceId: target.invoiceId } })",
+      "decideLinkedRefundedTotalCents(tx, [payment])",
+      "decideXeroRefundedColumns(tx,",
+      "tx.payment.updateMany(",
+      "claimed.count !== 1",
+    ]);
+    expect(decide).toContain("status: payment.status, refundedAmountCents: payment.refundedAmountCents, updatedAt: payment.updatedAt");
+    expect(decide).not.toMatch(/tx\.payment\.update\(|sendBankTransferFloorAlert|notifyXeroSyncError/);
+    // The floor alerts go out after every write's commit, outside any transaction: additions and removals.
+    const afterTheWrites = ["bankTransferPaymentIdsByInvoiceId(", "writeCurrentCreditNoteAllocation(", "decidedPaymentOf(link, byInvoiceId)", "holdOrCollect(floorAlert, input.heldFloorAlerts, floorAlerts)", "sendFloorAlerts(floorAlerts)"];
+    inOrder(between("export async function writeCurrentCreditNoteAllocations(", "export async function retireUnlistedCreditNoteAllocations("), afterTheWrites);
+    inOrder(text.slice(text.indexOf("export async function retireUnlistedCreditNoteAllocations(")), afterTheWrites);
+    // #4449 verify, low 2: the sync holds the writes' and removals' alerts and sends them after its recount, outside any transaction.
+    const sync = stripComments(sources.find(({ rel }) => rel === "src/lib/xero-inbound/credit-note.ts")?.text ?? "");
+    inOrder(sync, [
+      "await withHeldFloorAlerts(async (held) => {",
+      "writeCurrentCreditNoteAllocations(allocationLinks, { isModificationNote, heldFloorAlerts: held.alerts })",
+      "heldFloorAlerts: held.alerts,",
+      "held.recountedPaymentIds = new Set([...directPaymentIds, ...modificationRefundAmountsByPaymentId.keys()])",
+      "repairRefundedPaymentBusinessState(",
+      "return { refundedPaymentRepair, voidedMirrorAuditLinks };",
+    ]);
+    // The held alerts are sent in a finally, so a failed sync still sends them.
+    inOrder(text, ["export async function withHeldFloorAlerts<T>(", "try {", "return await run(held);", "} finally {", "sendFloorAlertsNotRecounted(held.alerts, held.recountedPaymentIds)"]);
   });
 
   it("keeps school held-reuse on global -> lodge -> re-read -> guarded claim", () => {

@@ -18,6 +18,10 @@ import {
 
 const CLUB_WIDE = "__club_wide__"
 
+/** What a save says when it is refused because no policy scope is settled yet. */
+export const POLICY_SCOPE_NOT_READY_REASON =
+  "Choose an available policy scope before saving"
+
 export type PolicyScopeState =
   | { kind: "resolving" }
   | { kind: "unavailable"; failed: boolean; forbidden: boolean }

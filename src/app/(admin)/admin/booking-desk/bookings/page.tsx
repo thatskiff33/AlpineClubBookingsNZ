@@ -46,6 +46,7 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { lodgeOrderBy } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { BOOKING_REQUESTS_STATUS_PARAM, buildBookingRequestsHref } from "@/lib/admin-booking-requests-path";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import {
   BOOKING_MONEY_RECONCILIATION_COPY,
@@ -75,6 +76,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { getAdminPage } from "@/lib/admin-hubs";
 
 export function formatAdminBookingGuestCount(totalGuests: number, nonMemberGuests: number) {
   return `${totalGuests} (${nonMemberGuests} non-member${nonMemberGuests === 1 ? "" : "s"})`;
@@ -412,7 +414,7 @@ export default async function AdminBookingsPage({
           widget so a Diagnostics question carries them (#2816). */}
       <DiagnosticsViewStatePublisher view={appliedView} />
       <AdminPageHeader
-        title="All Bookings"
+        title={getAdminPage("bookings").label}
         actions={
           canEditBookings ? (
             <Link href={adminHref("book")} className="app-button-brand">
@@ -743,7 +745,7 @@ export default async function AdminBookingsPage({
                         </Link>
                         {booking.requiresAdminReview ? (
                           <Link
-                            href={`${adminHref("booking-requests")}?tab=approvals&bookingId=${booking.id}&status=ALL`}
+                            href={buildBookingRequestsHref("approvals", { bookingId: booking.id, [BOOKING_REQUESTS_STATUS_PARAM]: "ALL" })}
                             className="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >
                             <MiniChip tone="warning" icon={Eye}>Review</MiniChip>

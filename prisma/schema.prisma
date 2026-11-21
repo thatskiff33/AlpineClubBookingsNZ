@@ -777,6 +777,10 @@ model Member {
   // onDelete: SetNull rather than Cascade — a deleted account must not take a
   // still-broken heater off the maintenance officer's queue.
   maintenanceReportsReported                 MaintenanceReport[]                        @relation("MaintenanceReportReporter")
+  // Fork #121: food orders this member placed. onDelete: SetNull, like the
+  // maintenance reporter — a deleted account must not take the club's record of
+  // what food cost out of the history.
+  foodOrdersPlaced                           FoodOrder[]                                @relation("FoodOrderMember")
   adminCreditAdjustmentRequests              AdminCreditAdjustmentRequest[]             @relation("AdminCreditAdjustmentTarget")
   membershipCancellationRequestsRequested    MembershipCancellationRequest[]            @relation("MembershipCancellationRequestRequester")
   membershipCancellationRequestsReviewed     MembershipCancellationRequest[]            @relation("MembershipCancellationRequestReviewer")
@@ -1984,6 +1988,7 @@ model Booking {
   // non-member guests cannot be accommodated, instead of the default partial
   // bump (drop the non-members, keep the members). Both happen pre-charge.
   cancelIfGuestsBumped      Boolean            @default(false)
+  savedCardClaimAt          DateTime? // Durable off-session charge claim; swept after interruption.
   nonMemberHoldUntil        DateTime?
   // Split-booking group link (issue #738). A mixed member/non-member party is
   // stored as two bookings: a member booking that is paid up front and holds
@@ -3648,6 +3653,12 @@ model PaymentRecoveryOperation {
   lastError            String?                        @db.Text
   processingStartedAt  DateTime?
   succeededAt          DateTime?
+  // #4755: the carried ask the replay last saw in a 3D Secure challenge, and
+  // when it first saw it; null when none. Only `CREATE_ADDITIONAL_PAYMENT_INTENT`
+  // rows set them (`carriedAskPaymentWait`): the replay waits up to an hour from
+  // that first sighting before it supersedes the ask the member is confirming.
+  carriedAskChallengeIntentId String?
+  carriedAskChallengeSeenAt   DateTime?
   createdAt            DateTime                       @default(now())
   updatedAt            DateTime                       @updatedAt
 
@@ -4999,13 +5010,17 @@ model ProcessedWebhookEvent {
   // F16 (issue #1887): the dedup claim is a processing LEASE, not a bare
   // "seen" marker. `status` is "PROCESSING" (claimed, handler in flight) or
   // "COMPLETED" (handler finished). `processingStartedAt` stamps when the
-  // current attempt took the lease. A redelivery hitting an existing claim
-  // returns 200 only when COMPLETED; a PROCESSING claim still inside the lease
-  // window forces a provider retry (500), and an expired lease (a crashed
-  // prior attempt) is taken over and reprocessed. This closes the two
-  // lost-event windows: (a) a crash between claim-insert and completion no
-  // longer ACKs every redelivery as a duplicate, and (b) a concurrent
-  // redelivery is no longer ACKed while the in-flight attempt later fails.
+  // current attempt took the lease. Stripe and SES/SNS claim through
+  // `webhook-claim-lease.ts` (INV-INT-039, #4921). A redelivery hitting an
+  // existing claim returns 200 only when COMPLETED; a PROCESSING claim still
+  // inside the lease window forces a provider retry (Stripe 500, SES 503), and
+  // an expired lease (a crashed prior attempt) is taken over and reprocessed.
+  // Xero rows are plain dedup markers, never COMPLETED: the XeroInboundEvent
+  // row holds that claim, and its stale-event takeover deletes the marker.
+  // This closes the two lost-event windows: (a) a crash between claim-insert
+  // and completion no longer ACKs every redelivery as a duplicate, and (b) a
+  // concurrent redelivery is no longer ACKed while the in-flight attempt
+  // later fails.
   //
   // Blue/green-safe: `status` defaults to "PROCESSING" so an old-colour insert
   // (which omits the column and never marks COMPLETED) is reprocessed by the
@@ -5573,6 +5588,12 @@ model ClubModuleSettings {
   // cut-over. Safe to add as a defaulted column because every read narrows to
   // CLUB_MODULE_SETTINGS_COLUMN_SELECT.
   multiPromoCodes         Boolean  @default(false)
+  // Food orders (fork #121). Default OFF: it needs the food officer's email
+  // address (FoodOrderSettings) before an order reaches anybody. Safe to add as
+  // a defaulted column because every read narrows to
+  // CLUB_MODULE_SETTINGS_COLUMN_SELECT, so a previously deployed client never
+  // names it.
+  foodOrders              Boolean  @default(false)
   // Whakapapa (Mt Ruapehu) conditions report (#4932): the /api/skifield-whakapapa
   // feed, its admin cache and the admin Mountain Conditions page, split out of
   // skifieldConditions, which keeps only the generic widget. Default OFF so a new
@@ -5695,6 +5716,9 @@ model Lodge {
   // QR token with it, because neither means anything without the building.
   maintenanceReports      MaintenanceReport[]
   maintenanceReportToken  LodgeMaintenanceReportToken?
+  // Fork #121: food orders for this lodge, by a direct NOT NULL lodgeId. CASCADE
+  // like the maintenance reports: an order means nothing without the building.
+  foodOrders              FoodOrder[]
   memberMoneyLines MemberMoneyLine[]
 }
 
@@ -6103,23 +6127,30 @@ model ClubFormatSettings {
   @@index([updatedByMemberId])
 }
 
-// The club's GST treatment for member-money journal postings (#4626, Ledger
-// M3a; D3 in docs/design/member-money-ledger.md). Singleton (id="default"). An
-// ABSENT row resolves to the code defaults in src/lib/club-tax-settings.ts —
-// registered, 1500 basis points, in force from 2010-10-01 — which reproduce the
-// GST-inclusive 15% treatment every Xero document already renders, so no seed or
-// backfill is needed. The column defaults equal those values. The migration adds
-// a CHECK holding the rate to whole basis points from 0 to 10000. Nothing writes
-// the row yet; the journal posting command reads a treatment its caller resolves
-// from it before the transaction (INV-LOCK-004). The admin surface that first
-// writes it adds its audit columns (updatedByMemberId) with their registrations.
+// The club's GST treatment (#4626 Ledger M3a; D3 in
+// docs/design/member-money-ledger.md), the one answer the member-money journal
+// and every Xero document render from (#4632). A SCHEDULE of dated periods: the
+// row id="default" is the baseline, and an ABSENT baseline resolves to the code
+// defaults in src/lib/club-tax-settings.ts (registered, 1500 basis points, Xero
+// tax type OUTPUT2, from 2010-10-01), which these column defaults equal. Every
+// other row is a change a Full Admin scheduled from a FUTURE club date through
+// the one writer, src/lib/club-tax-settings-write.ts, which never edits the
+// baseline or a period that has started. CHECKs hold the rate to whole basis
+// points from 0 to 10000, and xeroTaxType to a non-blank code when registered and
+// NULL when not; effectiveFrom is unique, so a date has one period. Readers read
+// the schedule before their transaction (INV-LOCK-004). updatedByMemberId is the
+// Full Admin who scheduled the period, kept as tax-record attribution; no foreign key.
 model ClubTaxSettings {
   id                 String   @id @default("default")
   gstRegistered      Boolean  @default(true)
   taxRateBasisPoints Int      @default(1500)
-  effectiveFrom      DateTime @default(dbgenerated("'2010-10-01'::date")) @db.Date
+  xeroTaxType        String?  @default("OUTPUT2")
+  effectiveFrom      DateTime @unique @default(dbgenerated("'2010-10-01'::date")) @db.Date
+  updatedByMemberId  String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @default(now()) @updatedAt
+
+  @@index([updatedByMemberId])
 }
 
 // Club-wide login & security policy singleton (epic #2030, child #2033). Mirrors
@@ -7887,7 +7918,7 @@ model MemberCredit {
 /// `batchKey` is the SHA-256 of the batch's canonical rows, so the same file can
 /// be posted only once (a second confirm, concurrent or later, hits the unique
 /// key). Reversal stamps `reversedAt` once and posts negative rows linked here;
-/// nothing is deleted (`INV-PAY-156`).
+/// nothing is deleted (`INV-PAY-162`).
 model OpeningCreditBatch {
   id             String    @id @default(cuid())
   batchKey       String    @unique
@@ -9583,6 +9614,18 @@ model MemberMoneyRefundReservationRelease {
 /// M13 (#4525): the outbound document families whose coverage a manifest records.
 enum MemberMoneyExportDocumentRole {
   PRIMARY_BOOKING_INVOICE
+  /// #4525 (ALP-436): an edit's supplementary invoice, or a review's second ask.
+  SUPPLEMENTARY_BOOKING_INVOICE
+  /// #4525 (ALP-436): a rewrite of an issued primary invoice's descriptions and dates.
+  PRIMARY_BOOKING_INVOICE_UPDATE
+  /// #4525 (ALP-439): a refund credit note, covering the one live R05 refund debt it answers.
+  REFUND_NOTE
+  /// #4525 (ALP-439): the cash payment that settles a refund note, covering its R12 or R14 slice.
+  REFUND_NOTE_PAYMENT
+  /// #4525 (ALP-439): reserved for the failed-later refund reversal invoice; nothing writes it yet.
+  FAILED_LATER_REFUND_REVERSAL
+  /// #4525 (ALP-605): a stored Xero payment's cents of one card capture, under its own idempotency key.
+  CAPTURE_RECEIPT
 }
 
 enum MemberMoneyExportOutcome {
@@ -9595,6 +9638,18 @@ enum MemberMoneyExportConflictReason {
   STAY_CENTS
   FEE_CENTS
   COMPONENT_UNUSABLE
+  /// A supplementary invoice nets a price reduction against a fee: no component is billed whole or as a slice.
+  REDUCTION_NETTED
+  /// A primary-invoice update whose total is not its covered primary manifest's.
+  PRIMARY_UNMATCHED
+  /// A refund note whose cents are not its one obligation's.
+  CENTS
+  /// The component is already covered by an earlier document of the same role.
+  ALREADY_COVERED
+  /// A receipt's cents exceed what is left of its capture's live cash debit.
+  CAPTURE_CENTS
+  /// The receipt names no capture, or the journal holds no live receipt for it.
+  CAPTURE_NOT_JOURNALLED
 }
 
 /// M13 (#4525): what one sent provider document covers, written once under its
@@ -9620,18 +9675,22 @@ model MemberMoneyExportManifest {
   @@index([bookingId])
 }
 
-/// One journal component a manifest's document bills whole. A component is billed
-/// by at most one document of each role.
+/// One journal component a manifest's document covers: whole (sliceKey ''), the
+/// slice one journal event moved (sliceKey: that event's key, supplementary only),
+/// or the cents of one card capture a Xero payment applied (sliceKey: that
+/// payment's idempotency key, capture receipts only). A component is covered
+/// whole by at most one document of each role, and each slice by at most one.
 model MemberMoneyExportCoverage {
   id String @id @default(cuid())
   manifestId String
   documentRole MemberMoneyExportDocumentRole
   account MemberMoneyAccount
   chargeIdentity String
+  sliceKey String @default("")
   coveredCents Int
   taxCode String?
   manifest MemberMoneyExportManifest @relation(fields: [manifestId, documentRole], references: [id, documentRole], onDelete: Restrict, onUpdate: Restrict)
-  @@unique([documentRole, account, chargeIdentity])
+  @@unique([documentRole, account, chargeIdentity, sliceKey])
   @@index([manifestId, documentRole])
 }
 
@@ -9646,4 +9705,103 @@ model PrivacyHostingSettings {
   updatedAt         DateTime @default(now()) @updatedAt
 
   @@index([updatedByMemberId])
+}
+
+/// Food orders (fork #121). Whether an order is open or the food arrived.
+/// Received closes it; there is no reopening (the price can still change).
+enum FoodOrderStatus {
+  OPEN
+  RECEIVED
+}
+
+/// The one food-order settings row ("default"), created lazily on first save
+/// like MaintenanceReportSettings. No row reads as no officer email (ordering
+/// not set up) and the default label.
+model FoodOrderSettings {
+  id String @id @default("default")
+
+  /// Where every new order is emailed. Checked only as a valid address, never
+  /// against members or committee roles: keeping it current is the committee's
+  /// job (fork #121 owner decision 10). Null or empty means ordering is not set up.
+  officerEmail String? @db.VarChar(254)
+  /// What this club calls the person (INV-CONFIG-001): "Food officer" by default.
+  officerLabel String  @default("Food officer") @db.VarChar(60)
+
+  updatedAt         DateTime @default(now()) @updatedAt
+  updatedByMemberId String?
+}
+
+/// A member's food order for a lodge (fork #121). Not linked to a booking
+/// (fork #121 owner decision 9): the officer matches it to a stay by lodge and neededBy.
+model FoodOrder {
+  id       String  @id @default(cuid())
+  lodgeId  String
+  /// Who placed it. Nullable only so a deleted account keeps the order's cost
+  /// history (SetNull); every order is created with a member.
+  memberId String?
+  /// The club calendar day the food is needed by (INV-DATE, date-only).
+  neededBy DateTime        @db.Date
+  notes    String?         @db.VarChar(1000)
+  status   FoodOrderStatus @default(OPEN)
+
+  /// Set once, by the status-guarded OPEN -> RECEIVED claim. receivedById is a
+  /// snapshot member id, not a relation, like MaintenanceReport.resolvedById.
+  receivedAt   DateTime?
+  receivedById String?
+
+  /// The whole order's cost in integer cents (INV-MONEY). A record only: never
+  /// charged, invoiced, posted to the ledger or sent to Xero (fork #121 owner decision 8).
+  priceCents       Int?
+  priceUpdatedAt   DateTime?
+  priceUpdatedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  lodge  Lodge           @relation(fields: [lodgeId], references: [id], onDelete: Cascade)
+  member Member?         @relation("FoodOrderMember", fields: [memberId], references: [id], onDelete: SetNull)
+  items  FoodOrderItem[]
+
+  @@index([status, neededBy])
+  @@index([lodgeId])
+  @@index([memberId])
+}
+
+/// The unit a food-order quantity is counted in (owner change, 13 Nov 2026).
+/// Labels, singular and plural, live in src/lib/food-order-rules.ts.
+enum FoodOrderUnit {
+  ITEMS
+  GRAMS
+  KILOGRAMS
+  LITERS
+  LOAVES
+  PACKETS
+  BOTTLES
+  CANS
+  BAGS
+  BOXES
+  PUNNETS
+  MILLILITERS
+}
+
+/// One line of a food order: a description, a quantity and its unit.
+/// 1-50 lines per order; the quantity is more than 0 and at most 99999.99,
+/// to two decimal places (grams need more than 999).
+model FoodOrderItem {
+  id          String        @id @default(cuid())
+  foodOrderId String
+  description String        @db.VarChar(200)
+  quantity    Decimal       @db.Decimal(7, 2)
+  unit        FoodOrderUnit @default(ITEMS)
+  sortOrder   Int
+
+  /// Set once when this line is ticked received (owner change, 13 Nov 2026:
+  /// food can arrive in parts). The order closes when its last line is.
+  /// receivedById is a snapshot member id, not a relation, like the order's.
+  receivedAt   DateTime?
+  receivedById String?
+
+  foodOrder FoodOrder @relation(fields: [foodOrderId], references: [id], onDelete: Cascade)
+
+  @@index([foodOrderId, sortOrder])
 }

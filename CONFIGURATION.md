@@ -1265,6 +1265,9 @@ test/demo mode or disabled:
 | `DEMO_SEED_PASSWORD`    | Optional local-only password for `pnpm run db:seed:demo` users.   |
 | `DEMO_SECOND_LODGE`     | Local-only; set to `1` to also seed a second demo lodge (rooms + a few bookings) so two-lodge flows are demoable. Default demo dataset is unchanged when unset. |
 
+The seed runs once, on a new install, after migrations:
+`docker compose run --rm seed` on a Docker-only server, or `pnpm run db:seed`
+on a developer machine (#4977). Upgrades never run it.
 `prisma/seed.ts` fails before seeding if `SEED_ADMIN_EMAIL` or
 `SEED_ADMIN_PASSWORD` is unset, or if the lodge kiosk account is missing and
 `SEED_LODGE_PASSWORD` is unset. Before it writes anything, it checks the
@@ -2644,32 +2647,34 @@ Existing env-configured deployments upgrading past #2079 must re-enter Xero
 credentials in-app and reconnect Xero — see the **upgrade runbook** in
 `DEPLOYMENT.md`.
 
-## GST treatment (member-money ledger)
+## GST treatment (member-money ledger and Xero)
 
 The club's GST treatment is a database setting, `ClubTaxSettings`
-(`INV-CONFIG-007`, #4626). It records three things: whether the club is
-GST-registered, the rate in basis points (1500 is 15%), and the club date it
-applies from. There is no environment variable and, for now, no screen.
+(`INV-CONFIG-007`, #4626/#4632). It is a schedule of dated periods, each
+recording whether the club is GST-registered, the rate in basis points (1500
+is 15%), the Xero tax type its revenue carries, and the club date it applies
+from. There is no environment variable.
 
-- **Default.** With no row, the club is GST-registered at 15% from 1 October
-  2010, with GST included in every price. That is the treatment the Xero
-  invoices already show (the inclusive `OUTPUT2` code), so a deployment that
-  never sets it records charges exactly as it invoices them.
-- **Who reads it.** Only the member-money ledger, which splits tax out of each
-  charge in whole cents. Xero does not read it yet: its documents still
-  hard-code the inclusive 15% code until #4632.
-- **Nothing writes it yet,** on purpose. Changing it before Xero reads it would
-  give the ledger and the invoices two different answers, so a census fails on
-  any code that writes the row.
-- **Charges are already recorded.** Since M3b (#4627), the journal records each
-  booking door's charge lines for every club whose currency can be charged by
-  card. Until #4632 provides the tax screen, it uses the default GST-inclusive
-  15% treatment, matching the Xero invoices. A club that is not GST-registered
-  should expect its booking charges to be recorded with that same default tax
-  split in the meantime. That split does not match its real position until the
-  #4632 screen lets it change the setting, and no screen or Xero document uses
-  those tax figures yet. A journal refusal stops the booking or payment change
-  rather than being ignored
+- **Default.** With no row beyond the baseline, the club is GST-registered at
+  15% from 1 October 2010, Xero code `OUTPUT2`, with GST included in every
+  price. That is the treatment every Xero document and the member-money
+  ledger already rendered, so a deployment that never schedules a change
+  records and invoices charges exactly as it always did.
+- **Who reads it.** The member-money ledger and every Xero document resolve
+  the same schedule through the same reader and renderer
+  (`docs/xero/ARCHITECTURE.md#tax-treatment`), never a hard-coded tax code.
+  Which period a charge takes is fixed by its own anchor — a booking's or
+  charge's creation date — never the day it is rendered or posted, so a
+  booking keeps the treatment it was made under for its whole life.
+- **Who writes it.** A Full Admin schedules a change from the "GST / tax
+  treatment" card on `/admin/finance/xero`, or `PUT`/`DELETE
+  /api/admin/club-tax` directly. A change only ever adds a period that starts
+  after the club's today, so no document already rendered changes, and is
+  refused when Xero's own tax-rate list does not carry the chosen code,
+  active and usable on revenue, at the chosen rate.
+- **Charges are recorded.** Since M3b (#4627), the journal records each
+  booking door's charge lines under the schedule above. A journal refusal
+  stops the booking or payment change rather than being ignored
   ([`INV-MONEY-044`](docs/invariants/money.md#inv-money-044)).
 
 ## Finance dashboard
@@ -2762,6 +2767,18 @@ read `MemberAccessRole` rows.
 | `SES_SNS_ALLOW_SIGNATURE_V1`             | Temporarily permit legacy SNS SignatureVersion 1 (SHA1). Default rejects v1; enable SignatureVersion 2 on the SNS topic and leave this unset in production.   |
 | `BULK_SENDMAIL_LIMIT`                    | Admin bulk-communication sends allowed per hour (default `1`).                                                                                               |
 
+**SNS delivery policy for SES feedback (#4921).** The SES/SNS route answers
+503 while an earlier attempt at the same notification still holds its
+15-minute processing lease, and takes the notification over only on a
+redelivery after the lease has run out. SNS's default HTTP/S delivery policy
+retries 3 times, 20 seconds apart, so a notification whose first attempt
+crashed is dropped before then. Set an HTTP/S delivery policy on the
+subscription (or topic) that keeps retrying past 15 minutes, within SNS's
+3,600-second hard limit, and attach a dead-letter queue. For example:
+`{"healthyRetryPolicy":{"minDelayTarget":20,"maxDelayTarget":120,"numRetries":30,"numNoDelayRetries":0,"numMinDelayRetries":3,"numMaxDelayRetries":20,"backoffFunction":"exponential"}}`
+retries for roughly 50 minutes. See
+[Amazon SNS message delivery retries](https://docs.aws.amazon.com/sns/latest/dg/sns-message-delivery-retries.html).
+
 ## Address Autocomplete
 
 | Variable          | Description                                     |
@@ -2782,13 +2799,28 @@ rate-limited, or temporarily unavailable.
 
 | Variable                                  | Description                                                                                                      |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `SENTRY_DSN`                              | Server/edge Sentry DSN.                                                                                          |
-| `NEXT_PUBLIC_SENTRY_DSN`                  | Browser Sentry DSN.                                                                                              |
+| `SENTRY_DSN`                              | Server/edge Sentry DSN, read at runtime.                                                                         |
+| `NEXT_PUBLIC_SENTRY_DSN`                  | Browser Sentry DSN, read at runtime through a public no-store endpoint; blank disables browser reporting.        |
 | `SENTRY_ORG`                              | Sentry organization slug for source map uploads.                                                                 |
 | `SENTRY_PROJECT`                          | Sentry project slug for source map uploads.                                                                      |
 | `SENTRY_AUTH_TOKEN`                       | Sentry auth token for source map uploads during build.                                                           |
 | `OBSERVABILITY_SENTRY_DEDUP_COOLDOWN_MS` | Optional in-process cooldown for Sentry event deduplication, shared by the cron/webhook bridge and the auth-bounce anomaly alert (#1669); defaults to 300000 ms. |
 | `AUTH_BOUNCE_AUDIT_MAX_WRITES_PER_MINUTE` | Optional per-process cap on durable auth-bounce `AuditLog` rows per minute (#1669); suppressed rows are tallied onto the next written row. Defaults to 10. |
+
+Both DSNs belong in the deployment's `.env`, including when using published
+images or `--build-and-push-images`. Restart/redeploy after changing them; no
+image rebuild is needed. New page loads fetch only `NEXT_PUBLIC_SENTRY_DSN`
+from `/api/observability/browser-config` before initializing browser reporting.
+Failed or empty configuration leaves reporting and replay off. Errors before
+that fetch completes are not reported. Replay still needs the separate club
+privacy opt-in; its default remains off.
+
+**Upgrade action:** before deploying the first release with runtime browser
+Sentry, set `NEXT_PUBLIC_SENTRY_DSN` in `.env` if browser reports are wanted.
+This applies to the maintainer's deployment too: published images no longer
+supply the upstream destination. Leaving it blank deliberately disables browser
+reports. Sentry DSNs are environment settings, not in-app credentials; upload
+credentials remain build-time settings.
 
 ## Cron, Waitlist, And Backups
 

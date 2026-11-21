@@ -460,7 +460,7 @@ describe("mintSliceMappingKey (#2717): goodwill is the admin adjustment", () => 
 
   it("sends an opening credit to its own mapping, which falls back to refunds (#4988)", () => {
     // Owner, 16 Nov 2026: never goodwill; `openingCredits` resolves to
-    // `hutFeeRefunds` while unset (INV-INT-021, INV-PAY-156).
+    // `hutFeeRefunds` while unset (INV-INT-021, INV-PAY-162).
     expect(mintSliceMappingKey({ creditType: CreditType.ADMIN_ADJUSTMENT, openingCredit: true })).toBe(
       "openingCredits",
     );

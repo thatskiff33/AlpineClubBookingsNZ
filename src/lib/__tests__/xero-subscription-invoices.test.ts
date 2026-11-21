@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BASELINE_XERO_TAX_RENDERING } from "@/lib/xero-tax-rendering";
 import { Invoice, LineAmountTypes } from "xero-node";
 
 const enqueueMocks = vi.hoisted(() => ({
@@ -8,6 +9,10 @@ const enqueueMocks = vi.hoisted(() => ({
   chargeUpdate: vi.fn(),
 }));
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
+vi.mock("@/lib/xero-invoicing-guard", () =>
+  import("@/lib/__tests__/helpers/xero-invoicing-guard-mock"),
+);
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     membershipSubscriptionCharge: { findUnique: enqueueMocks.chargeFindUnique, updateMany: enqueueMocks.chargeUpdate },
@@ -23,6 +28,8 @@ import {
   enqueueMembershipSubscriptionChargeOperation,
   subscriptionInvoiceMatchesSnapshot,
 } from "@/lib/xero-subscription-invoices";
+import { setXeroInvoicingEnabled } from "@/lib/__tests__/helpers/xero-invoicing-guard-mock";
+import { XeroInvoicingOffError } from "@/lib/xero-invoicing-off";
 
 describe("enqueueMembershipSubscriptionChargeOperation ignores VOIDED charges (#2147)", () => {
   beforeEach(() => {
@@ -49,6 +56,23 @@ describe("enqueueMembershipSubscriptionChargeOperation ignores VOIDED charges (#
     const result = await enqueueMembershipSubscriptionChargeOperation("charge-live");
     expect(result.queueOperationId).toBe("op-1");
     expect(enqueueMocks.startOperation).toHaveBeenCalledTimes(1);
+  });
+
+  // #4986 (INV-INT-040): the backstop for every caller — with Xero off the
+  // charge is never read, flipped to QUEUED or handed to the outbox.
+  it("refuses with Xero off and writes nothing (#4986)", async () => {
+    enqueueMocks.chargeFindUnique.mockResolvedValue({
+      id: "charge-live", status: "QUEUED", billingBasis: "PER_MEMBER", xeroInvoiceId: null, emailSentAt: null,
+    });
+    setXeroInvoicingEnabled(false);
+    try {
+      await expect(enqueueMembershipSubscriptionChargeOperation("charge-live")).rejects.toBeInstanceOf(XeroInvoicingOffError);
+    } finally {
+      setXeroInvoicingEnabled(true);
+    }
+    expect(enqueueMocks.chargeFindUnique).not.toHaveBeenCalled();
+    expect(enqueueMocks.chargeUpdate).not.toHaveBeenCalled();
+    expect(enqueueMocks.startOperation).not.toHaveBeenCalled();
   });
 
   it("no-ops a charge an officer closed as already paid (#4098)", async () => {
@@ -107,10 +131,17 @@ describe("Xero membership subscription invoice adoption", () => {
     lines: [{ amountCents: 12_000, accountCode: "203", itemCode: "SUB" as string | null }],
     dueDays: 30,
     reference: "MEMSUB-reference",
+    taxRendering: BASELINE_XERO_TAX_RENDERING,
   };
 
   it("adopts only an exact reference, recipient, GST-inclusive amount, account and ACCREC match", () => {
     expect(subscriptionInvoiceMatchesSnapshot({ invoice: invoice(), ...snapshot })).toBe(true);
+  });
+
+  // #4632: an invoice raised under another tax treatment is never adopted as this charge's.
+  it("refuses an invoice raised under another treatment than the charge's anchor", () => {
+    expect(subscriptionInvoiceMatchesSnapshot({ invoice: invoice(), ...snapshot, taxRendering: { lineAmountTypes: LineAmountTypes.NoTax } })).toBe(false);
+    expect(subscriptionInvoiceMatchesSnapshot({ invoice: invoice(), ...snapshot, taxRendering: { lineAmountTypes: LineAmountTypes.Inclusive, taxType: "TAX005" } })).toBe(false);
   });
 
   // The due interval is measured from `invoice.date` and `invoice.dueDate`, and
@@ -185,6 +216,7 @@ describe("Xero membership subscription invoice adoption", () => {
       lines: [{ amountCents: 0, accountCode: "203", itemCode: "SUB" as string | null }],
       dueDays: 30,
       reference: "MEMSUB-reference",
+      taxRendering: BASELINE_XERO_TAX_RENDERING,
     };
 
     it.each([
@@ -274,6 +306,7 @@ describe("Xero membership subscription invoice adoption", () => {
       ],
       dueDays: 30,
       reference: "MEMSUB-reference",
+      taxRendering: BASELINE_XERO_TAX_RENDERING,
     };
 
     it("adopts an exact full-line-array match in order", () => {

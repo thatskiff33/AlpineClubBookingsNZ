@@ -815,7 +815,7 @@ async function validateNegativeAdjustmentBalance(
 }
 
 /**
- * Opening-credit rows (#4988, `INV-PAY-156`), kept here so this module stays
+ * Opening-credit rows (#4988, `INV-PAY-162`), kept here so this module stays
  * the one place that creates `MemberCredit` rows. The caller is the batch
  * transaction in `opening-credit-batch.ts`: it holds every member's
  * `lockMemberCreditLedger`, sorted (`INV-LOCK-002`), and has claimed the batch.

@@ -120,7 +120,7 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
   {
     // Owner decision on #4988 (16 Nov 2026): optional, falling back to
     // `hutFeeRefunds` while unset, so a club that never carried its members'
-    // old credit in Xero posts exactly where it did before (`INV-PAY-156`).
+    // old credit in Xero posts exactly where it did before (`INV-PAY-162`).
     key: "openingCredits",
     label: "Opening Credits",
     description:

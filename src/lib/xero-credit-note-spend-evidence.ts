@@ -19,7 +19,7 @@
  * or writes Xero or the credit ledger.
  */
 import type { Prisma } from "@prisma/client";
-import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
+import { isNonNegativeIntegerCents } from "@/lib/cents-schema";
 import { fundingLotWhere } from "@/lib/xero-applied-credit-slice-lookup";
 import {
   creditNoteMirrorEvidenceFrom,

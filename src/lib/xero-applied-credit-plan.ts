@@ -58,7 +58,7 @@ export interface AppliedCreditLot {
   creditType: CreditType;
   /**
    * The lot is an opening credit carried over from a club's old system
-   * (#4988, `INV-PAY-156`). REQUIRED for the same reason as `creditType`: an
+   * (#4988, `INV-PAY-162`). REQUIRED for the same reason as `creditType`: an
    * opening credit is an `ADMIN_ADJUSTMENT` row, yet it is the member's own
    * money rather than goodwill, so its minted slice posts to the refund
    * mapping (`mintSliceMappingKey`).

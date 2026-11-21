@@ -24,7 +24,7 @@ minimumReleaseAgeExclude:
 # overrides below point here too, so each range is written exactly once; bump
 # it here.
 catalog:
-  nodemailer: ^10.3.1
+  nodemailer: ^10.4.0
   sharp: ^0.35.5
 
 # The former npm `overrides` block, translated one entry for one entry, less
@@ -56,6 +56,9 @@ overrides:
   "@auth/core>nodemailer": "catalog:"
   browserslist: ^4.28.7
   ajv>fast-uri: ^3.1.9
+  typed-rest-client>qs: ^6.16.1
+  "minimatch@>=7.0.0 <11.0.1": ^11.0.5
+  "@prisma/config>effect": ^3.22.1
 
 # Dependencies allowed to run install scripts, pinned to the exact version that
 # was reviewed. pnpm runs none by default and fails the install on any build it

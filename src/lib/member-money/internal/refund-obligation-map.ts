@@ -78,15 +78,33 @@ export function refundDoorOfObligationKey(key: string): CardRefundObligationRef 
 
 type Db = Pick<Prisma.TransactionClient, "memberMoneyEvent" | "manualRefundTask" | "paymentRecoveryOperation">;
 
-/** The debt an applied card refund paid: its R12's pay, or (review L4) the answer that applied it later. */
-async function paidByRefund(db: Db, stripeRefundId: string): Promise<string | null> {
-  for (const eventKey of [memberMoneyEventKeys.refund(stripeRefundId), memberMoneyEventKeys.refundAnswer(stripeRefundId)]) {
+/**
+ * The debts an applied card refund paid, distinct and in application order: its R12's, or (review L4) those of
+ * the answer that applied it later, with the event that applied them. Null when neither applies a debt. The one
+ * reader of "what a card refund paid" (`INV-SSOT`): the recovery map and the refund note's manifest both use it.
+ */
+export async function cardRefundAppliedObligations(db: Pick<Prisma.TransactionClient, "memberMoneyEvent">, stripeRefundId: string): Promise<{ eventKey: string; obligationKeys: string[] } | null> {
+  return appliedObligationsOfEvents(db, [memberMoneyEventKeys.refund(stripeRefundId), memberMoneyEventKeys.refundAnswer(stripeRefundId)]);
+}
+
+/**
+ * The debts the first of these events to apply any debt applied, distinct and in application order, with that
+ * event's key; null when none of them applies one. The one reader of "what a cash event paid" (`INV-SSOT`): a
+ * card refund's reader above and the refund note's manifest, for a bank hand-back's keys, both use it.
+ */
+export async function appliedObligationsOfEvents(db: Pick<Prisma.TransactionClient, "memberMoneyEvent">, eventKeys: readonly string[]): Promise<{ eventKey: string; obligationKeys: string[] } | null> {
+  for (const eventKey of eventKeys) {
     const event = await db.memberMoneyEvent.findUnique({ where: { eventKey },
       select: { journal: { select: { applications: { select: { obligation: { select: { obligationKey: true } } } } } } } });
-    const paid = event?.journal?.applications[0]?.obligation.obligationKey;
-    if (paid) return paid;
+    const obligationKeys = [...new Set((event?.journal?.applications ?? []).map((a) => a.obligation.obligationKey))];
+    if (obligationKeys.length > 0) return { eventKey, obligationKeys };
   }
   return null;
+}
+
+/** The debt an applied card refund paid: its R12's pay, or (review L4) the answer that applied it later. */
+async function paidByRefund(db: Db, stripeRefundId: string): Promise<string | null> {
+  return (await cardRefundAppliedObligations(db, stripeRefundId))?.obligationKeys[0] ?? null;
 }
 
 /**

@@ -131,7 +131,8 @@ function ItemRow({ item }: { item: StuckStateItem }) {
   const Icon = domainIcons[item.domain];
 
   return (
-    <TableRow className="align-top">
+    // #4959: the row is the anchor its own card link and the hub registry name.
+    <TableRow id={item.id} className="align-top">
       <TableCell>
         <div className="flex items-center gap-2">
           <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -162,6 +163,11 @@ function ItemRow({ item }: { item: StuckStateItem }) {
               </li>
             ))}
           </ul>
+        ) : null}
+        {item.details && item.count > item.details.length ? (
+          <div className="mt-2 text-xs text-muted-foreground">
+            and {item.count - item.details.length} more
+          </div>
         ) : null}
       </TableCell>
       <TableCell>
@@ -208,14 +214,24 @@ export default async function AdminStuckStatesPage() {
   // match, answered here - finance:view to list (they name bookings and
   // money), finance:edit to answer.
   // The list is read once: a finance viewer's dashboard count is its length (review, security 7).
-  const bankRefundVoidsToAnswer = viewerCanViewFinance ? await listBankRefundVoidsToAnswerRows() : [];
-  const [dashboard, deadCardRefunds, cardRefundsPaidTwice] = await Promise.all([
+  // #4959: the dead card refunds too, so an exhausted row can point at this list.
+  const [bankRefundVoidsToAnswer, deadCardRefunds] = viewerCanViewFinance
+    ? await Promise.all([listBankRefundVoidsToAnswerRows(), listDeadCardRefunds()])
+    : [[], []];
+  const [dashboard, cardRefundsPaidTwice] = await Promise.all([
     getStuckStateDashboard({
       viewerCanViewMembership,
       viewerCanViewFinance,
-      ...(viewerCanViewFinance ? { deps: { countBankRefundVoidsToAnswer: async () => bankRefundVoidsToAnswer.length } } : {}),
+      ...(viewerCanViewFinance
+        ? {
+            deps: {
+              countBankRefundVoidsToAnswer: async () => bankRefundVoidsToAnswer.length,
+              listDeadCardRefundOperationIds: async () =>
+                new Set(deadCardRefunds.map((row) => row.operationId)),
+            },
+          }
+        : {}),
     }),
-    viewerCanViewFinance ? listDeadCardRefunds() : Promise.resolve([]),
     viewerCanViewFinance ? listCardRefundsPaidTwice() : Promise.resolve([]),
   ]);
   const clubTime = await resolveClubTime();

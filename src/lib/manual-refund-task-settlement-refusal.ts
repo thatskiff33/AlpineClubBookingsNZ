@@ -9,8 +9,9 @@ import {
   XeroAppliedCreditOperationBusyError,
 } from "@/lib/xero-applied-credit-operation-serialization";
 
-/** #4872: a hand-back refused only because a replaced card payment's own refund still owns part of the payment. */
-const SUPERSEDED_HOLD_BACK_REFUSAL_MESSAGE =
+/** #4872: a hand-back refused only because a replaced card payment's own refund still owns part of the payment.
+ * #5171 review: the edit review's card refund names the same cause with this sentence (`INV-SSOT`). */
+export const SUPERSEDED_HOLD_BACK_REFUSAL_MESSAGE =
   "Part of this payment is still being refunded on a card payment that was replaced. Try again once that refund has completed.";
 
 /**

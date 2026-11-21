@@ -190,6 +190,10 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/booking-requests/[id]/resolve-pending-adults": "bookings",
   "/api/admin/booking-requests/[id]/school-record": "bookings",
   "/api/admin/booking-requests/[id]/send-quote": "bookings",
+  // #4969: the four queue counts that badge the Booking Requests page tabs.
+  // Bookings view, like the lists it counts, rather than the overview-area
+  // sidebar aggregate, so a bookings-only role still gets its badges.
+  "/api/admin/booking-requests/pending-counts": "bookings",
   "/api/admin/booking-requests/settings": "bookings",
   "/api/admin/booking-reviews": "bookings",
   "/api/admin/bookings": "bookings",
@@ -216,11 +220,6 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/bookings/[id]/member-guest-candidates": "bookings",
   "/api/admin/bookings/[id]/no-emails": "bookings",
   "/api/admin/bookings/[id]/requested-room": "bookings",
-  // #3214: a second bookings-prefixed path deliberately resolved to finance by
-  // SPECIAL_ROUTE_AREA_PATTERNS, for the same reason as mark-paid above -
-  // recording what a stay's nights sold for is money evidence, gated
-  // finance:edit, and the handler declares that requirement explicitly.
-  "/api/admin/bookings/[id]/stored-night-prices": "finance",
   // #2649: the stranded zero-dollar waitlist confirm repair. It moves booking
   // status, so path inference gives it bookings:edit, and the route declares
   // that permission explicitly rather than relying on inference.
@@ -240,6 +239,12 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // `admin-route-authorization-proof.test.ts`.
   "/api/admin/club-format": "support",
   "/api/admin/club-identity": "content",
+  // #4632: the club's GST / tax treatment schedule. `finance`, beside the Xero
+  // routes whose documents render from it: the read is `finance:view`, but the
+  // writes pass `requireAdmin({ permission: false })`, Full Admin, stricter
+  // than `finance:edit`; both divergences are pinned in
+  // `admin-route-authorization-proof.test.ts`.
+  "/api/admin/club-tax": "finance",
   // CT-1 (#2989): the club-timezone maintenance API. `support` is the area — it
   // is installation configuration, alongside /api/admin/modules and
   // /api/admin/config-transfer — but the AREA is not the gate here. Both verbs
@@ -291,6 +296,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/display/templates": "lodge",
   "/api/admin/display/templates/[id]": "lodge",
   "/api/admin/email-failures/[id]/reissue-token": "support",
+  "/api/admin/email-failures/[id]/retry": "support",
   "/api/admin/email-failures/[id]/review": "support",
   "/api/admin/email-settings": "support",
   "/api/admin/email-suppressions": "support",
@@ -313,6 +319,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/family-suggestions/hide": "membership",
   "/api/admin/family-suggestions/reset": "membership",
   "/api/admin/fee-configuration": "finance",
+  "/api/admin/food-orders/settings": "lodge",
   "/api/admin/health": "support",
   "/api/admin/hut-leaders": "lodge",
   "/api/admin/hut-leaders/[id]": "lodge",
@@ -462,9 +469,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // is gated exactly as closing one is - undoing a money decision is not a
   // lesser act than taking it.
   "/api/admin/payments/manual-refund-tasks/[id]/reopen": "finance",
-  // #3835: what a review share on a cancelled booking still owes, read by the
-  // settle dialog before completing - a finance read, gated as the queue is.
-  "/api/admin/payments/manual-refund-tasks/[id]/still-owed": "finance",
+  "/api/admin/payments/manual-refund-tasks/[id]/reduce-by-lost-dispute": "finance",
   "/api/admin/pending-counts": "overview",
   "/api/admin/privacy-hosting": "content",
   "/api/admin/privacy-retention": "support",
@@ -684,6 +689,7 @@ const EXPECTED_PAGE_AREAS: Record<string, AdminPermissionArea> = {
   "/admin/family-groups": "membership",
   "/admin/fee-configuration": "finance",
   "/admin/fees": "bookings",
+  "/admin/food-orders": "lodge",
   "/admin/google/setup": "finance",
   "/admin/health": "support",
   "/admin/hut-leaders": "lodge",

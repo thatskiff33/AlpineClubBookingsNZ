@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest"
-import { cleanup, render, screen, waitFor } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus"
 
 type LodgeOptions = {
   lodges: Array<{ id: string; name: string }>
@@ -103,5 +104,80 @@ describe("MemberLodgeAccessCard settled lodge-list gate (#2701, #2887)", () => {
       expect(screen.getAllByLabelText("Lodge B")[1]).toBeChecked()
     })
     expect(screen.getByRole("button", { name: "Save Lodge Access" })).toBeInTheDocument()
+  })
+})
+
+/*
+  #4975: a failed load of the member's grants is a passive box that moves
+  nothing; a refused save is the admin's own action, so it takes focus, and takes
+  it again when the same refusal repeats. A save that lands retires a stale load
+  message rather than leaving it beside "Lodge access saved.".
+*/
+describe("MemberLodgeAccessCard action failures (#4975)", () => {
+  const GRANTS_URL = "/api/admin/members/member-1/lodge-access"
+  const answer = (status: number, body: unknown) =>
+    ({ ok: status < 400, status, json: async () => body }) as Response
+
+  beforeEach(() => {
+    lodgeOptions = {
+      lodges: LODGES,
+      loading: false,
+      failed: false,
+      forbidden: false,
+      reload: vi.fn(),
+    }
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
+
+  it("focuses a refused save, and focuses it again when it repeats", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) =>
+        init?.method === "PUT"
+          ? answer(400, { error: "That grant was refused." })
+          : answer(200, { lodgeAccess: [] }),
+      ),
+    )
+    render(<MemberLodgeAccessCard memberId="member-1" />)
+    // The alert mounts with the form, once the grants have loaded.
+    await screen.findByRole("button", { name: "Save Lodge Access" })
+    const alert = document.getElementById("member-lodge-access-save-error")
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const save = screen.getByRole("button", { name: "Save Lodge Access" })
+      save.focus()
+      fireEvent.click(save)
+      await waitFor(() => expect(alert).toHaveTextContent("That grant was refused."))
+      await expectRecoveryAlertToHoldFocus(alert)
+    }
+  })
+
+  it("keeps a failed load passive, and retires it when a save lands", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) =>
+        init?.method === "PUT"
+          ? answer(200, { lodgeAccess: [] })
+          : answer(500, { error: "Grants unavailable." }),
+      ),
+    )
+    render(<MemberLodgeAccessCard memberId="member-1" />)
+    const loadMessage = await screen.findByText("Grants unavailable.")
+    expect(document.getElementById("member-lodge-access-save-error")).toBeEmptyDOMElement()
+    // The failed read moved no focus, and did not mark itself as the focus target.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(document.activeElement).toBe(document.body)
+    expect(loadMessage.closest('[tabindex="-1"]')).toBeNull()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Save Lodge Access" }))
+
+    await waitFor(() => expect(screen.getByText("Lodge access saved.")).toBeInTheDocument())
+    expect(screen.queryByText("Grants unavailable.")).not.toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledWith(GRANTS_URL, expect.objectContaining({ method: "PUT" }))
   })
 })

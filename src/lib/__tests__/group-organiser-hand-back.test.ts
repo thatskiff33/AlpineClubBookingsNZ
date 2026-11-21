@@ -434,6 +434,7 @@ describe("a growing claim keeps the alert's record", () => {
 describe("the finance queue payload marks it for the card's own sentence", () => {
   it("true for the group key only", async () => {
     const { toOpenManualRefundTaskPayload } = await import("@/lib/manual-refund-task-queue-payload");
+    const { DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, JOURNAL_HAND_BACK_DISMISS_REFUSAL, disputedHandBackDismissRefusal } = await import("@/lib/manual-refund-task-copy");
     const row = {
       id: "task-1",
       bookingId: "org-booking",
@@ -463,11 +464,34 @@ describe("the finance queue payload marks it for the card's own sentence", () =>
         payment: null,
       },
     };
-    const payload = toOpenManualRefundTaskPayload(row, null, []);
+    const payload = toOpenManualRefundTaskPayload(row, null);
     expect(payload).toMatchObject({ groupOrganiserHandBack: true, editRefundHandBack: false, refundRequestHandBack: false, memberName: "Olive Organiser" });
-    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null }, null, []).groupOrganiserHandBack).toBe(false);
-    // Its shares are kept in reviewContext: never read as unreadable review evidence.
-    const withShares = toOpenManualRefundTaskPayload({ ...row, reviewContext: { groupOrganiserHandBack: { settlementId: "settle-1", shares: [] } } }, null, []);
-    expect(withShares).toMatchObject({ reviewEvidence: null, reviewEvidenceUnreadable: false });
+    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null }, null).groupOrganiserHandBack).toBe(false);
+    // #4516 (owner decisions, 14 and 15 Nov 2026): the queue hides Dismiss on a real bank or cash hand-back. An
+    // organiser's is not one (M6, it has its own refusal); a cash cancellation's hand-back on the same row is; a card
+    // shortfall's part to check keeps Dismiss and its bank-transfer part does not.
+    expect(payload.journalHandBackDismissRefusal).toBeNull();
+    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null }, null).journalHandBackDismissRefusal).toBe(JOURNAL_HAND_BACK_DISMISS_REFUSAL);
+    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: "cancel-card-shortfall:booking-1:check" }, null).journalHandBackDismissRefusal).toBeNull();
+    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: "cancel-card-shortfall:booking-1" }, null).journalHandBackDismissRefusal).toBe(JOURNAL_HAND_BACK_DISMISS_REFUSAL);
+    // #4516 (owner decision, 15 Nov 2026): a disputed card payment's hand-back, by the same rule the server asks.
+    const cash = { ...row, occurrenceKey: null, amountCents: 9000, paymentId: "payment-1" };
+    expect(toOpenManualRefundTaskPayload(cash, null, { disputes: [{ stripeDisputeId: "dp_1", status: "OPEN", amountCents: 9000, paymentId: "payment-1" }], paymentTasks: [] }).journalHandBackDismissRefusal).toBe(disputedHandBackDismissRefusal("OPEN"));
+    expect(toOpenManualRefundTaskPayload(cash, null, { disputes: [{ stripeDisputeId: "dp_1", status: "WON", amountCents: 9000, paymentId: "payment-1" }], paymentTasks: [] }).journalHandBackDismissRefusal).toBe(disputedHandBackDismissRefusal("WON"));
+    expect(toOpenManualRefundTaskPayload(cash, null, { disputes: [{ stripeDisputeId: "dp_1", status: "LOST", amountCents: 9000, paymentId: "payment-1" }], paymentTasks: [] })).toMatchObject({ journalHandBackDismissRefusal: null, disputedHandBackLost: true });
+    // #4516 (owner decision, 15 Nov 2026, comment 6893252570): lost for part, the reduction the server's rule offers.
+    expect(toOpenManualRefundTaskPayload(cash, null, { disputes: [{ stripeDisputeId: "dp_1", status: "LOST", amountCents: 8999, paymentId: "payment-1" }], paymentTasks: [] }))
+      .toMatchObject({ journalHandBackDismissRefusal: DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, disputedHandBackLost: false, disputeReduction: { reducedByCents: 8999, stillOwedCents: 1 } });
+    expect(toOpenManualRefundTaskPayload({ ...cash, amountCents: 6000, raisedAmountCents: 9000 }, null, { disputes: [{ stripeDisputeId: "dp_1", status: "LOST", amountCents: 3000, paymentId: "payment-1" }, { stripeDisputeId: "dp_2", status: "LOST", amountCents: 1000, paymentId: "payment-1" }], paymentTasks: [] }))
+      .toMatchObject({ disputeReduction: { reducedByCents: 1000, stillOwedCents: 5000 } });
+    expect(toOpenManualRefundTaskPayload(cash, null).disputeReduction).toBeNull();
+    expect(toOpenManualRefundTaskPayload(cash, null)).toMatchObject({ disputedHandBackLost: false });
+    // A group settlement's dispute (no payment) on the organiser's booking is not this task's (review).
+    expect(toOpenManualRefundTaskPayload(cash, null, { disputes: [{ stripeDisputeId: "dp_s", status: "LOST", amountCents: 100_000, paymentId: null }], paymentTasks: [] }).journalHandBackDismissRefusal).toBe(JOURNAL_HAND_BACK_DISMISS_REFUSAL);
+    // Organiser shares stay private; the retired review evidence is no longer projected.
+    const withShares = toOpenManualRefundTaskPayload({ ...row, reviewContext: { groupOrganiserHandBack: { settlementId: "settle-1", shares: [] } } }, null);
+    expect(withShares).not.toHaveProperty("reviewContext");
+    expect(withShares).not.toHaveProperty("reviewEvidence");
+    expect(withShares).not.toHaveProperty("reviewEvidenceUnreadable");
   });
 });

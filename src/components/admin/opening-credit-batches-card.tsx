@@ -31,7 +31,7 @@ import { formatCents } from "@/lib/utils"
 type Batch = OpeningCreditBatchListItem
 
 /**
- * Opening credits (#4988, `INV-PAY-156`): import a moving-in club's credit
+ * Opening credits (#4988, `INV-PAY-162`): import a moving-in club's credit
  * balances from one CSV, previewed and totalled, posted on one confirmation,
  * and reversible as a whole batch while none of it is spent.
  */

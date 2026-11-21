@@ -110,6 +110,7 @@ function upsertLink(link: Row) {
 
 const CRASH = new Error("process died");
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => {
   const prisma = {
     payment: {

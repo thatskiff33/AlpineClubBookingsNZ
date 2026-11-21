@@ -8,6 +8,7 @@ import AdminWaitlistPage from "@/app/(admin)/admin/booking-desk/waitlist/page";
 import RefundRequestsPage from "@/app/(admin)/admin/finance/refund-requests/page";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 import { refundAppealCeilingParts } from "@/lib/manual-refund-task-settlement-rules";
+import { htmlErrorPage } from "@/lib/__tests__/support/failed-write-cases";
 
 const mocks = vi.hoisted(() => ({
   currentSearch: "",
@@ -435,6 +436,56 @@ describe("Admin waitlist page", () => {
     expect(confirm).toBeEnabled();
     await expectRecoveryAlertToHoldFocus(screen.getByRole("alert"));
     expect(screen.queryByText(/private JSON detail/i)).not.toBeInTheDocument();
+  });
+
+  // ALP-589: the refusal is read without a bare `res.json()`. A JSON refusal
+  // shows its own sentence; an HTML error page from the proxy is an unknown
+  // outcome for a capacity write, never a JSON parse error.
+  it.each([
+    [404, () => Response.json({ error: "That record no longer exists." }, { status: 404 }), /That record no longer exists\./],
+    [500, () => htmlErrorPage(500), /could not verify whether this booking was force-confirmed/i],
+    [502, () => htmlErrorPage(502), /could not verify whether this booking was force-confirmed/i],
+  ])("reads a %i force-confirm refusal without a parse error", async (_status, answer, shown) => {
+    mocks.currentSearch = "";
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/admin/waitlist") {
+        return Promise.resolve(
+          Response.json({ entries: [waitlistEntry()], page: 1, pageSize: 25, total: 1 }),
+        );
+      }
+      if (url === "/api/admin/bookings/booking-1/force-confirm") return Promise.resolve(answer());
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    render(<AdminWaitlistPage />);
+
+    await screen.findByText("Jane Doe");
+    fireEvent.click(screen.getByRole("button", { name: "Force Confirm" }));
+
+    expect(await screen.findByText(shown)).toBeInTheDocument();
+    expect(screen.queryByText(/JSON/)).not.toBeInTheDocument();
+  });
+
+  // ALP-589: the list load shows the route's sentence for a refusal it worded,
+  // and the screen's own sentence for a dropped connection or an HTML page,
+  // never the browser's "Failed to fetch".
+  it.each([
+    ["a worded refusal", () => Response.json({ error: "Waitlist is switched off." }, { status: 403 }), "Waitlist is switched off."],
+    ["a dropped connection", () => Promise.reject(new TypeError("Failed to fetch")), "Failed to load waitlist"],
+    ["an HTML 502", () => htmlErrorPage(502), "Failed to load waitlist"],
+  ])("shows the right sentence when the list load meets %s", async (_label, answer, shown) => {
+    mocks.currentSearch = "";
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      if (String(input) === "/api/admin/waitlist") return Promise.resolve().then(answer);
+      return Promise.reject(new Error(`Unexpected fetch: ${String(input)}`));
+    });
+
+    render(<AdminWaitlistPage />);
+
+    expect(await screen.findAllByText(shown)).not.toHaveLength(0);
+    expect(screen.queryByText("Failed to fetch")).not.toBeInTheDocument();
+    expect(screen.queryByText(/JSON|Unexpected token/)).not.toBeInTheDocument();
   });
 
   it("retains the overbook retry context when the final confirmation fails", async () => {

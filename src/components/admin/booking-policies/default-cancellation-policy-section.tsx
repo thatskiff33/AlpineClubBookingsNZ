@@ -23,20 +23,22 @@ import { PolicyPreview } from "./policy-preview"
 import { PolicyFeedback } from "./policy-feedback"
 import {
   isPolicyScopeReady,
+  POLICY_SCOPE_NOT_READY_REASON,
   PolicyScopeSelect,
   usePolicyScopeOptions,
 } from "./policy-scope-select"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
-import {
-  ForbiddenSaveError,
-  useSectionEditState,
-} from "@/hooks/use-section-edit-state"
+import { ForbiddenSaveError, useSectionEditState } from "@/hooks/use-section-edit-state"
+import { ApiRefusalError, apiRefusalFromResponse } from "@/lib/api-error-message"
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import type { PolicyRule } from "./types"
+
+const LOAD_FALLBACK = "Failed to fetch policy"
+const SAVE_FALLBACK = "Failed to save"
 
 type WaitlistCrossLodgeOrder = "OWN_LODGE_FIRST" | "MERGED"
 
@@ -215,7 +217,7 @@ export function DefaultCancellationPolicySection() {
       // every commit, so this closure always carries the CURRENT scope.
       const scope = scopeLodgeId
       const res = await fetch(endpointFor(scope), { signal })
-      if (!res.ok) throw new Error("Failed to fetch policy")
+      if (!res.ok) throw new Error(LOAD_FALLBACK)
       const data = await res.json()
       // A scope switch during the fetch makes this response the wrong
       // partition's. `reload` cannot abort the in-flight request the way the
@@ -228,7 +230,7 @@ export function DefaultCancellationPolicySection() {
     },
     save: async (draft, savedSnapshot) => {
       if (!policyScopeReady) {
-        throw new Error("Choose an available policy scope before saving")
+        throw new ApiRefusalError(POLICY_SCOPE_NOT_READY_REASON)
       }
       const lodgeId = scopeLodgeId
       // Captured at SUBMIT time — see `savedScopeNameRef`.
@@ -258,8 +260,7 @@ export function DefaultCancellationPolicySection() {
       })
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError()
-        const data = await res.json()
-        throw new Error(data.error || "Failed to save")
+        throw await apiRefusalFromResponse(res, SAVE_FALLBACK)
       }
       // The PUT echoes the stored partition back, so re-seed from THAT — the
       // route sorts and normalises the rules it persists.
@@ -272,6 +273,8 @@ export function DefaultCancellationPolicySection() {
       savedDraft.scope
         ? `Override saved for ${savedScopeNameRef.current ?? "lodge"}`
         : "Default policy saved",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
     // #2143: an Edit -> Save that changed nothing must not reach the PUT, which
     // logs `cancellation-policy.update` and revalidates the public pages
     // unconditionally — so a no-op save left an audit entry asserting a policy
@@ -349,7 +352,7 @@ export function DefaultCancellationPolicySection() {
       // Seed the editor from the club-wide rules so the override starts as
       // a copy the admin adjusts, not a blank slate.
       const res = await fetch(ENDPOINT)
-      if (!res.ok) throw new Error("Failed to fetch policy")
+      if (!res.ok) throw new Error(LOAD_FALLBACK)
       const clubWide = toDraft(await res.json(), null)
       if (scopeRef.current !== scopeAtClick) return
       section.setDraft({
@@ -395,7 +398,7 @@ export function DefaultCancellationPolicySection() {
           return
         }
         const data = await res.json()
-        throw new Error(data.error || "Failed to save")
+        throw new Error(data.error || SAVE_FALLBACK)
       }
       setCreatingOverride(false)
       await reload()

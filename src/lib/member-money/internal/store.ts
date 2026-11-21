@@ -496,7 +496,8 @@ export interface ExportManifestRow {
   frozenMapping: Prisma.InputJsonObject;
   lineTotalCents: number;
   providerInvoiceId: string;
-  coverage: ReadonlyArray<{ account: MemberMoneyAccount; chargeIdentity: string; coveredCents: number; taxCode: string | null }>;
+  /** `sliceKey`: the journal event whose slice of the component a row bills, or the Xero payment key whose cents of a capture it covers; absent for a whole component. */
+  coverage: ReadonlyArray<{ account: MemberMoneyAccount; chargeIdentity: string; coveredCents: number; taxCode: string | null; sliceKey?: string }>;
 }
 
 /**
@@ -519,7 +520,7 @@ export async function writeExportManifest(db: Db, row: ExportManifestRow): Promi
   if (row.coverage.length > 0) {
     await db.memberMoneyExportCoverage.createMany({ data: row.coverage.map((c) => ({
       id: randomUUID(), manifestId: id, documentRole: row.documentRole, account: c.account,
-      chargeIdentity: c.chargeIdentity, coveredCents: c.coveredCents, taxCode: c.taxCode,
+      chargeIdentity: c.chargeIdentity, sliceKey: c.sliceKey ?? "", coveredCents: c.coveredCents, taxCode: c.taxCode,
     })) });
   }
   return "WRITTEN";

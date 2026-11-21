@@ -67,9 +67,10 @@ payment not yet made (being retried, or stopped and listed on [Stuck States](stu
    while telling the member money is coming. The booking's cancellation
    already raised a **manual refund task** in the queue on **Admin → Finance →
    Payments** (`/admin/payments`) for what the cancellation policy returns;
-   complete the task there once the club has actually paid the member back (or
-   dismiss it, with a note, if the member declined or it was settled another
-   way). Settle any further refund with the treasurer.
+   complete the task there once the club has actually paid the member back. For
+   now it cannot be dismissed (#4516, owner decision 14 Nov 2026): if the
+   member declined or it was settled another way, leave it open. Settle any
+   further refund with the treasurer.
 
    **Internet banking bookings get a bank-transfer task (#3827).** When the
    booking was paid by internet banking (reconciled in Xero), there is no card
@@ -167,7 +168,7 @@ in one batch ([Moving in from your old system](moving-in.md#6-credit-post-the-op
 When a member later spends an opening credit on an Internet Banking booking,
 the app raises a Xero credit note for the amount spent. Its line is coded to
 the optional **Opening Credits** account in **Xero Setup → Account mapping**,
-never to goodwill (`INV-PAY-156`):
+never to goodwill (`INV-PAY-162`):
 
 - **Your club already carries the old credit in Xero** (a member credits held
   liability, or open credit notes or overpayments on members' contacts): set

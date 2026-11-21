@@ -145,7 +145,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   PrivacyHostingSettings: "personal",
   ClubTimeSettings: "personal",
   ClubFormatSettings: "personal",
-  ClubTaxSettings: "non-personal",
+  ClubTaxSettings: "personal", // #4632: each period records the Full Admin who scheduled it (updatedByMemberId).
   LoginSecuritySetting: "personal",
   AnalyticsSettings: "personal",
   EmailTemplateOverride: "personal",
@@ -219,6 +219,12 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MaintenanceReport: "personal",
   MaintenanceReportAnswer: "personal",
   LodgeMaintenanceReportToken: "personal",
+  // Fork #121: an order names its member and the officers who closed and priced
+  // it; its items are that member's order; the settings hold the officer's
+  // address and who last saved them.
+  FoodOrderSettings: "personal",
+  FoodOrder: "personal",
+  FoodOrderItem: "personal",
   EnvironmentSafetySettings: "personal",
   XeroSandboxContactContainment: "personal",
   Organisation: "personal",

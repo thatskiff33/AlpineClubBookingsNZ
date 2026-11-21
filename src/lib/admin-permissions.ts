@@ -169,6 +169,9 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/api/admin/alpine-server",
       "/api/admin/integrations",
       "/api/admin/xero",
+      // The club's GST / tax treatment (#4632): the card on the Xero page.
+      // finance:view reads; changing it is Full Admin, enforced in the route.
+      "/api/admin/club-tax",
       "/api/admin/payments",
       "/api/admin/internet-banking-settings",
       "/api/admin/refund-requests",
@@ -261,6 +264,8 @@ const ROUTE_AREA_PREFIXES: Array<{
       // audience is `{ area: "lodge", level: "edit" }` — see
       // ADMIN_NOTIFICATION_PREFERENCE_REQUIREMENT.
       "/api/admin/maintenance-reports",
+      // Food orders settings (fork #121), Lodge Operations like maintenance.
+      "/api/admin/food-orders",
     ],
   },
   {
@@ -418,15 +423,6 @@ const SPECIAL_ROUTE_AREA_PATTERNS: Array<{
   {
     area: "finance",
     pattern: /^\/api\/admin\/bookings\/[^/]+\/mark-paid$/,
-  },
-  // #3214 (epic #2797): the same shape as the row above. Recording what a
-  // booking guest's nights sold for writes money evidence - it is fenced so it
-  // cannot change what anybody owes, but what it records is what a refund will
-  // one day be computed from - so it is gated finance:edit despite the
-  // bookings-shaped path, and the handler declares the same requirement.
-  {
-    area: "finance",
-    pattern: /^\/api\/admin\/bookings\/[^/]+\/stored-night-prices$/,
   },
 ];
 

@@ -19,7 +19,7 @@ const confirmSchema = z.object({
 /**
  * POST /api/admin/opening-credits/confirm
  * Post a previewed opening-credit CSV as one audited batch (#4988,
- * `INV-PAY-156`). The same file posts once.
+ * `INV-PAY-162`). The same file posts once.
  */
 export async function POST(request: NextRequest) {
   const guard = await requireAdmin({ permission: { area: "finance", level: "edit" } });

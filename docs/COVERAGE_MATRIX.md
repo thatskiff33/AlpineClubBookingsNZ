@@ -18,7 +18,7 @@ The area list is each registered admin page's top-level URL directory, taken
 from the [hub registry](../src/lib/admin-hubs/index.ts), whose own census ties
 every entry to its page on disk, so it is exhaustive and will not silently miss a
 surface. A hub's directory under `src/app/(admin)/admin/` (such as `website/`,
-`finance/`, `rules/`, `system/`, `messages/`, `booking-desk/` or `membership/`) is not an area: it holds areas. An area keeps
+`finance/`, `rules/`, `system/`, `messages/`, `booking-desk/`, `membership/` or `lodge-ops/`) is not an area: it holds areas. An area keeps
 its row, and its URL, when its pages move under a hub (epic #4468): the Website
 hub's areas live in `website/` (C4 #4801), the Finance hub's areas
 (`internet-banking`, `payments`, `refund-requests`, `reports`,
@@ -37,7 +37,8 @@ Bookings hub's areas (`bed-allocation`, `book`, `booking-approvals`,
 `deletion-requests`, `family-groups`, `induction`, `member-applications`,
 `member-fields`, `members`, `membership-cancellations`, `membership-setup`,
 `membership-types`, `subscription-categories`, `subscription-lockout`) in
-`membership/` (C9 #4806). Member
+`membership/` (C9 #4806), and the Lodge hub's `display` and `lodges` areas in
+`lodge-ops/` (C11 part 1 #4808; its other areas move in part 2). Member
 detail, member merge, induction print and induction settings are not areas; they
 live under `members/` and `induction/`. The
 count that used to stand here said 70 and was measured once; it had already
@@ -110,6 +111,7 @@ For what an officer sees and does on each screen, use the
 | `family-groups` | membership | `ARCHITECTURE.md` (family groups / billing, hidden family suggestions) | [guide](guides/family-groups.md); Suggestions tab: [guide](guides/family-suggestions.md) | 2 |
 | `fee-configuration` | finance | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) (redirect → Fees) | 2 |
 | `fees` | bookings (route map); page opens on **bookings or finance** (`canAccessConsolidatedFeesPage`) | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) | 2 |
+| `food-orders` | lodge | `multi-lodge/lodge-scoping-contract.md` (FoodOrder scoping), `SECURITY-ATTACK-SURFACE.md` (member routes `/food-order`, `/food-orders` and their API) | [guide](guides/food-orders.md) | — (foodOrders module, off by default; outside #2050) |
 | `google` | finance | [`guides/security.md`](guides/security.md) (Google sign-in credentials, verified in-app before the module can be enabled), [`guides/integrations.md`](guides/integrations.md) | [guide](guides/integrations.md) (`google/setup` wizard) | — (epic #2030; postdates #2050) |
 | `health` | support | — | [guide](guides/health.md) (Integration readiness section, S1 #4796) | 4 |
 | `hut-leaders` | lodge | `ARCHITECTURE.md` (hut-leader auto-assign cron), `invariants/booking-dates-and-capacity.md` (`INV-DATE-031`: night cover, school-night kinds #3819) | [guide](guides/hut-leaders.md) | 3 |
@@ -138,7 +140,7 @@ For what an officer sees and does on each screen, use the
 | `payments` | finance | `ARCHITECTURE.md` (Stripe), `finance-dashboard/README.md` | [guide](guides/payments.md) | 1 |
 | `privacy-retention` | support (settings); membership:view additionally for application/member previews; bookings:edit additionally for the after-stay dietary period and switch | [retention schedule](PRIVACY_RETENTION.md) | [retention schedule and controls](PRIVACY_RETENTION.md) | — (#4457, #4916) |
 | `promo-codes` | bookings | `ARCHITECTURE.md` (promo codes / redemptions) | [guide](guides/promo-codes.md) | 1 |
-| `refund-requests` | finance | `CANCELLATIONS.md`, `ARCHITECTURE.md` (refund recovery), `INV-PAY-156` (opening credits) | [guide](guides/refund-requests.md) | 2 |
+| `refund-requests` | finance | `CANCELLATIONS.md`, `ARCHITECTURE.md` (refund recovery), `INV-PAY-162` (opening credits) | [guide](guides/refund-requests.md) | 2 |
 | `reports` | finance | `finance-dashboard/README.md` | [guide](guides/reports.md) | 1 |
 | `rooms-beds` | lodge | `CAPACITY_MODEL.md`, `ARCHITECTURE.md` (bed inventory) | [guide](guides/rooms-beds.md) | 3 |
 | `roster` | lodge | `ARCHITECTURE.md` (roster/chores) | [guide](guides/roster.md) | 3 |
@@ -161,7 +163,7 @@ For what an officer sees and does on each screen, use the
 
 ## Summary
 
-- **84** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`, `membership`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
+- **85** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`, `membership`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
 - **2** areas are already served by a **feature hub** (`display` → lobby-display,
   `lodges` → multi-lodge). #2050 should extend, not duplicate, those hubs.
 - **13** areas have **no reference coverage** beyond their operator guide

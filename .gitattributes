@@ -168,6 +168,19 @@ src/lib/__tests__/support/email-render-pins.txt text eol=lf
 # silently — eyeball the CHANGELOG on release PRs.
 CHANGELOG.md merge=union
 
+# The audit write-site ledger (#5211) is generated (`pnpm run audit:census
+# --write`), one line per site, sorted by id, and every lane that adds an audit
+# writer regenerates it. Two lanes whose new sites sort next to each other
+# conflicted for no reason; union keeps both lines, which is the right merge.
+# It is safe because every wrong merge union can make here is LOUD, measured on
+# trial merges for PR #5224: a repeated id (two lanes touching the same `#n`
+# line) fails the census by name, because it reads this file's text for repeated
+# keys, and is also a TS1117 duplicate-key compile error; a line union
+# resurrects after one side deleted its site fails the census by name
+# ("REMOVED from ..."). The fix in every case is to regenerate the file on the
+# merged tree; never hand-merge it.
+scripts/audit/audit-write-sites.ts merge=union
+
 # Binary assets, declared rather than left to Git's content sniffing. `binary`
 # is Git's standard macro for `-diff -merge -text`, and all three are already
 # how Git treats these files by auto-detection, so this changes nothing about

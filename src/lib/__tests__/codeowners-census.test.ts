@@ -135,7 +135,13 @@ const ALLOWED_PREFIXES = [
 // #4759 raised it to 42: #4464's `status-board.yml` is the same kind of owned
 // workflow, and merged beside #4459 without its count.
 // #4940 raised it to 43: the advisory `load-smoke.yml` workflow, same kind.
-const MAX_OWNED_OUTSIDE_SRC_LIB = 43;
+// #5252 raised it to 46: the picomatch mitigation record and its two patches,
+// which the existing `/dependency-mitigations.d/` and `/patches/` patterns own.
+// #5293 retired that record and lowered it to the measured 40: minus those
+// three files, and minus three more that #4998 stopped owning when it named the
+// manual-refund-task routes instead of globbing them, which had left the
+// ceiling three above the count.
+const MAX_OWNED_OUTSIDE_SRC_LIB = 40;
 
 /**
  * THE REVERSE CHECK: modules known to move money, which must stay owned. A

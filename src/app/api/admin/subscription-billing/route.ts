@@ -19,6 +19,11 @@ import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { enqueueMembershipSubscriptionChargeOperation } from "@/lib/xero-subscription-invoices";
 import {
+  assertSubscriptionInvoicingEnabled,
+  isXeroInvoicingEnabled,
+} from "@/lib/xero-invoicing-guard";
+import { XERO_SWITCHED_OFF_DURING_CONFIRM_MESSAGE, XeroInvoicingOffError } from "@/lib/xero-invoicing-off";
+import {
   closeAlreadyPaidSubscriptionCharge,
   CloseAlreadyPaidChargeError,
 } from "@/lib/membership-subscription-charge-close";
@@ -76,6 +81,9 @@ const mutationSchema = z.discriminatedUnion("action", [
   }).strict(),
 ]);
 
+// Charges whose invoice the Xero outbox still has to raise or email.
+const CHARGE_STATUSES_AWAITING_XERO = ["QUEUED", "PROCESSING", "INVOICE_CREATED"] as const;
+
 function invalidate() {
   revalidateAdminPage("subscriptions");
   revalidateAdminPage("stuck-states");
@@ -88,8 +96,9 @@ function invalidate() {
 // Pure reads only — any exception reconciliation is done by the caller BEFORE
 // this loads, so the GET stays a non-mutating view (#2148 constraint 3).
 async function loadBillingData(seasonYear: number, decisionDate: Date) {
+  const xeroInvoicingEnabled = await isXeroInvoicingEnabled();
   const [preview, charges, exceptions, settings] = await Promise.all([
-    buildSubscriptionBillingPreview({ seasonYear, decisionDate }),
+    buildSubscriptionBillingPreview({ seasonYear, decisionDate, xeroInvoicingOff: !xeroInvoicingEnabled }),
     prisma.membershipSubscriptionCharge.findMany({
       where: { seasonYear },
       orderBy: { createdAt: "desc" },
@@ -109,10 +118,20 @@ async function loadBillingData(seasonYear: number, decisionDate: Date) {
   const visiblePersistentExceptions = exceptions.filter(
     (item) => !previewFingerprints.has(item.fingerprint)
   );
+  // #4986: with Xero off nothing can be invoiced, so the panel explains that
+  // instead of confirming, and counts the season's charges whose invoice is
+  // still waiting to be raised or sent: they go out when Xero is switched back
+  // on, so the officer sees them first. Only counted while off.
+  const awaitingXeroCount = xeroInvoicingEnabled
+    ? 0
+    : await prisma.membershipSubscriptionCharge.count({
+        where: { seasonYear, status: { in: [...CHARGE_STATUSES_AWAITING_XERO] } },
+      });
   return {
     preview,
     charges,
     exceptions: visiblePersistentExceptions,
+    xeroInvoicing: { enabled: xeroInvoicingEnabled, awaitingXeroCount },
     settings: {
       invoiceDueDays: settings?.invoiceDueDays ?? 30,
       familyBillingMode: settings?.familyBillingMode ?? DEFAULT_FAMILY_BILLING_MODE,
@@ -194,6 +213,7 @@ export async function POST(request: Request) {
       });
     }
     if (parsed.data.action === "RETRY_CHARGE") {
+      await assertSubscriptionInvoicingEnabled();
       const result = await enqueueMembershipSubscriptionChargeOperation(parsed.data.chargeId, { createdByMemberId: guard.session.user.id });
       await createAuditLog({
         action: "membership-subscription-billing.retry",
@@ -320,6 +340,10 @@ export async function POST(request: Request) {
         ...data,
       });
     }
+    // CONFIRM_ANNUAL_BATCH. #4986: refused while Xero is off BEFORE the confirm
+    // writes, because its charges are immutable and the enqueue below would be
+    // too late to stop them (`INV-INT-040`).
+    await assertSubscriptionInvoicingEnabled();
     if (!isDateOnlyString(parsed.data.decisionDate)) {
       return NextResponse.json({ error: "Decision date must be YYYY-MM-DD." }, { status: 400 });
     }
@@ -336,18 +360,38 @@ export async function POST(request: Request) {
       source: "ANNUAL_BATCH",
       confirmedByMemberId: guard.session.user.id,
     });
-    const queued = await Promise.all(result.chargeIds.map((chargeId) =>
-      enqueueMembershipSubscriptionChargeOperation(chargeId, { createdByMemberId: guard.session.user.id })));
+    const createdMessage = `${result.chargeIds.length} immutable charge${result.chargeIds.length === 1 ? "" : "s"} created; ${result.exceptionCount} exception${result.exceptionCount === 1 ? "" : "s"} recorded.`;
+    let queued: Awaited<ReturnType<typeof enqueueMembershipSubscriptionChargeOperation>>[];
+    try {
+      queued = await Promise.all(result.chargeIds.map((chargeId) =>
+        enqueueMembershipSubscriptionChargeOperation(chargeId, { createdByMemberId: guard.session.user.id })));
+    } catch (error) {
+      if (!(error instanceof XeroInvoicingOffError)) throw error;
+      // #4986 review: Xero was switched off after the check above but before the
+      // enqueue. The charges and their outbox rows are already committed, so
+      // say so truthfully rather than answer "refused" (`INV-INT-040`).
+      invalidate();
+      return NextResponse.json({
+        success: true,
+        message: `${createdMessage} ${XERO_SWITCHED_OFF_DURING_CONFIRM_MESSAGE}`,
+        ...result,
+        queued: [],
+        xeroSwitchedOffDuringConfirm: true,
+      });
+    }
     invalidate();
     return NextResponse.json({
       success: true,
-      message: `${result.chargeIds.length} immutable charge${result.chargeIds.length === 1 ? "" : "s"} created; ${result.exceptionCount} exception${result.exceptionCount === 1 ? "" : "s"} recorded.`,
+      message: createdMessage,
       ...result,
       queued,
     });
   } catch (error) {
     if (error instanceof SubscriptionBillingError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    if (error instanceof XeroInvoicingOffError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
     }
     if (error instanceof CloseAlreadyPaidChargeError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
