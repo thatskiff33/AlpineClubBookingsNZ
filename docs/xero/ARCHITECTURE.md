@@ -1069,7 +1069,8 @@ note.
    otherwise the queued request the dispatch claimed is laid back over the
    stored record in the same compare-and-set on the stored request - what the
    handler recorded stays (the booking invoice's figures at link, which say
-   which card captures its payment already holds), but no stored key that
+   which card captures its payment already holds), the latest attempt's over
+   an earlier give-back's after a second refusal, but no stored key that
    changes how the queued request reads; with neither, it writes nothing.
    The writers, each with the suite that proves it
    (`xero-pending-writer-census.test.ts` names every file):

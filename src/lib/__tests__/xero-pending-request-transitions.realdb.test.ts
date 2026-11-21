@@ -116,6 +116,21 @@ let sequence = 0;
         expect(payloads.readQueuedOutboxPayload(note.requestPayload)).toEqual(payloads.readQueuedOutboxPayload(QUEUED_NOTE));
       });
 
+      it("MUTATION: a second refusal keeps the second attempt's figures, never the first give-back's", async () => {
+        const row = await seed({ queueType: "REFUND_CREDIT_NOTE", status: "FAILED", requestPayload: EXECUTION_REQUEST });
+        await pending.returnOutboxRowToPending({ operationId: row.id, where: GUARD, data: CLEARED, request: { keep: true, fallback: QUEUED_NOTE } });
+        // The next pass claims the layered request; the handler saves a fresh execution request with new figures, and is refused again.
+        const firstGiveBack = (await claimable(row.id)).requestPayload as Prisma.InputJsonObject;
+        expect(firstGiveBack).toMatchObject({ creditNotes: [{ total: 50 }], allocation: { amount: 50 } });
+        const secondAttempt = { creditNotes: [{ total: 30 }], allocation: { invoiceId: "inv-y", amount: 30 } };
+        await prisma.xeroSyncOperation.update({ where: { id: row.id }, data: { status: "FAILED", requestPayload: secondAttempt } });
+        await expect(pending.returnOutboxRowToPending({ operationId: row.id, where: GUARD, data: CLEARED, request: { keep: true, fallback: firstGiveBack } }))
+          .resolves.toEqual({ outcome: "pending", requestWritten: true });
+        const second = await claimable(row.id);
+        expect(second.requestPayload).toMatchObject({ ...QUEUED_NOTE, ...secondAttempt });
+        expect(payloads.readQueuedOutboxPayload(second.requestPayload)).toEqual(payloads.readQueuedOutboxPayload(QUEUED_NOTE));
+      });
+
       it("keeps a handler's checkpoint that is still a queued request, whatever its key order", async () => {
         const checkpoint = { watermarkCents: 5_000, documentDate: "2026-06-30", refundAmountCents: 5_000, queueType: "REFUND_CREDIT_NOTE" };
         const row = await seed({ queueType: "REFUND_CREDIT_NOTE", status: "FAILED", requestPayload: checkpoint });
@@ -158,6 +173,25 @@ let sequence = 0;
         await expect(pending.returnOutboxRowToPending({ operationId: row.id, where: GUARD, data: CLEARED, request: { keep: true, fallback: QUEUED_NOTE } }))
           .resolves.toEqual({ outcome: "lost" });
         expect(await read(row.id)).toMatchObject({ status: "RUNNING", requestPayload: EXECUTION_REQUEST });
+      });
+
+      it("MUTATION: loses, writing nothing, when another writer changes the stored request between its read and its write", async () => {
+        const row = await seed({ queueType: "REFUND_CREDIT_NOTE", status: "FAILED", requestPayload: EXECUTION_REQUEST });
+        const concurrent = { ...EXECUTION_REQUEST, creditNotes: [{ total: 70 }] };
+        // The status guard still matches; only the request half of the compare-and-set can refuse the write.
+        const store = {
+          xeroSyncOperation: {
+            findUnique: async (args: Prisma.XeroSyncOperationFindUniqueArgs) => {
+              const read = await prisma.xeroSyncOperation.findUnique(args);
+              await prisma.xeroSyncOperation.update({ where: { id: row.id }, data: { requestPayload: concurrent } });
+              return read;
+            },
+            updateMany: (args: Prisma.XeroSyncOperationUpdateManyArgs) => prisma.xeroSyncOperation.updateMany(args),
+          },
+        } as unknown as Prisma.TransactionClient;
+        await expect(pending.returnOutboxRowToPending({ operationId: row.id, where: GUARD, data: CLEARED, request: { keep: true, fallback: QUEUED_NOTE }, store }))
+          .resolves.toEqual({ outcome: "lost" });
+        expect(await read(row.id)).toMatchObject({ status: "FAILED", requestPayload: concurrent, completedAt: expect.any(Date) });
       });
     });
 

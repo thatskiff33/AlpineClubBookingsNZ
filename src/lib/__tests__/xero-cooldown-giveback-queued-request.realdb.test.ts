@@ -8,8 +8,12 @@
  * `queueType`) stayed on the row, the outbox built the fallback claim (an
  * invoice for a member) from it, could not claim the row, and skipped it for
  * ever: the refund note, booking invoice or group invoice never reached Xero,
- * and nothing failed or alerted. The refund-note and booking-invoice cases
- * failed on `main` before the fix (commit "Reproduce #5228").
+ * and nothing failed or alerted. All five cases fail against `main`'s code
+ * (450b74582), each at the same check: the row is PENDING holding the
+ * handler's execution request, no queue type. The refund-note and
+ * booking-invoice cases were committed red first ("Reproduce #5228",
+ * 560a74f389); the other three were added with the fix and run red against
+ * `main`'s code in a throwaway checkout during review.
  *
  * What is driven through the app's own writers, and what is seeded:
  * - SEEDED: the booking and group histories (`booking-ledger-history`,

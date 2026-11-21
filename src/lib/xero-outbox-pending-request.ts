@@ -62,11 +62,14 @@ export function sameStoredRequest(stored: Prisma.JsonValue | null): Prisma.JsonN
  * record what it did on the same request before a later call is refused - the
  * booking invoice's figures at link (`persistPrimaryInvoiceLink`), which say
  * which card captures its payment already holds. Those stay. A stored key is
- * kept only where the queued request lacks it and it leaves the queued
- * reading (`readQueuedOutboxPayload`) unchanged, so the next run is driven by
- * exactly the request the dispatch claimed - never by an execution-time
- * `refundMethod` or watermark; if the whole still reads differently, the
- * queued request is written alone. The handler's "create reached" markers
+ * kept, over the claimed request's own value too, whenever it leaves the
+ * queued reading (`readQueuedOutboxPayload`) unchanged, so the next run is
+ * driven by exactly the request the dispatch claimed - never by an
+ * execution-time `refundMethod` or watermark; if the whole still reads
+ * differently, the queued request is written alone. Over the claimed value
+ * because the claimed request can itself be an earlier give-back's layering:
+ * on a second refusal the newer attempt's `creditNotes`, `allocation`,
+ * `invoices` or figures at link win, never the first attempt's. The handler's "create reached" markers
  * (`creditNotes`, `invoices`) stay too: a pre-HTTP refusal may have hit a call
  * after a create that landed, and the give-back cannot tell which, so their
  * readers keep answering "may be in Xero" rather than risk a second document.
@@ -79,7 +82,7 @@ function layeredOverStored(stored: Prisma.JsonValue | null, queued: Prisma.JsonV
   const readsAsQueued = (candidate: Record<string, unknown>) => JSON.stringify(readQueuedOutboxPayload(candidate)) === reading;
   const layered: Record<string, unknown> = { ...queuedRecord };
   for (const [key, value] of Object.entries(storedRecord)) {
-    if (!(key in queuedRecord) && readsAsQueued({ ...queuedRecord, [key]: value })) layered[key] = value;
+    if (readsAsQueued({ ...layered, [key]: value })) layered[key] = value;
   }
   return readsAsQueued(layered) ? (layered as Prisma.JsonObject) : queued;
 }
