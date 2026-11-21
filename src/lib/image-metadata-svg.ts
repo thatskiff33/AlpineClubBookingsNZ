@@ -126,8 +126,17 @@ function assertNoOutsideReach(value: string): void {
 
 /** CSS with comments removed, or a throw when it reaches outside the drawing. */
 function cleanCss(css: string): string {
-  const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
-  if (withoutComments.includes("/*")) throw new UnconfirmedSvg("unterminated CSS comment");
+  // A linear scan, not a lazy regex: an unterminated run of `/*` would make
+  // the regex retry from every opener.
+  let withoutComments = "";
+  let from = 0;
+  for (let open = css.indexOf("/*"); open !== -1; open = css.indexOf("/*", from)) {
+    const close = css.indexOf("*/", open + 2);
+    if (close === -1) throw new UnconfirmedSvg("unterminated CSS comment");
+    withoutComments += css.slice(from, open);
+    from = close + 2;
+  }
+  withoutComments += css.slice(from);
   assertNoOutsideReach(withoutComments);
   return withoutComments;
 }

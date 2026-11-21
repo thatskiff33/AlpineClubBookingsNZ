@@ -786,6 +786,29 @@ describe("stripImageMetadata", () => {
       JPEG_SOS_EOI,
     ]);
     expect(stripImageMetadata(reserved, "image/jpeg").ok).toBe(false);
+    const lowReserved = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      jpegAppSegment(0x02, Buffer.from(SECRET)),
+      JPEG_SOF0,
+      JPEG_SOS_EOI,
+    ]);
+    expect(stripImageMetadata(lowReserved, "image/jpeg").ok).toBe(false);
+  });
+
+  it("keeps only the defined bytes of an Adobe segment", () => {
+    const adobe = Buffer.from("Adobe\x00\x64\x00\x00\x00\x00\x01", "latin1");
+    const jpeg = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      jpegAppSegment(0xee, Buffer.concat([adobe, Buffer.from(SECRET)])),
+      JPEG_SOF0,
+      JPEG_SOS_EOI,
+    ]);
+
+    const result = stripImageMetadata(jpeg, "image/jpeg");
+
+    expect(result.ok).toBe(true);
+    expect(result.bytes.includes(Buffer.from(SECRET))).toBe(false);
+    expect(result.bytes.includes(adobe)).toBe(true);
   });
 
   it("covers every allowed content type and refuses garbage for each", () => {

@@ -75,7 +75,7 @@ export function stripJpegMetadata(bytes: Buffer): Buffer | null {
 
     // Markers with no length, or reserved for extensions this does not walk,
     // cannot be stepped over safely outside a scan: refuse rather than guess.
-    if (marker <= 0x01 || (marker >= 0xd0 && marker <= 0xd8) || (marker >= 0xf0 && marker <= 0xfd)) {
+    if (marker < 0xc0 || (marker >= 0xd0 && marker <= 0xd8) || (marker >= 0xf0 && marker <= 0xfd)) {
       return null;
     }
 
@@ -87,15 +87,15 @@ export function stripJpegMetadata(bytes: Buffer): Buffer | null {
     // Allow-list, not deny-list: metadata lives across many APPn markers (APP1
     // EXIF/XMP, APP13 IPTC/Photoshop, APP12 Ducky, vendor APP3-APP11), any of
     // which can carry creator contact info, location or GPS. Preserve ONLY the
-    // colour/rendering segments — APP0 (JFIF, rebuilt), APP14 (Adobe), an APP2 that
-    // is an ICC profile (identified by its "ICC_PROFILE\0" tag, so the MPF index
+    // colour/rendering segments — APP0 (JFIF) and APP14 (Adobe), both rebuilt
+    // from their defined bytes, and an APP2 that is an ICC profile (identified by its "ICC_PROFILE\0" tag, so the MPF index
     // APP2 that points at appended images is NOT kept) — and drop every other
     // APPn and every COM comment. Structural markers (DQT, DHT, SOFn, DRI, …)
     // are not APPn/COM and are always kept.
     const isAppSegment = marker >= 0xe0 && marker <= 0xef;
     const tag = (text: string) => bytes.toString("latin1", offset + 4, offset + 4 + text.length) === text;
     const isJfif = marker === 0xe0 && segLen >= 16 && tag("JFIF\0");
-    const isAdobe = marker === 0xee && tag("Adobe");
+    const isAdobe = marker === 0xee && segLen >= 14 && tag("Adobe");
     const isIccApp2 = marker === 0xe2 && tag("ICC_PROFILE\0");
     const drop =
       (isAppSegment && !isJfif && !isAdobe && !isIccApp2) || marker === 0xfe; // COM
@@ -106,6 +106,12 @@ export function stripJpegMetadata(bytes: Buffer): Buffer | null {
         Buffer.from([0xff, 0xe0, 0x00, 0x10]),
         bytes.subarray(offset + 4, offset + 16),
         Buffer.from([0x00, 0x00]),
+      ]));
+    } else if (isAdobe) {
+      // Adobe's 12 defined bytes (tag, version, flags, colour transform) only.
+      kept.push(Buffer.concat([
+        Buffer.from([0xff, 0xee, 0x00, 0x0e]),
+        bytes.subarray(offset + 4, offset + 16),
       ]));
     } else if (!drop) {
       kept.push(bytes.subarray(offset, segEnd));

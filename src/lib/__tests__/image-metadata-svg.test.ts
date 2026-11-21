@@ -130,6 +130,13 @@ describe("SVG hidden-data removal", () => {
     expect(realElapsedMs(start)).toBeLessThan(1_000);
   });
 
+  it("refuses a long run of unclosed CSS comments in linear time", () => {
+    const svg = svgWith(`<g style="${"/*a".repeat(200_000)}"/>`);
+    const start = process.hrtime.bigint();
+    expect(stripImageMetadata(Buffer.from(svg), "image/svg+xml").ok).toBe(false);
+    expect(realElapsedMs(start)).toBeLessThan(1_000);
+  });
+
   it("escapes markup smuggled into a style element instead of emitting it", () => {
     const cleaned = strip(svgWith(
       "<style><![CDATA[.a{fill:red}</style><script>alert(1)</script>]]></style><rect class=\"a\"/>",

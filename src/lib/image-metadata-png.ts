@@ -18,7 +18,7 @@ import { orientationOnlyExif, readExifOrientation } from "@/lib/image-metadata-e
 const PNG_DRAWING_CHUNKS = new Set([
   "IHDR", "PLTE", "IDAT", "IEND",
   "tRNS", "gAMA", "cHRM", "sRGB", "iCCP", "sBIT", "bKGD", "pHYs",
-  "cICP", "mDCv", "cLLi",
+  "cICP", "mDCV", "cLLI", "mDCv", "cLLi", // HDR (final and draft names)
   "acTL", "fcTL", "fdAT",
 ]);
 

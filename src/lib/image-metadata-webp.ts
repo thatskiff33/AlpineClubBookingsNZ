@@ -17,6 +17,8 @@ const WEBP_DRAWING_CHUNKS = new Set(["VP8 ", "VP8L", "VP8X", "ALPH", "ANIM", "IC
 /** What an animation frame (`ANMF`) may hold after its 16-byte header. */
 const WEBP_FRAME_CHUNKS = new Set(["ALPH", "VP8 ", "VP8L"]);
 const ANMF_HEADER_BYTES = 16;
+/** Chunks with a fixed size: anything past it is cut off. */
+const FIXED_CHUNK_BYTES: Record<string, number> = { VP8X: 10, ANIM: 6 };
 
 type Chunk = { fourCC: string; start: number; data: number; size: number; end: number };
 
@@ -62,7 +64,12 @@ function cleanFrame(bytes: Buffer, frame: Chunk): Buffer | null {
   const inner = riffChunks(bytes, body, dataEnd);
   if (!inner) return null;
   const kept = inner.filter((chunk) => WEBP_FRAME_CHUNKS.has(chunk.fourCC));
-  if (kept.length === inner.length) return bytes.subarray(frame.start, frame.end);
+  // Copied whole only when its chunks are all kept and cover it exactly: up to
+  // seven stray bytes after the last chunk are not a chunk the walk can see.
+  const coversFrame = (inner.at(-1)?.end ?? body) === dataEnd;
+  if (kept.length === inner.length && coversFrame && frame.size % 2 === 0) {
+    return bytes.subarray(frame.start, frame.end);
+  }
   return riffChunk("ANMF", Buffer.concat([
     bytes.subarray(frame.data, body),
     ...kept.map((chunk) => bytes.subarray(chunk.start, chunk.end)),
@@ -108,8 +115,12 @@ export function stripWebpMetadata(bytes: Buffer): Buffer | null {
       if (!frame) return null;
       kept.push(frame);
     } else if (WEBP_DRAWING_CHUNKS.has(chunk.fourCC)) {
-      if (chunk.fourCC === "VP8X" && chunk.end - chunk.start > 8) vp8xIndex = kept.length;
-      kept.push(bytes.subarray(chunk.start, chunk.end));
+      const fixed = FIXED_CHUNK_BYTES[chunk.fourCC];
+      if (fixed !== undefined && chunk.size < fixed) return null;
+      if (chunk.fourCC === "VP8X") vp8xIndex = kept.length;
+      kept.push(fixed !== undefined && chunk.size > fixed
+        ? riffChunk(chunk.fourCC, bytes.subarray(chunk.data, chunk.data + fixed))
+        : bytes.subarray(chunk.start, chunk.end));
     }
   }
   if (vp8xIndex !== null) {

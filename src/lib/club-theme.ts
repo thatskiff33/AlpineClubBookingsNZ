@@ -141,8 +141,15 @@ export async function saveClubTheme(input: ClubThemeUpdateInput) {
       await tx.$executeRaw`SELECT 1 FROM "ClubTheme" WHERE "id" = ${CLUB_THEME_ID} FOR UPDATE`;
       const locked = await tx.clubTheme.findUnique({
         where: { id: CLUB_THEME_ID },
-        select: { logoUrl: true },
+        select: { logoUrl: true, logoDataUrl: true },
       });
+      if (logoUnchanged && locked?.logoDataUrl !== logoFields.logoDataUrl) {
+        // Another save replaced the logo after it was read, so the value this
+        // save sends back is no longer what is stored: clean it like a new one.
+        const recleaned = storableLogoDataUrl(logoFields.logoDataUrl);
+        if (!recleaned.ok) throw new UncleanLogoError(recleaned.message);
+        data.logoDataUrl = recleaned.value;
+      }
       const previousLogoImageId = logoImageIdFromUrl(locked?.logoUrl ?? null);
       const nextLogoImageId = logoImageIdFromUrl(logoFields.logoUrl);
 
