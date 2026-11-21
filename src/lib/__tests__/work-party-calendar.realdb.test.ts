@@ -39,6 +39,7 @@
  * fixtures.
  */
 import type { PrismaClient } from "@prisma/client";
+import type { CalendarViewer } from "@/lib/calendar-events";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
@@ -113,7 +114,7 @@ const MEMBER = { accessRoles: ["USER"], role: "USER", canLogin: true };
 
 async function visibleIds(
   modules: { workParties: boolean },
-  viewer: import("@/lib/calendar-events").CalendarViewer = MEMBER,
+  viewer: CalendarViewer = MEMBER,
 ) {
   const rows = await prisma.calendarEvent.findMany({
     where: calendarEvents.whereVisibleCalendarEvent(
@@ -374,7 +375,7 @@ async function clean(): Promise<void> {
     it("3c. the dashboard Events card shows a multi-night work party once, on its first night, beside an ordinary event", async () => {
       const event = await createWorkParty("Race 5148 dashboard");
       await workPartyCalendar.addWorkPartyToCalendar(event.id, ACTOR_ID);
-      const read = (viewer: import("@/lib/calendar-events").CalendarViewer) =>
+      const read = (viewer: CalendarViewer) =>
         dashboardEvents.listDashboardCalendarEvents({
           from: day("2026-07-01"),
           to: day("2026-07-15"),
