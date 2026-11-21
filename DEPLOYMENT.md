@@ -2272,9 +2272,13 @@ alert, "Lost card payment dispute now won". If you recorded the loss in Xero:
    referencing the booking and the Stripe dispute id, and a second for the fee
    if Stripe returned it.
 3. Reconcile both against that payout.
-4. A treasurer task the app raised while the dispute held stays open. If you
-   already dismissed it, the member's refund or credit is now owed again: pay
-   it as the task would have.
+4. A treasurer task the app raised while the dispute held stays open. One
+   dismissed for the loss is put back on the queue by the app, its refund
+   owed to the member again, and the alert names it (#5197); pay it as usual.
+   The alert also names any task it could not reopen (reopen it under
+   Finance → Payments) and any reduction made for the loss, now owed to the
+   member again: the app leaves a reduced task as it is, so pay that amount by
+   bank transfer and record it in Xero as you record the task's payment.
 
 If Stripe webhook delivery was missed while the endpoint, DNS, TLS, or the
 signing secret stored under **Admin > Integrations > Stripe** was wrong (it is

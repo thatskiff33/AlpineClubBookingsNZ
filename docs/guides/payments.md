@@ -222,15 +222,19 @@ member is told the club will arrange their refund.
    the member by bank while the dispute was open and it was then lost, they have
    had that money twice and the app cannot record your payment: take it to the
    treasurer. In rare cases Stripe turns a
-   lost dispute into a "late win" and returns the money to the club; the app
-   sends Finance a "Lost card payment dispute now won" alert but does not yet
-   reopen the task itself (#5197 will), so reopen the dismissed task (the
-   recently dismissed list offers it for 30 days; after that, take it to the
-   treasurer) and pay the member. A booking change's refund dismissed for a
-   lost dispute after its booking was cancelled cannot be reopened in the app
-   yet: the treasurer handles it by hand until #5197 ships. A late win after a
-   reduction is the same limit: the reduction stays, so take the restored
-   amount to the treasurer.
+   lost dispute into a "late win" and returns the money to the club (#5197).
+   The app then puts every task dismissed for that loss back on the queue,
+   with the member's refund owed again, and sends Finance a "Lost card payment
+   dispute now won" alert naming each one: pay them as usual. If another lost
+   dispute still covers part of a reopened task, the alert says so: reduce it
+   again before paying. A task the app could not reopen (the booking was busy,
+   or it was dismissed before its booking was cancelled) is named with the
+   reason: reopen it here (the recently dismissed list offers it for 30 days;
+   after that, take it to the treasurer). A reduction made for the loss stays
+   as it is: the alert names the amount now owed again, so pay the member that
+   by bank transfer with the rest and take it to the treasurer to record. A
+   booking change's refund dismissed for a lost dispute after its booking was
+   cancelled can be reopened like any other.
    A task dismissed before this change can still be reopened.
 
 **The same task for a booking change (#3827).** When a member or an officer

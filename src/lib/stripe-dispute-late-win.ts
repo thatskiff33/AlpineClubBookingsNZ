@@ -19,7 +19,7 @@ import { readDisputesByBookingId } from "@/lib/stripe-dispute-hold";
 import { disputeIsLost, type LateWinHandBackReport } from "@/lib/stripe-dispute-note";
 
 /**
- * #5197 (`INV-PAY-154`, owner decision 18 Nov 2026): A LOST DISPUTE STRIPE LATER REPORTS WON (a "late win").
+ * #5197 (`INV-PAY-154`): A LOST DISPUTE STRIPE LATER REPORTS WON (a "late win").
  *
  * While a card dispute read lost, an officer could dismiss the payment's hand-back task (the cardholder had the money
  * back) or reduce it by the lost part (#4516, owner decision 15 Nov 2026), withdrawing that much of its refund debt.

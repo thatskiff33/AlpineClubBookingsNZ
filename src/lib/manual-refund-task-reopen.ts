@@ -1,6 +1,6 @@
 import "server-only";
 
-import { BookingEventType, BookingStatus, ManualRefundTaskKind, ManualRefundTaskStatus, type Prisma } from "@prisma/client";
+import { BookingEventType, BookingStatus, ManualRefundTaskKind, ManualRefundTaskStatus, Prisma } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import {
@@ -184,7 +184,7 @@ type ReopenBy =
   | { by: "officer"; actingMemberId: string; note: string }
   | { by: "late-win"; disputeId: string };
 
-const REOPEN_TASK_SELECT = {
+const REOPEN_TASK_SELECT = Prisma.validator<Prisma.ManualRefundTaskSelect>()({
   id: true,
   bookingId: true,
   paymentId: true,
@@ -204,7 +204,7 @@ const REOPEN_TASK_SELECT = {
   // #3827: whether a cancellation has since counted this task out.
   // #3949: and whether the group organiser paid for it, whom its money goes back to.
   booking: { select: { memberId: true, status: true, organiserSettled: true, parentBookingId: true, payment: { select: { source: true } }, organisation: { select: { name: true, email: true } } } },
-} satisfies Prisma.ManualRefundTaskSelect;
+});
 
 type ReopenTask = Prisma.ManualRefundTaskGetPayload<{ select: typeof REOPEN_TASK_SELECT }>;
 
@@ -249,7 +249,7 @@ export async function reopenManualRefundTask({
 }
 
 /**
- * #5197 (owner decision, 18 Nov 2026): a dispute-loss hand-back dismissed while its card dispute read lost, put back
+ * #5197: a dispute-loss hand-back dismissed while its card dispute read lost, put back
  * on the queue by the app once Stripe reports that dispute won (a "late win"): the club holds the money again and
  * owes the member. The officer's own rules and order apply, with no officer: origin `STRIPE`, no actor (as the inbound
  * Xero sync reopens a part-payment review, `part-payment-review-cover.ts`), the dispute named in the audit entry, and

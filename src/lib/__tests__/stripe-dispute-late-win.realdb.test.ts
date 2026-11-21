@@ -10,7 +10,7 @@ import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 
 /**
- * #5197 (`INV-PAY-154`, owner decision 18 Nov 2026): A LOST CARD DISPUTE STRIPE LATER REPORTS WON, through the real
+ * #5197 (`INV-PAY-154`): A LOST CARD DISPUTE STRIPE LATER REPORTS WON, through the real
  * webhook processor (`processStripeWebhookEvent`) on PostgreSQL. A hand-back dismissed while the dispute read lost
  * is reopened with its refund debt posted again, so the journal owes what the task does; a reduction made for the
  * loss is named in the alert and nothing is written; the alert is sent once, however the event is delivered. The

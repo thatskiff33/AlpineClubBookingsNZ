@@ -2819,8 +2819,21 @@ still open on the same payment, wait for it) or cover it all (dismiss
 instead), read under `lock(1)` and the booking row, so the lost part
 is never paid twice. A legacy row with no `raisedAmountCents` records its
 original with the first reduction. A Stripe late win after a reduction leaves
-it reduced: a stated limit, with #5197. Reopened, it has no live R05, and Mark paid then
-posts its R14 unapplied, as for a task raised before M4d.
+it reduced: the won-after-loss alert names the cents now owed again (#5197).
+
+**#5197: DISMISSED -> OPEN by a late win.** When Stripe reports WON a dispute
+recorded LOST, the webhook (after the WON commit, while its alert is unsent)
+puts each dispute-loss hand-back the loss dismissed back OPEN, newest first,
+as far as the lost cents still recorded no longer cover what the payment's
+hand-backs applied (`lateWinOwedAgain`). The officer's reopen rules apply,
+with no actor (origin `STRIPE`), and the claim also posts the task's R05 again:
+a whole R05 the dismissal reversed is posted at its chain's next key, a
+reduced task's rest withdrawal is reversed exactly (`restoreHandBackObligation`),
+so the journal owes what the task does. An officer's reopen of a dispute-loss
+hand-back restores it the same way, and dismissing it again withdraws it again.
+A refused or timed-out reopen leaves it DISMISSED and the alert names it. An
+edit's hand-back dismissed after its booking's latest cancellation (only a
+lost dispute allows it) is spared the after-cancel reopen refusal.
 
 **#3498: and one of the two terminal states is no longer terminal.** A DISMISSED
 row can be put back OPEN by an officer, which is the arm above; a COMPLETED row

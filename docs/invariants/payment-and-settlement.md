@@ -2737,7 +2737,7 @@ _Legacy: settles tasks raised before #4317._
     cash less open tasks, `INV-PAY-118`'s too
     (`refundableCashNetOfOpenHandBacks`); a reopen is refused past that cash. Completing one, or approving an appeal,
     takes `lock(1)`. Once the booking is cancelled it is only paid: the
-    cancel counted it.
+    cancel counted it, unless dismissed after (a lost dispute, #5197).
   - **The member is told the club WILL refund by bank transfer**, never that a
     refund "has been processed" (`bookingModifiedRefundSentence`).
   - **Owed, not kept** (#3372, 7 Oct 2026): Net Collected subtracts an open one
@@ -4286,36 +4286,33 @@ Proven by `cancellation-credit-event.realdb.test.ts` and `member-credit.test.ts`
 alert nobody received answers 500).
 
 - **A disputed capture is never refunded, nor credited by a cancel or an
-  edit** (#4911, #5061). While a cardholder's dispute (chargeback) is OPEN or
-  LOST, no card refund is issued for that capture, and neither a paid cancel
-  nor a price-lowering edit issues account credit. A WON dispute, or one closed
-  with no funds taken, holds nothing.
-- **One read.** `disputedCaptureCents` (`stripe-dispute-hold.ts`) answers "is
-  this capture disputed": `processRefund` before every Stripe call, a refund
-  before reserving, a paid cancel inside its claim, an edit inside
-  `applyPaymentAdjustments`.
-- **Handed to the treasurer.** A paid cancel, or the whole reduction of an
-  edit, raises one `CANCELLED_BOOKING_HAND_BACK` task naming the dispute, and
-  the member is told the refund is with the treasurer. An officer review
-  refuses account credit on a disputed payment.
-- **A refused refund stops.** A recovery row refused for a dispute goes to
-  the treasurer at once (`unretryableRecoveryCause`); a late capture's is held,
-  never redelivered.
+  edit** (#4911, #5061). While its dispute (chargeback) is OPEN or LOST, no
+  card refund issues, and no paid cancel or price-lowering edit credits the
+  account. A WON dispute, or one closed with no funds taken, holds nothing.
+- **One read**, `disputedCaptureCents` (`stripe-dispute-hold.ts`):
+  `processRefund` before every Stripe call, a refund before reserving, a paid
+  cancel in its claim, an edit in `applyPaymentAdjustments`.
+- **Handed to the treasurer.** A paid cancel, or an edit's whole reduction,
+  raises one `CANCELLED_BOOKING_HAND_BACK` task naming the dispute, and tells
+  the member. An officer review refuses account credit.
+- **A refused refund stops**: its recovery row goes to the treasurer at once
+  (`unretryableRecoveryCause`); a late capture's is held, never redelivered.
 - **One record per dispute**, merged under its row lock: replays change
-  nothing, older events never overwrite newer, a closed dispute never
-  reopens.
+  nothing, older events never overwrite newer, closed never reopens.
 - **Finance alerts**, unmuteable, once ever: open, close, and a LOST dispute
-  later WON (reverse the Xero loss entry).
-- **A record, not money.** No ledger line, journal, refund, `Payment` total or
-  Xero posting (a held refund's task: its R05 only, #4516); the treasurer
-  posts by hand (`DEPLOYMENT.md`).
-- Limits: a dispute recorded after a cancel's or edit's read is not seen by
-  it; a joiner's reduction owed to the organiser's card is refused only at
+  later WON (reverse the Xero loss; the hand-backs it touched).
+- **No money moves**: no refund, credit, `Payment` total or Xero posting
+  (the treasurer's, by hand: `DEPLOYMENT.md`). Its one journal effect is a
+  hand-back's R05: withdrawn when an officer dismisses or reduces it for a
+  LOST dispute, posted again when that dispute is later WON and the app
+  reopens the task (#5197; a reduction is only named).
+- Limits: a dispute recorded after a cancel's or edit's read is unseen; a
+  joiner's reduction owed to the organiser's card is refused only at
   `processRefund`; a task raised before a win stays with the treasurer.
 - Proven by `stripe-dispute.test.ts`, `admin-stripe-dispute-alert.test.ts`,
   `cancel-refund-method.test.ts`, `manual-refund-task.test.ts`,
-  `stripe-dispute-cancel.realdb.test.ts`,
-  `stripe-dispute-edit.realdb.test.ts` and
+  `stripe-dispute-cancel.realdb.test.ts`, `stripe-dispute-edit.realdb.test.ts`,
+  `stripe-dispute-late-win.realdb.test.ts` and
   `xero-booking-edit-settlement.test.ts`.
 
 ## INV-PAY-156
@@ -4371,9 +4368,9 @@ alert nobody received answers 500).
   a WON one leaves the task payable. A lost dispute lets an edit's hand-back be
   dismissed after its booking was cancelled.
 - **Serialised, order-independent.** Dismiss and Reduce take `lock(1)`, the
-  booking row, the Payment row, then re-read; Mark paid reads under `lock(1)`.
-  Applying x to an older task raises applied and lowers older owed by x, so no
-  other share moves; one task's second officer meets the guarded claim.
+  booking row, the Payment row, then re-read; Mark paid reads under `lock(1)`,
+  and a dispute's move to WON takes it first (#5197). Applying x to an older
+  task leaves every other share; one task's second officer meets the claim.
 - Limit: a dispute-loss task dismissed for another reason (by older code) still
   counts all it was raised for. A $50 edit refund dismissed while the dispute
   was open, then a $150 cancel refund with $150 lost: the cancel is reduced by
