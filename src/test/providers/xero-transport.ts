@@ -16,7 +16,17 @@ import { XeroFake, XeroValidationError } from "./xero-fake";
  * `page` returns everything, a `page` returns that slice of `pageSize`
  * (default 100). Document totals are worked out here, line by line, not with
  * the app's own totalling helper, so app and fake cannot agree by construction.
- * Not modelled: tax, currencies, auth, rate limits beyond what `failNext` injects, invoice edits,
+ *
+ * Line tax (#5208) follows Xero's documented behaviour: "The tax amount is auto
+ * calculated as a percentage of the line amount (see below) based on the tax
+ * rate. This value can be overriden if the calculated TaxAmount is not correct."
+ * A line sent with a `TaxAmount` keeps it; a line sent with a tax type and none
+ * gets round-half-up(line × rate / (10000 + rate)) from `XERO_FAKE_TAX_RATES`,
+ * worked out here in integers, not with the app's helper. `recalculateTaxNext`
+ * makes the next create or update ignore sent amounts, as a Xero that did not
+ * keep them would. An update may rewrite lines but never the document's total.
+ *
+ * Not modelled: currencies, auth, rate limits beyond what `failNext` injects,
  * payment dates, the organisation record and email. Anything absent from the
  * method table throws, so the app's organisation read falls back as it does
  * when Xero is unreachable.
@@ -24,6 +34,9 @@ import { XeroFake, XeroValidationError } from "./xero-fake";
 type Api = XeroClient["accountingApi"];
 type Args<K extends keyof Api> = Api[K] extends (...args: infer P) => unknown ? P : never;
 type Snapshot = ReturnType<XeroFake["snapshot"]>;
+
+/** The fake organisation's tax rates, in basis points, by Xero tax type. */
+export const XERO_FAKE_TAX_RATES: Readonly<Record<string, number>> = { OUTPUT2: 1500, NONE: 0 };
 
 /** A non-2xx reply; xero-node rejects with it serialised (`ApiError.generateError`). */
 export type XeroHttpFailure = { statusCode: number; headers?: Record<string, string>; body?: unknown };
@@ -35,6 +48,7 @@ export function xeroTransport(fake: XeroFake) {
   const invoiceInputs = new Map<string, Record<string, unknown>>();
   const contactInputs = new Map<string, Record<string, unknown>>();
   const noteInputs = new Map<string, Record<string, unknown>>();
+  let recalculateTax = false;
 
   // xero-node rejects a non-2xx reply with a JSON string, not an Error or object.
   const reject = ({ statusCode, headers = {}, body }: XeroHttpFailure) =>
@@ -76,6 +90,26 @@ export function xeroTransport(fake: XeroFake) {
       return sum + lineCents;
     }, 0);
   };
+  // The tax Xero holds on each line of a stored (serialised) document: a sent
+  // TaxAmount kept unless recalculating, else the line's own figure at its rate.
+  const withLineTax = (document: Record<string, unknown>, recalculate: boolean): Record<string, unknown> => {
+    const lines = document.LineItems as Array<Record<string, unknown>> | undefined;
+    if (!lines) return document;
+    const inclusive = document.LineAmountTypes === LineAmountTypes.Inclusive;
+    return { ...document, LineItems: lines.map((line) => {
+      if (!inclusive) return { ...line, TaxAmount: 0 };
+      if (line.TaxType === undefined) return line;
+      const rate = XERO_FAKE_TAX_RATES[String(line.TaxType)];
+      if (rate === undefined) throw new XeroValidationError(`TaxType code '${String(line.TaxType)}' does not exist or cannot be used for this type of transaction`);
+      if (line.TaxAmount !== undefined && !recalculate) return line;
+      const lineCents = Math.round(Number(line.Quantity) * cents(line.UnitAmount));
+      // round-half-up(|line| × rate / (10000 + rate)), signed; exact in integers at these magnitudes.
+      const divisor = 10_000 + rate;
+      const taxCents = Math.sign(lineCents) * Math.floor((2 * Math.abs(lineCents) * rate + divisor) / (2 * divisor));
+      return { ...line, TaxAmount: taxCents / 100 };
+    }) };
+  };
+  const takeRecalculate = () => { const value = recalculateTax; recalculateTax = false; return value; };
   const one = <T>(items: T[] | undefined): T => {
     const [item, ...rest] = items ?? [];
     if (item === undefined || rest.length) throw new Error("The Xero test transport models one document per request");
@@ -137,9 +171,20 @@ export function xeroTransport(fake: XeroFake) {
       const input = one(body.invoices);
       if (String(input.type) !== "ACCREC" || String(input.status) !== "AUTHORISED") throw new Error("Only authorised ACCREC invoices are modelled");
       const invoice = fake.createInvoice(key(idempotencyKey), input.contact?.contactID ?? "", linesTotalCents(input));
+      const recalculate = takeRecalculate();
       // A replay returns the original document, so only the first request's fields are kept.
-      if (!invoiceInputs.has(invoice.invoiceID)) invoiceInputs.set(invoice.invoiceID, ObjectSerializer.serialize(input, "Invoice"));
+      if (!invoiceInputs.has(invoice.invoiceID)) invoiceInputs.set(invoice.invoiceID, withLineTax(ObjectSerializer.serialize(input, "Invoice"), recalculate));
       return { Invoices: invoices().filter(i => i.InvoiceID === invoice.invoiceID) };
+    }),
+    updateInvoice: (...[, id, body]: Args<"updateInvoice">) => call("Invoices", () => {
+      const input = one(body.invoices);
+      const current = fake.snapshot().invoices.find(i => i.invoiceID === id);
+      if (!current) throw new XeroValidationError("Object not found");
+      if (current.status !== "AUTHORISED") throw new XeroValidationError("Invoice not of valid status for modification");
+      if (linesTotalCents(input) !== current.totalCents) throw new Error("The Xero test transport models invoice updates that keep the total only");
+      const recalculate = takeRecalculate();
+      invoiceInputs.set(id, withLineTax({ ...invoiceInputs.get(id), ...ObjectSerializer.serialize(input, "Invoice") }, recalculate));
+      return { Invoices: invoices().filter(i => i.InvoiceID === id) };
     }),
     getContact: (...[, id]: Args<"getContact">) =>
       call("Contacts", () => ({ Contacts: contacts().filter(c => c.ContactID === id) })),
@@ -189,5 +234,7 @@ export function xeroTransport(fake: XeroFake) {
     xero: strictTestClient<XeroClient>("Xero", { accountingApi: strictTestClient<Api>("Xero", api) }),
     /** Queue an HTTP failure for the next call, e.g. a 429 with `x-rate-limit-problem: day`. */
     failNext(failure: XeroHttpFailure) { failures.push(failure); },
+    /** Make the next invoice create or update work every line's tax out itself, ignoring any sent (#5208). */
+    recalculateTaxNext() { recalculateTax = true; },
   };
 }
