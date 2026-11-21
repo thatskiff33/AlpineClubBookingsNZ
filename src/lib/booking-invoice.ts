@@ -70,7 +70,10 @@ import { CHANGE_FEE_LINE_DESCRIPTION } from "@/lib/xero-modification-line-items"
 import { workingBeeDiscountLabel } from "@/lib/working-bee-discount-label";
 import { promoAdjustmentLineDescription } from "@/lib/xero-promo-adjustment-lines";
 
-/** The document's title. "Tax invoice" waits for the club's recorded GST status (#5153). */
+/**
+ * The document's title. The "Tax invoice" form follows #5291; a booking in a
+ * recorded GST-registered period is never offered this document.
+ */
 export const BOOKING_INVOICE_TITLE = "Invoice";
 /** The mark on a booking the club has not approved yet (owner decision 5). */
 export const BOOKING_INVOICE_NOT_YET_APPROVED = "Not yet approved";

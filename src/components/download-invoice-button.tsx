@@ -95,7 +95,7 @@ const ASK_CLUB_LINE: Readonly<Record<BookingInvoiceAskClubReason | "FURTHER_INVO
   },
   REGISTERED_TAX_PERIOD: {
     member: "Please ask the club for a copy of this booking's invoice.",
-    staff: "This booking falls in a period the club recorded as GST-registered, so no invoice is generated for it here yet. Check the club's accounts.",
+    staff: "This booking falls in a period the club recorded as GST-registered, so no invoice is generated for it here yet. Provide one from the club's own records.",
   },
 };
 

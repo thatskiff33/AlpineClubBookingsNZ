@@ -3630,7 +3630,7 @@ page and both routes, so neither can serve what the page does not offer.
   its organiser's booking) falls in a GST-registered period the club recorded
   gets `ASK_CLUB` with reason `REGISTERED_TAX_PERIOD` instead, until the "Tax
   invoice" form and the club GST number setting exist (#5291). The period comes
-  from the one schedule (`resolveAnchoredClubTaxPeriod` in
+  from the one schedule (`resolveAnchoredClubTax` in
   `xero-tax-anchors.ts`); a club that never recorded a status (the code
   baseline an absent `"default"` row stands for, `clubTaxPeriodIsRecorded`) or
   a period recorded as not registered gets the document. The schedule is read

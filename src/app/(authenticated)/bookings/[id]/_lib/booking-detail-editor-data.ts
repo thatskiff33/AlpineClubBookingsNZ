@@ -1,3 +1,4 @@
+import logger from "@/lib/logger";
 import {
   bookingPromoCodeAdjustments,
   bookingPromoRedemptions,
@@ -382,7 +383,10 @@ async function withBookingInvoiceOffer(
   try {
     invoiceOffer = await resolveBookingInvoiceOffer({ ...input, modules });
   } catch (error) {
-    if (error instanceof BookingInvoiceSettingsUnavailableError) return editorData;
+    if (error instanceof BookingInvoiceSettingsUnavailableError) {
+      logger.warn({ err: error, bookingId: input.booking.id }, "Booking invoice offer withheld: the club's settings could not be read");
+      return editorData;
+    }
     throw error;
   }
   if (invoiceOffer.kind === "NONE") return editorData;
