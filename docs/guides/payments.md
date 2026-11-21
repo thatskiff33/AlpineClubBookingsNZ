@@ -251,7 +251,10 @@ for a card refund to be made against. A change that lowers its price raises the
 same task and sends the same email, and no card refund is promised or tried.
 The edit screen's price summary offers that refund as **Refund by bank
 transfer**, as it does for an Internet Banking booking, never as a refund to
-the original card (#5303).
+the original card (#5303). So does the **Return method** choice when moving a
+linked booking, and the offer's own sentence about where the money goes; where
+that one choice covers a card booking and a bank-transfer booking, it names
+both.
 For now, **Mark paid back** is refused on most of these tasks, because the
 payment has no card charge on record for the refund to be recorded against.
 
