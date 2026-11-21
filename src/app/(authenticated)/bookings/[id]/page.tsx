@@ -92,6 +92,26 @@ const BOOKING_SECTIONS: SectionNavItem[] = [
   { id: "transaction-history", label: "Transaction History" },
 ];
 
+/**
+ * #5266 (`INV-ADDPAY-034`): what the booking's owner, or a member guest on it,
+ * sees once the club has removed it. Everybody else gets the plain `notFound()`
+ * — `resolveBookingDetailEntry` decides which — and a Full Admin still gets the
+ * record, through the deleted-booking guard below.
+ */
+function RemovedBookingDetail() {
+  return (
+    <div className="mx-auto max-w-2xl space-y-6">
+      <h1 className="text-3xl font-bold">Booking Details</h1>
+      <RemovedBookingNotice
+        links={[
+          { href: "/bookings", label: "My bookings" },
+          { href: "/dashboard", label: "Back to the dashboard" },
+        ]}
+      />
+    </div>
+  );
+}
+
 export default async function BookingDetailPage({
   params,
   searchParams,
@@ -127,25 +147,9 @@ export default async function BookingDetailPage({
   // offered a member a self-removal control the very next check refused.
   const clubTodayDateOnly = dateOnlyInstantOf(club.today());
 
-  // #5266 (`INV-ADDPAY-034`): a removed booking is explained to its owner or a
-  // guest on it, and is the same plain "not found" as a never-valid id for
-  // everybody else. A Full Admin still gets the record (the guard below).
   const entry = await resolveBookingDetailEntry({ id, session });
-  if (entry.kind === "REMOVED_FOR_VIEWER") {
-    return (
-      <div className="mx-auto max-w-2xl space-y-6">
-        <h1 className="text-3xl font-bold">Booking Details</h1>
-        <RemovedBookingNotice
-          links={[
-            { href: "/bookings", label: "My bookings" },
-            { href: "/dashboard", label: "Back to the dashboard" },
-          ]}
-        />
-      </div>
-    );
-  }
-  if (entry.kind === "NOT_FOUND") notFound();
-  const { booking } = entry;
+  if (entry.kind === "REMOVED_FOR_VIEWER") return <RemovedBookingDetail />;
+  const booking = entry.kind === "FOUND" ? entry.booking : notFound();
   const viewer = resolveBookingDetailViewer({ session, booking });
   const {
     isAdmin,

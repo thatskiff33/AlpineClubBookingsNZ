@@ -217,13 +217,11 @@ describe("deleted-booking refusal callers (#2700, INV-ADDPAY-034)", () => {
   });
 
   it("on the booking page, signs the visitor in, then resolves entitlement, then explains", () => {
-    const body = functionBody(
-      readRepoCode("src/app/(authenticated)/bookings/[id]/page.tsx"),
-      "export default async function BookingDetailPage(",
-    );
+    const pageCode = readRepoCode("src/app/(authenticated)/bookings/[id]/page.tsx");
+    const body = functionBody(pageCode, "export default async function BookingDetailPage(");
     const signIn = body.search(/if\s*\(!session\)\s*redirect\("\/login"\)/);
     const resolve = body.search(/resolveBookingDetailEntry\(\{\s*id,\s*session\s*\}\)/);
-    const notice = body.search(/<RemovedBookingNotice\b/);
+    const notice = body.search(/entry\.kind\s*===\s*"REMOVED_FOR_VIEWER"\)\s*return\s*<RemovedBookingDetail\s*\/>/);
     expect(signIn, "the booking page no longer sends a signed-out visitor to sign in").toBeGreaterThan(-1);
     expect(
       resolve,
@@ -231,8 +229,14 @@ describe("deleted-booking refusal callers (#2700, INV-ADDPAY-034)", () => {
     ).toBeGreaterThan(signIn);
     expect(
       notice,
-      "INV-ADDPAY-034: the booking page renders the removed-booking notice before it has asked resolveBookingDetailEntry whether this viewer is entitled",
+      "INV-ADDPAY-034: the booking page renders the removed-booking notice other than on resolveBookingDetailEntry's REMOVED_FOR_VIEWER answer",
     ).toBeGreaterThan(resolve);
+    // The notice itself is rendered only by that one helper, never elsewhere
+    // on the page where it could escape the entitlement decision.
+    const helper = functionBody(pageCode, "function RemovedBookingDetail(");
+    expect(pageCode.match(/<RemovedBookingNotice\b/g)).toHaveLength(1);
+    expect(helper).toMatch(/<RemovedBookingNotice\b/);
+    expect(pageCode.match(/<RemovedBookingDetail\b/g)).toHaveLength(1);
   });
 
   it("in the delegate page's resolver, says BOOKING_REMOVED only below the target and delegate checks", () => {
