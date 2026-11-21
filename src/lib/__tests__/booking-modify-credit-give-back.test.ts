@@ -93,6 +93,9 @@ function creditPaidBooking(overrides: { status?: BookingStatus; payment?: NonNul
       additionalAmountCents: 0,
       additionalPaymentStatus: null,
       xeroInvoiceId: "INV-3809",
+      // #5212: a card payment here is one Stripe holds a record of, so its
+      // reduction is still the card's to take back.
+      stripePaymentIntentId: overrides.payment?.source === PaymentSource.STRIPE ? "pi_3809" : null,
       ...overrides.payment,
     },
   });

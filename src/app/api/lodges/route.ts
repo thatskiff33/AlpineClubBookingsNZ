@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getEligibleLodgeIdsForMember } from "@/lib/lodge-access";
+import {
+  filterLodgesByEligibility,
+  getEligibleLodgeIdsForMember,
+} from "@/lib/lodge-access";
 import { lodgeOrderBy } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -30,10 +33,7 @@ export async function GET() {
   // Resolve restrictions once. Calling the single-lodge helper in a loop
   // repeated the same MemberLodgeAccess query for every active lodge.
   const access = await getEligibleLodgeIdsForMember(prisma, session.user.id);
-  const allowedLodgeIds = new Set(access.allLodges ? [] : access.lodgeIds);
-  const eligible = access.allLodges
-    ? lodges
-    : lodges.filter((lodge) => allowedLodgeIds.has(lodge.id));
+  const eligible = filterLodgesByEligibility(access, lodges);
 
   return NextResponse.json({ lodges: eligible });
 }

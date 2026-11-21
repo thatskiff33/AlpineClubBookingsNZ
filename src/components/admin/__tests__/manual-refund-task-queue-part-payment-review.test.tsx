@@ -42,8 +42,6 @@ const REVIEW_TASK = {
     "Booking booking-7 was cancelled as unpaid, but Xero records a payment against its invoice.",
   createdAt: "2026-06-21T00:00:00Z",
   memberName: "Ada Lovelace",
-  reviewEvidence: null,
-  reviewEvidenceUnreadable: false,
   checkIn: "2026-08-10T00:00:00Z",
   checkOut: "2026-08-12T00:00:00Z",
 };

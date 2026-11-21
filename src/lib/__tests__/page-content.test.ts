@@ -8,6 +8,7 @@ import {
   normalizePageSlug,
   toPagePath,
 } from "@/lib/page-content";
+import { isPublicWebsitePath } from "@/lib/public-website-paths";
 
 describe("normalizePageSlug", () => {
   it("trims, lowercases, and strips surrounding slashes", () => {
@@ -66,6 +67,16 @@ describe("isReservedPageSlug", () => {
     expect(isReservedPageSlug("privacy")).toBe(false);
     expect(isReservedPageSlug("terms")).toBe(false);
     expect(isReservedPageSlug("faq")).toBe(false);
+  });
+
+  it("leaves work-parties to the website: the member page lives under /dashboard (#5148)", () => {
+    // Owner decision, 15 Nov 2026: the app does not reserve `/work-parties`,
+    // so a club can publish (or keep) a working-bee page at that address.
+    expect(isReservedPageSlug("work-parties")).toBe(false);
+    expect(isReservedPageSlug("work-parties/spring-2026")).toBe(false);
+    expect(isPublicWebsitePath("/work-parties")).toBe(true);
+    // The member page is under a root the app already owns.
+    expect(isReservedPageSlug("dashboard/work-parties/wp-1")).toBe(true);
   });
 });
 

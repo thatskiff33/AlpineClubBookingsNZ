@@ -1,17 +1,6 @@
-import { z } from "zod";
-
-import {
-  calendarDateSchema,
-  isNonNegativeIntegerCents,
-  nonNegativeCentsSchema,
-  type EditFinancialReviewCause,
-} from "@/lib/edit-financial-review-context";
+import { isNonNegativeIntegerCents } from "@/lib/cents-schema";
 import { formatCents } from "@/lib/utils";
-import {
-  formatClubDate,
-  type CalendarDate,
-  type ClubDateFormat,
-} from "@/lib/club-time";
+import type { CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
 
 /**
@@ -46,37 +35,20 @@ import type { ClubFormat } from "@/lib/club-format";
  *     "reconcile to the agreed total" #3191 asks for, stated as arithmetic a
  *     screen can check before it posts.
  *
- * ## The SECOND rule this module is the home of (#3214)
+ * ## What is left of it (#4344)
  *
- * Rule 2 above reconciles a strand while a review is being settled. #3214 adds
- * the only other act that may write a night price, and it is deliberately the
- * same arithmetic with both variable parts set to zero:
- *
- * > An officer may record what a guest strand's nights sold for **on a strand
- * > whose stored rows do not reconcile**. They must give an amount for **every
- * > night the strand holds**, and those amounts must come to exactly
- * > `BookingGuest.priceCents` **as stored**. Nothing is derived and nothing is
- * > defaulted; the strand's total is not changed. The act can turn an unreadable
- * > strand into a readable one and can do nothing else.
- *
- * THE SAFETY IS ARITHMETIC, NOT POLICY, and that is why it needs no new rule
- * here. {@link checkStoredNightPriceRepair} run with `knownNightTotalCents: 0`
- * and `deltaCents: 0` forces `sum(entries) === storedGuestTotalCents`, and the
- * writer re-bases the total to `0 + sum(entries)` - the same number. So the
- * total write is provably a no-op and the officer cannot re-price anybody,
- * whatever they type. `stored-night-price-repair-store.ts` holds the eligibility
- * fence that keeps the act off a strand which already reconciles, and
- * `stored-night-price-strand-reconcile.test.ts` pins both properties.
+ * The two screens that asked an officer for these figures - the review settle
+ * dialog and #3214's strand reconcile on the booking's Admin tools card - were
+ * retired with the officer review (wave C1). The rules stay because the
+ * completion door (`manual-refund-task-resolution.ts`) still holds them until
+ * wave C3 removes the review's money path; nothing on a screen calls them now.
  *
  * ## WHY THIS HALF IS CLIENT-SAFE
  *
- * The same split `edit-financial-review-context.ts` records for itself, for the
- * same reason: the settle screen is a client component and has to apply rule 2
- * as the officer types, or they learn their figures do not add up only after
- * posting them at a task that is about to be claimed. If the screen applied its
- * own copy of the arithmetic the two could disagree, and only the server's
- * matters - so there is ONE function and both call it (`INV-SSOT`). Nothing here
- * imports `node:`, Prisma, or `@/lib/prisma`; the reads and the writes live in
+ * It was split this way while the settle screen applied rule 2 as the officer
+ * typed, so the screen and the server ran ONE function (`INV-SSOT`). Nothing
+ * here imports `node:`, Prisma, or `@/lib/prisma`; the reads and the writes
+ * live in `stored-night-price-repair-plan.ts` and
  * `stored-night-price-repair-store.ts`.
  */
 
@@ -110,41 +82,6 @@ export type UnpricedNightsSummary = {
 };
 
 /**
- * What ONE guest strand is offered when its stored rows cannot be read back
- * (#3214), and the one definition of that shape.
- *
- * HERE, IN THE CLIENT-SAFE HALF, because the booking page reads it on the server
- * and hands it to a client component as a prop. Declaring it twice - once
- * server-side and once as the component's prop type - is exactly the "cannot
- * change a fact in one place" defect `INV-SSOT` names, and the two copies would
- * drift the first time a field was added.
- *
- * `summary` is the SAME shape the settle screen fills in, built for this mode:
- * `dates` is every night the strand holds rather than only its blanks, and
- * `knownNightTotalCents` is 0, because nothing on the strand is being treated as
- * already known. That is what turns {@link checkStoredNightPriceRepair} into
- * "type every night, and come to the stored total" with no second rule written
- * anywhere.
- */
-export type StrandNightPriceOffer = {
-  bookingGuestId: string;
-  guestName: string;
-  /** Why the stored evidence cannot be read, in the closed admin vocabulary. */
-  cause: EditFinancialReviewCause;
-  summary: UnpricedNightsSummary;
-  /**
-   * What is on file for each night now, for DISPLAY beside the boxes.
-   *
-   * An array rather than a `Map` because it crosses the server-to-browser
-   * boundary and a `Map` does not serialise. `null` means the night carries no
-   * usable stored price - no row, or a row whose value is not money - which is
-   * the collapse `storedNightPricesByKey` makes and is right for a reader. The
-   * WRITER needs the raw value and reads it separately, server-side.
-   */
-  storedByDate: ReadonlyArray<{ date: CalendarDate; priceCents: number | null }>;
-};
-
-/**
  * One night the officer priced, as it arrives from the screen.
  *
  * There is no "and work the rest out" variant of this shape, and that absence is
@@ -156,64 +93,6 @@ export type RecordedNightPrice = {
   date: CalendarDate;
   priceCents: number;
 };
-
-/**
- * The same shape at the HTTP boundary, and the one definition of it.
- *
- * `.strict()` so an extra field - a "split the rest evenly" flag, a derived
- * total - cannot be smuggled past the type into a body this module never agreed
- * to. The cents rule and the calendar-date rule are both the shared ones rather
- * than re-spelled here (`INV-SSOT`, #3030).
- *
- * The length cap is a BOUND, not a rule about bookings: one guest strand cannot
- * hold more nights than a year has, and an unbounded array on an authenticated
- * write is work a request can ask for without paying for. The real check is
- * `checkStoredNightPriceRepair`, which requires the dates to equal the strand's
- * blanks exactly.
- */
-export const recordedNightPricesSchema = z
-  .array(
-    z
-      .object({ date: calendarDateSchema, priceCents: nonNegativeCentsSchema })
-      .strict(),
-  )
-  .max(370);
-
-/**
- * The whole item's figures: ONE ENTRY PER REPAIRABLE STRAND, each NAMING THE
- * STRAND IT IS FOR by its position in the item (#3498).
- *
- * ## Why the position is carried rather than implied
- *
- * It was implied - a bare array of arrays, matched to the repairable strands by
- * list index, with a length mismatch refused as a race. That binding is carried
- * by a length check plus value checks that happen to discriminate, and it has a
- * hole: if one strand stops being repairable while another starts, in the
- * seconds the dialog is open, the length is unchanged and every position shifts
- * by one. The blank dates and the stored total usually tell the two apart - and
- * on a couple sharing the same nights at the same rate they do not, so one
- * guest's figures are written silently onto the other's nights. Same sum,
- * different nights, and a later part-refund is worked out from the nights.
- *
- * `strandIndex` is the item's OWN ordinal, which the server sets and sends
- * (`RepairableStrand`), and the completion refuses anything whose indices are
- * not exactly the repairable set's. It is a position inside one work item and
- * names nothing outside it, so the browser STILL never names a guest strand -
- * the property {@link UnpricedNightsSummary} protects.
- *
- * The outer cap is a BOUND on work an authenticated request can ask for, like
- * the inner one: a booking's party, not a rule about bookings.
- */
-export const recordedStrandNightPricesSchema = z
-  .array(
-    z
-      .object({
-        strandIndex: nonNegativeCentsSchema,
-        nightPrices: recordedNightPricesSchema,
-      })
-      .strict(),
-  )
-  .max(60);
 
 /** One strand's figures on the wire, named by the item's own ordinal. */
 export type RecordedStrandNightPrices = {
@@ -297,60 +176,6 @@ export const NIGHT_PRICE_REPAIR_NO_STRAND_MESSAGE =
 export const NIGHT_PRICE_REPAIR_NOTHING_TO_FILL_MESSAGE =
   "This review has no unpriced nights for these amounts to belong to, so they cannot be recorded against it. Reload the page and settle it without them.";
 
-/**
- * #3214's three refusals, which are about WHEN this act is available rather than
- * about what was typed. Here, beside the settle path's own refusals, because
- * they are the same feature's copy and a screen and a server describing one
- * behaviour in two places drift (`INV-SSOT`).
- */
-
-/**
- * WHAT THE CONTROL IS CALLED, in one place (#3214, `INV-SSOT`).
- *
- * The button on the booking's Admin tools card reads it from here. Until #4317
- * an other-lodge refusal named the control too; that refusal is gone, and the
- * control itself is retired by wave C (D6).
- */
-export const STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL =
-  "Record what these nights sold for";
-
-/**
- * The strand named is not this booking's, or neither exists.
- *
- * ONE SENTENCE FOR BOTH, deliberately, and answered at 404. Telling an officer
- * whether a guest strand exists on some OTHER booking is a fact about a booking
- * this request has not been authorised against, and it is a fact this refusal
- * has no use for.
- */
-export const STRAND_RECONCILE_WRONG_BOOKING_MESSAGE =
-  "That guest is not on this booking, so there are no nights here to record prices against. Reload the page and try again.";
-
-/**
- * The booking is waiting on a review, and that screen owns these figures.
- *
- * NOT A PERMANENT PROPERTY, and it says so, because the officer's next act is
- * the one that clears it: the review's own screen asks for the same per-night
- * amounts against a target that ALSO includes what is being settled. Two
- * surfaces asking for one set of figures against two different targets is how an
- * officer records a set that the other one refuses.
- */
-export const STRAND_RECONCILE_REVIEW_OPEN_MESSAGE =
-  "This booking has an amount waiting for the office to confirm, and that job asks for these same night prices as part of settling it. Settle it first, on the refunds and adjustments queue, and record anything still missing here afterwards.";
-
-/**
- * There is nothing on this strand for this act to record.
- *
- * IT NAMES NO CAUSE, for the reason {@link
- * NIGHT_PRICE_REPAIR_NOTHING_TO_FILL_MESSAGE} gives at length: three quite
- * different states raise it - the strand's nights already add up to what the
- * stay is stored as being worth, the strand holds no nights at all, or what the
- * stay is stored as being worth is not an amount this can reconcile to - and the
- * advice is the same in all three. Answered at 409 because what the page was
- * shown is no longer what the booking says.
- */
-export const STRAND_RECONCILE_NOT_OFFERED_MESSAGE =
-  "There is nothing to record against this guest's nights. Either they already add up to what the stay is stored as being worth, or what is stored is not an amount anything can be reconciled to. Reload the page to see where this booking stands.";
-
 /** Rule 1, said out loud: a night nobody priced stays unpriced. */
 export const NIGHT_PRICE_REPAIR_INCOMPLETE_MESSAGE =
   "Give an amount for every night listed, or leave them all blank. Nothing here works the missing ones out for you - a night nobody has priced has to stay unpriced.";
@@ -360,34 +185,6 @@ export const NIGHT_PRICE_REPAIR_UNKNOWN_NIGHT_MESSAGE =
 
 export const NIGHT_PRICE_REPAIR_AMOUNT_MESSAGE =
   "Each night's amount must be whole cents and cannot be negative. A free night is 0.00, which is a real price.";
-
-/**
- * A box holding something that is not an amount at all, naming which box.
- *
- * IT CANNOT BE ASKED FOR AN EMPTY LIST (#3191 fix round). Handed one it rendered
- * "The amounts for  are not ones these boxes can read." Nothing reaches it that
- * way today - the caller only builds this branch when a box failed to parse -
- * but a required first date makes that sentence unwritable rather than policed
- * (`INV-SSOT`: prefer unrepresentable over policed).
- *
- * A DIFFERENT REFUSAL FROM THE ONE ABOVE, and from the incomplete one, because
- * it is a different mistake. `parseDecimalDollarsToCents` answers `null` for
- * "1,200.00", "$45", "45." and a stray letter alike, and a caller that treats
- * that `null` as "not typed" hands the officer "give an amount for every night"
- * over boxes that visibly all hold one - the #2685 class the money parser's own
- * docblock warns about. Naming the night is the whole value of it: the officer
- * is looking at a column of figures, and "one of these is wrong" is not a
- * finding they can act on.
- */
-export function nightPriceRepairUnreadableMessage(
-  dates: NonEmptyDates,
-  format: ClubDateFormat,
-): string {
-  const listed = dates.map((date) => formatClubDate(date, format)).join(", ");
-  return dates.length === 1
-    ? `The amount for ${listed} is not one this box can read. Give it as dollars and cents - 45.00 - with no currency sign, comma or minus sign.`
-    : `The amounts for ${listed} are not ones these boxes can read. Give each as dollars and cents - 45.00 - with no currency sign, comma or minus sign.`;
-}
 
 /**
  * Rule 2's refusal, which has to say what the figures should come to - AND that
@@ -432,12 +229,6 @@ function nightPriceRepairReconcileMessage(
 function nightPriceRepairUnreachableMessage(targetCents: number, format: ClubFormat): string {
   return `The amount being settled would leave these nights worth ${formatCents(targetCents, format)} in total, which cannot be shared out as prices. Check the settlement figure against what this guest's stay is stored as being worth - and if that figure is right, then these nights cannot account for it: clear every box and settle without them.`;
 }
-
-/**
- * At least one date. The argument shape of the refusal above, so a caller cannot
- * ask it to name a night it has not got.
- */
-export type NonEmptyDates = readonly [CalendarDate, ...CalendarDate[]];
 
 /**
  * The verdict on one proposed repair.
@@ -595,39 +386,4 @@ export function unpricedNightsExplanation(
       ? `The ${otherStrandsOnThisItem === 1 ? "other guest" : "other guests"} this change touched ${otherStrandsOnThisItem === 1 ? "is" : "are"} on this same review: any unpriced nights of theirs are asked about beside these, and all of it is recorded together.`
       : "If another guest on the same booking also has unpriced nights, they are asked about separately, on their own review.";
   return `${count === 1 ? "One night" : `${count} nights`} on this guest's stay ${count === 1 ? "has" : "have"} no stored price, which is why this change could not be worked out automatically. Say what each one sold for: this review cannot be closed - settled or dismissed - until they are recorded, because without them this booking's own price cannot be brought back into line with its nights. ${elsewhere} Nothing is filled in for you - an amount nobody decided is exactly what this review exists to avoid.`;
-}
-
-/**
- * The paragraph above the boxes when an officer is RECONCILING a strand rather
- * than settling a review (#3214).
- *
- * A SECOND SENTENCE FOR A SECOND ACT, not a reword of
- * {@link unpricedNightsExplanation}, because three of the four things it has to
- * say are different. This mode asks for EVERY night rather than only the blanks,
- * including nights that already show a figure; the target is the stored total
- * flat, with no settlement moving it; and the reason to say so is that this is
- * the one property that makes the act safe - an officer who did not know the
- * figures have to come to what is already on file could believe they were
- * setting a new price for the stay.
- *
- * IT PROMISES ONLY WHAT THIS STRAND CAN DELIVER, and its closing sentence -
- * "another guest on the same booking is asked about separately" - is STILL TRUE
- * after #3498, which is why it is unchanged while its sibling's had to become
- * conditional. This act is per-strand by construction: an officer reconciles ONE
- * guest strand from the booking's own page, outside any review, and the screen
- * offers one of these per unreadable strand. There is no grain here for the
- * sentence to follow.
- *
- * Here rather than in the component for the reason the whole module exists: the
- * screen and the server describe one rule, so there is one place it is written
- * (`INV-SSOT`).
- */
-export function unreconciledStrandExplanation(
-  summary: UnpricedNightsSummary,
-  format: ClubFormat,
-): string {
-  const count = summary.dates.length;
-  const subject =
-    count === 1 ? "the one night on this guest's stay" : `all ${count} nights on this guest's stay`;
-  return `What is on file for this guest's stay cannot be read back as a set of night prices, which is why every change to this booking has to be worked out by hand. Say what ${subject} sold for - every one of them, including any that already show a figure - and they have to come to ${formatCents(summary.storedGuestTotalCents, format)}, which is what this guest's stay is stored as being worth. That figure does not move: this records how the stay's price was made up, night by night, and it cannot change what anybody owes. Nothing here works an amount out for you. Once they add up, this guest's nights stop sending the booking back for review; another guest on the same booking is asked about separately.`;
 }

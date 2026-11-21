@@ -12,19 +12,31 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * it rather than answering for it, while still refusing everything a money
  * boundary must.
  *
- * It also pins #3191's new field in both directions: it reaches the library on a
- * completion AND on a dismissal, and an unrecognised field is still refused.
+ * #4344 (wave C1 of #4302): an officer edit review is refused at 409 before
+ * the body is read, so a stale settle screen writes nothing and reaches no
+ * provider, while every other kind still resolves.
  */
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
   resolveManualRefundTask: vi.fn(),
+  taskFindUnique: vi.fn(),
+  prepareBankRefundVoidAnswer: vi.fn(),
 }));
 
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
+}));
+vi.mock("@/lib/prisma", () => ({
+  prisma: { manualRefundTask: { findUnique: mocks.taskFindUnique } },
+}));
+// The one provider read this route can make before the resolution: Xero, for a
+// re-confirmed bank refund's "already in Xero" answer.
+vi.mock("@/lib/bank-refund-void-answer", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/bank-refund-void-answer")),
+  prepareBankRefundVoidAnswer: mocks.prepareBankRefundVoidAnswer,
 }));
 vi.mock("@/lib/manual-refund-task-resolution", () => ({
   resolveManualRefundTask: mocks.resolveManualRefundTask,
@@ -69,6 +81,7 @@ beforeEach(() => {
     additionalPaymentIntentId: null,
     recordedNightPriceCount: 0,
   });
+  mocks.taskFindUnique.mockResolvedValue({ kind: "CANCELLED_BOOKING_HAND_BACK" });
 });
 
 describe("a $0 completion reaches the layer that can explain it (#3195)", () => {
@@ -118,172 +131,103 @@ describe("a $0 completion reaches the layer that can explain it (#3195)", () => 
   });
 });
 
-describe("per-night amounts on the way in (#3191)", () => {
-  // #3498: ONE ENTRY PER REPAIRABLE STRAND of the item, each naming the strand
-  // it is for by the item's own ordinal. These cases describe a one-strand
-  // review, so it is one entry, and its ordinal is 0.
-  const recordedNightPrices = [
-    { strandIndex: 0, nightPrices: [{ date: "2026-08-02", priceCents: 1_500 }] },
-  ];
+describe("a retired officer edit review is refused before anything happens (#4344)", () => {
+  /** What a settle screen from before the retirement still posts. */
+  const staleReviewSettle = {
+    resolution: "completed",
+    confirmed: true,
+    note: "Priced from the evidence.",
+    confirmedAmountCents: 4_500,
+    direction: "REFUND_TO_MEMBER",
+    recordedNightPrices: [
+      { strandIndex: 0, nightPrices: [{ date: "2026-08-02", priceCents: 1_500 }] },
+    ],
+    bankRefundVoidAnswer: { answer: "recorded-in-xero", creditNoteNumber: "CN-1" },
+  };
 
-  it("passes them to the library on a completion", async () => {
-    await POST(
-      request({
-        resolution: "completed",
-        confirmed: true,
-        note: "Priced from the rate card.",
-        confirmedAmountCents: 4_500,
-        direction: "REFUND_TO_MEMBER",
-        recordedNightPrices,
-      }),
+  beforeEach(() => {
+    mocks.taskFindUnique.mockResolvedValue({ kind: "EDIT_FINANCIAL_REVIEW" });
+  });
+
+  it("answers 409 in words, and resolves nothing and reads no provider", async () => {
+    const response = await POST(request(staleReviewSettle), { params });
+
+    expect(response.status).toBe(409);
+    expect(((await response.json()) as { error: string }).error).toMatch(
+      /Officer edit reviews were retired/,
+    );
+    expect(mocks.taskFindUnique).toHaveBeenCalledWith({
+      where: { id: "task-1" },
+      select: { kind: true },
+    });
+    expect(mocks.resolveManualRefundTask).not.toHaveBeenCalled();
+    expect(mocks.prepareBankRefundVoidAnswer).not.toHaveBeenCalled();
+    expect(vi.mocked(revalidatePath)).not.toHaveBeenCalled();
+  });
+
+  it("refuses a dismissal the same way", async () => {
+    const response = await POST(
+      request({ resolution: "dismissed", confirmed: true, note: "Nothing owed." }),
       { params },
     );
 
-    expect(mocks.resolveManualRefundTask).toHaveBeenCalledWith(
-      expect.objectContaining({ recordedNightPrices }),
-      CLUB_FORMAT_TEST,
-    );
-  });
-
-  it("passes them on a DISMISSAL too, which is where most parked strands end", async () => {
-    await POST(
-      request({
-        resolution: "dismissed",
-        confirmed: true,
-        note: "Nothing owed either way.",
-        recordedNightPrices,
-      }),
-      { params },
-    );
-
-    expect(mocks.resolveManualRefundTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        resolution: "dismissed",
-        recordedNightPrices,
-      }),
-      CLUB_FORMAT_TEST,
-    );
-  });
-
-  it("sends null when none were given, so an untouched settle posts what it always did", async () => {
-    await POST(
-      request({
-        resolution: "completed",
-        confirmed: true,
-        note: "Priced from the rate card.",
-        confirmedAmountCents: 4_500,
-        direction: "REFUND_TO_MEMBER",
-      }),
-      { params },
-    );
-
-    expect(mocks.resolveManualRefundTask).toHaveBeenCalledWith(
-      expect.objectContaining({ recordedNightPrices: null }),
-      CLUB_FORMAT_TEST,
-    );
-  });
-
-  it("refuses a night amount that is not whole non-negative cents", async () => {
-    for (const priceCents of [-1, 10.5]) {
-      const response = await POST(
-        request({
-          resolution: "dismissed",
-          confirmed: true,
-          note: "Nothing owed either way.",
-          recordedNightPrices: [
-            { strandIndex: 0, nightPrices: [{ date: "2026-08-02", priceCents }] },
-          ],
-        }),
-        { params },
-      );
-      expect(response.status).toBe(400);
-    }
+    expect(response.status).toBe(409);
     expect(mocks.resolveManualRefundTask).not.toHaveBeenCalled();
   });
 
-  it("refuses a date that is not a lodge night", async () => {
+  it("checks permission first: a caller without finance:edit meets the guard, not the refusal", async () => {
+    mocks.requireAdmin.mockResolvedValueOnce({
+      ok: false,
+      response: new Response(null, { status: 403 }),
+    });
+
+    const response = await POST(request(staleReviewSettle), { params });
+
+    expect(response.status).toBe(403);
+    expect(mocks.taskFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("CONTROL: every other kind still resolves, and a missing task still reaches the door", async () => {
+    mocks.taskFindUnique.mockResolvedValueOnce({ kind: "CANCELLED_BOOKING_HAND_BACK" });
+    const handBack = await POST(
+      request({ resolution: "completed", confirmed: true, note: null }),
+      { params },
+    );
+    expect(handBack.status).toBe(200);
+
+    // The resolution answers an unknown id as it always has; this route does
+    // not guess at it.
+    mocks.taskFindUnique.mockResolvedValueOnce(null);
+    await POST(request({ resolution: "dismissed", confirmed: true, note: "Gone." }), {
+      params,
+    });
+
+    expect(mocks.resolveManualRefundTask).toHaveBeenCalledTimes(2);
+    expect(mocks.resolveManualRefundTask).toHaveBeenLastCalledWith(
+      expect.objectContaining({ resolution: "dismissed", recordedNightPrices: null }),
+      CLUB_FORMAT_TEST,
+    );
+  });
+
+  it("no longer accepts per-night prices on any other kind's body", async () => {
+    mocks.taskFindUnique.mockResolvedValue({ kind: "CANCELLED_BOOKING_HAND_BACK" });
     const response = await POST(
       request({
         resolution: "dismissed",
         confirmed: true,
-        note: "Nothing owed either way.",
-        recordedNightPrices: [
-          {
-            strandIndex: 0,
-            nightPrices: [{ date: "the second", priceCents: 100 }],
-          },
-        ],
+        note: "Nothing owed.",
+        recordedNightPrices: staleReviewSettle.recordedNightPrices,
       }),
       { params },
     );
-    expect(response.status).toBe(400);
-    expect(mocks.resolveManualRefundTask).not.toHaveBeenCalled();
-  });
 
-  it("refuses an extra field on a night, so no 'work the rest out' flag can be smuggled in", async () => {
-    const response = await POST(
-      request({
-        resolution: "dismissed",
-        confirmed: true,
-        note: "Nothing owed either way.",
-        recordedNightPrices: [
-          {
-            strandIndex: 0,
-            nightPrices: [
-              { date: "2026-08-02", priceCents: 100, splitRemainder: true },
-            ],
-          },
-        ],
-      }),
-      { params },
-    );
     expect(response.status).toBe(400);
     expect(mocks.resolveManualRefundTask).not.toHaveBeenCalled();
   });
 });
 
 describe("what the operator is told afterwards", () => {
-  it("says the nights were recorded, and what that bought them", async () => {
-    mocks.resolveManualRefundTask.mockResolvedValue({
-      amountAmended: false,
-      settlementRoute: null,
-      stripeRefundId: null,
-      additionalPaymentIntentId: null,
-      recordedNightPriceCount: 2,
-    });
-
-    const response = await POST(
-      request({
-        resolution: "dismissed",
-        confirmed: true,
-        note: "Nothing owed either way.",
-        recordedNightPrices: [
-          {
-            strandIndex: 0,
-            nightPrices: [
-              { date: "2026-08-02", priceCents: 100 },
-              { date: "2026-08-03", priceCents: 100 },
-            ],
-          },
-        ],
-      }),
-      { params },
-    );
-    const body = (await response.json()) as { message: string };
-    /*
-      The receipt claims THIS GUEST'S nights, not the booking (#3191 fix round).
-      Since #4317 no edit sends a booking for review, so it no longer promises
-      that, nor that another guest's blanks still can (#4317).
-    */
-    expect(body.message).toContain(
-      "2 nights' prices were recorded for this guest.",
-    );
-    expect(body.message).not.toContain("for review again");
-  });
-
-  it("says nothing extra when no nights were recorded", async () => {
-    // THE CONTROL: the sentence is appended, so it must be absent rather than
-    // empty-but-present on the ordinary settle.
+  it("tells a dismissal it was a dismissal", async () => {
     const response = await POST(
       request({
         resolution: "dismissed",
