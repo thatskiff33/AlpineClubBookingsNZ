@@ -305,13 +305,14 @@ export function dismissalMessage(
  * queue shows it - naming who the bank transfer goes to. A joiner's booking the
  * group organiser paid for by internet banking is refunded to the ORGANISER
  * (owner decision on #3949, 21 Oct 2026), never to the joiner, so the officer
- * paying it must be told whose account to send it to. The member wording is
- * exactly what it was.
+ * paying it must be told whose account to send it to. #5212 (`INV-PAY-160`):
+ * the member wording also covers a card payment Stripe holds no record of,
+ * which has no card to refund and so arrives here too.
  */
 export function editRefundHandBackReason({ bookingId, editLabel, payee }: { bookingId: string; editLabel: string; payee: BankTransferRefundPayee }): string {
   return payee === "organiser"
     ? `Booking ${bookingId} lowered by a ${editLabel}; the group organiser paid for it by internet banking, so the club refunds the difference to the group organiser by bank transfer.`
-    : `Booking ${bookingId} lowered by a ${editLabel}; paid by internet banking or by hand, so the club refunds the difference by bank transfer (#3827).`;
+    : `Booking ${bookingId} lowered by a ${editLabel}; paid by internet banking or by hand, or by a card payment with no Stripe record, so the club refunds the difference by bank transfer (#3827).`;
 }
 
 export function refundRequestHandBackReason({ bookingId, payee }: { bookingId: string; payee: BankTransferRefundPayee }): string {

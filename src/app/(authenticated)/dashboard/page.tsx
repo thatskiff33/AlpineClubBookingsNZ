@@ -55,6 +55,13 @@ import {
 } from "@/lib/promo";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { canViewCalendarEvents } from "@/lib/calendar-access";
+import { listDashboardCalendarEvents } from "@/lib/dashboard-calendar-events";
+import { canViewWorkParties } from "@/lib/work-party-access";
+import { listUpcomingMemberWorkParties } from "@/lib/work-party-member";
+import {
+  WORK_PARTY_DASHBOARD_CARD_LIMIT,
+  WorkPartyDashboardCard,
+} from "@/components/work-party-dashboard-card";
 import { canActorUseFoodOrders } from "@/lib/food-order-access";
 import { FoodOrderDashboardCard } from "@/components/food-order-dashboard-card";
 import { RecentNewsCard } from "@/components/recent-news-card";
@@ -491,18 +498,21 @@ export default async function DashboardPage() {
   // the process's own zone (INV-DATE-019).
   const twoWeeksOut = club.startOfDay(addCalendarDays(todayDate, 14));
   const upcomingEvents = showEventsCard
-    ? await prisma.calendarEvent.findMany({
-        where: { startsAt: { gte: startOfTodayNZ, lte: twoWeeksOut } },
-        orderBy: { startsAt: "asc" },
-        take: 6,
-        select: {
-          id: true,
-          title: true,
-          startsAt: true,
-          allDay: true,
-          isMeeting: true,
-        },
+    ? await listDashboardCalendarEvents({
+        from: startOfTodayNZ,
+        to: twoWeeksOut,
+        modules,
+        viewer: session.user,
       })
+    : [];
+
+  // Upcoming work parties (#5148): members only, with the module on. The
+  // bound is the club's today as a date-only value, against the work party's
+  // date-only last night, so one finishing today is still listed.
+  const showWorkPartiesCard =
+    modules.workParties && canViewWorkParties(session.user);
+  const upcomingWorkParties = showWorkPartiesCard
+    ? await listUpcomingMemberWorkParties(today, WORK_PARTY_DASHBOARD_CARD_LIMIT)
     : [];
 
   return (
@@ -692,6 +702,13 @@ export default async function DashboardPage() {
               </ul>
             )}
           </SummaryLinkCard>
+        )}
+
+        {showWorkPartiesCard && (
+          <WorkPartyDashboardCard
+            workParties={upcomingWorkParties}
+            format={club.format}
+          />
         )}
 
         {modules.promoCodes && (
