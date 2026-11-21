@@ -5,6 +5,8 @@ import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "@/lib/__tests__/support/club-time-render";
+import { expectOneLevelOneHeading } from "@/lib/__tests__/support/heading-outline";
+import { storedInstructionWithH1 } from "@/lib/__tests__/support/stored-heading-one";
 
 /**
  * #5218 (`INV-PUB-006`) — an administrator can put a Heading 1 in the lodge
@@ -31,8 +33,6 @@ import { KioskLodgeInstructions } from "@/components/kiosk-lodge-instructions";
 import { LodgeRules } from "@/components/lodge-display/modules/lodge-rules";
 import type { DisplayState } from "@/lib/lodge-display-state";
 
-const STORED_WITH_H1 = "<h1>Arriving at the lodge</h1><p>Turn the power on.</p>";
-
 async function readerDocuments() {
   return getSanitizedLodgeInstructions();
 }
@@ -45,14 +45,7 @@ function stubDocumentsFetch(documents: unknown) {
 }
 
 beforeEach(() => {
-  mocks.lodgeInstructionFindMany.mockResolvedValue([
-    {
-      key: "OPEN",
-      contentHtml: STORED_WITH_H1,
-      updatedAt: new Date("2026-06-10T00:00:00Z"),
-      lodgeId: null,
-    },
-  ]);
+  mocks.lodgeInstructionFindMany.mockResolvedValue([storedInstructionWithH1()]);
 });
 
 afterEach(() => {
@@ -67,9 +60,7 @@ describe("an H1 in stored lodge instructions", () => {
 
     const authored = await screen.findByRole("heading", { name: "Arriving at the lodge" });
     expect(authored.tagName).toBe("H2");
-    const h1s = screen.getAllByRole("heading", { level: 1 });
-    expect(h1s).toHaveLength(1);
-    expect(h1s[0]).toHaveAccessibleName("Lodge Instructions");
+    expectOneLevelOneHeading("Lodge Instructions");
   });
 
   it("/hut-leader-instructions keeps one level-1 heading once the PIN is accepted", async () => {
@@ -81,9 +72,7 @@ describe("an H1 in stored lodge instructions", () => {
 
     const authored = await screen.findByRole("heading", { name: "Arriving at the lodge" });
     expect(authored.tagName).toBe("H2");
-    const h1s = screen.getAllByRole("heading", { level: 1 });
-    expect(h1s).toHaveLength(1);
-    expect(h1s[0]).toHaveAccessibleName("Lodge Instructions");
+    expectOneLevelOneHeading("Lodge Instructions");
   });
 
   it("the kiosk's instructions section adds no level-1 heading to the kiosk page", async () => {
