@@ -72,17 +72,7 @@ export function planPrimaryBookingInvoice(input: PrimaryInvoicePlanInput): Prima
       // #4632: the treatment the built lines carry, resolved from the booking's tax anchor.
       taxType: input.taxRendering.taxType ?? null,
       lineAmountTypes: input.taxRendering.lineAmountTypes,
-      hutFee: {
-        accountCode: input.hutFeeMapping.code ?? "200",
-        itemCode: input.hutFeeMapping.itemCode,
-        codeExplicitlyConfigured: input.hutFeeMapping.codeExplicitlyConfigured,
-      },
-      itemCodeMap: {
-        byKey: [...input.hutFeeItemCodeMap.byKey].sort(([a], [b]) => compareOrdinal(a, b)),
-        fullTypeId: input.hutFeeItemCodeMap.fullTypeId,
-        nonMemberTypeId: input.hutFeeItemCodeMap.nonMemberTypeId,
-        legacyItemCode: input.hutFeeItemCodeMap.legacyItemCode,
-      },
+      ...frozenHutFeeMapping(input.hutFeeMapping, input.hutFeeItemCodeMap),
       seasonType: input.seasonType,
       promoCodes: (input.promo.redemptions ?? []).map((redemption) => ({
         code: redemption.promoCode?.code ?? null,
@@ -91,6 +81,26 @@ export function planPrimaryBookingInvoice(input: PrimaryInvoicePlanInput): Prima
       })),
     },
   });
+}
+
+/**
+ * The hut-fee account and item-code settings built lines were coded with, frozen
+ * beside a manifest: the primary invoice's and the combined group invoice's.
+ */
+export function frozenHutFeeMapping(hutFeeMapping: PrimaryInvoiceLineInput["hutFeeMapping"], itemCodeMap: PrimaryInvoiceLineInput["hutFeeItemCodeMap"]) {
+  return {
+    hutFee: {
+      accountCode: hutFeeMapping.code ?? "200",
+      itemCode: hutFeeMapping.itemCode,
+      codeExplicitlyConfigured: hutFeeMapping.codeExplicitlyConfigured,
+    },
+    itemCodeMap: {
+      byKey: [...itemCodeMap.byKey].sort(([a], [b]) => compareOrdinal(a, b)),
+      fullTypeId: itemCodeMap.fullTypeId,
+      nonMemberTypeId: itemCodeMap.nonMemberTypeId,
+      legacyItemCode: itemCodeMap.legacyItemCode,
+    },
+  };
 }
 
 /**
@@ -191,6 +201,67 @@ function coverPrimaryInvoiceLines(input: {
   const conflict = (reason: MemberMoneyExportConflictReason, problem: string): PrimaryInvoicePlan =>
     ({ outcome: "CONFLICT", lines, reason, problem, ...rendering([]) });
 
+  const covered = coverBookingInvoiceLines({ bookingId, stayCents, feeCents, postedLegs });
+  if ("reason" in covered) return conflict(covered.reason, covered.problem);
+  if (covered.coverage.reduce((sum, c) => sum + c.coveredCents, 0) !== lineTotalCents) {
+    return conflict("STAY_CENTS", "the lines' total is not what the components carry");
+  }
+  return { outcome: "COVERED", lines, coverage: covered.coverage, ...rendering(covered.coverage) };
+}
+
+/** What one booking's invoice lines cover in whole, or why they cover nothing. */
+export type BookingInvoiceCoverage =
+  | { coverage: PrimaryInvoiceCoverage[] }
+  | { reason: Extract<MemberMoneyExportConflictReason, "STAY_CENTS" | "FEE_CENTS" | "COMPONENT_UNUSABLE">; problem: string };
+
+/**
+ * THE PER-BOOKING MATCH (#4525): one booking's stay lines and change-fee line,
+ * in cents, against its live journal components. The primary invoice runs it
+ * for its booking; the combined group invoice runs it for each child (`INV-SSOT`).
+ *
+ * Guest and promo lines must equal the stay component's live gross
+ * (`bookingChargeIdentity`), and the fee line the live change-fee components'
+ * gross. A component whose legs disagree on booking or tax, one naming another
+ * booking, a non-stay booking-revenue component (a close-out), or a missing stay
+ * charge under non-zero lines is unusable. Coverage is whole components only.
+ */
+export function coverBookingInvoiceLines(input: {
+  bookingId: string;
+  stayCents: number;
+  feeCents: number;
+  postedLegs: readonly PostedRevenueLeg[];
+}): BookingInvoiceCoverage {
+  const { bookingId, stayCents, feeCents } = input;
+  const live = liveBookingInvoiceComponents(bookingId, input.postedLegs);
+  if ("reason" in live) return live;
+  const { stay, fees } = live;
+  const liveFeeCents = fees.reduce((sum, c) => sum + c.coveredCents, 0);
+  if (!stay) {
+    if (stayCents + feeCents === 0 && liveFeeCents === 0) return { coverage: [] };
+    return { reason: "COMPONENT_UNUSABLE", problem: `the journal holds no stay charge ${bookingChargeIdentity(bookingId)}` };
+  }
+  if (stay.coveredCents !== stayCents) {
+    return { reason: "STAY_CENTS", problem: "the stay lines do not bill the stay charge's live gross" };
+  }
+  if (liveFeeCents !== feeCents) {
+    return { reason: "FEE_CENTS", problem: "the change-fee line does not bill the fee components' live gross" };
+  }
+  const coverage = [stay, ...fees].filter((c) => c.coveredCents !== 0);
+  if (coverage.some((c) => c.coveredCents < 0)) return { reason: "COMPONENT_UNUSABLE", problem: "a component carries a negative gross" };
+  return { coverage };
+}
+
+/**
+ * The components a booking's invoice can bill, each at its live gross: its stay
+ * charge (or null when no leg posts it) and its live change-fee components. Any
+ * component whose legs disagree on booking or tax, one naming another booking,
+ * or a live booking-revenue component other than the stay charge is unusable.
+ */
+export function liveBookingInvoiceComponents(
+  bookingId: string,
+  postedLegs: readonly PostedRevenueLeg[],
+): { stay: PrimaryInvoiceCoverage | null; fees: PrimaryInvoiceCoverage[] } | { reason: "COMPONENT_UNUSABLE"; problem: string } {
+  const unusable = (problem: string) => ({ reason: "COMPONENT_UNUSABLE" as const, problem });
   const stayIdentity = bookingChargeIdentity(bookingId);
   const identities = componentsPostedBy({ lines: postedLegs }).sort((a, b) =>
     compareOrdinal(componentKey(a.account, a.chargeIdentity), componentKey(b.account, b.chargeIdentity)));
@@ -200,32 +271,17 @@ function coverPrimaryInvoiceLines(input: {
     const { chargeIdentity } = identity;
     const split = liveComponentSplit(postedLegs, account, chargeIdentity);
     if (!split) continue;
-    if ("problem" in split) return conflict("COMPONENT_UNUSABLE", split.problem);
-    if (split.bookingId !== bookingId) return conflict("COMPONENT_UNUSABLE", `component ${chargeIdentity} names another booking`);
+    if ("problem" in split) return unusable(split.problem);
+    if (split.bookingId !== bookingId) return unusable(`component ${chargeIdentity} names another booking`);
     components.push({ account, chargeIdentity, coveredCents: split.grossCents, taxCode: split.taxCode });
   }
-  const stay = components.find((c) => c.account === "BOOKING_REVENUE" && c.chargeIdentity === stayIdentity);
   // A close-out (`refundCloseOutIdentity`) or any other booking-revenue component is never the stay charge.
   const otherStay = components.find((c) => c.account === "BOOKING_REVENUE" && c.chargeIdentity !== stayIdentity && c.coveredCents !== 0);
-  if (otherStay) return conflict("COMPONENT_UNUSABLE", `booking revenue ${otherStay.chargeIdentity} is not the stay charge`);
-  const fees = components.filter((c) => c.account === "FEE_REVENUE");
-  const liveFeeCents = fees.reduce((sum, c) => sum + c.coveredCents, 0);
-  if (!stay) {
-    if (lineTotalCents === 0 && liveFeeCents === 0) return { outcome: "COVERED", lines, coverage: [], ...rendering([]) };
-    return conflict("COMPONENT_UNUSABLE", `the journal holds no stay charge ${stayIdentity}`);
-  }
-  if (stay.coveredCents !== stayCents) {
-    return conflict("STAY_CENTS", "the stay lines do not bill the stay charge's live gross");
-  }
-  if (liveFeeCents !== feeCents) {
-    return conflict("FEE_CENTS", "the change-fee line does not bill the fee components' live gross");
-  }
-  const coverage = [stay, ...fees].filter((c) => c.coveredCents !== 0);
-  if (coverage.some((c) => c.coveredCents < 0)) return conflict("COMPONENT_UNUSABLE", "a component carries a negative gross");
-  if (coverage.reduce((sum, c) => sum + c.coveredCents, 0) !== lineTotalCents) {
-    return conflict("STAY_CENTS", "the lines' total is not what the components carry");
-  }
-  return { outcome: "COVERED", lines, coverage, ...rendering(coverage) };
+  if (otherStay) return unusable(`booking revenue ${otherStay.chargeIdentity} is not the stay charge`);
+  return {
+    stay: components.find((c) => c.account === "BOOKING_REVENUE" && c.chargeIdentity === stayIdentity) ?? null,
+    fees: components.filter((c) => c.account === "FEE_REVENUE"),
+  };
 }
 
 /** The primary manifest an update stands on: the one recorded for the same booking's invoice. */

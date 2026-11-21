@@ -692,6 +692,27 @@ officer's inline retry of a FAILED one passes that payload's
 `paymentIntentId` to the sender, so the retry's receipt names the same capture
 the outbox run would have.
 
+The combined group invoice cohort (ALP-437) adds `COMBINED_GROUP_INVOICE` on
+the same manifest, and `createXeroInvoiceForGroupSettlement` still sends,
+emails and voids exactly as before. `planCombinedGroupInvoice` runs each
+committed child through the primary invoice's own match
+(`coverBookingInvoiceLines`); any child's conflict, or a component a primary
+invoice or another combined invoice still covers (`ALREADY_COVERED`), covers
+nothing. The manifest names the organiser's booking and the settlement, under
+the attempt's key (`groupSettlementInvoiceCreateKey`); a replacement invoice is
+the next attempt, never a second render revision. Only a kept invoice is
+recorded, after its bind; an already-bound return replays it from the CREATE
+row's stored lines, matched across the children together because those lines
+do not say which child each bills. A primary invoice and a combined invoice
+never both live-cover one component (a partial unique index). Coverage ends
+only by an insert-only `MemberMoneyExportCoverageRelease` row, written when
+Xero holds the invoice void or holds no such invoice, never when it carries
+money; the next document then covers the component at the next coverage
+generation. A replacement invoice whose settlement's earlier invoice still
+covers a child records nothing until that earlier invoice's release, which
+records it; one carrying money keeps its cover, and the replacement stays
+unrecorded.
+
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |
 | Primary, supplementary or combined group invoice | Exact issued charge components, including fee coverage assigned once. Combined invoices consume child charge coverage; individual child invoices cannot consume it again. Pending bank-transfer obligations already have R01 postings. |

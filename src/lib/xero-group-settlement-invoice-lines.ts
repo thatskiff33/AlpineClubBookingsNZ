@@ -20,23 +20,23 @@
  */
 import type { LineItem } from "xero-node";
 import type { XeroTaxRendering } from "@/lib/xero-tax-rendering";
-import { BookingStatus } from "@prisma/client";
+import { BookingStatus, type Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { getStayNights } from "./pricing";
-import { buildInvoiceLineItems } from "./xero-booking-invoices";
+import { buildPrimaryInvoiceLines } from "./xero-primary-invoice-lines";
 import {
   getHutFeeItemCodeMap,
   getHutFeeSeasonType,
   getResolvedAccountMapping,
+  type HutFeeItemCodeResolver,
+  type ResolvedAccountMapping,
 } from "./xero-mappings";
 import {
-  planPromoAdjustmentLines,
-  promoAdjustmentLineItems,
   promoAdjustmentLineRecord,
   type PromoAdjustmentLineRecord,
 } from "@/lib/xero-promo-adjustment-lines";
 import { groupSettlementTotalCents } from "@/lib/group-settlement-invoice-binding";
-import { changeFeeLineItem, invoiceLineItemsTotalCents } from "@/lib/xero-modification-line-items";
+import { invoiceLineItemsTotalCents } from "@/lib/xero-modification-line-items";
 import { recordedChangeFeeCents } from "@/lib/booking-payment-state";
 import { completeXeroSyncOperation } from "@/lib/xero-sync";
 import { alertGroupSettlementInvoice } from "@/lib/group-settlement-invoice-alerts";
@@ -46,8 +46,25 @@ import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 
+/** One child's share of the combined invoice, in build order (#4525, ALP-437). */
+export interface GroupSettlementChildLines {
+  bookingId: string;
+  lodgeId: string;
+  seasonType: string | null;
+  /** The child's guest and promo lines: what bills its stay charge. */
+  stayLines: LineItem[];
+  /** The child's change-fee line, or none. */
+  feeLines: LineItem[];
+}
+
 export interface GroupSettlementInvoiceLines {
+  /** Every child's stay lines then fee lines, child after child: what is sent. */
   lineItems: LineItem[];
+  /** The same lines, child by child, for the export manifest's per-child match. */
+  byChild: GroupSettlementChildLines[];
+  /** The hut-fee mapping and item-code map every child's lines were built with. */
+  hutFeeMapping: ResolvedAccountMapping;
+  hutFeeItemCodeMap: HutFeeItemCodeResolver;
   childCount: number;
   /** `groupSettlementTotalCents` over the children the lines were built from. */
   childrenCents: number;
@@ -62,6 +79,20 @@ export interface GroupSettlementInvoiceLines {
   operationRecord: { promoLines?: Array<{ bookingId: string } & PromoAdjustmentLineRecord> };
 }
 
+/**
+ * The children a settlement commits and its combined invoice bills: the
+ * organiser's CONFIRMED, organiser-settled, undeleted children. The one
+ * definition the lines and the export manifest's replay read (`INV-SSOT`).
+ */
+export function committedGroupChildrenWhere(organiserBookingId: string) {
+  return {
+    parentBookingId: organiserBookingId,
+    organiserSettled: true,
+    deletedAt: null,
+    status: BookingStatus.CONFIRMED,
+  } satisfies Prisma.BookingWhereInput;
+}
+
 /** Build the combined invoice's lines from the settlement's committed children. */
 export async function buildGroupSettlementInvoiceLines(
   organiserBookingId: string,
@@ -69,12 +100,7 @@ export async function buildGroupSettlementInvoiceLines(
   taxRendering: XeroTaxRendering,
 ): Promise<GroupSettlementInvoiceLines> {
   const children = await prisma.booking.findMany({
-    where: {
-      parentBookingId: organiserBookingId,
-      organiserSettled: true,
-      deletedAt: null,
-      status: BookingStatus.CONFIRMED,
-    },
+    where: committedGroupChildrenWhere(organiserBookingId),
     include: {
       guests: { include: { nights: true } },
       promoRedemptions: { include: { promoCode: true, allocations: true } },
@@ -88,11 +114,12 @@ export async function buildGroupSettlementInvoiceLines(
     getResolvedAccountMapping("hutFeesIncome"),
     getHutFeeItemCodeMap(),
   ]);
-  const incomeCode = hutFeeMapping.code ?? "200";
 
-  // Built per child (each child has its own date range and season), then
-  // aggregated across the whole group into one invoice.
-  const lineItems: LineItem[] = [];
+  // Built per child (each child has its own date range and season) through the
+  // primary invoice's own composition (`INV-SSOT`): guest lines, its promotion
+  // lines (#3828, one per code), then its recorded change fee (#3750, #3955
+  // review F3), which is part of its worth. Aggregated into one invoice.
+  const byChild: GroupSettlementChildLines[] = [];
   const promoLines: Array<{ bookingId: string } & PromoAdjustmentLineRecord> = [];
   for (const child of children) {
     const checkIn = new Date(child.checkIn);
@@ -113,43 +140,34 @@ export async function buildGroupSettlementInvoiceLines(
         priceCents: n.priceCents,
       })),
     }));
-    lineItems.push(
-      ...buildInvoiceLineItems(
-        guests,
-        checkIn,
-        checkOut,
-        nights,
-        incomeCode,
-        hutFeeMapping.itemCode,
-        hutFeeMapping.codeExplicitlyConfigured,
-        hutFeeItemCodeMap,
-        seasonType,
-        taxRendering,
-      )
-    );
-    const promoLinePlan = planPromoAdjustmentLines({
-      aggregateCents: child.promoAdjustmentCents ?? 0,
-      redemptions: child.promoRedemptions,
-      adjustmentRows: child.nightAdjustments,
-    });
-    lineItems.push(
-      ...promoAdjustmentLineItems(promoLinePlan, {
+    const built = buildPrimaryInvoiceLines({
+      guests,
+      checkIn,
+      checkOut,
+      nights,
+      hutFeeMapping,
+      hutFeeItemCodeMap,
+      seasonType,
+      promo: {
+        aggregateCents: child.promoAdjustmentCents ?? 0,
+        redemptions: child.promoRedemptions,
+        adjustmentRows: child.nightAdjustments,
         firstGuest: guests[0] ?? null,
-        itemCodeResolver: hutFeeItemCodeMap,
-        seasonType,
-        hutFeeMapping,
-      }, taxRendering)
-    );
-    const promoLineRecord = promoAdjustmentLineRecord(promoLinePlan);
+      },
+      changeFeeCents: recordedChangeFeeCents(child.payment),
+      taxRendering,
+    });
+    byChild.push({ bookingId: child.id, lodgeId: child.lodgeId, seasonType, stayLines: built.stayLines, feeLines: built.feeLines });
+    const promoLineRecord = promoAdjustmentLineRecord(built.promoLinePlan);
     if (promoLineRecord) promoLines.push({ bookingId: child.id, ...promoLineRecord });
-    // #3750 (#3955 review F3): the child's recorded change fee is in its worth,
-    // so the combined invoice bills it on the one change-fee line.
-    const childFeeCents = recordedChangeFeeCents(child.payment);
-    if (childFeeCents > 0) lineItems.push(changeFeeLineItem(childFeeCents, hutFeeMapping, taxRendering));
   }
+  const lineItems = byChild.flatMap((child) => [...child.stayLines, ...child.feeLines]);
 
   return {
     lineItems,
+    byChild,
+    hutFeeMapping,
+    hutFeeItemCodeMap,
     childCount: children.length,
     childrenCents: groupSettlementTotalCents(
       children.map((child) => ({ finalPriceCents: child.finalPriceCents ?? 0, payment: child.payment }))

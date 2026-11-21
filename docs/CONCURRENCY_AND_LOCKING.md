@@ -102,6 +102,7 @@ the legacy `hashtext(<memberId>)` contact-link key's in
 [recovery preflight (#4359)](#charge-backed-refund-recovery-preflight-4359) ·
 [refund failed later (#4104)](#a-card-refund-that-failed-later-the-payment-row-lock-no-advisory-key-4104) ·
 [primary invoice link (#3980)](#an-edit-against-the-primary-invoices-link-the-payment-row-lock-no-advisory-key-3980) ·
+[combined group invoice manifest (#4525)](#the-combined-group-invoices-export-manifest-no-lock-the-unique-keys-4525) ·
 [a Stripe dispute's record (#4911)](#a-stripe-disputes-record-4911).
 
 **Xero refund-note links.**
@@ -7062,6 +7063,28 @@ Counterpart reconciliation at M4c's base (`0d678da`): #4791 (M4b receipts),
 claims, exact `madeRefundId` and key-generation markers, preflight and outbox
 behaviour are unchanged; the Stripe request each sender makes is byte-identical
 (`card-refund-obligation-census.test.ts`, `member-money-refunds.realdb.test.ts`).
+
+## The combined group invoice's export manifest: no lock, the unique keys (#4525)
+
+`recordCombinedGroupInvoiceManifest` and `releaseCombinedGroupInvoiceManifest`
+(`src/lib/member-money/internal/combined-group-invoice-manifest.ts`, ALP-437)
+each run in a short transaction of their own: the record after
+`bindCreatedGroupSettlementInvoice` has committed, or on an already-bound
+return; the release after a void handler finds the invoice void, voids it, or
+finds no such invoice. Neither joins that bind's `lock(1)` nor takes any key
+(`INV-LOCK-001`: a manifest or a release changes no booking status and no
+settlement money), and neither changes the void's or the create's operation.
+The exclusion is structural: the manifest's unique `(documentRole, legacyKey)`,
+the coverage key per generation, and the partial unique index that lets only
+one primary or combined invoice cover a component at a time. Two racing
+recorders, or a primary and a combined recorder on one component, meet a
+unique violation (P2002); the loser writes nothing, logs, and a replay
+re-plans it, as `ALREADY_COVERED` if the winner still covers the component
+(a winner from the same settlement's earlier attempt is waited for instead: its
+release retries the replacement's record).
+Releases are insert-only, one per manifest (`skipDuplicates`). The deferred
+`member_money_require_export_generation` refuses a later generation whose
+predecessor is not wholly released, at commit; it reads, never locks.
 
 ## A credit note spent outside the app: global, then the member's credit ledger (#4219)
 

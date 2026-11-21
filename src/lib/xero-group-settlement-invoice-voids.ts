@@ -13,6 +13,11 @@
  * completes quietly. Anything else that fails leaves the row FAILED, which the
  * operator's Retry returns to the outbox (`xero-operation-retry.ts`).
  *
+ * #4525 (ALP-437): an invoice found void, voided here, or missing from Xero has
+ * its export manifest's coverage released, so the group's next invoice can
+ * cover the same components; one carrying money keeps its coverage. The release
+ * never changes the void's outcome.
+ *
  * Deploy note: code from before #3642 reads an abandon VOID row (its payload
  * names an invoice) as a cancellation VOID, refuses it ("Cannot VOID an active
  * group settlement") and leaves it FAILED. That fails closed — nothing is voided
@@ -36,6 +41,7 @@ import { alertGroupSettlementInvoice } from "@/lib/group-settlement-invoice-aler
 import { clubFormatValues } from "@/lib/club-format-server";
 import { formatCents } from "@/lib/utils";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { releaseCombinedGroupInvoiceManifest } from "@/lib/member-money/doors";
 
 /** What a combined invoice's state in Xero lets the app do with it. */
 export type GroupSettlementInvoiceState =
@@ -154,6 +160,7 @@ export async function voidCancelledGroupSettlementInvoice(params: {
       context: `voidInvoice(cancelled group settlement ${params.settlementId})`,
     }
   );
+  await releaseCombinedGroupInvoiceManifest({ settlementId: params.settlementId, invoiceId: params.invoiceId, reason: "VOIDED" });
 
   const link = groupSettlementInvoiceLink(params.settlementId, {
     id: params.invoiceId,
@@ -223,6 +230,7 @@ async function voidStillNeeded(params: {
       },
       await clubFormatValues()
     );
+    await releaseCombinedGroupInvoiceManifest({ settlementId: params.settlementId, invoiceId: params.invoiceId, reason: "NOT_FOUND" });
     await completeXeroSyncOperation(params.syncOperation, {
       status: "SUCCEEDED",
       responsePayload: { invoiceNotFoundInXero: true },
@@ -230,6 +238,7 @@ async function voidStillNeeded(params: {
     return false;
   }
   if (state.kind === "void") {
+    await releaseCombinedGroupInvoiceManifest({ settlementId: params.settlementId, invoiceId: params.invoiceId, reason: "VOIDED" });
     await completeXeroSyncOperation(params.syncOperation, {
       status: "SUCCEEDED",
       responsePayload: { invoiceAlreadyVoid: true, invoiceStatus: state.status },
@@ -380,6 +389,7 @@ export async function voidXeroInvoiceForAbandonedGroupSettlement(
       context: `voidInvoice(abandoned group settlement ${settlementId})`,
     }
   );
+  await releaseCombinedGroupInvoiceManifest({ settlementId, invoiceId: xeroInvoiceId, reason: "VOIDED" });
   await completeXeroSyncOperation(options.syncOperation, {
     status: "SUCCEEDED",
     responsePayload: {

@@ -38,7 +38,8 @@ const mocks = vi.hoisted(() => {
     paymentTransaction: { findMany: vi.fn().mockResolvedValue([]) },
     // #4525 (M13): the primary invoice's export manifest, written after its link.
     memberMoneyExportManifest: { findUnique: vi.fn().mockResolvedValue(null), createMany: vi.fn().mockResolvedValue({ count: 1 }) },
-    memberMoneyExportCoverage: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    // #4525 (ALP-437): no released generation of any component, so each row is generation 0.
+    memberMoneyExportCoverage: { createMany: vi.fn().mockResolvedValue({ count: 1 }), findFirst: vi.fn().mockResolvedValue(null) },
   };
 
   const prisma = {

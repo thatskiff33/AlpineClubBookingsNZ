@@ -41,3 +41,5 @@ export { recordRefundNoteManifest, recordRefundNotePaymentManifest, type RefundN
 export { recordCaptureReceiptManifest, type CaptureReceiptManifestInput } from "./internal/capture-receipt-manifest";
 // #4525 (M13): a failed-later refund's reversal invoice's export manifest, recorded after its operation completes.
 export { recordFailedLaterRefundReversalManifest } from "./internal/refund-note-manifest";
+// #4525 (ALP-437): the organiser's combined group invoice's manifest, recorded once the invoice is kept, and released when it is void or gone.
+export { recordCombinedGroupInvoiceManifest, releaseCombinedGroupInvoiceManifest } from "./internal/combined-group-invoice-manifest";

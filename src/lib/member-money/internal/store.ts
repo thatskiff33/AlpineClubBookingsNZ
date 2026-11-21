@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   MemberMoneyAccount,
   MemberMoneyExportConflictReason,
+  MemberMoneyExportCoverageReleaseReason,
   MemberMoneyExportDocumentRole,
   MemberMoneyExportOutcome,
   MemberMoneyRefundReservationReleaseReason,
@@ -490,6 +491,8 @@ export interface ExportManifestRow {
   documentRole: MemberMoneyExportDocumentRole;
   legacyKey: string;
   bookingId: string;
+  /** The group settlement a COMBINED_GROUP_INVOICE bills (ALP-437); absent for every other role. */
+  settlementId?: string;
   outcome: MemberMoneyExportOutcome;
   reason: MemberMoneyExportConflictReason | null;
   payloadHash: string;
@@ -497,13 +500,70 @@ export interface ExportManifestRow {
   lineTotalCents: number;
   providerInvoiceId: string;
   /** `sliceKey`: the journal event whose slice of the component a row bills, or the Xero payment key whose cents of a capture it covers; absent for a whole component. */
-  coverage: ReadonlyArray<{ account: MemberMoneyAccount; chargeIdentity: string; coveredCents: number; taxCode: string | null; sliceKey?: string }>;
+  coverage: ReadonlyArray<ExportCoverageRow>;
+}
+
+type ExportCoverageRow = { account: MemberMoneyAccount; chargeIdentity: string; coveredCents: number; taxCode: string | null; sliceKey?: string };
+
+/**
+ * The roles whose documents bill a booking's whole components (#4525, ALP-437):
+ * the primary booking invoice and the organiser's combined group invoice. At
+ * most one of them covers a component at a time (the partial unique index
+ * `MemberMoneyExportCoverage_invoice_component_key`); every other role is a
+ * group of its own.
+ */
+const INVOICE_COVERAGE_ROLES: readonly MemberMoneyExportDocumentRole[] = ["PRIMARY_BOOKING_INVOICE", "COMBINED_GROUP_INVOICE"];
+
+function coverageRoleGroup(role: MemberMoneyExportDocumentRole): MemberMoneyExportDocumentRole[] {
+  return INVOICE_COVERAGE_ROLES.includes(role) ? [...INVOICE_COVERAGE_ROLES] : [role];
+}
+
+/**
+ * The generation a new coverage row of `role` takes: one after the highest
+ * generation of the same component its role group released, else 0. A live
+ * row at that generation makes the insert fail on the unique key, which is the
+ * exclusion; the deferred `member_money_require_export_generation` refuses a
+ * generation whose predecessor is not wholly released.
+ */
+async function nextCoverageGeneration(db: Db, role: MemberMoneyExportDocumentRole, row: ExportCoverageRow): Promise<number> {
+  const released = await db.memberMoneyExportCoverage.findFirst({
+    where: {
+      documentRole: { in: coverageRoleGroup(role) }, account: row.account, chargeIdentity: row.chargeIdentity,
+      sliceKey: row.sliceKey ?? "", manifest: { release: { isNot: null } },
+    },
+    orderBy: { coverageGeneration: "desc" },
+    select: { coverageGeneration: true },
+  });
+  return released ? released.coverageGeneration + 1 : 0;
+}
+
+/**
+ * The whole components of `components` an invoice-family document still covers
+ * (no release on its manifest), by `account` and `chargeIdentity`, with the
+ * covering manifest's role, settlement and provider invoice. What a combined group invoice checks
+ * before it claims a child's components (ALP-437).
+ */
+export async function readLiveInvoiceCoverage(
+  db: Db,
+  components: ReadonlyArray<{ account: MemberMoneyAccount; chargeIdentity: string }>,
+): Promise<{
+  account: MemberMoneyAccount; chargeIdentity: string; documentRole: MemberMoneyExportDocumentRole; settlementId: string | null; providerInvoiceId: string;
+}[]> {
+  if (components.length === 0) return [];
+  const rows = await db.memberMoneyExportCoverage.findMany({
+    where: {
+      documentRole: { in: [...INVOICE_COVERAGE_ROLES] }, sliceKey: "", manifest: { release: { is: null } },
+      OR: components.map((c) => ({ account: c.account, chargeIdentity: c.chargeIdentity })),
+    },
+    select: { account: true, chargeIdentity: true, documentRole: true, manifest: { select: { settlementId: true, providerInvoiceId: true } } },
+  });
+  return rows.map(({ manifest, ...row }) => ({ ...row, ...manifest }));
 }
 
 /**
  * Insert a manifest under its key, or leave the row already there: the first
  * write wins (`SAME` when it hashed the same lines for the same invoice, else
- * `KEPT_FIRST`). The deferred check runs at the caller's commit.
+ * `KEPT_FIRST`). The deferred checks run at the caller's commit.
  */
 export async function writeExportManifest(db: Db, row: ExportManifestRow): Promise<"WRITTEN" | "SAME" | "KEPT_FIRST"> {
   const prior = await db.memberMoneyExportManifest.findUnique({
@@ -514,14 +574,30 @@ export async function writeExportManifest(db: Db, row: ExportManifestRow): Promi
   const id = randomUUID();
   await db.memberMoneyExportManifest.createMany({ data: [{
     id, documentRole: row.documentRole, legacyKey: row.legacyKey, renderRevision: 1, bookingId: row.bookingId,
+    settlementId: row.settlementId ?? null,
     outcome: row.outcome, reason: row.reason, payloadHash: row.payloadHash, frozenMapping: row.frozenMapping,
     lineTotalCents: row.lineTotalCents, providerInvoiceId: row.providerInvoiceId,
   }] });
   if (row.coverage.length > 0) {
-    await db.memberMoneyExportCoverage.createMany({ data: row.coverage.map((c) => ({
-      id: randomUUID(), manifestId: id, documentRole: row.documentRole, account: c.account,
-      chargeIdentity: c.chargeIdentity, sliceKey: c.sliceKey ?? "", coveredCents: c.coveredCents, taxCode: c.taxCode,
-    })) });
+    const data = [];
+    for (const c of row.coverage) {
+      data.push({
+        id: randomUUID(), manifestId: id, documentRole: row.documentRole, account: c.account,
+        chargeIdentity: c.chargeIdentity, sliceKey: c.sliceKey ?? "", coveredCents: c.coveredCents, taxCode: c.taxCode,
+        coverageGeneration: await nextCoverageGeneration(db, row.documentRole, c),
+      });
+    }
+    await db.memberMoneyExportCoverage.createMany({ data });
   }
   return "WRITTEN";
+}
+
+/**
+ * End one manifest's coverage (#4525, ALP-437): its document is void, or the
+ * provider holds no such document. Insert-only; a manifest already released is
+ * left as it is. The manifest itself never changes.
+ */
+export async function releaseExportCoverage(db: Db, manifestId: string, reason: MemberMoneyExportCoverageReleaseReason): Promise<"RELEASED" | "ALREADY_RELEASED"> {
+  const { count } = await db.memberMoneyExportCoverageRelease.createMany({ data: [{ id: randomUUID(), manifestId, reason }], skipDuplicates: true });
+  return count === 1 ? "RELEASED" : "ALREADY_RELEASED";
 }

@@ -73,10 +73,11 @@ takes no lodge parameter.
 
 `MemberMoneyEvent`, `MemberMoneyJournal`, `MemberMoneyObligation`,
 `MemberMoneyApplication`, `MemberMoneySourceLink`, `MemberMoneySourcePosting`,
-`MemberMoneyRefundReservation`, `MemberMoneyRefundReservationRelease`, `MemberMoneyExportManifest`
-and `MemberMoneyExportCoverage` are club-wide economic
+`MemberMoneyRefundReservation`, `MemberMoneyRefundReservationRelease`, `MemberMoneyExportManifest`,
+`MemberMoneyExportCoverage` and `MemberMoneyExportCoverageRelease` are club-wide economic
 records: one receipt may cover several lodges. An export manifest names its
-booking, which identifies the lodge. A reservation names its obligation
+booking, which identifies the lodge; a combined group invoice's manifest names
+the organiser's booking, and its children's lodges are frozen in its mapping. A reservation names its obligation
 and its funding batch, which identify the booking; an application batch names
 one booking and takes that booking's Payment row. `MemberMoneyLine` carries optional
 `bookingId` and `lodgeId` dimensions with RESTRICT foreign keys and no update
