@@ -95,6 +95,16 @@ transfer by the Payment's immutable booking id. Receipt legs carry that booking'
 actual lodge; no default-lodge lookup occurs. The owner-run receipt census spans
 all R01 bookings across lodges; each catch-up transaction locks only its Payment.
 
+## Xero cash credits (#5204)
+
+`XeroCashCredit`, `MemberCreditCashAllocation` and `MemberCreditCashReturn`
+are club-wide. A `XeroCashCredit` is a snapshot of one overpayment or
+prepayment in the club's one Xero organisation: money a contact paid the
+club, not any lodge. A cash allocation names its booking as a bare id, the way
+`MemberCreditNoteAllocation` does, and the booking carries the lodge. A
+return row names a credit restoration and a slice, which identify the same
+booking. None of the three gets a `lodgeId`.
+
 ## Club-Wide Defaults With Per-Lodge Overrides
 
 `CancellationPolicy`, `MinimumStayPolicy`, and `BookingPeriod` gain a

@@ -198,6 +198,10 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   MemberCredit: "credits",
   MemberCreditNoteAllocation: "credits",
   AdminCreditAdjustmentRequest: "additionalRecords.AdminCreditAdjustmentRequest",
+  // #5204: a Xero document snapshot keyed by contact, not by member.
+  XeroCashCredit: OPERATIONAL,
+  MemberCreditCashAllocation: "credits",
+  MemberCreditCashReturn: "credits",
   PublicContentSettings: CLUB_CONFIG,
   RefundRequest: "refundRequests",
   CommitteeRole: CLUB_CONFIG,
