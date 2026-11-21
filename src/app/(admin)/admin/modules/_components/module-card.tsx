@@ -21,7 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import type { ModuleKey } from "@/config/modules";
 import { adminHref } from "@/lib/admin-hubs";
 
-export type ModuleReadinessStatus =
+type ModuleReadinessStatus =
   | "ready"
   | "admin_disabled"
   // #2306 added a `not_available_yet` state for the memberGuests flag, which
