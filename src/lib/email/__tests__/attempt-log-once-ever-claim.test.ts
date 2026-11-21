@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const db = vi.hoisted(() => {
   const topLevelCreate = vi.fn(async (args: { data: Record<string, unknown> }) => ({ id: "log-top", ...args.data }));
   const txCreate = vi.fn(async (args: { data: Record<string, unknown> }) => ({ id: "log-tx", ...args.data }));
-  const confirm = vi.fn(async (_args: unknown) => ({ count: 1 }));
+  const confirm = vi.fn<(args: unknown) => Promise<{ count: number }>>(async () => ({ count: 1 }));
   const tx = { emailLog: { create: txCreate }, alertCooldown: { updateMany: confirm } };
   return {
     topLevelCreate,
@@ -29,7 +29,9 @@ vi.mock("@/lib/prisma", () => ({
 const logger = vi.hoisted(() => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() }));
 vi.mock("@/lib/logger", () => ({ default: logger }));
 
-const sendEmail = vi.hoisted(() => vi.fn(async (_args: Record<string, unknown>) => ({ status: "sent", emailLogId: "log-1", messageId: null })));
+const sendEmail = vi.hoisted(() =>
+  vi.fn<(args: Record<string, unknown>) => Promise<unknown>>(async () => ({ status: "sent", emailLogId: "log-1", messageId: null })),
+);
 vi.mock("@/lib/email/core", () => ({ sendEmail }));
 vi.mock("@/lib/email-admin-alert-escalation", () => ({ recordAdminAlertDeliveryEscalation: vi.fn(async () => undefined) }));
 vi.mock("@/lib/admin-permissions", () => ({ hasAdminAreaAccess: () => true }));

@@ -2,6 +2,7 @@ import { readOnceEverClaimState } from "@/lib/admin-alert-once";
 import {
   ONCE_EVER_OWED_PREFIX,
   parseStoredReplayableAlert,
+  replayableAlertSend,
   sendStoredAlertOnceEver,
 } from "@/lib/admin-alert-once-replayable";
 import { listStaleUnsentAlertCooldowns, releaseUnsentAlertCooldown, settleOwedAlert } from "@/lib/alert-cooldown";
@@ -119,7 +120,8 @@ async function drainOwedAlerts(now: Date, result: OnceEverAlertSweepResult): Pro
         continue;
       }
       if (state !== "none") continue;
-      if (await sendStoredAlertOnceEver({ key, context, stored })) result.resent += 1;
+      const send = await replayableAlertSend(stored.alert);
+      if (await sendStoredAlertOnceEver({ key, context, label: stored.label, send })) result.resent += 1;
     } catch (err) {
       result.failed += 1;
       logger.error({ ...context, err }, "Failed to sweep an owed once-ever admin alert");

@@ -28,16 +28,13 @@ export async function sendReplayableAdminAlertOnceEver({
   key,
   label,
   context,
-  alert,
-  format,
+  ...send
 }: {
   key: string;
   label: string;
   context: Record<string, unknown>;
-  alert: ReplayableAdminAlert;
-  /** The club's format, when the caller has it; a replay reads it afresh. */
-  format?: ClubFormat;
-}): Promise<boolean> {
+} & ReplayableAlertSend): Promise<boolean> {
+  const { alert } = send;
   const now = new Date();
   try {
     const state = await readOnceEverClaimState(key, now);
@@ -52,24 +49,35 @@ export async function sendReplayableAdminAlertOnceEver({
   } catch (err) {
     logger.error({ ...context, err }, `Failed to store the ${label} for the sweep; sending it once without a retry`);
   }
-  return sendStoredAlertOnceEver({ key, context, stored, format });
+  return sendStoredAlertOnceEver({ key, context, label, send });
 }
 
 /**
  * What a raised-once caller sends: one of the two admin alerts these callers
  * use, as plain JSON so the sweep can rebuild it. The Xero alert's timestamp is
- * an ISO string; the payment alert's club format is read when it is sent.
+ * an ISO string. The club's format is not stored: the caller passes its own,
+ * and a re-send reads it afresh (`replayableAlertSend`).
  */
-export type ReplayableAdminAlert =
-  | {
-      kind: "payment-recovery";
-      bookingId: string;
-      operationId?: string;
-      amountCents: number;
-      paymentIntentId: string;
-      errorMessage: string;
-    }
-  | { kind: "xero-sync-error"; errorType: string; operation: string; errorMessage: string; timestamp: string };
+type PaymentRecoveryReplayAlert = {
+  kind: "payment-recovery";
+  bookingId: string;
+  operationId?: string;
+  amountCents: number;
+  paymentIntentId: string;
+  errorMessage: string;
+};
+type XeroSyncErrorReplayAlert = { kind: "xero-sync-error"; errorType: string; operation: string; errorMessage: string; timestamp: string };
+export type ReplayableAdminAlert = PaymentRecoveryReplayAlert | XeroSyncErrorReplayAlert;
+
+/** An alert ready to send: a payment alert always with the club's format. */
+type ReplayableAlertSend = { alert: PaymentRecoveryReplayAlert; format: ClubFormat } | { alert: XeroSyncErrorReplayAlert };
+
+/** A stored alert ready for the sweep to re-send, with the club's format read now for a payment alert. */
+export async function replayableAlertSend(alert: ReplayableAdminAlert): Promise<ReplayableAlertSend> {
+  if (alert.kind === "xero-sync-error") return { alert };
+  const { clubFormatValues } = await import("@/lib/club-format-server");
+  return { alert, format: await clubFormatValues() };
+}
 
 /** The owed row's `replayAlert`: the alert and the label its log lines use. */
 export type StoredReplayableAlert = { label: string; alert: ReplayableAdminAlert };
@@ -102,49 +110,37 @@ export function parseStoredReplayableAlert(value: Prisma.JsonValue | null): Stor
 export async function sendStoredAlertOnceEver({
   key,
   context,
-  stored,
-  format,
+  label,
+  send,
 }: {
   key: string;
   context: Record<string, unknown>;
-  stored: StoredReplayableAlert;
-  format?: ClubFormat;
+  label: string;
+  send: ReplayableAlertSend;
 }): Promise<boolean> {
-  const kept = await sendAdminAlertOnceEver({
-    key,
-    label: stored.label,
-    context,
-    send: () => sendReplayableAlert(stored.alert, format),
-  });
+  const kept = await sendAdminAlertOnceEver({ key, label, context, send: () => sendReplayableAlert(send) });
   if (!kept) return false;
   try {
     await settleOwedAlert({ key: onceEverOwedKey(key) });
   } catch (err) {
-    logger.error({ ...context, err }, `Failed to settle the sent ${stored.label}; the sweep settles it`);
+    logger.error({ ...context, err }, `Failed to settle the sent ${label}; the sweep settles it`);
   }
   return true;
 }
 
 /** Loaded on use: the payment ledger reaches some callers, and these senders reach back to it. */
-async function sendReplayableAlert(alert: ReplayableAdminAlert, format?: ClubFormat): Promise<AdminAlertSendResult> {
-  if (alert.kind === "xero-sync-error") {
+async function sendReplayableAlert(send: ReplayableAlertSend): Promise<AdminAlertSendResult> {
+  if (!("format" in send)) {
     const { sendAdminXeroSyncErrorAlert } = await import("@/lib/email");
-    return sendAdminXeroSyncErrorAlert({
-      errorType: alert.errorType,
-      operation: alert.operation,
-      errorMessage: alert.errorMessage,
-      timestamp: new Date(alert.timestamp),
-    });
+    const { errorType, operation, errorMessage, timestamp } = send.alert;
+    return sendAdminXeroSyncErrorAlert({ errorType, operation, errorMessage, timestamp: new Date(timestamp) });
   }
-  const [{ alertPaymentRecoveryOfficers, NOBODY_ALERTED }, { clubFormatValues }] = await Promise.all([
-    import("@/lib/payment-recovery-alert"),
-    import("@/lib/club-format-server"),
-  ]);
-  const { bookingId, operationId, amountCents, paymentIntentId, errorMessage } = alert;
+  const { alertPaymentRecoveryOfficers, NOBODY_ALERTED } = await import("@/lib/payment-recovery-alert");
+  const { bookingId, operationId, amountCents, paymentIntentId, errorMessage } = send.alert;
   return (
     (await alertPaymentRecoveryOfficers(
       { bookingId, ...(operationId === undefined ? {} : { operationId }), amountCents, paymentIntentId, errorMessage },
-      format ?? (await clubFormatValues()),
+      send.format,
     )) ?? NOBODY_ALERTED
   );
 }
