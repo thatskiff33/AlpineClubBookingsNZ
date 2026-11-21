@@ -2559,8 +2559,9 @@ describe("processQueuedXeroOutboxOperations", () => {
       status: "PENDING",
       direction: "OUTBOUND",
       queueType: { in: [...XERO_OUTBOX_QUEUE_TYPES] },
-      // #3954 round 8, #3953 round 3, #4692 review, #4431 and #4919: rows waiting their turn are spaced out.
+      // #3954 round 8, #3953 round 3, #4692 review, #4431, #4919 and #4988: rows waiting their turn are spaced out.
       AND: [
+        expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
@@ -2687,6 +2688,8 @@ describe("processQueuedXeroOutboxOperations", () => {
     const { ADMIN_GRANT_NOTE_AWAITING_RETRY_RECHECK_MS } = await import("@/lib/admin-grant-credit-note");
     const { ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE, GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CODE } = await import("@/lib/xero-operation-error-codes");
     const { GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_RECHECK_MS } = await import("@/lib/xero-group-settlement-invoice-outbox");
+    const { XERO_TAX_CATEGORY_AWAITING_MAPPING_CODE } = await import("@/lib/xero-operation-error-codes");
+    const { XERO_TAX_CATEGORY_AWAITING_MAPPING_RECHECK_MS } = await import("@/lib/xero-tax-category-hold");
     mocks.findManyOperations.mockResolvedValue([
       {
         id: "op_dealloc_waiting",
@@ -2749,7 +2752,55 @@ describe("processQueuedXeroOutboxOperations", () => {
           { updatedAt: { lte: new Date(Date.now() - GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_RECHECK_MS) } },
         ],
       },
+      // #4988: an operation held for a tax category Xero cannot carry yet.
+      {
+        OR: [
+          { lastErrorCode: null },
+          { lastErrorCode: { not: XERO_TAX_CATEGORY_AWAITING_MAPPING_CODE } },
+          { updatedAt: { lte: new Date(Date.now() - XERO_TAX_CATEGORY_AWAITING_MAPPING_RECHECK_MS) } },
+        ],
+      },
     ]);
+  });
+
+  describe("#4988: an applied-credit allocation whose Exempt line Xero cannot carry is held, not failed", () => {
+    const heldRow = {
+      id: "op_alloc_exempt",
+      localId: "payment_1",
+      localModel: "Payment",
+      createdByMemberId: null,
+      requestPayload: { queueType: "APPLIED_CREDIT_ALLOCATION", bookingId: "booking_1" },
+    };
+
+    it("MUTATION: hands the row back to PENDING under the tax category wait code, with the sentence that says what to map", async () => {
+      const { XeroTaxCategoryUnavailableError } = await import("@/lib/xero-tax-categories");
+      const { XERO_TAX_CATEGORY_AWAITING_MAPPING_CODE } = await import("@/lib/xero-operation-error-codes");
+      mocks.findManyOperations.mockResolvedValue([heldRow]);
+      mocks.allocateAppliedCreditForBooking.mockRejectedValue(new XeroTaxCategoryUnavailableError("EXEMPT", "unmapped"));
+
+      const result = await processQueuedXeroOutboxOperations({ limit: 5 });
+
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+        where: givenBackWhere("op_alloc_exempt", { status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM }),
+        data: expect.objectContaining({
+          status: "PENDING",
+          lastErrorCode: XERO_TAX_CATEGORY_AWAITING_MAPPING_CODE,
+          lastErrorMessage: "The Exempt tax category is not mapped to a Xero tax rate; map it on the Xero setup screen.",
+        }),
+      });
+      // Held, so neither failed nor counted as done.
+      expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ skipped: 1, succeeded: 0, failed: 0 });
+    });
+
+    it("still fails an allocation that stops for any other reason", async () => {
+      mocks.findManyOperations.mockResolvedValue([heldRow]);
+      mocks.allocateAppliedCreditForBooking.mockRejectedValue(new Error("Xero refused the credit note"));
+
+      const result = await processQueuedXeroOutboxOperations({ limit: 5 });
+
+      expect(result).toMatchObject({ skipped: 0, failed: 1 });
+    });
   });
 
   describe("#4692 review (finding 1): a refund note held by an unrecorded one never stalls the outbox", () => {

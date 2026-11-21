@@ -229,6 +229,10 @@ const xeroClient = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: h.prismaStub }));
+// #4988: the mint resolves its lines' tax before it authenticates, so a line
+// Xero cannot carry is refused with nothing written. The stub has no booking
+// tax anchor to read, so every note here renders under the baseline treatment.
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/xero-api-client", () => ({
   getAuthenticatedXeroClient: xeroClient.getAuthenticatedXeroClient,
   callXeroApi: xeroClient.callXeroApi,

@@ -13,6 +13,7 @@
 import { CreditType } from "@prisma/client";
 import type { LineItem } from "xero-node";
 import { xeroLineTax, type XeroTaxRendering } from "./xero-tax-rendering";
+import type { XeroTaxCategoryKey } from "./xero-tax-categories";
 import type { ResolvedAccountMappingWithFallback } from "./xero-mappings";
 
 /**
@@ -112,6 +113,13 @@ export function planMintGroups(
 }
 
 /**
+ * The tax category a minted line carries when it is NOT sales tax on income
+ * (#4988; owner, 17 Nov 2026). One today: Exempt, on the share the club's own
+ * Opening Credits mapping codes.
+ */
+type MintLineTaxCategory = Extract<XeroTaxCategoryKey, "EXEMPT">;
+
+/**
  * The account and item coding ONE minted line carries, before it becomes a
  * `LineItem`. Two shares that resolve to the same coding are merged, which is
  * what keeps an unconfigured club's note byte-identical to the pre-#2717 one.
@@ -120,6 +128,11 @@ export interface MintLineCoding {
   accountCode?: string;
   itemCode?: string;
   amountCents: number;
+  /**
+   * Absent on every line but one: the line is sales tax on income and takes
+   * the note's own treatment, as it always has. Set by `codeMintLine` alone.
+   */
+  taxCategory?: MintLineTaxCategory;
 }
 
 /**
@@ -127,6 +140,15 @@ export interface MintLineCoding {
  * operand for operand: the default "200" is left OFF the line when an item code
  * carries the account and the club never chose a code of its own, so Xero takes
  * the account from the item exactly as it did before.
+ *
+ * THE EXEMPT LINE (#4988; owner decisions of 17 Nov 2026, `INV-PAY-162`). A
+ * share is in the Exempt tax category when, and only when, the Opening Credits
+ * mapping ITSELF supplied its account: the club set that mapping, so the line
+ * is the spent opening credit coded to the club's liability account. While the
+ * mapping is unset the share resolves through its `hutFeeRefunds` fallback
+ * (`sourceKey` is then `hutFeeRefunds`), carries no category, and is coded and
+ * taxed exactly as it was before the mapping existed. No other key is ever the
+ * source of an Exempt line.
  */
 export function codeMintLine(
   mapping: ResolvedAccountMappingWithFallback,
@@ -144,6 +166,9 @@ export function codeMintLine(
   ) {
     coding.accountCode = accountCode;
   }
+  if (mapping.sourceKey === "openingCredits") {
+    coding.taxCategory = "EXEMPT";
+  }
   return coding;
 }
 
@@ -152,19 +177,30 @@ export function codeMintLine(
  * coding is identical. That merge is what makes an unset `goodwillWriteOffs` or
  * `openingCredits` a no-op: each share resolves to the hut-fee-refund mapping
  * and collapses back into the single line an upgrading club has always had.
+ *
+ * The tax category is part of the coding (#4988): an Exempt share is never
+ * folded into an income line, even where the two name the same account, because
+ * the merged line could carry only one of the two tax types.
  */
 export function mintLineItems(
   codings: readonly MintLineCoding[],
   description: string,
   /** The note's tax treatment (#4632), resolved from its anchor by the caller. */
   taxRendering: XeroTaxRendering,
+  /**
+   * The Exempt line's tax field (#4988), from `resolveXeroCategoryLineTax` for
+   * the same anchor. The sender resolves it only when a coding is Exempt, and
+   * before any provider write.
+   */
+  exemptLineTax?: { taxType?: string },
 ): LineItem[] {
   const merged: MintLineCoding[] = [];
   for (const coding of codings) {
     const existing = merged.find(
       (candidate) =>
         candidate.accountCode === coding.accountCode &&
-        candidate.itemCode === coding.itemCode,
+        candidate.itemCode === coding.itemCode &&
+        candidate.taxCategory === coding.taxCategory,
     );
     if (existing) {
       existing.amountCents += coding.amountCents;
@@ -177,7 +213,7 @@ export function mintLineItems(
       description,
       quantity: 1,
       unitAmount: coding.amountCents / 100,
-      ...xeroLineTax(taxRendering),
+      ...mintLineTax(coding, taxRendering, exemptLineTax),
     };
     if (coding.itemCode) {
       lineItem.itemCode = coding.itemCode;
@@ -187,4 +223,24 @@ export function mintLineItems(
     }
     return lineItem;
   });
+}
+
+/**
+ * The tax field one minted line spreads in. An income line takes the note's
+ * treatment, exactly as before #4988. An Exempt line takes the field its sender
+ * resolved; one that was never resolved is refused here rather than sent under
+ * the income code.
+ */
+function mintLineTax(
+  coding: MintLineCoding,
+  taxRendering: XeroTaxRendering,
+  exemptLineTax: { taxType?: string } | undefined,
+): { taxType?: string } {
+  if (coding.taxCategory === undefined) return xeroLineTax(taxRendering);
+  if (exemptLineTax === undefined) {
+    throw new Error(
+      "A minted line in the Exempt tax category was given no resolved tax; it is never sent under the income code.",
+    );
+  }
+  return exemptLineTax;
 }
