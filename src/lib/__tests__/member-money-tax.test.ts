@@ -11,7 +11,7 @@ import { splitTaxInclusiveGross } from "@/lib/member-money";
 import { MAX_INTEGER_CENTS as MAX_MEMBER_MONEY_CENTS } from "@/lib/money-input";
 import { stripComments } from "./support/strip-comments";
 
-const registered = (rateBasisPoints: number): ClubTaxTreatment => ({ registered: true, rateBasisPoints, taxCode: clubTaxCode(rateBasisPoints) });
+const registered = (rateBasisPoints: number): ClubTaxTreatment => ({ registered: true, rateBasisPoints, taxCode: clubTaxCode(rateBasisPoints), xeroTaxType: "OUTPUT2" });
 
 /** Deterministic large values across the column's range (no Math.random in tests). */
 function* spread(count: number): Generator<number> {

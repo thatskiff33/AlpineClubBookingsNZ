@@ -496,7 +496,7 @@ export interface ExportManifestRow {
   frozenMapping: Prisma.InputJsonObject;
   lineTotalCents: number;
   providerInvoiceId: string;
-  /** `sliceKey`: the journal event whose slice of the component a row bills; absent for a whole component. */
+  /** `sliceKey`: the journal event whose slice of the component a row bills, or the Xero payment key whose cents of a capture it covers; absent for a whole component. */
   coverage: ReadonlyArray<{ account: MemberMoneyAccount; chargeIdentity: string; coveredCents: number; taxCode: string | null; sliceKey?: string }>;
 }
 

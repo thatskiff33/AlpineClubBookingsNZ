@@ -63,8 +63,6 @@ const HAND_BACK_TASK = {
   reason: "Cancelled after a cash payment",
   createdAt: "2026-06-20T00:00:00Z",
   memberName: "Ada Lovelace",
-  reviewEvidence: null,
-  reviewEvidenceUnreadable: false,
   ...STAY,
 };
 
@@ -79,8 +77,6 @@ const WITHHELD_SHARE_TASK = {
     "A share of this booking change was settled while its Xero invoice was being sent.",
   createdAt: "2026-06-21T00:00:00Z",
   memberName: "Grace Hopper",
-  reviewEvidence: null,
-  reviewEvidenceUnreadable: false,
   ...STAY,
 };
 

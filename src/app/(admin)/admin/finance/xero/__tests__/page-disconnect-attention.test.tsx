@@ -42,6 +42,7 @@ vi.mock("../_components/panels", async () => {
         Disconnect
       </button>
     ),
+    ClubTaxCard: stub,
     ContactSyncPanel: stub,
     ErasedMemberContactsPanel: stub,
     HealthAndDiagnosticsPanels: stub,

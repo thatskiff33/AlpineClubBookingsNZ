@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import { loadClubTaxSettings } from "../../club-tax-settings";
+import { loadClubTaxSchedule } from "../../club-tax-settings";
 import { requireInstant, type ClubTimeZone } from "../../club-time";
 import { getClubFormat } from "../../club-format-settings";
 import { readClubTimeZoneOutsideRequest } from "../../club-time-zone-runtime";
@@ -23,7 +23,7 @@ export const MEMBER_MONEY_CODING_VERSION = "member-money-accounts-1";
 
 /**
  * A booking door's posting context, resolved BEFORE its transaction opens
- * (`INV-LOCK-004`): the club's timezone, format and tax setting are read here
+ * (`INV-LOCK-004`): the club's timezone, format and tax schedule are read here
  * through the module client, never under the door's locks. The timezone and
  * format readers always answer; a tax setting that cannot be read is carried as
  * "unreadable", which refuses only a batch that needs a fresh split; and a club
@@ -36,17 +36,17 @@ export const MEMBER_MONEY_CODING_VERSION = "member-money-accounts-1";
 export async function resolveBookingMoneyPostingContext(options: {
   /** The club's timezone, where the door has already read it before its transaction: one read, one club day. */
   zone?: ClubTimeZone;
-  /** The client the tax setting is read through: the server's, unless a caller runs on its own. */
+  /** The client the tax schedule is read through: the server's, unless a caller runs on its own. */
   db?: Pick<Prisma.TransactionClient, "clubTaxSettings">;
 } = {}): Promise<BookingJournalContext> {
   const effectiveAt = requireInstant(new Date());
-  const [zone, format, taxSettings] = await Promise.all([
+  const [zone, format, taxSchedule] = await Promise.all([
     options.zone ?? readClubTimeZoneOutsideRequest(),
     getClubFormat(),
     // A read that fails is carried, not thrown: only a batch needing a fresh
     // split refuses it, naming why, inside the door's transaction, so the door
     // rolls back then; a correction repeats its posted split and needs no setting (D3).
-    loadClubTaxSettings(options.db ?? prisma).catch((error: unknown) => ({
+    loadClubTaxSchedule(options.db ?? prisma).catch((error: unknown) => ({
       unreadable: error instanceof Error ? error.message : String(error),
     })),
   ]);
@@ -63,7 +63,7 @@ export async function resolveBookingMoneyPostingContext(options: {
     format,
     policyVersion: BOOKING_LEDGER_POLICY_VERSION,
     codingVersion: MEMBER_MONEY_CODING_VERSION,
-    taxSettings,
+    taxSchedule,
   });
 }
 
