@@ -371,7 +371,7 @@ describe("admin failed-response JSON reads (#4976, ALP-589)", () => {
   });
 
   it("lists only admin components that still fail", () => {
-    const failing = new Set(measured.map(({ rel }) => rel));
+    const failing = new Set(measured.filter(({ hits }) => hits.length > 0).map(({ rel }) => rel));
     expect(
       [...KNOWN_UNGUARDED].filter((rel) => !failing.has(rel)),
       "remove a fixed file from KNOWN_UNGUARDED so it cannot regress unseen",
