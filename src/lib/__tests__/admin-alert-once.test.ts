@@ -171,7 +171,7 @@ describe("sendAdminAlertOnceEver gives back an uncertain claim", () => {
 });
 
 /**
- * #5255 (`INV-INT-041`): the claim is taken marked "no email yet", and what the
+ * #5255 (`INV-INT-042`): the claim is taken marked "no email yet", and what the
  * send's own email rows did - not only the counts it reports - decides whether
  * the claim is kept. A send that recorded no email under the claim gives it
  * back, so the next run sends; one that did is kept, and its row has already

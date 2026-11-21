@@ -160,6 +160,7 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   ClubTimeSettings: CLUB_CONFIG,
   ClubFormatSettings: CLUB_CONFIG,
   ClubTaxSettings: CLUB_CONFIG,
+  XeroTaxCategoryMapping: CLUB_CONFIG,
   LoginSecuritySetting: CLUB_CONFIG,
   AnalyticsSettings: CLUB_CONFIG,
   EmailTemplateOverride: CLUB_CONFIG,
@@ -244,6 +245,12 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   MemberMoneyExportCoverage: SHARED,
   // #4520: Stripe's own balance transaction, keyed by a payment intent rather than a member.
   StripeBalanceTransactionEvidence: OPERATIONAL,
+  // ALP-653: the member's own AI app connections are listed; the codes and
+  // tokens behind them are secrets, and the policy is club configuration.
+  McpGrant: "additionalRecords.McpGrant",
+  McpAuthCode: SECRET,
+  McpToken: SECRET,
+  McpSettings: CLUB_CONFIG,
   // Food orders (PR #5143): the subject's own orders and their lines.
   FoodOrderSettings: CLUB_CONFIG,
   FoodOrder: "additionalRecords.FoodOrder",

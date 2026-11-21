@@ -2599,6 +2599,22 @@ its list of processors. Suggested wording:
 > store the text of your question. Please don't include personal or sensitive
 > details in AI help questions."_
 
+## AI app connections
+
+> See the [AI app connections guide](docs/guides/mcp-server.md) for what the
+> `mcpServer` module does, its settings and its risks.
+
+The feature has no secret or setting of its own in the environment: who may
+connect, the most a connection may do and the approved AI apps are edited at
+**Admin → Help & system → AI app connections** and stored in `McpSettings`.
+It reads three existing variables:
+
+| Variable | How AI app connections use it |
+| --- | --- |
+| `NEXTAUTH_URL` | The connector address members give their AI app (`<origin>/api/mcp`), the OAuth issuer and every discovery URL. It must be the public origin. |
+| `AUTH_SECRET` / `NEXTAUTH_SECRET` | Derives, under its own label, the key that signs the internal `x-mcp-principal` header. Rotating it only invalidates headers in flight (they last 30 seconds); connections survive. |
+| `PORT` | The port each action is sent to on `127.0.0.1` (`src/lib/mcp/loopback.ts`); 3000 when unset or invalid. The Docker image sets `PORT=3000` and `HOSTNAME="0.0.0.0"`. A server that does not listen on loopback, or on that port, cannot run any action. |
+
 ## Operational Xero
 
 **Xero credentials are DB-only (#2079).** The Xero OAuth client id/secret, the
@@ -2672,6 +2688,12 @@ from. There is no environment variable.
   after the club's today, so no document already rendered changes, and is
   refused when Xero's own tax-rate list does not carry the chosen code,
   active and usable on revenue, at the chosen rate.
+- **Tax categories.** Sales tax on expenses, Exempt and Zero rated map to
+  the connected Xero organisation's own tax rates (`XeroTaxCategoryMapping`,
+  `INV-CONFIG-008`, #5209), set by a Full Admin on the Xero setup screen;
+  Sales tax on income is the schedule above. There is no environment
+  variable and nothing to do on upgrade: an unmapped category changes no
+  document until a line uses it.
 - **Charges are recorded.** Since M3b (#4627), the journal records each
   booking door's charge lines under the schedule above. A journal refusal
   stops the booking or payment change rather than being ignored

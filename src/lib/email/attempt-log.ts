@@ -16,7 +16,7 @@ type EmailAttemptLogResult =
  * Logging is best effort unless the event opts into durable idempotency; that
  * event's primary key also serializes concurrent re-drives.
  *
- * #5255 (`INV-INT-041`): an admin alert sent under a once-ever claim passes
+ * #5255 (`INV-INT-042`): an admin alert sent under a once-ever claim passes
  * `onceEverClaim`, and its row is written only together with the claim's
  * confirm, in one short transaction: a claim the sweep gave back meanwhile, or
  * any write error, records nothing and throws, so nothing is sent. Without it

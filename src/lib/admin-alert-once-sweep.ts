@@ -11,7 +11,7 @@ import { prisma } from "@/lib/prisma";
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
 
 /**
- * #5255 (`INV-INT-041`): THE ONCE-EVER ALERT SWEEP, the first task of the
+ * #5255 (`INV-INT-042`): THE ONCE-EVER ALERT SWEEP, the first task of the
  * 15-minute payments cron cycle (`once-ever-alert-sweep`).
  *
  * 1. A once-ever claim still marked "no email yet" `ONCE_EVER_UNSENT_GRACE_MS`

@@ -29,7 +29,7 @@ import { formatCents } from "@/lib/utils";
  * inside it. The alert's claim and the email row are the durable record; the
  * error log stays beside them. Nothing raises it again, so the alert is stored
  * for the payments cron's sweep, which re-sends it until it is out
- * (`sendReplayableAdminAlertOnceEver`, #5255, `INV-INT-041`).
+ * (`sendReplayableAdminAlertOnceEver`, #5255, `INV-INT-042`).
  */
 export type CardRefundCapOverflow = {
   paymentId: string;

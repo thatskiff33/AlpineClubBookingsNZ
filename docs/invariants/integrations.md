@@ -639,8 +639,8 @@ second note.
   `ADMIN_GRANT_CREDIT_NOTE`.
 - **A contact repair keeps the queued request (#5221).** The repair's stored
   payload spreads `buildAdminGrantCreditNotePayload`, the builder approval
-  queues with. The outbox routes and claims the row by that `queueType`, so a
-  row given back to PENDING after a failed retry still runs.
+  queues with. The outbox routes the row by that `queueType`, and a Retry
+  requeues in place only a row holding it (`INV-INT-041`).
 - **No new lock.** The stamp moves no balance (`INV-LOCK-001`). It uses no new
   key or order (`INV-LOCK-002`) and no new site (`INV-LOCK-003`).
 
@@ -674,7 +674,7 @@ attempt's claim. Two callers can share one row (#1354).
   outcome (`retryClaim`), lands there.
 - **A success lands on any row no claim holds,** even one resolved in Xero
   (#4374): the mark stays; a recorded object alerts officers once per
-  operation after commit, re-sent by the sweep until out (`INV-INT-041`).
+  operation after commit, re-sent by the sweep until out (`INV-INT-042`).
   Late notes under `INV-INT-028` and `INV-INT-034` keep out: audited and
   alerted.
 - **A refused write leaves the row:** null; the outbox counts refused
@@ -932,9 +932,48 @@ Pinned by `xero-invoicing-guard.test.ts`, the subscription-billing `route.test.t
 `xero-operation-retry.test.ts`, `xero-subscription-invoices.test.ts` and
 `subscription-billing-panel.test.tsx`.
 
-## Once-ever admin alerts held with nothing sent (#5255)
+## A PENDING outbox row holds a request the outbox can send (#5228)
 
 ### INV-INT-041
+
+An outbound Xero row with an outbox queue type is PENDING only while its stored
+request is a queued request the outbox can claim and send under that queue
+type. A row the outbox cannot claim is skipped on every pass, and nothing fails
+or alerts.
+
+- **The column claims.** The outbox builds its claim from the immutable
+  `queueType` column and reads the stored request only through
+  `readQueuedOutboxRequestFor`. It never routes on another queue type.
+- **One guarded write.** Every give-back, Retry requeue and kept-capture
+  requeue writes PENDING through `returnOutboxRowToPending`. A still-queued
+  request stays (a handler's checkpoint); over an execution request the queued
+  request the dispatch claimed is laid back, keeping only stored keys that
+  leave its reading unchanged, replacing a claimed value only with an
+  execution record, in one compare-and-set on the stored request; with
+  neither, nothing is written, and the row fails or Retry answers 409. WAITING_PAYMENT releases flip only never-dispatched rows.
+  `xero-pending-writer-census.test.ts` names every writer.
+- **Stuck rows are not sent from a guess.** The scan leaves out a PENDING row
+  whose request names no queue type (`NAMES_NO_QUEUE_TYPE`), so it never holds
+  up the rows behind it; the run counts it (`unclaimableRequest`) and the cron
+  run warns. The owner's `pnpm run xero:stuck-queued-report --release` fails
+  exactly the listed rows still as listed (`QUEUED_REQUEST_RELEASED`), keeping
+  request, response, Xero ids and keys. A refund note's Retry then bills only
+  what is still uncovered.
+- **No new lock.** Each write is a status- and claim-guarded compare-and-set
+  on the row (`INV-LOCK-001`); no new key or order (`INV-LOCK-002`); no new
+  site (`INV-LOCK-003`).
+
+Pinned by `xero-outbox-fail-fast.test.ts`, `xero-operation-retry.test.ts`,
+`xero-pending-writer-census.test.ts`, `xero-cron-runner.test.ts` and, against
+a real database, `xero-cooldown-giveback-queued-request.realdb.test.ts`,
+`xero-pending-request-transitions.realdb.test.ts`,
+`xero-stuck-queued-request.realdb.test.ts`,
+`xero-released-refund-current-cap.realdb.test.ts` and
+`xero-stale-request-recovery.realdb.test.ts`.
+
+## Once-ever admin alerts held with nothing sent (#5255)
+
+### INV-INT-042
 
 A once-ever admin alert whose claim is held with no email behind it is given
 back within 30 minutes, and the sweep never makes it go out twice (owner

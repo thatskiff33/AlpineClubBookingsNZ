@@ -29,7 +29,7 @@ import { UNMUTEABLE_ALERT_SENT } from "@/lib/email/admin-alert-send-result";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /**
- * #5255 (`INV-INT-041`): a raised-once alert is stored for the sweep before it
+ * #5255 (`INV-INT-042`): a raised-once alert is stored for the sweep before it
  * is sent, and settled once its claim is kept. A failure to store it never
  * costs the send itself; an alert already sent or deferred is left alone.
  */

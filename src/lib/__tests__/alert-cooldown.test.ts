@@ -196,7 +196,7 @@ describe("owed alert markers (#3635 F1)", () => {
 });
 
 /*
- * #5255 (`INV-INT-041`): a once-ever claim marked as having no email behind it.
+ * #5255 (`INV-INT-042`): a once-ever claim marked as having no email behind it.
  * The alert's email row confirms it; the sweep gives back only a claim still
  * marked, under its own stamp, so a confirmed or newer claim is never released.
  */

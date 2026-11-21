@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 /**
- * #5255 (`INV-INT-041`): the once-ever claim a `sendAdminAlertOnceEver` send
+ * #5255 (`INV-INT-042`): the once-ever claim a `sendAdminAlertOnceEver` send
  * runs under, handed to the alert's own emails so each one's row confirms the
  * claim (`confirmAlertCooldownSend`) in the transaction that writes it.
  *

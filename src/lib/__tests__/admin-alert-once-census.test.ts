@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { stripComments } from "./support/strip-comments";
 
 /**
- * #4696, #5255 (`INV-SSOT`, `INV-INT-041`): the caller census in
+ * #4696, #5255 (`INV-SSOT`, `INV-INT-042`): the caller census in
  * `admin-alert-once.ts` is the one list of the once-ever helpers' callers,
  * grouped by what sends an alert again once its claim is given back. This
  * suite holds that list to the code: it walks `src/` for every production file

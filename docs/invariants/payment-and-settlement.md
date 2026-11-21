@@ -2192,7 +2192,7 @@ total at apply).
   is kept once an admin has it or the email retry cron holds a copy, held a
   day when no admin can receive it, and given back when the send throws
   first or the claim write throws, under its exact stamp (#4696), or by the
-  sweep if no email followed (`INV-INT-041`). The
+  sweep if no email followed (`INV-INT-042`). The
   reaper retries it from the events of stays not yet ended.
 - Pinned by `group-late-joiner.test.ts`, `group-late-joiner-heal.test.ts`,
   `group-late-joiner-alert-outage.test.ts`, `alert-cooldown.test.ts`,
@@ -4528,4 +4528,5 @@ settlement body), **`INV-PAY-040`** (the manual capacity refusal),
   yet") until #5008; reversing a batch and the refund-as-credit choice are
   #5005 children B and D.
 - Proven by `booking-import-parse.test.ts`, `booking-import-plan.test.ts`,
+  `booking-import-plan-decisions.test.ts`, `booking-import-write.test.ts`,
   `zero-price-payment-call-sites.test.ts` and `booking-import.realdb.test.ts`.

@@ -32,7 +32,7 @@ import { UNMUTEABLE_ALERT_SENT } from "@/lib/email/admin-alert-send-result";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /**
- * #5255 (`INV-INT-041`): the payments cron's sweep. It gives back a once-ever
+ * #5255 (`INV-INT-042`): the payments cron's sweep. It gives back a once-ever
  * claim still marked as having no email 15 minutes on, and re-sends a
  * raised-once alert's stored copy while no claim holds it - never one already
  * sent, never twice. Driven over the in-memory `AlertCooldown` table.

@@ -19,7 +19,7 @@
  *
  * The send is once-ever. Nothing calls again unless another success lands on
  * the row, so the alert is stored for the payments cron's sweep
- * (`sendReplayableAdminAlertOnceEver`, #5255, `INV-INT-041`): a send that
+ * (`sendReplayableAdminAlertOnceEver`, #5255, `INV-INT-042`): a send that
  * throws, reaches nobody, or whose claim write throws is re-sent from the
  * stored alert until it is out, for up to 7 days.
  */

@@ -7,7 +7,7 @@ import type { AdminAlertSendResult } from "@/lib/email/admin-alert-send-result";
 import logger from "@/lib/logger";
 
 /**
- * #5255 (`INV-INT-041`): A ONCE-EVER ALERT RAISED ONLY ONCE. Its caller fires
+ * #5255 (`INV-INT-042`): A ONCE-EVER ALERT RAISED ONLY ONCE. Its caller fires
  * it at the moment something goes wrong and nothing raises it again, so a
  * claim given back, deferred or lost would leave the error log as the only
  * record. This stores the alert first as an owed row (`once-ever-owed:<key>`)

@@ -45,7 +45,7 @@ export function AccountCreditCard({
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle>Account credit</CardTitle>
+          <CardTitle headingLevel={2}>Account credit</CardTitle>
           <span className="rounded-full bg-success-3 px-2 py-0.5 text-xs font-medium text-success-11">
             Credit → booking
           </span>

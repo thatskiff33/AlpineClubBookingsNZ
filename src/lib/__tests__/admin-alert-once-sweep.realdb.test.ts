@@ -1,5 +1,5 @@
 /**
- * Real-PostgreSQL proof for #5255 (`INV-INT-041`): the sweep's give-back of a
+ * Real-PostgreSQL proof for #5255 (`INV-INT-042`): the sweep's give-back of a
  * once-ever claim with no email behind it, and the alert's first email row,
  * cannot both win. The row confirms the claim (`confirmAlertCooldownSend`) in
  * the transaction that writes it, and the give-back deletes only a row still

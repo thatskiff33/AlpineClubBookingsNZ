@@ -40,6 +40,7 @@ export const MODULE_KEYS = [
   "memberLodgeRoster",
   "alpineCentralServer",
   "commsPortal",
+  "mcpServer",
   "foodOrders",
 ] as const;
 
@@ -194,6 +195,10 @@ export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
   // post from this module publishes member-written content to other clubs.
   // An upgrade must not start doing that because nobody opted out (#2993).
   commsPortal: false,
+  // Default OFF, inverting the general ON rule above on purpose: switching it
+  // on lets a member connect an AI app that then reads their club data and
+  // sends it to that app's provider. A club has to choose that (ALP-653).
+  mcpServer: false,
   // Default OFF, inverting the general ON rule above on purpose: switching the
   // roster on shows one member's stay pattern — which lodge, which nights — to
   // every other member who can book that lodge. An upgrade must not start
@@ -537,6 +542,18 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       "The board works with no central-server connection: posts are club-only unless a member ticks 'share with all clubs'.",
       "Sharing a post with other clubs additionally needs the Alpine Central Server module switched on and connected.",
       "When off, the member board and its admin screens return Not Found. Existing posts are kept and reappear when it is switched back on.",
+    ],
+  },
+  mcpServer: {
+    key: "mcpServer",
+    label: "AI app connections (MCP)",
+    description:
+      "Let a signed-in person connect an approved AI app, such as Claude or ChatGPT, to their own account. The app acts as that person, with that person's permissions only. SENDS DATA OUTSIDE THE CLUB: whatever the person asks about is sent to the AI app's provider. Off unless you turn it on.",
+    dependencies: [
+      "Choose who may connect, the most a connection may do, and which apps are approved under Admin → Help & system → AI app connections. Connections start view-only.",
+      "An officer's connection can read other members' details, so officers have their own switch, off by default. Cover this in the club's privacy notice before switching it on.",
+      "Actions that need a fresh sign-in proof stay on the website, and card details are never entered through an AI app.",
+      "When off, the connection endpoints and screens return Not Found and every connected app stops working. Existing connections are kept and work again when it is switched back on.",
     ],
   },
   memberLodgeRoster: {

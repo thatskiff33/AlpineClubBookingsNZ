@@ -118,7 +118,7 @@ export async function deferAlertCooldown({
 }
 
 /**
- * #5255 (`INV-INT-041`): record that the once-ever claim taken at `claimedAt`
+ * #5255 (`INV-INT-042`): record that the once-ever claim taken at `claimedAt`
  * has an email behind it, so the sweep never gives it back. Guarded by the
  * claim's own stamp, not the mark: every recipient's row confirms, and only
  * the first finds the mark still set. Run in the email row's own transaction

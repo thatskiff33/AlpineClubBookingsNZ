@@ -2987,6 +2987,46 @@ compares money records, not links. Run the report again afterwards: a handled
 line no longer appears. **Sync everything from Xero now** does not revisit
 these notes.
 
+### Release Xero outbox rows stuck without a queued request (#5228)
+
+Before #5228, a Xero outbox row that a pre-HTTP cooldown (the "Xero is down"
+pause, the daily limit, the environment gate) refused after its handler had
+saved its execution request went back to PENDING without its queued request.
+The outbox then skipped it on every pass: the refund note, invoice or credit
+note never reached Xero, and nothing failed or alerted. Fixed builds never
+leave a row so. Any an older build left are kept out of the outbox's scan, so
+they never hold up other work, and counted (`unclaimableRequest` in the outbox
+run's result, shown as an amber warning on the Xero cron run).
+
+**When to run it:** once, on the live deployment, after upgrading to a build
+with #5228; and whenever the outbox's `unclaimableRequest` count is not zero.
+Running the report is safe at any time. **`--release` on a live site is the
+owner's to run.**
+
+```bash
+pnpm run xero:stuck-queued-report             # read-only: lists the rows, changes nothing
+pnpm run xero:stuck-queued-report --release   # fails exactly the rows it has just listed
+```
+
+1. **Inspect.** Run the report. Each line names the row, its queue type, the
+   record it belongs to (`Payment:<id>`, `GroupBookingSettlement:<id>`, ...),
+   and when it was queued; every row listed holds a request that names no
+   queue type. Look the records up before going on. The output
+   names members' payments, so never post it publicly.
+2. **Release.** Run it again with `--release`. It lists the rows again and
+   moves exactly those from PENDING to FAILED with
+   `QUEUED_REQUEST_RELEASED`, each only while it is still an unclaimed,
+   unresolved PENDING row with the same queue type and stored request; any
+   other is skipped and named. It keeps each row's request, response, Xero ids
+   and keys, makes no Xero call and rewrites nothing already posted.
+3. **Check the counts.** "Released N; skipped M." A second run lists nothing
+   and releases nothing.
+4. **Retry.** The rows are now in Xero Operations as Failed. For each, an
+   officer checks Xero for the document, then uses Retry (or resolves it by
+   hand if it is there). A refund note's Retry bills only what the payment
+   still shows uncovered, so cover added since the row was queued is not billed
+   twice.
+
 ### Audit bank-transfer receipts settled at a stale figure (#3979)
 
 Before #3979 the inbound Xero settle kept the figure an Internet Banking payment

@@ -116,7 +116,7 @@ export async function returnMovedInvoicesToCapturedIntent(paymentIntentId: strin
  * and a treasurer's keep may all release this capture, but none is sure to
  * come again, so the alert is stored for the payments cron's sweep, which
  * re-sends it until it is out (`sendReplayableAdminAlertOnceEver`, #5255,
- * `INV-INT-041`).
+ * `INV-INT-042`).
  */
 export async function alertTakenBackInvoicesPaidAgain(paymentIntentId: string): Promise<number> {
   const takenBack = await prisma.xeroSyncOperation.findMany({

@@ -1,4 +1,4 @@
--- #5255: the once-ever alert sweep (INV-INT-041). Expand only: two nullable
+-- #5255: the once-ever alert sweep (INV-INT-042). Expand only: two nullable
 -- columns with no default, so the deployed release, which never names them,
 -- keeps reading and writing AlertCooldown as before. A claim that release
 -- takes leaves "awaitingSendSince" null, so the sweep never gives it back.

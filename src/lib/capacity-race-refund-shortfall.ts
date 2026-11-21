@@ -15,7 +15,7 @@
  * keeps its claim, so a redelivered webhook never repeats it. Nothing re-runs
  * this - the capacity race happens once - so a send that threw, reached
  * nobody, or whose claim was lost is re-sent by the payments cron's sweep from
- * the stored alert, for up to 7 days (`INV-INT-041`).
+ * the stored alert, for up to 7 days (`INV-INT-042`).
  *
  * #4154 (`INV-PAY-135`): the rest is also recorded, as #4097's card refund
  * shortfall part to CHECK (a `CANCELLED_BOOKING_HAND_BACK` keyed

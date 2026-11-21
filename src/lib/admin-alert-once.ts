@@ -30,7 +30,7 @@ import { prisma } from "@/lib/prisma";
  *   given back (#4696) if the database answers one of two immediate tries: the
  *   write may have committed before the throw (#4679).
  *
- * #5255 (`INV-INT-041`): the claim is written marked "no email yet", and the
+ * #5255 (`INV-INT-042`): the claim is written marked "no email yet", and the
  * alert's own email rows clear that mark in the transaction that writes them
  * (`once-ever-claim-context.ts`). A claim still marked 15 minutes on - the two
  * cases #4696 could not reach: both give-backs failed on one outage, or the

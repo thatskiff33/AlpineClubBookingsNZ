@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * #5255 (`INV-INT-041`): an admin alert sent under a once-ever claim writes its
+ * #5255 (`INV-INT-042`): an admin alert sent under a once-ever claim writes its
  * email row only together with the claim's confirm, in one transaction, so
  * the sweep's give-back and the row cannot both win. Only the alert's own
  * emails carry the claim: a second alert in the same send, and any email sent
