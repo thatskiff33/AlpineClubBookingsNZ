@@ -12,9 +12,7 @@ import type {
   SubscriptionStatus,
 } from "@prisma/client";
 import {
-  computeAgeTierWithSettings,
   getAgeTierSettings,
-  getSeasonStartDate,
   type AgeTierSettingData,
 } from "@/lib/age-tier";
 import { DEFAULT_MEMBERSHIP_SUBSCRIPTION_BILLING_SETTINGS } from "@/config/club-settings-defaults";
@@ -29,7 +27,8 @@ import {
 } from "@/lib/financial-year";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { seasonYearsLabel } from "@/lib/season-label";
-import { requiresPaidSubscriptionForAgeTier } from "@/lib/member-subscription-eligibility";
+import { loadMembershipLockoutSettingsStrict } from "@/lib/membership-lockout-settings";
+import { liabilityRuleFor, resolveMemberSubscriptionLiability } from "@/lib/policies/subscription";
 import { prisma } from "@/lib/prisma";
 import { defaultMembershipTypeKeyForRole, storedRoleDefaultMembershipTypeWhere } from "@/lib/membership-types";
 import { getResolvedAccountMapping } from "@/lib/xero-mappings";
@@ -377,9 +376,10 @@ export async function buildSubscriptionBillingPreview(input: {
   if (decisionDate < bounds.start || decisionDate > bounds.end) {
     throw new SubscriptionBillingError(`Decision date must fall within membership year ${input.seasonYear}.`);
   }
-  const [dueDays, familyBillingMode, alreadyCovered, alreadyPaid, existingFamilyCharges, familyInvoiceBlockers, activeFamilyMarkers, members] = await Promise.all([
+  const [dueDays, familyBillingMode, lockoutSettings, alreadyCovered, alreadyPaid, existingFamilyCharges, familyInvoiceBlockers, activeFamilyMarkers, members] = await Promise.all([
     getSubscriptionBillingDueDays(db),
     getFamilyBillingMode(db),
+    loadMembershipLockoutSettingsStrict(db),
     db.membershipSubscriptionChargeCoverage.findMany({
       where: {
         // #2147: only ACTIVE claims block re-billing. A released claim must not
@@ -939,14 +939,18 @@ export async function buildSubscriptionBillingPreview(input: {
   const categoryBilledFamilyGroupIdsThisRun = new Map<string, string>();
   const typeBilledFamilyGroupIdsThisRun = new Set<string>();
   const decisionDateOnly = formatDateOnly(decisionDate);
-  // #2041: members skipped because a BASED_ON_AGE_TIER type + their season-start
-  // tier is not subscription-liable. Age-tier settings are lazy-loaded once (and
-  // only when a BASED_ON_AGE_TIER type is actually encountered) so clubs without
-  // the feature pay no extra read.
+  // #2041/#5190: members skipped because the liability rule says they owe no
+  // subscription. Age-tier settings are lazy-loaded once, on the first member
+  // the rule is asked about.
   const exemptMemberIds = new Set<string>();
   // #2148 (D1): parallel display list for the collapsed "Exempt" section — same
   // membership as exemptMemberIds, plus name + the tier that made them exempt.
   const exemptMembers: SubscriptionBillingExemptMember[] = [];
+  // #5190: the billing side of the club's liability rule. Read through the
+  // preview's own client (inside confirm, the season-locked transaction), with
+  // no swallowed failure: a failed read must fail the preview rather than bill
+  // an opted-in club by the NOT_CHOSEN rule.
+  const billingLiabilityRule = liabilityRuleFor("billing", lockoutSettings);
   let ageTierSettingsCache: AgeTierSettingData[] | null = null;
   const getAgeTierSettingsMemoized = async () => {
     if (!ageTierSettingsCache) {
@@ -955,38 +959,29 @@ export async function buildSubscriptionBillingPreview(input: {
     return ageTierSettingsCache;
   };
 
-  // Billing review fix (age-tier/REQUIRED-type exemption gap): whether a
-  // member's type policy exempts them from ANY season subscription, on
-  // EITHER billing axis. Shared so the type axis and the category axis
-  // cannot resolve a different answer for the same member/season — before
-  // this, the category branch asked `loadMemberSubscriptionSettlements`
-  // instead (a resolver built for the BOOKING-lockout gate, not this
-  // decision), which applies the tier gate unconditionally — even for a
-  // REQUIRED type — off the member's live, STORED `ageTier`. The type
-  // axis's own gate below only ever applied it for BASED_ON_AGE_TIER, off
-  // the season-start tier (stable all season, immune to a mid-season age-up).
-  // A REQUIRED-type member is NEVER tier-gated, on either axis.
-  function resolveSubscriptionTierExemption(input: {
-    subscriptionBehavior: MembershipTypeSubscriptionBehavior;
-    seasonStartTier: AgeTier | null;
-    ageTierSettings: AgeTierSettingData[];
-  }): boolean {
-    if (input.subscriptionBehavior === "NOT_REQUIRED") return true;
-    if (input.subscriptionBehavior !== "BASED_ON_AGE_TIER") return false;
-    return !requiresPaidSubscriptionForAgeTier(input.seasonStartTier, input.ageTierSettings);
-  }
-  // The season-start tier the exemption gate (and, for a BASED_ON_AGE_TIER
-  // type, the fee price itself — #2041/#2067 decision Q3) key off: the age
-  // at the START of the club's financial year, derived from DOB so
-  // mid-season birthdays never change that season's tier. Shared by both
-  // axes so a member's liability can't drift between them for the SAME
-  // underlying reason the type axis's own comment above states.
-  const resolveSeasonStartTier = async (member: { dateOfBirth: Date | null; ageTier: AgeTier }): Promise<AgeTier | null> => {
-    const ageTierSettings = await getAgeTierSettingsMemoized();
-    return member.dateOfBirth
-      ? computeAgeTierWithSettings(member.dateOfBirth, getSeasonStartDate(input.seasonYear), ageTierSettings)
-      : member.ageTier;
-  };
+  // #5190: whether a member owes a subscription for this season, on EITHER
+  // billing axis, is the ONE liability rule booking access also reads
+  // (`resolveMemberSubscriptionLiability`, `INV-MONEY-046`), applied on the
+  // billing side of the club's settings. While the club has not chosen
+  // (`NOT_CHOSEN`) that is exactly the pre-#5190 billing rule — only a
+  // BASED_ON_AGE_TIER type is tier-gated, off the season-start tier (stable all
+  // season, immune to a mid-season age-up), and a saved NOT_REQUIRED season row
+  // exempts nobody. Once chosen, the club's pair decides both sides alike.
+  // `ageTier` is also the tier a BASED_ON_AGE_TIER fee is priced from
+  // (#2041/#2067 decision Q3), so price and liability never key off different
+  // ages. Billing never reads the season row: its rule has no row exemption.
+  const resolveBillingLiability = async (
+    member: { dateOfBirth: Date | null; ageTier: AgeTier },
+    subscriptionBehavior: MembershipTypeSubscriptionBehavior,
+  ): Promise<{ owes: boolean; ageTier: AgeTier | null }> =>
+    resolveMemberSubscriptionLiability({
+      subscriptionBehavior,
+      member,
+      seasonRowStatus: null,
+      seasonYear: input.seasonYear,
+      rule: billingLiabilityRule,
+      ageTierSettings: await getAgeTierSettingsMemoized(),
+    });
 
   // #2161 (D1): resolve one member's OWN effective billing basis using the SAME
   // policy/fee resolution the main loop performs (assignment-first membership
@@ -1023,9 +1018,9 @@ export async function buildSubscriptionBillingPreview(input: {
     // raise the rebill-beside-an-invoice warning (#4496 review, billing
     // defect 3).
     if (resolveMemberSubscriptionCategory(holder)) return "PER_FAMILY";
-    // The same season-start tier rule the main loop uses (INV-SSOT-001).
+    // The same liability tier the main loop prices from (INV-SSOT-001).
     const feeTier: AgeTier | null = membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER"
-      ? await resolveSeasonStartTier(holder)
+      ? (await resolveBillingLiability(holder, membershipType.subscriptionBehavior)).ageTier
       : holder.ageTier;
     const fee = await getMemoizedFee(membershipType.id, feeTier);
     return fee?.billingBasis ?? null;
@@ -1321,46 +1316,31 @@ export async function buildSubscriptionBillingPreview(input: {
     // it does NOT override a type's own exemption the way an earlier design
     // did — a category assignment no longer forces a charge on a member the
     // booking gates would treat as exempt. The check a few lines below uses
-    // `resolveSubscriptionTierExemption`, the SAME gate the type axis uses
-    // further down, so a member's liability cannot differ between the two
-    // billing axes (owner decision, #4554, 11 Nov 2026: the type exemption
-    // wins).
+    // `resolveBillingLiability`, the SAME rule the type axis uses further
+    // down, so a member's liability cannot differ between the two billing
+    // axes (owner decision, #4554, 11 Nov 2026: the type exemption wins).
     const subscriptionCategory = assignment?.subscriptionCategory;
     if (subscriptionCategory) {
-      // Review finding (point 3), corrected (billing review, age-tier/
-      // REQUIRED-type exemption gap): a member exempt from ANY season
-      // subscription (type NOT_REQUIRED, or BASED_ON_AGE_TIER with a
-      // tier-exempt season-start age) is never billed via category either
-      // — checked first, before any fee/family work, since an exempt member
-      // needs none of it. Mirrors the type axis's own `exemptMemberIds`/
-      // `exemptMembers` flow below: no charge, confirm still writes/keeps
-      // their NOT_REQUIRED row, and #4554's acceptance check lists them in
-      // the preview's exempt section. Uses `resolveSubscriptionTierExemption`,
-      // the SAME shared gate the type axis calls below — not
-      // `loadMemberSubscriptionSettlements` (a BOOKING-lockout-oriented
-      // resolver that used to gate on the member's live STORED tier even
-      // for a REQUIRED type, so the same person could be billed on one
-      // axis and wrongly exempt on the other).
+      // Review finding (point 3): a member exempt from ANY season subscription
+      // (type NOT_REQUIRED, or an exempt liability tier under the club's rule,
+      // #5190) is never billed via category either — checked first, before any
+      // fee/family work, since an exempt member needs none of it. Mirrors the
+      // type axis's own `exemptMemberIds`/`exemptMembers` flow below: no
+      // charge, confirm still writes/keeps their NOT_REQUIRED row, and #4554's
+      // acceptance check lists them in the preview's exempt section.
       //
       // #4496 review: this runs before the archived-category check below, so
       // an exempt member whose category was later archived owes nothing and
       // raises no exception (the type exemption wins, owner decision 11 Nov
       // 2026), even when rollover carries the archived category forward.
-      const categorySeasonStartTier = membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER"
-        ? await resolveSeasonStartTier(member)
-        : null;
-      const categoryExempt = resolveSubscriptionTierExemption({
-        subscriptionBehavior: membershipType.subscriptionBehavior,
-        seasonStartTier: categorySeasonStartTier,
-        ageTierSettings: await getAgeTierSettingsMemoized(),
-      });
-      if (categoryExempt) {
+      const categoryLiability = await resolveBillingLiability(member, membershipType.subscriptionBehavior);
+      if (!categoryLiability.owes) {
         exemptMemberIds.add(member.id);
         // A NOT_REQUIRED type is exempt by its type, not an age tier, so the
         // preview names the reason rather than showing a tier as the cause.
         exemptMembers.push(membershipType.subscriptionBehavior === "NOT_REQUIRED"
           ? { memberId: member.id, memberName, ageTier: null, exemptBy: "MEMBERSHIP_TYPE", membershipTypeName: membershipType.name }
-          : { memberId: member.id, memberName, ageTier: categorySeasonStartTier ?? member.ageTier, exemptBy: "AGE_TIER" });
+          : { memberId: member.id, memberName, ageTier: categoryLiability.ageTier ?? member.ageTier, exemptBy: "AGE_TIER" });
         continue;
       }
     }
@@ -1672,68 +1652,52 @@ export async function buildSubscriptionBillingPreview(input: {
     if (membershipType.subscriptionBehavior === "NOT_REQUIRED") continue;
     // Per-tier pricing (#2067) + age-tier liability (#2041): for a
     // BASED_ON_AGE_TIER type the fee PRICE and the liability gate must both key
-    // off the SAME season-start computed tier — the age at the START of the club
-    // financial year (season start = 1st of the FY start month), derived from
-    // DOB so mid-season birthdays never change that season's tier (decision Q3;
-    // e.g. youth-from-10 with an Apr-start year: a 31 Mar 10th birthday stays a
-    // Child all season, a 1 Apr 10th birthday is a Youth that season). Pricing
-    // off the STORED tier while gating liability on the computed tier would
-    // mis-price a member whose stored tier has drifted from the season-start
-    // tier (the age-up cron only maintains the ADULT boundary, and
-    // non-current-season billing recomputes) — e.g. liable as YOUTH but charged
-    // the CHILD price, or overcharged at ADULT for a prior season. Members
-    // without a DOB fall back to their stored tier (ADULT default) — fail-closed
-    // / required. Every OTHER policy has no computed tier, so its fee resolves
-    // by the member's stored tier (joining-fee convention); a NOT_APPLICABLE
-    // tier still short-circuits to the flat fee inside the resolver.
-    const seasonStartTier: AgeTier | null = membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER"
-      ? await resolveSeasonStartTier(member)
-      : null;
+    // off the SAME tier — the liability tier the club's rule resolves
+    // (`resolveBillingLiability`; before a club chooses, the age at the START of
+    // the club financial year, derived from DOB so mid-season birthdays never
+    // change that season's tier: decision Q3; e.g. youth-from-10 with an
+    // Apr-start year: a 31 Mar 10th birthday stays a Child all season, a 1 Apr
+    // 10th birthday is a Youth that season). Pricing off the STORED tier while
+    // gating liability on the computed tier would mis-price a member whose
+    // stored tier has drifted (the age-up cron only maintains the ADULT
+    // boundary, and non-current-season billing recomputes) — e.g. liable as
+    // YOUTH but charged the CHILD price. Members without a DOB fall back to
+    // their stored tier (ADULT default) — fail-closed / required. Every OTHER
+    // policy prices by the member's stored tier (joining-fee convention); a
+    // NOT_APPLICABLE tier still short-circuits to the flat fee inside the
+    // resolver.
+    const liability = await resolveBillingLiability(member, membershipType.subscriptionBehavior);
     // The tier ACTUALLY used to resolve the fee — also what names a
-    // MISSING_FEE_SCHEDULE exception and keys the memo cache: the season-start
+    // MISSING_FEE_SCHEDULE exception and keys the memo cache: the liability
     // tier for a BASED_ON_AGE_TIER type, else the member's stored tier.
     const feeTier =
       membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER"
-        ? seasonStartTier
+        ? liability.ageTier
         : member.ageTier;
     const fee = await getMemoizedFee(membershipType.id, feeTier);
-    // #2041 + #2148 (D1): BASED_ON_AGE_TIER defers per-member liability to the
-    // season-start age tier. The exemption gate runs BEFORE MISSING_FEE_SCHEDULE
-    // and does NOT require a resolved fee — a deliberately exempt tier
-    // (subscriptionRequiredForBooking = false, e.g. CHILD/INFANT) legitimately
-    // has no MembershipAnnualFee row, so raising MISSING_FEE_SCHEDULE for it is
-    // pure noise (#2148). A member is exempt when their season-start tier is not
-    // subscription-liable AND either NO fee resolves for that tier OR the
-    // resolved fee is PER_MEMBER. The PER_FAMILY carve-out is deliberate
-    // (#2148 constraint 1 / decision Q5): a BASED_ON_AGE_TIER PER_FAMILY fee
-    // bills the family once even when a child is tier-exempt, so a resolved
-    // PER_FAMILY fee must NOT short-circuit here — the child falls through to the
-    // family path below and stays in family coverage. NO_INVOICE fees already
-    // mint a zero charge + NOT_REQUIRED row on the entry path, so a resolved
-    // NO_INVOICE fee is also left to fall through.
-    if (membershipType.subscriptionBehavior === "BASED_ON_AGE_TIER") {
-      // Billing review fix: `resolveSubscriptionTierExemption` is the SAME
-      // shared gate the category branch above calls — for a
-      // BASED_ON_AGE_TIER type (confirmed by this branch already) it
-      // reduces to exactly the season-start tier check this always did, so
-      // this call changes no behavior here; it exists so the two axes can
-      // never drift apart on what counts as tier-exempt.
-      const tierExempt = resolveSubscriptionTierExemption({
-        subscriptionBehavior: membershipType.subscriptionBehavior,
-        seasonStartTier,
-        ageTierSettings: await getAgeTierSettingsMemoized(),
-      });
-      if (
-        tierExempt &&
-        (!fee || fee.billingBasis === "PER_MEMBER")
-      ) {
-        // Skip the charge; confirm upserts a NOT_REQUIRED season row (Q4). Join
-        // exemptMemberIds (drives the confirm NOT_REQUIRED write — constraint 2),
-        // and the display list for the collapsed "Exempt" section.
-        exemptMemberIds.add(member.id);
-        exemptMembers.push({ memberId: member.id, memberName, ageTier: feeTier, exemptBy: "AGE_TIER" });
-        continue;
-      }
+    // #2041 + #2148 (D1) + #5190: the shared rule decides liability. The
+    // exemption gate runs BEFORE MISSING_FEE_SCHEDULE and does NOT require a
+    // resolved fee — a deliberately exempt tier (subscriptionRequiredForBooking
+    // = false, e.g. CHILD/INFANT) legitimately has no fee row, so raising
+    // MISSING_FEE_SCHEDULE for it is pure noise (#2148). A member is exempt
+    // when the rule says they do not owe AND either NO fee resolves for their
+    // tier OR the resolved fee is PER_MEMBER. The PER_FAMILY carve-out is
+    // deliberate (#2148 constraint 1 / decision Q5): a PER_FAMILY fee bills the
+    // family once even when a child is tier-exempt, so a resolved PER_FAMILY
+    // fee must NOT short-circuit here — the child falls through to the family
+    // path below and stays in family coverage. NO_INVOICE fees already mint a
+    // zero charge + NOT_REQUIRED row on the entry path, so a resolved
+    // NO_INVOICE fee is also left to fall through. Before a club chooses, only
+    // a BASED_ON_AGE_TIER type can reach this exemption (the billing rule is
+    // ALWAYS_OWES for a REQUIRED type); a club that chooses AGE_TIER_EXEMPTS
+    // exempts a REQUIRED-type child here the same way (Edge 1).
+    if (!liability.owes && (!fee || fee.billingBasis === "PER_MEMBER")) {
+      // Skip the charge; confirm upserts a NOT_REQUIRED season row (Q4). Join
+      // exemptMemberIds (drives the confirm NOT_REQUIRED write — constraint 2),
+      // and the display list for the collapsed "Exempt" section.
+      exemptMemberIds.add(member.id);
+      exemptMembers.push({ memberId: member.id, memberName, ageTier: feeTier, exemptBy: "AGE_TIER" });
+      continue;
     }
     if (!fee) {
       exceptions.push(exception({
