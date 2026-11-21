@@ -295,7 +295,7 @@ export function TaxCategoryMappingCard() {
     if (await send("PUT", { category: category.key, taxType: draft })) cancelEditing()
   }
 
-  async function clear(category: CategoryView) {
+  async function clearMapping(category: CategoryView) {
     if (canEdit !== true) return
     const ok = await confirm({
       title: `Clear the ${category.label} mapping?`,
@@ -362,7 +362,7 @@ export function TaxCategoryMappingCard() {
                       onDraftChange={setDraft}
                       onSave={() => void save(category)}
                       onCancel={cancelEditing}
-                      onClear={() => void clear(category)}
+                      onClear={() => void clearMapping(category)}
                     />
                   ),
                 )}
