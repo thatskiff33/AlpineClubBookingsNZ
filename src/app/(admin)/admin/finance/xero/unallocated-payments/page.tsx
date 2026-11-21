@@ -142,8 +142,8 @@ export default function XeroUnallocatedPaymentsPage() {
                   {queue.rows.map((row) => (
                     <TableRow key={row.id}>
                       <TableCell>{KIND_LABEL[row.kind]}</TableCell>
-                      <TableCell>{row.documentDate ? formatClubDate(requireCalendarDate(row.documentDate), format) : "No date"}</TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="whitespace-nowrap">{row.documentDate ? formatClubDate(requireCalendarDate(row.documentDate), format) : "No date"}</TableCell>
+                      <TableCell className="whitespace-nowrap text-right">
                         <span className="font-medium">{formatCents(row.remainingCents, format)}</span>
                         {row.remainingCents !== row.totalCents ? (
                           <span className="block text-xs text-muted-foreground">of {formatCents(row.totalCents, format)}</span>
