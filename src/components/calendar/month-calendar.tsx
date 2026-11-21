@@ -10,6 +10,7 @@ import {
   formatDayKeyLong,
   formatEventTime,
   isSameCalendarMonth,
+  showsRepeatMarker,
   weekdayLabels,
 } from "@/lib/calendar-client";
 
@@ -157,7 +158,7 @@ export function MonthCalendar({
                     {event.isMeeting && (
                       <Video aria-hidden className="h-3 w-3 shrink-0" />
                     )}
-                    {event.seriesId && !event.isMeeting && (
+                    {showsRepeatMarker(event) && (
                       <Repeat aria-hidden className="h-3 w-3 shrink-0 opacity-70" />
                     )}
                     <span className="truncate">

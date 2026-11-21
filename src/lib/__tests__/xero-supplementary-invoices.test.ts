@@ -37,7 +37,12 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
-vi.mock("@/lib/member-money/doors", () => ({ recordSupplementaryInvoiceManifest: mocks.recordSupplementaryInvoiceManifest }));
+// #4525 (M13): the payment's capture receipt; the recorder has its own suite.
+const captureReceipts = vi.hoisted(() => ({ record: vi.fn() }));
+vi.mock("@/lib/member-money/doors", () => ({
+  recordSupplementaryInvoiceManifest: mocks.recordSupplementaryInvoiceManifest,
+  recordCaptureReceiptManifest: captureReceipts.record,
+}));
 
 vi.mock("@/lib/credit-release-xero-payment", () => ({
   unpaidGapPayloadIfOverlapping: async (...a: unknown[]) => (await mocks.unpaidGapPayloadIfOverlapping(...a)) ?? null,
@@ -360,6 +365,60 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     });
     mocks.getHutFeeSeasonType.mockResolvedValue("WINTER");
   }
+
+  it("#4525 (M13): records the stored payment's capture receipt under its key, naming no capture when the call queued none", async () => {
+    await createXeroSupplementaryInvoice({
+      format: CLUB_FORMAT_TEST, bookingId: "bk1", priceDiffCents: -500, changeFeeCents: 1000, bookingModificationId: "mod_mixed",
+    });
+    const [, paymentBody, , paymentIdempotencyKey] = createPayments.mock.calls[0];
+    expect(captureReceipts.record).toHaveBeenCalledWith({
+      bookingId: "bk1", paymentIntentId: null, paymentKey: paymentIdempotencyKey, amountCents: 500,
+      providerPaymentId: "pay_1", invoiceId: "inv_supp", reference: paymentBody.payments[0].reference, bankCode: "606",
+    });
+    expect(captureReceipts.record.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.completeXeroSyncOperation.mock.invocationCallOrder[0]!);
+  });
+
+  it("#4525 (M13): names the capture the queued payload names", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(null);
+    mocks.unpaidGapPayloadIfOverlapping.mockResolvedValue(null);
+    mocks.xeroSyncOperationFindUnique.mockResolvedValue({ requestPayload: {
+      queueType: "SUPPLEMENTARY_INVOICE", bookingId: "bk1", priceDiffCents: 3000, changeFeeCents: 0,
+      bookingModificationId: "mod_123", recordPayment: true, paymentIntentId: "pi_change",
+    } });
+    await createXeroSupplementaryInvoice({
+      format: CLUB_FORMAT_TEST, bookingId: "bk1", priceDiffCents: 3000, changeFeeCents: 0, bookingModificationId: "mod_123",
+      recordPayment: true, syncOperation: xeroClaim("op_q"),
+    });
+    expect(captureReceipts.record).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_change", amountCents: 3000, providerPaymentId: "pay_1" }));
+  });
+
+  it("#4525 review: an inline call names the capture its caller passes, and the queued payload's own capture wins over it", async () => {
+    await createXeroSupplementaryInvoice({
+      format: CLUB_FORMAT_TEST, bookingId: "bk1", priceDiffCents: -500, changeFeeCents: 1000, bookingModificationId: "mod_mixed",
+      captureIntentId: "pi_from_retry",
+    });
+    expect(captureReceipts.record).toHaveBeenLastCalledWith(expect.objectContaining({ paymentIntentId: "pi_from_retry", amountCents: 500 }));
+
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(null);
+    mocks.unpaidGapPayloadIfOverlapping.mockResolvedValue(null);
+    mocks.xeroSyncOperationFindUnique.mockResolvedValue({ requestPayload: {
+      queueType: "SUPPLEMENTARY_INVOICE", bookingId: "bk1", priceDiffCents: 3000, changeFeeCents: 0,
+      bookingModificationId: "mod_123", recordPayment: true, paymentIntentId: "pi_change",
+    } });
+    await createXeroSupplementaryInvoice({
+      format: CLUB_FORMAT_TEST, bookingId: "bk1", priceDiffCents: 3000, changeFeeCents: 0, bookingModificationId: "mod_123",
+      recordPayment: true, syncOperation: xeroClaim("op_q"), captureIntentId: "pi_other",
+    });
+    expect(captureReceipts.record).toHaveBeenLastCalledWith(expect.objectContaining({ paymentIntentId: "pi_change", amountCents: 3000 }));
+  });
+
+  it("#4525 (M13): records no capture receipt when Xero refuses the payment", async () => {
+    createPayments.mockRejectedValue(new Error("Xero refused the payment"));
+    await expect(createXeroSupplementaryInvoice({
+      format: CLUB_FORMAT_TEST, bookingId: "bk1", priceDiffCents: -500, changeFeeCents: 1000, bookingModificationId: "mod_mixed",
+    })).resolves.toBe("inv_supp");
+    expect(captureReceipts.record).not.toHaveBeenCalled();
+  });
 
   it("itemises the invoice from the edit's stored lines, summing to the cent, and records STORED (#3530)", async () => {
     itemisedFixtures();
