@@ -695,7 +695,7 @@ describe("a refund debt reversed after its owner merged away (#5191)", () => {
   };
   const receivable = (t: T, memberId: string) => t.db.rows("memberMoneyLine", { bookingId: t.id, account: "MEMBER_RECEIVABLE", debtorKind: "MEMBER", memberId })
     .reduce((sum, l) => sum + (l.side === "DEBIT" ? 1 : -1) * Number(l.amountCents), 0);
-  const residues = (t: T) => t.db.rows("memberMoneyEvent").filter((e) => String(e.eventKey).startsWith("merge-residue|")).length;
+  const residues = (t: T) => t.db.rows("memberMoneyEvent").filter((e) => String(e.eventKey).startsWith("merge-residue:")).length;
   const mergedDebtorFindings = async (t: T) => (await readBookingReceiptCensus(t.db.tx, `${t.id}-payment`)).filter((f) => f.kind === "MERGED_DEBTOR_BALANCE");
   /** The owner's balance after the reversal is what it would be with no merge: the booking's own, now on the survivor. */
   const expectFollowed = async (t: T, gone: readonly string[], survivor: string, cents: number) => {
