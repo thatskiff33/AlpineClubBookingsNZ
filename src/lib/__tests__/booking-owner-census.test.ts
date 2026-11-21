@@ -44,6 +44,9 @@
  * this census keeps them enumerated and current — for the next stage to work
  * from, and so nobody re-derives them by hand at the moment they matter.
  * **Re-measure by running this test; never edit a list by incrementing it.**
+ * Each entry is keyed by its file and its own source line, not by a line
+ * number (#5232, see `siteKey`), so an edit elsewhere in the file leaves the
+ * lists alone.
  *
  * ## The blind spot this census has NOT closed, stated rather than implied
  *
@@ -161,17 +164,26 @@ const CARRIES_A_BOOKING =
 
 type Hit = { file: string; line: number; via: string; text: string };
 
-function scan(): { hits: Hit[]; destructures: Hit[]; files: number; code: Map<string, string> } {
+function scan(): {
+  hits: Hit[];
+  destructures: Hit[];
+  files: number;
+  code: Map<string, string>;
+  lines: Map<string, string[]>;
+} {
   const hits: Hit[] = [];
   const destructures: Hit[] = [];
   const code = new Map<string, string>();
+  const lines = new Map<string, string[]>();
   const files = sourceFiles()
     .map(relativeSource)
     .filter((file) => /^(?:src|scripts)\//.test(file) && file !== ACCESSOR);
 
   for (const file of files) {
-    const source = stripCommentsAndStrings(readFileSync(file, "utf8"));
+    const raw = readFileSync(file, "utf8");
+    const source = stripCommentsAndStrings(raw);
     code.set(file, source);
+    lines.set(file, raw.split("\n"));
 
     const aliases = new Set<string>();
     for (const [, name] of source.matchAll(DELEGATE_BINDING)) aliases.add(name);
@@ -195,7 +207,35 @@ function scan(): { hits: Hit[]; destructures: Hit[]; files: number; code: Map<st
       }
     });
   }
-  return { hits, destructures, files: files.length, code };
+  return { hits, destructures, files: files.length, code, lines };
+}
+
+/**
+ * A reviewed site's key: `file::<its trimmed source line>#<ordinal>` (#5232).
+ *
+ * The ordinal counts the lines ABOVE it in the same file whose trimmed text is
+ * identical, so two copies of one statement stay distinct. A line number would
+ * be shorter, and it is what these lists used until #5232 — but adding or
+ * removing any line above a site moved it, so the census failed on edits that
+ * never touched a reviewed site and two branches shifting the same file
+ * conflicted here. This key moves only when the site's own line changes, or
+ * an identical line is added or removed above it.
+ *
+ * The limit that buys: the key names the code, not where it sits, so deleting
+ * a reviewed site and pasting the identical line elsewhere in the same file
+ * still passes — a line pin would have caught that move; a reviewer now must.
+ *
+ * The text is the RAW line, not the comment-and-string-stripped one the rules
+ * scan: a key has to read as the code it names. The stripper keeps every
+ * newline, so the same index addresses both.
+ */
+function siteKey(file: string, lines: readonly string[], index: number): string {
+  const text = lines[index].trim();
+  let ordinal = 0;
+  for (let above = 0; above < index; above++) {
+    if (lines[above].trim() === text) ordinal++;
+  }
+  return `${file}::${text}#${ordinal}`;
 }
 
 const scanned = scan();
@@ -370,15 +410,161 @@ const MEMBER_KEYED_HELPER =
 const OPTIONAL_OWNER_READ =
   /bookingOwner\([^()]*(?:\([^()]*\))?[^()]*\)\s*\?\.|bookingOwner\([^()]*(?:\([^()]*\))?[^()]*\)\.(?:member|memberId)\s*\?\./;
 
-function sitesMatching(pattern: RegExp): string[] {
+/**
+ * Every key whose stripped line matches `pattern`. `code` and `lines` default
+ * to the real tree; the fixture proofs below hand in a small one instead, so
+ * the census's own failure modes stay proven rather than probed once (#5232).
+ */
+function sitesMatching(
+  pattern: RegExp,
+  code: ReadonlyMap<string, string> = scanned.code,
+  rawLines: ReadonlyMap<string, readonly string[]> = scanned.lines,
+): string[] {
   const out: string[] = [];
-  for (const [file, source] of scanned.code) {
+  for (const [file, source] of code) {
+    const lines = rawLines.get(file)!;
     source.split("\n").forEach((text, index) => {
-      if (pattern.test(text)) out.push(`${file}:${index + 1}`);
+      if (pattern.test(text)) out.push(siteKey(file, lines, index));
     });
   }
   return out.sort();
 }
+
+describe("#5232: a reviewed site's key survives edits around it", () => {
+  it("addresses the raw line the rules scanned, in every scanned file", () => {
+    // `siteKey` reads the raw line at the index the stripped text matched on.
+    // A stripper that dropped or added a newline would key every site below
+    // it to the wrong code, and the lists would then review the wrong lines.
+    const drifted = [...scanned.code]
+      .filter(([file, code]) => code.split("\n").length !== scanned.lines.get(file)!.length)
+      .map(([file]) => file);
+    expect(drifted).toEqual([]);
+  });
+
+  it("keys a site the same way after lines are added or removed above it", () => {
+    const site = "  if (bookingOwner(booking).memberId !== session.user.id) {";
+    const before = ["import x;", site, "}"];
+    const after = ["import x;", "", "// a new comment", "const y = 1;", site, "}"];
+    expect(siteKey("f.ts", after, 4)).toBe(siteKey("f.ts", before, 1));
+    expect(siteKey("f.ts", before, 1)).toBe(
+      "f.ts::if (bookingOwner(booking).memberId !== session.user.id) {#0",
+    );
+  });
+
+  it("tells identical lines apart by their order in the file", () => {
+    const line = "memberId: bookingOwner(booking).member?.id ?? null,";
+    const lines = [line, "other();", `    ${line}`];
+    expect(siteKey("f.ts", lines, 0)).toBe(`f.ts::${line}#0`);
+    expect(siteKey("f.ts", lines, 2)).toBe(`f.ts::${line}#1`);
+  });
+
+  // A one-file tree, stripped exactly as `scan()` strips the real one.
+  const tree = (raw: string) => ({
+    code: new Map([["f.ts", stripCommentsAndStrings(raw)]]),
+    lines: new Map([["f.ts", raw.split("\n")]]),
+  });
+  const census = (raw: string) => {
+    const { code, lines } = tree(raw);
+    return sitesMatching(COMPARISON, code, lines);
+  };
+  const reviewedFile = [
+    "export function a(booking, session) {",
+    "  if (bookingOwner(booking).memberId !== session.user.id) return;",
+    "}",
+    "export function b(booking, session) {",
+    "  return bookingOwner(booking).memberId === session.user.id;",
+    "}",
+  ];
+  const reviewed = census(reviewedFile.join("\n"));
+
+  it("reviews the fixture's two comparisons (fixture baseline)", () => {
+    expect(reviewed).toEqual([
+      "f.ts::if (bookingOwner(booking).memberId !== session.user.id) return;#0",
+      "f.ts::return bookingOwner(booking).memberId === session.user.id;#0",
+    ]);
+  });
+
+  it("does NOT move when lines are added or removed around a reviewed site (fixture proof)", () => {
+    const shifted = [
+      "import { bookingOwner } from './booking-owner';",
+      "",
+      "// a new comment",
+      ...reviewedFile.slice(0, 3),
+      "const unrelated = 1;",
+      ...reviewedFile.slice(3),
+    ];
+    expect(census(shifted.join("\n"))).toEqual(reviewed);
+  });
+
+  it("FAILS by name when a new site appears (fixture proof)", () => {
+    const added = [
+      ...reviewedFile,
+      "export const c = (booking, actor) => bookingOwner(booking).memberId != actor.id;",
+    ];
+    const sites = census(added.join("\n"));
+    expect(sites).not.toEqual(reviewed);
+    expect(sites.filter((site) => !reviewed.includes(site))).toEqual([
+      "f.ts::export const c = (booking, actor) => bookingOwner(booking).memberId != actor.id;#0",
+    ]);
+  });
+
+  it("FAILS by name when a reviewed site is removed (fixture proof)", () => {
+    const removed = reviewedFile.filter((_, index) => index !== 4);
+    const sites = census(removed.join("\n"));
+    expect(sites).not.toEqual(reviewed);
+    expect(reviewed.filter((site) => !sites.includes(site))).toEqual([
+      "f.ts::return bookingOwner(booking).memberId === session.user.id;#0",
+    ]);
+  });
+
+  it("FAILS by name when a reviewed site's own line is edited (fixture proof)", () => {
+    const edited = reviewedFile.map((line, index) =>
+      index === 1
+        ? "  if (bookingOwner(booking).memberId !== session.user.memberId) return;"
+        : line,
+    );
+    const sites = census(edited.join("\n"));
+    expect(sites).not.toEqual(reviewed);
+    expect(reviewed.filter((site) => !sites.includes(site))).toEqual([
+      "f.ts::if (bookingOwner(booking).memberId !== session.user.id) return;#0",
+    ]);
+  });
+
+  it("does NOT see a reviewed line deleted and pasted identically elsewhere (the key's stated limit)", () => {
+    // Pinned so the docblock on `siteKey` stays true: the key names the code,
+    // not its position, so moving an unchanged line within its file is
+    // invisible here. A reviewer sees the move in the diff; this census
+    // cannot.
+    const moved = [
+      ...reviewedFile.slice(0, 1),
+      ...reviewedFile.slice(2),
+      "export function moved(booking, session) {",
+      reviewedFile[1],
+      "}",
+    ];
+    expect(census(moved.join("\n"))).toEqual(reviewed);
+  });
+
+  it("FAILS by name when a new unrooted selection appears (fixture proof)", () => {
+    const before = "export const OWNER = { member: true } as const;";
+    const after = `${before}\nexport const ORG = { organisation: { select: { name: true } } } as const;`;
+    const unrooted = (raw: string) =>
+      selectionsIn("f.ts", raw).filter((s) => !s.rooted).map((s) => s.site);
+    expect(unrooted(before)).toEqual([]);
+    expect(unrooted(after)).toEqual([
+      "f.ts::export const ORG = { organisation: { select: { name: true } } } as const;#0",
+    ]);
+  });
+
+  it("keys a selection by its raw line, not the string-blanked one", () => {
+    const code = `const rows = await prisma.booking.findMany({
+  select: { organisation: { select: { name: true } } }, // "the owner"
+});`;
+    expect(selectionsIn("f.ts", code).map((s) => s.site)).toEqual([
+      'f.ts::select: { organisation: { select: { name: true } } }, // "the owner"#0',
+    ]);
+  });
+});
 
 describe("#3368: the three families stage 4 (#3369) has to answer for", () => {
   it("enumerates every ownership comparison against an actor", () => {
@@ -457,59 +643,59 @@ describe("#3368: the three families stage 4 (#3369) has to answer for", () => {
 
 /** Measured, not counted by hand. Re-measure by running this test. */
 const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
-  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts:240",
-  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-viewer.ts:38",
-  "src/app/(authenticated)/bookings/[id]/page.tsx:210",
-  "src/app/(authenticated)/bookings/page.tsx:196",
-  "src/app/api/bookings/[id]/additional-payment-secret/route.ts:87",
-  "src/app/api/bookings/[id]/arrival-time/route.ts:140",
-  "src/app/api/bookings/[id]/arrival-time/route.ts:248",
-  "src/app/api/bookings/[id]/arrival-time/route.ts:298",
-  "src/app/api/bookings/[id]/arrival-time/route.ts:367",
-  "src/app/api/bookings/[id]/cancel-preview/route.ts:82",
-  "src/app/api/bookings/[id]/change-requests/quote/route.ts:76",
-  "src/app/api/bookings/[id]/change-requests/route.ts:179",
-  "src/app/api/bookings/[id]/change-requests/route.ts:504",
-  "src/app/api/bookings/[id]/confirm-draft/route.ts:100",
-  "src/app/api/bookings/[id]/confirm-draft/route.ts:179",
-  "src/app/api/bookings/[id]/confirm-modification-payment/route.ts:73",
-  "src/app/api/bookings/[id]/confirm-payment/route.ts:94",
-  "src/app/api/bookings/[id]/exception-requests/route.ts:138",
-  "src/app/api/bookings/[id]/guests/route.ts:324",
-  "src/app/api/bookings/[id]/modify-quote/route.ts:367",
-  "src/app/api/bookings/[id]/notes/route.ts:48",
-  "src/app/api/bookings/[id]/refund-request/route.ts:273",
-  "src/app/api/bookings/[id]/refund-request/route.ts:50",
-  "src/app/api/bookings/[id]/requested-room/options/route.ts:85",
-  "src/app/api/bookings/[id]/send-guest-payment-link/route.ts:63",
-  "src/app/api/payments/create-payment-intent/route.ts:145",
-  "src/app/api/payments/create-setup-intent/route.ts:59",
-  "src/app/api/payments/switch-to-internet-banking/route.ts:132",
-  "src/lib/adult-member-hosting-review.ts:3256",
-  "src/lib/booking-batch-modification-service.ts:864",
-  "src/lib/booking-cancel.ts:2531",
-  "src/lib/booking-cancel.ts:551",
-  "src/lib/booking-date-modification-service.ts:316",
-  "src/lib/booking-delete.ts:121",
-  "src/lib/booking-delete.ts:70",
-  "src/lib/booking-email-authority.ts:115",
-  "src/lib/booking-guest-removal-service.ts:429",
-  "src/lib/booking-guest-removal-service.ts:656",
-  "src/lib/booking-linked-date-move-service.ts:245",
-  "src/lib/booking-member-night-conflicts.ts:369",
-  "src/lib/booking-modify-validation.ts:631",
-  "src/lib/diagnostics/tools/packs/booking-evidence.ts:1407",
-  "src/lib/group-booking.ts:276",
-  "src/lib/kiosk-access.ts:230",
-  "src/lib/manual-refund-task-queue-payload.ts:315",
-  "src/lib/member-self-read.ts:82",
-  "src/lib/requested-room-write.ts:63",
-  "src/lib/waitlist-cross-lodge.ts:346",
-  "src/lib/waitlist-cross-lodge.ts:534",
-  "src/lib/waitlist.ts:1093",
-  "src/lib/waitlist.ts:951",
-  "src/lib/xero-applied-credit-spent-outside-app.ts:175",
-  "src/lib/xero-period-lock-guard.ts:569",
+  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts::viewerIsBookingOwner: bookingOwner(booking).memberId === session.user.id,#0",
+  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-viewer.ts::const isBookingOwner = bookingOwner(booking).memberId === session.user.id;#0",
+  "src/app/(authenticated)/bookings/[id]/page.tsx::(isAdmin || bookingOwner(booking).memberId === session.user.id);#0",
+  "src/app/(authenticated)/bookings/page.tsx::bookingOwner(booking).memberId !== session.user.id#0",
+  "src/app/api/bookings/[id]/additional-payment-secret/route.ts::bookingOwner(payment.booking).memberId !== session.user.id &&#0",
+  "src/app/api/bookings/[id]/arrival-time/route.ts::bookingOwner(booking).memberId !== session.user.id &&#0",
+  "src/app/api/bookings/[id]/arrival-time/route.ts::bookingOwner(booking).memberId !== session.user.id &&#1",
+  "src/app/api/bookings/[id]/arrival-time/route.ts::onBehalf: bookingOwner(booking).memberId !== session.user.id,#0",
+  "src/app/api/bookings/[id]/arrival-time/route.ts::onBehalf: bookingOwner(booking).memberId !== session.user.id,#1",
+  "src/app/api/bookings/[id]/cancel-preview/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !officerReach) {#0",
+  "src/app/api/bookings/[id]/change-requests/quote/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {#0",
+  "src/app/api/bookings/[id]/change-requests/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {#0",
+  "src/app/api/bookings/[id]/change-requests/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {#1",
+  "src/app/api/bookings/[id]/confirm-draft/route.ts::bookingOwner(booking).memberId !== null &&#0",
+  "src/app/api/bookings/[id]/confirm-draft/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {#0",
+  "src/app/api/bookings/[id]/confirm-modification-payment/route.ts::bookingOwner(payment.booking).memberId !== session.user.id &&#0",
+  "src/app/api/bookings/[id]/confirm-payment/route.ts::bookingOwner(payment.booking).memberId !== session.user.id &&#0",
+  "src/app/api/bookings/[id]/exception-requests/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {#0",
+  "src/app/api/bookings/[id]/guests/route.ts::bookingOwner(booking).memberId !== session.user.id &&#0",
+  "src/app/api/bookings/[id]/modify-quote/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {#0",
+  "src/app/api/bookings/[id]/notes/route.ts::bookingOwner(booking).memberId !== session.user.id &&#0",
+  "src/app/api/bookings/[id]/refund-request/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {#0",
+  "src/app/api/bookings/[id]/refund-request/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {#1",
+  "src/app/api/bookings/[id]/requested-room/options/route.ts::bookingOwner(booking).memberId !== session.user.id &&#0",
+  "src/app/api/bookings/[id]/send-guest-payment-link/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {#0",
+  "src/app/api/payments/create-payment-intent/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {#0",
+  "src/app/api/payments/create-setup-intent/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {#0",
+  "src/app/api/payments/switch-to-internet-banking/route.ts::if (bookingOwner(booking).memberId !== session.user.id && !hasAdminAccess(session.user)) {#0",
+  "src/lib/adult-member-hosting-review.ts::return actorMemberId !== null && actorMemberId === bookingOwner(booking).memberId#0",
+  "src/lib/booking-batch-modification-service.ts::!(actor.role !== \"ADMIN\" && bookingOwner(booking).memberId !== actor.id)#0",
+  "src/lib/booking-cancel.ts::? `Booking cancelled. ${refundPercentage}% refund of ${formatCents(refundAmountCents, format)}: ${ownCardRefundWithShortfallSentence(plannedCardRefundCents, { ...shortfallParts, formatAmount: (cents) => formatCents(cents, format) }, !refundMade, sessionUserId === bookingOwner(fresh).memberId ? \"your\" : \"the member's\")}`#0",
+  "src/lib/booking-cancel.ts::bookingOwner(booking).memberId !== sessionUserId &&#0",
+  "src/lib/booking-date-modification-service.ts::if (bookingOwner(booking).memberId !== actor.id && actor.role !== \"ADMIN\") {#0",
+  "src/lib/booking-delete.ts::bookingOwner(booking).memberId !== input.actor.memberId &&#0",
+  "src/lib/booking-delete.ts::if (bookingOwner(booking).memberId !== actor.memberId && actor.role !== \"ADMIN\") {#0",
+  "src/lib/booking-email-authority.ts::bookingOwner(booking).memberId === recipientMemberId#0",
+  "src/lib/booking-guest-removal-service.ts::(bookingOwner(booking).memberId === actorMemberId || actorRole === \"ADMIN\");#0",
+  "src/lib/booking-guest-removal-service.ts::bookingOwner(booking).memberId === actorMemberId ? \"BOOKER\" : \"OTHER_PARTY_MEMBER\",#0",
+  "src/lib/booking-linked-date-move-service.ts::if (args.actor.id !== bookingOwner(before).memberId) {#0",
+  "src/lib/booking-member-night-conflicts.ts::const isOwnBooking = bookingOwner(guest.booking).memberId === actorMemberId;#0",
+  "src/lib/booking-modify-validation.ts::if (bookingOwner(booking).memberId !== actorId && role !== \"ADMIN\") {#0",
+  "src/lib/diagnostics/tools/packs/booking-evidence.ts::bookingOwner(booking).memberId === null#0",
+  "src/lib/group-booking.ts::if (bookingOwner(booking).memberId !== sessionUserId) {#0",
+  "src/lib/kiosk-access.ts::bookingOwner(b).memberId === user.id#0",
+  "src/lib/manual-refund-task-queue-payload.ts::bookingOwner(task.booking).memberId === viewerMemberId,#0",
+  "src/lib/member-self-read.ts::const madeByMe = bookingOwner(row).memberId === memberId;#0",
+  "src/lib/requested-room-write.ts::if (!input.actorIsAdmin && bookingOwner(booking).memberId !== input.actorMemberId) {#0",
+  "src/lib/waitlist-cross-lodge.ts::bookingOwner(preflight).memberId === memberId &&#0",
+  "src/lib/waitlist-cross-lodge.ts::if (bookingOwner(entry).memberId !== memberId) {#0",
+  "src/lib/waitlist.ts::bookingOwner(offerKind).memberId === memberId &&#0",
+  "src/lib/waitlist.ts::if (bookingOwner(booking).memberId !== memberId) {#0",
+  "src/lib/xero-applied-credit-spent-outside-app.ts::if (!current?.payment || current.payment.id !== paymentId || bookingOwner(current).memberId !== lockedOwnerId) {#0",
+  "src/lib/xero-period-lock-guard.ts::bookingOwner(booking).memberId !== options?.actorMemberId#0",
 ];
 
 /** Measured, not counted by hand. Re-measure by running this test. */
@@ -520,18 +706,18 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // which is where that chain belongs. Four remain (the fifth, the owner's age
   // tier as a predicate input, went with #5190's settlement loader), each
   // loading the organisation and each guarding the named-but-unreadable member:
-  // the booker's display NAME, two durable
-  // records that store the owner's member id (null for a school), and one
-  // admin health snapshot that renders the address with its own `?? ""`.
-  "src/lib/member-guest-consent-service.ts:1356",
-  "src/lib/payment-recovery.ts:2797",
-  "src/lib/payment-recovery.ts:2849",
-  "src/lib/xero-admin-health.ts:428",
+  // the booker's display NAME, two durable records that store the owner's
+  // member id (null for a school), and one admin health snapshot that renders
+  // the address with its own `?? ""`.
+  "src/lib/member-guest-consent-service.ts::[bookingOwner(booking).member?.firstName, bookingOwner(booking).member?.lastName]#0",
+  "src/lib/payment-recovery.ts::memberId: bookingOwner(booking).member?.id ?? null,#0",
+  "src/lib/payment-recovery.ts::memberId: bookingOwner(booking).member?.id ?? null,#1",
+  "src/lib/xero-admin-health.ts::? (bookingOwner(payment.booking).member?.email ?? \"\")#0",
 ];
 
 /** Measured, not counted by hand. Re-measure by running this test. */
 const MEMBER_KEYED_HELPER_SITES: readonly string[] = [
-  "src/lib/diagnostics/tools/packs/finance-evidence.ts:555",
+  "src/lib/diagnostics/tools/packs/finance-evidence.ts::? getMemberCreditBalance(bookingOwner(booking).memberId as string, tx)#0",
 ];
 
 /* -------------------------------------------------------------------------- */
@@ -599,6 +785,7 @@ type Selection = {
  */
 function selectionsIn(file: string, rawSource: string): Selection[] {
   const source = stripCommentsAndStrings(rawSource);
+  const rawLines = rawSource.split("\n");
   const found: Selection[] = [];
   for (const match of source.matchAll(SELECTION_KEY)) {
     const at = match.index ?? 0;
@@ -644,7 +831,7 @@ function selectionsIn(file: string, rawSource: string): Selection[] {
     }
 
     found.push({
-      site: `${file}:${source.slice(0, at).split("\n").length}`,
+      site: siteKey(file, rawLines, source.slice(0, at).split("\n").length - 1),
       model,
       rooted,
       declared: model ? MODEL_FIELDS.get(model)!.has("organisation") : null,
@@ -780,33 +967,33 @@ describe("#3369: an `organisation` selection names a relation that exists", () =
 
 /** Measured, not counted by hand. Re-measure by running this test. */
 const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
-  "src/app/api/admin/payments/manual-refund-tasks/route.ts:82",
-  "src/lib/bed-allocation-removal.ts:145",
+  "src/app/api/admin/payments/manual-refund-tasks/route.ts::organisation: { select: { name: true, email: true } },#0",
+  "src/lib/bed-allocation-removal.ts::organisation: { select: { name: true, email: true } },#0",
   // #3750: the change-request decision route's `includeRequestDetail`, moved
   // out of the route file to keep it in budget. Verified by hand: it is passed
   // as `include` to `bookingChangeRequest.findUnique`, and `organisation` sits
   // under its `booking` relation, which declares it.
-  "src/lib/booking-change-request-admin-decision.ts:94",
+  "src/lib/booking-change-request-admin-decision.ts::organisation: { select: { name: true, email: true } },#0",
   // #4925: `EDIT_DOOR_BOOKING_INCLUDE`, the one include every edit door
   // re-reads its booking with. Verified by hand: written
   // `satisfies Prisma.BookingInclude` and read back through
   // `Prisma.BookingGetPayload<{ include: typeof … }>`, so it is compile-checked
   // against Booking, which declares `organisation`.
-  "src/lib/booking-modify-validation.ts:245",
+  "src/lib/booking-modify-validation.ts::organisation: { select: { name: true, email: true } },#0",
   // #4042, #3949: the owner-name select, moved out of the organiser hand-back to
   // be shared with the joiner cancel's organiser name. Verified by hand: written
   // through `Prisma.validator<Prisma.BookingSelect>()` and spread into
   // `booking.findUniqueOrThrow`/`findMany` selects, and Booking declares
   // `organisation`.
-  "src/lib/booking-owner-name.ts:12",
-  "src/lib/cron-additional-payment-reminders.ts:444",
-  "src/lib/cron-confirm-pending.ts:193",
-  "src/lib/diagnostics/tools/packs/booking-evidence.ts:876",
+  "src/lib/booking-owner-name.ts::organisation: { select: { name: true, email: true } },#0",
+  "src/lib/cron-additional-payment-reminders.ts::organisation: { select: { name: true, email: true } },#0",
+  "src/lib/cron-confirm-pending.ts::organisation: { select: { name: true, email: true } },#0",
+  "src/lib/diagnostics/tools/packs/booking-evidence.ts::organisation: { select: { name: true, email: true } },#0",
   // #3740: `resolveManualRefundTask`'s select, moved out of that module to keep
   // it in budget. Verified by hand: written through
   // `Prisma.validator<Prisma.ManualRefundTaskSelect>()`, and `organisation` sits
   // under its `booking` relation, which declares it.
-  "src/lib/manual-refund-task-resolution-select.ts:58",
+  "src/lib/manual-refund-task-resolution-select.ts::organisation: { select: { name: true, email: true } },#0",
   // Added when the member lodge roster (#2942, from `main`) was routed through
   // `bookingOwner()` on the eighth epic sync. Verified by hand, which is what
   // this list asks for: `MEMBER_ROSTER_BOOKING_SELECT` is written
@@ -814,16 +1001,16 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // `Prisma.BookingGetPayload<{ select: typeof … }>`, so the model IS
   // compile-checked and a relation this model did not declare would fail to
   // build. The walk cannot root it only because the literal names no delegate.
-  "src/lib/member-lodge-roster.ts:112",
-  "src/lib/payment-link.ts:81",
-  "src/lib/payment-reconciliation.ts:104",
+  "src/lib/member-lodge-roster.ts::organisation: { select: { name: true } },#0",
+  "src/lib/payment-link.ts::organisation: { select: { name: true; email: true } };#0",
+  "src/lib/payment-reconciliation.ts::organisation: { select: { name: true; email: true } };#0",
   // The pre-arrival reminder's include, moved out of the daily cron so the
   // officer's fresh-copy action reads the booking the same way. Verified by
   // hand: written `satisfies Prisma.BookingInclude`, read back through
   // `Prisma.BookingGetPayload`, and passed as `include` to `booking.findMany`
   // and `booking.findUnique`; Booking declares `organisation`.
-  "src/lib/pre-arrival-reminder-email.ts:72",
-  "src/lib/stuck-state-dashboard.ts:653",
-  "src/lib/xero-booking-repair-types.ts:246",
-  "src/lib/xero-inbound/settlement-conflicts.ts:155",
+  "src/lib/pre-arrival-reminder-email.ts::organisation: { select: { name: true, email: true } },#0",
+  "src/lib/stuck-state-dashboard.ts::organisation: { select: { name: true, email: true } },#0",
+  "src/lib/xero-booking-repair-types.ts::organisation: { select: { name: true, email: true } },#0",
+  "src/lib/xero-inbound/settlement-conflicts.ts::include: { booking: { include: { member: true, organisation: { select: { name: true, email: true } } } } };#0",
 ];
