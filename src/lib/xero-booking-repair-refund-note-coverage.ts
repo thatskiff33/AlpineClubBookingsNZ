@@ -49,6 +49,8 @@ function readsRefundNoteCoverage(
  * note - still count as cover and a fully covered booking asks for nothing.
  * #4328: the same read's coverage judges a bank payment's several notes
  * together, read once more for one that is not cancelled - never twice.
+ * Its coverage is "unreadable" when the read threw, found no note-eligible
+ * cash, or met a hand-resolved note whose amount cannot be read.
  */
 export async function readRefundNoteGaps(
   bookings: readonly BookingRepairRecord[],

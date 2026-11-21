@@ -606,12 +606,7 @@ export interface BookingClassificationContext {
    * this, and nothing at all when it is zero.
    */
   refundNoteUncoveredCents: number | null;
-  /**
-   * #4328: `readRefundCreditNoteGap`'s `coveredCents` (all live notes) and
-   * `cashRefundCents` (note-eligible cash), compared by the several-note
-   * amount check (`readRefundNoteGaps`). `"unreadable"` when the read threw,
-   * found no such cash or an unreadable resolved note; null when not read.
-   */
+  /** #4328: the gap read's live-note coverage and note-eligible cash (`readRefundNoteGaps`, which says when it is "unreadable"); null when not read. */
   refundNoteCoverage: { coveredCents: number; cashRefundCents: number } | "unreadable" | null;
   /**
    * #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): the payments on this
