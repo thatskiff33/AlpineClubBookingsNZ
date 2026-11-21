@@ -59,7 +59,8 @@ import {
   type BookingGuestDietarySeeding,
 } from "@/lib/member-dietary-booking-writes";
 import { buildMemberGuestConsentWrite } from "@/lib/member-guest-consent";
-import { ManualBookingPaymentError, settleImportedBookingInTransaction } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
+import { settleImportedBookingInTransaction } from "@/lib/payment-reconciliation";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { prisma } from "@/lib/prisma";
 
