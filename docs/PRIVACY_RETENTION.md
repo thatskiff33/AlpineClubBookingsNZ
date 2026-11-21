@@ -217,6 +217,7 @@ What the file contains, and what it leaves out:
 | `ClubIdentitySettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `ClubTimeSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `ClubFormatSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
+| `ClubTaxSettings` | Club tax schedule and the officer who scheduled each period | While the period can render a Xero document; keep attribution for the tax record | Keep |
 | `LoginSecuritySetting` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `AnalyticsSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `EmailTemplateOverride` | Published / configured content and editor attribution | While published / configured and for content administration | Keep |
@@ -274,6 +275,9 @@ What the file contains, and what it leaves out:
 | `MaintenanceReportSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `MaintenanceReport` | Reporter / contact, fault description, answers and supporting evidence | Photo / IP hash: stamped expiry from maintenance settings; report / answers retained for maintenance history | Anonymise expired photo / IP fields; keep report and answers |
 | `MaintenanceReportAnswer` | Reporter / contact, fault description, answers and supporting evidence | Photo / IP hash: stamped expiry from maintenance settings; report / answers retained for maintenance history | Anonymise expired photo / IP fields; keep report and answers |
+| `FoodOrderSettings` | Club configuration (food officer email) and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
+| `FoodOrder` | Ordering member, needed-by date, note, receiving and pricing officers, recorded price (fork #121) | Retained as the club's food-cost history; a deleted member's orders keep their cost with the member link cleared | Keep; member link set null when the member is deleted |
+| `FoodOrderItem` | The ordering member's item descriptions and quantities, and who received each item and when | Retained with its order | Keep with the order |
 | `LodgeMaintenanceReportToken` | Report access token and creating / rotating officer | While token / report intake administration requires it; rotation revokes old access | Keep |
 | `EnvironmentSafetySettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `XeroSandboxContactContainment` | Provider contact identity, membership and grouping / containment evidence | While provider contact / grouping administration requires it | Keep |

@@ -311,6 +311,8 @@ export interface MockXeroOrganisation {
   shortCode?: string | null;
   /** Base currency (#3633); absent on older mock payloads. */
   baseCurrency?: string | null;
+  /** Whether the organisation pays tax (#4632); absent on older mock payloads. */
+  paysTax?: boolean | null;
 }
 
 /**
@@ -344,5 +346,6 @@ export async function fetchMockXeroOrganisation(
     shortCode: typeof body.shortCode === "string" ? body.shortCode : null,
     baseCurrency:
       typeof body.baseCurrency === "string" ? body.baseCurrency : null,
+    paysTax: typeof body.paysTax === "boolean" ? body.paysTax : null,
   };
 }

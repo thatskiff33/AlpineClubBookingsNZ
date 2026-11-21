@@ -7,8 +7,10 @@ import {
 import {
   bookingPolicyExceptionApprovedTemplate,
 } from "@/lib/email-templates/booking-exceptions";
+import { bookingPolicyExceptionApprovedPaymentNote } from "@/lib/booking-exception-approved-email-copy";
 import { BOOKING_URL_TEMPLATE_NAMES } from "@/lib/booking-email-template-contract";
 import { ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES } from "@/lib/booking-email-suppression";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 beforeEach(() => {
   vi.stubEnv("NEXTAUTH_URL", "https://bookings.example.nz");
@@ -211,16 +213,19 @@ describe("built-in booking email HTML links", () => {
  * because the delivered link is a property of the send pipeline, not of the
  * template source, and reading the template alone gives the wrong answer.
  */
+/** The notice as the sender composes it: the payment line is the cash-cover answer's own (#4069). */
+const approvedNotice = (args: Parameters<typeof bookingPolicyExceptionApprovedPaymentNote>[0]) =>
+  bookingPolicyExceptionApprovedTemplate({
+    firstName: "Ada",
+    checkIn: new Date("2026-07-01T00:00:00.000Z"),
+    checkOut: new Date("2026-07-03T00:00:00.000Z"),
+    guestCount: 2,
+    paymentNote: bookingPolicyExceptionApprovedPaymentNote(args, CLUB_FORMAT_TEST).paymentNote,
+    adminNotesLine: "",
+  });
+
 describe("the approved-exception notice links to the booking, not the list", () => {
-  const html = () =>
-    bookingPolicyExceptionApprovedTemplate({
-      firstName: "Ada",
-      checkIn: new Date("2026-07-01T00:00:00.000Z"),
-      checkOut: new Date("2026-07-03T00:00:00.000Z"),
-      guestCount: 2,
-      paymentNote: "There is $120.00 to pay on this booking.",
-      adminNotesLine: "",
-    });
+  const html = () => approvedNotice({ cover: { kind: "owes", cents: 12_000 }, bedsHeld: false });
 
   it("is classified so the canonical booking link is resolved for it at all", () => {
     expect(
@@ -257,5 +262,54 @@ describe("the approved-exception notice links to the booking, not the list", () 
     expect(delivered).not.toContain("View Booking");
     // The message itself still tells them what was approved and what is owing.
     expect(delivered).toContain("120.00");
+  });
+});
+
+/**
+ * #4069 (`INV-PAY-159`): the five payment lines, each rendered in the real
+ * template. One line per cash-cover answer; the body shows that line in its
+ * alert box, or no box at all.
+ */
+describe("the approved-exception notice's payment line, rendered", () => {
+  // The warning alert box's own background; nothing else in the notice has it.
+  const ALERT_BOX = "background-color: #fef3c7";
+
+  it.each([
+    [
+      "owes, beds not held",
+      { cover: { kind: "owes", cents: 12_000 }, bedsHeld: false },
+      "There is $120.00 to pay on this booking. Open it from your account to pay now — the beds are not held until it is paid.",
+    ],
+    [
+      "owes, beds held",
+      { cover: { kind: "owes", cents: 12_000 }, bedsHeld: true },
+      "There is $120.00 to pay on this booking. Your beds are held for now; open it from your account to pay or to see the payment details.",
+    ],
+    ["the organiser pays", { cover: { kind: "organiser_pays" }, bedsHeld: true }, "Your group organiser pays for this stay."],
+    [
+      "unknown",
+      { cover: { kind: "unknown", reason: "legacy-history" }, bedsHeld: true },
+      "To see whether anything is still to pay on this booking, open it from your account or contact the club.",
+    ],
+  ] as const)("%s: shows exactly its line", (_label, args, line) => {
+    const body = approvedNotice(args);
+    expect(body).toContain(line);
+    expect(body.split(ALERT_BOX)).toHaveLength(2);
+  });
+
+  it("covered: shows no payment box at all", () => {
+    const body = approvedNotice({ cover: { kind: "covered" }, bedsHeld: true });
+    expect(body).not.toContain(ALERT_BOX);
+    expect(body).not.toMatch(/to pay|\$\d/);
+  });
+
+  it.each([
+    { cover: { kind: "organiser_pays" }, bedsHeld: false },
+    { cover: { kind: "unknown", reason: "organiser-share-unproven" }, bedsHeld: false },
+    { cover: null, bedsHeld: false },
+  ] as const)("names no amount and never says paid or held for %j", (args) => {
+    const line = approvedNotice(args).split(ALERT_BOX)[1].split("</p>")[0].split(">").pop();
+    expect(line).toMatch(/^(Your group organiser pays|To see whether anything)/);
+    expect(line).not.toMatch(/\$|\d|\bpaid\b|\bheld\b/i);
   });
 });

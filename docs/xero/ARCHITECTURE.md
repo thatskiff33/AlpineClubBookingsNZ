@@ -20,7 +20,9 @@ on `MembershipSubscriptionCharge`. Its correlation key is charge-stable.
 Dispatch resolves the snapshotted recipient and uses the account/item mapping
 frozen at confirmation,
 then searches by the immutable `MEMSUB-*` reference. Zero matches creates an
-AUTHORISED ACCREC invoice with inclusive line amounts and `OUTPUT2`; one exact
+AUTHORISED ACCREC invoice with inclusive line amounts, at the tax treatment
+resolved for the charge's own anchor (see
+["Tax treatment"](#tax-treatment) below); one exact
 contact/account/item/amount/due-interval/type/state match is adopted. Only `AUTHORISED` is
 adoptable; draft, submitted, paid, voided, and deleted invoices conflict rather
 than being emailed. Duplicates or a mismatch set
@@ -519,6 +521,49 @@ DB lock across the provider call, backstopped by the raw partial unique index
 `XeroObjectLink_entrance_fee_active_unique` (at most one ACTIVE entrance-fee link
 per member).
 
+## Tax treatment
+
+Every document above — membership subscription invoices, entrance-fee
+invoices, booking and group-settlement invoices, credit notes and the promo
+adjustment lines — carries the tax treatment resolved by
+`resolveXeroTaxRendering` in
+[`xero-tax-anchors.ts`](../../src/lib/xero-tax-anchors.ts), never a literal
+tax code (#4632, `INV-CONFIG-007`). This is the ONE renderer: it reads the
+club's GST schedule (`loadClubTaxSchedule`,
+[`club-tax-settings.ts`](../../src/lib/club-tax-settings.ts)), resolves the
+period in force on the document's own anchor date, and turns it into the
+`LineAmountTypes` and `taxType` string every builder uses
+([`xero-tax-rendering.ts`](../../src/lib/xero-tax-rendering.ts)).
+
+**The anchor is the charge, never the render or send date** (owner decision A,
+11 Nov 2026): a booking's anchor is `Booking.createdAt`, and a group place's
+is its organiser's booking's, so a joiner's journal split matches the combined
+invoice its lines go on (`readBookingTaxAnchorInstant`,
+[`booking-tax-anchor.ts`](../../src/lib/booking-tax-anchor.ts), read by both
+sides); a subscription
+charge's is its own `createdAt`, and its cancellation credit note shares that
+anchor; an entrance-fee invoice's is its outbox operation's `createdAt`. A
+booking made before the club's GST registration or rate changes keeps the
+treatment it was made under for its whole life, so its invoice, every edit's
+document and every credit note agree with each other and with the
+member-money journal, which splits the same booking's charges on the same
+anchor (`resolveBookingMoneyPostingContext`,
+[`door-context.ts`](../../src/lib/member-money/internal/door-context.ts)).
+
+The schedule has one writer, `scheduleClubTaxChange`/
+`cancelScheduledClubTaxChange`
+([`club-tax-settings-write.ts`](../../src/lib/club-tax-settings-write.ts)),
+behind `PUT`/`DELETE /api/admin/club-tax`, Full Admin only. A change only ever
+adds a period starting after the club's today, so no document already rendered
+changes —
+and is refused outright when Xero's own tax-rate list does not carry the
+chosen code active, at the chosen rate, usable on revenue; the schedule and
+Xero's own codes can never disagree. The admin card on `/admin/finance/xero`
+("GST / tax treatment") shows the period in force and any change already
+scheduled; before a change saves it counts the bookings still in progress on
+the chosen date that will keep the old treatment (bookings, not documents —
+each booking's documents all follow its one anchor).
+
 ## Bird's-eye dataflow
 
 ```mermaid
@@ -657,6 +702,7 @@ module every provider call goes through (`INV-OPS-013`). Shared JSON-guard micro
 | --- | --- |
 | `xero-booking-invoices` | Primary booking invoice create/update (`buildInvoiceLineItems`). |
 | `xero-invoice-payments` | Recording Stripe payments against invoices and Stripe refunds as credit-note payments. |
+| `capture-receipt-senders` | Ledger M13 (#4525): after a capture sender stores a Xero payment id, that payment's cents are recorded on the export manifest as a `CAPTURE_RECEIPT` (`recordCaptureReceiptManifest`); the payment is sent exactly as before. This module names the capture, key and cents for the primary invoice's Stripe payment and a PARTIAL invoice repair; the other capture senders call the recorder themselves. See [member-money-ledger.md section 7](../design/member-money-ledger.md#7-outbound-rendering-and-optional-xero). |
 | `xero-credit-notes` | Refund credit notes, unapplied (account-credit) credit notes, allocation to invoices. Stripe refunds settle **per delta** (#1162): a payment refunded in several steps gets one credit note per uncovered delta, keyed on a cumulative refunded-cents watermark; non-Stripe refunds keep one note per payment, except that a later cancellation hand-back on a bank transfer gets its own note keyed and sized on its task (#4287, `INV-ADDPAY-043`), and so does each card refund on one, keyed and sized on its `PaymentRefund` row (#4312, `INV-ADDPAY-047`), and each refund request (appeal) paid back by bank transfer gets its own note when its task is marked paid back, for the amount paid back, keyed by the request (`payment:<id>:refund-request-credit-note:<request>:v1`) and linked under its own role `REFUND_REQUEST_CREDIT_NOTE` (#3827, owner decision D-3813-8, `INV-PAY-118`). That role is selected by none of the one-note machinery (the link normaliser's single-note rule in `xero-sync.ts`, `cleanupStaleCanonicalXeroObjectLinks`, the drift report), never takes `Payment.xeroRefundCreditNoteId`, and is left out of `findCanonicalPaymentRefundCreditNote`'s fallbacks, so a cancellation's note and a request's never absorb each other. The booking repair tool and the failed-operations panel leave a request's note out of everything that answers for the payment's one refund note (`isRefundRequestNoteOperation`), and the request's note is queued in the same transaction as the completion that records its refund. A cash refund note's settling payment is recorded only where the money verifiably moved (`resolveRefundSettlement`, `INV-PAY-101`): Stripe for a card refund, the configured bank-transfer refund account for a recorded bank transfer, and otherwise the note is left unsettled with `refundPaymentSkipped` on the operation. The note is recorded (payment field, covering link, the row's `xeroObjectId`) in one transaction the moment Xero returns it, so an attempt that dies before its payment leaves a FAILED row naming its note; the retry and repair legs and the repair tool finish it through one read-back-then-settle (`xero-refund-note-settlement.ts`, `INV-PAY-111`): the payment or the skip, PARTIAL if the payment fails, one note-keyed payment key, dated the note's own day, and never a second payment on a note Xero already shows paid, part-paid or allocated. Rows written before #3548 with neither are listed by the reconciliation report and the repair tool (`xero-refund-note-unsettled.ts`) and settled only by an operator. |
 | `xero-refund-method` | Leaf, pure: how the money went back — `card`, `internet-banking`, `account-credit` — as the ONE home for the wording every refund or credit document carries (#3529, `INV-PAY-101`), the default a method-less legacy row falls to (Stripe → card, anything else → bank transfer), and which mapping key settles a cash refund. The method is threaded from the settlement decision through the outbox payload; the builders never infer it from `Payment.source` when the caller said. Two booking-edit wordings (#3536) — *Invoice correction — nothing refunded* (an unpaid pay-on-account invoice lowered) and *Refunded in cash* (an edit-review refund paid back by hand, when the resolving officer says it went in cash; never inferred, `INV-PAY-116`) — ride beside the method as `noteWording`, which retries and the repair tool carry forward; words only, no settlement changes. Since #3935 the cash wording also reaches a since-cancelled booking's review refund note (`readRefundNoteWording`: cash only beside the internet-banking method). |
 | `xero-supplementary-invoices` | Positive booking-modification delta invoices. Since #3530 (stage 2b) itemised from the edit's stored lines when they sum exactly to what the invoice bills; otherwise the single price-adjustment line, with the reason under `requestPayload.priceLines`. |
@@ -3531,6 +3577,48 @@ Cancelled/bumped/deleted bookings and unauthorised audiences make no provider re
 Payment routes retain their final guards. No settlement, reconciliation, new lock
 key, schema change, historical operation or ledger reader cutover is introduced
 (`INV-INT-003`, `INV-LOCK-001`, `INV-LOCK-002`, `INV-LOCK-003`).
+
+## Booking-page invoice and credit-note downloads (#5066)
+
+With the Xero module on, the booking page offers Xero's own PDF of the
+booking's primary invoice and of each credit note raised against it
+(`booking-invoice-download.ts`; owner decisions on #5066, 15 Nov 2026, and on
+PR #5201, 17 Nov 2026). One offer (`resolveBookingInvoiceOffer`) drives the
+page and both routes, so neither can serve what the page does not offer.
+
+- **Which credit notes** (`readBookingCreditNotes`): only notes whose Xero id
+  the app holds — active CREDIT_NOTE links on the booking, its payment or its
+  modifications in a role that credits the booking (modification, refund,
+  refund-request, account-credit and applied-credit remainder notes), the
+  refund-note columns on `Payment` and `PaymentRefund`, and the owner's own
+  credit lots allocated to the booking (`MemberCreditNoteAllocation`). A note
+  any link records as voided or deleted is left out, as is one whose every
+  link is inactive. A note an applied-credit slice names is "credit used",
+  whatever an older link calls it, and a remainder note is listed only while a
+  slice for the booking names it. Organiser-extra notes credit another invoice
+  and are not listed. The credit-note route serves only an id in this list.
+- **The Xero read**: one `getInvoiceAsPdf` or `getCreditNoteAsPdf` through
+  `callXeroApi`, outside any transaction, no retries, no breaker arming, and
+  no writes to Xero.
+- **The summary** (`bookingInvoiceSummary`) is the page's own figures, not a
+  ledger statement: the price (the Payment card's Total), the recorded change
+  fee, the ledger's applied credit, what the payment still holds after refunds
+  and returned credit (Net Collected's cash rule), and the amount due (now, or
+  once a review or pending booking is confirmed). When a reduction was
+  refunded only in part, a "kept" row is the one sum that makes the rows
+  reconcile: paid = total + fee - credit - due + kept.
+- **Not showing the latest change** (`readPrimaryInvoiceUpdateState`): the page
+  says so when the latest primary-invoice update failed unresolved, or when a
+  credit note for the booking (modification, account-credit or refund note)
+  failed unresolved; and that the documents may lag while either is queued or
+  running. When the latest update was skipped (`isSkippedPrimaryInvoiceUpdate`:
+  by the edit's policy, or by the worker on a paid, credited, voided or
+  deleted invoice), no update is queued for that change, and neither of those
+  applies, the page says instead that the invoice stays as it was issued. A
+  failed credit note outranks a queued one, and both outrank this state.
+- **Later work.** A single statement PDF for the booking (invoice, credits,
+  payments and balance in one document) belongs to #5066's generated-document
+  slice, which waits on the club GST status work (#5153).
 
 ## OAuth and token lifecycle (supporting flow)
 

@@ -2699,6 +2699,12 @@ Preferred rollback is to route Caddy back to the previous healthy color while it
 is still running. If schema changes have already applied, rollback must respect
 the migration policy and any compatibility constraints in the migration PR.
 
+**Not below v0.14.0 once it has run (#5270).** Routing back to a colour older
+than v0.14.0 can let an old copy retry a saved-card charge under a different key
+and charge a member twice, and a backup cannot undo a charge at Stripe. Recover
+on v0.14.0 or later. The boundary and the checks to run if it was crossed are in
+the [saved-card upgrade and rollback boundary](docs/UPGRADING.md#saved-card-upgrade-and-rollback-boundary-5270).
+
 **Not once a data-encryption key is in use (#4456).** Rows written under
 `DATA_ENCRYPTION_KEYS` cannot be read by an older release or by a colour started
 without the ring, so routing back to one strands those credentials, two-factor
