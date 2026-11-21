@@ -222,11 +222,12 @@ altogether.
 ### The override register
 
 Every row below was verified by removing that entry and re-resolving (#2863),
-and re-checked for #3673 against the ranges the installed parents declare. Four
+and re-checked for #3673 against the ranges the installed parents declare. Five
 bind today: `postcss` (`next` pins 8.5.23 exactly), the `nodemailer` pair
 (`next-auth`'s optional peer stops at `^8`), and, since #5252, `qs` and
 `minimatch`, which hold development tooling outside its parents' declared
-ranges and say why in their rows. The `mysql2` override retired in
+ranges and say why in their rows, and, since #5293, `effect`, held above
+`@prisma/config`'s exact pin. The `mysql2` override retired in
 #4363, once `prisma` 7.10.1 pinned mysql2 3.24.4.
 `eslint-plugin-react-hooks` is a deliberate hold that is currently non-binding.
 `browserslist` is a security floor its parents' ranges do not guarantee
@@ -259,6 +260,7 @@ than the last install. Scope an override to its parent (`parent>name`) instead.
 | `ajv>fast-uri` (`^3.1.9`) | **Security, in build tooling only.** `fast-uri < 3.1.9` carries four advisories (GHSA-w74x-v6f9-j3xg, GHSA-xhq7-xmqj-769h, GHSA-wjr9-j795-jxcr, GHSA-333x-w4r6-6crp). It arrives only through `ajv@8` under Prisma's dev tooling (`prisma > @prisma/dev > @prisma/streams-local`), which the running application never loads. `ajv@8.20.0` accepts any `fast-uri@^3.0.1`, so the pin does not conflict with its range; remove it when the resolved version is at least 3.1.9 without it (#4326). |
 | `typed-rest-client>qs` (`^6.16.1`) | **Security, in development tooling only.** `qs 6.15.1` carries four moderate advisories (GHSA-q8mj-m7cp-5q26, GHSA-x5fp-wj9c-mxmx, GHSA-4mjr-xmp4-gh2g, GHSA-6pq8-jhm2-2vcw; all fixed by 6.16.1). It arrives only through `@stryker-mutator/core > typed-rest-client@2.3.1`, which pins qs at **exactly** 6.15.1, so this override sits outside the parent's declared range. Checked for #5252: typed-rest-client calls qs only in `Util.getUrlWithParsedQueryParams` (`qs.stringify` with standard options), reached by Stryker's dashboard reporter (not configured here) and `stryker init`; qs's changelog from 6.15.1 to 6.17.1 lists fixes and one new opt-in format, no breaking change; the call returns the same query strings on 6.17.1; and typed-rest-client 3.1.x itself declares `^6.16.1`. Cleared with the overrides that let the #5252 mitigation record apply. | `@stryker-mutator/core` depends on a `typed-rest-client` whose own qs range requires 6.16.1 or later (3.1.x does; Stryker 10.1.1 asks for `~2.3.0`). |
 | `minimatch@>=7.0.0 <11.0.1` (`^11.0.5`) | **Security, in development tooling only.** GHSA-g3hv-75wg-m249 (moderate) covers minimatch `>=7.0.0 <11.0.1` with no 10.x fix. The selector is the advisory's own range, so `minimatch@3.1.5` (under `eslint-plugin-import`, `-jsx-a11y` and `-react`, outside the range and on a different API) is untouched. It moves `eslint@10.14.0` (`^10.2.6`), `@eslint/config-array@0.23.5` (`^10.2.4`), `@typescript-eslint/typescript-estree@8.62.1` (`^10.2.2`) and `@stryker-mutator/core@10.1.1` (`~10.2.4`) **outside their declared ranges** onto the 11.0.5 that `glob` already used. Checked for #5252: 11.0's breaking changes remove `makeRe`, `Minimatch#regexp`, `AST`, `debug` and `matchOne` and change what `Minimatch.set` holds; none of the four parents uses any of them (they call `minimatch()`, `new Minimatch()`, `.match(path[, partial])`, `.negate`, `.pattern` and `.hasMagic()`); a differential of 10.2.6 against 11.0.5 over every glob in the repository's tool configs and every tracked path, in each parent's call shape, found no difference; and eslint, knip, vitest and the production build ran. | Each of those four parents requires 11.0.1 or later. eslint 10.15.0, `@eslint/config-array` 0.23.6 and typescript-eslint 8.73.0 already do, but were younger than the seven-day release age on 18 Nov 2026; Stryker 10.1.1 does not. |
+| `@prisma/config>effect` (`^3.22.1`) | **Security, in Prisma's configuration tooling.** GHSA-7589-6fvf-x4pw (high, CVE-2026-121707): `effect <=3.22.0` compiles `Schema.TemplateLiteral` templates with two or more string spans to a backtracking regular expression; fixed in 3.22.1. The installed `effect` arrives only through `prisma > @prisma/config`, and `@prisma/config@7.10.1`, the newest 7.x release, pins it at **exactly** 3.20.0, so this override takes `effect` **outside its parent's exact pin** (to 3.22.4). Checked for #5293: `@prisma/config` imports only `Schema.Struct`, `String`, `optional`, `Array`, `Boolean`, `NullOr`, `NonEmptyString`, `Any`, `mutable`, `decodeUnknownEither` and a schema's `make`, plus `Either` and `pipe` from `effect/Function`, never `Schema.TemplateLiteral`, and decodes only this repository's `prisma.config.ts`; Effect's changelog from 3.20.0 to 3.22.4 changes none of them (its one behaviour change, how a serialised `Cause.Fail` is named, is not used: `@prisma/config` throws the `ParseError` itself); the config still loads, an excess key is still refused with Effect's parse message, and Prisma generate, `migrate deploy`, the drift check, `prisma validate`, the data-migration verification suite and four real-database suites passed on PostgreSQL 16. **Not reached by this override:** the `prisma` command-line tool also bundles its own copy of `effect` 3.20.0 inside `build/cli.js`, which neither this override nor `pnpm audit` can reach. It loads `prisma.config.ts` through the installed `@prisma/config` (on 3.22.4), and the security review for #5293 found its bundled copy never builds a `Schema.TemplateLiteral` schema, so the weakness is not reachable through it. It is replaced when Prisma ships a release built on a fixed `effect`. | Prisma ships a release whose `@prisma/config` requires, and whose command-line tool bundles, `effect` 3.22.1 or later (keep `prisma`, `@prisma/client`, `@prisma/config` and `@prisma/adapter-pg` on one version). |
 
 ### The direct-dependency hold register
 
@@ -3579,11 +3581,17 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
      "Published release notes". The documentation hub links the index, not a
      version, so it needs no edit.
    - **The runbook stays release-agnostic.**
-     `docs/PRODUCTION_UPGRADE_RUNBOOK.md` names no release pair; its §7 and §8
-     are blank templates an operator fills in offline. If it has been
-     re-scoped to one release, re-scope it to the new tag, templates included.
-     Never write a rehearsal date, result or "confirmed by" into it: only the
-     owner attests a rehearsal, and not in the public repository.
+     `docs/PRODUCTION_UPGRADE_RUNBOOK.md` names no release pair and keeps
+     reusable operator templates. If it has been re-scoped to one release,
+     re-scope it to the new tag, templates included.
+     It may record example rehearsal transcripts, including their dates and
+     results. Record nothing that the public-writing rule bars
+     ([writing in the open](agents/ISSUE_WORKFLOW.md#writing-in-the-open)):
+     in particular secrets, credentials, production data, personal data, IP
+     addresses, hostnames, and anything else identifying a club's production
+     environment. An example does not attest any operator's upgrade, so it
+     carries no "Confirmed by" owner confirmation. Operators fill in their own
+     §7 and §8 records offline.
    - **Every windowed migration is reached.** A census
      (`src/lib/__tests__/upgrade-docs-scope.test.ts`) fails a pull request when
      a windowed ledger row is not named in the runbook's
