@@ -75,6 +75,7 @@
  * that still fires for anybody else.
  */
 import type { XeroClient } from "xero-node";
+import type { Prisma } from "@prisma/client";
 
 import {
   BookingOwnerMissingError,
@@ -126,6 +127,18 @@ import { schoolXeroContactName } from "@/lib/school-organisations";
 /** The advisory-lock keyspace for one organisation's contact link. */
 export function organisationXeroContactLockKey(organisationId: string): string {
   return `xero-organisation-contact:${organisationId}`;
+}
+/**
+ * Take one organisation's contact key on the caller's transaction. The ONE
+ * mint of the key (`INV-LOCK-003`): the resolve's phase 2 below, and the
+ * officer's contact-details edit (#5245), which must not interleave with a
+ * link being written.
+ */
+export async function lockOrganisationXeroContact(
+  tx: Prisma.TransactionClient,
+  organisationId: string,
+): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${organisationXeroContactLockKey(organisationId)}))`;
 }
 /**
  * WHO A BOOKING IS INVOICED AS (#3367).
@@ -406,7 +419,7 @@ export async function findOrCreateXeroContactForOrganisation(
   };
   try {
     linkOutcome = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${organisationXeroContactLockKey(organisationId)}))`;
+      await lockOrganisationXeroContact(tx, organisationId);
       await lockXeroContactHome(tx, finalResolved.contactId);
 
       const fresh = await tx.organisation.findUnique({

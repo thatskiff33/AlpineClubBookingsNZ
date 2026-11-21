@@ -81,6 +81,8 @@ import { recordAdditionalCaptureReceipt } from "@/lib/additional-capture-xero-re
 import { outboxScanSpacesWaitingReceipts } from "@/lib/additional-capture-receipt-gate";
 import { scanSpacesRefundNotesAwaitingResolve } from "@/lib/xero-refund-note-in-flight";
 import { XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE } from "@/lib/admin-grant-credit-note-payload";
+import { organisationContactDetailsOrganisationId, XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE } from "@/lib/organisation-contact-details-payload";
+import { syncOrganisationContactDetails } from "@/lib/organisation-xero-contact-details";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
 import {
@@ -2302,6 +2304,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
       ? buildPrecomputedEntranceFeeContext(payload)
       : null;
     const subscriptionChargeId = subscriptionInvoiceChargeId(queuedOperation);
+    const contactDetailsOrganisationId = organisationContactDetailsOrganisationId(queuedOperation); // #5245, INV-INT-026
     // #4655 (#4672 review S1/S2, `INV-INT-029`): the claim this dispatch's outcome is
     // written under. An organiser adjustment whose late note re-took a row a reset
     // failed hands back its fresh claim; every give-back and failure below follows it.
@@ -2398,6 +2401,9 @@ export async function processQueuedXeroOutboxOperations(options?: {
         );
       } else if (payload?.queueType === XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE) {
         await createAdminGrantCreditNote({ syncOperation: claimed, payload });
+      } else if (payload?.queueType === XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE && contactDetailsOrganisationId) {
+        // #5245: a school's corrected email and phone, read fresh at send time.
+        await syncOrganisationContactDetails({ organisationId: contactDetailsOrganisationId, syncOperation: claimed, createdByMemberId: queuedOperation.createdByMemberId ?? undefined });
       } else if (
         payload?.queueType === XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE
       ) {
