@@ -5,6 +5,7 @@ import {
   runBookingXeroRepair,
 } from "@/lib/xero-booking-repair";
 import { applyActionsForPass } from "@/lib/xero-booking-repair-passes";
+import { applyKeptChangeCaptureRecordAction } from "@/lib/xero-booking-repair-additional-capture";
 import { PartialRefundError } from "@/lib/payment-transactions";
 import { withTimeZoneAsync } from "@/lib/__tests__/helpers/timezone";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -293,7 +294,7 @@ function recomputePaymentSummary(payment: any) {
 }
 
 /** #3924 round 14: a capture's by-hand card refunds - cents alone, or with the share a note sent without a reply may answer. */
-type CardByHand = number | { byHandCents: number; mayBeInXeroCents: number };
+type CardByHand = number | { byHandCents: number; mayBeInXeroCents: number; aboveRecordedCents?: number };
 
 function createDependencies(state: {
   bookings: any[];
@@ -821,6 +822,7 @@ function createDependencies(state: {
     enqueueAdditionalCaptureReceiptOperation: vi.fn().mockResolvedValue({ outcome: "queued", queueOperationId: "op_receipt" }),
     // #4324: the keep's own decision, for a kept change capture.
     planKeptLateCaptureXeroRecord: vi.fn().mockResolvedValue({ kind: "receipt-queued", queueOperationId: "op_receipt" }),
+    alertKeptCaptureRefusal: vi.fn().mockResolvedValue(undefined),
     // #3548: the repair's settle of an operator-applied refund note. Tests that
     // do not apply that action never call it.
     finishRefundCreditNoteSettlement: vi.fn().mockResolvedValue({
@@ -838,7 +840,9 @@ function createDependencies(state: {
           new Map(
             Object.entries(state.lateCaptureCardRefundsByHand ?? {}).map(([intent, value]) => [
               intent,
-              typeof value === "number" ? { byHandCents: value, mayBeInXeroCents: 0 } : value,
+              typeof value === "number"
+                ? { byHandCents: value, mayBeInXeroCents: 0, aboveRecordedCents: 0 }
+                : { aboveRecordedCents: 0, ...value },
             ]),
           ),
       ),
@@ -6887,6 +6891,39 @@ describe("runBookingXeroRepair", () => {
       expect(card?.summary).not.toMatch(/record the \$/);
     });
 
+    // #4383: a receipt the app recorded for only part of the capture caps
+    // its refund note there; the refunds above it are named with the
+    // conditional sentence, never as a plain amount to record by hand.
+    it("MUTATION: #4383: a capped capture refunded above what was recorded is named, conditionally, on its own", async () => {
+      const refunded = keptBooking(
+        { refundedAmountCents: 8000, status: "REFUNDED" },
+        { refundedAmountCents: 8000, status: "REFUNDED" },
+      );
+      const { bookingReport } = await run(refunded, "COMPLETED", [], { pi_kept: { byHandCents: 0, mayBeInXeroCents: 0, aboveRecordedCents: 3000 } });
+      const card = bookingReport.findings.find((finding) => finding.code === "LATE_CAPTURE_CARD_REFUND_RECORD_BY_HAND");
+      expect(card).toMatchObject({
+        severity: "warning",
+        safeToAutoApply: false,
+        details: { paymentId: "payment_1", paymentIntentId: "pi_kept", recordByHandCents: 0, aboveRecordedCents: 3000 },
+      });
+      expect(card?.summary).toMatch(
+        /recorded only part of it, so the app's refund credit note stops at that part\. If the rest of the payment was recorded in Xero by hand, as the receipt's alert asks, record the \$30\.00 of the refund above it by hand too; if not, record nothing\. This finding is report-only/,
+      );
+      expect(card?.summary).not.toMatch(/resolved by hand/);
+      expect(bookingReport.actions).toEqual([]);
+    });
+
+    it("#4383: an uncapped capture says nothing of a part above what was recorded", async () => {
+      const refunded = keptBooking(
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+      );
+      const { bookingReport } = await run(refunded, "COMPLETED", [], { pi_kept: 10000 });
+      const card = bookingReport.findings.find((finding) => finding.code === "LATE_CAPTURE_CARD_REFUND_RECORD_BY_HAND");
+      expect(card?.summary).not.toMatch(/recorded only part of it/);
+      expect(card?.details).not.toHaveProperty("aboveRecordedCents");
+    });
+
     it("round 12: the card finding is read only for a cancelled booking", async () => {
       const { bookingReport, deps } = await run(
         makeBooking({ payment: { ...keptBooking().payment } }),
@@ -11596,5 +11633,49 @@ describe("runBookingXeroRepair - a change's card capture no Xero invoice records
       expect(finding(bookingReport)).toBeUndefined();
       expect(bookingReport.findings.find((entry) => entry.code === "BLOCKED_BY_XERO_OPERATION")).toBeUndefined();
     }
+  });
+});
+
+describe("#5220: the repair tool's run of the keep's decision on a retired change invoice", () => {
+  const action = () => ({
+    key: "queue:kept-late-capture-record:task_kept",
+    bookingId: "booking_1",
+    type: "QUEUE_KEPT_LATE_CAPTURE_RECORD" as const,
+    description: "",
+    safeToAutoApply: true,
+    payload: { manualRefundTaskId: "task_kept", bookingId: "booking_1", paymentIntentId: "pi_kept" },
+    status: "planned" as const,
+    resultMessage: null as string | null,
+  });
+  const run = async (plan: unknown) => {
+    const order: string[] = [];
+    const deps = {
+      prisma: { $transaction: async (fn: (tx: unknown) => unknown) => { const out = await fn({}); order.push("commit"); return out; } },
+      planKeptLateCaptureXeroRecord: vi.fn().mockResolvedValue(plan),
+      alertKeptCaptureRefusal: vi.fn(async () => { order.push("alert"); }),
+    };
+    const planned = action();
+    await applyKeptChangeCaptureRecordAction(planned as never, deps as never);
+    return { planned, deps, order };
+  };
+
+  it("emails the officer for a refusal the decision stamped, after its commit", async () => {
+    const plan = {
+      kind: "change-payment",
+      paymentIntentId: "pi_kept",
+      refusalAlert: { operationId: "op_retired", localModel: "BookingModification", localId: "mod_change", paymentIntentId: "pi_kept", reason: "short-of-ask", wasRetired: true },
+    };
+    const { planned, deps, order } = await run(plan);
+    expect(deps.alertKeptCaptureRefusal).toHaveBeenCalledWith(plan);
+    expect(order).toEqual(["commit", "alert"]);
+    expect(planned.status).toBe("skipped");
+    // Not "a change invoice already answers": no invoice was issued, and the report says so.
+    expect(planned.resultMessage).toContain("could not be re-issued");
+  });
+
+  it("reports the receipt it queued beside a revived unpaid invoice", async () => {
+    const { planned } = await run({ kind: "change-payment", paymentIntentId: "pi_kept", receiptQueueOperationId: "op_receipt" });
+    expect(planned).toMatchObject({ status: "queued", resultMessage: expect.stringContaining("op_receipt") });
+    expect(planned.resultMessage).toContain("receipt");
   });
 });

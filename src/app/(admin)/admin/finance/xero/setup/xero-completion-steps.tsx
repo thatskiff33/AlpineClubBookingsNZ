@@ -23,6 +23,7 @@ import { useClubIdentity } from "@/components/club-identity-provider";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { useActionFailure } from "@/hooks/use-action-failure";
 import { MappingsPanel } from "../_components/mappings-panel";
+import { TaxCategoryMappingCard } from "../_components/tax-category-mapping-card";
 import { SetupPanels } from "../_components/setup-panels";
 import { XERO_WEBHOOK_STATE_CHANGED_EVENT } from "../_components/webhook-amber-badge";
 import type { SyncResult } from "../_components/types";
@@ -376,12 +377,16 @@ export function MappingStep({ context }: { context: XeroWizardContext }) {
         </p>
       </div>
       {context.connected ? (
-        <MappingsPanel
-          connected={context.connected}
-          open
-          onToggle={noop}
-          clubName={club.name}
-        />
+        <>
+          <MappingsPanel
+            connected={context.connected}
+            open
+            onToggle={noop}
+            clubName={club.name}
+          />
+          {/* Beside the account mapping: each tax category's Xero tax rate (#5209). */}
+          <TaxCategoryMappingCard />
+        </>
       ) : (
         <p className="text-sm text-muted-foreground">
           Connect Xero first to load your chart of accounts.

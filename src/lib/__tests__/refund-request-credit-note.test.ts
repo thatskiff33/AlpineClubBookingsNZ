@@ -80,6 +80,12 @@ describe("the link a request's note is recorded under", () => {
     expect(noteLinkRole(refundCreditNoteCompletion(base))).toBe("REFUND_CREDIT_NOTE");
     expect(noteLinkRole(refundCreditNoteCompletion({ ...base, refundRequestId: null }))).toBe("REFUND_CREDIT_NOTE");
   });
+
+  it("MUTATION (#4279): a completion asks to adopt the note as the payment's refund note only when told to, and never for a request's own note", () => {
+    expect(refundCreditNoteCompletion({ ...base, adoptAsCanonicalRefundNote: true }).canonicalRefundNote).toEqual({ paymentId: "pay-1", creditNoteId: "cn-1" });
+    expect(refundCreditNoteCompletion(base)).not.toHaveProperty("canonicalRefundNote");
+    expect(refundCreditNoteCompletion({ ...base, refundRequestId: "req-1", adoptAsCanonicalRefundNote: true })).not.toHaveProperty("canonicalRefundNote");
+  });
 });
 
 describe("the canonical refund note never absorbs a request's note", () => {

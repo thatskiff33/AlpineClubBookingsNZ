@@ -239,6 +239,9 @@ describe("adult-supervision callers: the declared set, and the shape each passes
     "src/lib/booking-create-guests.ts": "consentStatus: guestConsentStatus(guest),",
     "src/lib/booking-guest-removal-service.ts": "requiresAdultSupervisionReview(remainingGuests)",
     "src/lib/booking-modify-plan.ts": "consentStatus: proposedConsentStatus(guest),",
+    // #5005: the import writes every member guest consent-free or as an officer
+    // assignment, so each row is present; it states that as null.
+    "src/lib/booking-import/plan.ts": "({ ageTier: guest.ageTier, consentStatus: null })",
     // The clients' one door to the rule: each row states the consent its add will
     // produce (the wizard's preview) or carries (the edit panel's kept rows).
     "src/components/book/member-guest-preview.tsx":

@@ -8,7 +8,12 @@ import {
   cleanup,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import "@testing-library/jest-dom/vitest";
 import { ADMIN_FORBIDDEN_SAVE_REASON } from "@/components/admin/view-only-action";
+import {
+  htmlErrorPage,
+  itShowsEveryRefusal,
+} from "@/lib/__tests__/support/failed-write-cases";
 
 const hookMock = vi.hoisted(() => ({ canEdit: true as boolean | undefined }));
 vi.mock("@/hooks/use-admin-area-edit-access", () => ({
@@ -248,22 +253,45 @@ describe("PasswordPolicyCard (#2103)", () => {
     });
   });
 
-  it("surfaces the forbidden-save reason on a 403 from the PUT", async () => {
-    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
-      init?.method === "PUT"
-        ? new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 })
-        : policyResponse(12),
-    );
-    await renderLoaded(fetchMock);
-    fireEvent.click(editButton());
-    fireEvent.change(minLengthInput(), { target: { value: "20" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  describe("a refused save (ALP-749)", () => {
+    async function saveAnswered(answer: () => Response | Promise<Response>) {
+      const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
+        init?.method === "PUT" ? answer() : policyResponse(12),
+      );
+      await renderLoaded(fetchMock);
+      fireEvent.click(editButton());
+      fireEvent.change(minLengthInput(), { target: { value: "20" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    }
 
-    await waitFor(() =>
-      expect(screen.getByText(ADMIN_FORBIDDEN_SAVE_REASON)).toBeTruthy(),
-    );
-    // Still editing; the change did not persist.
-    expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
+    async function expectRefusal(sentence: string) {
+      expect(await screen.findByRole("alert")).toHaveTextContent(sentence);
+      // Still editing; the change did not persist.
+      expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
+    }
+
+    it("shows the forbidden-save reason for the guard's bare 403", async () => {
+      await saveAnswered(() => Response.json({ error: "Forbidden" }, { status: 403 }));
+      await expectRefusal(ADMIN_FORBIDDEN_SAVE_REASON);
+    });
+
+    it("shows the forbidden-save reason for a 403 whose body is an HTML page", async () => {
+      await saveAnswered(() => htmlErrorPage(403));
+      await expectRefusal(ADMIN_FORBIDDEN_SAVE_REASON);
+    });
+
+    it("keeps a 403's own worded refusal", async () => {
+      await saveAnswered(() =>
+        Response.json({ error: "Two-factor verification required" }, { status: 403 }),
+      );
+      await expectRefusal("Two-factor verification required");
+      expect(screen.queryByText(ADMIN_FORBIDDEN_SAVE_REASON)).toBeNull();
+    });
+
+    itShowsEveryRefusal({
+      submit: saveAnswered,
+      fallback: "Failed to save password policy",
+    });
   });
 
   it("canEdit=false disables Edit and shows the view-only notice", async () => {

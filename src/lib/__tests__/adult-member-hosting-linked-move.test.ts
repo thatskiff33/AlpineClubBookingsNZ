@@ -62,6 +62,7 @@ function quote(overrides: Partial<LinkedMoveQuote> = {}): LinkedMoveQuote {
     combinedChangeFeeCents: 5000,
     combinedAmountDueCents: 6500,
     combinedRefundCents: 0,
+    combinedFreedCreditCents: 0,
     combinedPolicyRetainedCents: 0,
     combinedOrganiserRefundCents: 0,
     combinedOrganiserBankTransferRefundCents: 0,

@@ -47,7 +47,8 @@ It complements the two documents next to it and does not repeat them:
    Migration/deployment notes block. `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv` is
    the per-migration safety ledger. Together they tell you which migrations
    need a low-traffic window, which are destructive, and which change behaviour.
-4. **Deployments are blue/green.** Migrations run before the new app color
+4. **Deployments are normally blue/green.** Follow release-specific stop-before-start
+   rules first, including the [v0.14.0 saved-card boundary](#saved-card-upgrade-and-rollback-boundary-5270). Migrations run before the new app color
    receives traffic while the **old** color can still be serving requests
    against the shared database (see `docs/BLUE_GREEN_MIGRATION_POLICY.md`). Most
    migrations are written to stay old-code-compatible so the old color keeps
@@ -221,6 +222,37 @@ The migration runs once. Two things can write the old text back afterwards:
 Re-export your configuration bundle after upgrading, and re-check `/privacy`
 after any bundle import.
 
+### Starter privacy policy names the AI apps members connect (#5305)
+
+`20270101020000_add_ai_apps_to_starter_privacy` is a **data-only
+correction**. It adds and removes no schema and is safe to run in the ordinary
+deploy window with the previous app colour still serving. It runs after
+#5007's correction above, so a club upgrading across both gets both, in order.
+
+**What changes.** The migration rewrites the privacy page's body only where it
+still holds, byte for byte, the starter text #5007's correction wrote. On such
+a page:
+
+- section 5 gains an **AI apps you connect** entry, for the `ai-apps` row of
+  the [recipient register](PRIVACY_RECIPIENTS.md), marked "Only if the club
+  turns it on". It says that information goes to the AI app a member chooses
+  only once the club has turned on AI app connections and the member has
+  approved an app, and that, if the club also lets officers connect, other
+  members' information an officer can see may go to that officer's app;
+- the header's "Last updated" date moves to 21 November 2026, unless the header
+  was edited, in which case it is kept.
+
+**An edited privacy page keeps every byte.** If your club uses or may turn on
+AI app connections, add an entry yourself
+([AI App Connections](guides/mcp-server.md#turn-the-module-on)).
+
+The migration runs once. As with #5007's correction, an admin who had
+**Privacy** open in the Page Content editor before the upgrade and presses Save
+afterwards writes the old text back. Importing a configuration bundle exported
+before this release skips a privacy body that exactly matches the replaced
+starter text and warns in the preview (#2511), but can set the "Last updated"
+date back; re-check `/privacy` after any import.
+
 ---
 
 ## v0.13.2 → v0.14.0
@@ -232,7 +264,50 @@ points at the section that explains it; none of them repeats it. The
 production runbook ([`PRODUCTION_UPGRADE_RUNBOOK.md`](PRODUCTION_UPGRADE_RUNBOOK.md)) is the procedure these steps
 fit into.
 
+#### Saved-card upgrade and rollback boundary (#5270)
+
+**Stop every old copy before starting v0.14.0.** This includes web copies,
+cron leaders and workers, with in-flight requests drained and automatic restarts
+paused. No rolling or blue/green overlap is safe across this boundary unless
+all old copies already run a release that reads `_v2` saved-card charge keys.
+**v0.14.0 is the first public release that reads them**, and also the first
+that mints them; v0.13.2 and earlier cannot read them. This rule applies even
+if your database migrations have already run.
+
+Before running `scripts/run-production-blue-green-deploy.sh`, follow the
+[runbook's stopped-runtime procedure](PRODUCTION_UPGRADE_RUNBOOK.md#saved-card-boundary-and-incident-checks-5270),
+including stopping the old colour, its `app` cron leader and external workers.
+The script starts new processes before switching traffic; its normal overlap
+is unsafe here. After a failed cutover, keep the old colour stopped even if
+Caddy points back to it; recover on v0.14.0 or later.
+
+**Once v0.14.0 has run, do not roll back below v0.14.0.** An older copy can
+mistake an unresolved charge for an attempt that never happened, retry under
+a different key and charge the member twice. A database backup cannot undo a
+charge at Stripe. The ordinary blue/green rollback instructions do not override
+this floor, and neither do the rollback notes in the entries below: where one
+describes rolling the code back to an earlier release, the floor wins once
+v0.14.0 has run, and the note only says what an older copy would do. A change
+that stays on v0.14.0 or later, such as unsetting a variable, does not cross it.
+
+If incompatible copies overlapped, or a rollback crossed this floor, stop the
+incompatible copies and stop saved-card charges before retrying anything. There
+is no saved-card-only switch, so the runbook says what to keep stopped. Have the
+operator reconcile the affected period using the
+[runbook's saved-card checks](PRODUCTION_UPGRADE_RUNBOOK.md#saved-card-boundary-and-incident-checks-5270).
+
+The reader landed in PR #4681 (`71f6247ac`); the mint in PR #5001 (`e642097a`).
+Both are included in v0.14.0. The
+[18 November decision](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5270#issuecomment-6974536939)
+accepts that release as shipped, superseding the earlier plan to defer minting
+in #4682. The released changelog's #4646 promise of a later switch is therefore
+outdated: the #4682 entry in that same release describes the shipped behaviour.
+
 #### Before the deploy
+
+- Plan the stopped-runtime window and rollback floor in the
+  [saved-card boundary](#saved-card-upgrade-and-rollback-boundary-5270) before
+  running the deploy script.
 
 1. Rehearse the upgrade on staging first. The minimum is
    `pnpm run db:rehearse-epic --database-url <throwaway> --base <from-tag>`,
@@ -1996,9 +2071,10 @@ reverse script beside it,
 `prisma/migrations/20260803010000_contract_subscription_lockout_drop_enabled/rollback.sql`,
 which recreates `enabled` from the mode (**Let them book normally** → false, the
 other two → true) and lets the previous release run again. Both directions were
-rehearsed against a production-shaped database before this shipped; the transcript
-is in `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §7.1, and the full sequence is in
-`DEPLOYMENT.md` → "Windowed migrations".
+rehearsed before this shipped, against a production-shaped database (a
+demo-seeded one, not a production snapshot). The example transcript is in
+[the runbook §7.1](PRODUCTION_UPGRADE_RUNBOOK.md#71-windowed-migration-rehearsal-20260803010000_contract_subscription_lockout_drop_enabled),
+and the full sequence is in `DEPLOYMENT.md` → "Windowed migrations".
 
 See also point 3 below on configuration bundles.
 

@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClubIdentity } from "@/config/club-identity-types";
+import { expectNoSkippedHeadingLevels } from "@/lib/__tests__/support/heading-outline";
 
 /**
  * #5217 (`INV-PUB-006`) — `/join/apply` has exactly one level-1 heading in
@@ -18,7 +19,9 @@ import type { ClubIdentity } from "@/config/club-identity-types";
  * away with the form.
  *
  * The real page and the real form are rendered together: the count is a fact
- * about the two combined, which neither shows alone.
+ * about the two combined, which neither shows alone. #5216 added the form's
+ * own card title, "Enter your details", at level 2 under whichever h1 the
+ * composition draws, and holds every state to an outline with no skipped level.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -131,6 +134,10 @@ describe("/join/apply has one level-1 heading in every state (#5217)", () => {
     render(await load());
 
     expect(levelOneHeadings()).toHaveLength(1);
+    expect(
+      screen.getByRole("heading", { name: "Enter your details", level: 2 }),
+    ).toBeInTheDocument();
+    expectNoSkippedHeadingLevels();
   });
 
   it.each(COMPOSITIONS)("%s: the form refused with errors", async (_name, load) => {
@@ -142,6 +149,7 @@ describe("/join/apply has one level-1 heading in every state (#5217)", () => {
     await screen.findByRole("alert");
     expect(levelOneHeadings()).toEqual(before);
     expect(before).toHaveLength(1);
+    expectNoSkippedHeadingLevels();
   });
 
   it.each(COMPOSITIONS)("%s: while the application is being sent", async (_name, load) => {
@@ -154,6 +162,7 @@ describe("/join/apply has one level-1 heading in every state (#5217)", () => {
 
     await screen.findByRole("button", { name: /submitting/i });
     expect(levelOneHeadings()).toHaveLength(1);
+    expectNoSkippedHeadingLevels();
   });
 
   it.each(COMPOSITIONS)(
@@ -174,6 +183,7 @@ describe("/join/apply has one level-1 heading in every state (#5217)", () => {
         level: submittedLevel,
       });
       expect(levelOneHeadings()).toHaveLength(1);
+      expectNoSkippedHeadingLevels();
     },
   );
 });

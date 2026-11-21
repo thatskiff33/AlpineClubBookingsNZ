@@ -164,6 +164,9 @@ per-route index if you would rather start from a URL.
   nights that need cover, and their kiosk PINs.
 - [Work Parties](../guides/work-parties.md) — working-bee events and their
   automatic booking discount.
+- [Food Orders](../guides/food-orders.md) — members order food for a stay, the
+  food officer is emailed, and hut leaders or Lodge Operations admins confirm it
+  arrived (the optional `foodOrders` module).
 - [Events Calendar](../guides/calendar.md) — the club events calendar, recurring
   events, per-instance vs series edits, MiroTalk video meetings, and the Events
   calendar module switch.
@@ -216,6 +219,9 @@ per-route index if you would rather start from a URL.
   analytics, backups; feature-gated).
 - [AI Help Assistant](../guides/ai-help.md) — the in-app help widget and the
   optional paid AI assistant (module, key, spend cap, and privacy).
+- [AI App Connections](../guides/mcp-server.md) — letting members connect an
+  AI app such as Claude or ChatGPT to their own account (module, who may
+  connect, approved apps, risks).
 - [AI Diagnostics deployment](../ai-diagnostics/deployment.md) — the operator
   setup order for the separate admin-only diagnostics assistant: provisioning
   and rotating its SELECT-only database role, and reading its readiness
@@ -238,7 +244,10 @@ procedure.
   checklist, and the documented operator CLIs.
 - [`../PRODUCTION_UPGRADE_RUNBOOK.md`](../PRODUCTION_UPGRADE_RUNBOOK.md) — the
   owner-driven runbook for upgrading a live deployment across a release:
-  pre-flight backup, blue/green migrate, post-upgrade checklist, and rollback.
+  pre-flight backup, deployment, post-upgrade checklist, and rollback.
+  For v0.14.0, [stop incompatible old copies before starting the new release
+  and keep the rollback floor](../UPGRADING.md#saved-card-upgrade-and-rollback-boundary-5270);
+  ordinary blue/green overlap is unsafe from v0.13.2 or earlier.
 - [`../AUDIT_RETENTION_ARCHIVE_RUNBOOK.md`](../AUDIT_RETENTION_ARCHIVE_RUNBOOK.md)
   — audit-log retention and optional archival.
 - [`../INDUCTION_BASELINE_RUNBOOK.md`](../INDUCTION_BASELINE_RUNBOOK.md) — the

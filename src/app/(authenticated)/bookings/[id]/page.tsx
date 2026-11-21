@@ -218,8 +218,8 @@ export default async function BookingDetailPage({
     viewer,
     consent,
     access,
-    // #3991: the ledger credit the history loader already read for this page.
-    appliedCreditCents: history.amountOwed.appliedCreditCents,
+    // #3991: the amount owed and ledger credit the history loader already read for this page.
+    amountOwed: history.amountOwed,
   });
   const backHref = resolveInternalReturnPath(
     query.returnTo,

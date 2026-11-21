@@ -327,6 +327,9 @@ const NAMED_EDIT_MODULES = [
   // branch reads, so the same door has two eligibility answers; both are in
   // the census.
   "src/lib/booking-guest-self-removal.ts",
+  // Fork #119: the officer's "Add to work party" asks the edit doors' question
+  // up front, through `activeLifecycleEditRefusal`, never a list of its own.
+  "src/lib/work-party-booking-correction.ts",
 ];
 const EDIT_POLICY_MODULE = "src/lib/booking-edit-policy.ts";
 

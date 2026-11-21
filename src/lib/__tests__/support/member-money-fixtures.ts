@@ -122,6 +122,13 @@ export interface MemberMoneyScratchDatabase {
 }
 
 /**
+ * The hook timeout for a suite that creates and drops a member-money scratch
+ * database: `drop()` force-drops the database and then each role, which a loaded
+ * runner can stretch past vitest's 10-second hook default (#5283).
+ */
+export const MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS = 30_000;
+
+/**
  * A disposable database on the race server holding the journal migration, the
  * M4a reservation migration, the stub parents they reference (`Lodge`,
  * `Booking`, `BookingLedgerLine`, `AuditLog`, `Payment`, `PaymentTransaction`,
@@ -163,6 +170,7 @@ export async function createMemberMoneyScratchDatabase(
     await owner.query(readFileSync("prisma/migrations/20261221030000_member_money_export_manifest/migration.sql", "utf8"));
     await owner.query(readFileSync("prisma/migrations/20261222050000_member_money_export_supplementary/migration.sql", "utf8"));
     await owner.query(readFileSync("prisma/migrations/20261223010000_member_money_refund_note_manifest/migration.sql", "utf8"));
+    await owner.query(readFileSync("prisma/migrations/20261223050000_member_money_capture_receipt_manifest/migration.sql", "utf8"));
     const statements = buildDatabaseRolesSql({
       databaseName: name,
       migrator: { roleName: roles.migrator, password: "m".repeat(28) },

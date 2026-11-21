@@ -124,6 +124,9 @@ const HAND_WRITTEN_FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   {
     flag: "workParties",
     prefixes: [
+      // #5148: the member work party page, under `/dashboard` so the app
+      // reserves no top-level `/work-parties` (owner decision, 15 Nov 2026).
+      "/dashboard/work-parties",
       "/api/admin/work-parties",
       "/api/work-parties",
     ],
@@ -281,6 +284,24 @@ const HAND_WRITTEN_FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     ],
   },
   {
+    // AI app connections (ALP-653). The module is the only switch: with it off
+    // the MCP endpoint, its OAuth endpoints and discovery documents, the
+    // approval screen and both connection-list APIs all 404, and every route
+    // handler re-checks the flag itself so the gate does not live only here.
+    //
+    // The admin page, /admin/system/ai-connections, is gated through its hub
+    // registry entry's `mcpServer` flag (#4799), like every admin page.
+    flag: "mcpServer",
+    prefixes: [
+      "/connect",
+      "/api/mcp",
+      "/api/member/mcp-grants",
+      "/api/admin/mcp",
+      "/.well-known/oauth-protected-resource",
+      "/.well-known/oauth-authorization-server",
+    ],
+  },
+  {
     // Member lodge roster (#2942). The module is the only switch, and the
     // page re-checks the flag itself as well so the gate does not live only in
     // middleware — a module gate that lived only there shipped bypassed once
@@ -296,6 +317,23 @@ const HAND_WRITTEN_FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     // able to see and change the setting while the roster is switched off.
     flag: "memberLodgeRoster",
     prefixes: ["/lodge-roster"],
+  },
+  {
+    // Food orders (fork #121, owner decision 14). The module is the only switch:
+    // with it off the member order page, the history page, their API and the
+    // admin settings API all 404. "/food-order" and "/food-orders" are listed
+    // separately because a prefix matches only itself and its children, never a
+    // longer sibling. Every route handler re-checks the flag itself as well, so
+    // the gate does not live only in middleware (#2780). The admin settings page,
+    // /admin/food-orders, is gated through its hub registry entry's `foodOrders`
+    // flag (#4799), like every admin page.
+    flag: "foodOrders",
+    prefixes: [
+      "/food-order",
+      "/food-orders",
+      "/api/food-orders",
+      "/api/admin/food-orders",
+    ],
   },
   {
     // Alpine Central Server (ServerNZ). Admin -> Modules is the master switch,

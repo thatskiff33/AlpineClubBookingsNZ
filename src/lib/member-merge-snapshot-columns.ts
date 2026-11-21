@@ -79,6 +79,9 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   // @relation, kept pointing at the loser as the immutable answer to "who set
   // this", which is the person who set it, not whoever absorbed their record.
   "ClubPostSettings.updatedByMemberId",
+  // ALP-653: who last changed the AI-connection policy. The same kind of bare
+  // settings-audit scalar as the column above.
+  "McpSettings.updatedByMemberId",
   "MembershipSubscriptionChargeCoverage.memberId",
   "AuditLog.actorMemberId",
   "AuditLog.subjectMemberId",
@@ -147,6 +150,9 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   // #4632: who scheduled a club tax treatment period, the same last-writer note;
   // CLUB_TAX_TREATMENT_SCHEDULED is the full trail.
   "ClubTaxSettings.updatedByMemberId",
+  // #5209: who last mapped a Xero tax category, the same last-writer note;
+  // XERO_TAX_CATEGORY_MAPPED is the full trail.
+  "XeroTaxCategoryMapping.updatedByMemberId",
 
   // #2243 review sweep — bespoke-named FK-less member-id columns the detector
   // cannot see (their names appear nowhere in the schema as a Member FK column),
@@ -194,6 +200,14 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   "MaintenanceReport.resolvedById",
   "MaintenanceReport.photoDeletedById",
   "LodgeMaintenanceReportToken.rotatedById",
+  // Fork #121: who confirmed a food order received and who last recorded its
+  // price. Bare FK-less Strings written from a member session, kept as
+  // immutable history on merge like MaintenanceReport.resolvedById. (The order's
+  // own member, FoodOrder.memberId, is a real relation classified `move`.)
+  "FoodOrder.receivedById",
+  "FoodOrder.priceUpdatedById",
+  // Fork #121 owner change: who ticked a food-order item received. Same kind.
+  "FoodOrderItem.receivedById",
   // #4513 (M1): the actor recorded on an immutable member-money event. A bare
   // String the detector cannot see; the database refuses any UPDATE of a posted
   // event, so a merge could not rewrite it even if it tried.
@@ -235,6 +249,11 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   "AiAssistantUsageEvent.memberId",
   "AnalyticsSettings.updatedByMemberId",
   "BedAllocationSettings.updatedByMemberId",
+  // #5005: the officer who confirmed or reversed a paid-booking import. Bare
+  // FK-less columns, as the audit log keeps its actor, so the batch survives
+  // the officer leaving; kept as immutable history on merge.
+  "BookingImportBatch.confirmedByMemberId",
+  "BookingImportBatch.reversedByMemberId",
   "BookingMessageOverride.updatedByMemberId",
   "BookingRequest.reviewedByMemberId",
   "BookingRequestQuote.createdByMemberId",
@@ -253,6 +272,9 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   "EmailMessageSetting.updatedByMemberId",
   "EmailTemplateOverride.updatedByMemberId",
   "FinanceSyncRun.requestedByMemberId",
+  // Fork #121: who last saved the food-order settings singleton. Kept as
+  // immutable history on merge like every other `*.updatedByMemberId`.
+  "FoodOrderSettings.updatedByMemberId",
   "IntegrationWizardProgress.updatedByMemberId",
   "InternetBankingPaymentSettings.updatedByMemberId",
   "LodgeInstruction.updatedByMemberId",

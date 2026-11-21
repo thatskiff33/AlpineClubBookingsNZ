@@ -37,8 +37,8 @@ const request = new Request("https://club.example.com/api/admin/club-tax", { met
 const date = (value: string) => requireCalendarDate(value);
 const instant = (value: string) => new Date(`${value}T00:00:00.000Z`);
 const RATES: XeroTaxRateOption[] = [
-  { taxType: "OUTPUT2", name: "15% GST on Income", rateBasisPoints: 1500, active: true, revenue: true },
-  { taxType: "TAX009", name: "17% GST on Income", rateBasisPoints: 1700, active: true, revenue: true },
+  { taxType: "OUTPUT2", name: "15% GST on Income", rateBasisPoints: 1500, active: true, revenue: true, expenses: false },
+  { taxType: "TAX009", name: "17% GST on Income", rateBasisPoints: 1700, active: true, revenue: true, expenses: false },
 ];
 const row = (id: string, effectiveFrom: string, overrides: Record<string, unknown> = {}) => ({
   id,

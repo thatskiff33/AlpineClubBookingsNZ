@@ -110,6 +110,9 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   spec("SessionReauthChallenge", "member", "memberId", "cascade"),
   spec("WebAuthnCredential", "member", "memberId", "cascade"),
   spec("WebAuthnChallenge", "member", "memberId", "cascade"),
+  spec("McpGrant", "member", "memberId", "cascade", {
+    note: "an AI app connection signs in as the loser (INV-MCP-005); it dies with the loser, and the master connects their own",
+  }),
   spec("PartnerInviteToken", "createdBy", "createdById", "cascade", {
     note: "single-use invite token created by loser; low-value ephemeral, dies with loser",
   }),
@@ -266,6 +269,9 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   // to `member-merge-snapshot-columns.ts`. If you are here adding an actor column
   // to one of these models, that sibling module is where it goes.
   spec("MaintenanceReport", "member", "memberId", "move"),
+  // Fork #121: the member who placed a food order. Their order history follows
+  // them to the surviving record, like the maintenance reporter.
+  spec("FoodOrder", "member", "memberId", "move"),
   spec("HutLeaderAssignment", "member", "memberId", "move"),
   spec("MemberLodgeAccess", "member", "memberId", "resolve", {
     note: "@@unique(memberId,lodgeId,kind)",

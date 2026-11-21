@@ -10,8 +10,8 @@ import {
   BookingManualPaymentControls,
   type BookingManualPaymentState,
 } from "@/components/admin/booking-manual-payment-controls";
-import { BookingStoredNightPriceControls } from "@/components/admin/booking-stored-night-price-controls";
 import { AdminReturnToWaitlistControls } from "@/components/admin/admin-return-to-waitlist-controls";
+import { BookingWorkPartyControls } from "@/components/admin/booking-work-party-controls";
 import { ConfirmPendingGuestsButton } from "@/components/admin/confirm-pending-guests-button";
 import { CopyBookingButton } from "@/components/admin/copy-booking-button";
 import type {
@@ -22,7 +22,6 @@ import type {
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 import { formatDateOnly } from "@/lib/date-only";
-import type { StrandNightPriceOffer } from "@/lib/stored-night-price-repair";
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
 import { adminHref } from "@/lib/admin-hubs";
@@ -82,9 +81,9 @@ export function AdminBookingToolsCard({
   exclusiveHold,
   noEmails,
   manualPayment,
-  storedNightPriceOffers = [],
   showReturnToWaitlist = false,
   returnToWaitlistReleasesHold = false,
+  currentWorkParty = null,
 }: {
   bookingId: string;
   /**
@@ -122,6 +121,7 @@ export function AdminBookingToolsCard({
    */
   financialReviewWarnings?: BookingFinancialReviewWarning[];
   features: FeatureFlags;
+  currentWorkParty?: { id: string; name: string } | null; // the booking's work party, offered for removal (fork #130)
   /** Admin capacity hold state (#1764); omitted for deleted bookings. */
   capacityHold?: {
     hasAdminCapacityHold: boolean;
@@ -165,17 +165,6 @@ export function AdminBookingToolsCard({
    */
   manualPayment?: BookingManualPaymentState;
   /**
-   * #3214 (epic #2797): guest strands on this booking whose stored night prices
-   * cannot be read back, offered to an officer to record.
-   *
-   * The page supplies an EMPTY LIST rather than deciding not to pass the prop:
-   * whether the act is available is a server-side question about the strands
-   * themselves, answered once by `strandNightPriceOffersForBooking`, and a second
-   * condition here would be a second answer to it (`INV-SSOT`). Empty on the
-   * overwhelming majority of bookings, whose rows read back exactly.
-   */
-  storedNightPriceOffers?: StrandNightPriceOffer[];
-  /**
    * #2649: offer the stranded-zero-dollar-waitlist-confirm repair. The page
    * sets this only for a booking the audit log PROVES was stranded by a waitlist
    * confirmation — an unresolved `waitlist.confirm_offer_release_failed` report
@@ -215,7 +204,7 @@ export function AdminBookingToolsCard({
     <>
       <Card className="border-border bg-card">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base text-foreground">Admin tools</CardTitle>
+          <CardTitle headingLevel={2} className="text-base text-foreground">Admin tools</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {providerMismatches.length > 0 && (
@@ -295,16 +284,8 @@ export function AdminBookingToolsCard({
               noEmails={noEmails?.noEmails ?? false}
             />
           )}
-          {/* #3214: recording what a guest's nights sold for. It sits with the
-              other money controls on this card rather than on the finance
-              queue, because the bookings it is for raise no queue task at all —
-              that is the deadlock the issue exists to break. The component is
-              finance:edit-gated in its own right, matching the route. */}
-          {!isDeleted && storedNightPriceOffers.length > 0 && (
-            <BookingStoredNightPriceControls
-              bookingId={bookingId}
-              offers={storedNightPriceOffers}
-            />
+          {!isDeleted && features.workParties && (
+            <BookingWorkPartyControls bookingId={bookingId} noEmails={noEmails?.noEmails ?? false} currentWorkParty={currentWorkParty} />
           )}
           {/* #2649: the repair for a free waitlist confirm that got half-way.
               It sits with the other booking-state controls rather than on the
@@ -324,7 +305,8 @@ export function AdminBookingToolsCard({
               minCheckIn={copyProps.minCheckIn}
             />
           )}
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+          {/* pt-1, gap-y-2: 24px clear of the controls and each other (WCAG 2.5.8). */}
+          <div className="flex flex-wrap gap-x-4 gap-y-2 pt-1 text-sm">
             {memberId ? (
               <Link
                 className="text-muted-foreground underline hover:text-accent-foreground"

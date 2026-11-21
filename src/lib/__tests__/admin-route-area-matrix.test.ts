@@ -220,15 +220,11 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/bookings/[id]/member-guest-candidates": "bookings",
   "/api/admin/bookings/[id]/no-emails": "bookings",
   "/api/admin/bookings/[id]/requested-room": "bookings",
-  // #3214: a second bookings-prefixed path deliberately resolved to finance by
-  // SPECIAL_ROUTE_AREA_PATTERNS, for the same reason as mark-paid above -
-  // recording what a stay's nights sold for is money evidence, gated
-  // finance:edit, and the handler declares that requirement explicitly.
-  "/api/admin/bookings/[id]/stored-night-prices": "finance",
   // #2649: the stranded zero-dollar waitlist confirm repair. It moves booking
   // status, so path inference gives it bookings:edit, and the route declares
   // that permission explicitly rather than relying on inference.
   "/api/admin/bookings/[id]/return-to-waitlist": "bookings",
+  "/api/admin/bookings/[id]/work-party": "bookings",
   "/api/admin/bookings/[id]/review": "bookings",
   "/api/admin/bookings/eligible-family": "bookings",
   "/api/admin/bookings/non-member-contact": "bookings",
@@ -320,6 +316,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/family-suggestions/hide": "membership",
   "/api/admin/family-suggestions/reset": "membership",
   "/api/admin/fee-configuration": "finance",
+  "/api/admin/food-orders/settings": "lodge",
   "/api/admin/health": "support",
   "/api/admin/hut-leaders": "lodge",
   "/api/admin/hut-leaders/[id]": "lodge",
@@ -380,6 +377,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/other-lodges": "lodge",
   "/api/admin/other-lodges/[id]": "lodge",
   "/api/admin/other-lodges/[id]/hide": "lodge",
+  "/api/admin/mcp/grants": "support",
+  "/api/admin/mcp/grants/[id]": "support",
+  "/api/admin/mcp/settings": "support",
   "/api/admin/member-applications": "membership",
   "/api/admin/member-applications/[id]": "membership",
   "/api/admin/member-applications/[id]/approval-preview": "membership",
@@ -470,9 +470,6 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // lesser act than taking it.
   "/api/admin/payments/manual-refund-tasks/[id]/reopen": "finance",
   "/api/admin/payments/manual-refund-tasks/[id]/reduce-by-lost-dispute": "finance",
-  // #3835: what a review share on a cancelled booking still owes, read by the
-  // settle dialog before completing - a finance read, gated as the queue is.
-  "/api/admin/payments/manual-refund-tasks/[id]/still-owed": "finance",
   "/api/admin/pending-counts": "overview",
   "/api/admin/privacy-hosting": "content",
   "/api/admin/privacy-retention": "support",
@@ -516,8 +513,12 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/waitlist": "bookings",
   "/api/admin/work-parties": "lodge",
   "/api/admin/work-parties/[id]": "lodge",
+  "/api/admin/work-parties/[id]/calendar": "lodge",
   "/api/admin/xero/account-mappings": "finance",
   "/api/admin/xero/callback": "finance",
+  // #5204: the overpayment and prepayment queue (GET, finance:view) and its
+  // Xero refresh (POST, finance:edit).
+  "/api/admin/xero/cash-credits": "finance",
   "/api/admin/xero/chart-of-accounts": "finance",
   "/api/admin/xero/connect": "finance",
   "/api/admin/xero/contact-group-mismatches": "finance",
@@ -560,6 +561,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/xero/sync-contacts": "finance",
   "/api/admin/xero/sync-memberships": "finance",
   "/api/admin/xero/sync-now": "finance",
+  "/api/admin/xero/tax-categories": "finance",
   "/api/admin/xero/usage": "finance",
   "/api/admin/xero/webhook-health": "finance",
   // #2081: webhook intent-to-receive verify status / amber-badge source. Read is
@@ -645,6 +647,7 @@ const EXPECTED_PAGE_AREAS: Record<string, AdminPermissionArea> = {
   "/admin/access-roles": "support",
   "/admin/age-tier-settings": "bookings",
   "/admin/ai-assistant": "support",
+  "/admin/ai-connections": "support",
   "/admin/ai-diagnostics": "overview",
   "/admin/alpine-server/setup": "finance",
   "/admin/appearance": "content",
@@ -692,6 +695,7 @@ const EXPECTED_PAGE_AREAS: Record<string, AdminPermissionArea> = {
   "/admin/family-groups": "membership",
   "/admin/fee-configuration": "finance",
   "/admin/fees": "bookings",
+  "/admin/food-orders": "lodge",
   "/admin/google/setup": "finance",
   "/admin/health": "support",
   "/admin/hut-leaders": "lodge",
@@ -759,6 +763,7 @@ const EXPECTED_PAGE_AREAS: Record<string, AdminPermissionArea> = {
   "/admin/xero/member-grouping": "finance",
   "/admin/xero/records/[localModel]/[localId]": "finance",
   "/admin/xero/setup": "finance",
+  "/admin/xero/unallocated-payments": "finance",
 };
 
 /**

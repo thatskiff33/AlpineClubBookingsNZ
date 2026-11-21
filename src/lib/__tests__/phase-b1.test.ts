@@ -449,9 +449,12 @@ describe("#24: lodge kiosk account 30-day session", () => {
   it("auth.ts stamps the kiosk claim and applies the window per request", async () => {
     const content = await readFile("src/lib/auth.ts", "utf-8");
     // #4611: the fresh classification is held once and feeds both the claim
-    // and the maximum session age.
-    expect(content).toContain("const kioskAccount = isKioskSessionMember(member);");
-    expect(content).toContain("token.kioskAccount = kioskAccount;");
+    // and the maximum session age. ALP-653 moved the refresh half of the
+    // `jwt` callback to session-refresh.ts; auth.ts still runs it.
+    const refresh = await readFile("src/lib/session-refresh.ts", "utf-8");
+    expect(content).toContain("await refreshSessionToken(token, {");
+    expect(refresh).toContain("const kioskAccount = isKioskSessionMember(member);");
+    expect(refresh).toContain("token.kioskAccount = kioskAccount;");
     const buildConfig = content.slice(
       content.indexOf("export async function buildRequestAuthConfig("),
     );

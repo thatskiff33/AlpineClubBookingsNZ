@@ -8,7 +8,13 @@ import {
   type RefObject,
 } from "react";
 import { ADMIN_FORBIDDEN_SAVE_REASON } from "@/components/admin/view-only-action";
-import { refusalMessageOr } from "@/lib/api-error-message";
+import {
+  ApiRefusalError,
+  apiErrorMessageFromBody,
+  readApiErrorBody,
+  refusalMessageOr,
+  wordedForbiddenRefusal,
+} from "@/lib/api-error-message";
 import { useEditorFocusReturn } from "@/hooks/use-editor-focus-return";
 import {
   captureFocusReturn,
@@ -88,6 +94,25 @@ import {
  * page loaded.
  */
 export class ForbiddenSaveError extends Error {}
+
+/**
+ * Read a refused save into the error a `save` callback throws, parsing the
+ * body once and never as text (ALP-749). A 403 keeps the route's own worded
+ * refusal ("Two-factor verification required") and otherwise — the bare word
+ * "Forbidden", or an HTML page from the proxy in front of the app — becomes a
+ * {@link ForbiddenSaveError}. Any other status throws the route's sentence, or
+ * `fallback` when the body carries none.
+ */
+export async function saveRefusalFromResponse(
+  response: Response,
+  fallback: string,
+): Promise<Error> {
+  const body = await readApiErrorBody(response);
+  if (response.status === 403) {
+    return wordedForbiddenRefusal(body) ?? new ForbiddenSaveError();
+  }
+  return new ApiRefusalError(apiErrorMessageFromBody(body, fallback));
+}
 
 /**
  * A section with a `load` must word its failure; one without has none to word.

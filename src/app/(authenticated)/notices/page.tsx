@@ -4,6 +4,7 @@ import { Newspaper, Pin } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { listNoticesForMember } from "@/lib/notices";
+import { MEMBER_NOTICE_LIST_LIMIT } from "@/lib/notice-list-limit";
 import { clubTime } from "@/lib/club-time/server";
 import {
   Card,
@@ -27,7 +28,7 @@ export default async function NoticesPage() {
     notFound();
   }
 
-  const notices = await listNoticesForMember(session.user.id, { limit: 50 });
+  const notices = await listNoticesForMember(session.user.id, { limit: MEMBER_NOTICE_LIST_LIMIT });
   // `publishedAt` is a real INSTANT (a nullable `DateTime`, serialised to ISO by
   // `listNoticesForMember`), so the civil day it reads as comes from the club's
   // PERSISTED timezone rather than the container's (CT-4, #2870; INV-CONFIG-002).

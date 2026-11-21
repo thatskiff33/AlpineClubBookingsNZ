@@ -27,6 +27,7 @@ const state = vi.hoisted(() => ({
   note: vi.fn(),
   cardByHand: vi.fn(),
   cardMayBeInXero: 0,
+  cardAboveRecorded: 0,
 }));
 
 const RESOLVED_AT = new Date("2026-06-20T00:00:00.000Z");
@@ -63,7 +64,12 @@ vi.mock("@/lib/prisma", () => ({
     },
     // #4170: the note-eligible cash also asks whether the booking is cancelled
     // (it reads which captures landed after the cancel only then); not here.
-    paymentTransaction: { findFirst: async () => ({ kind: "PRIMARY" }), findMany: async () => [] },
+    paymentTransaction: {
+      findFirst: async () => ({ kind: "PRIMARY" }),
+      findMany: async () => [],
+      // #4383: the capture's gross, which a receipt other than its own records whole.
+      findUnique: async () => ({ amountCents: 24000 }),
+    },
     payment: { findUnique: async () => null },
   },
 }));
@@ -92,11 +98,11 @@ vi.mock("@/lib/late-capture-refund-credit-note", () => ({
     mayBeInXeroCents: state.cardMayBeInXero,
     notesCanStillLand: false,
     notedLaterCents: 0,
+    aboveRecordedCents: state.cardAboveRecorded,
   }),
 }));
 
 import {
-  hasXeroReceiptForLateCapture,
   readLateCaptureXeroReceipt,
   readPaidAnotherWayLateCaptureXeroReceipt,
 } from "@/lib/late-capture-xero-receipt";
@@ -141,6 +147,7 @@ beforeEach(() => {
   state.cardByHand.mockReset();
   state.cardByHand.mockResolvedValue(24000);
   state.cardMayBeInXero = 0;
+  state.cardAboveRecorded = 0;
 });
 
 describe.each(RESOLVED_ROWS)("round 11: %s", (_label, arrange, invoiceId) => {
@@ -148,11 +155,10 @@ describe.each(RESOLVED_ROWS)("round 11: %s", (_label, arrange, invoiceId) => {
 
   it("MUTATION: is resolved by hand for every card-refund path, as before #3924", async () => {
     await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "resolved-by-hand" });
-    await expect(hasXeroReceiptForLateCapture("pi_late")).resolves.toBe(false);
   });
 
   it("MUTATION: is recorded against that invoice only for a refund closed as paid another way", async () => {
-    await expect(readPaidAnotherWayLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId });
+    await expect(readPaidAnotherWayLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId, recordedCents: 24000 });
   });
 
   it("leaves the capture's refund out of the cash a refund note may answer", async () => {
@@ -185,7 +191,7 @@ describe.each(RESOLVED_ROWS)("round 11: %s", (_label, arrange, invoiceId) => {
   // and no card note will ever answer the capture's card refunds.
   it("MUTATION: round 12: names the capture's card refunds no note answers, for the repair tool to ask by hand", async () => {
     await expect(readLateCaptureCardRefundsByHand("payment_1", ["pi_late", "pi_ordinary"])).resolves.toEqual(
-      new Map([["pi_late", { byHandCents: 24000, mayBeInXeroCents: 0 }]]),
+      new Map([["pi_late", { byHandCents: 24000, mayBeInXeroCents: 0, aboveRecordedCents: 0 }]]),
     );
     expect(state.cardByHand).toHaveBeenCalledWith("payment_1", "pi_late");
     expect(state.cardByHand).toHaveBeenCalledTimes(1);
@@ -202,7 +208,7 @@ describe.each(RESOLVED_ROWS)("round 11: %s", (_label, arrange, invoiceId) => {
     state.cardByHand.mockResolvedValue(0);
     state.cardMayBeInXero = 24000;
     await expect(readLateCaptureCardRefundsByHand("payment_1", ["pi_late"])).resolves.toEqual(
-      new Map([["pi_late", { byHandCents: 0, mayBeInXeroCents: 24000 }]]),
+      new Map([["pi_late", { byHandCents: 0, mayBeInXeroCents: 24000, aboveRecordedCents: 0 }]]),
     );
   });
 });
@@ -220,7 +226,7 @@ describe("round 12: card refunds a card note answers are never named; round 13: 
   it("MUTATION: round 13: a change resolved before the app sent it, with no link, is named on the card verdict alone (#4038)", async () => {
     state.change = [{ ...resolvedPartialChange, status: "FAILED", xeroObjectId: null }];
     await expect(readPaidAnotherWayLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "resolved-by-hand" });
-    await expect(readLateCaptureCardRefundsByHand("payment_1", ["pi_late"])).resolves.toEqual(new Map([["pi_late", { byHandCents: 24000, mayBeInXeroCents: 0 }]]));
+    await expect(readLateCaptureCardRefundsByHand("payment_1", ["pi_late"])).resolves.toEqual(new Map([["pi_late", { byHandCents: 24000, mayBeInXeroCents: 0, aboveRecordedCents: 0 }]]));
     expect(state.cardByHand).toHaveBeenCalledWith("payment_1", "pi_late");
   });
 
@@ -230,9 +236,25 @@ describe("round 12: card refunds a card note answers are never named; round 13: 
   it("MUTATION: round 13: a resolved PARTIAL kept row whose link stays active names nothing (#4039)", async () => {
     state.keptResolved = [{ xeroObjectId: "inv_kept" }];
     state.keptLink = { xeroObjectId: "inv_kept" };
-    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId: "inv_kept" });
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId: "inv_kept", recordedCents: 24000 });
+    // The app raises the card note: what is left for it is never named by hand.
     await expect(readLateCaptureCardRefundsByHand("payment_1", ["pi_late"])).resolves.toEqual(new Map());
-    expect(state.cardByHand).not.toHaveBeenCalled();
+  });
+
+  // #4383: a receipt the app recorded for only part of the capture names the
+  // refunds above that part, and only them - never the card note's share.
+  it("MUTATION: #4383: a recorded capture refunded above what its receipt recorded is named for that part alone", async () => {
+    state.keptLink = { xeroObjectId: "inv_kept" };
+    state.cardAboveRecorded = 3000;
+    await expect(readLateCaptureCardRefundsByHand("payment_1", ["pi_late"])).resolves.toEqual(
+      new Map([["pi_late", { byHandCents: 0, mayBeInXeroCents: 0, aboveRecordedCents: 3000 }]]),
+    );
+    // A resolved-by-hand receipt keeps its by-hand figures, and capped nothing.
+    state.keptLink = null;
+    state.keptResolved = [{ xeroObjectId: null }];
+    await expect(readLateCaptureCardRefundsByHand("payment_1", ["pi_late"])).resolves.toEqual(
+      new Map([["pi_late", { byHandCents: 24000, mayBeInXeroCents: 0, aboveRecordedCents: 0 }]]),
+    );
   });
 });
 
@@ -243,11 +265,13 @@ describe("round 11: a change linked in Xero whose row FAILED after the link", ()
     await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({
       kind: "recorded",
       invoiceId: null,
+      recordedCents: 24000,
       invoiceFailed: true,
     });
     await expect(readPaidAnotherWayLateCaptureXeroReceipt("pi_late")).resolves.toEqual({
       kind: "recorded",
       invoiceId: "inv_linked",
+      recordedCents: 24000,
     });
   });
 });

@@ -83,6 +83,27 @@ describe("cardRefundDoorOf (#4312)", () => {
 });
 
 describe("planLateCaptureCardNotes (#4312)", () => {
+  // #4383: a bank-transfer payment's late capture recorded as $50 of $80 and
+  // refunded $30 before the cutover and $50 after: every ask together stays at $50.
+  it("MUTATION: #4383: the older refunds' note and the newer refunds' own together stay within the capped ask", () => {
+    const input = {
+      own: [
+        { stripeRefundId: "re_a", amountCents: 3_000, ownNotedCents: 0 },
+        { stripeRefundId: "re_b", amountCents: 2_000, ownNotedCents: 0 },
+      ],
+      legacyRefundedCents: 3_000,
+      legacyNotedCents: 0,
+    };
+    expect(planLateCaptureCardNotes({ ...input, capCents: 5_000 })).toEqual({
+      own: [{ stripeRefundId: "re_a", askCents: 2_000 }],
+      legacyAskCents: 3_000,
+    });
+    expect(planLateCaptureCardNotes({ ...input, capCents: 2_000 })).toEqual({ own: [], legacyAskCents: 2_000 });
+    expect(planLateCaptureCardNotes({ ...input, capCents: 0 })).toEqual({ own: [], legacyAskCents: 0 });
+    // A cap above the ask changes nothing.
+    expect(planLateCaptureCardNotes({ ...input, capCents: 9_000 })).toEqual(planLateCaptureCardNotes(input));
+  });
+
   it("with no refund since the cutover, the one note for the capture asks for everything, as before", () => {
     expect(planLateCaptureCardNotes({ own: [], legacyRefundedCents: 5_000, legacyNotedCents: 2_000 })).toEqual({ own: [], legacyAskCents: 3_000 });
   });

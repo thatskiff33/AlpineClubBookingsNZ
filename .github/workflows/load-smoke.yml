@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   load-smoke:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     env:
       E2E_COMPOSE_PROJECT: load-issue4940

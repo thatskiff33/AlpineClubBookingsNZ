@@ -233,7 +233,7 @@ export function EditGuestsCard({
           club that never adopted the feature looking untouched.
         */}
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle>Guests ({party.totalGuestCount})</CardTitle>
+          <CardTitle headingLevel={2}>Guests ({party.totalGuestCount})</CardTitle>
           <div className="flex flex-wrap gap-2">
             {booking.memberGuest?.enabled && !mode.overrideEnabled ? (
               // NOT capacity-disabled, deliberately — see the `atCapacity`
