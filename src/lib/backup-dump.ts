@@ -14,7 +14,7 @@ const SERVER_VERSION_LINE = /^-- Dumped from database version (\S+)[^\n]*\n/m;
 const CLIENT_VERSION_LINE = /^-- Dumped by pg_dump version (\S+)[^\n]*\n/m;
 
 /** The major version of a PostgreSQL version string such as `16.4` or `17devel`. */
-export function postgresMajorVersion(version: string): number | undefined {
+function postgresMajorVersion(version: string): number | undefined {
   const match = /^(\d+)/.exec(version.trim());
   return match ? Number(match[1]) : undefined;
 }
@@ -26,7 +26,7 @@ export function postgresMajorVersion(version: string): number | undefined {
  * `SET transaction_timeout`, which PostgreSQL 16 refuses, so the restore fails.
  * An older pg_dump refuses a newer server by itself.
  */
-export function describeDumpVersionMismatch(header: string): string | undefined {
+function describeDumpVersionMismatch(header: string): string | undefined {
   const server = SERVER_VERSION_LINE.exec(header)?.[1];
   const client = CLIENT_VERSION_LINE.exec(header)?.[1];
   const serverMajor = server === undefined ? undefined : postgresMajorVersion(server);

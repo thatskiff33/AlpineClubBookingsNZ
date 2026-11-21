@@ -27,11 +27,10 @@ mkdir -p "$bin_dir"
 for tool in pg_dump psql; do
   # libpq reads the password and options from the environment as well as the
   # URL; the backup code passes PGPASSWORD that way, so the shim forwards them.
+  # One line: the image-pin census (check-image-pins.mjs) reads this command.
   cat > "${bin_dir}/${tool}" <<SHIM
 #!/usr/bin/env bash
-exec docker run --rm -i --network host \\
-  -e PGPASSWORD -e PGOPTIONS -e PGSSLMODE -e PGCONNECT_TIMEOUT -e PGAPPNAME \\
-  --entrypoint ${tool} '${image}' "\$@"
+exec docker run --rm -i --network host -e PGPASSWORD -e PGOPTIONS -e PGSSLMODE -e PGCONNECT_TIMEOUT -e PGAPPNAME --entrypoint ${tool} '${image}' "\$@"
 SHIM
   chmod +x "${bin_dir}/${tool}"
 done
