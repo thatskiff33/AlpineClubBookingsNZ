@@ -37,3 +37,10 @@ reason: the Edit school details button sits in the school cell of the bookings
 function: src/app/(admin)/admin/booking-desk/bookings/page.tsx#AdminBookingsPage
 lines: 663
 reason: the same one line in the table's school cell.
+
+function: src/lib/organisation-xero-contacts.ts#findOrCreateXeroContactForOrganisation
+lines: 362
+reason: the link transaction is the one place that can see an officer's
+  correction committed while the school's first contact was being created from
+  the older details; the rule lives in `organisation-xero-contact-details.ts`,
+  leaving one call and its comment under the lock it needs.

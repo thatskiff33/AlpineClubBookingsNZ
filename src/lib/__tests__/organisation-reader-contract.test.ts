@@ -523,6 +523,47 @@ const DECLARED_FILES: Record<string, string> = {
     "answers who owns a booking, and its docblock is where the decision that " +
     "an OrganisationContact role is NOT yet entitled to act on a school's " +
     "booking is written down (INV-SSOT-005)",
+  // ---- added by #5245 (an officer corrects a school's email and phone) --
+  "src/lib/school-organisation-contact-edit.ts":
+    "the ONE writer of a school's own email and phone after creation: reads " +
+    "and updates the Organisation under its Xero contact key, audits it and " +
+    "queues the correction; never the name or the teachers",
+  "src/lib/organisation-xero-contact-details.ts":
+    "sends that correction to the school's Xero contact: reads the record " +
+    "fresh at send time and picks only the email and phone, never the name",
+  "src/lib/organisation-contact-details-payload.ts":
+    "the leaf naming that queue type and reading its row's Organisation " +
+    "anchor; it reads no row and decides nothing about a school",
+  "src/lib/xero-operation-outbox-payload.ts":
+    "registers the contact-details queue type and its expected Organisation " +
+    "anchor; it reads no row and decides nothing about a school",
+  "src/lib/xero-operation-outbox.ts":
+    "dispatches a contact-details row to its sender by the row's Organisation " +
+    "anchor; it decides nothing about a school",
+  "src/lib/xero-operation-retry.ts":
+    "hands a failed contact-details row back to the outbox with its stored " +
+    "payload; it decides nothing about a school",
+  "src/lib/step-up-routes.ts":
+    "lists the contact edit as a step-up operation by file and export name; " +
+    "it reads no row",
+  "src/app/api/admin/organisations/[id]/contact/route.ts":
+    "parses and delegates the officer's read and correction of a school's " +
+    "email and phone to school-organisation-contact-edit.ts",
+  "src/app/api/admin/organisations/[id]/contact/retry/route.ts":
+    "retries the school's latest failed contact-details row through the Xero " +
+    "operations retry; it decides nothing about a school",
+  "src/components/admin/school-contact-editor.tsx":
+    "the Edit school details dialog: takes a school's id and calls the routes " +
+    "above; every rule is the server's",
+  "src/components/admin/booking-requests/booking-request-school-record-notice.tsx":
+    "mounts the Edit school details dialog for the school record a request " +
+    "already names",
+  "src/app/(admin)/admin/booking-desk/bookings/page.tsx":
+    "mounts the Edit school details dialog in a school booking's owner cell, " +
+    "by the booking's organisationId",
+  "scripts/audit/audit-write-sites.ts":
+    "the generated audit write-site ledger names updateSchoolOrganisationContact " +
+    "as a key; it reads no row and decides nothing about a school",
 };
 
 /**

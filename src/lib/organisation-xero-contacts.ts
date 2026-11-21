@@ -123,6 +123,7 @@ import {
   type XeroContactTransferFromMember,
 } from "@/lib/xero-contact-home";
 import { schoolXeroContactName } from "@/lib/school-organisations";
+import { enqueueOrganisationContactDetailsIfMoved } from "@/lib/organisation-xero-contact-details";
 
 /** The advisory-lock keyspace for one organisation's contact link. */
 export function organisationXeroContactLockKey(organisationId: string): string {
@@ -424,7 +425,7 @@ export async function findOrCreateXeroContactForOrganisation(
 
       const fresh = await tx.organisation.findUnique({
         where: { id: organisationId },
-        select: { xeroContactId: true },
+        select: { xeroContactId: true, email: true, phone: true, updatedAt: true },
       });
       if (!fresh) {
         throw new OrganisationXeroContactError(
@@ -509,6 +510,8 @@ export async function findOrCreateXeroContactForOrganisation(
         },
         tx,
       );
+      // #5245: a correction committed since phase 1 read the record reached neither the create nor a queued row.
+      await enqueueOrganisationContactDetailsIfMoved(tx, { organisationId, read: organisation, fresh, createdByMemberId: options?.createdByMemberId });
       return { contactId: finalResolved.contactId, wonWrite: true, transferredFrom };
     });
   } catch (linkError) {

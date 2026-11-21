@@ -27,7 +27,9 @@
  *
  * A school whose first invoice has not been raised has no Xero contact, so the
  * edit queues nothing: the create path builds the contact from the corrected
- * record (`buildOrganisationXeroContactPayload`). A row that finds no contact
+ * record (`buildOrganisationXeroContactPayload`). A correction that lands while
+ * that create is in flight is queued by the link instead
+ * (`enqueueOrganisationContactDetailsIfMoved`). A row that finds no contact
  * anyway (an officer unlinked it in between) closes as a no-op for the same
  * reason.
  */
@@ -71,7 +73,7 @@ const CONTACT_DETAILS_ROW = {
  */
 export async function enqueueOrganisationContactDetailsOperation(
   tx: Prisma.TransactionClient,
-  input: { organisationId: string; version: Date; createdByMemberId: string },
+  input: { organisationId: string; version: Date; createdByMemberId: string | null },
 ) {
   const key = buildXeroIdempotencyKey(
     "organisation",
@@ -93,6 +95,31 @@ export async function enqueueOrganisationContactDetailsOperation(
     requestPayload: buildOrganisationContactDetailsPayload(),
     createdByMemberId: input.createdByMemberId,
     store: tx,
+  });
+}
+
+/**
+ * Queue the school's details when they moved after `read`: an officer's
+ * correction that committed while the school's first contact was being created
+ * from the older details, when the edit had no contact to queue for. Called on
+ * the link's transaction, under the organisation contact key the edit takes, so
+ * one or the other always queues it.
+ */
+export async function enqueueOrganisationContactDetailsIfMoved(
+  tx: Prisma.TransactionClient,
+  input: {
+    organisationId: string;
+    read: { email: string | null; phone: string | null };
+    fresh: { email: string | null; phone: string | null; updatedAt: Date };
+    createdByMemberId?: string | null;
+  },
+) {
+  const { read, fresh } = input;
+  if (fresh.email === read.email && fresh.phone === read.phone) return null;
+  return enqueueOrganisationContactDetailsOperation(tx, {
+    organisationId: input.organisationId,
+    version: fresh.updatedAt,
+    createdByMemberId: input.createdByMemberId ?? null,
   });
 }
 

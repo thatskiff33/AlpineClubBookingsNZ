@@ -8643,9 +8643,12 @@ contact-details outbox row INSERT, all in one transaction.
 
 - **Why the key.** The edit re-reads `xeroContactId` to decide whether to queue a
   Xero update. Under the key the resolve's phase-2 link write cannot commit
-  between that read and the edit's commit, so a school that is being given its
-  contact either gets the queued row or is created from the corrected record —
-  never neither.
+  between that read and the edit's commit. The resolve builds its create in
+  phase 1, outside the key, so phase 2 re-reads the email and phone under it
+  and queues the same row when they moved since phase 1
+  (`enqueueOrganisationContactDetailsIfMoved`). A school being given its
+  contact is therefore created from the corrected record or gets a queued
+  row — never neither.
 - **Two officers.** Saves of one school serialise on the key; the second re-reads
   a moved `updatedAt` and is refused (409) before it writes. The guarded
   `updateMany` is the second line. The edit sets `updatedAt` itself, at least one
