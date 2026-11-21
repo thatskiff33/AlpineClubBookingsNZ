@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   schedule: vi.fn(),
   rates: vi.fn(),
   organisation: vi.fn(),
+  mappings: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/club-time-zone-runtime", () => ({ readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland" }));
@@ -24,6 +25,7 @@ vi.mock("@/lib/xero-tax-rates", async (importOriginal) => ({
   readXeroTaxRatesOrNull: mocks.rates,
 }));
 vi.mock("@/lib/xero-organisation", () => ({ getXeroConnectedOrganisation: mocks.organisation }));
+vi.mock("@/lib/xero-tax-category-mappings", () => ({ loadXeroTaxCategoryMappings: mocks.mappings }));
 
 import { readXeroTaxHealth } from "@/lib/xero-tax-health";
 
@@ -76,6 +78,7 @@ describe("readXeroTaxHealth", () => {
     mocks.schedule.mockResolvedValue([period()]);
     mocks.rates.mockResolvedValue([rate({})]);
     mocks.organisation.mockResolvedValue({ paysTax: true });
+    mocks.mappings.mockResolvedValue({ tenantId: "tenant-connected", rows: [] });
   });
 
   it("is clean when Xero agrees with the period in force today", async () => {
@@ -115,5 +118,34 @@ describe("readXeroTaxHealth", () => {
     mocks.rates.mockResolvedValue(null);
     mocks.organisation.mockResolvedValue({ paysTax: null });
     await expect(readXeroTaxHealth()).resolves.toEqual({ checked: false, problems: [] });
+  });
+
+  it("flags a mapped tax category whose rate was removed in Xero, or that no longer fits it (#5209)", async () => {
+    mocks.rates.mockResolvedValue([rate({}), rate({ taxType: "NOWTAXED", name: "Now taxed", rateBasisPoints: 1500 })]);
+    mocks.mappings.mockResolvedValue({
+      tenantId: "tenant-connected",
+      rows: [
+        { category: "EXEMPT", taxType: "GONE", currentTenant: true },
+        { category: "ZERO_RATED", taxType: "NOWTAXED", currentTenant: true },
+      ],
+    });
+    expect((await readXeroTaxHealth()).problems).toEqual([
+      expect.stringMatching(/^Exempt: Xero has no tax rate with the code GONE/),
+      expect.stringMatching(/^Zero rated: .* is not 0%/),
+    ]);
+  });
+
+  it("flags a mapping chosen in another Xero organisation, even when Xero's rates cannot be read (#5209)", async () => {
+    mocks.rates.mockResolvedValue(null);
+    mocks.mappings.mockResolvedValue({
+      tenantId: "tenant-connected",
+      rows: [{ category: "EXEMPT", taxType: "EXEMPTOUTPUT", currentTenant: false }],
+    });
+    expect((await readXeroTaxHealth()).problems).toEqual([expect.stringMatching(/^Exempt: mapped in a different Xero organisation/)]);
+  });
+
+  it("does not judge mappings while Xero is not connected (#5209)", async () => {
+    mocks.mappings.mockResolvedValue({ tenantId: null, rows: [{ category: "EXEMPT", taxType: "GONE", currentTenant: false }] });
+    await expect(readXeroTaxHealth()).resolves.toEqual({ checked: true, problems: [] });
   });
 });
