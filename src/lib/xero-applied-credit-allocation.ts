@@ -135,7 +135,12 @@ async function resolveMintLines(bookingId: string, mintGroups: readonly PlannedM
   // identical, which is what makes an unset `goodwillWriteOffs` a no-op.
   const codings = [];
   for (const group of mintGroups) {
-    const mapping = await getResolvedAccountMappingWithFallback(group.mappingKey);
+    // A failed read of the Opening Credits mapping must not look like "unset":
+    // the share would go out on the refund account under the income code. It
+    // fails the operation instead, before any provider write.
+    const mapping = await getResolvedAccountMappingWithFallback(group.mappingKey, prisma, {
+      throwOnReadError: group.mappingKey === OPENING_CREDITS_MAPPING_KEY,
+    });
     codings.push(codeMintLine(mapping, group.amountCents));
   }
   // #4632: the note settles the booking's invoice, so it carries the booking's treatment.

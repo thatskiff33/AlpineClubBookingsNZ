@@ -28,6 +28,10 @@ import { bundleCarriesJoiningFeeSchedule } from "./membership-fees";
 import { addDaysDateOnly } from "@/lib/date-only";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import {
+  openingCreditsImportExemptWarning,
+  openingCreditsSharedAccountProblem,
+} from "@/lib/xero-opening-credits-exempt-guards";
 
 // xero-config category: the accounting mappings — GL account/item-code mappings
 // and per-category item codes. Contact-group rules/accepted-groups are excluded
@@ -652,6 +656,9 @@ async function planXeroConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
   const errors: string[] = [];
   const fingerprintParts: string[] = [];
   const batch = await loadXeroBatch(ctx.db);
+  // #4988: every account code as it would read once this bundle is applied.
+  const storedCodes = [...batch.accounts.values()].map(({ key, code }) => ({ key, code }));
+  const codesAfterImport = new Map(storedCodes.map(({ key, code }) => [key, code]));
 
   readCsvRows(ctx.files, ACCOUNT_FILE).forEach((raw, i) => {
     const v = new RowValidator(ACCOUNT_FILE, i, errors);
@@ -664,7 +671,30 @@ async function planXeroConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
     const write = updateDataForMode(ctx.mode, raw, { code: nz(raw.code), itemCode: nz(raw.itemCode) });
     const changed = changedFields(write, current);
     items.push({ entity: "xero-account-mapping", key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
+    // A new row is created with the bundle's code; an existing one keeps its
+    // code unless this mode writes the field (`applyRow`).
+    if (!current) codesAfterImport.set(key, nz(raw.code));
+    else if ("code" in write) codesAfterImport.set(key, write.code ?? null);
   });
+
+  // #4988: the account mapping screen's rule, applied to the import, which
+  // writes the same rows (owner decision, 21 Nov 2026: Opening Credits never
+  // shares its Xero account with another mapped role). The guard's own
+  // sentence. Blocking: the plan's errors stop the apply, and the apply's
+  // re-plan under its lock runs this again.
+  const codesAfter = [...codesAfterImport].map(([key, code]) => ({ key, code }));
+  const sharedAccount = openingCreditsSharedAccountProblem(codesAfter);
+  if (sharedAccount) {
+    errors.push(`${ACCOUNT_FILE}: ${sharedAccount}`);
+  } else {
+    const exemptWarning = await openingCreditsImportExemptWarning({
+      db: ctx.db,
+      stored: storedCodes,
+      after: codesAfter,
+      today: clubToday(await readClubTimeZoneOutsideRequest()),
+    });
+    if (exemptWarning) warnings.push(exemptWarning);
+  }
 
   const parsedItemRows: ParsedItemRow[] = [];
   readCsvRows(ctx.files, ITEM_FILE).forEach((raw, i) => {

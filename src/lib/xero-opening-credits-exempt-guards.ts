@@ -1,4 +1,5 @@
 import { loadClubTaxSchedule, type ClubTaxSchedule } from "@/lib/club-tax-settings";
+import type { Prisma } from "@prisma/client";
 import { clubToday, type CalendarDate } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { prisma } from "@/lib/prisma";
@@ -70,7 +71,7 @@ function listInWords(items: readonly string[]): string {
  * The message names roles, never the account code: the mapping screen reads a
  * bare "403" in a refusal as "not permitted", and an account can carry that code.
  */
-function openingCreditsSharedAccountProblem(rows: readonly MappingCodeRow[]): string | null {
+export function openingCreditsSharedAccountProblem(rows: readonly MappingCodeRow[]): string | null {
   const conflicts = openingCreditsAccountConflicts({
     openingCreditsCode: rows.find((row) => row.key === OPENING_CREDITS_MAPPING_KEY)?.code,
     mappings: rows,
@@ -92,8 +93,12 @@ function codesAfterSave(
   return [...codes].map(([key, code]) => ({ key, code }));
 }
 
-/** `exemptPrerequisiteProblem` over what is stored now. Xero's rates are read fresh, and only when they are needed. */
-async function readExemptPrerequisiteProblem(): Promise<string | null> {
+/**
+ * `exemptPrerequisiteProblem` over what is stored now. Xero's rates are read
+ * fresh, and only when they are needed. `ratesUnreadable` says the problem is
+ * that Xero could not be asked, which a retry may cure.
+ */
+async function readExemptPrerequisiteProblem(): Promise<{ problem: string | null; ratesUnreadable: boolean }> {
   const [schedule, zone, mappings] = await Promise.all([
     loadClubTaxSchedule(prisma),
     readClubTimeZoneOutsideRequest(),
@@ -102,14 +107,30 @@ async function readExemptPrerequisiteProblem(): Promise<string | null> {
   const today = clubToday(zone);
   const exemptTaxType = mappedTaxTypeFor(mappings, "EXEMPT");
   let rates: XeroTaxRateOption[] | null = null;
+  let ratesUnreadable = false;
   if (exemptTaxType !== null && registeredNowOrLater(schedule, today)) {
     try {
       rates = await readXeroTaxRates({ fresh: true });
     } catch {
-      rates = null;
+      ratesUnreadable = true;
     }
   }
-  return exemptPrerequisiteProblem({ schedule, today, exemptTaxType, rates });
+  return { problem: exemptPrerequisiteProblem({ schedule, today, exemptTaxType, rates }), ratesUnreadable };
+}
+
+/** Whether the codes as they would read set the Opening Credits account, or change it. */
+function setsOrChangesOpeningCredits(stored: readonly MappingCodeRow[], after: readonly MappingCodeRow[]): boolean {
+  const codeOf = (rows: readonly MappingCodeRow[]) =>
+    normalizeMappingCode(rows.find((row) => row.key === OPENING_CREDITS_MAPPING_KEY)?.code);
+  const next = codeOf(after);
+  return next !== null && next !== codeOf(stored);
+}
+
+/** A refused account-mapping save: its sentence, and whether trying again could succeed. */
+export interface OpeningCreditsSaveRefusal {
+  message: string;
+  /** True only when Xero's tax rates could not be read: the same answer the tax category route gives. */
+  retryable: boolean;
 }
 
 /**
@@ -130,19 +151,50 @@ export async function openingCreditsMappingSaveRefusal({
 }: {
   stored: readonly MappingCodeRow[];
   updates: Readonly<Record<string, { code?: string | null } | undefined>>;
-}): Promise<string | null> {
+}): Promise<OpeningCreditsSaveRefusal | null> {
   const after = codesAfterSave(stored, updates);
   const shared = openingCreditsSharedAccountProblem(after);
-  if (shared) return shared;
+  if (shared) return { message: shared, retryable: false };
 
-  const codeOf = (rows: readonly MappingCodeRow[]) =>
-    normalizeMappingCode(rows.find((row) => row.key === OPENING_CREDITS_MAPPING_KEY)?.code);
-  const next = codeOf(after);
-  if (next === null || next === codeOf(stored)) return null;
+  if (!setsOrChangesOpeningCredits(stored, after)) return null;
   // Named, because the screen saves every mapping at once: the officer must be
   // told which one was refused. The route refuses before its first write.
-  const problem = await readExemptPrerequisiteProblem();
-  return problem === null ? null : `Opening Credits needs the Exempt tax category. ${problem} Nothing was saved.`;
+  const { problem, ratesUnreadable } = await readExemptPrerequisiteProblem();
+  if (problem === null) return null;
+  return { message: `${OPENING_CREDITS_NEEDS_EXEMPT} ${problem} Nothing was saved.`, retryable: ratesUnreadable };
+}
+
+const OPENING_CREDITS_NEEDS_EXEMPT = "Opening Credits needs the Exempt tax category.";
+
+/**
+ * The config import's warning (`config-transfer/categories/xero-config.ts`), or
+ * null: the bundle sets or changes the Opening Credits account, the club is, or
+ * is scheduled to be, GST-registered, and no Exempt mapping exists in the
+ * connected Xero organisation. A warning, not a refusal: the import still
+ * applies, and the health check and the outbox hold cover the state.
+ *
+ * The plan runs a second time inside the apply's transaction, so every read
+ * goes through the caller's client (`INV-LOCK-004`) and Xero is not asked. A
+ * mapped rate that Xero has since changed is therefore not judged here; the
+ * health check reports that.
+ */
+export async function openingCreditsImportExemptWarning({
+  db,
+  stored,
+  after,
+  today,
+}: {
+  db: Pick<Prisma.TransactionClient, "clubTaxSettings" | "xeroConnection" | "xeroTaxCategoryMapping">;
+  stored: readonly MappingCodeRow[];
+  after: readonly MappingCodeRow[];
+  today: CalendarDate;
+}): Promise<string | null> {
+  if (!setsOrChangesOpeningCredits(stored, after)) return null;
+  const [schedule, mappings] = await Promise.all([loadClubTaxSchedule(db), loadXeroTaxCategoryMappings(db)]);
+  if (mappedTaxTypeFor(mappings, "EXEMPT") !== null) return null;
+  const problem = exemptPrerequisiteProblem({ schedule, today, exemptTaxType: null, rates: null });
+  if (problem === null) return null;
+  return `${OPENING_CREDITS_NEEDS_EXEMPT} ${problem} The import still sets the account; until Exempt is mapped, spent opening credits wait in the Xero queue.`;
 }
 
 /** Whether the club chose an Opening Credits account: the one read the checks below share. */
@@ -161,13 +213,17 @@ async function openingCreditsAccountIsMapped(): Promise<boolean> {
  * needs the Exempt rate; without it each one would wait in the Xero queue.
  */
 export async function exemptClearRefusalWhileOpeningCreditsMapped(): Promise<string | null> {
-  const [mapped, schedule, zone] = await Promise.all([
+  const [mapped, schedule, zone, mappings] = await Promise.all([
     openingCreditsAccountIsMapped(),
     loadClubTaxSchedule(prisma),
     readClubTimeZoneOutsideRequest(),
+    loadXeroTaxCategoryMappings(),
   ]);
   if (!mapped) return null;
   if (!registeredNowOrLater(schedule, clubToday(zone))) return null;
+  // A row chosen in another Xero organisation already reads as unmapped: no
+  // line is sent with it, so clearing it strands nothing and is allowed.
+  if (mappedTaxTypeFor(mappings, "EXEMPT") === null) return null;
   return "The Exempt tax category is in use: the Opening Credits account is mapped, and the club is, or is scheduled to be, GST-registered, so each spent opening credit is sent to Xero with the Exempt rate. Unmap the Opening Credits account under Account Mappings first, then clear Exempt.";
 }
 
@@ -198,5 +254,5 @@ export async function openingCreditsExemptHealthProblem({
   const exemptTaxType = mappedTaxTypeFor(mappings, "EXEMPT");
   if (exemptTaxType !== null && rates === null) return null;
   if (exemptPrerequisiteProblem({ schedule, today, exemptTaxType, rates }) === null) return null;
-  return "Opening Credits is mapped and the club is, or is scheduled to be, GST-registered, but the Exempt tax category has no usable Xero tax rate, so spent opening credits wait in the Xero queue. A Full Admin maps Exempt to a 0% rate on the Xero setup screen, or unmaps the Opening Credits account under Account Mappings.";
+  return "Opening Credits is mapped and the club is, or is scheduled to be, GST-registered, but the Exempt tax category has no usable Xero tax rate, so spent opening credits wait, or will wait, in the Xero queue. A Full Admin maps Exempt to a 0% rate on the Xero setup screen, or unmaps the Opening Credits account under Account Mappings.";
 }

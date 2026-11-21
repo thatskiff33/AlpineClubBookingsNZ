@@ -39,14 +39,18 @@ const h = vi.hoisted(() => {
     taxCategoryRows: [] as Array<{ category: string; taxType: string; xeroTenantId: string }>,
     /** #4988: how often those rows were read, so "the resolver was not asked" is a fact. */
     taxCategoryReads: 0,
+    /** #4988: mapping keys whose database read throws, as a dropped connection would. */
+    failingMappingReads: new Set<string>(),
     /** #4988: the join row of a lot allocated from its own floating note; null when every lot is noteless. */
     floatingSlice: null as { id: string; amountCents: number } | null,
   };
 
   const prismaStub = {
     xeroAccountMapping: {
-      findUnique: async ({ where }: { where: { key: string } }) =>
-        mappingRows.get(where.key) ?? null,
+      findUnique: async ({ where }: { where: { key: string } }) => {
+        if (state.failingMappingReads.has(where.key)) throw new Error(`database read of ${where.key} failed`);
+        return mappingRows.get(where.key) ?? null;
+      },
     },
     booking: {
       findUnique: async () => ({
@@ -181,6 +185,7 @@ beforeEach(() => {
   h.state.taxCategoryRows = [];
   h.state.taxCategoryReads = 0;
   h.state.floatingSlice = null;
+  h.state.failingMappingReads.clear();
   h.readXeroTaxRates.mockReset();
   h.readXeroTaxRates.mockResolvedValue([]);
   resolveXeroTaxRendering.mockResolvedValue(BASELINE_XERO_TAX_RENDERING);
@@ -545,6 +550,24 @@ describe("the spent opening credit's tax (#4988, INV-PAY-162)", () => {
     expect(lines.map((line) => [line.accountCode, line.unitAmount, line.taxType])).toEqual([["2100", 30, "EXEMPTCODE"]]);
     // The floating note's slice, then the minted note's.
     expect(allocateCreditNoteToInvoice).toHaveBeenCalledTimes(2);
+  });
+
+  it("MUTATION: a failed read of the Opening Credits mapping fails the operation, never sends the share as a refund", async () => {
+    // Read as "unset", the share would go out on Hut Fee Refunds under the income code, with no error.
+    h.mappingRows.set("hutFeeRefunds", { code: "200", itemCode: null });
+    h.mappingRows.set("openingCredits", { code: "2100", itemCode: null });
+    mapExempt("EXEMPTCODE");
+    h.state.failingMappingReads.add("openingCredits");
+    await expect(mintedNote([openingLot])).rejects.toThrow("database read of openingCredits failed");
+    expect(providerWrites()).toBe(0);
+  });
+
+  it("still falls back as before when another mapping's read fails", async () => {
+    // Only the Opening Credits read is loud: goodwill keeps the resolver's fallback, as on main.
+    h.mappingRows.set("hutFeeRefunds", { code: "202", itemCode: null });
+    h.state.failingMappingReads.add("goodwillWriteOffs");
+    const lines = await mintedLines([{ id: "c9", amountCents: 1000, type: CreditType.ADMIN_ADJUSTMENT }]);
+    expect(lines.map((line) => [line.accountCode, line.taxType])).toEqual([["202", "OUTPUT2"]]);
   });
 
   it("names why the line is refused, in words an officer can act on", async () => {

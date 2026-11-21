@@ -189,6 +189,9 @@ describe("PUT and DELETE", () => {
   it("refuse to clear Exempt while the Opening Credits account is mapped, with the writer's own sentence (#4988)", async () => {
     h.tx.behaviour.set("xeroTaxCategoryMapping.findUnique", () => ({ taxType: "EXEMPTOUTPUT" }));
     h.root.behaviour.set("xeroAccountMapping.findUnique", () => ({ code: "2100" }));
+    h.root.behaviour.set("xeroTaxCategoryMapping.findMany", () => [
+      { category: "EXEMPT", taxType: "EXEMPTOUTPUT", xeroTenantId: TENANT },
+    ]);
     const response = await del({ category: "EXEMPT" });
     expect(response.status).toBe(409);
     expect(((await response.json()) as { error: string }).error).toMatch(/Unmap the Opening Credits account/);

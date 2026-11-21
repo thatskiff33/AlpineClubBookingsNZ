@@ -20,8 +20,9 @@ const h = vi.hoisted(() => {
     tx,
     prisma: {
       xeroConnection: { findUnique: vi.fn() },
-      // #4988: whether the Opening Credits account is mapped, read before a clear of Exempt.
+      // #4988: whether the Opening Credits account is mapped, and where Exempt was mapped, read before a clear of Exempt.
       xeroAccountMapping: { findUnique: vi.fn() },
+      xeroTaxCategoryMapping: { findMany: vi.fn() },
       $transaction: vi.fn(async (callback: (client: unknown) => unknown, _options?: unknown) => callback(tx)),
     },
     readXeroTaxRates: vi.fn(),
@@ -71,6 +72,7 @@ beforeEach(() => {
   h.tx.xeroConnection.findUnique.mockResolvedValue(connected(TENANT));
   h.tx.xeroTaxCategoryMapping.findUnique.mockResolvedValue(null);
   h.prisma.xeroAccountMapping.findUnique.mockResolvedValue(null);
+  h.prisma.xeroTaxCategoryMapping.findMany.mockResolvedValue([]);
   h.schedule.mockResolvedValue(REGISTERED);
 });
 
@@ -144,6 +146,18 @@ describe("clearXeroTaxCategory", () => {
     beforeEach(() => {
       h.tx.xeroTaxCategoryMapping.findUnique.mockResolvedValue({ taxType: "EXEMPTOUTPUT" });
       h.prisma.xeroAccountMapping.findUnique.mockResolvedValue({ code: "2100" });
+      // Mapped in the organisation connected now, so lines are being sent with it.
+      h.prisma.xeroTaxCategoryMapping.findMany.mockResolvedValue([
+        { category: "EXEMPT", taxType: "EXEMPTOUTPUT", xeroTenantId: TENANT },
+      ]);
+    });
+
+    it("MUTATION: clears a mapping chosen in another Xero organisation: it already reads as unmapped, so nothing is sent with it", async () => {
+      h.prisma.xeroTaxCategoryMapping.findMany.mockResolvedValue([
+        { category: "EXEMPT", taxType: "EXEMPTOUTPUT", xeroTenantId: "tenant-before" },
+      ]);
+      await expect(clearExempt()).resolves.toEqual({ changed: true });
+      expect(h.tx.xeroTaxCategoryMapping.delete).toHaveBeenCalledWith({ where: { category: "EXEMPT" } });
     });
 
     it("MUTATION: refuses the clear for a GST-registered club, and says to unmap Opening Credits first", async () => {

@@ -6,11 +6,17 @@ import { XeroTaxCategoryUnavailableError } from "@/lib/xero-tax-categories";
 /**
  * THE QUEUE HOLD FOR A TAX CATEGORY XERO CANNOT CARRY (#4988, on #5209's
  * `XeroTaxCategoryUnavailableError`; `INV-CONFIG-008`). A sender that meets one
- * has written nothing to Xero, and no fallback code exists, so its outbox row
- * is not a failure: it goes back to PENDING under a code naming the wait, with
- * the error's own sentence telling the officer what to map, and is asked again
+ * has not sent the line, and no fallback code exists, so its outbox row is not
+ * a failure: it goes back to PENDING under a code naming the wait, with the
+ * error's own sentence telling the officer what to map, and is asked again
  * every five minutes, so it is sent soon after a Full Admin maps the category
  * on the Xero setup screen.
+ *
+ * WHAT HAS REACHED XERO BY THEN. The sender asks before its first provider
+ * write, so normally nothing has. If the answer changes between that ask and
+ * the mint's own (a rate read that fails the second time, say), the booking's
+ * floating notes may already be allocated. The retry is safe either way: each
+ * allocation is skipped by its completion link, and the note is minted once.
  *
  * First sender: the applied-credit allocation, whose spent opening credit
  * coded to the mapped Opening Credits account is an Exempt line.

@@ -135,7 +135,8 @@ export async function PUT(request: NextRequest) {
       stored: await prisma.xeroAccountMapping.findMany({ select: { key: true, code: true } }),
       updates,
     });
-    if (refusal) return NextResponse.json({ error: refusal }, { status: 409 });
+    // 503 only when Xero's tax rates could not be read, as the tax category route answers it.
+    if (refusal) return NextResponse.json({ error: refusal.message }, { status: refusal.retryable ? 503 : 409 });
 
     type MappingValue = { code?: string | null; itemCode?: string | null };
     const ops = (Object.entries(updates) as [XeroMappingWritableKey, MappingValue | undefined][])

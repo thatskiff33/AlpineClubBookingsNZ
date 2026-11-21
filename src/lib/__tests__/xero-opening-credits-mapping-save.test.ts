@@ -227,9 +227,11 @@ describe("a GST-registered club maps Exempt before it maps Opening Credits (#498
     mapExempt();
     h.readXeroTaxRates.mockResolvedValue([exemptRate(1500)]);
     expect((await save({ openingCredits: { code: "2100" } })).error).toMatch(/is not 0%/);
+    expect((await save({ openingCredits: { code: "2100" } })).status).toBe(409);
     h.readXeroTaxRates.mockRejectedValue(new Error("Xero is down"));
     const unreadable = await save({ openingCredits: { code: "2100" } });
-    expect(unreadable.status).toBe(409);
+    // Retryable, as the tax category route answers an unreadable rate list.
+    expect(unreadable.status).toBe(503);
     expect(unreadable.error).toMatch(/could not be read/);
     expect(h.upsert).not.toHaveBeenCalled();
   });
