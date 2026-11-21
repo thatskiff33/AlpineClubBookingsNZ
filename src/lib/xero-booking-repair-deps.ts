@@ -25,7 +25,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { enqueueXeroKeptLateCaptureInvoiceOperation } from "@/lib/xero-kept-late-capture-invoice";
 import { enqueueAdditionalCaptureReceiptOperation } from "@/lib/additional-capture-receipt-enqueue";
-import { planKeptLateCaptureXeroRecord } from "@/lib/late-capture-kept-xero";
+import { alertKeptCaptureRefusal, planKeptLateCaptureXeroRecord } from "@/lib/late-capture-kept-xero";
 import {
   queueWaitingPaidAnotherWayNote,
   readPaidAnotherWayReceiptState,
@@ -52,6 +52,8 @@ export type RepairDependencies = {
   enqueueAdditionalCaptureReceiptOperation: typeof enqueueAdditionalCaptureReceiptOperation;
   // #4324: the keep's one decision of which document records a kept capture.
   planKeptLateCaptureXeroRecord: typeof planKeptLateCaptureXeroRecord;
+  // #5220: that decision's officer email for a refusal it stamped, after its commit.
+  alertKeptCaptureRefusal: typeof alertKeptCaptureRefusal;
   enqueueXeroSupplementaryInvoiceOperation: typeof enqueueXeroSupplementaryInvoiceOperation;
   enqueueXeroModificationCreditNoteOperation: typeof enqueueXeroModificationCreditNoteOperation;
   enqueueXeroAccountCreditNoteOperation: typeof enqueueXeroAccountCreditNoteOperation;
@@ -102,6 +104,7 @@ const defaultDependencies: RepairDependencies = {
   enqueueXeroKeptLateCaptureInvoiceOperation,
   enqueueAdditionalCaptureReceiptOperation,
   planKeptLateCaptureXeroRecord,
+  alertKeptCaptureRefusal,
   enqueueXeroSupplementaryInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation,
   enqueueXeroAccountCreditNoteOperation,
