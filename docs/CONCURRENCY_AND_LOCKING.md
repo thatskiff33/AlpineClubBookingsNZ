@@ -7024,7 +7024,9 @@ writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
   debtor it named, then carry any receivable that leaves on a merged-away
   member along the committed merge chain to the owner they read under the
   booking row, one `merge-residue` transfer per hop, as a reversed receipt does
-  (D4). Merge first, the owner move has committed, so the door reads the
+  (D4). The R05 itself is carried first when the merge's snapshot missed it:
+  the reservation step reads its debtor without a lock, so its R05 can land on
+  a member after that member's snapshot. Merge first, the owner move has committed, so the door reads the
   survivor and moves the residue; door first, the merge waits on the booking row
   and its snapshot nets the reversal, so nothing moves. No new key, site or
   order. Proven in both orders against the real merge by

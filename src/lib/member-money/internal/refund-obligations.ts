@@ -196,13 +196,17 @@ type RefundBooking = { bookingId: string; lodgeId: string; owner: MemberMoneyDeb
 
 /**
  * The exact mirror of the R05, on the debtor it named. A debtor merged away since leaves that receivable stray, so
- * it is then carried along the committed merge chain to the owner, as a reversed receipt's is (D4, #5191); a merge
+ * the R05's own receivable, when the merge snapshot missed it, and then the mirror's are carried along the committed merge chain to the owner, as a reversed receipt's is (D4, #5191); a merge
  * after this commits nets it in its own snapshot instead, and with no merge nothing moves.
  */
 async function reverseRefundObligation(tx: Db, context: MemberMoneyPostingContext, input: {
   booking: RefundBooking; live: MemberMoneyEventKey; actorMemberId: string | null; reason: string;
 }): Promise<void> {
   const { bookingId, lodgeId, owner } = input.booking;
+  // The debt itself first: a reservation reads its debtor unlocked (`refund-reservations.ts`), so an R05 can land on
+  // a member after that member's merge snapshot. Its receivable is then carried too, or the mirror's move alone would
+  // leave the debt behind; an R05 the snapshot counted is skipped, and a replay posts nothing.
+  await moveMergedDebtorResidue(tx, context, { bookingId, lodgeId }, owner, input.live);
   const r05 = await tx.memberMoneyEvent.findUniqueOrThrow({ where: { eventKey: input.live }, select: { journal: { select: { id: true } } } });
   const reversal = memberMoneyEventKeys.reversal(r05.journal!.id);
   await reverseMemberMoneyJournal(tx, context, { reversesJournalId: r05.journal!.id, origin: "OFFICER", actorMemberId: input.actorMemberId,

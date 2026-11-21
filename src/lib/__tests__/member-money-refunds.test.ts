@@ -755,6 +755,21 @@ describe("a refund debt reversed after its owner merged away (#5191)", () => {
     expect(residues(t)).toBe(1);
   });
 
+  it("a debt posted on the merged-away member after the merge's snapshot moves with its reversal, so neither stays behind", async () => {
+    const t = await cancelled();
+    const before = receivable(t, A);
+    // The snapshot, then the debt from a stale owner read (a reservation reads it unlocked), then the owner move.
+    await postMemberMergeTransfer(t.db.tx, context, { fromMemberId: A, toMemberId: B, actorMemberId: OFFICER });
+    await checkPart(t);
+    t.db.rows("booking", { id: t.id })[0]!.memberId = B;
+    expect(receivable(t, A)).toBe(700);
+    expect(await dismiss(t)).toBe(true);
+    await expectFollowed(t, [A], B, before);
+    expect(residues(t)).toBe(2);
+    expect(await dismiss(t)).toBe(false);
+    expect(residues(t)).toBe(2);
+  });
+
   it("two hops: one residue move per merge, ending on the last survivor; a replay moves nothing again", async () => {
     const t = await cancelled();
     await checkPart(t);
