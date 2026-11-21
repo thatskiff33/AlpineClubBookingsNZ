@@ -673,7 +673,6 @@ export async function register() {
           const { runXeroCronTaskList } = await import(
             "./lib/xero-cron-runner"
           );
-          // #5204: the overpayment and prepayment refresh shares this daily slot.
           const result = await runXeroCronTaskList(["credit-sync", "cash-credits"], { taskLabel: "credit-sync" });
           logger.info(
             { job: XERO_CRON_JOB_NAMES["credit-sync"], result: result.creditSyncCheck, cashCredits: result.cashCreditRefresh },
