@@ -100,7 +100,7 @@ vi.mock("@/lib/xero-sync", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.audit }));
 vi.mock("@/lib/payment-transactions", () => ({ lockPaymentForRefundedTotal: mocks.paymentLock, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS: BUDGET }));
-// #4279: the real shared pointer adoption (`adoptCanonicalRefundNote`), over the payment's refund-note links read below.
+// #4279: the real eligibility rule behind the shared pointer adoption (`adoptCanonicalRefundNote`), over the links read below.
 vi.mock("@/lib/xero-refund-note-status", async (importOriginal) => ({
   ...((await importOriginal()) as object),
   assertFreshRefundNoteFromCreate: mocks.fresh,

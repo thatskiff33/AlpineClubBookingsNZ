@@ -69,7 +69,8 @@ import { heldByAnotherClaim, ownRunningClaim } from "@/lib/xero-operation-outcom
 import { prisma } from "@/lib/prisma";
 import { isPostgresLockNotAvailable, isTransactionContention } from "@/lib/prisma-errors";
 import { traceUnrecordedLateNote, type LateNoteTrace } from "@/lib/xero-late-note-trace";
-import { adoptCanonicalRefundNote, assertFreshRefundNoteFromCreate } from "@/lib/xero-refund-note-status";
+import { adoptCanonicalRefundNote } from "@/lib/xero-refund-note-adoption";
+import { assertFreshRefundNoteFromCreate } from "@/lib/xero-refund-note-status";
 import { describeUnrecordedObject } from "@/lib/xero-success-after-resolution-alert";
 import { upsertXeroObjectLink } from "@/lib/xero-sync";
 

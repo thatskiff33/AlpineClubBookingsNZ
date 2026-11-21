@@ -6,14 +6,12 @@ import { asRecord, readString } from "./xero-json";
 import {
   canonicalRefundNoteFromField,
   isPerDeltaRefundNoteLink,
-  adoptCanonicalRefundNote,
-  type CanonicalRefundNoteAdoption,
-  completeAdoptingCanonicalRefundNote,
   isRefundCreditNoteLinkCancelledInXero, isRefundNoteLinkOf, keepStoredRefundNoteVoid, REFUND_NOTE_LINK_ROLES,
   perDeltaRefundNoteIds,
   neverCanonicalRefundNoteIds,
   readCanonicalRefundNoteField,
 } from "./xero-refund-note-status";
+import { adoptCanonicalRefundNote, type CanonicalRefundNoteAdoption, completeAdoptingCanonicalRefundNote } from "./xero-refund-note-adoption";
 import { buildXeroObjectUrl, stripXeroOrgShortCode } from "./xero-links";
 import { mergeXeroObjectLinkMetadata, planXeroObjectLinkMetadataMerge } from "./xero-object-link-metadata-merge";
 import {
@@ -1052,11 +1050,8 @@ export async function completeXeroSyncOperation(
 
     return operation;
   };
-  const operation = completion.canonicalRefundNote
-    ? await completeAdoptingCanonicalRefundNote(prisma, completion.canonicalRefundNote, options, completeWithClient)
-    : options?.store
-      ? await completeWithClient(options.store)
-      : await prisma.$transaction(completeWithClient);
+  const operation = completion.canonicalRefundNote ? await completeAdoptingCanonicalRefundNote(prisma, completion.canonicalRefundNote, options, completeWithClient)
+    : options?.store ? await completeWithClient(options.store) : await prisma.$transaction(completeWithClient);
 
   // #4686: its Xero object is traced after commit (or only logged inside a caller's own `store`), never written over the row.
   if (lostClaim) await import("./xero-late-partial-trace").then((trace) => trace.afterLostClaimPartial(claim, completion, Boolean(options?.store), lostClaim!.laterClaimHolds), (err) => logger.error({ operationId, err }, "Xero part-success trace not loaded (#4686)"));

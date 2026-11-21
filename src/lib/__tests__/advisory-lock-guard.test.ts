@@ -2026,8 +2026,8 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
         expect(at[i], `${markers[i]} must follow ${markers[i - 1]}`).toBeGreaterThan(at[i - 1]);
       }
     };
-    const status = text("src/lib/xero-refund-note-status.ts");
-    const adopting = status.slice(status.indexOf("export async function completeAdoptingCanonicalRefundNote<"));
+    const adoptionModule = text("src/lib/xero-refund-note-adoption.ts");
+    const adopting = adoptionModule.slice(adoptionModule.indexOf("export async function completeAdoptingCanonicalRefundNote<"));
     inOrder(adopting, ["options?.store || !options?.retryClaim", "db.$transaction(", "lockPaymentForRefundedTotal(tx, adoption.paymentId)", "complete(tx)", "}, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS);"]);
     expect(adopting).not.toMatch(/pg_advisory|acquireLodgeCapacityLock|lockMemberCreditLedger/);
     const sync = text("src/lib/xero-sync.ts");
