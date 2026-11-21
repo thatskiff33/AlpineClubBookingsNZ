@@ -128,7 +128,7 @@ describe("readPaidAnotherWayReceiptState: recordByHandCents (rounds 11 and 12)",
   });
 
   it("is nothing for a receipt the app recorded: its note follows", async () => {
-    mocks.receipt.mockResolvedValue({ kind: "recorded", invoiceId: "inv_kept" });
+    mocks.receipt.mockResolvedValue({ kind: "recorded", recordedCents: null, invoiceId: "inv_kept" });
     await expect(readPaidAnotherWayReceiptState("pi_late")).resolves.toMatchObject({ recordByHandCents: 0 });
     expect(mocks.refunds).not.toHaveBeenCalled();
   });
@@ -173,6 +173,7 @@ describe("round 13: only a card note in Xero is taken off what is recorded by ha
       mayBeInXeroCents: 0,
       notesCanStillLand: false,
       notedLaterCents: 0,
+      aboveRecordedCents: 0,
     });
   });
 });
@@ -216,6 +217,7 @@ describe("round 14: a card note sent with the outcome unknown is named apart, ne
       mayBeInXeroCents: 1500,
       notesCanStillLand: false,
       notedLaterCents: 0,
+      aboveRecordedCents: 0,
     });
     // Beside one in Xero and one never sent: only the in-Xero one comes off,
     // the never-sent one is recorded by hand, the sent one is named apart.
@@ -225,6 +227,7 @@ describe("round 14: a card note sent with the outcome unknown is named apart, ne
       mayBeInXeroCents: 700,
       notesCanStillLand: false,
       notedLaterCents: 0,
+      aboveRecordedCents: 0,
     });
     // A sent note completed as skipped on a later run is still maybe in Xero.
     mocks.notes.mockResolvedValue([sentNote(700, "SUCCEEDED")]);
@@ -252,7 +255,7 @@ describe("round 14: a card note sent with the outcome unknown is named apart, ne
   });
 
   it("MUTATION: while the card verdict names an invoice in Xero, a waiting note can still land - nothing by hand, the rest noted later", async () => {
-    mocks.cardReceipt.mockResolvedValue({ kind: "recorded", invoiceId: "inv_kept" });
+    mocks.cardReceipt.mockResolvedValue({ kind: "recorded", recordedCents: null, invoiceId: "inv_kept" });
     mocks.notes.mockResolvedValue([cardNote(1000), waitingNote(500), sentNote(700)]);
     // 4000 - (1000 + 500 + 700) asked for: the app asks for 1800 the next time
     // it notes this charge; nothing is recorded by hand or named maybe in Xero.
@@ -261,27 +264,65 @@ describe("round 14: a card note sent with the outcome unknown is named apart, ne
       mayBeInXeroCents: 0,
       notesCanStillLand: true,
       notedLaterCents: 1800,
+      aboveRecordedCents: 0,
     });
     expect(mocks.cardReceipt).toHaveBeenCalledWith("pi_late");
     // A receipt whose only row FAILED: nothing sends it, so nothing lands.
-    mocks.cardReceipt.mockResolvedValue({ kind: "recorded", invoiceId: null, invoiceFailed: true });
+    mocks.cardReceipt.mockResolvedValue({ kind: "recorded", recordedCents: null, invoiceId: null, invoiceFailed: true });
     await expect(readUnnotedLateCaptureCardRefunds("payment_1", "pi_late")).resolves.toMatchObject({
       notesCanStillLand: false,
       byHandCents: 2300,
       notedLaterCents: 0,
+      aboveRecordedCents: 0,
     });
   });
 
   // Round 15 (2a): another receipt row still queued or sending is on its way
   // to Xero, so the capture's card notes can still land against it.
   it("MUTATION: round 15: a receipt row still on its way (no id, not FAILED) lets notes land", async () => {
-    mocks.cardReceipt.mockResolvedValue({ kind: "recorded", invoiceId: null });
+    mocks.cardReceipt.mockResolvedValue({ kind: "recorded", recordedCents: null, invoiceId: null });
     mocks.notes.mockResolvedValue([cardNote(1000), waitingNote(500)]);
     await expect(readUnnotedLateCaptureCardRefunds("payment_1", "pi_late")).resolves.toEqual({
       byHandCents: 0,
       mayBeInXeroCents: 0,
       notesCanStillLand: true,
       notedLaterCents: 2500,
+      aboveRecordedCents: 0,
+    });
+  });
+});
+
+/**
+ * #4383 (`INV-PAY-110`): a receipt that recorded only part of the capture.
+ * Every figure is sized from the refunds up to what it recorded; the rest is
+ * named apart (`aboveRecordedCents`), never in the by-hand figure.
+ */
+describe("#4383: a receipt capped at what it recorded", () => {
+  it("MUTATION: the note writer's figure stops at what was recorded, and the rest is named apart", async () => {
+    // 4000 refunded of a capture whose receipt recorded 2500; a 1000 note is in Xero.
+    mocks.cardReceipt.mockResolvedValue({ kind: "recorded", invoiceId: "inv_primary", recordedCents: 2500 });
+    mocks.notes.mockResolvedValue([cardNote(1000)]);
+    await expect(readUnnotedLateCaptureCardRefunds("payment_1", "pi_late")).resolves.toEqual({
+      byHandCents: 0,
+      mayBeInXeroCents: 0,
+      notesCanStillLand: true,
+      notedLaterCents: 1500,
+      aboveRecordedCents: 1500,
+    });
+    // Its row FAILED: the recorded part is recorded by hand; the rest stays apart.
+    mocks.cardReceipt.mockResolvedValue({ kind: "recorded", invoiceId: null, invoiceFailed: true, recordedCents: 2500 });
+    await expect(readUnnotedLateCaptureCardRefunds("payment_1", "pi_late")).resolves.toMatchObject({
+      byHandCents: 1500,
+      aboveRecordedCents: 1500,
+    });
+  });
+
+  it("a receipt that recorded more than was refunded caps nothing", async () => {
+    mocks.cardReceipt.mockResolvedValue({ kind: "recorded", invoiceId: "inv_primary", recordedCents: 5000 });
+    mocks.notes.mockResolvedValue([]);
+    await expect(readUnnotedLateCaptureCardRefunds("payment_1", "pi_late")).resolves.toMatchObject({
+      notedLaterCents: 4000,
+      aboveRecordedCents: 0,
     });
   });
 });
@@ -324,6 +365,7 @@ describe("round 15: an officer's retry of a card note, and a note Xero refused",
       mayBeInXeroCents: 0,
       notesCanStillLand: false,
       notedLaterCents: 0,
+      aboveRecordedCents: 0,
     });
     // The rows read are the queued ones and the retries with no queue type.
     expect(mocks.notes).toHaveBeenCalledWith(
