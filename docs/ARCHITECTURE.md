@@ -1991,11 +1991,13 @@ officer queue screen that reads it for that list pages through `useAdminQueuePag
 `Pagination` with its "Showing 1–25 of 40" total line, shown even on a single
 page. The officer queues — member applications, refund appeals, booking
 approvals, change requests, public requests, policy exceptions, the
-membership cancellation and archive queues, and both deletion-request
-queues — do so today: pending filters read
-oldest first, a filter change returns to page 1, the page is kept in the URL
-wherever the screen keeps its filter there (not the deletion-request queues or
-the policy exceptions tab, which keep it in memory), a slower read for a page
+membership cancellation and archive queues, both deletion-request
+queues, the maintenance queue and the communications send history (which has
+no filter, and returns to page 1 after a send, where the new send is) — do so
+today: pending filters (the maintenance queue's is Open) read oldest first, a filter change returns to page 1, the page is kept in the URL
+wherever the screen keeps its filter there (not the deletion-request queues,
+the policy exceptions tab, the maintenance queue or the send history, which keep
+it in memory), a slower read for a page
 the officer has left never replaces the list, the pager stays mounted through a
 read so keyboard focus survives a page change, and a focused `bookingId=` /
 `requestId=` link pins its record when it is off the page (approvals, change
@@ -2010,13 +2012,9 @@ than the hook, show the range line once the list has more than one page, and
 share `formatAdminListRange` for the range text and
 `parseAdminListPageParam` / `setAdminListPageParam` for the URL page; the same
 census fails hand-rolled range arithmetic, an unparsed page read or a
-hand-written page write. Five capped lists sit outside this. System issue
+hand-written page write. Three capped lists sit outside this: system issue
 reports, messages notice reads and the privacy retention preview keep their own
-pagers until next changed. The communications history and the maintenance queue
-have no pager yet: the history reads its newest 25 sends with no total, and the
-queue says "Showing the newest N of T". Both predate #4960, which left them out
-of scope, and both routes already take their page fields from the shared schema,
-so a pager needs no route change.
+pagers until next changed.
 
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same
