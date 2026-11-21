@@ -408,13 +408,15 @@ describe("attempt-scoped GitHub jobs read", () => {
 });
 
 it("the CLI fails closed without a GitHub run identity", () => {
-  const result = spawnSync(process.execPath, [path.join(root, "scripts", "ci", "require-test-shards.mjs")], {
+  // #5222: with both allowances, so it fails on the identity, not on a missing flag.
+  const result = spawnSync(process.execPath, [path.join(root, "scripts", "ci", "require-test-shards.mjs"), "--max-queue-minutes", "1", "--max-run-minutes", "1"], {
     cwd: root,
     encoding: "utf8",
     env: { ...process.env, GITHUB_REPOSITORY: "", GITHUB_TOKEN: "" },
   });
   expect(result.status).toBe(1);
   expect(result.stderr).toContain('Shard gate for "Test shard" failed');
+  expect(result.stderr).toMatch(/failed: (Invalid GITHUB_|GITHUB_TOKEN is required)/);
 });
 
 // #4397: e2e.yml's required jobs reuse this gate for their own matrices.
