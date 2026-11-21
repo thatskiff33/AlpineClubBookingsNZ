@@ -246,20 +246,11 @@ export async function GET(request: NextRequest) {
     });
 
     // 2. Revenue by dynamic granularity
-    const revenueSeries = buildRevenueSeries(
-      bookings,
-      fromDay,
-      toDay,
-      await clubFormatValues(),
-    );
+    const revenueSeries = buildRevenueSeries(bookings, fromDay, toDay, await clubFormatValues());
 
     // 3. Booking trends by overlapped stay week. A booking spanning several
     // nights is counted once in each touched week, never once per night.
-    const trendData = buildBookingTrendSeries(
-      bookings,
-      fromDay,
-      toDay,
-    );
+    const trendData = buildBookingTrendSeries(bookings, fromDay, toDay);
 
     // 4. Distinct guest rows that stay at least one selected night.
     const { totalGuests, memberGuests, nonMemberGuests } =
