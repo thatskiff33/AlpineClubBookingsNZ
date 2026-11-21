@@ -158,19 +158,22 @@ async function generations(chargeIdentity: string) {
       return result;
     }, { timeout: 20_000 });
     await wrote;
-    const second = write(documents[secondRole]);
-    // The second recorder is blocked on the first's uncommitted index entry.
-    for (let waited = 0; ; waited += 1) {
+    let secondDone = false;
+    const second = write(documents[secondRole]).finally(() => { secondDone = true; });
+    // The second recorder waits on the first's uncommitted index entry; with no
+    // index it finishes at once, and the assertions below say so.
+    let secondWaited = false;
+    for (let polls = 0; !secondWaited && !secondDone && polls < 100; polls += 1) {
       const blocked = await app.query(`SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`);
-      if (blocked.rows.length > 0) break;
-      if (waited > 200) throw new Error("the second recorder never waited on the first");
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      secondWaited = blocked.rows.length > 0;
+      if (!secondWaited) await new Promise((resolve) => setTimeout(resolve, 25));
     }
     commitFirst();
     const settled = await Promise.allSettled([first, second]);
     expect(settled[0]).toEqual({ status: "fulfilled", value: "WRITTEN" });
     expect(settled[1]).toMatchObject({ status: "rejected", reason: { code: "P2002" } });
     expect(await generations(stayOf(ids.child))).toEqual([{ documentRole: firstRole, coverageGeneration: 0 }]);
+    expect(secondWaited).toBe(true);
   });
 
   it("lets the next invoice cover a component at the next generation once the last one is released", async () => {
