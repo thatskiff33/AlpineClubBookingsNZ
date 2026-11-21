@@ -84,7 +84,7 @@ the row, not open work. Open findings now live in labelled GitHub issues
 
 | Route or surface | Auth mechanism | Actor | Data touched | External calls | Rate, signature, or boundary controls | Logging and audit | Residual risk or follow-up |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `src/proxy.ts` global proxy, pre-setup gate, and module gates | No session auth. Applies CSP/security headers to page requests and selected API matcher paths; returns 404 for disabled module routes; returns 503 + the "Site setup in progress" screen for every public-website path until `ClubTheme.completedAt` is set (#2420, "The Pre-Setup Gate" below). | Anonymous and authenticated browser traffic. | Module settings via `loadEffectiveModuleFlags()`; setup state, club name and contact address via `setup-gate.ts` (memoised 15s, read only while setup is incomplete). | None. | CSP nonce, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, module route blocking, pre-setup 503 gate (fails closed, `no-store`, `Retry-After`). | No per-request audit. | API matcher is selective, not global for every API path. Keep route-level auth as the enforcement boundary. The setup gate never covers `/api/*`, the admin area, or the login flows — an operator must be able to finish setup. Since #2404 the matcher RUNS on asset-shaped URLs (`/foo.png`, `/favicon.ico`, `/wp-content/uploads/x.jpg`), so those carry a policy and meet the gate like any other address; only `/api`, `/_next/static/` and `/_next/image` stay excluded. A miss under `_next/static` is terminated without a document by the `afterFiles` rewrites, whose own `default-src 'none'` is then the policy that ships; a miss under `/api` is answered as JSON by `api/[[...unmatched]]`, and no rewrite rule may touch `/api` at all (module-state parity — see "Static-Asset URLs And The Nonce-Only CSP"). #2404 also removed the prefetch exemption outright, so no request header — `Purpose: prefetch`, `Next-Router-Prefetch`, `RSC`, in any combination — takes a URL outside the proxy. The gate still declines to CLAIM asset-shaped paths (a 503 holding screen is a document), so a URL of that shape which reaches a render is ungated by design; the shared public chrome (`src/components/website/website-chrome.tsx`, composed by both public route groups) and the public metadata guard cover it. |
+| `src/proxy.ts` global proxy, pre-setup gate, and module gates | No session auth. Applies CSP/security headers to page requests and selected API matcher paths; returns 404 for disabled module routes; returns 503 + the "Site setup in progress" screen for every public-website path until `ClubTheme.completedAt` is set (#2420, "The Pre-Setup Gate" below). | Anonymous and authenticated browser traffic. | Module settings via `loadEffectiveModuleFlags()`; setup state, club name and contact address via `setup-gate.ts` (memoised 15s; each refresh reads `ClubTheme.completedAt`, and the club name and contact address only while setup is incomplete). | None. | CSP nonce, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, module route blocking, pre-setup 503 gate (fails closed, `no-store`, `Retry-After`). | No per-request audit. | API matcher is selective, not global for every API path. Keep route-level auth as the enforcement boundary. The setup gate never covers `/api/*`, the admin area, or the login flows — an operator must be able to finish setup. Since #2404 the matcher RUNS on asset-shaped URLs (`/foo.png`, `/favicon.ico`, `/wp-content/uploads/x.jpg`), so those carry a policy and meet the gate like any other address; only `/api`, `/_next/static/` and `/_next/image` stay excluded. A miss under `_next/static` is terminated without a document by the `afterFiles` rewrites, whose own `default-src 'none'` is then the policy that ships; a miss under `/api` is answered as JSON by `api/[[...unmatched]]`, and no rewrite rule may touch `/api` at all (module-state parity — see "Static-Asset URLs And The Nonce-Only CSP"). #2404 also removed the prefetch exemption outright, so no request header — `Purpose: prefetch`, `Next-Router-Prefetch`, `RSC`, in any combination — takes a URL outside the proxy. The gate still declines to CLAIM asset-shaped paths (a 503 holding screen is a document), so a URL of that shape which reaches a render is ungated by design; the shared public chrome (`src/components/website/website-chrome.tsx`, composed by both public route groups) and the public metadata guard cover it. |
 | `/api/health`, `/api/health/ready` | Public. | Load balancers, operators, anonymous callers. | DB reachability, runtime version/uptime, config readiness. Public responses omit provider error detail. | DB query only. | No rate limit. No secrets in response. | Logger debug/error only. | Anonymous callers can observe availability. #615 can decide whether to add light rate limiting or cache headers. |
 | `/api/age-tier-settings`, `/api/committee` | Public read endpoints. | Anonymous website users. | Public age-tier/rate settings and published committee assignment presentation fields; and, **only when `PublicContentSettings.committeePhotoDisplay != NONE`**, per-published-member photo metadata (member id + `photoUpdatedAt` version) so the roster can build the scoped `/api/members/[id]/photo` URL. | None. | No rate limit. Committee query selects active, published assignment fields only; member email is not selected or returned, phone is returned only when show-phone is enabled, and contact keys are returned only for contactable assignments. Photo metadata (incl. member id) is emitted **only** when the club has opted the roster into photos — with `committeePhotoDisplay = NONE` (the default), no member id or photo pointer is returned. | None beyond DB errors if thrown. | Public committee names and optional phone numbers are intentional once an admin publishes the assignment; email remains server-only. Committee-photo bytes are served (and gated) by the scoped `/api/members/[id]/photo` endpoint, which applies the SAME `committeePhotoDisplay != NONE` condition to its anonymous branch (#2242) — so "Don't show photos" takes the bytes off the public internet, not just the roster metadata. |
 | `/api/address-autocomplete/search`, `/api/address-autocomplete/details/[id]` | Public server-side proxy to Addy, gated by the `addressAutocomplete` Admin Module. | Anonymous website users. | Search terms, address suggestion ids, Addy result payloads. | Addy API via `src/lib/addy-api.ts`. | Module-route/proxy gate returns 404 while disabled, Zod query validation, `rateLimiters.addressAutocomplete` at 90/min/IP. Secrets stay server-side. | Minimal error responses, no audit. | Upstream-cost and enumeration surface remains public only when the module is enabled; manual address entry remains the fallback. |
@@ -371,6 +371,38 @@ These family rules are enforced by automated tests (issue #1132):
 ### Admin Routes
 
 - `src/app/api/admin/**/route.ts`
+  - `admin/bookings/[id]/work-party` (fork #119): bookings view to list the
+    work parties a booking could join, bookings edit to preview or apply
+    adding it to one. The only door to a work party's internal promo code on
+    an existing booking: the code is admitted by a service argument
+    (`officerWorkPartyCorrection`) that no request body can carry, and a census
+    pins its one caller (and the service refuses it without an officer, a
+    caller transaction and a promo-only change). It moves money only through
+    the canonical booking edit's own settlement (fork #129): account credit by
+    default, a refund only when the officer chooses it where the edit itself
+    offers one — to the card, or the edit's bank-transfer hand-back for
+    Internet Banking (any other method is refused, 409) — and an organiser-paid
+    joiner's money back to the organiser by the pipeline's organiser
+    disposition. It adds no refund path, calls no provider itself, and refuses
+    any refund the offered options did not mean. It never changes the acting
+    officer's own or family's booking (the member-guest family boundary, over
+    the owner and, for an organiser-pays joiner, the organiser, settled or not; owner
+    decision 3 of 18 Nov 2026 on #5149), whatever the money does: the list
+    greys it out for the signed-in officer, and the service refuses it again
+    under its locks, on Add and Remove alike. It applies only the figures the
+    officer was shown, settlement method included, and answers 404 while the
+    Work Parties module is off. Its POST is on the step-up list
+    (`INV-AUTH-010`): the canonical edit it calls reaches the refund
+    operations, so it asks for a fresh proof before reading the body.
+    Fork #130: `action: "remove"` takes the
+    booking off the work party it carries through the same service argument
+    and edit; the price rises and the difference is owed on the booking. A
+    removal carries no settlement method (400 if sent) and refuses, 409, any
+    money it would hand back. Its checked figures include an increase invoiced
+    to the group organiser, so a stale preview cannot save it. Fork #127: on a started stay the argument also
+    asks the edit policy to price the whole stay (an officer-only mode no body
+    can reach), so the promotion re-runs over nights already slept; every
+    other in-progress edit still refuses a promo change.
 
 Admin route subfamilies are:
 
@@ -1520,7 +1552,8 @@ the Tokoroa fork's review and fixed in #2242.
   carry metadata — which silenced that warning for exactly the types that are
   never stripped; it now returns `ok: false` with the original bytes.
 
-Notes on the fail-open choice and its cost:
+Notes on the fail-open choice and its cost (the fail-open half is superseded:
+see [Hidden Image Data On Every Type](#hidden-image-data-on-every-type---2026-11-22)):
 
 - The asymmetry is deliberate. `stripJpegMetadata` is known to reject some
   spec-legal JPEG fill-byte sequences (T.81 §B.1.1.2). On a member photo —
@@ -1580,6 +1613,63 @@ Notes on the fail-open choice and its cost:
   not), exactly as it did before this change. What that timing could distinguish
   is committee-publication status, which the public roster already publishes by
   name.
+
+## Hidden Image Data On Every Type - 2026-11-22
+
+Issue #5244 closed the two gaps the 2026-08-01 review above left: three allowed
+types had no cleaner, and four of the five storing paths stored an unconfirmed
+image anyway.
+
+- **Every allowed type now has a cleaner**, each lossless and byte-identical on
+  a second pass, and each a keep-list rather than a deny-list, so a metadata
+  block nobody has named (Content Credentials, a vendor chunk) is dropped
+  anyway: JPEG keeps only structural segments, a rebuilt JFIF without its
+  thumbnail, Adobe and ICC, and refuses reserved markers; PNG and WebP keep
+  only the chunks that draw the picture (WebP animation frames are walked
+  too) and refuse an unknown critical PNG chunk; all three keep an
+  orientation-only EXIF (dropping it turned phone portraits sideways);
+  GIF keeps only image, graphic-control and looping (`NETSCAPE2.0`) blocks,
+  rebuilt from their defined fields so nothing rides in extra sub-blocks;
+  a still AVIF has every non-picture item (`Exif`, XMP `mime`), property
+  (except `colr`, which is kept and can hold an ICC profile) and top-level
+  box retyped `free` and zeroed in place, with every `mdat`/`idat`
+  byte outside a picture item's extents zeroed, data-reference location
+  strings zeroed and unknown file-type brands replaced; SVG is rebuilt by
+  `sanitize-html` from an allow-list of drawing elements and attributes, with
+  `script`, `metadata`, `title`, `desc` and `foreignObject` removed with their
+  contents, references narrowed to `#id`, and embedded raster images cleaned
+  and re-embedded.
+- **Every path fails closed.** `cleanImageForStorage` replaced
+  `storableImageBytes`: an image that cannot be confirmed clean is refused with
+  one plain message (`IMAGE_NOT_CLEAN_MESSAGE`), never stored and logged. The
+  image library answers 400, the image manager refuses that file and keeps the
+  batch, a configuration restore stops at its dry run with an error naming the
+  file, and a site-style save with an unconfirmable inline logo answers 400. The
+  fill-byte false refusal that once justified failing open is fixed. An animated
+  AVIF is refused with its own message. The image manager also refuses bytes
+  that sniff as no image, or as SVG, whatever the declared type.
+- **SVG fails closed on reach, not just on parse**: CSS `@import`,
+  `image-set()`, a CSS escape, an unterminated CSS comment, a `url()` that is
+  not `#id`, markup nested in a `<style>`, an embedded image that cannot be
+  cleaned, bytes that are not UTF-8, output without an `<svg` root in the SVG
+  namespace, or output
+  that does not rebuild to itself all refuse the file. Each `<style>` body is
+  checked whole after the rebuild, because the parser hands its text over in
+  pieces split at character references, comments and CDATA; the `url()` scan is
+  linear, so an upload cannot stall the server with unclosed `url(` runs.
+  Text inside the drawing's own `text` elements is kept, even where it is
+  hidden or only referenced from `defs`.
+- **An inline logo already stored is not re-cleaned** on a site-style save that
+  sends it back unchanged, so a legacy logo neither blocks a colour change nor
+  is rewritten.
+- **`/api/images/[id]` adds `sandbox` to its CSP**:
+  `default-src 'none'; style-src 'unsafe-inline'; sandbox`, with `nosniff` and
+  `Content-Disposition: inline` as before. Opened directly as a document, an SVG
+  gets a unique opaque origin, so markup that slipped past the rebuild can
+  neither run nor reach the site's cookies or storage.
+- **Images stored before #5244 are not altered** (owner decision, 20 Nov 2026):
+  no backfill runs over `MediaImage` rows, `public/images` or stored logos.
+  `docs/guides/image-manager.md` tells an admin how to replace one.
 
 ## Per-Route CSP Relaxation And Soft Navigation - 2026-07-26
 
@@ -2015,9 +2105,12 @@ Fixed at the root: that function now reports `readFailed` separately, and the
 shared public chrome (`src/components/website/website-chrome.tsx`, which held this
 branch as `(website)/layout.tsx` until the D1 narrowing extracted it) paints the
 holding screen only on a POSITIVE answer. The
-asymmetry with the proxy gate, which still fails closed on the same input, is
-deliberate and is the general rule worth keeping — **503 is a true statement
+asymmetry with the proxy gate, which fails closed on the same input on a cold
+start, is deliberate and is the general rule worth keeping — **503 is a true statement
 about an unreadable database; a 200 that describes the club is not.**
+Since #5264 the gate fails closed only until it has seen setup complete: after
+that, a database read that fails, throws or times out keeps serving the stale
+"complete" answer, by design, so a blip cannot close a live club's website.
 
 ## Prerendered Pages And The Nonce-Only CSP - 2026-07-31
 
@@ -2355,15 +2448,24 @@ address — real page, typo, and bot probe alike — which is the configuration 
   incomplete, the fully rendered document — is memoised for 15 seconds behind a
   single-flight promise, matching the TTL of the tagged cache the layout reads
   the same `ClubTheme` row through. Once setup is complete the cached answer is a
-  bare boolean and the club identity and contact address are never read at all.
+  bare boolean, each refresh reads `completedAt` alone (`readSetupCompletion`),
+  and the theme, club identity and contact address are never read at all. An
+  expired answer is served while one background refresh runs, so no visitor
+  waits for the read (#5264: the refresh used to load the whole theme and build
+  its CSS, stalling a page every 15 seconds); only a cold start waits.
   The proxy is bundled separately from route handlers, so the `revalidateTag`
   the site-style save issues cannot reach this memo; the TTL is the propagation
-  bound, and it is why the site opens within 15 seconds of the save rather than
-  instantly.
-- **Fails CLOSED.** A failed `ClubTheme` read leaves `isComplete` false, so a
-  database outage is answered with the holding screen and a 503 — which is what
-  503 literally means. Failing open would restore the 200-for-every-address
-  defect under exactly the conditions that make it hardest to notice. Note the
+  bound, and it is why the site opens on the second request after the 15
+  seconds rather than instantly.
+- **Fails CLOSED.** A cold start whose `ClubTheme` read fails or throws answers
+  with the holding screen and a 503 — which is what 503 literally means.
+  Failing open would restore the 200-for-every-address defect under exactly the
+  conditions that make it hardest to notice. **One deliberate exception
+  (#5264):** once the gate has seen setup complete, a refresh whose read fails,
+  throws or times out (5 seconds, `SETUP_STATE_READ_TIMEOUT_MS`) keeps serving
+  the stale "complete" answer, by design, rather than closing a live club's
+  website for a database blip — the same launch-state reasoning as finding F4. A refresh that
+  reads a POSITIVE "not complete" still closes the site. Note the
   deliberate asymmetry with the render-time fallback in
   `src/components/website/website-chrome.tsx` — `(website)/layout.tsx` until the D1
   narrowing extracted it, and now the one copy shared by both public route groups —

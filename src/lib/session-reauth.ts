@@ -1,6 +1,7 @@
 import { randomBytes } from "crypto";
 
 import { verifyPassword } from "./password-hashing";
+import { upgradePasswordHashAfterProof } from "./password-rehash";
 
 import { prisma } from "@/lib/prisma";
 import { memberHasStoredPasskey, verifyPasskeyAssertion } from "@/lib/webauthn";
@@ -243,11 +244,17 @@ export async function proveSessionReauth(input: {
     if (!(await claimPasswordAttempt(member.email)).allowed) {
       return throttleResult();
     }
-    const valid = await verifyPassword(input.password ?? "", member.passwordHash);
+    const password = input.password ?? "";
+    const valid = await verifyPassword(password, member.passwordHash);
     if (!valid) {
       return { ok: false, status: 400, error: INVALID_PROOF_ERROR };
     }
     await clearPasswordAttempts(member.email);
+    await upgradePasswordHashAfterProof({
+      memberId: member.id,
+      plain: password,
+      storedHash: member.passwordHash,
+    });
   }
 
   return {

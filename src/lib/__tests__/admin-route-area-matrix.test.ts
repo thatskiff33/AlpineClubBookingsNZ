@@ -224,6 +224,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // status, so path inference gives it bookings:edit, and the route declares
   // that permission explicitly rather than relying on inference.
   "/api/admin/bookings/[id]/return-to-waitlist": "bookings",
+  "/api/admin/bookings/[id]/work-party": "bookings",
   "/api/admin/bookings/[id]/review": "bookings",
   "/api/admin/bookings/eligible-family": "bookings",
   "/api/admin/bookings/non-member-contact": "bookings",
@@ -512,6 +513,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/work-parties/[id]/calendar": "lodge",
   "/api/admin/xero/account-mappings": "finance",
   "/api/admin/xero/callback": "finance",
+  // #5204: the overpayment and prepayment queue (GET, finance:view) and its
+  // Xero refresh (POST, finance:edit).
+  "/api/admin/xero/cash-credits": "finance",
   "/api/admin/xero/chart-of-accounts": "finance",
   "/api/admin/xero/connect": "finance",
   "/api/admin/xero/contact-group-mismatches": "finance",
@@ -754,6 +758,7 @@ const EXPECTED_PAGE_AREAS: Record<string, AdminPermissionArea> = {
   "/admin/xero/member-grouping": "finance",
   "/admin/xero/records/[localModel]/[localId]": "finance",
   "/admin/xero/setup": "finance",
+  "/admin/xero/unallocated-payments": "finance",
 };
 
 /**

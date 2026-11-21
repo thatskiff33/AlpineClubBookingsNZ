@@ -114,6 +114,10 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-001",
   },
   {
+    site: "writeOneBooking#1", tier: "GLOBAL", invariant: "INV-LOCK-002",
+    reason: "#5005: an imported booking is created PAID by the manual settlement body in one transaction, so it joins the settle/cancel cohort, then takes the lodge capacity key and the person-night keys and re-runs every import check under them. One booking per transaction; nothing leaves the app.",
+  },
+  {
     // The one spelling of the carrying-ask queue's order, taken by the inline
     // mint, the re-issue's completion and the recovery runner's claim hold.
     site: "lockAdditionalAskQueue#1",
@@ -495,6 +499,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     tier: "GLOBAL",
     reason:
       "#3750: approving a LOCKED_PERIOD change request on a finished stay claims the request and runs the canonical batch modification on the same transaction — a money and booking-status transition that must exclude a concurrent cancel, capture or refund of the same booking, composed with a capacity re-check. Global first, then the booking's immutable lodge key, then (#4845) the booking row before the claim; the tx-aware service re-enters all three and takes the member keys after.",
+    invariant: "INV-LOCK-002",
+  },
+  {
+    site: "correctWorkParty#1",
+    tier: "GLOBAL",
+    reason:
+      "Fork #119: an officer adds an existing booking to a work party (fork #130: or removes it from one; both directions are this one writer, `addBookingToWorkParty` and `removeBookingFromWorkParty` its two entry points) — the canonical batch modification on the same transaction, which moves settlement money (account credit, a refund, or an amount owed) and must exclude a concurrent cancel, capture or refund of the same booking, composed with a capacity re-check on a booking that does not yet hold its beds. Global first, then the booking's immutable lodge key, then (#4845) the booking row before the officer's re-authorisation; the tx-aware service re-enters all three and takes the member keys after. No claim row: two concurrent applies serialise here and the second re-reads a booking that already carries (or no longer carries) the work party and is refused.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -1741,6 +1752,10 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // of its invoice (`writeCurrentCreditNoteAllocation`, no lock(1), lodge or
   // member key), before its allocation row, so the Internet Banking settle
   // (lock(1) -> lodge -> member -> this row) and the write serialise here.
+  // #4279: and by a refund-note repair's completion that adopts its note as the
+  // payment's pointer (`completeAdoptingCanonicalRefundNote`, a retry claim's own
+  // transaction, no lock(1)), FIRST, before the operation row's guarded claim,
+  // the pointer and the links - the create's record order. No new key.
   "src/lib/payment-transactions.ts": 1,
   // #4161 / #4192: the nightly link cleanup's refund-note heal takes two
   // lock-only statements: the one `XeroObjectLink` row it is about to re-write
@@ -2017,6 +2032,35 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
         "their counterpart writers and order against advisory and row locks " +
         "in docs/CONCURRENCY_AND_LOCKING.md.",
     ).toEqual(ROW_LOCK_SITE_INVENTORY);
+  });
+
+  // #4279 (INV-LOCK-002, INV-LOCK-003): a completion that adopts a refund note
+  // as the payment's pointer takes the Payment row before the operation row's
+  // claim, adopts only after the claim wins, and writes its links after that.
+  // Only that completion shape takes the row; every other keeps its transaction.
+  it("keeps a refund-note repair's adopting completion on Payment row -> guarded claim -> pointer -> links", () => {
+    const text = (rel: string) => stripComments(sources.find((source) => source.rel === rel)?.text ?? "");
+    const inOrder = (body: string, markers: string[]) => {
+      const at = markers.map((marker) => body.indexOf(marker));
+      markers.forEach((marker, i) => expect(at[i], `${marker} is missing`).toBeGreaterThanOrEqual(0));
+      for (let i = 1; i < at.length; i += 1) {
+        expect(at[i], `${markers[i]} must follow ${markers[i - 1]}`).toBeGreaterThan(at[i - 1]);
+      }
+    };
+    const adoptionModule = text("src/lib/xero-refund-note-adoption.ts");
+    const adopting = adoptionModule.slice(adoptionModule.indexOf("export async function completeAdoptingCanonicalRefundNote<"));
+    inOrder(adopting, ["options?.store || !options?.retryClaim", "db.$transaction(", "lockPaymentForRefundedTotal(tx, adoption.paymentId)", "complete(tx)", "}, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS);"]);
+    expect(adopting).not.toMatch(/pg_advisory|acquireLodgeCapacityLock|lockMemberCreditLedger/);
+    const sync = text("src/lib/xero-sync.ts");
+    const complete = sync.slice(sync.indexOf("export async function completeXeroSyncOperation("));
+    inOrder(complete, [
+      "tx.xeroSyncOperation.updateMany({ where: { id: operationId, ...guard }, data })",
+      "if (claimed.count === 0)",
+      "adoptCanonicalRefundNote(completion.canonicalRefundNote, tx)",
+      "for (const link of completion.extraLinks ?? []) {",
+      "completeAdoptingCanonicalRefundNote(prisma, completion.canonicalRefundNote, options, completeWithClient)",
+      ": await prisma.$transaction(completeWithClient)",
+    ]);
   });
 
   // #4449 (INV-LOCK-002, INV-LOCK-003): the credit-note allocation write is a

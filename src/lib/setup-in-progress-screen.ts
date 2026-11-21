@@ -53,8 +53,8 @@ export const SETUP_IN_PROGRESS_COPY = {
  *
  * Two minutes because setup completion is a human action on the site-style
  * wizard that flips the state in one save, and because the proxy's own cache of
- * the setup state expires within 15 seconds of that save (see
- * `SETUP_STATE_TTL_MS`). A longer value would leave a crawler waiting on a site
+ * the setup state picks up that save within 15 seconds plus one request (an
+ * expired answer is served while it refreshes; see `SETUP_STATE_TTL_MS`). A longer value would leave a crawler waiting on a site
  * that is already live; a much shorter one just invites needless retries.
  */
 export const SETUP_IN_PROGRESS_RETRY_AFTER_SECONDS = 120;

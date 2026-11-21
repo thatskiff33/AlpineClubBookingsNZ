@@ -26,6 +26,7 @@ import {
 import { reconcileXeroCreditSync } from "@/lib/xero-credit-sync-checker";
 import { XERO_CRON_JOB_NAMES, XERO_CRON_TASKS, type XeroCronTask } from "@/lib/xero-cron-jobs";
 import { runCreditNoteMirrorSweep } from "@/lib/xero-credit-note-mirror-sweep";
+import { refreshXeroCashCredits } from "@/lib/xero-cash-credits";
 import { processQueuedXeroOutboxOperations } from "@/lib/xero-operation-outbox";
 import { processQueuedXeroOperationRetries } from "@/lib/xero-operation-queue";
 import { refreshAllMembershipStatuses } from "@/lib/xero-membership-sync";
@@ -49,6 +50,7 @@ export interface XeroCronRunnerPayload {
   reconciliationReport: unknown | null;
   creditSyncCheck: unknown | null;
   creditNoteMirror: unknown | null;
+  cashCreditRefresh: unknown | null;
 }
 
 export interface XeroCronRunnerDependencies {
@@ -68,6 +70,7 @@ export interface XeroCronRunnerDependencies {
     sendXeroReconciliationReport: typeof sendXeroReconciliationReport;
     reconcileXeroCreditSync: typeof reconcileXeroCreditSync;
     runCreditNoteMirrorSweep: typeof runCreditNoteMirrorSweep;
+    refreshXeroCashCredits: typeof refreshXeroCashCredits;
   }>;
   includeLinkCleanupForBackfill?: boolean;
   assertRunOwned?: () => Promise<void>;
@@ -129,14 +132,19 @@ function cronStatusForResult(result: unknown): CronJobRunStatus {
 // #4375: the outbox and replay tasks are SUCCESS once they work their batch,
 // so what an officer must still see rides on the #3663 `warning`: rows Xero
 // refused before any call (outage cooldown, daily limit, environment check;
-// they stay queued) and rows that failed (they wait for a retry or an officer).
-function withQueueRunWarning<T extends { failed: number; cooldownDeferred?: number }>(
+// they stay queued), rows that failed (they wait for a retry or an officer) and
+// (#5228) rows the outbox cannot send, which no pass will ever take.
+function withQueueRunWarning<T extends { failed: number; cooldownDeferred?: number; unclaimableRequest?: number }>(
   result: T
 ): T & { warning?: string } {
   const deferred = result.cooldownDeferred ?? 0;
+  const unclaimable = result.unclaimableRequest ?? 0;
   const reasons = [
     deferred > 0
       ? `Xero refused ${deferred} operation(s) before any call (outage cooldown, daily limit or environment check); they stay queued and run once it clears.`
+      : null,
+    unclaimable > 0
+      ? `${unclaimable} queued operation(s) hold no request the outbox can send and will not run; the owner lists and releases them with pnpm run xero:stuck-queued-report.`
       : null,
     result.failed > 0
       ? `${result.failed} operation(s) failed; see Xero Operations.`
@@ -216,6 +224,7 @@ function emptyPayload(task: string, connected = false): XeroCronRunnerPayload {
     reconciliationReport: null,
     creditSyncCheck: null,
     creditNoteMirror: null,
+    cashCreditRefresh: null,
   };
 }
 
@@ -229,6 +238,8 @@ function messageForTask(task: string) {
       return "Xero credit-sync check completed";
     case "credit-note-mirror":
       return "Credit notes spent or un-spent in Xero mirrored into the credit ledger";
+    case "cash-credits":
+      return "Unallocated Xero overpayments and prepayments refreshed";
     case "backfill":
       return "Historical Xero link maintenance completed";
     case "link-cleanup":
@@ -406,6 +417,17 @@ async function runXeroCronTaskListUnderClaim(
           work: async () =>
             connected
               ? await (taskDependencies.runCreditNoteMirrorSweep ?? runCreditNoteMirrorSweep)()
+              : { skipped: true, reason: "Xero not connected" },
+        });
+      } else if (task === "cash-credits") {
+        // #5204: reads Xero, writes only the finance queue's snapshot. A failed
+        // read changes nothing and fails the task, so cron health shows it.
+        payload.cashCreditRefresh = await runRecordedXeroTask({
+          task,
+          recordCronRun,
+          work: async () =>
+            connected
+              ? await (taskDependencies.refreshXeroCashCredits ?? refreshXeroCashCredits)()
               : { skipped: true, reason: "Xero not connected" },
         });
       } else {

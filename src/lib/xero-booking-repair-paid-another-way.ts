@@ -5,7 +5,7 @@ import {
   keptLateCaptureInvoiceAsked,
   keptReceiptMayHaveReachedXero,
 } from "@/lib/late-capture-kept-xero-rules";
-import { cardNoteMayBeInXeroSentence } from "@/lib/late-capture-card-note-wording";
+import { cardNoteMayBeInXeroSentence, cardRefundAboveRecordedSentence } from "@/lib/late-capture-card-note-wording";
 import type {
   BlockingOperationMatch,
   BookingClassificationContext,
@@ -274,27 +274,47 @@ export function addKeptLateCaptureRefundByHandFinding(
  * names the capture: the kept invoice's names its card refunds, and the
  * close's them with the close. So each capture is named once. Round 14: a
  * card note sent without a reply is named apart, to check in Xero first.
+ *
+ * #4383: a receipt the app recorded for only part of the capture, refunded
+ * above that part (`aboveRecordedCents`), is named here too, with the
+ * conditional sentence (`cardRefundAboveRecordedSentence`) - even where
+ * another finding names the capture, since none of them says it.
  */
 export function addLateCaptureCardRefundByHandFindings(
   findings: MutableFinding[],
   paymentId: string,
   byHand: ReadonlyMap<string, LateCaptureCardRefundsByHandEntry> | undefined,
 ): void {
-  for (const [paymentIntentId, { cents, amountLabel, mayBeInXeroCents, mayBeInXeroLabel }] of byHand ?? []) {
+  for (const [paymentIntentId, entry] of byHand ?? []) {
+    const { cents, amountLabel, mayBeInXeroCents, mayBeInXeroLabel, aboveRecordedCents, aboveRecordedLabel } = entry;
     const named = findings.some(
       (finding) =>
         (finding.code === "KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND" ||
           finding.code === "PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND") &&
         finding.details.paymentIntentId === paymentIntentId,
     );
-    if (named || (cents <= 0 && mayBeInXeroCents <= 0)) continue;
-    const record = cents > 0 ? `: record the ${amountLabel} refunded to the card by hand in Xero.` : ".";
+    const unnoted = !named && (cents > 0 || mayBeInXeroCents > 0);
+    if (!unnoted && aboveRecordedCents <= 0) continue;
+    const sentences: string[] = [];
+    if (unnoted) {
+      const record = cents > 0 ? `: record the ${amountLabel} refunded to the card by hand in Xero.` : ".";
+      sentences.push(
+        `A late card payment's Xero receipt was resolved by hand, so the app raises no refund note for the card refunds of it${record}${mayBeInXero(mayBeInXeroCents, mayBeInXeroLabel)}`,
+      );
+    }
+    if (aboveRecordedCents > 0) sentences.push(cardRefundAboveRecordedSentence(aboveRecordedLabel));
     addFinding(findings, {
       code: "LATE_CAPTURE_CARD_REFUND_RECORD_BY_HAND",
       severity: "warning",
-      summary: `A late card payment's Xero receipt was resolved by hand, so the app raises no refund note for the card refunds of it${record}${mayBeInXero(mayBeInXeroCents, mayBeInXeroLabel)} ${RECORD_BY_HAND_REMINDER}`,
+      summary: `${sentences.join(" ")} ${RECORD_BY_HAND_REMINDER}`,
       safeToAutoApply: false,
-      details: { paymentId, paymentIntentId, recordByHandCents: cents, ...mayBeInXeroDetail(mayBeInXeroCents) },
+      details: {
+        paymentId,
+        paymentIntentId,
+        recordByHandCents: unnoted ? cents : 0,
+        ...mayBeInXeroDetail(unnoted ? mayBeInXeroCents : 0),
+        ...(aboveRecordedCents > 0 ? { aboveRecordedCents } : {}),
+      },
       actionKeys: [],
     });
   }

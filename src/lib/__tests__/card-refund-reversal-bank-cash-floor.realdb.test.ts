@@ -21,8 +21,10 @@
  * - account credit beside the bank cash;
  * - the cap binding: card refunds still counted plus the close's cash above
  *   what was captured;
- * - a cancel's card refund shortfall, and a hand-back paid through the real
- *   allocation that #4162's unwind took back, never counted (owner, 26 Oct 2026);
+ * - a hand-back paid through the real allocation that #4162's unwind took
+ *   back, never counted (owner, 26 Oct 2026); a completed card refund
+ *   shortfall does count since #4488 (owner, 11 Nov 2026), proven in
+ *   `card-refund-reversal-shortfall-floor.realdb.test.ts`;
  * - the close and the late refund racing in both orders, a failure racing a
  *   second close in both orders, and a failure rolled back with its caller.
  *
@@ -581,8 +583,8 @@ const B: Charge = { id: TXN_B, intent: INTENT_B, charge: CHARGE_B, cents: CHARGE
       });
     });
 
-    describe("only Paid another way closes count (owner, 26 Oct 2026)", () => {
-      it("a completed card refund shortfall and a bank hand-back #4162 undid raise no floor: with no close, the failure goes to $0", async () => {
+    describe("an ordinary bank hand-back never counts (owner, 26 Oct and 11 Nov 2026)", () => {
+      it("a bank hand-back #4162 undid raises no floor: with no close, the failure goes to $0", async () => {
         await seedPayment({ charges: [A] });
         await seedDeadRefund({ slices: [{ charge: A, cents: CHARGE_A_CENTS }] });
         // A bank hand-back paid back through the real allocation (the mirror holds it), then
@@ -595,7 +597,7 @@ const B: Charge = { id: TXN_B, intent: INTENT_B, charge: CHARGE_B, cents: CHARGE
           await reconcilePaymentAggregates({ paymentId: PAYMENT_ID, store: tx });
         });
         expect(await mirrors()).toEqual({ payment: 0, charges: { [TXN_A]: 0 }, retained: CHARGE_A_CENTS });
-        // Completed records whose cash no longer stands in this total, or is outside this repair.
+        // A completed record whose cash no longer stands in this total, and the follow-up #4162 raised for it.
         const handBack = await prisma.manualRefundTask.create({
           data: {
             bookingId: BOOKING_ID,
@@ -618,20 +620,6 @@ const B: Charge = { id: TXN_B, intent: INTENT_B, charge: CHARGE_B, cents: CHARGE
             amountCents: CHARGE_A_CENTS,
             reason: "Refund to re-confirm (race 4280)",
             reviewContext: { bankRefundVoidFollowUp: { originalTaskId: handBack.id } },
-          },
-        });
-        await prisma.manualRefundTask.create({
-          data: {
-            bookingId: BOOKING_ID,
-            paymentId: PAYMENT_ID,
-            kind: "CANCELLED_BOOKING_HAND_BACK",
-            status: "COMPLETED",
-            // Its record alone: card shortfalls are outside this bounded repair (owner, 26 Oct 2026).
-            occurrenceKey: `cancel-card-shortfall:${BOOKING_ID}:race-4280`,
-            amountCents: CHARGE_A_CENTS,
-            completedAt: NIGHT,
-            completedByMemberId: OFFICER_ID,
-            reason: "Card refund shortfall paid back (race 4280)",
           },
         });
 

@@ -98,7 +98,7 @@ export async function loadBookingDetail(id: string) {
               type: true,
               description: true,
               internal: true,
-              workPartyEvent: { select: { name: true } },
+              workPartyEvent: { select: { id: true, name: true } },
             },
           },
         },

@@ -679,16 +679,25 @@ const CENSUS_CEILING = {
   // descriptions: the moved builders for the guest and night-range text, the
   // sender for its own narration. Same benign split shape as #3128 and #3232.
   // Re-measured by RUNNING this suite on the merged tree.
-  dateOnlyImporters: 224, // 224 -> 223 (#4915): the data-export route left; the subject access export reads dates through club-time. 228/232 -> 231 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #77's one, zone-free, on upstream's 228. Re-measured by RUNNING this suite on the merged tree.
+  // 224 -> 227 (#5005, `INV-CAP-040`): the booking import's `parse.ts`,
+  // `plan.ts` and `resolve.ts`, all the zone-free direction. They read and step
+  // a file's `yyyy-MM-dd` arrival and departure dates (`parseDateOnly`,
+  // `countNightsDateOnly`, `eachDateOnlyInRange`, `addDaysDateOnly`,
+  // `formatDateOnly`) as stored lodge nights. None takes a `timeZone`; the
+  // club's today is resolved by the caller through `club-time` before any
+  // transaction and passed in. Re-measured by RUNNING this suite on the
+  // merged tree.
+  dateOnlyImporters: 227, // 224 -> 223 (#4915): the data-export route left; the subject access export reads dates through club-time. 228/232 -> 231 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #77's one, zone-free, on upstream's 228. Re-measured by RUNNING this suite on the merged tree.
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *
    * Counted here because it is the one class on the issue's census list that no
    * lint selector reaches: a constructor, not a method call. Both live sites are
-   * reviewed report-surface adapters, so this is a recurrence counter rather
-   * than a backlog.
+   * in one reviewed report-surface adapter, so this is a recurrence counter
+   * rather than a backlog. 3 -> 2 (#5258): the report charts' `host-local-day.ts`
+   * left; the chart labels format through the club-time kernel.
    */
-  localMidnightConstructions: 3,
+  localMidnightConstructions: 2,
 } as const;
 
 describe("the escape-hatch census is exact, and only ever revised downward", () => {
@@ -799,16 +808,14 @@ describe("the classes CT-6 closed are at zero, and stay there", () => {
       file,
       count: findLocalMidnightConstruction(read(file)),
     })).filter((entry) => entry.count > 0);
-    // Three, in two files, both already reviewed: the admin report surface's
-    // own `host-local-day.ts`, which says what it is in its name, and
-    // `admin-dataset-reset-state.ts`, which is on the `date-fns` ratchet for
-    // the same report-bucketing reason. A FOURTH would not have been noticed
-    // before this counter existed, which is the whole point of adding it.
+    // Two, in one already-reviewed file: `admin-dataset-reset-state.ts`, which
+    // is on the `date-fns` ratchet for the report-bucketing reason. A THIRD
+    // would not have been noticed before this counter existed, which is the
+    // whole point of adding it.
     expect(
       offenders.map((entry) => entry.file).sort(),
       offenders.map((entry) => entry.file + ": " + entry.count).join("\n"),
     ).toEqual([
-      "src/app/(admin)/admin/finance/reports/_components/host-local-day.ts",
       "src/lib/admin-dataset-reset-state.ts",
     ]);
     expect(

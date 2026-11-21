@@ -207,9 +207,35 @@ export async function sumRefundCreditNoteCoverageCents(
 }
 
 /**
+ * #4383 delta review (money): the same live reversals
+ * `sumRefundCreditNoteCoverageCents` subtracts, by the close that queued each
+ * (`closeTaskId`), so a reader can tell which refunds a reversal answered. A
+ * link naming no close is left out; it still counts in that sum.
+ */
+export async function readLiveCardRefundReversalCentsByClose(
+  paymentId: string,
+  db: Pick<Prisma.TransactionClient, "xeroObjectLink"> = prisma,
+): Promise<Map<string, number>> {
+  const links = await db.xeroObjectLink.findMany({
+    where: activeCardRefundReversalLinksWhere(paymentId),
+    select: { role: true, metadata: true },
+  });
+  const centsByClose = new Map<string, number>();
+  for (const link of links ?? []) {
+    const closeTaskId = (link.metadata as { closeTaskId?: unknown } | null)?.closeTaskId;
+    const cents = reversalLinkCents(link);
+    if (typeof closeTaskId === "string" && closeTaskId.length > 0 && cents > 0) {
+      centsByClose.set(closeTaskId, (centsByClose.get(closeTaskId) ?? 0) + cents);
+    }
+  }
+  return centsByClose;
+}
+
+/**
  * The active reversal-invoice links of one payment, or of many (#4936). The one
- * filter `sumRefundCreditNoteCoverageCents` and its bulk counterpart
- * `readCardRefundReversalCentsByPayment` select by (`INV-SSOT`). #4370: with
+ * filter `sumRefundCreditNoteCoverageCents`, its bulk counterpart
+ * `readCardRefundReversalCentsByPayment` and its per-close counterpart
+ * `readLiveCardRefundReversalCentsByClose` select by (`INV-SSOT`). #4370: with
  * `retired`, also the links a voided or deleted invoice retired.
  */
 function activeCardRefundReversalLinksWhere(

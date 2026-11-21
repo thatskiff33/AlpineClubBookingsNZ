@@ -486,6 +486,53 @@ describe("sanitiser round-trip", () => {
     expect(documents[2].contentHtml).toBe("");
   });
 
+  it("renders an author's h1 as an h2 for readers but keeps it for the editor (#5218)", async () => {
+    mocks.auth.mockResolvedValue(adminSession);
+    const stored = "<h1>Opening</h1><p>Shutters</p>";
+    mocks.lodgeInstructionFindMany.mockResolvedValue([
+      { key: "OPEN", contentHtml: stored, updatedAt: new Date("2026-06-10T00:00:00Z") },
+    ]);
+
+    const documents = await getSanitizedLodgeInstructions();
+    expect(documents[0].contentHtml).toBe("<h2>Opening</h2><p>Shutters</p>");
+
+    const response = await adminGET(
+      new NextRequest("http://localhost/api/admin/lodge-instructions"),
+    );
+    const body = (await response.json()) as {
+      documents: { key: string; contentHtml: string }[];
+    };
+    expect(body.documents.find((doc) => doc.key === "OPEN")?.contentHtml).toBe(stored);
+  });
+
+  it("stores an author's h1 as written", async () => {
+    mocks.auth.mockResolvedValue(adminSession);
+    mocks.lodgeInstructionFindFirst.mockResolvedValue(null);
+    mocks.lodgeInstructionCreate.mockImplementation(
+      async ({ data }: { data: { key: string; contentHtml: string } }) => ({
+        id: "lodge-instruction-open",
+        key: data.key,
+        contentHtml: data.contentHtml,
+        updatedAt: new Date("2026-06-11T00:00:00Z"),
+        lodgeId: null,
+      }),
+    );
+
+    const response = await adminPUT(
+      new NextRequest("http://localhost/api/admin/lodge-instructions", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ key: "OPEN", contentHtml: "<h1>Opening</h1>" }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.lodgeInstructionCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ contentHtml: "<h1>Opening</h1>" }),
+      }),
+    );
+  });
+
   it("round-trips save and render without altering safe content", async () => {
     mocks.auth.mockResolvedValue(adminSession);
     mocks.lodgeInstructionFindFirst.mockResolvedValue(null);

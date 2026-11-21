@@ -93,6 +93,11 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   GroupBooking: SHARED,
   GroupBookingJoin: SHARED,
   GroupBookingSettlement: SHARED,
+  // #5005: a paid-booking import. The imported booking and its payment are in
+  // `bookings`; the batch spans every booking in a file, and a row is one
+  // booking's whole party with no subject-only filter.
+  BookingImportBatch: OPERATIONAL,
+  BookingImportRow: SHARED,
   BookingRequest: "bookingRequests",
   BookingRequestPendingAdultReservationNight: SHARED,
   BookingRequestQuote: SHARED,
@@ -198,6 +203,10 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   MemberCredit: "credits",
   MemberCreditNoteAllocation: "credits",
   AdminCreditAdjustmentRequest: "additionalRecords.AdminCreditAdjustmentRequest",
+  // #5204: keyed by Xero contact; the rows matched by the member's xeroContactId.
+  XeroCashCredit: "additionalRecords.XeroCashCredit",
+  MemberCreditCashAllocation: "credits",
+  MemberCreditCashReturn: "credits",
   PublicContentSettings: CLUB_CONFIG,
   RefundRequest: "refundRequests",
   CommitteeRole: CLUB_CONFIG,

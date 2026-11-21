@@ -66,6 +66,7 @@ const REVIEWED: Record<string, Classification> = {
   "src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts|PAID|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "an officer confirms a $0 pending booking (#4738)" },
   "src/app/api/bookings/[id]/confirm-draft/route.ts|PAID|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "a $0 draft confirms (#4738)" },
   "src/app/api/bookings/[id]/waitlist-confirm/route.ts|PAID|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "a $0 waitlist offer confirms (#4738)" },
+  "src/lib/booking-import/write.ts|PAID|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "an imported free stay confirms (#5005); a paid one settles through the settle" },
   "src/lib/cron-confirm-pending.ts|PAID|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "the cron confirms a $0 provisional booking (#4738)" },
   // --- CANCELLED: a cancellation ---
   "src/lib/booking-cancel.ts|CANCELLED|5": { kind: "POSTS", call: "postCancellationLedgerLines", why: "every cancel path: R04, pending or confirmed" },

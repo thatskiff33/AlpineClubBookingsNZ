@@ -105,6 +105,7 @@ import type { ClubTimeZone } from "@/lib/club-time";
 import logger from "@/lib/logger";
 import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
 import { supplementaryInvoicesMovedOffIntentWhere } from "@/lib/supplementary-invoice-parked-from";
+import { SUPPLEMENTARY_INVOICE_CREATE_WHERE } from "@/lib/xero-supplementary-invoice-statuses";
 
 /**
  * #3635 (owner decision 29 Sep 2026): a late capture a treasurer KEPT on a
@@ -763,7 +764,7 @@ describe("#4324: a kept change capture on an invoiced booking", () => {
       expect(mocks.enqueueXeroKeptLateCaptureInvoiceOperation).not.toHaveBeenCalled();
       expect(mocks.operationUpdateMany).toHaveBeenCalledTimes(1);
       expect(mocks.operationUpdateMany).toHaveBeenCalledWith({
-        where: { id: "op_retired", status: "CANCELLED", lastErrorCode: "STALE_WAITING_PAYMENT" },
+        where: { ...SUPPLEMENTARY_INVOICE_CREATE_WHERE, id: "op_retired", status: "CANCELLED", lastErrorCode: "STALE_WAITING_PAYMENT" },
         data: {
           status: "PENDING",
           startedAt: null,

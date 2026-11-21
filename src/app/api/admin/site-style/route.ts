@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit";
 import {
   MissingLogoImageError,
+  UncleanLogoError,
   getClubThemeForAdmin,
   saveClubTheme,
 } from "@/lib/club-theme";
@@ -153,6 +154,12 @@ export async function PUT(request: NextRequest) {
         },
         { status: 409 },
       );
+    }
+
+    // An inline logo that could not be confirmed free of hidden details
+    // (#5244): the admin needs a fresh copy, so say why in plain words.
+    if (error instanceof UncleanLogoError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
     // Config-transfer apply holds the ClubTheme row for its whole bundle

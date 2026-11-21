@@ -7,6 +7,7 @@
  * non-zero amount.
  */
 
+import { bookingHasExternalSettlement, externalSettlementSkipReason } from "@/lib/booking-external-settlement";
 import {
   Invoice,
   Invoices,
@@ -328,9 +329,8 @@ export async function createXeroInvoiceForBooking(
   // is sent, the ids are logged at warn, and the sync operation is closed with
   // a NON-SUCCEEDED terminal status carrying a populated reason, so it is
   // visible to an operator and never silently replayed.
-  if (booking.payment.manuallyMarkedPaidAt) {
-    const skipReason =
-      "Booking was manually marked paid (cash / off-Xero) after this invoice operation was queued — no Xero invoice is expected, so none was created and nothing was emailed (#2262).";
+  if (bookingHasExternalSettlement(booking)) {
+    const skipReason = externalSettlementSkipReason(booking.payment);
     logger.warn(
       {
         bookingId,

@@ -197,6 +197,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-CAP-036` | A shared double losing its primary auto-promotes the survivor, audited |
 | `INV-CAP-037` | At most one live payment link per booking; never both settle |
 | `INV-CAP-038` | A whole-lodge hold excludes custodian-held bed-nights; the reverse asks, then amends atomically |
+| `INV-CAP-040` | An import claims beds under the lodge lock, never overbooks |
 | `INV-CAP-011` | Waitlisted and offered bookings hold no capacity until confirmed |
 | `INV-CAP-012` | A waitlist offer reprices at current rates and states what is payable |
 | `INV-CAP-013` | A member is present on only one live booking per lodge night |
@@ -358,7 +359,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-137` | An IB organiser-paid joiner's refund goes to the organiser, on its mirror |
 | `INV-PAY-139` | A change capture nothing else records is recorded once, against its invoice |
 | `INV-PAY-140` | A superseded card change's waiting invoice follows the carrying request |
-| `INV-PAY-141` | A card refund's reversal keeps Paid another way bank cash |
+| `INV-PAY-141` | A card refund's reversal keeps its bank-paid closes and shortfalls |
 | `INV-PAY-142` | A refund failing after a Paid another way close is held |
 | `INV-PAY-143` | An unminted approved whole-lodge booking reprices as unpaid |
 | `INV-PAY-144` | A kept change capture is recorded by the document its evidence names |
@@ -378,6 +379,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-158` | A saved-card claim is marked durably and recovered when stranded |
 | `INV-PAY-159` | Cash cover is read from cash records by one reader |
 | `INV-PAY-160` | An edit refunds a card only where Stripe holds a record |
+| `INV-PAY-161` | An imported paid booking is settled manually in its creating transaction |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -498,6 +500,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-060` | An ordinary price ask's door and replay send one Stripe request |
 | `INV-MOD-061` | An edit's card refund and its replay send one Stripe request |
 | `INV-MOD-062` | An edit settles only the figures its preview showed |
+| `INV-MOD-063` | An officer's work-party correction prices a started stay whole |
 
 ### Adult-member hosting
 
@@ -859,7 +862,7 @@ is now `INV-OPS-005` to `INV-OPS-011` in
 | `INV-LIFE-019` | `NOT_APPLICABLE` has no `AgeTierSetting` row and sits outside every age-based automation |
 | `INV-LIFE-084` | Committee assignment is presentation only; contact routing per assignment via `contactEmailMode` |
 | `INV-LIFE-085` | Member photos: scoped endpoint only; public only when rostered and displayed |
-| `INV-LIFE-086` | Every stored image has EXIF/XMP metadata stripped; member-photo path fails closed |
+| `INV-LIFE-086` | Every stored image has hidden metadata removed; unconfirmed images are refused |
 | `INV-LIFE-087` | Seasonal membership type governs pricing and lockout, never access or committee |
 | `INV-LIFE-093` | Full and Non-Member stay active with fixed booking rules; drift is repairable |
 | `INV-LIFE-020` | 2FA on: the JWT claim flips only via a server-minted challenge |
@@ -969,6 +972,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-038` | An abandoned inbound reconcile row is taken over, never shared |
 | `INV-INT-039` | A dead webhook attempt is taken over past the lease |
 | `INV-INT-040` | No subscription or joining-fee invoice work while Xero is off |
+| `INV-INT-041` | A PENDING outbox row always holds a request the outbox can claim |
 
 ## Operations
 

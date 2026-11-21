@@ -22,6 +22,7 @@ sequencing):
 | `BookingWaitlistAlternateLodge` | direct `lodgeId` junction | ADR-004 cross-lodge waitlist opt-in: lodges a waitlisted member would also accept; rows only widen what the processor may offer |
 | `BookingGuest` / `BookingGuestNight` | via `Booking` | no direct FK |
 | `BookingRequestPendingAdultReservationNight` | direct `lodgeId` | unnamed SCHOOL adult capacity, one count per request/night; always matches the held booking's immutable lodge, released with that hold (#3413) |
+| `BookingImportBatch` / `BookingImportRow` | direct `lodgeId` | a paid-booking import is one lodge per batch (#5005); the row copies the batch's lodge so a Booking Ref imports once per lodge (`INV-CAP-040`), and each imported booking's own `lodgeId` matches it |
 | `GroupBooking` | via organiser `Booking` | one group = one lodge (ADR-001 open question 1) |
 | `ChoreTemplate` | direct `lodgeId` | roster generation filters by lodge |
 | `LodgeSettings` | per-lodge row | converted from singleton |
@@ -96,6 +97,16 @@ M4b receipt adapters scope every settlement line, application read and residue
 transfer by the Payment's immutable booking id. Receipt legs carry that booking's
 actual lodge; no default-lodge lookup occurs. The owner-run receipt census spans
 all R01 bookings across lodges; each catch-up transaction locks only its Payment.
+
+## Xero cash credits (#5204)
+
+`XeroCashCredit`, `MemberCreditCashAllocation` and `MemberCreditCashReturn`
+are club-wide. A `XeroCashCredit` is a snapshot of one overpayment or
+prepayment in the club's one Xero organisation: money a contact paid the
+club, not any lodge. A cash allocation names its booking as a bare id, the way
+`MemberCreditNoteAllocation` does, and the booking carries the lodge. A
+return row names a credit restoration and a slice, which identify the same
+booking. None of the three gets a `lodgeId`.
 
 ## Club-Wide Defaults With Per-Lodge Overrides
 
