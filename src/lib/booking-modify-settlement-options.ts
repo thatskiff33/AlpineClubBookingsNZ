@@ -97,7 +97,7 @@ export async function editReductionDisputeHold(
 }
 
 /**
- * #5212 (`INV-PAY-159`): does a reduction on this card-paid booking have a card
+ * #5212 (`INV-PAY-160`): does a reduction on this card-paid booking have a card
  * to go back to? Only where Stripe holds a record of the payment - otherwise
  * the refund is the treasurer's to send by bank transfer, as an Internet
  * Banking payment's is, and no card refund is promised or owed. A joiner the

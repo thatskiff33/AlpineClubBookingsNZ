@@ -264,7 +264,7 @@ async function enqueueLedgerRefundRecovery({
   allocationPlan?: RefundAllocationSlice[];
   store?: PaymentRecoveryStore;
 }) {
-  // #5212 (`INV-PAY-159`): the read an edit asked before it promised this debt.
+  // #5212 (`INV-PAY-160`): the read an edit asked before it promised this debt.
   const representativePaymentIntentId = await readRefundableCardIntentId(store, paymentId);
 
   if (!representativePaymentIntentId) {

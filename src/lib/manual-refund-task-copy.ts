@@ -38,7 +38,6 @@ import {
 } from "@/lib/manual-refund-task-settlement-rules";
 import { namedDisputes, STRIPE_DISPUTE_STATUS_LABEL } from "@/lib/stripe-dispute-note";
 import { formatCents } from "@/lib/utils";
-import type { EditReviewStillOwedPreview } from "@/lib/edit-financial-review-still-owed";
 
 /**
  * A completion at zero stays refused, and the refusal names the way out.
@@ -253,62 +252,15 @@ export function completionSummary(shape: CompletionSettlementShape): string {
 }
 
 /**
- * #4317 (owner decision on #4302; review rounds 3 and 6 wording): the officer's
- * warning on an OPEN edit review one of whose MOVED guests was removed from the
- * booking after the review was raised (`editFinancialReviewGuestsRemovedSinceRaised`).
- * The removal credited that guest's STORED total, which a parked edit never
- * changed (`INV-MOD-040`): it still held the nights the edit gave back, and
- * never held the nights it added. So settling could credit given-back nights
- * again, or charge for added nights the guest no longer holds - each strand is
- * warned in the direction it moved, a mixed one in both. The review may still
- * hold money owed for another guest, so it asks for a check, not a dismissal.
- *
- * The guest is named the way the settle card's evidence block names it - its
- * ordinal on a several-guest item, and its stored total - because the payload
- * carries no guest id and the guest's row is gone.
+ * #4344 (wave C1 of #4302): the resolve route's refusal for an officer edit
+ * review. The review is retired - every edit is priced automatically, and wave
+ * B closed every open one - so nothing settles or dismisses one any more. Said
+ * in words a stale settle screen's officer can act on: there is nothing left to
+ * do, and the record is still there. The finance queue's card for a retired
+ * review shows this same sentence, so the card and the route cannot drift.
  */
-export function reviewGuestRemovedSinceRaisedWarning(
-  guest: { ordinal: string | null; guestTotalCents: number | null; gaveNightsBack: boolean; addedNights: boolean },
-  format: ClubFormat,
-): string {
-  const who = guest.ordinal ?? "This review's guest";
-  const stored =
-    guest.guestTotalCents !== null ? `, stored at ${formatCents(guest.guestTotalCents, format)},` : "";
-  const risks = [
-    ...(guest.gaveNightsBack
-      ? ["the nights this change gave back were already credited with this guest's stored total, so settling could credit those nights again"]
-      : []),
-    ...(guest.addedNights
-      ? ["the nights this change added were never part of this guest's stored total, so settling could charge for nights this guest no longer holds"]
-      : []),
-  ];
-  return `${who}${stored} was removed from the booking after this review was raised. Check Xero and the booking before settling: ${risks.join("; and ")}.`;
-}
-
-/**
- * #3191: the second half of the receipt, when the officer also said what the
- * booking's unpriced nights sold for.
- *
- * Appended rather than folded into the sentences above, because it is a
- * different claim about a different thing - one says what happened to the money,
- * this says what the booking now records - and it has to be able to follow a
- * DISMISSAL, which those sentences never describe. Empty when nothing was
- * recorded, which is the ordinary case.
- *
- * IT CLAIMS THE GUEST AND NOT THE BOOKING: one review names one guest's nights.
- * It used to add that those nights would no longer send the booking back for
- * review, and that another guest's blanks still could. #4317 (epic #4302) prices
- * every edit from stored data, so no edit sends a booking for review any more
- * and that promise is true of every booking; it is dropped rather than kept as a
- * gain the officer did not make. This receipt goes with the settle screen in
- * wave C.
- */
-export function nightPricesRecordedMessage(count: number): string {
-  if (count === 0) return "";
-  return count === 1
-    ? " One night's price was recorded for this guest."
-    : ` ${count} nights' prices were recorded for this guest.`;
-}
+export const RETIRED_EDIT_REVIEW_REFUSAL =
+  "Officer edit reviews were retired, so this review stays as it is and cannot be settled or closed here. What was recorded for it is still on the booking's history. Reload the page.";
 
 /**
  * #3213: what an officer is told a DISMISSAL actually did.
@@ -348,38 +300,12 @@ export function dismissalMessage(
 }
 
 /**
- * #3835: what the settle dialog tells the officer, BEFORE completing, about a
- * share on a cancelled booking - the figure the completion will actually
- * settle (`previewEditReviewStillOwed`), so money handed back by hand is the
- * netted amount, not the typed share. Null where there is nothing to add.
- */
-export function stillOwedNoticeText(preview: EditReviewStillOwedPreview | null, format: ClubFormat): string | null {
-  if (preview === null) return null;
-  if ("refusal" in preview) return preview.refusal;
-  const { shareCents, stillOwedCents, captureCents, creditCents, route } = preview;
-  const owed = formatCents(stillOwedCents, format);
-  const capture = formatCents(captureCents, format);
-  const credit = formatCents(creditCents, format);
-  // #3835: a capture never takes the credit's part, so a split is always said.
-  const split = route !== "account-credit" && creditCents > 0
-    ? { "hand-back": captureCents > 0 ? `hand back ${capture}, not the full share, and ${credit} goes back as account credit` : `hand nothing back: ${credit} goes back as account credit`, card: captureCents > 0 ? `${capture} to the card and ${credit} as account credit` : `${credit} as account credit, nothing to the card` }[route]
-    : null;
-  if (stillOwedCents >= shareCents && split === null) return null;
-  if (stillOwedCents >= shareCents) return `The ${formatCents(shareCents, format)} share goes back in two parts - ${split}.`;
-  if (stillOwedCents === 0) {
-    return `Nothing of this share is still owed: the booking's cancellation already returned it.${route === "hand-back" ? " Do not hand anything back." : ""} Completing records no refund.`;
-  }
-  const then = split ?? { "hand-back": `hand back ${owed}, not the full share`, card: `${owed} will be refunded to the card`, "account-credit": `${owed} will be credited` }[route];
-  return `Only ${owed} of the ${formatCents(shareCents, format)} share is still owed after the booking's cancellation - ${then}.`;
-}
-
-/**
  * #3827, #3949 (`INV-PAY-137`): THE REASON LINE of an edit's refund hand-back
  * (`INV-PAY-117`) and of an approved appeal's (`INV-PAY-118`), as the finance
  * queue shows it - naming who the bank transfer goes to. A joiner's booking the
  * group organiser paid for by internet banking is refunded to the ORGANISER
  * (owner decision on #3949, 21 Oct 2026), never to the joiner, so the officer
- * paying it must be told whose account to send it to. #5212 (`INV-PAY-159`):
+ * paying it must be told whose account to send it to. #5212 (`INV-PAY-160`):
  * the member wording also covers a card payment Stripe holds no record of,
  * which has no card to refund and so arrives here too.
  */

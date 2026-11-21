@@ -15,7 +15,12 @@
 
   One limit remains: on most of these bookings the treasurer cannot yet mark
   the task paid back, because there is no card charge on record to set the
-  refund against. Pay the member and leave the task open until that is fixed.
+  refund against. **Such an open task may already have been paid**, so it can
+  look unpaid when it is not: before paying one, check Xero and the club's
+  bank account for a refund already sent for that booking. After paying,
+  record the refund in Xero against the change's credit note, tell the other
+  finance officers (the booking, the amount and the date paid) and your club
+  administrator, and leave the task open until #5290 lets you close it.
 
   Nothing already recorded is changed. If an earlier edit left a card refund
   owed on such a booking, it stays as it was and still needs settling by hand.

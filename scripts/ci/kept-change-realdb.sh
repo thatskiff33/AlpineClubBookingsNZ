@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Disposable, loopback-only PostgreSQL proof for #4324, #3403 and #4930 in Sekreton.
+# Disposable, loopback-only PostgreSQL proof for #4324, #3403, #4930 and #4069 in Sekreton.
 set -euo pipefail
 
 # The cluster start lives in one sourced helper (INV-SSOT); it sets pg_dir,
@@ -18,6 +18,8 @@ export TMPDIR=/tmp/scratch
 export NODE_OPTIONS=--max-old-space-size=1800
 pnpm run db:migrate
 files=(
+  # #4069: cash-cover evidence and snapshot coherence over the real writers.
+  src/lib/__tests__/booking-cash-evidence.realdb.test.ts
   src/lib/__tests__/kept-change-capture-record.realdb.test.ts
   src/lib/__tests__/superseded-ask-invoice-carry.realdb.test.ts
   src/lib/__tests__/additional-capture-receipt.realdb.test.ts

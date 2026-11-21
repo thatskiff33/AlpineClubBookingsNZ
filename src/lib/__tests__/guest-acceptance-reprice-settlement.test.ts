@@ -638,7 +638,7 @@ describe("an internet-banking reduction asks the treasurer to send it back (D-38
     );
   });
 
-  it("MUTATION (#5212, INV-PAY-159): a card payment with no Stripe record goes the same way - one task, no card refund owed or asked", async () => {
+  it("MUTATION (#5212, INV-PAY-160): a card payment with no Stripe record goes the same way - one task, no card refund owed or asked", async () => {
     // Drop `editRefundHasCardToReturnTo` from the settlement and this reserves a
     // card refund the payment has no intent for, with no task and the card wording.
     const loaded = booking({ payment: { ...booking().payment, stripePaymentIntentId: null } });

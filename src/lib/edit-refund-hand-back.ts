@@ -51,7 +51,7 @@ import { paymentDisputedCaptureCents, type HoldingDispute } from "@/lib/stripe-d
  * money (`refundAmountCents`, never the account-credit arm) and that money is
  * not the card's to return (`hasSucceededPayment`, the same test that decides
  * whether a Stripe refund runs): it was not captured through Stripe, or
- * (#5212, `INV-PAY-159`) it was a card payment Stripe holds no intent for
+ * (#5212, `INV-PAY-160`) it was a card payment Stripe holds no intent for
  * (`editRefundHasCardToReturnTo`). Or (#5061 follow-up, `INV-PAY-154`) it is
  * the card's, but a Stripe dispute holds it (`refundHeldForDispute`), so the
  * treasurer settles it. The one spelling for every door.

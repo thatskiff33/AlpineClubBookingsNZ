@@ -1869,7 +1869,7 @@ and **`INV-PAY-147`** (slice evidence).
 - A planning failure that is not a database error writes the whole debt with
   no plan; the edit still commits and reports `own_card_pending`, as does any
   incomplete refund. A payment with no Stripe intent is promised no card
-  refund (`INV-PAY-159`). Officers hear of a refusal when it moves the row.
+  refund (`INV-PAY-160`). Officers hear of a refusal when it moves the row.
 - Date edits, batch edits, guest removals and guest-acceptance reprice share this
   door.
 - Proven by `modification-refund-replay-reason.test.ts`, `payment-recovery.test.ts`,
@@ -2712,7 +2712,7 @@ _Legacy: settles tasks raised before #4317._
 - **A price reduction the club returns by hand raises ONE officer refund
   task** (#3827; owner decision D-3813-6 on #3492). When a batch modify, date
   change, guest removal or acceptance re-price lowers a booking paid outside
-  Stripe (internet banking, cash, `INV-PAY-159`'s card) and the reduction goes
+  Stripe (internet banking, cash, `INV-PAY-160`'s card) and the reduction goes
   back as money, not credit, the
   edit raises a `ManualRefundTask` for that refund inside its own transaction,
   under its locks, with no provider call. `raiseEditRefundHandBackIfOwed`
@@ -3927,9 +3927,9 @@ _Split from `INV-PAY-057` (#3220)._
   payment, a stored credit election's cap, a review share's covered test and
   invoice reduction, and each joiner's group share and invoice; confirmation
   emails quote worth. Both card intents, pay-link and booking pages (nothing
-  due at or below zero), the dashboard's Payment Owed card and
-  exception-approved and pay-link emails read `readBookingAmountOwed` (#4058,
-  #3991, #4944).
+  due at or below zero), the dashboard's Payment Owed card and pay-link emails
+  read `readBookingAmountOwed` (#4058, #3991, #4944; approval email:
+  `INV-PAY-159`).
   An edit's credit clamp, zero-dollar decision and stale-intent comparison
   read worth; a guest's acceptance nets credit to the price, its return route
   admitting only credit and cash summing to it.
@@ -3953,7 +3953,7 @@ _Split from `INV-PAY-057` (#3220)._
   `booking-detail-history-amount-owed.test.ts`,
   `booking-change-request-execution.realdb.test.ts`,
   `xero-primary-invoice-fee-gap.test.ts`,
-  `primary-invoice-edit-race.realdb.test.ts` and
+  `primary-invoice-edit-race.realdb.test.ts`,
   `unpaid-edit-change-fee-owed.realdb.test.ts`.
 
 ## INV-PAY-124
@@ -4413,6 +4413,44 @@ window), **`INV-LOCK-001`** to **`INV-LOCK-003`**.
   `saved-card-claim-recovery.realdb.test.ts`.
 
 ## INV-PAY-159
+
+**Related: `INV-PAY-119`**, **`INV-PAY-150`**, **`INV-PAY-154`**,
+**`INV-MONEY-037`**.
+
+- **Whether a booking is covered is decided from its cash records, by one
+  reader** (#4069). Status is lifecycle, never proof of payment: CONFIRMED can
+  owe a whole bank transfer, and PAID with a part-refunded payment can be
+  covered. `readBookingCashCover` answers `covered`, `owes`, `organiser_pays`
+  or `unknown`.
+- **Owed** is `bookingAmountOwedCents`, credit read once. **Held** is Net
+  Collected's cash half (`getNetCollectedCashParts`): captured cash less
+  recorded refunds, open hand-backs, card refunds not yet paid and late
+  captures, each capped. A refund owed leaves the open operand in the snapshot
+  its paid form lands, so it comes off once. A superseded capture being sent
+  back is never cover: until its refund row exists its in-flight cancel row
+  owns it (`supersededCaptureHeldBack`).
+- **Evidence.** The payment counts only where its captured
+  `PaymentTransaction` rows agree with it; a PENDING or PROCESSING face amount
+  never counts. Back-filled history, a bank receipt holding a stored figure,
+  unproven refunds, an open or lost dispute (the organiser's combined capture
+  included), a booking not live and an organiser share the frozen settlement
+  cannot prove answer `unknown`, which no caller turns into paid, unpaid, zero
+  due or a personal demand.
+- **Group children.** An organiser-settled child never counts the parent's
+  cash; its share counts only where `planGroupChildLines` proves it. A joiner
+  the organiser pays for, and a bank-paid child's later rise, are
+  `organiser_pays`: the member is never asked.
+- It writes nothing, takes no lock, calls no provider and reads through the
+  caller's client, in one `withReadOnlySnapshot` with what it is shown
+  beside. It never reads the ledger balance or `readBookingAmountOwed`
+  (unchanged). Ledger M11 (#4523) extends this reader; nothing adds a second.
+- First caller: `INV-EXCEPT-031`'s email. Surfaces still deciding from status:
+  [`paid-from-cash.md`](../design/paid-from-cash.md).
+- Proven by `booking-cash-evidence.test.ts`, its `.realdb` twin,
+  `booking-exception-approved-interleaving.test.ts` and
+  `amount-owed-one-home.test.ts`.
+
+## INV-PAY-160
 
 **Related: `INV-PAY-117`** (the edit's by-hand refund), **`INV-PAY-146`** (the
 edit's card refund debt).
