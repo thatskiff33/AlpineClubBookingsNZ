@@ -24,6 +24,7 @@
 import type { Prisma } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 
@@ -65,10 +66,11 @@ let retry: typeof import("@/lib/xero-operation-retry");
       ({ prisma } = await import("@/lib/prisma"));
       retry = await import("@/lib/xero-operation-retry");
       await deleteFixtures();
-      // Kept between runs: a repair's refund payment records an immutable export
-      // manifest (#4525) that references the booking, so it is upserted, never deleted.
-      // Inactive and archived, in both branches, so it never joins the active
-      // population another suite on this database counts (the induction baseline).
+      // Removed again in afterAll, so no suite later in the same database sees them
+      // (privacy retention counts a leftover inactive member as an undated former
+      // member). Upserted, so a run killed before its afterAll can start over the rows it left.
+      // Inactive and archived, in both branches, so while it exists it never joins the
+      // active population another suite counts (the induction baseline).
       const outOfPopulation = { active: false, archivedAt: new Date("2026-06-01T00:00:00.000Z") };
       await prisma.member.upsert({
         where: { id: MEMBER_ID },
@@ -94,9 +96,19 @@ let retry: typeof import("@/lib/xero-operation-retry");
 
     afterAll(async () => {
       if (!prisma) return;
-      await deleteFixtures();
-      if (mappingBefore) await prisma.xeroAccountMapping.update({ where: { key: SETTLEMENT_MAPPING }, data: mappingBefore });
-      else await prisma.xeroAccountMapping.deleteMany({ where: { key: SETTLEMENT_MAPPING } });
+      try {
+        await deleteFixtures();
+        // A repair's refund payment records an immutable export manifest (#4525) naming the
+        // booking (ON DELETE RESTRICT), so release it and any journal rows before the booking.
+        await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
+        // The booking holds the foreign keys to the lodge and the member, so it goes first.
+        await prisma.booking.deleteMany({ where: { id: BOOKING_ID } });
+        await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
+        await prisma.member.deleteMany({ where: { id: MEMBER_ID } });
+      } finally {
+        if (mappingBefore) await prisma.xeroAccountMapping.update({ where: { key: SETTLEMENT_MAPPING }, data: mappingBefore });
+        else await prisma.xeroAccountMapping.deleteMany({ where: { key: SETTLEMENT_MAPPING } });
+      }
     }, 60_000);
 
     /**
