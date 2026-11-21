@@ -237,6 +237,32 @@ async function readStoredPrimaryInvoiceLines(
   }
 }
 
+/**
+ * #5208: the lines every earlier attempt under a primary invoice's idempotency
+ * key stored, read before this attempt stores its own. An operation that failed
+ * after its request reached Xero leaves its key to the next, and Xero answers a
+ * replay with the invoice the first request raised. A read failure is "unknown":
+ * one entry no request matches, so the reply is not compared.
+ */
+async function readEarlierPrimaryInvoiceRequests(idempotencyKey: string): Promise<LineItem[][]> {
+  try {
+    const operations = await prisma.xeroSyncOperation.findMany({
+      where: { idempotencyKey },
+      select: { requestPayload: true },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    });
+    return operations.flatMap(({ requestPayload }) => {
+      const invoices = asRecord(requestPayload)?.invoices;
+      const lines = Array.isArray(invoices) ? asRecord(invoices[0])?.lineItems : undefined;
+      return Array.isArray(lines) ? [lines as LineItem[]] : [];
+    });
+  } catch (error) {
+    logger.error({ err: error, idempotencyKey }, "Could not read the earlier primary invoice requests");
+    return [[]];
+  }
+}
+
 export async function createXeroInvoiceForBooking(
   bookingId: string,
   options?: CreateXeroBookingInvoiceOptions
@@ -559,6 +585,8 @@ export async function createXeroInvoiceForBooking(
     ...(promoLineRecord ? { promoLines: promoLineRecord } : {}),
   };
 
+  // #5208: what earlier attempts under this key sent; Xero may answer this one with that attempt's invoice.
+  const earlierSentLines = await readEarlierPrimaryInvoiceRequests(invoiceIdempotencyKey);
   if (operationId) {
     await prisma.xeroSyncOperation.update({
       where: { id: operationId },
@@ -677,6 +705,9 @@ export async function createXeroInvoiceForBooking(
     if (!createdInvoice?.invoiceID) {
       throw new Error("Failed to create Xero invoice");
     }
+    // #5208: Xero must keep the GST sent on each line; a difference pauses the overrides. Never throws.
+    await recordXeroTaxOverrideMismatch({ xeroSyncOperationId: operationId!, bookingId, providerInvoiceId: createdInvoice.invoiceID,
+      invoiceNumber: createdInvoice.invoiceNumber ?? null, documentKind: "CREATE", sent: lineItems, returned: createdInvoice.lineItems ?? [], earlierSent: earlierSentLines });
 
     // Record payment against the invoice in Xero when real funds moved.
     // Xero already marks zero-total invoices as PAID and rejects $0 payments.
@@ -1063,9 +1094,6 @@ export async function createXeroInvoiceForBooking(
       { kind: "BUILT", bookingId, plan: manifestPlan, billedLines: createdInvoice.lineItems ?? lineItems },
       createdInvoice.invoiceID,
     );
-    // #5208: Xero must keep the GST sent on each line; a difference pauses the overrides. Never throws.
-    await recordXeroTaxOverrideMismatch({ xeroSyncOperationId: operationId!, bookingId, providerInvoiceId: createdInvoice.invoiceID,
-      invoiceNumber: createdInvoice.invoiceNumber ?? null, documentKind: "CREATE", sent: lineItems, returned: createdInvoice.lineItems ?? [] });
     await prisma.paymentTransaction.updateMany({
       where: {
         paymentId: booking.payment.id,

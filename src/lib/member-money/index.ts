@@ -17,6 +17,8 @@ export {
 export { postMemberMoneyEvent, resolveMemberMoneyPostingContext, reverseMemberMoneyJournal } from "./internal/post";
 export { MemberMoneyPostingConflictError } from "./internal/store";
 export { allocateTaxAcrossLines, splitTaxInclusiveGross } from "./internal/tax";
+// #5208: whether a new primary invoice carries the journal's GST on each line.
+export type { XeroTaxOverrides } from "./internal/primary-invoice-plan";
 // M3b (#4627): the rule mapping a legacy booking line to its journal component,
 // shared by the doors' adapter and the comparison census. The doors' own entry,
 // which reads settings through the server's client, is `./doors` (server-only),

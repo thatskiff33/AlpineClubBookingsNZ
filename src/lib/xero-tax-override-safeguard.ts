@@ -2,9 +2,9 @@ import { Prisma } from "@prisma/client";
 import type { LineItem } from "xero-node";
 import { buildStructuredAuditLogCreateArgs } from "@/lib/audit";
 import logger from "@/lib/logger";
-import type { XeroTaxOverrides } from "@/lib/member-money/internal/primary-invoice-plan";
+import type { XeroTaxOverrides } from "@/lib/member-money";
 import { prisma } from "@/lib/prisma";
-import { lineTaxMismatches } from "@/lib/xero-line-tax-mismatches";
+import { lineTaxAmountsMatch, lineTaxMismatches, type XeroLineTaxMismatch } from "@/lib/xero-line-tax-mismatches";
 import { invoiceLineItemsTotalCents } from "@/lib/xero-modification-line-items";
 
 /**
@@ -35,7 +35,7 @@ export interface XeroTaxOverrideMismatchView {
   providerInvoiceId: string;
   invoiceNumber: string | null;
   documentKind: "CREATE" | "UPDATE";
-  lines: { index: number; sentCents: number; xeroCents: number | null }[];
+  lines: XeroLineTaxMismatch[];
 }
 
 /**
@@ -79,9 +79,11 @@ export async function listOpenXeroTaxOverrideMismatches(): Promise<XeroTaxOverri
  * it and pause the overrides. Lines sent without a `taxAmount` are never
  * compared, so a document sent while paused, or an update that copies Xero's
  * own amounts, can only trip the pause if Xero changed what it already held.
- * A reply whose lines bill other amounts is not this request's document (a
- * create replayed under its idempotency key returns the ORIGINAL invoice), so
- * it is not compared; the manifest records that as its own conflict.
+ * A create replayed under its idempotency key returns the ORIGINAL invoice, so
+ * a reply is not compared when an earlier attempt under the key sent other
+ * line tax (`earlierSent`, e.g. sent while paused or by the release before),
+ * or when its lines bill other amounts; the manifest records either as its own
+ * conflict.
  * Never throws: the sync operation's outcome is not this check's to change.
  */
 export async function recordXeroTaxOverrideMismatch(input: {
@@ -92,7 +94,13 @@ export async function recordXeroTaxOverrideMismatch(input: {
   documentKind: "CREATE" | "UPDATE";
   sent: ReadonlyArray<LineItem>;
   returned: ReadonlyArray<LineItem>;
+  /** The lines each earlier attempt under the same idempotency key stored. */
+  earlierSent?: ReadonlyArray<ReadonlyArray<LineItem>>;
 }): Promise<void> {
+  if ((input.earlierSent ?? []).some((earlier) => !lineTaxAmountsMatch(earlier, input.sent))) {
+    logger.info({ bookingId: input.bookingId, xeroSyncOperationId: input.xeroSyncOperationId }, "An earlier attempt sent other line tax, so Xero's reply may be its invoice; GST not compared");
+    return;
+  }
   if (!billsTheSameLines(input.sent, input.returned)) return;
   const lines = lineTaxMismatches(input.sent, input.returned);
   if (lines.length === 0) return;
@@ -121,7 +129,7 @@ export async function recordXeroTaxOverrideMismatch(input: {
       logger.info({ bookingId, providerInvoiceId, xeroSyncOperationId }, "This operation's GST mismatch was already recorded");
       return;
     }
-    logger.warn({ err: error, bookingId, providerInvoiceId, xeroSyncOperationId, lines }, "Could not record a GST mismatch Xero returned");
+    logger.error({ err: error, bookingId, providerInvoiceId, xeroSyncOperationId, lines }, "Could not record a GST mismatch Xero returned; the GST overrides were NOT paused");
   }
 }
 

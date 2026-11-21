@@ -727,6 +727,20 @@ describe("createXeroInvoiceForBooking", () => {
       expect(manifestRows()).toEqual([expect.objectContaining({ outcome: "CONFLICT", reason: "STAY_CENTS" })]);
     });
 
+    it("does not pause when a retry's earlier attempt sent other line tax, though Xero's reply bills the same amounts", async () => {
+      // The first attempt went out while paused (or from the release before): no taxAmount. Xero replays that invoice.
+      const earlier = [{ description: "Jordan Hartley-Smith - (ADULT, Member) - 2 nights", quantity: 2, unitAmount: 50, taxType: "OUTPUT2", accountCode: "200" }];
+      mocks.prisma.xeroSyncOperation.findMany.mockResolvedValueOnce([{ requestPayload: { invoices: [{ lineItems: earlier }] } }]);
+      mocks.prisma.memberMoneyLine.findMany.mockResolvedValueOnce([taxedStayLeg()]);
+      xeroReplies(() => 13.03);
+      await expect(createXeroInvoiceForBooking("booking_1", { syncOperation: xeroClaim("op_1") })).resolves.toBe("inv_1");
+      expect(mocks.prisma.xeroSyncOperation.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { idempotencyKey: "booking:booking_1:invoice:v1" } }));
+      expect(sentLines().every((line) => typeof line.taxAmount === "number")).toBe(true);
+      expect(mocks.tx.xeroTaxOverrideMismatch.create).not.toHaveBeenCalled();
+      // The manifest still says the journal and Xero differ.
+      expect(manifestRows()).toEqual([expect.objectContaining({ outcome: "CONFLICT", reason: "TAX_CENTS" })]);
+    });
+
     it("sends the pre-change request byte for byte while paused or unregistered, then resumes once cleared", async () => {
       // The request as it was before #5208: the same create with no journal to plan from.
       await createXeroInvoiceForBooking("booking_1");

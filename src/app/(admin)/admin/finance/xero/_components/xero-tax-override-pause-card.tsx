@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { formatCents } from "@/lib/utils"
+import type { XeroLineTaxMismatch } from "@/lib/xero-line-tax-mismatches"
 
 /**
  * The "GST overrides" card on the Xero page (#5208), served by
@@ -39,7 +40,7 @@ type FlaggedInvoice = {
   providerInvoiceId: string
   invoiceNumber: string | null
   documentKind: "CREATE" | "UPDATE"
-  lines: { index: number; sentCents: number; xeroCents: number | null }[]
+  lines: XeroLineTaxMismatch[]
 }
 
 type PauseView = { invoices: FlaggedInvoice[]; problem: string | null }
@@ -139,7 +140,8 @@ export function XeroTaxOverridePauseCard() {
             <p className="text-sm text-muted-foreground">Loading…</p>
           ) : !paused ? (
             <p className="text-sm" data-testid="xero-tax-overrides-on">
-              On. Xero has kept the GST sent on every invoice.
+              No invoice is flagged. While the club is GST-registered, new booking invoices carry its own GST
+              figure on each line.
             </p>
           ) : (
             <>

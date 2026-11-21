@@ -26,3 +26,8 @@ export function lineTaxMismatches(sent: ReadonlyArray<LineItem>, returned: Reado
   });
   return mismatches;
 }
+
+/** Whether two requests carry the same tax on every line: the same lines, each with the same `taxAmount` cents or none. */
+export function lineTaxAmountsMatch(a: ReadonlyArray<LineItem>, b: ReadonlyArray<LineItem>): boolean {
+  return a.length === b.length && a.every((line, index) => providerAmountToCents(line.taxAmount) === providerAmountToCents(b[index]!.taxAmount));
+}

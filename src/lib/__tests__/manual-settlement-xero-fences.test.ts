@@ -62,6 +62,8 @@ vi.mock("@/lib/prisma", () => {
       findFirst: (...a: unknown[]) => mocks.xeroSyncOperationFindFirst(...a),
       findUnique: (...a: unknown[]) => mocks.xeroSyncOperationFindUnique(...a),
       update: (...a: unknown[]) => mocks.xeroSyncOperationUpdate(...a),
+      // #5208: no earlier attempt under the invoice's key.
+      findMany: async () => [],
     },
     // #5208: no GST mismatch pauses the overrides.
     xeroTaxOverrideMismatch: { findFirst: async () => null },

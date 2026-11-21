@@ -83,6 +83,16 @@ describe("recordXeroTaxOverrideMismatch", () => {
     expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
   });
 
+  it("does not compare a reply that may be an earlier attempt's invoice, sent with other line tax", async () => {
+    const input = { xeroSyncOperationId: "op_1", bookingId: "b1", providerInvoiceId: "inv_1", invoiceNumber: null, documentKind: "CREATE" as const,
+      sent: [line(80, 10.44)], returned: [line(80, 10.43)] };
+    await recordXeroTaxOverrideMismatch({ ...input, earlierSent: [[line(80)]] });
+    expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
+    // An earlier attempt that sent the same tax is this request's twin: its reply is compared.
+    await recordXeroTaxOverrideMismatch({ ...input, earlierSent: [[line(80, 10.44)]] });
+    expect(mocks.tx.xeroTaxOverrideMismatch.create).toHaveBeenCalledTimes(1);
+  });
+
   it("treats a second record for the same operation as already done, and never throws", async () => {
     mocks.tx.xeroTaxOverrideMismatch.create.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError("unique", { code: "P2002", clientVersion: "test" }));
     await expect(record([line(80, 10.44)], [line(80, 10.43)])).resolves.toBeUndefined();
@@ -91,7 +101,7 @@ describe("recordXeroTaxOverrideMismatch", () => {
 
     mocks.tx.xeroTaxOverrideMismatch.create.mockRejectedValueOnce(new Error("database down"));
     await expect(record([line(80, 10.44)], [line(80, 10.43)])).resolves.toBeUndefined();
-    expect(mocks.logger.warn).toHaveBeenCalledWith(expect.objectContaining({ xeroSyncOperationId: "op_1" }), expect.stringContaining("Could not record"));
+    expect(mocks.logger.error).toHaveBeenCalledWith(expect.objectContaining({ xeroSyncOperationId: "op_1" }), expect.stringContaining("Could not record"));
   });
 });
 
