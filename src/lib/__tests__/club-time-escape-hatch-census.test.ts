@@ -679,7 +679,15 @@ const CENSUS_CEILING = {
   // descriptions: the moved builders for the guest and night-range text, the
   // sender for its own narration. Same benign split shape as #3128 and #3232.
   // Re-measured by RUNNING this suite on the merged tree.
-  dateOnlyImporters: 224, // 224 -> 223 (#4915): the data-export route left; the subject access export reads dates through club-time. 228/232 -> 231 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #77's one, zone-free, on upstream's 228. Re-measured by RUNNING this suite on the merged tree.
+  // 224 -> 227 (#5005, `INV-CAP-040`): the booking import's `parse.ts`,
+  // `plan.ts` and `resolve.ts`, all the zone-free direction. They read and step
+  // a file's `yyyy-MM-dd` arrival and departure dates (`parseDateOnly`,
+  // `countNightsDateOnly`, `eachDateOnlyInRange`, `addDaysDateOnly`,
+  // `formatDateOnly`) as stored lodge nights. None takes a `timeZone`; the
+  // club's today is resolved by the caller through `club-time` before any
+  // transaction and passed in. Re-measured by RUNNING this suite on the
+  // merged tree.
+  dateOnlyImporters: 227, // 224 -> 223 (#4915): the data-export route left; the subject access export reads dates through club-time. 228/232 -> 231 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #77's one, zone-free, on upstream's 228. Re-measured by RUNNING this suite on the merged tree.
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

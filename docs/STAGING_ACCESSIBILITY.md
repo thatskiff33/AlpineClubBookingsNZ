@@ -419,6 +419,7 @@ Not done here, and still true after it:
   below, which titles them.
 - Lodge and hut-leader instruction bodies are admin-written HTML shown as
   written, so an H1 inside one adds a second level-1 heading to that page.
+  Superseded by #5218 below.
 - The membership application page (`/join/apply`, under `src/app/(website)`)
   is outside the census roots. Its "Application submitted" state has no
   level-1 heading, and the right level depends on whether the page is embedded
@@ -535,3 +536,15 @@ Not done here, and still true after it:
 - The "Enter your details" card title on `/join/apply` is still unclassified,
   like the rest of the public website's card titles. Card-title classification
   is tracked in #5216.
+
+## #5218 Headings Inside the Lodge Instructions (2026-11-21)
+
+Static fix, finishing the instructions item #4951 left open. An H1 an admin
+writes in the lodge instructions is now rendered as an H2, as a notice body's
+already is, on `/lodge-instructions`, `/hut-leader-instructions`, the lodge
+kiosk's instructions section and the lobby display's rules card. Each of those
+screens keeps its own one level-1 heading. That heading is drawn at heading-2
+size; nothing else changes. The stored instructions and the admin editor keep
+the H1 as written. Pinned by
+`src/app/__tests__/instruction-screen-headings.test.tsx`, which renders each
+screen from a stored document holding an H1.
