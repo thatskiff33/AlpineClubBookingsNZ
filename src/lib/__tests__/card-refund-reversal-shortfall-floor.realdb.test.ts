@@ -27,6 +27,13 @@
  *   both orders: completion first, both charges keep their bank cash; failure
  *   first, the close's $200 stays and the completion is refused while the
  *   failed-later row is unsettled.
+ * - The capacity race's completion and its late dashboard refund queued on the
+ *   race's Payment row (#5344): completion first, its guarded correction and
+ *   its $50 land before the refund is recorded and fails, and the charge stays
+ *   $200; failure first, the charge falls to its $150 of card refunds and the
+ *   completion then places the $50 on it; and with the refund recorded ahead
+ *   of the completion, the completion is refused (nothing to lower) and the
+ *   failure leaves the charge at $150, the shortfall still open.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -299,23 +306,39 @@ let example: ReturnType<typeof cardShortfallLateRefundExample>;
         );
       }
 
+      /** A $50 refund made by hand in the Stripe dashboard. */
+      const DASHBOARD_REFUND = {
+        id: "re_race_4488_cap_dashboard", object: "refund", amount: DRIFT_CENTS, currency: "nzd", status: "pending", reason: "requested_by_customer",
+        created: REFUNDS_MADE_SECONDS + 86_400, charge: "ch_race_4488_cap", payment_intent: CAP_INTENT, metadata: {},
+      } as unknown as Stripe.Refund;
+
+      /** The dashboard refund recorded late. It counts, and where the charge already reads all of it refunded it is capped. */
+      async function recordDashboardRefund() {
+        const { recordStripeRefundsAgainstTransaction } = await import("@/lib/payment-transactions");
+        await recordStripeRefundsAgainstTransaction({ paymentId: CAP_PAYMENT, paymentTransactionId: CAP_TXN, refunds: [DASHBOARD_REFUND as never], store: prisma });
+      }
+
+      /** `refund.failed` for the dashboard refund - the webhook's recorder. */
+      async function failDashboardRefund() {
+        const { recordRefusedCardRefund } = await import("@/lib/card-refund-status-sync");
+        return recordRefusedCardRefund({ ...DASHBOARD_REFUND, status: "failed" } as Stripe.Refund);
+      }
+
       /** A $50 refund made by hand in the Stripe dashboard, recorded late (capped: the charge reads all of it refunded), then failed. */
       async function dashboardRefundRecordedThenFailed() {
-        const refund = {
-          id: "re_race_4488_cap_dashboard", object: "refund", amount: DRIFT_CENTS, currency: "nzd", status: "pending", reason: "requested_by_customer",
-          created: REFUNDS_MADE_SECONDS + 86_400, charge: "ch_race_4488_cap", payment_intent: CAP_INTENT, metadata: {},
-        } as unknown as Stripe.Refund;
-        const { recordStripeRefundsAgainstTransaction } = await import("@/lib/payment-transactions");
-        await recordStripeRefundsAgainstTransaction({ paymentId: CAP_PAYMENT, paymentTransactionId: CAP_TXN, refunds: [refund as never], store: prisma });
+        await recordDashboardRefund();
         expect(await charge()).toBe(CAP_CHARGE_CENTS);
-        const { recordRefusedCardRefund } = await import("@/lib/card-refund-status-sync");
-        expect(await recordRefusedCardRefund({ ...refund, status: "failed" } as Stripe.Refund)).toBe("recorded");
+        expect(await failDashboardRefund()).toBe("recorded");
+      }
+
+      /** What Stripe says the race's charge has refunded, as the completion reads it before its transaction: the race's own $150. */
+      function stripeShowsTheRaceRefundOnly() {
+        stripeRaceHooks.get = async (id) => ({ id, object: "payment_intent", status: "succeeded", latest_charge: { id: "ch_race_4488_cap", object: "charge", amount_refunded: CAP_CHARGE_CENTS - DRIFT_CENTS } });
       }
 
       it("marked paid back: $150 by card and $50 by bank went back, and the charge stays at $200 when a late dashboard refund fails", async () => {
         const task = await lostCapacityRace();
-        // What Stripe says the race's charge has refunded, as the completion reads it before its transaction.
-        stripeRaceHooks.get = async (id) => ({ id, object: "payment_intent", status: "succeeded", latest_charge: { id: "ch_race_4488_cap", object: "charge", amount_refunded: CAP_CHARGE_CENTS - DRIFT_CENTS } });
+        stripeShowsTheRaceRefundOnly();
         await resolveCheck(task.id, "completed");
         // The guarded correction lowered the charge to its refund rows, then the completion put the $50 on it.
         expect(await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "COMPLETED", amountCents: DRIFT_CENTS });
@@ -337,12 +360,84 @@ let example: ReturnType<typeof cardShortfallLateRefundExample>;
 
         expect(await charge()).toBe(CAP_CHARGE_CENTS - DRIFT_CENTS);
       });
+
+      // ------------------------- the completion and the late dashboard refund, queued on the race's Payment row (#5344)
+
+      /** How many times the guarded correction (#4154) lowered the race's charge. */
+      const corrections = () => prisma.auditLog.count({ where: { targetId: CAP_BOOKING, action: "booking-payment.capacity-race.refunded-total-corrected" } });
+      const racePaymentRefunded = async () => (await prisma.payment.findUniqueOrThrow({ where: { id: CAP_PAYMENT }, select: { refundedAmountCents: true } })).refundedAmountCents;
+      const checkTask = (taskId: string) => prisma.manualRefundTask.findUniqueOrThrow({ where: { id: taskId }, select: { status: true, amountCents: true } });
+
+      /** The least the charge may read: its card refunds still counted, plus the shortfall once completed (`INV-PAY-141`). */
+      async function countedCardRefundsPlusCompletedShortfall(taskId: string) {
+        const { isRecordedRefundStatus } = await import("@/lib/payment-transaction-status");
+        const refunds = await prisma.paymentRefund.findMany({ where: { paymentTransactionId: CAP_TXN }, select: { amountCents: true, status: true } });
+        const counted = refunds.filter((refund) => isRecordedRefundStatus(refund.status)).reduce((sum, refund) => sum + refund.amountCents, 0);
+        const task = await checkTask(taskId);
+        return counted + (task.status === "COMPLETED" ? (task.amountCents ?? 0) : 0);
+      }
+
+      it("completion first: its correction and its $50 land before the late dashboard refund is recorded and fails - the charge and the payment stay at $200", async () => {
+        const task = await lostCapacityRace();
+        stripeShowsTheRaceRefundOnly();
+
+        const [completed, late] = await inOrder(() => resolveCheck(task.id, "completed"), () => dashboardRefundRecordedThenFailed(), CAP_PAYMENT);
+        expect(completed.ok && late.ok).toBe(true);
+
+        // The correction ran, so the completion read the charge before the dashboard refund was recorded on it:
+        // recorded first, there is nothing to lower and the completion is refused (the third case).
+        expect(await corrections()).toBe(1);
+        expect(await checkTask(task.id)).toEqual({ status: "COMPLETED", amountCents: DRIFT_CENTS });
+        expect(await charge()).toBe(CAP_CHARGE_CENTS);
+        expect(await racePaymentRefunded()).toBe(CAP_CHARGE_CENTS);
+        expect(await charge()).toBeGreaterThanOrEqual(await countedCardRefundsPlusCompletedShortfall(task.id));
+      });
+
+      it("failure first: the failed dashboard refund takes the charge to its $150 of card refunds, and the completion behind it places the $50 there - $200", async () => {
+        const task = await lostCapacityRace();
+        stripeShowsTheRaceRefundOnly();
+        // Recorded before either writer starts: it counts, capped, so the charge still reads all of it refunded.
+        await recordDashboardRefund();
+        expect(await charge()).toBe(CAP_CHARGE_CENTS);
+
+        const [failed, completed] = await inOrder(() => failDashboardRefund(), () => resolveCheck(task.id, "completed"), CAP_PAYMENT);
+        expect(failed).toEqual({ ok: true, value: "recorded" });
+        // Placed, not refused: the failure left the charge $50 of room, so the completion needed no correction.
+        // Ahead of the failure it is refused (the next case).
+        expect(completed.ok).toBe(true);
+        expect(await corrections()).toBe(0);
+
+        expect(await checkTask(task.id)).toEqual({ status: "COMPLETED", amountCents: DRIFT_CENTS });
+        expect(await charge()).toBe(CAP_CHARGE_CENTS);
+        expect(await racePaymentRefunded()).toBe(CAP_CHARGE_CENTS);
+        expect(await charge()).toBeGreaterThanOrEqual(await countedCardRefundsPlusCompletedShortfall(task.id));
+      });
+
+      it("the dashboard refund already recorded, completion first: refused with nothing to lower, and the failure behind it takes the charge to its $150 of card refunds, no lower", async () => {
+        const task = await lostCapacityRace();
+        stripeShowsTheRaceRefundOnly();
+        await recordDashboardRefund();
+        expect(await charge()).toBe(CAP_CHARGE_CENTS);
+
+        const [completed, failed] = await inOrder(() => resolveCheck(task.id, "completed"), () => failDashboardRefund(), CAP_PAYMENT);
+        const { CAPACITY_RACE_CORRECTION_BLOCKED_REASON } = await import("@/lib/capacity-race-refunded-total-correction");
+        // The charge's refund rows ($150 by card, $50 in the dashboard) account for all it reads refunded.
+        expect(completed).toMatchObject({ ok: false, error: { status: 400, message: expect.stringContaining(CAPACITY_RACE_CORRECTION_BLOCKED_REASON["nothing-to-lower"]) } });
+        expect(failed).toEqual({ ok: true, value: "recorded" });
+
+        // The shortfall is still open, so it holds nothing up: the charge reads its card refunds still counted.
+        expect(await corrections()).toBe(0);
+        expect(await checkTask(task.id)).toEqual({ status: "OPEN", amountCents: DRIFT_CENTS });
+        expect(await charge()).toBe(CAP_CHARGE_CENTS - DRIFT_CENTS);
+        expect(await racePaymentRefunded()).toBe(CAP_CHARGE_CENTS - DRIFT_CENTS);
+        expect(await charge()).toBeGreaterThanOrEqual(await countedCardRefundsPlusCompletedShortfall(task.id));
+      });
     });
 
     // ---------------------------------------------------------------- races
 
-    /** Hold the Payment row on a third connection; the writers queue behind it. */
-    async function holdPaymentRow() {
+    /** Hold a Payment row (example 1's unless told) on a third connection; the writers queue behind it. */
+    async function holdPaymentRow(paymentId = example.ids.payment) {
       let release!: () => void;
       const released = new Promise<void>((resolve) => {
         release = resolve;
@@ -353,7 +448,7 @@ let example: ReturnType<typeof cardShortfallLateRefundExample>;
       });
       const held = lockHolderClient.$transaction(
         async (tx) => {
-          await tx.$executeRaw`SELECT 1 FROM "Payment" WHERE "id" = ${example.ids.payment} FOR NO KEY UPDATE`;
+          await tx.$executeRaw`SELECT 1 FROM "Payment" WHERE "id" = ${paymentId} FOR NO KEY UPDATE`;
           ready();
           await released;
         },
@@ -377,8 +472,8 @@ let example: ReturnType<typeof cardShortfallLateRefundExample>;
     }
 
     /** Start `first`, wait until it queues on the held row, then `second`, and release them in that order. */
-    async function inOrder<T, U>(first: () => Promise<T>, second: () => Promise<U>) {
-      const holder = await holdPaymentRow();
+    async function inOrder<T, U>(first: () => Promise<T>, second: () => Promise<U>, paymentId = example.ids.payment) {
+      const holder = await holdPaymentRow(paymentId);
       const settle = <V>(run: () => Promise<V>) =>
         run().then(
           (value) => ({ ok: true as const, value }),
