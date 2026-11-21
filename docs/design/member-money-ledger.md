@@ -423,7 +423,7 @@ modules identify today's doors; their future writes converge on section 3's API.
 
 Paid future bookings carried over by #5005 post R01 and R08 through the manual
 cash settlement, with an import row identifying their adopted history
-(`INV-PAY-155`). They are never rendered to Xero by R26 back-posting or M13's
+(`INV-PAY-160`). They are never rendered to Xero by R26 back-posting or M13's
 future document renderer: the club already received the money elsewhere.
 No Opening-control posting is invented here; M9 owns historical adoption.
 

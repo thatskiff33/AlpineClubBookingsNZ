@@ -81,6 +81,6 @@ member merge by `booking-import.realdb.test.ts`.
 
 - [Architecture](../ARCHITECTURE.md#paid-booking-import-engine)
 - [Capacity](../CAPACITY_MODEL.md#imported-paid-future-bookings-5005)
-- [Payment invariant INV-PAY-155](../invariants/payment-and-settlement.md#inv-pay-155)
+- [Payment invariant INV-PAY-160](../invariants/payment-and-settlement.md#inv-pay-160)
 - [Capacity invariant INV-CAP-040](../invariants/booking-dates-and-capacity.md#inv-cap-040)
 - [Member-money journal](member-money-ledger.md)
