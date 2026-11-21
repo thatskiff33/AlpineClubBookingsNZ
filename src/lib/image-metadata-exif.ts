@@ -11,6 +11,9 @@
  * WebP `EXIF` chunk.
  */
 
+/** What precedes the TIFF data in a JPEG APP1 (and, from some writers, a WebP EXIF chunk). */
+export const EXIF_APP1_PREFIX = "Exif\0\0";
+
 const ORIENTATION_TAG = 0x0112;
 const SHORT = 3;
 

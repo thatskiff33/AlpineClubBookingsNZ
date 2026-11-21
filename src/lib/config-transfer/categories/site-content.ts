@@ -161,17 +161,11 @@ export function deriveThemeWrite(
   const sanitised: Record<string, unknown> = {
     ...normalised,
     ...logoFields,
-    // #2242: the INLINE logo is image bytes too, and it renders on every public
-    // page (header, footer, mobile menu). A bundle's `logoDataUrl` used to be
-    // written verbatim, so a club's straight-from-phone inline logo published
-    // its GPS coordinates on every deployment the bundle was ever restored to —
-    // the same hole the bundled `MediaImage` bytes had (see ../media.ts). Same
-    // fail-closed policy (#5244): a logo that cannot be confirmed clean is an
-    // ERROR naming the file, so the restore stops at its dry run; were apply
-    // ever to reach it, the logo is dropped rather than stored.
-    //
-    // Applied here, inside the single derivation BOTH plan and apply use, so the
-    // dry-run keeps disclosing exactly what the write will do (ADR-002).
+    // #2242: the INLINE logo renders on every public page, so it is cleaned
+    // like the bundled `MediaImage` bytes (see ../media.ts). #5244: one that
+    // cannot be confirmed clean is a plan ERROR naming the file, so the restore
+    // stops at its dry run (were apply reached, it is dropped, never stored).
+    // Inside the one derivation plan and apply share (ADR-002).
     logoDataUrl: cleanedInlineLogo(logoFields.logoDataUrl, errors),
   };
 
@@ -210,9 +204,8 @@ export function deriveThemeWrite(
 
 function cleanedInlineLogo(value: string | null, errors?: string[]): string | null {
   const cleaned = storableLogoDataUrl(value);
-  if (cleaned.ok) return cleaned.value;
-  errors?.push(`${THEME_FILE}: logoDataUrl — ${cleaned.message}`);
-  return null;
+  if (!cleaned.ok) errors?.push(`${THEME_FILE}: logoDataUrl — ${cleaned.message}`);
+  return cleaned.ok ? cleaned.value : null;
 }
 
 /** Extract MediaImage ids referenced as /api/images/<id> in content HTML. */

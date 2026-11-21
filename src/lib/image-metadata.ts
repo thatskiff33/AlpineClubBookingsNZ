@@ -1,10 +1,10 @@
-import { crc32 } from "node:zlib";
-
 import { must } from "@/lib/indexed-access";
 import { stripAvifMetadata } from "@/lib/image-metadata-avif";
-import { orientationOnlyExif, readExifOrientation } from "@/lib/image-metadata-exif";
 import { stripGifMetadata } from "@/lib/image-metadata-gif";
+import { stripJpegMetadata } from "@/lib/image-metadata-jpeg";
+import { stripPngMetadata } from "@/lib/image-metadata-png";
 import { stripSvgMetadata } from "@/lib/image-metadata-svg";
+import { stripWebpMetadata } from "@/lib/image-metadata-webp";
 
 /**
  * Shared constants and helpers for the database-backed image library
@@ -359,236 +359,8 @@ function unconfirmed(bytes: Buffer): StripImageResult {
   return { ok: false, bytes, reason: "unconfirmed" };
 }
 
-const EXIF_APP1_PREFIX = "Exif\0\0";
-
-/**
- * Remove metadata from a JPEG by copying only the colour/rendering marker
- * segments — JFIF (APP0), an ICC-profile APP2, Adobe (APP14) — and the
- * structural markers, dropping every other APPn (EXIF/XMP APP1, IPTC/Photoshop
- * APP13, Ducky APP12, the MPF index APP2, vendor blocks) and every COM comment,
- * any of which can carry creator contact info, location or GPS. The parser runs
- * through the entropy-coded scan(s) to the primary EOI and STOPS there, dropping
- * any bytes appended after it — an MPF multi-picture / motion-photo JPEG appends
- * a second image with its own EXIF/GPS. The first EXIF APP1 is replaced by one
- * holding only its Orientation, so a phone portrait keeps its rotation; `FF`
- * fill bytes before a marker are accepted and dropped. Fail-CLOSED: `ok` is true
- * ONLY on the primary-EOI-terminated path; any malformed/nonstandard structure
- * returns `ok: false` with the original bytes so the caller rejects the upload.
- */
-function stripJpegMetadata(bytes: Buffer): StripImageResult {
-  if (bytes.length < 2 || bytes[0] !== 0xff || bytes[1] !== 0xd8)
-    return unconfirmed(bytes);
-  const kept: Buffer[] = [bytes.subarray(0, 2)]; // SOI
-  let offset = 2;
-  let orientationWritten = false;
-  while (offset + 2 <= bytes.length) {
-    if (bytes[offset] !== 0xff) return unconfirmed(bytes); // not at a marker
-    // Any run of 0xFF fill bytes may precede a marker (T.81 §B.1.1.2); skip
-    // to the last one, dropping the padding.
-    while (offset + 2 < bytes.length && bytes[offset + 1] === 0xff) offset += 1;
-    const marker = must(bytes[offset + 1], "stripJpegMetadata: offset within bytes.length");
-
-    if (marker === 0xd9) {
-      // Primary EOI: end of the primary image. Emit it and STOP, dropping any
-      // appended trailer (MPF / motion-photo secondary image + its EXIF/GPS).
-      // This is the ONLY confirmed-clean exit.
-      kept.push(bytes.subarray(offset, offset + 2));
-      return { ok: true, bytes: Buffer.concat(kept) };
-    }
-
-    if (marker === 0xda) {
-      // Start of scan: copy the SOS header + entropy-coded data up to the next
-      // real marker (an 0xff not part of 0xff00 byte-stuffing or an RSTn
-      // 0xd0-0xd7), then continue so a following EOI truncates any trailer and a
-      // following scan (progressive JPEG) is handled normally.
-      if (offset + 4 > bytes.length) return unconfirmed(bytes);
-      const sosLen = bytes.readUInt16BE(offset + 2);
-      let scan = offset + 2 + sosLen;
-      if (scan > bytes.length) return unconfirmed(bytes);
-      while (scan + 1 < bytes.length) {
-        if (bytes[scan] === 0xff) {
-          const m = must(bytes[scan + 1], "stripJpegMetadata scan: scan+1 within bytes.length");
-          if (m === 0x00 || (m >= 0xd0 && m <= 0xd7)) {
-            scan += 2; // stuffed byte or restart marker → part of the scan
-            continue;
-          }
-          break; // real marker
-        }
-        scan += 1;
-      }
-      kept.push(bytes.subarray(offset, scan));
-      offset = scan;
-      continue;
-    }
-
-    // Length-prefixed marker segment (APPn, COM, DQT, DHT, SOFn, DRI, …).
-    if (offset + 4 > bytes.length) return unconfirmed(bytes);
-    const segLen = bytes.readUInt16BE(offset + 2);
-    const segEnd = offset + 2 + segLen;
-    if (segLen < 2 || segEnd > bytes.length) return unconfirmed(bytes); // truncated/invalid
-    // Allow-list, not deny-list: metadata lives across many APPn markers (APP1
-    // EXIF/XMP, APP13 IPTC/Photoshop, APP12 Ducky, vendor APP3-APP11), any of
-    // which can carry creator contact info, location or GPS. Preserve ONLY the
-    // colour/rendering segments — APP0 (JFIF), APP14 (Adobe), and an APP2 that
-    // is an ICC profile (identified by its "ICC_PROFILE\0" tag, so the MPF index
-    // APP2 that points at appended images is NOT kept) — and drop every other
-    // APPn and every COM comment. Structural markers (DQT, DHT, SOFn, DRI, …)
-    // are not APPn/COM and are always kept.
-    const isAppSegment = marker >= 0xe0 && marker <= 0xef;
-    const isJfifOrAdobe = marker === 0xe0 || marker === 0xee;
-    const isIccApp2 =
-      marker === 0xe2 &&
-      bytes.toString("latin1", offset + 4, offset + 4 + 12) === "ICC_PROFILE\0";
-    const drop =
-      (isAppSegment && !isJfifOrAdobe && !isIccApp2) || marker === 0xfe; // COM
-    if (!drop) {
-      kept.push(bytes.subarray(offset, segEnd));
-    } else if (
-      marker === 0xe1 &&
-      !orientationWritten &&
-      bytes.toString("latin1", offset + 4, offset + 10) === EXIF_APP1_PREFIX
-    ) {
-      // The first EXIF APP1 is replaced, in place, by one holding only the
-      // Orientation, so a phone portrait is not turned sideways.
-      orientationWritten = true;
-      const orientation = readExifOrientation(bytes.subarray(offset + 10, segEnd));
-      if (orientation !== null) kept.push(jpegOrientationSegment(orientation));
-    }
-    offset = segEnd;
-  }
-  return unconfirmed(bytes); // no primary EOI found → reject (fail-closed)
-}
-
-function jpegOrientationSegment(orientation: number): Buffer {
-  const tiff = orientationOnlyExif(orientation);
-  const header = Buffer.alloc(4 + EXIF_APP1_PREFIX.length);
-  header.writeUInt16BE(0xffe1, 0);
-  header.writeUInt16BE(2 + EXIF_APP1_PREFIX.length + tiff.length, 2);
-  header.write(EXIF_APP1_PREFIX, 4, "latin1");
-  return Buffer.concat([header, tiff]);
-}
-
-const PNG_METADATA_CHUNKS = new Set(["tEXt", "zTXt", "iTXt", "eXIf", "tIME"]);
-
-/**
- * Remove text/EXIF/timestamp ancillary chunks from a PNG (eXIf can carry GPS),
- * keeping all critical and colour chunks; the first eXIf is replaced by one
- * holding only its Orientation. Fail-CLOSED: `ok` is true only if the
- * chunk walk actually reaches an IEND chunk; a truncated chunk or a walk that
- * ends without IEND returns `ok: false` with the original bytes.
- */
-function stripPngMetadata(bytes: Buffer): StripImageResult {
-  const SIG = 8;
-  if (bytes.length < SIG + 12) return unconfirmed(bytes);
-  const kept: Buffer[] = [bytes.subarray(0, SIG)];
-  let offset = SIG;
-  let orientationWritten = false;
-  while (offset + 12 <= bytes.length) {
-    const len = readUInt32BE(bytes, offset);
-    const type = bytes.toString("ascii", offset + 4, offset + 8);
-    const chunkEnd = offset + 12 + len; // len(4) + type(4) + data(len) + crc(4)
-    if (chunkEnd > bytes.length) return unconfirmed(bytes); // truncated
-    if (!PNG_METADATA_CHUNKS.has(type)) {
-      kept.push(bytes.subarray(offset, chunkEnd));
-    } else if (type === "eXIf" && !orientationWritten) {
-      // Replaced in place by a chunk holding only the Orientation.
-      orientationWritten = true;
-      const orientation = readExifOrientation(bytes.subarray(offset + 8, chunkEnd - 4));
-      if (orientation !== null) kept.push(pngChunk("eXIf", orientationOnlyExif(orientation)));
-    }
-    if (type === "IEND") return { ok: true, bytes: Buffer.concat(kept) };
-    offset = chunkEnd;
-  }
-  return unconfirmed(bytes); // walk ended without IEND → reject (fail-closed)
-}
-
-function pngChunk(type: string, data: Buffer): Buffer {
-  const chunk = Buffer.alloc(12 + data.length);
-  chunk.writeUInt32BE(data.length, 0);
-  chunk.write(type, 4, "ascii");
-  data.copy(chunk, 8);
-  chunk.writeUInt32BE(crc32(chunk.subarray(4, 8 + data.length)), 8 + data.length);
-  return chunk;
-}
-
-/**
- * Remove XMP chunks from a WebP RIFF container, replace the first EXIF chunk by
- * one holding only its Orientation (dropping it when there is none), set the
- * matching VP8X metadata flag bits and recompute the RIFF size. Fail-CLOSED:
- * `ok` is true when the chunk walk completes cleanly to EOF — including the
- * "nothing to strip" case (the input is returned as is) and the legitimate
- * final-odd-pad case. A malformed
- * non-final-chunk overrun (or a bad RIFF/WEBP header) returns `ok: false` with
- * the original bytes.
- */
-function stripWebpMetadata(bytes: Buffer): StripImageResult {
-  if (
-    bytes.length < 12 ||
-    bytes.toString("ascii", 0, 4) !== "RIFF" ||
-    bytes.toString("ascii", 8, 12) !== "WEBP"
-  ) {
-    return unconfirmed(bytes);
-  }
-  const kept: Buffer[] = [];
-  let vp8xIndex: number | null = null;
-  let orientation: number | null = null;
-  let exifSeen = false;
-  let offset = 12;
-  while (offset + 8 <= bytes.length) {
-    const fourCC = bytes.toString("ascii", offset, offset + 4);
-    const size = bytes.readUInt32LE(offset + 4);
-    const padded = size + (size % 2);
-    let chunkEnd = offset + 8 + padded;
-    if (chunkEnd > bytes.length) {
-      // A final odd-sized chunk may omit its RIFF pad byte. Accept that exact
-      // case (the unpadded end lands on EOF) so a trailing EXIF/XMP chunk is
-      // still stripped rather than the whole file being left untouched;
-      // anything else is genuinely malformed → reject.
-      if (offset + 8 + size === bytes.length) {
-        chunkEnd = bytes.length;
-      } else {
-        return unconfirmed(bytes);
-      }
-    }
-    if (fourCC === "EXIF") {
-      // Replaced in place by a chunk holding only the Orientation. Some
-      // writers prefix the TIFF data with JPEG's "Exif\0\0".
-      if (!exifSeen) {
-        exifSeen = true;
-        let tiff = bytes.subarray(offset + 8, offset + 8 + size);
-        if (tiff.toString("latin1", 0, 6) === EXIF_APP1_PREFIX) tiff = tiff.subarray(6);
-        orientation = readExifOrientation(tiff);
-        if (orientation !== null) {
-          const data = orientationOnlyExif(orientation); // even length: no pad
-          const header = Buffer.alloc(8);
-          header.write("EXIF", 0, "ascii");
-          header.writeUInt32LE(data.length, 4);
-          kept.push(header, data);
-        }
-      }
-    } else if (fourCC !== "XMP ") {
-      if (fourCC === "VP8X" && chunkEnd - offset > 8) vp8xIndex = kept.length;
-      kept.push(bytes.subarray(offset, chunkEnd));
-    }
-    offset = chunkEnd;
-  }
-  if (vp8xIndex !== null) {
-    // The VP8X flags byte says which metadata chunks follow: XMP (0x04) never
-    // does now, EXIF (0x08) only when an Orientation was kept.
-    const vp8x = Buffer.from(must(kept[vp8xIndex], "stripWebpMetadata: VP8X index recorded from kept"));
-    const flags = must(vp8x[8], "stripWebpMetadata: VP8X chunk has more than 8 bytes");
-    vp8x[8] = (flags & ~0b0000_1100) | (orientation !== null ? 0b0000_1000 : 0);
-    kept[vp8xIndex] = vp8x;
-  }
-  const body = Buffer.concat(kept);
-  const out = Buffer.alloc(12 + body.length);
-  out.write("RIFF", 0, "ascii");
-  out.writeUInt32LE(4 + body.length, 4); // "WEBP" tag + chunk bytes
-  out.write("WEBP", 8, "ascii");
-  body.copy(out, 12);
-  // Clean walk to EOF. Nothing to strip is a confirmed-clean result too, and
-  // returns the input itself.
-  return { ok: true, bytes: out.equals(bytes) ? bytes : out };
+function confirmed(original: Buffer, cleaned: Buffer | null): StripImageResult {
+  return cleaned ? { ok: true, bytes: cleaned } : unconfirmed(original);
 }
 
 /**
@@ -619,15 +391,13 @@ export function stripImageMetadata(
   try {
     switch (contentType) {
       case "image/jpeg":
-        return stripJpegMetadata(bytes);
+        return confirmed(bytes, stripJpegMetadata(bytes));
       case "image/png":
-        return stripPngMetadata(bytes);
+        return confirmed(bytes, stripPngMetadata(bytes));
       case "image/webp":
-        return stripWebpMetadata(bytes);
-      case "image/gif": {
-        const cleaned = stripGifMetadata(bytes);
-        return cleaned ? { ok: true, bytes: cleaned } : unconfirmed(bytes);
-      }
+        return confirmed(bytes, stripWebpMetadata(bytes));
+      case "image/gif":
+        return confirmed(bytes, stripGifMetadata(bytes));
       case "image/avif": {
         const outcome = stripAvifMetadata(bytes);
         if (outcome.ok) return outcome;
@@ -635,10 +405,8 @@ export function stripImageMetadata(
           ? { ok: false, bytes, reason: "animated-avif" }
           : unconfirmed(bytes);
       }
-      case "image/svg+xml": {
-        const cleaned = stripSvgMetadata(bytes, cleanEmbeddedRaster);
-        return cleaned ? { ok: true, bytes: cleaned } : unconfirmed(bytes);
-      }
+      case "image/svg+xml":
+        return confirmed(bytes, stripSvgMetadata(bytes, cleanEmbeddedRaster));
     }
   } catch {
     return unconfirmed(bytes);
