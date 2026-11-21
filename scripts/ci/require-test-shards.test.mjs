@@ -685,3 +685,93 @@ describe("every workflow job runs on the one pinned runner image (#5192)", () =>
     expect(jobs.length).toBeGreaterThanOrEqual(30);
   });
 });
+
+// #5362: CONTRIBUTING.md (Branch protection) carries the one human-readable
+// table of each gate's limits, and the workflows set the real numbers. This
+// reads both and fails when they part, so the table cannot drift. It reads the
+// files only; it changes no workflow.
+describe("the CONTRIBUTING.md gate-limits table matches the workflows (#5362)", () => {
+  const workflowsDir = path.join(root, ".github", "workflows");
+  const contributing = readFileSync(path.join(root, "CONTRIBUTING.md"), "utf8");
+  const HEADER = "| Gate | Runner queue | Longest job limit | Total wait | Gate job's limit |";
+
+  // The table's body rows, from the header to the first line that is not a row.
+  const tableRows = () => {
+    const lines = contributing.split(/\r?\n/);
+    const start = lines.indexOf(HEADER);
+    expect(start, "the limits table's header row").toBeGreaterThan(-1);
+    const rows = [];
+    for (const line of lines.slice(start + 2)) {
+      if (!line.startsWith("|")) break;
+      const cells = line.split("|").slice(1, -1).map((cell) => cell.trim());
+      expect(cells, line).toHaveLength(5);
+      rows.push({ line, gate: cells[0].match(/^`([^`]+)`/)?.[1], cells });
+    }
+    return rows;
+  };
+
+  // Every gate step in every workflow, with the job it runs in.
+  const gateSteps = () => {
+    const found = [];
+    for (const file of readdirSync(workflowsDir).filter((name) => /\.ya?ml$/.test(name)).sort()) {
+      const parsed = parseWorkflowYaml(readFileSync(path.join(workflowsDir, file), "utf8"));
+      for (const [id, job] of Object.entries(parsed.jobs ?? {})) {
+        for (const step of job.steps ?? []) {
+          if (!step.run?.startsWith(`${GATE} `)) continue;
+          found.push({ where: `${file} → ${id}`, jobs: parsed.jobs, job, name: job.name ?? id, options: parseShardGateArgs(splitArgs(step.run.slice(GATE.length))) });
+        }
+      }
+    }
+    return found;
+  };
+
+  const leadingMinutes = (cell) => {
+    const match = cell.match(/^(\d+)(?:\s|$)/);
+    expect(match, `a cell that starts with its minutes: ${cell}`).not.toBeNull();
+    return Number(match[1]);
+  };
+
+  it("has one row per gate step in the workflows, and no other", () => {
+    const steps = gateSteps();
+    // Vacuity guard: both known gates were read.
+    expect(steps.length).toBeGreaterThanOrEqual(2);
+    expect(tableRows().map((row) => row.gate).toSorted()).toEqual(steps.map((step) => step.name).toSorted());
+  });
+
+  it("states each gate's queue and run flags, its total wait and its job's timeout-minutes", () => {
+    const rows = new Map(tableRows().map((row) => [row.gate, row]));
+    for (const step of gateSteps()) {
+      const row = rows.get(step.name);
+      expect(row, `a table row for ${step.where}`).toBeDefined();
+      const [, queue, longest, total, gateLimit] = row.cells;
+      expect(leadingMinutes(queue), `${step.where}: runner queue`).toBe(step.options.maxQueueMinutes);
+      expect(leadingMinutes(longest), `${step.where}: longest job limit`).toBe(step.options.maxRunMinutes);
+      expect(leadingMinutes(total), `${step.where}: total wait`).toBe(shardGateWaitMs(step.options) / 60_000);
+      expect(leadingMinutes(gateLimit), `${step.where}: gate job's limit`).toBe(Number(step.job["timeout-minutes"]));
+    }
+  });
+
+  it("names jobs in the longest-limit column whose timeout-minutes are the figures it gives", () => {
+    const jobsByName = (jobs) => Object.values(jobs).map((job) => ({ name: String(job.name ?? ""), minutes: Number(job["timeout-minutes"]) }));
+    const rows = new Map(tableRows().map((row) => [row.gate, row]));
+    let checked = 0;
+    for (const step of gateSteps()) {
+      const cell = rows.get(step.name).cells[2];
+      // `45 (`Test shard`; `Real-PostgreSQL suites (all)` is 35)`: the first name
+      // carries the leading figure, and any `<name>` is N carries its own.
+      const first = cell.match(/^\d+ \(`([^`]+)`/)?.[1];
+      expect(first, `${step.where}: the job the longest limit belongs to`).toBeDefined();
+      const owner = jobsByName(step.jobs).filter((job) => job.name.startsWith(first));
+      expect(owner, `${step.where}: one job named ${first}`).toHaveLength(1);
+      expect(owner[0].minutes, `${step.where}: ${first}`).toBe(leadingMinutes(cell));
+      checked += 1;
+      for (const [, name, minutes] of cell.matchAll(/`([^`]+)` is (\d+)/g)) {
+        const job = jobsByName(step.jobs).find((candidate) => candidate.name === name);
+        expect(job, `${step.where}: a job named ${name}`).toBeDefined();
+        expect(job.minutes, `${step.where}: ${name}`).toBe(Number(minutes));
+        checked += 1;
+      }
+    }
+    expect(checked).toBeGreaterThanOrEqual(3);
+  });
+});

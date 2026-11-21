@@ -71,7 +71,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 export const FAST_CENSUS_SUITES = [
   {
     path: "src/lib/__tests__/booking-owner-census.test.ts",
-    why: "pins every booking-owner read by line; re-measured after almost every main merge",
+    why: "pins every booking-owner read, keyed by its file and source line (#5232); a read main adds or moves is not re-measured on a merge, so it is judged here",
   },
   {
     path: "src/lib/__tests__/audit-writer-census.test.ts",
