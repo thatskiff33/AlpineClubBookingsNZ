@@ -29,10 +29,12 @@ const LEDGER_PATH = path.resolve(
  * One real run of the migration-safety gate. Built with the shared
  * `bashGateArgs` helper, like every other suite that shells out to a gate, so
  * it is a plain `bash -c` and never a login shell. This file used to write its
- * own `bash -lc`: on the ubuntu-26.04 runner that login shell's profile never
- * returned while libfaketime was preloaded, and because `spawnSync` blocks the
- * worker, Vitest's own test timeout could not fire. All three Clock rollover
- * canary jobs sat on this file until the job's 30-minute limit (#5374).
+ * own `bash -lc`. On the ubuntu-26.04 runner, under the libfaketime preload,
+ * that login shell did not return before the job's limit: the cancelled jobs'
+ * leftover processes were `bash` and `locale`, and why was not established.
+ * Because `spawnSync` blocks the worker, Vitest's own test timeout could not
+ * fire, and all three Clock rollover canary jobs sat on this file until their
+ * 30-minute limit (#5374, #5377).
  *
  * The `timeout` is the backstop for the same reason: a child that hangs must
  * fail this test, not the whole job.
@@ -56,9 +58,11 @@ function validate(env: Record<string, string> = {}) {
       timeout: GATE_RUN_TIMEOUT_MS,
     },
   );
-  // A run killed by the timeout has a null status, which `not.toBe(0)` would
-  // read as the refusal two of the three cases expect. Say what happened.
+  // A run killed by the timeout, or by a signal, has a null status, which
+  // `not.toBe(0)` would read as the refusal two of the three cases expect.
+  // Say what happened instead.
   expect(result.error, `the gate did not finish: ${result.error?.message}`).toBeUndefined();
+  expect(result.signal, `the gate was killed by ${result.signal}`).toBeNull();
   return result;
 }
 
