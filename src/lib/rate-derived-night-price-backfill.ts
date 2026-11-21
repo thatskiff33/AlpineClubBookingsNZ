@@ -51,7 +51,7 @@ import { NON_MEMBER_RATE_HOLDER_KEY } from "@/lib/membership-type-rate-coverage"
 import {
   applyRateDerivedNightRewrites,
   RateDerivedBackfillRacedError,
-} from "@/lib/stored-night-price-repair-store";
+} from "@/lib/rate-derived-night-price-store";
 import { formatCents } from "@/lib/utils";
 
 /** A stored night row as the planner reads it. */
