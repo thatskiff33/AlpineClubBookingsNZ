@@ -43,6 +43,9 @@ let prisma: PrismaClient;
 
 type Sent = { operation: string; cents: number };
 
+/** Xero's ids, unique across the file as Xero's own are. */
+let documents = 0;
+
 /**
  * A fake Xero for the real senders: the client, the invoiced party's contact,
  * the contact-repair wrapper and the refund settlement are stood in for, and
@@ -54,7 +57,6 @@ async function fakeXero(sent: Sent[], refuse: Set<string>) {
   const contacts = await import("@/lib/xero-contacts");
   const invoicedParty = await import("@/lib/organisation-xero-contacts");
   const invoicePayments = await import("@/lib/xero-invoice-payments");
-  let documents = 0;
   const cents = (lines: Array<{ unitAmount?: number; quantity?: number }>) =>
     lines.reduce((sum, line) => sum + Math.round((line.unitAmount ?? 0) * 100) * (line.quantity ?? 1), 0);
   const handlers: Record<string, (...args: never[]) => unknown> = {

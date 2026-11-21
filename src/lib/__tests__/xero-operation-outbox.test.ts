@@ -96,6 +96,24 @@ vi.mock("@/lib/audit", () => ({
 // the double has to serve the transaction client too. It is the SAME object, so
 // every existing assertion on `mocks.*` reads the in-transaction calls unchanged,
 // and `mocks.executeRaw` is where the lock statement lands.
+/**
+ * #5228: a row's `queueType` column, as `startXeroSyncOperation` writes it at
+ * enqueue - the queued payload's own - unless a case sets it. The outbox claims
+ * from the column, so a double that omitted it would describe no real row.
+ */
+const scannedRows = new Map<string, unknown>();
+
+/** #5228: a give-back's write (`returnOutboxRowToPending`) - the caller's guard, narrowed to the request it read. */
+function givenBackWhere(id: string, guard: Record<string, unknown>) {
+  return { AND: [guard, { id, requestPayload: { equals: expect.anything() } }] };
+}
+function withQueueTypeColumn(row: unknown): unknown {
+  if (!row || typeof row !== "object" || "queueType" in row) return row;
+  const payload = (row as { requestPayload?: unknown }).requestPayload;
+  const queueType = payload && typeof payload === "object" ? (payload as { queueType?: unknown }).queueType : undefined;
+  return typeof queueType === "string" ? { ...row, queueType } : row;
+}
+
 vi.mock("@/lib/prisma", () => {
   const client: Record<string, unknown> = {
     booking: {
@@ -139,8 +157,17 @@ vi.mock("@/lib/prisma", () => {
     },
     xeroSyncOperation: {
       findFirst: mocks.findFirstOperation,
-      findUnique: mocks.findUniqueOperation,
-      findMany: mocks.findManyOperations,
+      // #5228: a row a case does not re-stage reads back as its scan returned it.
+      findUnique: async (...a: unknown[]) => {
+        const staged = await mocks.findUniqueOperation(...a);
+        return withQueueTypeColumn(staged === undefined ? scannedRows.get((a[0] as { where?: { id?: string } })?.where?.id ?? "") : staged);
+      },
+      findMany: async (...a: unknown[]) => {
+        const rows = await mocks.findManyOperations(...a);
+        if (!Array.isArray(rows)) return rows;
+        for (const row of rows) if (row && typeof row === "object" && "id" in row) scannedRows.set(String(row.id), row);
+        return rows.map(withQueueTypeColumn);
+      },
       count: mocks.countOperations,
       updateMany: mocks.updateManyOperation,
       update: mocks.updateOperation,
@@ -2636,7 +2663,7 @@ describe("processQueuedXeroOutboxOperations", () => {
 
     for (const id of ["op_alloc_busy", "op_dealloc_busy"]) {
       expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-        where: { id, status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
+        where: givenBackWhere(id, { status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM }),
         data: {
           status: "PENDING",
           startedAt: null,
@@ -2671,7 +2698,7 @@ describe("processQueuedXeroOutboxOperations", () => {
     await processQueuedXeroOutboxOperations({ limit: 5 });
 
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_dealloc_waiting", status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
+      where: givenBackWhere("op_dealloc_waiting", { status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM }),
       data: expect.objectContaining({ status: "PENDING", lastErrorCode: BILLED_OFFSET_AWAITING_OWN_NOTE_CODE }),
     });
     // The scan leaves such a row out until its recheck is due; every other
@@ -2737,7 +2764,7 @@ describe("processQueuedXeroOutboxOperations", () => {
 
       await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toMatchObject({ skipped: 1, failed: 0 });
       expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-        where: { id: "op_fenced", status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
+        where: givenBackWhere("op_fenced", { status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM }),
         data: expect.objectContaining({ status: "PENDING", startedAt: null, lastErrorCode: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE }),
       });
     });
@@ -2795,7 +2822,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       skipped: 1,
     });
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_dealloc_retry", status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
+      where: givenBackWhere("op_dealloc_retry", { status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM }),
       data: {
         status: "PENDING",
         startedAt: null,
@@ -2940,7 +2967,7 @@ describe("processQueuedXeroOutboxOperations", () => {
 
     // Only the run's own claim; `responsePayload` (the owed-email marker) untouched.
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_settle_1", status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
+      where: givenBackWhere("op_settle_1", { status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM }),
       data: {
         status: "PENDING",
         startedAt: null,
@@ -3100,7 +3127,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       skipped: 1,
     });
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_hand_back_2", status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
+      where: givenBackWhere("op_hand_back_2", { status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM }),
       data: { status: "PENDING", startedAt: null, lastErrorCode: null, lastErrorMessage: expect.stringContaining("op_hand_back_1") },
     });
     expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
@@ -4029,7 +4056,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       });
       await processQueuedXeroOutboxOperations({ limit: 1 });
       expect(mocks.updateManyOperation).toHaveBeenCalledWith(expect.objectContaining({
-        where: expect.objectContaining({ AND: [{ status: { in: ["RUNNING", "FAILED"] }, startedAt: RETAKEN.startedAt }] }),
+        where: { AND: [expect.objectContaining({ AND: [{ status: { in: ["RUNNING", "FAILED"] }, startedAt: RETAKEN.startedAt }] }), expect.anything()] },
         data: expect.objectContaining({ status: "PENDING" }),
       }));
     });
@@ -4042,7 +4069,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       });
       await processQueuedXeroOutboxOperations({ limit: 1 });
       expect(mocks.updateManyOperation).toHaveBeenCalledWith(expect.objectContaining({
-        where: expect.objectContaining({ status: "RUNNING", startedAt: RETAKEN.startedAt }),
+        where: { AND: [expect.objectContaining({ status: "RUNNING", startedAt: RETAKEN.startedAt }), expect.anything()] },
       }));
     });
   });

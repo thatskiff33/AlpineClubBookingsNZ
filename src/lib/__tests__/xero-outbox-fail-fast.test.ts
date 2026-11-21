@@ -25,6 +25,8 @@ type StoredOperation = {
   localId: string | null;
   createdByMemberId?: string | null;
   requestPayload: Record<string, unknown>;
+  /** #5228: the immutable column, as enqueue writes it from the queued payload. */
+  queueType?: string | null;
   status: string;
   startedAt: Date | null;
   completedAt: Date | null;
@@ -57,7 +59,10 @@ const mocks = vi.hoisted(() => {
       if (column === "OR") return (test as Record<string, unknown>[]).some((b) => matchesBranch(row, b));
       if (column === "AND") return (test as Record<string, unknown>[]).every((b) => matchesBranch(row, b));
       const value = (row as unknown as Record<string, unknown>)[column];
-      if (test === null) return value === null;
+      // #5228: a JSON column compared whole, as the give-back's compare-and-set does.
+      if (test && typeof test === "object" && "equals" in test) return JSON.stringify(value) === JSON.stringify((test as { equals: unknown }).equals);
+      // A column the stored row never set reads NULL, as an unset column does in Postgres.
+      if (test === null) return value === null || value === undefined;
       if (value === null || value === undefined) return false;
       if (test instanceof Date) return value instanceof Date && value.getTime() === test.getTime();
       if (typeof test !== "object") return value === test;
@@ -77,12 +82,12 @@ const mocks = vi.hoisted(() => {
       where,
       data,
     }: {
-      where: { id: string; status?: unknown; startedAt?: Date | null; manuallyResolvedAt?: null; OR?: Record<string, unknown>[]; AND?: Record<string, unknown>[] };
+      where: { id?: string; status?: unknown; startedAt?: Date | null; manuallyResolvedAt?: null; OR?: Record<string, unknown>[]; AND?: Record<string, unknown>[] };
       data: Partial<StoredOperation>;
     }) => {
       let count = 0;
       for (const row of rows.values()) {
-        if (row.id !== where.id) continue;
+        if (where.id !== undefined && row.id !== where.id) continue;
         if (!matchesStatus(row.status, where)) continue;
         // #4356: honour the not-a-repair-claim `OR` as Postgres would, NULL included.
         if (where.OR && !where.OR.some((branch) => matchesBranch(row, branch))) continue;
@@ -134,7 +139,7 @@ const mocks = vi.hoisted(() => {
   const operationFindUnique = vi.fn(
     async ({ where }: { where: { id: string } }) => {
       const row = rows.get(where.id);
-      return row ? { requestPayload: row.requestPayload, status: row.status } : null;
+      return row ? { requestPayload: row.requestPayload, queueType: row.queueType ?? null, status: row.status } : null;
     }
   );
 
@@ -214,6 +219,7 @@ function seedOperation(row: Partial<StoredOperation> & { id: string }) {
     lastErrorMessage: null,
     ...row,
   };
+  stored.queueType ??= typeof stored.requestPayload.queueType === "string" ? stored.requestPayload.queueType : null;
   mocks.rows.set(stored.id, stored);
   mocks.operationFindMany.mockResolvedValue([
     {
@@ -222,6 +228,7 @@ function seedOperation(row: Partial<StoredOperation> & { id: string }) {
       localId: stored.localId,
       createdByMemberId: stored.createdByMemberId,
       requestPayload: stored.requestPayload,
+      queueType: stored.queueType,
     },
   ]);
 }
@@ -361,14 +368,19 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
       expect(row?.startedAt).toBeNull();
       expect(row?.completedAt).toBeNull();
 
-      // The un-claim widened its guard to match the FAILED row the handler left.
+      // The un-claim widened its guard to match the FAILED row the handler left,
+      // narrowed (#5228) to the queued request it read, which it keeps.
       expect(mocks.operationUpdateMany).toHaveBeenLastCalledWith({
         where: {
-          id: "op_refund_1",
-          // #4373/#4687: RUNNING or self-failed FAILED, only under this dispatch's own claim.
-          AND: [{ status: { in: ["RUNNING", "FAILED"] }, startedAt: expect.any(Date) }],
-          manuallyResolvedAt: null,
-          ...NOT_A_XERO_REPAIR_CLAIM,
+          AND: [
+            {
+              // #4373/#4687: RUNNING or self-failed FAILED, only under this dispatch's own claim.
+              AND: [{ status: { in: ["RUNNING", "FAILED"] }, startedAt: expect.any(Date) }],
+              manuallyResolvedAt: null,
+              ...NOT_A_XERO_REPAIR_CLAIM,
+            },
+            { id: "op_refund_1", requestPayload: { equals: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 3000, watermarkCents: 8000 } } },
+          ],
         },
         data: {
           status: "PENDING",
@@ -487,6 +499,91 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
       expect(row?.status).toBe("PENDING");
       expect(row?.startedAt).toBeNull();
       expect(row?.completedAt).toBeNull();
+    });
+  });
+
+  // #5228: the refund note, booking and group invoices (and others) save their
+  // execution request over the queued one before their first Xero call. A
+  // give-back that left it there stranded the row: PENDING, unclaimable,
+  // skipped on every pass, nothing sent and nothing alerted.
+  describe("#5228: a give-back leaves a request the next pass can claim", () => {
+    const executionRequest = { creditNotes: [{ total: 30 }], allocation: { invoiceId: "inv_1", amount: 30 }, refundMethod: "card" };
+    const queuedRequest = { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 3000, watermarkCents: 8000 };
+
+    it("MUTATION: puts back the queued request a self-failing handler overwrote before the refusal", async () => {
+      queueOneRefundOperation();
+      mocks.createXeroCreditNote.mockImplementation(async () => {
+        mocks.rows.get("op_refund_1")!.requestPayload = executionRequest;
+        const refusal = new XeroTransientOutageError(120, true);
+        await mocks.failXeroSyncOperation(dispatchClaim("op_refund_1"), refusal);
+        throw refusal;
+      });
+
+      await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toMatchObject({ skipped: 1, failed: 0, cooldownDeferred: 1 });
+
+      expect(mocks.rows.get("op_refund_1")).toMatchObject({ status: "PENDING", startedAt: null, completedAt: null, requestPayload: queuedRequest });
+      // And the next pass claims it and sends the queued amount.
+      mocks.createXeroCreditNote.mockReset().mockResolvedValue(undefined);
+      seedOperation({ ...mocks.rows.get("op_refund_1")! });
+      await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toMatchObject({ processed: 1, succeeded: 1 });
+      expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("pay_1", 3000, expect.objectContaining({ watermarkCents: 8000 }));
+    });
+
+    it("keeps a handler's checkpoint that is still a queued request for the row's queue type", async () => {
+      queueOneRefundOperation();
+      const checkpoint = { ...queuedRequest, documentDate: "2026-06-30" };
+      mocks.createXeroCreditNote.mockImplementation(async () => {
+        mocks.rows.get("op_refund_1")!.requestPayload = checkpoint;
+        const refusal = new XeroDailyLimitError(3600, true);
+        await mocks.failXeroSyncOperation(dispatchClaim("op_refund_1"), refusal);
+        throw refusal;
+      });
+
+      await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toMatchObject({ cooldownDeferred: 1 });
+
+      expect(mocks.rows.get("op_refund_1")).toMatchObject({ status: "PENDING", requestPayload: checkpoint });
+    });
+
+    it("MUTATION: never gives back a row whose request changed after the read; it fails it instead", async () => {
+      queueOneRefundOperation();
+      mocks.createXeroCreditNote.mockImplementation(async () => {
+        mocks.rows.get("op_refund_1")!.requestPayload = executionRequest;
+        const refusal = new XeroTransientOutageError(120, true);
+        await mocks.failXeroSyncOperation(dispatchClaim("op_refund_1"), refusal);
+        throw refusal;
+      });
+      // Another writer rewrites the request between the give-back's read and its write.
+      const read = mocks.operationFindUnique.getMockImplementation()!;
+      let reads = 0;
+      mocks.operationFindUnique.mockImplementation(async (args) => {
+        const row = await read(args);
+        if (++reads === 2) mocks.rows.get("op_refund_1")!.requestPayload = { ...executionRequest, rewritten: true };
+        return row;
+      });
+
+      await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toMatchObject({ skipped: 0, failed: 1 });
+
+      expect(mocks.rows.get("op_refund_1")).toMatchObject({ status: "FAILED", requestPayload: { ...executionRequest, rewritten: true } });
+    });
+
+    it("MUTATION: a PENDING row whose stored request names no queue type is not claimed or sent, and is counted", async () => {
+      seedOperation({ id: "op_stuck", queueType: "REFUND_CREDIT_NOTE", requestPayload: executionRequest });
+
+      await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toEqual({
+        found: 1, processed: 0, succeeded: 0, failed: 0, skipped: 1, unclaimableRequest: 1,
+      });
+
+      expect(mocks.rows.get("op_stuck")).toMatchObject({ status: "PENDING", startedAt: null, requestPayload: executionRequest });
+      expect(mocks.createXeroCreditNote).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: dispatch never routes on a stored request for another queue type than the row's column", async () => {
+      seedOperation({ id: "op_mismatch", queueType: "ACCOUNT_CREDIT_NOTE", requestPayload: queuedRequest });
+
+      await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toMatchObject({ processed: 1, succeeded: 0, failed: 1 });
+
+      expect(mocks.createXeroCreditNote).not.toHaveBeenCalled();
+      expect(mocks.rows.get("op_mismatch")?.status).toBe("FAILED");
     });
   });
 
