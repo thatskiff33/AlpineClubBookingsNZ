@@ -25,6 +25,7 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { escapeRegExp } from "@/lib/escape-regexp";
 
 import { stripComments } from "./support/strip-comments";
 
@@ -80,7 +81,7 @@ function refusalModuleImporters(): string[] {
 
 /** Every non-test source file under `src/` importing `specifier`, sorted. */
 function importersOf(specifier: string): string[] {
-  const importLine = new RegExp(`from\\s*"${specifier.replace(/[/.-]/g, "\\$&")}"`);
+  const importLine = new RegExp(`from\\s*"${escapeRegExp(specifier)}"`);
   const root = path.resolve(process.cwd(), "src");
   const found: string[] = [];
   const walk = (dir: string) => {

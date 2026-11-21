@@ -226,7 +226,7 @@ describe("never existed and removed-but-not-yours are the same answer", () => {
     const element = (await BookingDetailPage({ params: Promise.resolve({ id: REMOVED.id }) })) as ReactElement;
     const html = renderToStaticMarkup(element);
     expect(html).toContain("This booking is no longer available");
-    expect(html).toContain(DELETED_BOOKING_MESSAGE.replace("'", "&#x27;"));
+    expect(html).toContain(DELETED_BOOKING_MESSAGE.replaceAll("'", "&#x27;"));
     expect(notFound).not.toHaveBeenCalled();
   });
 });
