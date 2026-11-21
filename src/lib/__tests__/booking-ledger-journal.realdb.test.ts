@@ -29,7 +29,6 @@ import {
   seedHistoryFixtures,
   settleHistoryByCard,
 } from "./support/booking-ledger-history";
-import { realElapsedMs } from "./helpers/clock";
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { arrivingWhilePaused, clearPauses, expectFulfilled, pauseIn, previewMerge } from "./support/member-merge-race";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
@@ -545,16 +544,21 @@ async function expectAgreed(bookingId: string) {
       where: { id: { in: ids } }, select: { id: true, lodgeId: true, finalPriceCents: true, payment: { select: { changeFeeCents: true } } },
     });
     const groupSync = await import("@/lib/booking-ledger-group-settlement-sync");
-    const started = process.hrtime.bigint();
-    await prisma.$transaction(async (tx) => {
+    // Imported here, not at the top: `db-transaction` loads `@/lib/prisma`, which
+    // must not bind before `beforeAll` points DATABASE_URL at the race database.
+    const { LOCK1_HOLDER_TRANSACTION_BUDGET } = await import("@/lib/db-transaction");
+    // The judge is the settle's own budget, not a stopwatch (#5213). Prisma
+    // rolls back a transaction whose body outruns `timeout` (P2028), so this
+    // resolving with 40 R01s committed is the proof that they fit. A wall-clock
+    // bound measured around the call also counted the `maxWait` queue for a
+    // connection, and failed busy runners (40.5 s) with nothing wrong.
+    await expect(prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       await groupSync.postGroupSettlementLedgerLines({
         store: tx, journal: JOURNAL, settlement: { id: `${PREFIX}settlement`, source: "STRIPE", amountCents: 40 * PRICE }, children,
       });
-    }, { maxWait: 10_000, timeout: 30_000 }); // the group settle's own bound
-    const elapsedMs = realElapsedMs(started);
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET)).resolves.toBeUndefined();
     expect(await prisma.memberMoneyEvent.count({ where: { eventKey: { in: ids.map((id) => `booking-charge:${id}`) } } })).toBe(40);
-    expect(elapsedMs).toBeLessThan(30_000);
   });
 
   it("the census reports zero JOURNAL differences and no unbridged line on the whole population", async () => {

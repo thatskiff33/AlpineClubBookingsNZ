@@ -14,13 +14,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // ---------------------------------------------------------------------------
 
 const mocks = vi.hoisted(() => ({
+  completion: vi.fn(),
   themeState: vi.fn(),
   clubIdentity: vi.fn(),
   emailSettings: vi.fn(),
   moduleFlags: vi.fn(),
 }));
 
-vi.mock("@/lib/club-theme", () => ({ getWebsiteThemeRenderState: mocks.themeState }));
+vi.mock("@/lib/club-theme", () => ({
+  readSetupCompletion: mocks.completion,
+  getWebsiteThemeRenderState: mocks.themeState,
+}));
 vi.mock("@/lib/club-identity-settings", () => ({ getClubIdentity: mocks.clubIdentity }));
 vi.mock("@/lib/email-message-settings", () => ({
   loadEmailMessageSettings: mocks.emailSettings,
@@ -68,6 +72,7 @@ const MOVED = ADMIN_PAGES.filter((page) => page.moved);
 beforeEach(() => {
   vi.clearAllMocks();
   resetSetupGateCache();
+  mocks.completion.mockResolvedValue({ readFailed: false, isComplete: true });
   mocks.themeState.mockResolvedValue({ isComplete: true, css: "" });
   mocks.clubIdentity.mockResolvedValue({ name: "Example Alpine Club" });
   mocks.emailSettings.mockResolvedValue({

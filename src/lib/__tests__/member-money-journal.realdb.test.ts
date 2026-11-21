@@ -11,6 +11,7 @@ import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
 import {
   createMemberMoneyScratchDatabase,
   MEMBER_MONEY_JOURNAL_MIGRATION as MIGRATION,
+  MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS,
   memberMoneyScratchName,
   memberMoneyScratchRoles,
   type MemberMoneyScratchDatabase,
@@ -118,11 +119,11 @@ describe.skipIf(!RUN)("member money journal database contracts (#4513)", () => {
     scratch = await createMemberMoneyScratchDatabase(url, "member money journal", prefix);
     db = scratch.owner;
     app = new Client({ connectionString: scratch.appUrl }); await app.connect();
-  }, 30_000);
+  }, MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS);
   afterAll(async () => {
     await app?.end();
     await scratch?.drop();
-  });
+  }, MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS);
 
   it("commits a balanced complete batch as the INSERT/SELECT-only role and verifies it", async () => {
     await transaction(app, () => batch(app));

@@ -521,3 +521,63 @@ describe("booking edit policy — finished-stay correction (#3750)", () => {
     expect(isFinishedStay({ checkOut: TODAY, status: "COMPLETED" }, TODAY)).toBe(true);
   });
 });
+
+describe("booking edit policy — work-party correction (fork #127/#130)", () => {
+  const TODAY = new Date("2026-07-01T00:00:00.000Z");
+  const started = {
+    checkIn: new Date("2026-06-28T00:00:00.000Z"),
+    checkOut: new Date("2026-07-03T00:00:00.000Z"),
+    today: TODAY,
+  };
+
+  it.each(["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"])(
+    "prices a started %s stay whole for an officer: no in-progress window, check-in locked",
+    (status) => {
+      expect(
+        getBookingEditPolicy({ ...started, status, role: "ADMIN", workPartyCorrection: true }),
+      ).toMatchObject({ canModify: true, mode: "work-party-correction", editableFrom: null, checkInEditable: false });
+    },
+  );
+
+  it("refuses a status outside the active lifecycle", () => {
+    for (const status of ["CANCELLED", "DRAFT", "WAITLISTED", "AWAITING_REVIEW"]) {
+      const policy = getBookingEditPolicy({ ...started, status, role: "ADMIN", workPartyCorrection: true });
+      expect(policy.canModify).toBe(false);
+      expect(policy.mode).toBeNull();
+    }
+  });
+
+  it("never gives a COMPLETED stay the mode: it is finished, and keeps its own window", () => {
+    const policy = getBookingEditPolicy({ ...started, status: "COMPLETED", role: "ADMIN", workPartyCorrection: true });
+    expect(policy.mode).not.toBe("work-party-correction");
+  });
+
+  it("leaves every other edit of a started stay in-progress: no flag, or a member's", () => {
+    expect(getBookingEditPolicy({ ...started, status: "PAID", role: "ADMIN" }).mode).toBe("in-progress");
+    expect(
+      getBookingEditPolicy({ ...started, status: "PAID", role: "MEMBER", workPartyCorrection: true }).mode,
+    ).toBe("in-progress");
+  });
+
+  it("never widens a future or finished stay", () => {
+    const future = getBookingEditPolicy({
+      checkIn: new Date("2026-08-01T00:00:00.000Z"),
+      checkOut: new Date("2026-08-03T00:00:00.000Z"),
+      today: TODAY,
+      status: "PAID",
+      role: "ADMIN",
+      workPartyCorrection: true,
+    });
+    expect(future.mode).toBe("future");
+    const finished = getBookingEditPolicy({
+      checkIn: new Date("2026-06-20T00:00:00.000Z"),
+      checkOut: new Date("2026-06-30T00:00:00.000Z"),
+      today: TODAY,
+      status: "PAID",
+      role: "ADMIN",
+      workPartyCorrection: true,
+    });
+    expect(finished.canModify).toBe(false);
+    expect(finished.mode).toBeNull();
+  });
+});

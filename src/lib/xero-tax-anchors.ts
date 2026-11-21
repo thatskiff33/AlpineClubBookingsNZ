@@ -1,5 +1,11 @@
 import { readBookingTaxAnchorInstant } from "@/lib/booking-tax-anchor";
-import { clubTaxTreatmentOn, loadClubTaxSchedule } from "@/lib/club-tax-settings";
+import {
+  clubTaxPeriodOn,
+  clubTaxTreatmentOn,
+  loadClubTaxSchedule,
+  type ClubTaxPeriod,
+  type ClubTaxTreatment,
+} from "@/lib/club-tax-settings";
 import { clubCalendarDateOf, requireInstant, type Instant } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { prisma } from "@/lib/prisma";
@@ -75,12 +81,28 @@ async function anchorInstant(anchor: XeroTaxAnchor): Promise<Instant> {
   }
 }
 
-/** The Xero rendering of the treatment in force on the anchor's club date. */
-export async function resolveXeroTaxRendering(anchor: XeroTaxAnchor): Promise<XeroTaxRendering> {
+/** The schedule period in force on an anchor's club date, and the treatment it gives. */
+export interface AnchoredClubTax {
+  period: ClubTaxPeriod;
+  treatment: ClubTaxTreatment;
+}
+
+/**
+ * The one lookup of an anchor's period: the Xero rendering below, and the app's
+ * own generated booking invoice, which also asks whether the club recorded that
+ * period (`clubTaxPeriodIsRecorded`; #5066). Throws as the rendering does.
+ */
+export async function resolveAnchoredClubTax(anchor: XeroTaxAnchor): Promise<AnchoredClubTax> {
   const [at, schedule, zone] = await Promise.all([
     anchorInstant(anchor),
     loadClubTaxSchedule(prisma),
     readClubTimeZoneOutsideRequest(),
   ]);
-  return xeroTaxRenderingOf(clubTaxTreatmentOn(schedule, clubCalendarDateOf(at, zone)));
+  const date = clubCalendarDateOf(at, zone);
+  return { period: clubTaxPeriodOn(schedule, date), treatment: clubTaxTreatmentOn(schedule, date) };
+}
+
+/** The Xero rendering of the treatment in force on the anchor's club date. */
+export async function resolveXeroTaxRendering(anchor: XeroTaxAnchor): Promise<XeroTaxRendering> {
+  return xeroTaxRenderingOf((await resolveAnchoredClubTax(anchor)).treatment);
 }

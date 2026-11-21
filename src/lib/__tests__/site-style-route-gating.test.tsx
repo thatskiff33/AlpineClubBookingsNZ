@@ -229,8 +229,9 @@ describe("site style route-group gating", () => {
     // launch-state lie pinned in every visitor's cache for a minute.
     //
     // The chrome is only allowed to paint that screen on a POSITIVE answer. The
-    // proxy gate keeps failing closed on the same input, and that asymmetry is
-    // the point: 503 is a true statement about an unreadable database, a 200
+    // proxy gate fails closed on the same input on a cold start (once it has
+    // seen setup complete it keeps that answer through a failed read, #5264),
+    // and that asymmetry is the point: 503 is a true statement about an unreadable database, a 200
     // holding screen is not.
     mocks.getWebsiteThemeRenderState.mockResolvedValue({
       css: ":root{}",

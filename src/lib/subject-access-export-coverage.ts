@@ -93,6 +93,11 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   GroupBooking: SHARED,
   GroupBookingJoin: SHARED,
   GroupBookingSettlement: SHARED,
+  // #5005: a paid-booking import. The imported booking and its payment are in
+  // `bookings`; the batch spans every booking in a file, and a row is one
+  // booking's whole party with no subject-only filter.
+  BookingImportBatch: OPERATIONAL,
+  BookingImportRow: SHARED,
   BookingRequest: "bookingRequests",
   BookingRequestPendingAdultReservationNight: SHARED,
   BookingRequestQuote: SHARED,
@@ -155,6 +160,7 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   ClubTimeSettings: CLUB_CONFIG,
   ClubFormatSettings: CLUB_CONFIG,
   ClubTaxSettings: CLUB_CONFIG,
+  XeroTaxCategoryMapping: CLUB_CONFIG,
   LoginSecuritySetting: CLUB_CONFIG,
   AnalyticsSettings: CLUB_CONFIG,
   EmailTemplateOverride: CLUB_CONFIG,
@@ -198,6 +204,10 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   MemberCredit: "credits",
   MemberCreditNoteAllocation: "credits",
   AdminCreditAdjustmentRequest: "additionalRecords.AdminCreditAdjustmentRequest",
+  // #5204: keyed by Xero contact; the rows matched by the member's xeroContactId.
+  XeroCashCredit: "additionalRecords.XeroCashCredit",
+  MemberCreditCashAllocation: "credits",
+  MemberCreditCashReturn: "credits",
   PublicContentSettings: CLUB_CONFIG,
   RefundRequest: "refundRequests",
   CommitteeRole: CLUB_CONFIG,
@@ -235,6 +245,12 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   MemberMoneyExportCoverage: SHARED,
   // #4520: Stripe's own balance transaction, keyed by a payment intent rather than a member.
   StripeBalanceTransactionEvidence: OPERATIONAL,
+  // ALP-653: the member's own AI app connections are listed; the codes and
+  // tokens behind them are secrets, and the policy is club configuration.
+  McpGrant: "additionalRecords.McpGrant",
+  McpAuthCode: SECRET,
+  McpToken: SECRET,
+  McpSettings: CLUB_CONFIG,
   // Food orders (PR #5143): the subject's own orders and their lines.
   FoodOrderSettings: CLUB_CONFIG,
   FoodOrder: "additionalRecords.FoodOrder",

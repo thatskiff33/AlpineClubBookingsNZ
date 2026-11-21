@@ -12,7 +12,7 @@
 import type { AuditWriteSiteLedgerEntry } from "./audit-writer-census";
 
 export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntry>> = {
-  "src/app/(authenticated)/bookings/[id]/_lib/booking-invoice-download.ts::prepareBookingInvoiceDownload#0": {"category":"booking","sink":"createAuditLog","action":"(dynamic) creditNote ? \"booking.credit_note.downloaded\" : \"booking.invoice.downloaded\""},
+  "src/app/(authenticated)/bookings/[id]/_lib/booking-invoice-download.ts::prepareBookingInvoiceDownload#0": {"category":"booking","sink":"createAuditLog","action":"(dynamic) isCreditNote ? \"booking.credit_note.downloaded\" : \"booking.invoice.downloaded\""},
   "src/app/api/admin/access-roles/[id]/route.ts::DELETE#0": {"category":"admin","sink":"auditLog.create","action":"ACCESS_ROLE_DEFINITION_DELETED"},
   "src/app/api/admin/access-roles/[id]/route.ts::PATCH.updated#0": {"category":"admin","sink":"auditLog.create","action":"ACCESS_ROLE_DEFINITION_UPDATED"},
   "src/app/api/admin/access-roles/route.ts::POST.created#0": {"category":"admin","sink":"auditLog.create","action":"ACCESS_ROLE_DEFINITION_CREATED"},
@@ -233,6 +233,8 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/app/api/admin/work-parties/[id]/route.ts::PUT#0": {"category":"admin","sink":"logAudit","action":"workparty.update","reviewed":["2765-lodge-keep"]},
   "src/app/api/admin/work-parties/route.ts::POST#0": {"category":"admin","sink":"logAudit","action":"workparty.create","reviewed":["2765-lodge-keep"]},
   "src/app/api/admin/xero/account-mappings/route.ts::PUT#0": {"category":"xero","sink":"logAudit","action":"xero_account_mappings_updated","reviewed":["2581-applied","2581-no-entity-id"]},
+  "src/app/api/admin/xero/cash-credits/route.ts::POST#0": {"category":"xero","sink":"createAuditLog","action":"XERO_CASH_CREDITS_REFRESH"},
+  "src/app/api/admin/xero/cash-credits/route.ts::POST#1": {"category":"xero","sink":"createAuditLog","action":"XERO_CASH_CREDITS_REFRESH"},
   "src/app/api/admin/xero/force-sync/route.ts::POST#0": {"category":"xero","sink":"logAudit","action":"XERO_FORCE_SYNC_CONTACT"},
   "src/app/api/admin/xero/force-sync/route.ts::POST#1": {"category":"xero","sink":"logAudit","action":"XERO_FORCE_SYNC_MEMBERSHIP"},
   "src/app/api/admin/xero/force-sync/route.ts::POST#2": {"category":"xero","sink":"logAudit","action":"XERO_FORCE_SYNC_INVOICE"},
@@ -363,6 +365,8 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/booking-delete.ts::softDeleteCancelledBookingInTransaction#0": {"category":"booking","sink":"createAuditLog","action":"booking.delete.cancelled.soft"},
   "src/lib/booking-fresh-email-copy.ts::recordSentCopy#0": {"category":"communication","sink":"createAuditLog","action":"booking.email.freshCopySent"},
   "src/lib/booking-guest-acceptance-reprice.ts::settleGuestAcceptanceRepriceAfterCommit#0": {"category":"booking","sink":"logAudit","action":"booking.modify.promo_reprice"},
+  "src/lib/booking-import/write.ts::confirmBookingImport#0": {"category":"booking","sink":"logAudit","action":"booking_import.completed"},
+  "src/lib/booking-import/write.ts::importOneBooking#0": {"category":"booking","sink":"logAudit","action":"booking_import.booking_imported"},
   "src/lib/booking-no-emails-service.ts::setBookingNoEmails#0": {"category":"booking","sink":"createAuditLog","action":"(dynamic) params.noEmails ? \"booking.noEmails.set\" : \"booking.noEmails.cleared\""},
   "src/lib/booking-request-corrections.ts::correctBookingRequest#0": {"category":"booking","sink":"logAudit","action":"booking_request.corrected"},
   "src/lib/booking-request-quotes.ts::createBookingRequestQuote#0": {"category":"booking","sink":"logAudit","action":"booking_request.quote_created"},
@@ -450,6 +454,7 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/manual-refund-task-reopen-audit.ts::recordManualRefundTaskReopenAudit#0": {"category":"payment","sink":"createAuditLog","action":"booking-payment.manual-refund-task.reopen"},
   "src/lib/manual-subscription-payment.ts::applyManualSubscriptionPayment#0": {"category":"payment","sink":"createAuditLog","action":"membership-subscription.manual-payment.mark-paid"},
   "src/lib/manual-subscription-payment.ts::applyManualSubscriptionPayment#1": {"category":"payment","sink":"createAuditLog","action":"membership-subscription.manual-payment.mark-unpaid"},
+  "src/lib/mcp/audit.ts::recordMcpAudit#0": {"category":"security","sink":"createStructuredAuditLog","action":"(dynamic) event.action"},
   "src/lib/member-credit.ts::createAdminAdjustmentRequest.request#0": {"category":"payment","sink":"createAuditLog","action":"member.credit.adjustment.request","reviewed":["2581-applied"]},
   "src/lib/member-credit.ts::reviewAdminAdjustmentRequest.result#0": {"category":"payment","sink":"createAuditLog","action":"member.credit.adjustment.reject","reviewed":["2581-applied"]},
   "src/lib/member-credit.ts::reviewAdminAdjustmentRequest.result#1": {"category":"payment","sink":"createAuditLog","action":"member.credit.adjustment.approve","reviewed":["2581-applied","2695-member-facing"]},
@@ -573,4 +578,6 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/xero-late-partial-trace.ts::traceLostClaimPartial#0": {"category":"xero","sink":"createAuditLog","action":"(dynamic) LATE_PARTIAL_NOT_RECORDED_ACTION"},
   "src/lib/xero-member-import.ts::importMembersFromXeroGroups#0": {"category":"admin","sink":"auditLog.create","action":"(dynamic) XERO_MEMBER_IMPORT_MEMBERSHIP_TYPES_ACTION"},
   "src/lib/xero-refund-note-record.ts::auditUnrecordedNote#0": {"category":"xero","sink":"createAuditLog","action":"(dynamic) LATE_REFUND_NOTE_NOT_RECORDED_ACTION"},
+  "src/lib/xero-tax-category-write.ts::clearXeroTaxCategory#0": {"category":"admin","sink":"auditLog.create","action":"XERO_TAX_CATEGORY_CLEARED"},
+  "src/lib/xero-tax-category-write.ts::mapXeroTaxCategory#0": {"category":"admin","sink":"auditLog.create","action":"XERO_TAX_CATEGORY_MAPPED"},
 };

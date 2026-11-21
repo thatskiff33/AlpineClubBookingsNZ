@@ -294,7 +294,7 @@ function recomputePaymentSummary(payment: any) {
 }
 
 /** #3924 round 14: a capture's by-hand card refunds - cents alone, or with the share a note sent without a reply may answer. */
-type CardByHand = number | { byHandCents: number; mayBeInXeroCents: number };
+type CardByHand = number | { byHandCents: number; mayBeInXeroCents: number; aboveRecordedCents?: number };
 
 function createDependencies(state: {
   bookings: any[];
@@ -840,7 +840,9 @@ function createDependencies(state: {
           new Map(
             Object.entries(state.lateCaptureCardRefundsByHand ?? {}).map(([intent, value]) => [
               intent,
-              typeof value === "number" ? { byHandCents: value, mayBeInXeroCents: 0 } : value,
+              typeof value === "number"
+                ? { byHandCents: value, mayBeInXeroCents: 0, aboveRecordedCents: 0 }
+                : { aboveRecordedCents: 0, ...value },
             ]),
           ),
       ),
@@ -6887,6 +6889,39 @@ describe("runBookingXeroRepair", () => {
         /raises no refund note for the card refunds of it\. A refund credit note for \$100\.00 refunded to the card may be in Xero: the app tried to send it and cannot tell whether Xero took it\. Check Xero for that credit note first/,
       );
       expect(card?.summary).not.toMatch(/record the \$/);
+    });
+
+    // #4383: a receipt the app recorded for only part of the capture caps
+    // its refund note there; the refunds above it are named with the
+    // conditional sentence, never as a plain amount to record by hand.
+    it("MUTATION: #4383: a capped capture refunded above what was recorded is named, conditionally, on its own", async () => {
+      const refunded = keptBooking(
+        { refundedAmountCents: 8000, status: "REFUNDED" },
+        { refundedAmountCents: 8000, status: "REFUNDED" },
+      );
+      const { bookingReport } = await run(refunded, "COMPLETED", [], { pi_kept: { byHandCents: 0, mayBeInXeroCents: 0, aboveRecordedCents: 3000 } });
+      const card = bookingReport.findings.find((finding) => finding.code === "LATE_CAPTURE_CARD_REFUND_RECORD_BY_HAND");
+      expect(card).toMatchObject({
+        severity: "warning",
+        safeToAutoApply: false,
+        details: { paymentId: "payment_1", paymentIntentId: "pi_kept", recordByHandCents: 0, aboveRecordedCents: 3000 },
+      });
+      expect(card?.summary).toMatch(
+        /recorded only part of it, so the app's refund credit note stops at that part\. If the rest of the payment was recorded in Xero by hand, as the receipt's alert asks, record the \$30\.00 of the refund above it by hand too; if not, record nothing\. This finding is report-only/,
+      );
+      expect(card?.summary).not.toMatch(/resolved by hand/);
+      expect(bookingReport.actions).toEqual([]);
+    });
+
+    it("#4383: an uncapped capture says nothing of a part above what was recorded", async () => {
+      const refunded = keptBooking(
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+      );
+      const { bookingReport } = await run(refunded, "COMPLETED", [], { pi_kept: 10000 });
+      const card = bookingReport.findings.find((finding) => finding.code === "LATE_CAPTURE_CARD_REFUND_RECORD_BY_HAND");
+      expect(card?.summary).not.toMatch(/recorded only part of it/);
+      expect(card?.details).not.toHaveProperty("aboveRecordedCents");
     });
 
     it("round 12: the card finding is read only for a cancelled booking", async () => {
