@@ -23,6 +23,7 @@
  * Pure: the outbox's builder and the repair pass read the same predicates.
  */
 import { asRecord } from "@/lib/xero-json";
+import { MODIFICATION_ACCOUNT_CREDIT_NOTE_ROLE, MODIFICATION_CREDIT_NOTE_ROLE } from "@/lib/xero-booking-credit-note-link-roles";
 import {
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
@@ -77,7 +78,7 @@ const OWN_NOTE_QUEUE_TYPES: readonly string[] = [
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
 ];
-const OWN_NOTE_LINK_ROLES: readonly string[] = ["MODIFICATION_CREDIT_NOTE", "MODIFICATION_ACCOUNT_CREDIT_NOTE"];
+const OWN_NOTE_LINK_ROLES: readonly string[] = [MODIFICATION_CREDIT_NOTE_ROLE, MODIFICATION_ACCOUNT_CREDIT_NOTE_ROLE];
 
 /**
  * An edit's own (unscoped) note operation - either kind, any status but

@@ -22,11 +22,10 @@ type StayNightsClient = Pick<typeof prisma, "bookingGuestNight">;
  *
  * IT COUNTS ROWS, so a strand that holds its nights only through its stay
  * envelope contributes NOTHING here until those rows exist. #3214's strand
- * reconcile creates them, and a member can therefore cross `minimumNights` from
- * an officer recording what their nights sold for. That is a correction —
- * `INV-CAP-032` is that a guest with no night rows is one the system believes is
- * nowhere — and it is analysed where it is caused, in
- * `stored-night-price-strand-reconcile.ts`'s module docblock.
+ * reconcile used to create them (retired by #4344), so a member could cross
+ * `minimumNights` from an officer recording what their nights sold for. That
+ * was a correction — `INV-CAP-032` is that a guest with no night rows is one
+ * the system believes is nowhere.
  */
 export async function countMemberStayNights(
   memberId: string,
