@@ -88,8 +88,10 @@ describe("Club Currency & Locale copy has one home (#3566)", () => {
     const start = guide.indexOf("**What does not follow it.**");
     expect(start).toBeGreaterThan(-1);
     const section = guide.slice(start, guide.indexOf("\n\n**", start + 1));
-    // #5258: the report charts' date labels follow the setting now.
-    expect(section).not.toMatch(/report charts|Apr 16/);
+    // #5258: the report charts' date labels follow the setting now, so no
+    // item on the list names them.
+    const items = section.split("\n- ").slice(1).join("\n- ").split("\n\n")[0];
+    expect(items).not.toMatch(/report charts|Apr 16/);
     for (const item of [
       /chore schedule/,
       /minimum-stay setup/,
