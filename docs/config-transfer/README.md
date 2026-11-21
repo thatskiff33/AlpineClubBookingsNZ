@@ -126,7 +126,7 @@ deeper reference for what each category contains and the import safety model.
   `MembershipLockoutSettings.useFeeScheduleItemCodes` (#2109) is
   classified should-travel and now exports like the rest of that singleton.
   Its subscription-liability pair, `requiredTypeAgeRule` and
-  `liabilityAgeSource` (#5190, `INV-CONFIG-008`), travels too, but only whole
+  `liabilityAgeSource` (#5190, `INV-CONFIG-009`), travels too, but only whole
   and chosen: a bundle naming `NOT_CHOSEN`, or only one of the two, carries
   nothing for them, so it never moves a chosen target back. A bundle naming
   `CURRENT_AGE` fails the dry-run. An import that changes the singleton runs the

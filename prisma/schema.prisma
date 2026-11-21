@@ -8523,7 +8523,7 @@ model MembershipLockoutSettings {
   // per membership type + age tier are still recognised as paid. Default false =
   // single-code behaviour byte-for-byte.
   useFeeScheduleItemCodes       Boolean  @default(false)
-  // The club's subscription-liability rule (#5190, INV-CONFIG-008). Both stay
+  // The club's subscription-liability rule (#5190, INV-CONFIG-009). Both stay
   // NOT_CHOSEN until an admin chooses them together; while either is NOT_CHOSEN
   // billing and booking access keep their pre-#5190 rules exactly. Read through
   // `loadMembershipLockoutSettings` and `liabilityRuleFor`, never directly.
