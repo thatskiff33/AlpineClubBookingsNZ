@@ -86,9 +86,14 @@ function sourceFiles(): string[] {
 
 describe("the Sentry initialisation census (#5262)", () => {
   it("lists exactly the files that call Sentry.init, so none goes untested", () => {
-    const callers = sourceFiles().filter((file) =>
-      /\bSentry\.init\s*\(/.test(stripComments(readFileSync(path.join(ROOT, file), "utf8"))),
-    );
+    const callers = sourceFiles().filter((file) => {
+      const source = stripComments(readFileSync(path.join(ROOT, file), "utf8"));
+      // `Sentry.init(...)`, or `init(...)` taken as a named import from a Sentry package.
+      const namedInit =
+        /\bimport\s*\{[^}]*\binit\b[^}]*\}\s*from\s*["']@sentry\//.test(source) &&
+        /(?<![.\w$])init\s*\(/.test(source);
+      return /\bSentry\.init\s*\(/.test(source) || namedInit;
+    });
     expect(callers.sort()).toEqual([...SENTRY_INIT_FILES].sort());
   });
 });
