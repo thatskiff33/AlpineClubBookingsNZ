@@ -1,29 +1,10 @@
 "use client";
 import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
-import { adminHref } from "@/lib/admin-hubs";
-
 import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  AlertCircle,
-  ArrowRight,
-  CheckCircle2,
-  Loader2,
-  RefreshCw,
-  Save,
-} from "lucide-react";
-import { Badge, type BadgeProps } from "@/components/ui/badge";
+import { Loader2, RefreshCw, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { MODULE_KEYS, type ModuleKey, type ModuleSettingsValues } from "@/config/modules";
 import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
@@ -39,27 +20,11 @@ import {
   readApiObjectOrEmpty,
 } from "@/lib/api-error-message";
 import { ModulesInfoNote } from "./_components/modules-info-note";
-
-type ModuleReadinessStatus =
-  | "ready"
-  | "admin_disabled"
-  // #2306 added a `not_available_yet` state for the memberGuests flag, which
-  // gated nothing in that release. #2307 shipped the behaviour, removing the
-  // only producer, so the state and its branches go with it.
-  | "credentials_missing";
-
-interface ModuleStatus {
-  key: ModuleKey;
-  label: string;
-  description: string;
-  adminEnabled: boolean;
-  effectiveEnabled: boolean;
-  readiness: {
-    status: ModuleReadinessStatus;
-    message: string;
-    dependencies: string[];
-  };
-}
+import { ModuleCard, type ModuleStatus } from "./_components/module-card";
+import {
+  AI_DIAGNOSTICS_DISCLOSURE,
+  AI_DIAGNOSTICS_DISCLOSURE_VERSION,
+} from "@/lib/ai-diagnostics-disclosure";
 
 interface ModulesResponse {
   settings: ModuleSettingsValues;
@@ -67,42 +32,6 @@ interface ModulesResponse {
   updatedAt: string | null;
   updatedByMemberId: string | null;
 }
-
-function readinessVariant(
-  status: ModuleReadinessStatus,
-): BadgeProps["variant"] {
-  if (status === "ready") return "success";
-  if (status === "credentials_missing") return "warning";
-  return "secondary";
-}
-
-function readinessLabel(status: ModuleReadinessStatus) {
-  if (status === "ready") return "Enabled";
-  if (status === "credentials_missing") return "Needs setup";
-  return "Disabled";
-}
-
-// Modules whose "Needs setup" state has somewhere to deep-link to (#2080). C4/C5
-// add their providers here as their wizards land.
-//
-// `analytics` points at the Integrations HUB rather than at a setup route of its
-// own, because it has none by design: the owner's #2573 decision put Google
-// Analytics on that hub as a peer card whose configuration opens in place, and
-// expressly ruled out a dedicated analytics setup route. Without this entry
-// analytics was the one module in the tree that could report `credentials_missing`
-// with no clickable route to its configuration — on the screen where the #2573
-// hard cutover is most likely to be discovered by an operator who has not read the
-// release note, and two rows away from the Xero and Google sign-in cards that do
-// show the affordance.
-const MODULE_SETUP_HREFS: Partial<Record<ModuleKey, string>> = {
-  xeroIntegration: adminHref("xero-setup"),
-  googleLogin: "/admin/google/setup",
-  analytics: "/admin/integrations",
-  // The Alpine Central Server setup lives on the Integrations hub (as a card
-  // opening /admin/alpine-server/setup); the module's "Set up" affordance points
-  // at the hub, matching the analytics pattern.
-  alpineCentralServer: "/admin/integrations",
-};
 
 function getReadiness(
   module: ModuleStatus,
@@ -147,6 +76,10 @@ export default function AdminModulesPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [savedMessage, setSavedMessage] = useState("");
+  // The provider-disclosure tick (#5243). Asked for only while this save would
+  // switch AI Diagnostics on, and cleared whenever the draft is reset.
+  const [aiDiagnosticsAcknowledged, setAiDiagnosticsAcknowledged] =
+    useState(false);
   const pageRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
 
@@ -167,6 +100,7 @@ export default function AdminModulesPage() {
       }
       setPayload(body);
       setDraft(cloneSettings(body.settings));
+      setAiDiagnosticsAcknowledged(false);
       return true;
     } catch (loadError) {
       setError(
@@ -213,6 +147,14 @@ export default function AdminModulesPage() {
     draft !== null &&
     MODULE_KEYS.some((key) => payload.settings[key] !== draft[key]);
 
+  const enablesAiDiagnostics =
+    payload !== null &&
+    draft !== null &&
+    draft.aiDiagnostics &&
+    !payload.settings.aiDiagnostics;
+  const awaitingAiDiagnosticsAcknowledgement =
+    enablesAiDiagnostics && !aiDiagnosticsAcknowledged;
+
   function setModuleEnabled(key: ModuleKey, enabled: boolean) {
     setDraft((current) =>
       current
@@ -222,6 +164,7 @@ export default function AdminModulesPage() {
           }
         : current,
     );
+    if (key === "aiDiagnostics" && !enabled) setAiDiagnosticsAcknowledged(false);
     setSavedMessage("");
   }
 
@@ -237,7 +180,15 @@ export default function AdminModulesPage() {
         method: "PUT",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ settings: draft }),
+        body: JSON.stringify(
+          enablesAiDiagnostics
+            ? {
+                settings: draft,
+                aiDiagnosticsDisclosureAcknowledgedVersion:
+                  AI_DIAGNOSTICS_DISCLOSURE_VERSION,
+              }
+            : { settings: draft },
+        ),
       });
       if (response.status === 403) {
         throw new ApiRefusalError(ADMIN_FORBIDDEN_SAVE_REASON);
@@ -248,6 +199,7 @@ export default function AdminModulesPage() {
       }
       setPayload(body);
       setDraft(cloneSettings(body.settings));
+      setAiDiagnosticsAcknowledged(false);
       setSavedMessage("Module settings saved.");
       router.refresh();
     } catch (saveError) {
@@ -299,30 +251,42 @@ export default function AdminModulesPage() {
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void refreshModules()}
-            disabled={loading || saving}
-          >
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Refresh
-          </Button>
-          <ViewOnlyActionButton
-            canEdit={canEdit}
-            describeReason={false}
-            type="button"
-            onClick={() => void saveModules()}
-            disabled={!dirty || saving || draft === null}
-          >
-            {saving ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Save className="mr-2 h-4 w-4" />
-            )}
-            Save
-          </ViewOnlyActionButton>
+        <div className="flex flex-col items-start gap-2 lg:items-end">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void refreshModules()}
+              disabled={loading || saving}
+            >
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Refresh
+            </Button>
+            <ViewOnlyActionButton
+              canEdit={canEdit}
+              describeReason={false}
+              type="button"
+              onClick={() => void saveModules()}
+              disabled={
+                !dirty ||
+                saving ||
+                draft === null ||
+                awaitingAiDiagnosticsAcknowledgement
+              }
+            >
+              {saving ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="mr-2 h-4 w-4" />
+              )}
+              Save
+            </ViewOnlyActionButton>
+          </div>
+          {awaitingAiDiagnosticsAcknowledgement ? (
+            <p className="max-w-xs text-sm text-muted-foreground lg:text-right">
+              {AI_DIAGNOSTICS_DISCLOSURE.acknowledgementRequired}
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -344,82 +308,23 @@ export default function AdminModulesPage() {
       <ModulesInfoNote />
 
       <div className="grid gap-4 xl:grid-cols-2">
-        {modules.map((module) => {
-          const checkboxId = `module-${module.key}`;
-          const statusIcon = module.effectiveEnabled ? (
-            <CheckCircle2 className="h-4 w-4 text-success-11" />
-          ) : (
-            <AlertCircle className="h-4 w-4 text-warning-11" />
-          );
-
-          return (
-            <Card key={module.key}>
-              <CardHeader className="space-y-3">
-                <div className="flex items-start gap-3">
-                  <Checkbox
-                    id={checkboxId}
-                    checked={module.adminEnabled}
-                    onCheckedChange={(checked) =>
-                      setModuleEnabled(module.key, checked === true)
-                    }
-                    disabled={saving || !canEdit}
-                    className="mt-1"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <CardTitle className="text-base">
-                        <label htmlFor={checkboxId}>{module.label}</label>
-                      </CardTitle>
-                      <Badge variant={module.adminEnabled ? "success" : "secondary"}>
-                        {module.adminEnabled ? "Enabled" : "Disabled"}
-                      </Badge>
-                    </div>
-                    <CardDescription className="mt-1">
-                      {module.description}
-                    </CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-start gap-2 rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
-                  {statusIcon}
-                  <div>
-                    <Badge
-                      variant={readinessVariant(module.readiness.status)}
-                      className="mb-2"
-                    >
-                      {readinessLabel(module.readiness.status)}
-                    </Badge>
-                    <p>{module.readiness.message}</p>
-                    {module.readiness.status === "credentials_missing" &&
-                    MODULE_SETUP_HREFS[module.key] ? (
-                      <Link
-                        href={MODULE_SETUP_HREFS[module.key] as string}
-                        className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-foreground underline decoration-brand-gold/70 decoration-2 underline-offset-4"
-                      >
-                        Set up
-                        <ArrowRight className="h-3.5 w-3.5" aria-hidden />
-                      </Link>
-                    ) : null}
-                  </div>
-                </div>
-
-                {module.readiness.dependencies.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Dependencies
-                    </p>
-                    <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-                      {module.readiness.dependencies.map((dependency) => (
-                        <li key={dependency}>{dependency}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          );
-        })}
+        {modules.map((module) => (
+          <ModuleCard
+            key={module.key}
+            module={module}
+            onEnabledChange={(enabled) => setModuleEnabled(module.key, enabled)}
+            disabled={saving || !canEdit}
+            aiDiagnosticsAcknowledgement={
+              module.key === "aiDiagnostics" && enablesAiDiagnostics
+                ? {
+                    checked: aiDiagnosticsAcknowledged,
+                    onChange: setAiDiagnosticsAcknowledged,
+                    disabled: saving || !canEdit,
+                  }
+                : undefined
+            }
+          />
+        ))}
       </div>
       </div>
     </div>
