@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { readXeroConnection } from "@/lib/xero-connection";
 import {
   XeroTaxCategoryUnavailableError,
+  xeroTaxCategoryRateFault,
   type MappedXeroTaxCategory,
   type XeroTaxCategoryKey,
 } from "@/lib/xero-tax-categories";
@@ -69,7 +70,8 @@ export function mappedTaxTypeFor(mappings: XeroTaxCategoryMappings, category: Ma
  * The tax field a line in `category` carries, under the treatment its anchor
  * fixes (`xero-tax-anchors.ts`). Sales tax on income, and every line of an
  * unregistered club, need no mapping. Otherwise the category must be mapped in
- * the connected organisation to a rate Xero still has, active; when it is not,
+ * the connected organisation to a rate `xeroTaxCategoryRateFault` accepts (Xero
+ * still has it, active, and of the right kind for the category); when it is not,
  * or Xero's rates cannot be read, this throws `XeroTaxCategoryUnavailableError`
  * and the caller sends nothing. The rates come from the reader's short cache.
  */
@@ -93,8 +95,8 @@ export async function resolveXeroCategoryLineTax(
   } catch {
     throw new XeroTaxCategoryUnavailableError(category, "rates-unreadable");
   }
-  const rate = rates.find((candidate) => candidate.taxType === taxType);
-  if (!rate) throw new XeroTaxCategoryUnavailableError(category, "removed");
-  if (!rate.active) throw new XeroTaxCategoryUnavailableError(category, "inactive");
+  // The same test the writer, picker and health check apply (`INV-SSOT`).
+  const fault = xeroTaxCategoryRateFault(rates, category, taxType);
+  if (fault) throw new XeroTaxCategoryUnavailableError(category, fault.reason);
   return xeroCategoryLineTax(rendering, category, taxType);
 }

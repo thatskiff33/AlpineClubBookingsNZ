@@ -69,27 +69,49 @@ export function xeroTaxCategoryLabel(category: XeroTaxCategoryKey): string {
   return XERO_TAX_CATEGORIES.find((definition) => definition.key === category)!.label;
 }
 
+/** Why a rate fails a category: gone from Xero, not active, or the wrong kind of rate for it. */
+export type XeroTaxCategoryRateFaultReason = "removed" | "inactive" | "unfit";
+
+export interface XeroTaxCategoryRateFault {
+  reason: XeroTaxCategoryRateFaultReason;
+  /** The plain-English problem the card, the writer and the health check show. */
+  message: string;
+}
+
 /**
- * Why Xero's rate cannot carry this category, in plain English, or null when it
- * can. The rate must exist and be active; Exempt and Zero rated must be 0%;
- * Sales tax on expenses must be usable on expenses.
+ * THE ONE TEST OF WHETHER XERO'S RATE CAN CARRY A CATEGORY (`INV-SSOT`), or null
+ * when it can. The rate must exist and be active; Exempt and Zero rated must be
+ * 0%; Sales tax on expenses must be usable on expenses. The writer, the picker,
+ * the health check and the send-time resolver (`resolveXeroCategoryLineTax`)
+ * all judge by this.
  */
+export function xeroTaxCategoryRateFault(
+  rates: readonly XeroTaxRateOption[],
+  category: MappedXeroTaxCategory,
+  taxType: string,
+): XeroTaxCategoryRateFault | null {
+  const rate = rates.find((candidate) => candidate.taxType === taxType);
+  const label = xeroTaxCategoryLabel(category);
+  if (!rate) return { reason: "removed", message: `${label}: Xero has no tax rate with the code ${taxType}.` };
+  if (!rate.active) {
+    return { reason: "inactive", message: `${label}: Xero's tax rate ${taxType} (${rate.name}) is not active.` };
+  }
+  if ((category === "EXEMPT" || category === "ZERO_RATED") && rate.rateBasisPoints !== 0) {
+    return { reason: "unfit", message: `${label}: Xero's tax rate ${taxType} (${rate.name}) is not 0%.` };
+  }
+  if (category === "SALES_TAX_ON_EXPENSES" && !rate.expenses) {
+    return { reason: "unfit", message: `${label}: Xero's tax rate ${taxType} (${rate.name}) cannot be used on expenses.` };
+  }
+  return null;
+}
+
+/** `xeroTaxCategoryRateFault`'s message alone, or null when the rate can carry the category. */
 export function xeroTaxCategoryRateProblem(
   rates: readonly XeroTaxRateOption[],
   category: MappedXeroTaxCategory,
   taxType: string,
 ): string | null {
-  const rate = rates.find((candidate) => candidate.taxType === taxType);
-  const label = xeroTaxCategoryLabel(category);
-  if (!rate) return `${label}: Xero has no tax rate with the code ${taxType}.`;
-  if (!rate.active) return `${label}: Xero's tax rate ${taxType} (${rate.name}) is not active.`;
-  if ((category === "EXEMPT" || category === "ZERO_RATED") && rate.rateBasisPoints !== 0) {
-    return `${label}: Xero's tax rate ${taxType} (${rate.name}) is not 0%.`;
-  }
-  if (category === "SALES_TAX_ON_EXPENSES" && !rate.expenses) {
-    return `${label}: Xero's tax rate ${taxType} (${rate.name}) cannot be used on expenses.`;
-  }
-  return null;
+  return xeroTaxCategoryRateFault(rates, category, taxType)?.message ?? null;
 }
 
 /** The rates a category's picker offers: exactly those `xeroTaxCategoryRateProblem` accepts. */
@@ -100,12 +122,17 @@ export function usableXeroTaxCategoryRates(
   return rates.filter((rate) => xeroTaxCategoryRateProblem(rates, category, rate.taxType) === null);
 }
 
-export type XeroTaxCategoryUnavailableReason = "unmapped" | "removed" | "inactive" | "wrong-tenant" | "rates-unreadable";
+export type XeroTaxCategoryUnavailableReason =
+  | "unmapped"
+  | XeroTaxCategoryRateFaultReason
+  | "wrong-tenant"
+  | "rates-unreadable";
 
 const UNAVAILABLE_REASON: Record<XeroTaxCategoryUnavailableReason, string> = {
   unmapped: "is not mapped to a Xero tax rate",
   removed: "is mapped to a tax rate the club's Xero organisation no longer has",
   inactive: "is mapped to a tax rate that is not active in Xero",
+  unfit: "is mapped to a Xero tax rate that cannot carry it (Exempt and Zero rated need a 0% rate; expenses need a rate usable on expenses)",
   "wrong-tenant": "was mapped in a different Xero organisation from the one connected now",
   "rates-unreadable": "cannot be checked because Xero's tax rates could not be read",
 };

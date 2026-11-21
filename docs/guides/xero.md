@@ -405,8 +405,9 @@ Xero organisation provides, so the app never assumes a Xero tax code:
 
 While the club is not GST-registered, Xero documents carry no tax and no
 category is used. While it is, a line in a category that is not mapped — or
-whose rate Xero has removed or made inactive — is held back with an error, not
-sent with a guessed code. **If your club is GST-registered and is moving in
+whose rate Xero has removed, made inactive or changed so it no longer suits the
+category (an Exempt rate edited to a non-zero percentage, say) — is held back
+with an error, not sent with a guessed code. **If your club is GST-registered and is moving in
 with opening credits, map Exempt before you map the Opening Credits account.**
 Nothing changes on upgrade: until you map a category, every document is sent
 exactly as before. How it works:

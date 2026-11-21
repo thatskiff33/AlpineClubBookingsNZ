@@ -104,6 +104,24 @@ describe("resolveXeroCategoryLineTax (#5209)", () => {
     expect(await reasonFor()).toBe("inactive");
   });
 
+  it("refuses an Exempt or Zero rated rate that is no longer 0% in Xero, by the writer's own test", async () => {
+    for (const [category, taxType] of [["EXEMPT", "EXEMPTCODE"], ["ZERO_RATED", "ZEROCODE"]] as const) {
+      h.rows.mockResolvedValue([mapping(category, taxType)]);
+      h.rates.mockResolvedValue([rate(taxType, { rateBasisPoints: 1500 })]);
+      const error = await resolveXeroCategoryLineTax(ANCHOR, category).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(XeroTaxCategoryUnavailableError);
+      expect((error as XeroTaxCategoryUnavailableError).reason).toBe("unfit");
+    }
+  });
+
+  it("refuses a Sales tax on expenses rate Xero no longer lets apply to expenses", async () => {
+    h.rows.mockResolvedValue([mapping("SALES_TAX_ON_EXPENSES", "INPUTCODE")]);
+    h.rates.mockResolvedValue([rate("INPUTCODE", { rateBasisPoints: 1500, expenses: false })]);
+    const error = await resolveXeroCategoryLineTax(ANCHOR, "SALES_TAX_ON_EXPENSES").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(XeroTaxCategoryUnavailableError);
+    expect((error as XeroTaxCategoryUnavailableError).reason).toBe("unfit");
+  });
+
   it("refuses when Xero's rates cannot be read, rather than trust the stored code", async () => {
     h.rows.mockResolvedValue([mapping("EXEMPT", "EXEMPTCODE")]);
     h.rates.mockRejectedValue(new Error("Xero is down"));
@@ -127,10 +145,11 @@ describe("loadXeroTaxCategoryMappings (#5209)", () => {
 // A synthetic sender, built the way a real one must be: resolve the line's tax, then write.
 let writes = 0;
 describeExemptLineContract("a synthetic Exempt sender", {
-  arrange({ registered, exemptTaxType }) {
+  arrange({ registered, exemptTaxType, exemptRateIsZero }) {
     writes = 0;
     h.schedule.mockResolvedValue(registered ? REGISTERED : UNREGISTERED);
     h.rows.mockResolvedValue(exemptTaxType === null ? [] : [mapping("EXEMPT", exemptTaxType)]);
+    h.rates.mockResolvedValue([rate("EXEMPTCODE", { rateBasisPoints: exemptRateIsZero ? 0 : 1500 })]);
   },
   async renderLine() {
     const line = { description: "Opening credit used", unitAmount: -20, ...(await resolveXeroCategoryLineTax(ANCHOR, "EXEMPT")), accountCode: "2100" };

@@ -4,11 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Only the Xero client is stubbed, so the mapping and the cache run for real.
 const live = vi.hoisted(() => ({
   getTaxRates: vi.fn(),
+  tenantId: "tenant-1",
+  connectedTenantId: "tenant-1" as string | null,
 }));
 
 vi.mock("@/lib/xero-api-client", () => ({
-  getAuthenticatedXeroClient: async () => ({ xero: { accountingApi: { getTaxRates: live.getTaxRates } }, tenantId: "tenant-1" }),
+  getAuthenticatedXeroClient: async () => ({ xero: { accountingApi: { getTaxRates: live.getTaxRates } }, tenantId: live.tenantId }),
   callXeroApi: (fn: () => unknown) => fn(),
+}));
+vi.mock("@/lib/xero-connection", () => ({
+  readXeroConnection: async () => (live.connectedTenantId === null ? null : { tenantId: live.connectedTenantId, expiresAt: new Date() }),
 }));
 vi.mock("@/lib/xero-mock-endpoint", () => ({ isXeroMockActive: () => false }));
 vi.mock("@/lib/logger", () => ({ default: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() } }));
@@ -20,7 +25,11 @@ function serve(taxRates: Partial<TaxRate>[]) {
 }
 
 describe("readXeroTaxRates (#4632)", () => {
-  beforeEach(() => resetXeroTaxRatesCacheForTests());
+  beforeEach(() => {
+    resetXeroTaxRatesCacheForTests();
+    live.tenantId = "tenant-1";
+    live.connectedTenantId = "tenant-1";
+  });
   afterEach(() => live.getTaxRates.mockReset());
 
   it("maps each rate to its code, rate in basis points, status and revenue and expense use, sorted by code", async () => {
@@ -48,6 +57,26 @@ describe("readXeroTaxRates (#4632)", () => {
       expect.objectContaining({ taxType: "OUTPUT2", active: false }),
     ]);
     expect(live.getTaxRates).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats the cache as a miss once a different Xero organisation is connected (#5209)", async () => {
+    serve([{ taxType: "EXEMPTA", effectiveRate: 0, status: TaxRate.StatusEnum.ACTIVE }]);
+    await readXeroTaxRates();
+
+    live.tenantId = "tenant-2";
+    live.connectedTenantId = "tenant-2";
+    serve([{ taxType: "EXEMPTB", effectiveRate: 0, status: TaxRate.StatusEnum.ACTIVE }]);
+    await expect(readXeroTaxRates()).resolves.toEqual([expect.objectContaining({ taxType: "EXEMPTB" })]);
+    expect(live.getTaxRates).toHaveBeenCalledTimes(2);
+
+    // Same organisation again: the cache answers.
+    await readXeroTaxRates();
+    expect(live.getTaxRates).toHaveBeenCalledTimes(2);
+
+    // Disconnected: the cache never answers for no organisation.
+    live.connectedTenantId = null;
+    await readXeroTaxRates();
+    expect(live.getTaxRates).toHaveBeenCalledTimes(3);
   });
 
   it("throws when Xero cannot be read, and the degrading reader answers null instead", async () => {

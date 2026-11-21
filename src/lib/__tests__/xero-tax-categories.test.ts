@@ -11,6 +11,7 @@ import {
   MAPPED_XERO_TAX_CATEGORIES,
   XERO_TAX_CATEGORIES,
   usableXeroTaxCategoryRates,
+  xeroTaxCategoryRateFault,
   xeroTaxCategoryRateProblem,
 } from "@/lib/xero-tax-categories";
 import {
@@ -71,13 +72,14 @@ describe("xeroTaxCategoryRateProblem (#5209)", () => {
   });
 
   it.each([
-    ["EXEMPT", "GONE", /Exempt: Xero has no tax rate with the code GONE/],
-    ["ZERO_RATED", "OLDNONE", /Zero rated: .* is not active/],
-    ["EXEMPT", "OUTPUT2", /Exempt: .* is not 0%/],
-    ["ZERO_RATED", "INPUT2", /Zero rated: .* is not 0%/],
-    ["SALES_TAX_ON_EXPENSES", "OUTPUT2", /Sales tax on expenses: .* cannot be used on expenses/],
-  ] as const)("refuses %s mapped to %s", (category, taxType, message) => {
+    ["EXEMPT", "GONE", "removed", /Exempt: Xero has no tax rate with the code GONE/],
+    ["ZERO_RATED", "OLDNONE", "inactive", /Zero rated: .* is not active/],
+    ["EXEMPT", "OUTPUT2", "unfit", /Exempt: .* is not 0%/],
+    ["ZERO_RATED", "INPUT2", "unfit", /Zero rated: .* is not 0%/],
+    ["SALES_TAX_ON_EXPENSES", "OUTPUT2", "unfit", /Sales tax on expenses: .* cannot be used on expenses/],
+  ] as const)("refuses %s mapped to %s (%s)", (category, taxType, reason, message) => {
     expect(xeroTaxCategoryRateProblem(RATES, category, taxType)).toMatch(message);
+    expect(xeroTaxCategoryRateFault(RATES, category, taxType)?.reason).toBe(reason);
   });
 
   it("offers each picker exactly the rates the rule accepts", () => {

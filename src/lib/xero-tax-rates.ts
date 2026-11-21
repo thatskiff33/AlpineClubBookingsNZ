@@ -2,6 +2,7 @@ import { TaxRate } from "xero-node";
 import { percentToBasisPoints } from "@/lib/club-tax-settings";
 import logger from "@/lib/logger";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
+import { readXeroConnection } from "@/lib/xero-connection";
 import { isXeroMockActive } from "@/lib/xero-mock-endpoint";
 import type { XeroTaxRateOption } from "@/lib/xero-tax-rate-options";
 
@@ -17,10 +18,28 @@ import type { XeroTaxRateOption } from "@/lib/xero-tax-rate-options";
  * the admin card and the health page read it on every render; the writer always
  * reads fresh, so a save is judged on what Xero says now. What a rate may be
  * used for is `xero-tax-rate-options.ts`, which the card shares.
+ *
+ * THE CACHE BELONGS TO ONE XERO ORGANISATION (#5209). It records the tenant it
+ * was read from, and a cached read checks the connection first: after a
+ * reconnect to another organisation the old organisation's rates are a miss,
+ * never an answer about the new one.
  */
 
 const CACHE_TTL_MS = 15 * 60 * 1000;
-let cached: { rates: XeroTaxRateOption[]; fetchedAt: number } | null = null;
+let cached: { rates: XeroTaxRateOption[]; fetchedAt: number; tenantId: string } | null = null;
+
+/** The cached rates, when they are recent and were read from the organisation connected now. */
+async function cachedRatesForConnectedTenant(): Promise<XeroTaxRateOption[] | null> {
+  if (!cached || Date.now() - cached.fetchedAt >= CACHE_TTL_MS) return null;
+  const entry = cached;
+  let connectedTenantId: string | null;
+  try {
+    connectedTenantId = (await readXeroConnection())?.tenantId ?? null;
+  } catch {
+    return null; // Unknown organisation: read Xero again rather than trust the cache.
+  }
+  return connectedTenantId === entry.tenantId ? entry.rates : null;
+}
 /**
  * The degrading reader's last failure. For a minute after one it answers null
  * without asking Xero again, so a health poll during an outage (or under the
@@ -49,7 +68,10 @@ function rateOf(rate: TaxRate): XeroTaxRateOption | null {
  * means, and the writer refuses rather than guess.
  */
 export async function readXeroTaxRates(options: { fresh?: boolean } = {}): Promise<XeroTaxRateOption[]> {
-  if (!options.fresh && cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) return cached.rates;
+  if (!options.fresh) {
+    const hit = await cachedRatesForConnectedTenant();
+    if (hit) return hit;
+  }
   // The E2E mock harness serves no tax rates; production-inert.
   if (isXeroMockActive()) throw new Error("The Xero mock harness serves no tax rates.");
   const { xero, tenantId } = await getAuthenticatedXeroClient();
@@ -67,7 +89,7 @@ export async function readXeroTaxRates(options: { fresh?: boolean } = {}): Promi
     .map(rateOf)
     .filter((rate): rate is XeroTaxRateOption => rate !== null)
     .sort((a, b) => a.taxType.localeCompare(b.taxType));
-  cached = { rates, fetchedAt: Date.now() };
+  cached = { rates, fetchedAt: Date.now(), tenantId };
   return rates;
 }
 

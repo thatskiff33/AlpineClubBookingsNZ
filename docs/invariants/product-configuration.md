@@ -469,8 +469,8 @@ home for that explanation and is not repeated here.
   chosen in; a row from another organisation reads as unmapped.
 - **An unregistered period renders no tax type in any category.** While a
   registered period applies, a line whose category is unmapped, mapped in
-  another organisation, or mapped to a rate Xero has removed or deactivated (or
-  whose rates cannot be read) throws `XeroTaxCategoryUnavailableError` before
+  another organisation, or mapped to a rate failing `xeroTaxCategoryRateFault`
+  (the writer's own test), or whose rates cannot be read, throws `XeroTaxCategoryUnavailableError` before
   any provider write; there is no fallback code.
 - **The one writer is behind Full Admin, audited:** `mapXeroTaxCategory`/
   `clearXeroTaxCategory`
