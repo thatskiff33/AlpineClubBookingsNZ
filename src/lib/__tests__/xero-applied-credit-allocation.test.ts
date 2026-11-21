@@ -106,6 +106,9 @@ const h = vi.hoisted(() => {
             amountCents: l.amountCents,
             type: l.type ?? "ADMIN_ADJUSTMENT",
             xeroCreditNoteId: l.xeroCreditNoteId,
+            // #4988: the lot loader selects this column, and Prisma always returns it. Left
+            // out, a row read as an opening credit (`undefined !== null`). None of these is one.
+            openingCreditBatchId: null,
           })),
       updateMany: async ({
         where,
