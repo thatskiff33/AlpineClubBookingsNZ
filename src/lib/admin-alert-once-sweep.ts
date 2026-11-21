@@ -1,3 +1,5 @@
+import type { Prisma } from "@prisma/client";
+
 import { readOnceEverClaimState } from "@/lib/admin-alert-once";
 import {
   ONCE_EVER_OWED_PREFIX,
@@ -83,7 +85,7 @@ async function releaseStaleUnsentClaims(now: Date, result: OnceEverAlertSweepRes
 }
 
 async function drainOwedAlerts(now: Date, result: OnceEverAlertSweepResult): Promise<void> {
-  let owed: { key: string; lastAlertedAt: Date; replayAlert: unknown }[];
+  let owed: { key: string; lastAlertedAt: Date; replayAlert: Prisma.JsonValue }[];
   try {
     owed = await prisma.alertCooldown.findMany({
       where: { key: exactPrefix(ONCE_EVER_OWED_PREFIX) },
@@ -106,7 +108,7 @@ async function drainOwedAlerts(now: Date, result: OnceEverAlertSweepResult): Pro
         result.settled += 1;
         continue;
       }
-      const stored = parseStoredReplayableAlert(row.replayAlert as Parameters<typeof parseStoredReplayableAlert>[0]);
+      const stored = parseStoredReplayableAlert(row.replayAlert);
       const givenUp = now.getTime() - row.lastAlertedAt.getTime() >= ONCE_EVER_OWED_GIVE_UP_MS;
       if (!stored || givenUp) {
         logger.error(
