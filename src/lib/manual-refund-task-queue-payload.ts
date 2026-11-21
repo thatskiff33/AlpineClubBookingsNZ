@@ -1,11 +1,4 @@
-import {
-  parseEditFinancialReviewContext,
-  toEditFinancialReviewEvidence,
-  type EditFinancialReviewEvidence,
-} from "@/lib/edit-financial-review-context";
-import { editFinancialReviewGuestsRemovedSinceRaised } from "@/lib/edit-review-guest-removed-since-raised";
 import { bookingOwner } from "@/lib/booking-owner";
-import { editReviewRefundIsPaidBackByHand } from "@/lib/booking-payment-state";
 import {
   cancelCardShortfallPart,
   isEditRefundHandBackTask,
@@ -16,9 +9,8 @@ import { isBankRefundVoidFollowUpTask } from "@/lib/bank-refund-void-follow-up-k
 import { isGroupOrganiserHandBackTask } from "@/lib/group-organiser-hand-back-rules";
 import { journalHandBackDismissal, NO_HAND_BACK_DISPUTES, type HandBackDisputeContext } from "@/lib/manual-refund-task-hand-back-journal";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
-import { isGroupSettlementMirrorHandBackKind, reviewRefundGoesToGroupOrganiser } from "@/lib/group-settlement-mirror-kinds";
+import { isGroupSettlementMirrorHandBackKind } from "@/lib/group-settlement-mirror-kinds";
 import { readBankRefundVoidFollowUpContext } from "@/lib/bank-refund-void-follow-up-copy";
-import type { QueueRepairableStrand } from "@/lib/stored-night-price-repair-queue";
 
 /**
  * What the finance settlement queue's loader sends to the browser, and the one
@@ -46,27 +38,20 @@ type QueueBookingSummary = {
 };
 
 /**
- * #3536: what `editReviewRefundIsPaidBackByHand` reads of an OPEN row - the
- * task's own payment, and the booking's as it stands now - selected by the
- * route so the settle screen can ask the cash-or-bank question only where a
- * refund would be paid back by hand.
+ * #3949: what `paidByOrganiserInternetBanking` reads of an OPEN row's booking,
+ * selected by the route so the card can say a refund goes back to the group
+ * organiser rather than to the joiner.
  */
-export const OPEN_TASK_REFUND_PAYMENT_SELECT = {
-  paymentId: true,
-  payment: { select: { source: true } },
-} as const;
 export const OPEN_TASK_BOOKING_PAYMENT_SELECT = {
-  status: true,
-  organiserSettled: true, parentBookingId: true, // #3949: whether the group organiser paid for it
-  payment: {
-    select: { id: true, status: true, amountCents: true, refundedAmountCents: true, source: true },
-  },
-  // #4317: the guests as they stand, ids only, for `reviewGuestsRemovedSinceRaised`.
-  guests: { select: { id: true } },
+  organiserSettled: true,
+  parentBookingId: true,
+  payment: { select: { source: true } },
 } as const;
 
 /** An OPEN row the operator has to settle by hand. */
 export type OpenManualRefundTaskRow = {
+  /** #4516: match disputes to this task’s payment. */
+  paymentId: string | null;
   id: string;
   bookingId: string;
   amountCents: number | null;
@@ -87,25 +72,15 @@ export type OpenManualRefundTaskRow = {
   /** #3643 (`INV-PAY-108`): the inbound sync's note that Xero reported the invoice paid. */
   partPaymentReviewXeroPaidAt: Date | null;
   partPaymentReviewXeroPaidCents: number | null;
+  /** #4042/#4162: a group hand-back's or a re-confirmed bank refund's own context. */
   reviewContext: unknown;
   reason: string;
   createdAt: Date;
-  /** #3536: `OPEN_TASK_REFUND_PAYMENT_SELECT`. */
-  paymentId: string | null;
-  payment: { source: string } | null;
   booking: QueueBookingSummary & {
-    /** #3536: `OPEN_TASK_BOOKING_PAYMENT_SELECT`. */
-    status: string;
-    /** #3949: the same select - whether the group organiser paid for it (`paidByOrganiserInternetBanking`). */
+    /** #3949: `OPEN_TASK_BOOKING_PAYMENT_SELECT` - whether the group organiser paid for it. */
     organiserSettled: boolean;
     parentBookingId: string | null;
-    payment: {
-      id: string;
-      status: string;
-      amountCents: number | null;
-      refundedAmountCents: number | null;
-      source: string;
-    } | null;
+    payment: { source: string } | null;
     /**
      * #3033: who owns the booking, for the ownership half of the link grant.
      * Null since #3369 when the owner is an `Organisation`, which never signs
@@ -114,12 +89,6 @@ export type OpenManualRefundTaskRow = {
      */
     memberId: string | null;
     deletedAt: Date | null;
-    /**
-     * #4317: the booking's guests as they stand, for
-     * `reviewGuestsRemovedSinceRaised`. Optional so a caller that does not read
-     * them gets no warning rather than a false one.
-     */
-    guests?: ReadonlyArray<{ id: string }>;
   };
 };
 
@@ -188,8 +157,7 @@ export type OpenManualRefundTaskPayload = {
   refundRequestHandBack: boolean;
   /**
    * #3949 (`INV-PAY-137`): either of those two, or the joiner's own cancellation's
-   * hand-back (`isGroupSettlementMirrorHandBackKind`), or a review whose refund
-   * the chooser sends there (`reviewRefundGoesToGroupOrganiser`), on a joiner's booking the
+   * hand-back (`isGroupSettlementMirrorHandBackKind`), on a joiner's booking the
    * group organiser paid for by Internet Banking, so the money goes back to the
    * ORGANISER (`paidByOrganiserInternetBanking`), never to the joiner.
    */
@@ -233,61 +201,18 @@ export type OpenManualRefundTaskPayload = {
    */
   bankRefundVoidFollowUp: { voidedCreditNoteNumber: string | null; voidedAt: string } | null;
   /**
-   * #3643 (`INV-PAY-108`, ORCHESTRATOR DECISION 3): on a review, when the inbound
+   * #3643 (`INV-PAY-108`, ORCHESTRATOR DECISION 3): on a part-payment review, when the inbound
    * Xero sync learned the invoice was reported PAID and the invoice's cash then.
    * Nothing was credited or handed back for it; the treasurer decides. The
    * card prints it, because this - not the best-effort email - is the record.
    */
   partPaymentReviewXeroPaid: { reportedAt: string; cashCents: number } | null;
-  /**
-   * #3536 (`INV-PAY-116`): a financial review whose refund the club would pay
-   * back by hand, so the settle screen asks the officer whether it went back in
-   * cash or by bank transfer. A preview only: the completion re-chooses the
-   * route under its lock, and the answer counts only on that route.
-   */
-  paidBackByHand: boolean;
   reason: string;
   createdAt: string;
   memberName: string;
   checkIn: string;
   checkOut: string;
   viewerOwnsBooking: boolean;
-  reviewEvidence: EditFinancialReviewEvidence | null;
-  reviewEvidenceUnreadable: boolean;
-  /**
-   * #4317 (owner decision on #4302): the guests whose nights this review's edit
-   * moved and who were removed from the booking after it was raised, credited
-   * their stored total. Named by their place among the item's strands (the
-   * evidence block's "Guest N of M") and stored total, with which way their
-   * nights moved; no id crosses the wire. Empty on a hand-back, and where the
-   * booking's guests were not read.
-   */
-  reviewGuestsRemovedSinceRaised: Array<{
-    strandIndex: number;
-    strandCount: number;
-    guestTotalCents: number | null;
-    gaveNightsBack: boolean;
-    addedNights: boolean;
-  }>;
-  /**
-   * #3191: the nights whose stored price is blank, and the two totals the
-   * officer's figures have to reconcile against. EMPTY when there is nothing
-   * this screen can repair, which is most rows.
-   *
-   * #3498: ONE ENTRY PER REPAIRABLE STRAND of this item, in the item's own
-   * strand order, because one item now covers the whole parked edit. The order
-   * is load-bearing: the officer's figures come back as a parallel array and the
-   * server matches them by position, which is how no payload here has to carry a
-   * guest-strand id. `absorbsSettlement` says which entry — at most one, and
-   * sometimes none — the settled amount moves the stored worth of.
-   *
-   * READ LIVE by the route rather than taken from the stored context, and the
-   * difference matters: the context records the evidence as it stood BEFORE the
-   * edit, while a blank is something the edit left behind. Showing the first as
-   * if it were the second would ask an officer to price nights that are no
-   * longer there.
-   */
-  unpricedNights: readonly QueueRepairableStrand[];
 };
 
 function memberName(booking: QueueBookingSummary): string {
@@ -297,50 +222,40 @@ function memberName(booking: QueueBookingSummary): string {
 /**
  * One OPEN row, as the queue card receives it.
  *
- * THE STORED CONTEXT IS PARSED HERE AND THE RAW COLUMN NEVER CROSSES THE WIRE.
+ * THE STORED CONTEXT NEVER CROSSES THE WIRE. A group organiser's hand-back and
+ * a re-confirmed bank refund keep their own context in the shared column; only
+ * the void's two facts are read out of it, and nothing else is sent.
  *
- * Two things fall out of that and both are deliberate. The parser returns NULL
- * rather than throwing on a row it cannot read (#3030), so an unreadable blob
- * costs the card its captured evidence and nothing else — the task, its amount
- * and the booking are still shown. And parsing on the server is what lets
- * `toEditFinancialReviewEvidence` do the redaction: the guest's member id and
- * the guest-strand id have no field in the shape the browser receives, so no
- * amount of forgetting can put them there.
+ * NO REVIEW EVIDENCE SINCE #4344. The officer edit review is retired and the
+ * route no longer lists one, so the redacted evidence, the removed-guest
+ * warning and the unpriced nights the settle screen read went with that screen.
  *
  * @param viewerMemberId the signed-in admin's member id — `session.user.id`,
  *   which is what the booking page's own `isBookingOwner` compares against.
- * @param unpricedNights #3191: this row's blank night prices, already read and
- *   projected by the route. Passed in rather than looked up here because it is a
- *   live database read and this module is a pure projection — and because the
- *   route reads them for the whole page in one query.
  */
 /**
- * Every open task's payload, in the queue's order: each with its own unpriced nights (#3191, keyed by task) and its
+ * Every open task's payload, in the queue's order: each with its
  * booking's card disputes (#4516, keyed by booking, for the dismissal rule).
  */
 export function toOpenManualRefundTaskPayloads(
   tasks: readonly OpenManualRefundTaskRow[],
   viewerMemberId: string | null | undefined,
-  unpricedNights: ReadonlyMap<string, readonly QueueRepairableStrand[]>,
   disputes: ReadonlyMap<string, HandBackDisputeContext>,
 ): OpenManualRefundTaskPayload[] {
-  return tasks.map((task) => toOpenManualRefundTaskPayload(task, viewerMemberId, unpricedNights.get(task.id) ?? [], disputes.get(task.bookingId) ?? NO_HAND_BACK_DISPUTES));
+  return tasks.map((task) => toOpenManualRefundTaskPayload(task, viewerMemberId, disputes.get(task.bookingId) ?? NO_HAND_BACK_DISPUTES));
 }
 
 export function toOpenManualRefundTaskPayload(
   task: OpenManualRefundTaskRow,
   viewerMemberId: string | null | undefined,
-  unpricedNights: readonly QueueRepairableStrand[],
   /** #4516: the card disputes on the task's booking and the tasks on their payments (`readOpenTaskDisputes`), for the dismissal rule. */
   disputes: HandBackDisputeContext = NO_HAND_BACK_DISPUTES,
 ): OpenManualRefundTaskPayload {
   const dismissal = journalHandBackDismissal({ ...task, status: "OPEN" }, disputes);
   // #4042: a group organiser's hand-back keeps its joiners' shares there, not review evidence.
   const groupHandBack = isGroupOrganiserHandBackTask(task);
-  // #4162: a re-confirmed bank refund keeps its void's facts there, not review evidence.
+  // #4162: a re-confirmed bank refund keeps its void's facts there.
   const followUp = isBankRefundVoidFollowUpTask(task) ? readBankRefundVoidFollowUpContext(task.reviewContext) : null;
-  const ownContext = groupHandBack || isBankRefundVoidFollowUpTask(task);
-  const reviewContext = ownContext ? null : parseEditFinancialReviewContext(task.reviewContext);
 
   return {
     id: task.id,
@@ -353,9 +268,7 @@ export function toOpenManualRefundTaskPayload(
     editRefundHandBack: isEditRefundHandBackTask(task),
     refundRequestHandBack: isRefundRequestHandBackTask(task),
     paidToGroupOrganiser:
-      task.kind === "EDIT_FINANCIAL_REVIEW"
-        ? reviewRefundGoesToGroupOrganiser(task) // review round 3: the chooser's own test
-        : isGroupSettlementMirrorHandBackKind(task) && paidByOrganiserInternetBanking(task.booking),
+      isGroupSettlementMirrorHandBackKind(task) && paidByOrganiserInternetBanking(task.booking),
     groupOrganiserHandBack: groupHandBack,
     // Waiting on an open dispute with a loss already taken: that sentence says both what to wait for and why not to pay.
     journalHandBackDismissRefusal: dismissal.refusal && dismissal.markPaidRefusal && dismissal.unappliedLostCents > 0 && !dismissal.reduction ? dismissal.markPaidRefusal : dismissal.refusal,
@@ -377,8 +290,6 @@ export function toOpenManualRefundTaskPayload(
             cashCents: task.partPaymentReviewXeroPaidCents,
           }
         : null,
-    paidBackByHand:
-      task.kind === "EDIT_FINANCIAL_REVIEW" && editReviewRefundIsPaidBackByHand(task),
     reason: task.reason,
     createdAt: task.createdAt.toISOString(),
     memberName: memberName(task.booking),
@@ -402,48 +313,9 @@ export function toOpenManualRefundTaskPayload(
       viewerMemberId != null &&
       task.booking.deletedAt === null &&
       bookingOwner(task.booking).memberId === viewerMemberId,
-    reviewEvidence: reviewContext
-      ? toEditFinancialReviewEvidence(reviewContext)
-      : null,
-    /*
-      The row HAS captured evidence this release cannot read, as distinct from
-      never having had any. The card says so in a line of its own: an admin
-      pricing a refund needs to know that the one record of what the edit
-      destroyed is unreadable, rather than silently see a task with no evidence
-      section and assume none was ever taken.
-    */
-    reviewEvidenceUnreadable: !ownContext && task.reviewContext !== null && !reviewContext,
-    /*
-      #4317 (owner decision on #4302): a guest this review names came off the
-      booking after it was raised, credited its stored total, so settling the
-      review could credit given-back nights again or charge for added ones. Only
-      on a review whose booking guests were read; never on a hand-back.
-    */
-    reviewGuestsRemovedSinceRaised:
-      task.kind === "EDIT_FINANCIAL_REVIEW" && reviewContext !== null && task.booking.guests !== undefined
-        ? editFinancialReviewGuestsRemovedSinceRaised(
-            reviewContext,
-            new Set(task.booking.guests.map((guest) => guest.id)),
-          ).map((guest) => ({
-            strandIndex: guest.strandIndex,
-            strandCount: guest.strandCount,
-            guestTotalCents: guest.guestTotalCents,
-            gaveNightsBack: guest.gaveNightsBack,
-            addedNights: guest.addedNights,
-          }))
-        : [],
-    unpricedNights,
   };
 }
 
-/**
- * One recently dismissed row, as the reopen card receives it.
- *
- * NO REVIEW EVIDENCE AND NO PRICE BOXES. This card offers exactly one action -
- * put it back - and everything needed to decide that is the reason, the note the
- * dismissing officer wrote and when. The evidence comes back with the row the
- * moment it is on the queue again, where the screen that prices it can show it.
- */
 /**
  * One dismissed row as the reopen card receives it.
  *
