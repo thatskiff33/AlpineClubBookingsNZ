@@ -28,7 +28,9 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { declareEnvironmentRoleForSuite, type SuiteEnvironmentRoleDeclaration } from "./helpers/environment-role";
+// Type-only: the helper reaches `@/lib/prisma`, whose client reads DATABASE_URL
+// when it is first imported, so the helper is imported after the URL is set.
+import type { SuiteEnvironmentRoleDeclaration } from "./helpers/environment-role";
 import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -94,7 +96,8 @@ let writer: typeof import("@/lib/booking-import/write");
 let census: typeof import("@/lib/booking-ledger-projection-census-store");
 let editService: typeof import("@/lib/booking-batch-modification-service");
 const stripeCall = vi.fn(async () => { throw new Error("An import must never call Stripe"); });
-let environmentRole: SuiteEnvironmentRoleDeclaration;
+let environmentRole: SuiteEnvironmentRoleDeclaration | undefined;
+let previousDatabaseUrl: string | undefined;
 let restoreXeroQueue: (() => void) | undefined;
 /** The edit's after-commit Xero work, awaited so "sent nothing" is read after it ran. */
 const pendingXeroWork: Promise<unknown>[] = [];
@@ -178,6 +181,19 @@ async function clean() {
   await prisma.booking.deleteMany({ where: { id: { in: ids } } });
 }
 
+/** Everything this suite made, and nothing else: its own lodge, season, policy and members. */
+async function teardownFixtures() {
+  await clean();
+  await prisma.membershipTypeSeasonRate.deleteMany({ where: { seasonId: SEASON } });
+  await prisma.season.deleteMany({ where: { id: SEASON } });
+  await prisma.adultMemberHostingPolicy.deleteMany({ where: { id: POLICY } });
+  await prisma.lodgeSettings.deleteMany({ where: { lodgeId: LODGE } });
+  await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE } });
+  await prisma.lodge.deleteMany({ where: { id: LODGE } });
+  await prisma.memberAccessRole.deleteMany({ where: { memberId: OFFICER } });
+  await prisma.member.deleteMany({ where: { id: { in: [OFFICER, OWNER, FRIEND, OTHER, LOSER] } } });
+}
+
 /** A paid booking the app already holds, made by the importer itself on another Booking Ref. */
 async function existingBooking(ref: string, guests: Line[]) {
   return importedId((await importFile(guests.map((guest) => line({ ...guest, ref })))).result, ref);
@@ -186,9 +202,14 @@ async function existingBooking(ref: string, guests: Line[]) {
 (RUN ? describe : describe.skip)("the paid-booking import engine (#5005 child A)", () => {
   beforeAll(async () => {
     assertSafeRaceDbUrl(RACE_DB_URL, "Booking import");
-    environmentRole = declareEnvironmentRoleForSuite("non-production");
+    // The race URL first: CI's job-wide DATABASE_URL is a placeholder with no
+    // server behind it, and the first import of `@/lib/prisma` (this one, or
+    // one reached through the environment-role helper) builds the client.
+    previousDatabaseUrl = process.env.DATABASE_URL;
     process.env.DATABASE_URL = RACE_DB_URL;
     ({ prisma } = await import("@/lib/prisma"));
+    const { declareEnvironmentRoleForSuite } = await import("./helpers/environment-role");
+    environmentRole = declareEnvironmentRoleForSuite("non-production");
     parse = await import("@/lib/booking-import/parse");
     planner = await import("@/lib/booking-import/plan");
     writer = await import("@/lib/booking-import/write");
@@ -203,15 +224,7 @@ async function existingBooking(ref: string, guests: Line[]) {
     });
     restoreXeroQueue = () => spy.mockRestore();
 
-    await clean();
-    await prisma.membershipTypeSeasonRate.deleteMany({ where: { seasonId: SEASON } });
-    await prisma.season.deleteMany({ where: { id: SEASON } });
-    await prisma.adultMemberHostingPolicy.deleteMany({ where: { id: POLICY } });
-    await prisma.lodgeSettings.deleteMany({ where: { lodgeId: LODGE } });
-    await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE } });
-    await prisma.lodge.deleteMany({ where: { id: LODGE } });
-    await prisma.memberAccessRole.deleteMany({ where: { memberId: OFFICER } });
-    await prisma.member.deleteMany({ where: { id: { in: [OFFICER, OWNER, FRIEND, OTHER, LOSER] } } });
+    await teardownFixtures();
 
     await prisma.member.create({
       data: { id: OFFICER, email: "officer@race-5005.invalid", passwordHash: "not-a-real-password", firstName: "Oli", lastName: "Officer", ageTier: "ADULT", role: "ADMIN", canLogin: true },
@@ -259,18 +272,14 @@ async function existingBooking(ref: string, guests: Line[]) {
 
   afterAll(async () => {
     resetStripeRaceHooks();
-    environmentRole?.restore();
     restoreXeroQueue?.();
-    if (!prisma) return;
-    await clean();
-    await prisma.membershipTypeSeasonRate.deleteMany({ where: { seasonId: SEASON } });
-    await prisma.season.deleteMany({ where: { id: SEASON } });
-    await prisma.adultMemberHostingPolicy.deleteMany({ where: { id: POLICY } });
-    await prisma.lodgeSettings.deleteMany({ where: { lodgeId: LODGE } });
-    await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE } });
-    await prisma.lodge.deleteMany({ where: { id: LODGE } });
-    await prisma.memberAccessRole.deleteMany({ where: { memberId: OFFICER } });
-    await prisma.member.deleteMany({ where: { id: { in: [OFFICER, OWNER, FRIEND, OTHER, LOSER] } } });
+    try {
+      if (prisma) await teardownFixtures();
+    } finally {
+      environmentRole?.restore();
+      if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previousDatabaseUrl;
+    }
   }, 120_000);
 
   it("imports a mixed party as one PAID booking at the imported price, both records agreeing", async () => {
