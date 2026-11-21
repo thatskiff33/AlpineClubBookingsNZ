@@ -44,6 +44,7 @@ import { isAppliedMemberAgeTier } from "./_age-tier-filter-values"
 import { MemberBulkActionBar } from "./_components/member-bulk-action-bar"
 import { MemberBulkDialog } from "./_components/member-bulk-dialog"
 import { MemberBulkMembershipDialog } from "./_components/member-bulk-membership-dialog"
+import { MemberBulkSubscriptionCategoryDialog } from "./_components/member-bulk-subscription-category-dialog"
 import { MemberEditorDialog } from "./_components/member-editor-dialog"
 import { MemberExportControl } from "./_components/member-export-control"
 import { MemberFilterToolbar } from "./_components/member-filter-toolbar"
@@ -106,6 +107,7 @@ export default function MembersPage() {
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false)
   const [bulkAction, setBulkAction] = useState<BulkAction>("")
   const [membershipDialogOpen, setMembershipDialogOpen] = useState(false)
+  const [subscriptionCategoryDialogOpen, setSubscriptionCategoryDialogOpen] = useState(false)
   const [passwordActionDialogOpen, setPasswordActionDialogOpen] = useState(false)
   const [passwordActionTarget, setPasswordActionTarget] =
     useState<PasswordActionTarget | null>(null)
@@ -360,8 +362,18 @@ export default function MembersPage() {
       setMembershipDialogOpen(true)
       return
     }
+    if (action === "set-subscription-category") {
+      setSubscriptionCategoryDialogOpen(true)
+      return
+    }
     setBulkAction(action)
     setBulkDialogOpen(true)
+  }
+
+  const handleSubscriptionCategoryChanged = (changed: number) => {
+    showSuccess(`Changed subscription category for ${changed} member(s)`)
+    setSelectedIds(new Set())
+    void fetchMembers()
   }
 
   const handleMembershipChanged = (changed: number) => {
@@ -589,6 +601,15 @@ export default function MembersPage() {
         memberNames={memberNames}
         onOpenChange={setMembershipDialogOpen}
         onComplete={handleMembershipChanged}
+        onError={setError}
+      />
+      <MemberBulkSubscriptionCategoryDialog
+        open={subscriptionCategoryDialogOpen}
+        selectedIds={selectedIds}
+        memberNames={memberNames}
+        subscriptionCategories={subscriptionCategories}
+        onOpenChange={setSubscriptionCategoryDialogOpen}
+        onComplete={handleSubscriptionCategoryChanged}
         onError={setError}
       />
       <MemberPasswordActionDialog

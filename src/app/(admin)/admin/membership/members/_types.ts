@@ -201,4 +201,5 @@ export type BulkAction =
   | "deactivate"
   | "reactivate"
   | "set-role"
-  | "set-membership-type";
+  | "set-membership-type"
+  | "set-subscription-category";
