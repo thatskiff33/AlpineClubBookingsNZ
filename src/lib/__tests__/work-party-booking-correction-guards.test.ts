@@ -111,8 +111,7 @@ import {
 } from "@/lib/work-party-booking-correction";
 import { WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE } from "@/lib/work-party-settlement-options";
 
-// Stripe holds its intent, so a reduction goes back to the card (`editReductionRefundsToCard`, `INV-PAY-160`).
-const PAID_BY_CARD = { id: "payment-1", status: "SUCCEEDED", amountCents: 20_000, creditAppliedCents: 0, source: "STRIPE", stripePaymentIntentId: "pi_1" };
+const PAID_BY_CARD = { status: "SUCCEEDED", amountCents: 20_000, creditAppliedCents: 0, source: "STRIPE" };
 
 function seedBooking(change: Record<string, unknown> = {}) {
   h.booking = {
@@ -134,13 +133,16 @@ function seedBooking(change: Record<string, unknown> = {}) {
  * What the canonical edit reports back: a 5,000c reduction, settled as given.
  * `requiresSettlementMethod` is the edit's own answer to "is there a choice":
  * true for a paid booking with cash to return, false otherwise.
+ * `reductionRefundsToCard` is its answer to where a refund goes (`INV-PAY-160`).
  */
 function edit(
   money: Partial<Record<"refundAmountCents" | "accountCreditAmountCents" | "appliedCreditGivenBackCents" | "refundedExcessCreditCents", number>>,
   requiresSettlementMethod = true,
+  reductionRefundsToCard = true,
 ) {
   h.modified = {
     requiresSettlementMethod,
+    reductionRefundsToCard,
     booking: { finalPriceCents: 15_000 },
     priceDiffCents: -5_000,
     changeFeeCents: 0,
@@ -209,11 +211,17 @@ describe("the options are the ordinary edit's (upstream owner decision, 15 Nov 2
 
   it("offers a refund by bank transfer on a booking paid by Internet Banking, and runs the edit with it", async () => {
     seedBooking({ payment: PAID_BY_BANK });
-    edit({ refundAmountCents: 5_000 });
+    edit({ refundAmountCents: 5_000 }, true, false);
     const result = await addBookingToWorkParty({ ...common, settlementMethod: "card", dryRun: true });
     expect(result.settlementOptions).toEqual({ methods: ["credit", "card"], paidByOrganiser: false, refundTo: "bank" });
     expect(result.figures).toMatchObject({ refundAmountCents: 5_000, settlementMethod: "card" });
     expect(h.modifyCalls[0]).toMatchObject({ input: expect.objectContaining({ settlementMethod: "card" }) });
+  });
+
+  it("#5212 (INV-PAY-160): names the refund by the edit's own answer, so a card payment the edit refunds by bank transfer says so", async () => {
+    edit({ refundAmountCents: 5_000 }, true, false);
+    const result = await addBookingToWorkParty({ ...common, settlementMethod: "card", dryRun: true });
+    expect(result.settlementOptions).toEqual({ methods: ["credit", "card"], paidByOrganiser: false, refundTo: "bank" });
   });
 
   it("defaults a bank-paid booking to club credit", async () => {

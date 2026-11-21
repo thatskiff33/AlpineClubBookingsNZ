@@ -134,22 +134,27 @@ export type BatchModificationTransactionResult =
  * #5149 (maintainers' review, 18 Nov 2026): what the edit's settlement did with
  * a reduction, surfaced on the response beside `policyRetainedAmountCents` for
  * a caller that must say where the money went rather than re-derive it
- * (`INV-SSOT-001`): how much an unpaid ask took (#3954, `INV-PAY-120`), and
- * whether a dispute holds the refund for the treasurer (`INV-PAY-154`).
+ * (`INV-SSOT-001`): how much an unpaid ask took (#3954, `INV-PAY-120`),
+ * whether a dispute holds the refund for the treasurer (`INV-PAY-154`), and
+ * whether a reduction's refund goes back to the card rather than by bank
+ * transfer: the settlement's own `hasSucceededPayment`, which on a reduction
+ * is `editReductionRefundsToCard` (`INV-PAY-160`).
  */
 export type BatchModificationSettlementFacts = {
   unpaidAskOffsetCents: number;
   refundHeldForDispute: boolean;
+  reductionRefundsToCard: boolean;
 };
 
 /** The response's settlement facts, read off the transaction result in one spread. */
 export function batchModificationSettlementFacts(
-  result: Pick<BatchModificationTransactionResult, "policyRetainedAmountCents" | "unpaidAskOffsetCents" | "refundHeldForDispute">,
+  result: Pick<BatchModificationTransactionResult, "policyRetainedAmountCents" | "unpaidAskOffsetCents" | "refundHeldForDispute" | "hasSucceededPayment">,
 ): BatchModificationSettlementFacts & { policyRetainedAmountCents: number } {
   return {
     policyRetainedAmountCents: result.policyRetainedAmountCents,
     unpaidAskOffsetCents: result.unpaidAskOffsetCents,
     refundHeldForDispute: result.refundHeldForDispute,
+    reductionRefundsToCard: result.hasSucceededPayment,
   };
 }
 

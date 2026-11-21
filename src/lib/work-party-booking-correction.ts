@@ -61,7 +61,6 @@ import {
   isFinishedStay,
 } from "@/lib/booking-edit-policy";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify";
-import { editReductionRefundsToCard } from "@/lib/booking-modify-settlement-options";
 import { EditPriceChangedError } from "@/lib/edit-quoted-figures";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import { promoCodeListRefusal } from "@/lib/promo-code-list-rules";
@@ -556,11 +555,8 @@ async function correctWorkParty(
       // maintainers' second comment); part of it is named (review M4).
       const settlementOptions = workPartySettlementOptions(
         booking,
-        {
-          asksForMethod: modified.requiresSettlementMethod,
-          // #5212 (`INV-PAY-160`): the edit's own read of where a refund goes.
-          refundsToCard: modified.requiresSettlementMethod && (await editReductionRefundsToCard(tx, booking)),
-        },
+        // #5212 (`INV-PAY-160`): where a refund goes is the answer the edit settled by, carried on its result.
+        { asksForMethod: modified.requiresSettlementMethod, refundsToCard: modified.reductionRefundsToCard },
         direction === "add" ? workPartyAskOffset(modified) : undefined,
       );
       const settlementMethod =

@@ -124,9 +124,9 @@ export function hasSettledCardPayment(booking: { status: string; payment: (Booki
  * #5212 (`INV-PAY-160`): does a REDUCTION on this booking go back to its card?
  * Paid by card (`hasSettledCardPayment`) with a card to return to
  * (`editRefundHasCardToReturnTo`); otherwise a refund is the bank-transfer
- * hand-back. The one answer `applyPaymentAdjustments` settles a reduction by
- * and "Add to work party" names its refund by (#5149), read under the door's
- * locks.
+ * hand-back. The one answer `applyPaymentAdjustments` settles a reduction by,
+ * read under the door's locks; the batch result carries it as
+ * `reductionRefundsToCard`, which "Add to work party" names its refund by (#5149).
  */
 export async function editReductionRefundsToCard(
   db: Pick<Prisma.TransactionClient, "payment">,

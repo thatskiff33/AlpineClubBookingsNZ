@@ -65,9 +65,9 @@ export interface WorkPartySettlementBooking {
  *  - `edit.asksForMethod`: the edit's own settlement asked for a method
  *    (`requiresSettlementMethod` on its response) — a paid booking with cash a
  *    reduction can return, whatever it was paid by. Credit, or a refund: to the
- *    card where the edit refunds one (`edit.refundsToCard`, the service's read
- *    of `editReductionRefundsToCard`, the answer that also decides a Stripe
- *    refund, `INV-PAY-160`), else by the bank-transfer hand-back.
+ *    card where the edit refunds one (`edit.refundsToCard`, the edit's own
+ *    `reductionRefundsToCard`, the answer that decides its Stripe refund,
+ *    `INV-PAY-160`), else by the bank-transfer hand-back.
  *  - `unpaidAskOffsetCents`, all of it: an unpaid ask took the whole reduction (after
  *    Add, Remove, Add the reduction cancels the ask the Remove raised; B-L1 of
  *    the maintainers' comment
