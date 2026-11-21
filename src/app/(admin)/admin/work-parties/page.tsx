@@ -482,7 +482,8 @@ export default function AdminWorkPartiesPage() {
                 {...descriptionHint.fieldProps}
               />
               <FieldHint {...descriptionHint.hintProps}>
-                Shown to members on the work party page and the calendar.
+                Shown to members on the work party page and the calendar, and in the
+                booking form to anyone booking those nights.
               </FieldHint>
             </div>
             <label className="flex items-center gap-2 text-sm cursor-pointer">

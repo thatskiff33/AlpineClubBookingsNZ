@@ -129,7 +129,7 @@ cannot book, Book a Stay opens empty with a short notice saying so.
 | Discount % | Percent off nights in the window | 100 | Whole number 1–100 |
 | Start date | First night in the discount window | — | NZ date-only |
 | End date (last discounted night) | Last night in the discount window | — | NZ date-only; inclusive |
-| Description | A note shown to members on the work party page and the calendar | — | Optional; up to 1000 characters |
+| Description | A note shown to members on the work party page and the calendar, and in the booking form to anyone booking those nights | — | Optional; up to 1000 characters |
 | Lodge | Which lodge the working bee is at | All lodges (club-wide) | Only shown with more than one active lodge |
 | Active | Whether members can select the event when booking | on | Inactive events cannot be selected |
 

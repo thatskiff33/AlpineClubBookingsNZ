@@ -161,7 +161,8 @@ export function showsWorkPartyCalendarEntries(
  * - the viewer is a member (`canViewWorkParties`, owner decision of 20 Nov
  *   2026: members only, like the dashboard card, the work-party page and
  *   Join), so a non-member login, a lodge kiosk, an admin-only account and an
- *   organisation account never see a work party's name, lodge or description;
+ *   organisation account never see a work party's name, lodge or description
+ *   on the calendar (the booking form's working-bee list is a separate reader);
  * - the Work parties module is on. With it off nobody can manage the entries
  *   (the work-party routes answer 404 and the calendar refuses linked
  *   entries), so they must not show;

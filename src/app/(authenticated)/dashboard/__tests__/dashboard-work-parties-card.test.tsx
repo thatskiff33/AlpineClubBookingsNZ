@@ -76,8 +76,9 @@ vi.mock("@/lib/work-party-member", () => ({
 
 import DashboardPage from "../page";
 
-function moduleFlags(workParties: boolean) {
+function moduleFlags(workParties: boolean, eventsCalendar = false) {
   return {
+    eventsCalendar,
     kiosk: false,
     chores: false,
     financeDashboard: false,
@@ -114,11 +115,11 @@ const WORK_PARTY = {
 
 const MEMBER = { accessRoles: ["USER"], role: "USER", canLogin: true };
 
-async function renderAs(user: Record<string, unknown>, workParties = true) {
+async function renderAs(user: Record<string, unknown>, workParties = true, eventsCalendar = false) {
   mocks.auth.mockResolvedValue({
     user: { id: "viewer-1", name: "Viewer One", ...user },
   });
-  mocks.loadEffectiveModuleFlags.mockResolvedValue(moduleFlags(workParties));
+  mocks.loadEffectiveModuleFlags.mockResolvedValue(moduleFlags(workParties, eventsCalendar));
   return renderToStaticMarkup(await DashboardPage());
 }
 
@@ -168,5 +169,13 @@ describe("DashboardPage Work Parties card gate", () => {
 
     expect(html).not.toContain("Work Parties");
     expect(mocks.listUpcomingMemberWorkParties).not.toHaveBeenCalled();
+  });
+
+  it("reads a non-member's Events card through the visibility rule with their own session, so no work-party entry is asked for", async () => {
+    await renderAs({ accessRoles: [], role: "NON_MEMBER", canLogin: true }, true, true);
+
+    expect(mocks.calendarEventFindMany).toHaveBeenCalledTimes(1);
+    const [args] = mocks.calendarEventFindMany.mock.calls[0];
+    expect((args as { where: { AND: unknown[] } }).where.AND).toEqual([{ workPartyEventId: null }]);
   });
 });
