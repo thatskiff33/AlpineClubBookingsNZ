@@ -122,7 +122,6 @@ import {
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
   XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
   type QueuedOutboxExpectedOperation,
-  type QueuedOutboxPayload,
 } from "@/lib/xero-operation-outbox-payload";
 import { linkReviewTaskId, queuedReviewTaskId, reviewTaskKeyParts } from "@/lib/xero-review-task-key";
 import { supplementaryInvoicePayload } from "@/lib/xero-supplementary-invoice-enqueue";
