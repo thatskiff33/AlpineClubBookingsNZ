@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 */
 
 const h = vi.hoisted(() => {
-  const delegates = ["clubTaxSettings", "auditLog", "member", "booking", "xeroAccountMapping", "xeroTaxCategoryMapping", "xeroConnection"];
+  const delegates = ["clubTaxSettings", "auditLog", "member", "booking"];
   const methods = ["findUnique", "findFirst", "findMany", "create", "update", "upsert", "delete", "deleteMany", "count"];
 
   function makeClient() {
@@ -205,24 +205,6 @@ describe("PUT and DELETE", () => {
     h.readXeroTaxRates.mockRejectedValue(new Error("down"));
     expect((await put({ ...UNREGISTER, gstRegistered: true, taxRateBasisPoints: 1500, xeroTaxType: "OUTPUT2" })).status).toBe(503);
     expect((await del({ effectiveFrom: "2026-08-01", confirmed: true })).status).toBe(404);
-  });
-
-  it("refuse a registration while Opening Credits is mapped and Exempt is not, with the writer's own sentence (#4988)", async () => {
-    // An unregistered club with the Opening Credits account mapped.
-    const unregistered = { id: "unregistered", gstRegistered: false, taxRateBasisPoints: 0, xeroTaxType: null, effectiveFrom: new Date("2026-01-01T00:00:00.000Z") };
-    h.tx.behaviour.set("clubTaxSettings.findMany", () => [unregistered]);
-    h.root.behaviour.set("xeroConnection.findUnique", () => ({ tenantId: "tenant-connected", expiresAt: new Date() }));
-    h.root.behaviour.set("xeroAccountMapping.findUnique", () => ({ code: "2100" }));
-    const register = { ...UNREGISTER, gstRegistered: true, taxRateBasisPoints: 1500, xeroTaxType: "OUTPUT2" };
-
-    const refused = await put(register);
-    expect(refused.status).toBe(409);
-    expect(((await refused.json()) as { error: string }).error).toMatch(/map the Exempt tax category on the Xero setup screen first/);
-    expect(h.prisma.$transaction).not.toHaveBeenCalled();
-
-    // With the account unmapped the same registration is scheduled.
-    h.root.behaviour.set("xeroAccountMapping.findUnique", () => null);
-    expect((await put(register)).status).toBe(200);
   });
 
   it.each(["P2002", "P2028", "P2034"])("answer %s contention with a retryable 503", async (code) => {

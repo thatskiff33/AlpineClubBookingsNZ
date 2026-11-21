@@ -480,10 +480,10 @@ home for that explanation and is not repeated here.
   `xero-tax-category-one-writer-census.test.ts` holds every other path to
   reads; the Xero health check reports a mapping that stops passing.
 - **The first Exempt line is the spent opening credit** on the mapped Opening
-  Credits account (#4988, `INV-PAY-162`), resolved before the operation's
-  first provider write; the outbox holds it in PENDING on that error
+  Credits account (#4988, `INV-PAY-162`), resolved before the first provider
+  write; the outbox holds it on that error
   (`xero-tax-category-hold.ts`). Settings refuse what would strand it
   ([`xero-opening-credits-exempt-guards.ts`](../../src/lib/xero-opening-credits-exempt-guards.ts)):
   that account shared with another role (owner, 21 Nov 2026) or mapped before
-  Exempt, and Exempt cleared or a registration scheduled while it is mapped;
-  the health check reports it.
+  Exempt, and Exempt cleared while it is mapped. A registration is allowed;
+  the health check warns (owner, 22 Nov 2026).

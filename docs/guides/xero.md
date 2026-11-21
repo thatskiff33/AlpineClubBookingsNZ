@@ -383,9 +383,10 @@ never change; only how much of each price is GST does.
    Other officers see the card read-only.
 2. A GST-registered treatment is checked against Xero's tax rates before it is
    saved, so the tax code must be active in Xero and usable on revenue. If Xero
-   cannot be read, the change waits until the connection works. If the
-   **Opening Credits** account is mapped, the **Exempt** tax category must be
-   mapped to a usable rate first; the save says so and changes nothing.
+   cannot be read, the change waits until the connection works. A
+   registration is saved even while the **Opening Credits** account is mapped
+   and **Exempt** has no usable rate; the health check then warns, and spent
+   opening credits wait until Exempt is mapped.
 3. Bookings, subscriptions and entrance fees made on or after the date use the
    new treatment. A booking already made keeps the treatment in force when it
    was made for its whole life, including later edits, credit notes and

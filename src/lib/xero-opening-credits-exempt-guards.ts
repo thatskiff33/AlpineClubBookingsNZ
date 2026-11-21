@@ -1,4 +1,4 @@
-import { loadClubTaxSchedule, type ClubTaxPeriod, type ClubTaxSchedule } from "@/lib/club-tax-settings";
+import { loadClubTaxSchedule, type ClubTaxSchedule } from "@/lib/club-tax-settings";
 import { clubToday, type CalendarDate } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { prisma } from "@/lib/prisma";
@@ -25,7 +25,7 @@ import { readXeroTaxRates } from "@/lib/xero-tax-rates";
  * WHAT THE SETTINGS SCREENS REFUSE SO THE EXEMPT LINE CAN ALWAYS BE SENT
  * (#4988, on #5209's rules in `xero-tax-category-prerequisites.ts`;
  * `INV-PAY-162`, `INV-CONFIG-008`). A spent opening credit coded to the mapped
- * Opening Credits account is its own line in the Exempt tax category. Four
+ * Opening Credits account is its own line in the Exempt tax category. Three
  * saves could leave that line unsendable or ambiguous, and each is refused with
  * a sentence saying what to do instead:
  *
@@ -37,12 +37,15 @@ import { readXeroTaxRates } from "@/lib/xero-tax-rates";
  *    item 6: required only while a registered period is in force or scheduled).
  * 3. Clearing the Exempt mapping while Opening Credits is mapped and the club
  *    is, or is scheduled to be, GST-registered: the reverse of 2.
- * 4. Scheduling a GST registration while Opening Credits is mapped and Exempt
- *    is not usable: the other way into the state 2 refuses (#5375 item 3).
  *
- * What no save causes is REPORTED: the Xero health check carries a problem
- * while Opening Credits is mapped, a registered period applies or is scheduled,
- * and Exempt has no usable rate (`openingCreditsExemptHealthProblem`).
+ * A GST REGISTRATION IS NEVER REFUSED for this (owner decision, 22 Nov 2026,
+ * https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4988#issuecomment-7070628422:
+ * "allow, warn instead"). A club that mapped Opening Credits while unregistered
+ * needed no Exempt mapping, and may schedule a registration without one. The
+ * warning is the Xero health check, which carries a problem while Opening
+ * Credits is mapped, a registered period applies or is scheduled, and Exempt
+ * has no usable rate (`openingCreditsExemptHealthProblem`), and the outbox
+ * hold, under which each spent opening credit waits until Exempt is mapped.
  *
  * The decisions are #5209's pure functions; this module only reads what they
  * need, outside any transaction (`INV-LOCK-004`). The sender's own refusal
@@ -166,35 +169,10 @@ export async function exemptClearRefusalWhileOpeningCreditsMapped(): Promise<str
 }
 
 /**
- * Why a GST registration may not be scheduled, or null when it may
- * (`scheduleClubTaxChange`). A club that mapped Opening Credits while it was
- * not registered needed no Exempt mapping then; the day its registration
- * starts, every spent opening credit needs one. #5209's rule is asked of that
- * day: the period being scheduled, on the date it starts. `rates` is the list
- * the writer has just read fresh for the period's own code.
- */
-export async function registrationRefusalWhileOpeningCreditsMapped({
-  period,
-  rates,
-}: {
-  period: ClubTaxPeriod;
-  rates: readonly XeroTaxRateOption[];
-}): Promise<string | null> {
-  if (!period.gstRegistered) return null;
-  if (!(await openingCreditsAccountIsMapped())) return null;
-  const problem = exemptPrerequisiteProblem({
-    schedule: [period],
-    today: period.effectiveFrom,
-    exemptTaxType: mappedTaxTypeFor(await loadXeroTaxCategoryMappings(), "EXEMPT"),
-    rates,
-  });
-  if (problem === null) return null;
-  return `The Opening Credits account is mapped, so once the club is GST-registered each spent opening credit is sent to Xero with the Exempt rate. ${problem} Nothing was saved.`;
-}
-
-/**
- * The Xero health check's line for a state no screen refusal can rule out
- * (`readXeroTaxHealth`; #5375 item 3), or null: Opening Credits is mapped, a
+ * The Xero health check's line for a state no screen refusal rules out
+ * (`readXeroTaxHealth`; #5375 item 3): a registration scheduled after Opening
+ * Credits was mapped (allowed by the owner's decision above), a rate edited in
+ * Xero, a reconnect, or two saves racing. Null, or the line: Opening Credits is mapped, a
  * registered period applies today or is scheduled, and Exempt has no usable
  * rate in the connected organisation. Judged by #5209's rule. Rates that could
  * not be read are "not checked", which the health check already says, so only
@@ -217,5 +195,5 @@ export async function openingCreditsExemptHealthProblem({
   const exemptTaxType = mappedTaxTypeFor(mappings, "EXEMPT");
   if (exemptTaxType !== null && rates === null) return null;
   if (exemptPrerequisiteProblem({ schedule, today, exemptTaxType, rates }) === null) return null;
-  return "Opening Credits is mapped and the club is, or is scheduled to be, GST-registered, but the Exempt tax category has no usable Xero tax rate. Spent opening credits wait in the Xero queue until a Full Admin maps Exempt on the Xero setup screen.";
+  return "Opening Credits is mapped and the club is, or is scheduled to be, GST-registered, but the Exempt tax category has no usable Xero tax rate, so spent opening credits wait in the Xero queue. A Full Admin maps Exempt to a 0% rate on the Xero setup screen, or unmaps the Opening Credits account under Account Mappings.";
 }

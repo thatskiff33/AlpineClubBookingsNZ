@@ -154,7 +154,7 @@ describe("readXeroTaxHealth", () => {
 
   describe("Opening Credits mapped while Exempt has no usable rate (#4988, #5375 item 3)", () => {
     const OPENING_CREDITS_PROBLEM =
-      "Opening Credits is mapped and the club is, or is scheduled to be, GST-registered, but the Exempt tax category has no usable Xero tax rate. Spent opening credits wait in the Xero queue until a Full Admin maps Exempt on the Xero setup screen.";
+      "Opening Credits is mapped and the club is, or is scheduled to be, GST-registered, but the Exempt tax category has no usable Xero tax rate, so spent opening credits wait in the Xero queue. A Full Admin maps Exempt to a 0% rate on the Xero setup screen, or unmaps the Opening Credits account under Account Mappings.";
     const exemptRate = rate({ taxType: "EXEMPTOUTPUT", name: "Exempt", rateBasisPoints: 0 });
 
     beforeEach(() => {

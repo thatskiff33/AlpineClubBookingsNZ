@@ -14,9 +14,9 @@
   tax rate mapped to the **Exempt** tax category; a GST-registered club maps
   Exempt first, and the account mapping refuses the Opening Credits account
   until it has, or on an account another mapping already uses. While the
-  account is mapped, clearing Exempt is refused, a GST registration is not
-  scheduled without a usable Exempt rate, and the Xero health check reports a
-  club left without one. A club that leaves the mapping unset sends exactly the
+  account is mapped, clearing Exempt is refused, and the Xero health check
+  warns a club that has no usable Exempt rate, for example after scheduling a
+  GST registration, which is never refused for this. A club that leaves the mapping unset sends exactly the
   credit note it sent before. A
   new guide, *Moving in from your old system*, sets out the load order, a safe
   way to carry over stays that are already paid, and the totals to check
