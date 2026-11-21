@@ -98,9 +98,22 @@ vi.mock("@/lib/post-image-storage", () => ({
   deletePostImage: mocks.deletePostImage,
 }));
 
-import { retryPendingShares, shareOnePost } from "@/lib/club-post-sharing";
+import { OUTSTANDING_WITHDRAWAL_WHERE, retryPendingShares, shareOnePost } from "@/lib/club-post-sharing";
 
 const REQUESTED = new Date("2026-07-01T00:00:00.000Z");
+
+/** A removed own-club post as the withdrawal sweep selects it. */
+function removed(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "p9",
+    serverPostId: null,
+    unrecordedServerPostId: null,
+    removedAt: REQUESTED,
+    withdrawnAt: null,
+    originClubCode: null,
+    ...overrides,
+  };
+}
 
 function post(overrides: Record<string, unknown> = {}) {
   return {
@@ -168,7 +181,7 @@ describe("the request is claimed before the send, so a share goes out at most on
 
     expect(writes("claim")).toEqual([{
       where: { id: "post-1", sharedAt: null, serverPostId: null, removedAt: null, shareRequestedAt: REQUESTED },
-      data: { shareRequestedAt: null },
+      data: { shareRequestedAt: null, shareSentAt: expect.any(Date) },
     }]);
     expect(mocks.order.indexOf("claim")).toBeLessThan(mocks.order.indexOf("send"));
   });
@@ -193,7 +206,7 @@ describe("the request is claimed before the send, so a share goes out at most on
     expect(await shareOnePost("post-1")).toEqual({ status: "paused" });
     expect(writes("restore")).toEqual([{
       where: { id: "post-1", shareRequestedAt: null, sharedAt: null, serverPostId: null },
-      data: { shareRequestedAt: REQUESTED },
+      data: { shareRequestedAt: REQUESTED, shareSentAt: null },
     }]);
     expect(mocks.update).not.toHaveBeenCalled();
   });
@@ -234,7 +247,7 @@ describe("a share the server accepted is recorded with the id it returned (#4590
     expect(mocks.shareClubPost).toHaveBeenCalledTimes(1);
     expect(writes("unlocked-stamp")).toEqual([{
       where: { id: "post-1", serverPostId: null },
-      data: { serverPostId: "server-9", sharedAt: expect.any(Date), shareError: null },
+      data: { serverPostId: "server-9", sharedAt: expect.any(Date), shareError: null, shareSentAt: null },
     }]);
     // No attempt is counted against a share that succeeded.
     expect(mocks.update.mock.calls.some(([args]) => "shareAttempts" in args.data)).toBe(false);
@@ -281,7 +294,12 @@ describe("a share the server accepted is recorded with the id it returned (#4590
     expect(mocks.shareClubPost).toHaveBeenCalledTimes(1);
     expect(mocks.update).toHaveBeenLastCalledWith({
       where: { id: "post-1" },
-      data: { shareAttempts: 1, shareError: expect.stringContaining("server-9") },
+      data: {
+        shareAttempts: 1,
+        shareError: expect.stringContaining("server-9"),
+        unrecordedServerPostId: "server-9",
+        shareSentAt: null,
+      },
     });
     expect(mocks.logger.error).toHaveBeenCalledWith(
       expect.objectContaining({ serverPostId: "server-9" }), expect.stringMatching(/will not be sent again/),
@@ -622,10 +640,7 @@ describe("retryPendingShares", () => {
   it("stops the withdrawal sweep on the server's own version refusal without counting a failure (#49 review)", async () => {
     mocks.findMany
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        { id: "p9", serverPostId: "server-9" },
-        { id: "p10", serverPostId: "server-10" },
-      ]);
+      .mockResolvedValueOnce([removed({ id: "p9", serverPostId: "server-9" }), removed({ id: "p10", serverPostId: "server-10" })]);
     mocks.withdrawClubPost.mockRejectedValueOnce(new FakeVersionError());
 
     const result = await retryPendingShares(REQUESTED);
@@ -639,10 +654,7 @@ describe("retryPendingShares", () => {
   it("retries the takedown of a removed shared post and stamps the confirmation (#3091 r1)", async () => {
     mocks.findMany
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        { id: "p9", serverPostId: "server-9" },
-        { id: "p10", serverPostId: "server-10" },
-      ]);
+      .mockResolvedValueOnce([removed({ id: "p9", serverPostId: "server-9" }), removed({ id: "p10", serverPostId: "server-10" })]);
     mocks.withdrawClubPost
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new FakeApiError(503, "unavailable"));
@@ -662,5 +674,136 @@ describe("retryPendingShares", () => {
         data: { withdrawnAt: expect.any(Date) },
       }),
     );
+  });
+});
+
+describe("an accepted share that is not recorded is kept for the admin, and still never sent again (#5246)", () => {
+  beforeEach(() => {
+    mocks.findUnique.mockImplementation(async ({ where }: { where: { id?: string } }) => (where.id ? post() : null));
+    mocks.shareClubPost.mockResolvedValue({ id: "server-9" });
+  });
+
+  it.each([
+    ["a recorded share", () => {}],
+    ["a retryable failure", () => mocks.shareClubPost.mockRejectedValue(new FakeApiError(503, "unavailable"))],
+    ["a final refusal", () => mocks.shareClubPost.mockRejectedValue(new FakeApiError(403, "no"))],
+    ["a version pause", () => mocks.shareClubPost.mockRejectedValue(new FakeVersionError())],
+    ["every stamp failing", () => {
+      mocks.lockServerNzSettings.mockRejectedValue(new Error("database unavailable"));
+      mocks.updateMany.mockImplementation(async (args: GuardedWrite) => {
+        if (writeKind(args) === "claim") return { count: 1 };
+        throw new Error("database unavailable");
+      });
+    }],
+  ])("takes the claim's marker off the row on %s", async (_label, arrange) => {
+    arrange();
+
+    await shareOnePost("post-1");
+
+    const recorded = [
+      ...mocks.updateMany.mock.calls.map(([args]) => args as GuardedWrite).filter((args) => writeKind(args) !== "claim"),
+      ...mocks.update.mock.calls.map(([args]) => args as GuardedWrite),
+    ];
+    expect(recorded.some((args) => args.data.shareSentAt === null)).toBe(true);
+  });
+
+  it.each([
+    ["a mismatch: our post already holds another id", "server-1"],
+    ["a conflict: a mirror that is not our copy holds the id", "mirror"],
+  ])("stores the accepted id on %s", async (_label, held) => {
+    if (held === "mirror") {
+      mocks.findUnique.mockImplementation(async ({ where }: { where: { id?: string } }) => {
+        if (where.id === "copy-1") return { id: "copy-1", originClubCode: "OTHERCLUB", content: "Other words.", authorName: "Someone" };
+        return where.id ? post() : { id: "copy-1", originClubCode: "OTHERCLUB" };
+      });
+    } else {
+      mocks.updateMany.mockImplementation(async (args: GuardedWrite) => ({ count: writeKind(args) === "claim" ? 1 : 0 }));
+      let reads = 0;
+      mocks.findUnique.mockImplementation(async ({ where }: { where: { id?: string } }) => {
+        if (!where.id) return null;
+        reads += 1;
+        return reads === 1 ? post() : post({ serverPostId: held });
+      });
+    }
+
+    expect(await shareOnePost("post-1")).toMatchObject({ status: "failed", retryable: false });
+
+    expect(mocks.update.mock.calls.at(-1)?.[0].data).toMatchObject({
+      unrecordedServerPostId: "server-9",
+      shareSentAt: null,
+      shareRequestedAt: null,
+    });
+    expect(mocks.shareClubPost).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the marker when nothing can be written, and a following sweep sends nothing", async () => {
+    mocks.lockServerNzSettings.mockRejectedValue(new Error("database unavailable"));
+    mocks.updateMany.mockImplementation(async (args: GuardedWrite) => {
+      if (writeKind(args) === "claim") return { count: 1 };
+      throw new Error("database unavailable");
+    });
+    mocks.update.mockRejectedValue(new Error("database unavailable"));
+
+    await shareOnePost("post-1");
+
+    // Only the claim landed: it set the marker and took the request off.
+    expect(writes("claim")[0]?.data).toEqual({ shareRequestedAt: null, shareSentAt: expect.any(Date) });
+    expect(mocks.shareClubPost).toHaveBeenCalledTimes(1);
+
+    // The row as the claim left it: no request, so the sweep selects nothing
+    // (its filter requires one) and even a direct retry is refused.
+    mocks.findMany.mockResolvedValue([]);
+    mocks.findUnique.mockResolvedValue(post({ shareRequestedAt: null, shareSentAt: new Date() }));
+    await retryPendingShares(REQUESTED);
+    expect(await shareOnePost("post-1")).toEqual({ status: "skipped", reason: "not-requested" });
+    expect(mocks.findMany.mock.calls[0][0].where.shareRequestedAt).toMatchObject({ not: null });
+    expect(mocks.shareClubPost).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the withdrawal sweep takes down an unrecorded copy too (#5246)", () => {
+  it("selects removed own-club posts with either copy outstanding", async () => {
+    mocks.findMany.mockResolvedValue([]);
+
+    await retryPendingShares(REQUESTED);
+
+    expect(mocks.findMany.mock.calls[1][0].where).toBe(OUTSTANDING_WITHDRAWAL_WHERE);
+    expect(OUTSTANDING_WITHDRAWAL_WHERE).toEqual({
+      removedAt: { not: null },
+      originClubCode: null,
+      OR: [{ serverPostId: { not: null }, withdrawnAt: null }, { unrecordedServerPostId: { not: null } }],
+    });
+  });
+
+  it("withdraws the unrecorded id on a removed post and clears it once confirmed", async () => {
+    mocks.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([removed({ unrecordedServerPostId: "server-9" })]);
+    mocks.withdrawClubPost.mockResolvedValue(undefined);
+
+    const result = await retryPendingShares(REQUESTED);
+
+    expect(result).toMatchObject({ withdrawalsAttempted: 1, withdrawalsConfirmed: 1, withdrawalsFailed: 0 });
+    expect(mocks.withdrawClubPost).toHaveBeenCalledWith("server-9");
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { id: "p9", unrecordedServerPostId: "server-9" },
+      data: { unrecordedServerPostId: null, shareError: null },
+    });
+  });
+
+  it("withdraws both copies, and keeps the one the server refused for the next pass", async () => {
+    mocks.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([removed({ serverPostId: "server-1", unrecordedServerPostId: "server-9" })]);
+    mocks.withdrawClubPost
+      .mockRejectedValueOnce(new FakeApiError(503, "unavailable"))
+      .mockResolvedValueOnce(undefined);
+
+    const result = await retryPendingShares(REQUESTED);
+
+    expect(result).toMatchObject({ withdrawalsConfirmed: 0, withdrawalsFailed: 1 });
+    expect(mocks.withdrawClubPost.mock.calls).toEqual([["server-9"], ["server-1"]]);
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+    expect(mocks.update).toHaveBeenCalledWith({ where: { id: "p9" }, data: { withdrawnAt: expect.any(Date) } });
   });
 });
