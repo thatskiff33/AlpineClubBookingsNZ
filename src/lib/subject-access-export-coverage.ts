@@ -238,6 +238,7 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   // rows, keyed by booking and journal component like the ledger links above.
   MemberMoneyExportManifest: SHARED,
   MemberMoneyExportCoverage: SHARED,
+  MemberMoneyExportCoverageRelease: SHARED,
   // #4520: Stripe's own balance transaction, keyed by a payment intent rather than a member.
   StripeBalanceTransactionEvidence: OPERATIONAL,
   // Food orders (PR #5143): the subject's own orders and their lines.

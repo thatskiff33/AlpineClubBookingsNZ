@@ -163,7 +163,7 @@ vi.mock("@/lib/xero-mappings", async (importOriginal) => ({
   getHutFeeItemCodeMap: vi.fn().mockResolvedValue(new Map()),
 }));
 
-vi.mock("@/lib/xero-booking-invoices", () => ({
+vi.mock("@/lib/xero-booking-invoice-lines", () => ({
   // One $45 line: the child's stay, priced to its final price below.
   buildInvoiceLineItems: vi.fn(() => [
     { description: "One lodge stay", unitAmount: 45, quantity: 1 },
@@ -1670,7 +1670,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
   });
 
   it("releases the binding, alerts once and says so when a joiner's stored prices cannot make the invoice (#3642 D2)", async () => {
-    const { buildInvoiceLineItems } = await import("@/lib/xero-booking-invoices");
+    const { buildInvoiceLineItems } = await import("@/lib/xero-booking-invoice-lines");
     // The child's final price is $45, but its night prices add up to $40.
     vi.mocked(buildInvoiceLineItems).mockReturnValueOnce([
       { description: "One lodge stay", unitAmount: 40, quantity: 1 },

@@ -161,6 +161,7 @@ export async function createMemberMoneyScratchDatabase(
     await owner.query(`CREATE TABLE "Lodge" (id text PRIMARY KEY);
       CREATE TABLE "Booking" (id text PRIMARY KEY, "lodgeId" text REFERENCES "Lodge"(id));
       CREATE TABLE "BookingLedgerLine" (id text PRIMARY KEY);
+      CREATE TABLE "GroupBookingSettlement" (id text PRIMARY KEY);
       CREATE TABLE "AuditLog" (id text PRIMARY KEY, "ipAddress" text, "userAgent" text)`);
     await owner.query(`CREATE TABLE "Payment" (id text PRIMARY KEY, "bookingId" text UNIQUE REFERENCES "Booking"(id));
       CREATE TABLE "PaymentTransaction" (id text PRIMARY KEY, "paymentId" text REFERENCES "Payment"(id), "stripePaymentIntentId" text);
@@ -171,6 +172,8 @@ export async function createMemberMoneyScratchDatabase(
     await owner.query(readFileSync("prisma/migrations/20261222050000_member_money_export_supplementary/migration.sql", "utf8"));
     await owner.query(readFileSync("prisma/migrations/20261223010000_member_money_refund_note_manifest/migration.sql", "utf8"));
     await owner.query(readFileSync("prisma/migrations/20261223050000_member_money_capture_receipt_manifest/migration.sql", "utf8"));
+    await owner.query(readFileSync("prisma/migrations/20261230010000_member_money_export_combined_group_role/migration.sql", "utf8"));
+    await owner.query(readFileSync("prisma/migrations/20261230010100_member_money_export_coverage_release/migration.sql", "utf8"));
     const statements = buildDatabaseRolesSql({
       databaseName: name,
       migrator: { roleName: roles.migrator, password: "m".repeat(28) },
