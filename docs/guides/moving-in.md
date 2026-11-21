@@ -159,7 +159,7 @@ treatment with your treasurer or accountant for the account you choose.
 
 If your club is GST-registered, map the Exempt tax category on the Xero setup screen before you map the Opening Credits account; the app will not save the account, or send a spent opening credit, without it.
 
-Three more things the app does to keep that line sendable:
+Four more things the app does to keep that line sendable:
 
 - It will not save **Opening Credits** on an account another mapping already
   uses, such as **Hut Fee Refunds**. The message names the other mapping.
@@ -167,11 +167,16 @@ Three more things the app does to keep that line sendable:
 - While **Opening Credits** is set and the club is, or is scheduled to be,
   GST-registered, **Clear** on the Exempt category is refused. Unset **Opening
   Credits** first.
+- A club that set **Opening Credits** while it was not GST-registered needed
+  no Exempt mapping. If it registers later, the **GST / tax treatment** card
+  will not schedule the registration until Exempt is mapped.
 - If the Exempt rate stops being usable later (it is archived or changed from
   0% in Xero, or you connect a different Xero organisation), a spent opening
   credit is never sent with another rate. Its Xero operation waits, saying
-  which category to map, and is tried again by itself every few minutes once a
-  Full Admin has mapped it.
+  which category to map, and is tried again by itself every few minutes, so it
+  goes once a Full Admin has mapped the category. The Xero health check shows
+  the problem while it lasts. The app checks rates against its own copy of
+  Xero's list, which can be up to 15 minutes old.
 
 Changing the mapping affects only credit notes raised afterwards; notes already
 in Xero are not changed.

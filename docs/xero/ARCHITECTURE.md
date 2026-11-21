@@ -585,8 +585,10 @@ allocation failure there does, and an officer retries it. The settings screens
 refuse what would strand the line
 ([`xero-opening-credits-exempt-guards.ts`](../../src/lib/xero-opening-credits-exempt-guards.ts)):
 Opening Credits on an account another role uses, Opening Credits mapped before
-Exempt while a registered period applies or is scheduled, and Exempt cleared
-while Opening Credits is mapped. The one writer,
+Exempt while a registered period applies or is scheduled, Exempt cleared while
+Opening Credits is mapped, and a registration scheduled while Opening Credits
+is mapped and Exempt is unusable. `readXeroTaxHealth` reports that last state
+when it arises another way. The one writer,
 [`xero-tax-category-write.ts`](../../src/lib/xero-tax-category-write.ts)
 (Full Admin, `PUT`/`DELETE /api/admin/xero/tax-categories`), reads Xero's rates
 fresh before a Serializable single-table transaction with its audit row and no
