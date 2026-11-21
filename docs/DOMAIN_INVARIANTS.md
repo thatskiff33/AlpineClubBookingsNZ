@@ -197,6 +197,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-CAP-036` | A shared double losing its primary auto-promotes the survivor, audited |
 | `INV-CAP-037` | At most one live payment link per booking; never both settle |
 | `INV-CAP-038` | A whole-lodge hold excludes custodian-held bed-nights; the reverse asks, then amends atomically |
+| `INV-CAP-040` | An import claims beds under the lodge lock, never overbooks |
 | `INV-CAP-011` | Waitlisted and offered bookings hold no capacity until confirmed |
 | `INV-CAP-012` | A waitlist offer reprices at current rates and states what is payable |
 | `INV-CAP-013` | A member is present on only one live booking per lodge night |
@@ -378,6 +379,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-158` | A saved-card claim is marked durably and recovered when stranded |
 | `INV-PAY-159` | Cash cover is read from cash records by one reader |
 | `INV-PAY-160` | An edit refunds a card only where Stripe holds a record |
+| `INV-PAY-161` | An imported paid booking is settled manually in its creating transaction |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
