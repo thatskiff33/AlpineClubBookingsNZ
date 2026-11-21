@@ -41,7 +41,7 @@ export function requiresPaidSubscriptionForAgeTier(
 
 // ---------------------------------------------------------------------------
 // Subscription liability: ONE rule for billing and booking access (#5190,
-// INV-CONFIG-009, INV-MONEY-046, INV-LOCKOUT-020).
+// INV-CONFIG-008, INV-MONEY-046, INV-LOCKOUT-020).
 //
 // The club answers two questions on `MembershipLockoutSettings`:
 //  - `requiredTypeAgeRule`: does an exempt age tier exempt a member on an

@@ -375,7 +375,7 @@ Both are judged by the one owing test (`resolveMemberSubscriptionSettlement`, vi
 the single settlement batch in `evaluateNonMemberPricingRequirements`), so the
 owner cannot be judged by a different rule than the party. Whether a member owes
 at all is the liability rule billing also reads (`resolveMemberSubscriptionLiability`,
-access side, `INV-CONFIG-009`; #5190): while the club is `NOT_CHOSEN`, an exempt
+access side, `INV-CONFIG-008`; #5190): while the club is `NOT_CHOSEN`, an exempt
 stored tier exempts any type and a `BASED_ON_AGE_TIER` member's saved
 `NOT_REQUIRED` row exempts them, exactly as before; once chosen, the club's pair
 decides for both sides and the row exempts nobody. A member owing one is settled

@@ -140,7 +140,7 @@ those, and `src/lib/subscription-lockout-facts.ts`'s
 `resolveMemberSubscriptionSettlement` never reads a category — it only ever
 reads `MembershipType.subscriptionBehavior` and `MemberSubscription.status`.
 Whether a member owes at all is the one liability rule both billing axes and
-that resolver share (`resolveMemberSubscriptionLiability`, `INV-CONFIG-009`), so
+that resolver share (`resolveMemberSubscriptionLiability`, `INV-CONFIG-008`), so
 a member whose type exempts them is never billed through a category
 (`INV-MONEY-046`).
 Two members of the same `MembershipType` (same booking rights/rate) can be

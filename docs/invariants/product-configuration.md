@@ -454,7 +454,7 @@ home for that explanation and is not repeated here.
 - **It is instance-local:** a legal fact about this club, excluded from config
   transfer.
 
-## INV-CONFIG-009
+## INV-CONFIG-008
 
 - **Who owes a subscription is one rule the club chooses, read by billing and
   booking access alike** (#5190; owner decisions on the issue, 18 and 20 Nov

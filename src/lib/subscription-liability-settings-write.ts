@@ -17,7 +17,7 @@ type RequestedLiability = Partial<SubscriptionLiabilitySettings>;
 
 /**
  * Why a save's liability answers are refused, or null when they may be saved
- * (#5190, `INV-CONFIG-009`). The pair is one decision, so it is sent whole: a
+ * (#5190, `INV-CONFIG-008`). The pair is one decision, so it is sent whole: a
  * half-choice would leave the club on a rule nobody chose. A club cannot be
  * moved back to `NOT_CHOSEN` — that state exists only so an upgrade changes
  * nobody silently — though a club still on it may save it unchanged.

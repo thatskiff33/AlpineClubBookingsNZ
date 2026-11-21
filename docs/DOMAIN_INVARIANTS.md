@@ -1032,7 +1032,7 @@ headings the index keeps verbatim.
 | `INV-CONFIG-005` | Every application-managed Xero contact write consumes the canonical role; copies contained |
 | `INV-CONFIG-006` | One persisted currency and locale; the environment seeds them once |
 | `INV-CONFIG-007` | One GST schedule, dated periods; Xero and the journal resolve it |
-| `INV-CONFIG-009` | One chosen liability rule for billing and access; NOT_CHOSEN changes nobody |
+| `INV-CONFIG-008` | One chosen liability rule for billing and access; NOT_CHOSEN changes nobody |
 
 ## Single Source Of Truth
 

@@ -781,7 +781,7 @@ export const SINGLETONS: SingletonSpec[] = [
     //
     // #5190: the subscription-liability pair is the second job of this hook. A
     // club opts in by choosing BOTH answers together and can never go back to
-    // NOT_CHOSEN (`INV-CONFIG-009`), so a bundle carries the pair only when it
+    // NOT_CHOSEN (`INV-CONFIG-008`), so a bundle carries the pair only when it
     // states both and neither is NOT_CHOSEN. Otherwise both keys are dropped: an
     // older bundle, a never-chosen source or a hand-trimmed half pair says nothing
     // about the rule, and the target keeps its own in either import mode — a
