@@ -312,7 +312,7 @@ export function BookingEditor({
         <CardHeader>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <CardTitle>Stay Details</CardTitle>
+              <CardTitle headingLevel={2}>Stay Details</CardTitle>
               {canOpenEditor && (
                 <Button variant="outline" onClick={() => setEditing(true)}>
                   Edit Booking
@@ -378,7 +378,7 @@ export function BookingEditor({
       {/* Guests */}
       <Card>
         <CardHeader>
-          <CardTitle>Guests</CardTitle>
+          <CardTitle headingLevel={2}>Guests</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="divide-y">
@@ -432,7 +432,7 @@ export function BookingEditor({
       {/* Payment */}
       <Card>
         <CardHeader>
-          <CardTitle>Payment</CardTitle>
+          <CardTitle headingLevel={2}>Payment</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
           <div className="flex justify-between">
