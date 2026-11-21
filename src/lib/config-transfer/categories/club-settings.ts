@@ -33,10 +33,9 @@ import type { BundleEntry } from "../bundle";
 import { registerEntity } from "../registry";
 import { prismaEnumValues } from "../values";
 import {
-  isChoosableLiabilityAgeSource,
-  isSubscriptionLiabilityAgeSource,
-  isSubscriptionRequiredTypeAgeRule,
-} from "@/lib/policies/subscription";
+  reconcileMembershipLockoutBundle,
+  validateLiabilityAgeSource,
+} from "./membership-lockout-bundle";
 import type { CategoryExporter, ExportContext } from "../export-types";
 import {
   changedFields,
@@ -714,9 +713,7 @@ export const SINGLETONS: SingletonSpec[] = [
     // added here per the #2178 audit (should-travel).
     // #2543/#2561: `mode` replaced the legacy `enabled` boolean, and that COLUMN is
     // gone — so `enabled` is not a field here. It is still a BUNDLE KEY, though, and
-    // that distinction is the whole of the hook below.
-    // #5190: the subscription-liability pair travels whole or not at all — see
-    // the `reconcile` hook below.
+    // that distinction is the whole of the hook below (as is #5190's liability pair).
     fields: [
       "mode", "financialYearEndMonthOverride", "textFallbackEnabled",
       "useFeeScheduleItemCodes", "requiredTypeAgeRule", "liabilityAgeSource",
@@ -747,18 +744,7 @@ export const SINGLETONS: SingletonSpec[] = [
       textFallbackEnabled: { required: true },
       useFeeScheduleItemCodes: { required: true },
       requiredTypeAgeRule: { required: true },
-      // #5190: `CURRENT_AGE` needs part-season invoices, which have not shipped,
-      // so a bundle naming it fails the dry-run exactly as the admin route
-      // refuses it. A validator owns the whole check, so the enum test is here too.
-      liabilityAgeSource: {
-        required: true,
-        validate: (value) =>
-          !isSubscriptionLiabilityAgeSource(value)
-            ? `${JSON.stringify(value)} is not a valid SubscriptionLiabilityAgeSource`
-            : value === "NOT_CHOSEN" || isChoosableLiabilityAgeSource(value)
-              ? null
-              : `${value} cannot be chosen yet: it needs part-season invoices (#5190)`,
-      },
+      liabilityAgeSource: { required: true, validate: validateLiabilityAgeSource }, // no CURRENT_AGE yet
     },
     defaults: () => DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS,
     // BUNDLE-FORMAT compatibility, which outlives the column (#2543/#2561).
@@ -798,7 +784,7 @@ export const SINGLETONS: SingletonSpec[] = [
     // about the rule, and the target keeps its own in either import mode — a
     // bundle's NOT_CHOSEN never overwrites a chosen target. A present null or an
     // unknown string is left in place for the validation loop to refuse.
-    reconcile: (incoming) => reconcileLiabilityPair(reconcileLockoutMode(incoming)),
+    reconcile: reconcileMembershipLockoutBundle,
   },
   {
     entity: "membership-cancellation-setting",
@@ -931,52 +917,6 @@ export const SINGLETONS: SingletonSpec[] = [
 
 function fileFor(entity: string): string {
   return `club-settings/${entity}.json`;
-}
-
-/** `mode` from a pre-#2543 bundle's `enabled` key (#2543/#2561); see the spec. */
-function reconcileLockoutMode(
-  incoming: Record<string, unknown>,
-): Record<string, unknown> {
-  const stated = "mode" in incoming && incoming.mode !== null;
-  if (stated) {
-    return incoming;
-  }
-  if (typeof incoming.enabled === "boolean") {
-    return {
-      ...incoming,
-      mode: incoming.enabled ? "HARD_BLOCK" : "NO_BLOCK",
-    };
-  }
-  // `mode` is absent or null with nothing to derive from. Absent means "this
-  // bundle says nothing about the policy", which merge mode honours by leaving
-  // the target's own mode alone; a present null is a broken file, and
-  // `constraints.mode.required` above fails the dry-run on it.
-  return incoming;
-}
-
-/** The #5190 liability pair travels whole and chosen, or not at all; see the spec. */
-function reconcileLiabilityPair(
-  incoming: Record<string, unknown>,
-): Record<string, unknown> {
-  const rule = incoming.requiredTypeAgeRule;
-  const source = incoming.liabilityAgeSource;
-  // Anything the loop must refuse (null, a non-string, an unknown value) stays.
-  if (
-    ("requiredTypeAgeRule" in incoming && !isSubscriptionRequiredTypeAgeRule(rule)) ||
-    ("liabilityAgeSource" in incoming && !isSubscriptionLiabilityAgeSource(source))
-  ) {
-    return incoming;
-  }
-  if (
-    isSubscriptionRequiredTypeAgeRule(rule) && rule !== "NOT_CHOSEN" &&
-    isSubscriptionLiabilityAgeSource(source) && source !== "NOT_CHOSEN"
-  ) {
-    return incoming;
-  }
-  const rest = { ...incoming };
-  delete rest.requiredTypeAgeRule;
-  delete rest.liabilityAgeSource;
-  return rest;
 }
 
 /**

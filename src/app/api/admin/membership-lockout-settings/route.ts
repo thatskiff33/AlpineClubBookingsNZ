@@ -23,15 +23,15 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
-import { clearStaleNotRequiredRows } from "@/lib/member-subscription-defaults";
 import {
   SUBSCRIPTION_LIABILITY_AGE_SOURCES,
   SUBSCRIPTION_REQUIRED_TYPE_AGE_RULES,
-  hasChosenLiabilityRule,
-  isChoosableLiabilityAgeSource,
-  type SubscriptionLiabilitySettings,
 } from "@/lib/policies/subscription";
-import { lockSubscriptionBillingSeason } from "@/lib/subscription-billing-season-lock";
+import {
+  liabilityChoiceError,
+  liabilityChoiceToWrite,
+  saveLockoutSettings,
+} from "@/lib/subscription-liability-settings-write";
 
 const settingsSchema = z
   .object({
@@ -63,44 +63,6 @@ const settingsSchema = z
     liabilityAgeSource: z.enum(SUBSCRIPTION_LIABILITY_AGE_SOURCES).optional(),
   })
   .strict();
-
-type SettingsInput = z.infer<typeof settingsSchema>;
-
-/**
- * Why a save's liability answers are refused, or null when they may be saved
- * (#5190, `INV-CONFIG-008`). The pair is one decision, so it is sent whole: a
- * half-choice would leave the club on a rule nobody chose. A club cannot be
- * moved back to `NOT_CHOSEN` — that state exists only so an upgrade changes
- * nobody silently — though a club still on it may save it unchanged.
- * `CURRENT_AGE` waits for part-season invoices (#5190's third pull request), so
- * it is refused until then.
- */
-function liabilityChoiceError(
-  input: SettingsInput,
-  stored: SubscriptionLiabilitySettings,
-): string | null {
-  const { requiredTypeAgeRule, liabilityAgeSource } = input;
-  if (requiredTypeAgeRule === undefined && liabilityAgeSource === undefined) {
-    return null;
-  }
-  if (requiredTypeAgeRule === undefined || liabilityAgeSource === undefined) {
-    return "Choose both subscription liability answers together.";
-  }
-  const unchangedNotChosen =
-    requiredTypeAgeRule === "NOT_CHOSEN" &&
-    liabilityAgeSource === "NOT_CHOSEN" &&
-    !hasChosenLiabilityRule(stored);
-  if (unchangedNotChosen) {
-    return null;
-  }
-  if (requiredTypeAgeRule === "NOT_CHOSEN" || liabilityAgeSource === "NOT_CHOSEN") {
-    return "Choose both subscription liability answers; a chosen rule cannot be returned to not chosen.";
-  }
-  if (!isChoosableLiabilityAgeSource(liabilityAgeSource)) {
-    return "Age today cannot be chosen yet: it needs part-season subscription invoices.";
-  }
-  return null;
-}
 
 /**
  * Compute the fee-schedule detection preview (#2109): the resolved item-code set
@@ -198,17 +160,7 @@ export async function PUT(request: NextRequest) {
   const mode = parsed.data.mode ?? stored.mode;
 
   // #5190: the liability pair is written only when the save makes a choice.
-  // Omitted (or an unchanged NOT_CHOSEN), the columns are left out of the write
-  // altogether rather than re-written from the read above, so a save racing an
-  // opt-in can never put the club back on NOT_CHOSEN.
-  const { requiredTypeAgeRule, liabilityAgeSource } = parsed.data;
-  const liabilityChoice =
-    requiredTypeAgeRule !== undefined &&
-    liabilityAgeSource !== undefined &&
-    hasChosenLiabilityRule({ requiredTypeAgeRule, liabilityAgeSource })
-      ? { requiredTypeAgeRule, liabilityAgeSource }
-      : null;
-
+  const liabilityChoice = liabilityChoiceToWrite(parsed.data);
   const data = {
     mode,
     financialYearEndMonthOverride:
@@ -224,33 +176,13 @@ export async function PUT(request: NextRequest) {
     ...liabilityChoice,
     updatedByMemberId: session.user.id,
   };
-  const liabilityAfterSave: SubscriptionLiabilitySettings = liabilityChoice ?? stored;
-  const upsertSettings = {
-    where: { id: MEMBERSHIP_LOCKOUT_SETTINGS_ID },
-    create: { id: MEMBERSHIP_LOCKOUT_SETTINGS_ID, ...data },
-    update: data,
-  };
-
-  // #5190: a save that leaves the club on a chosen liability rule also clears
-  // the season's stale NOT_REQUIRED rows, in ONE transaction under the billing
-  // season key (season lock -> settings -> clear-up), so a billing confirm sees
-  // the rule and the rows from before the save or after it, never half of each.
-  // The season is resolved before the transaction opens.
-  let clearedStaleRows: number | null = null;
-  let record;
-  if (hasChosenLiabilityRule(liabilityAfterSave)) {
-    const seasonYear = clubSeasonYear(await clubTimeZone());
-    const saved = await prisma.$transaction(async (tx) => {
-      await lockSubscriptionBillingSeason(tx, seasonYear);
-      const upserted = await tx.membershipLockoutSettings.upsert(upsertSettings);
-      const { clearedCount } = await clearStaleNotRequiredRows(tx, seasonYear);
-      return { upserted, clearedCount };
-    });
-    record = saved.upserted;
-    clearedStaleRows = saved.clearedCount;
-  } else {
-    record = await prisma.membershipLockoutSettings.upsert(upsertSettings);
-  }
+  // #5190: a save that leaves the club on a chosen rule also runs the stale-row
+  // clear-up, in the same transaction (`saveLockoutSettings`).
+  const { record, clearedStaleRows } = await saveLockoutSettings(prisma, {
+    data,
+    liabilityAfterSave: liabilityChoice ?? stored,
+    seasonYear: clubSeasonYear(await clubTimeZone()),
+  });
 
   // Reseed the financial-year cache so the change takes effect immediately on
   // this instance.

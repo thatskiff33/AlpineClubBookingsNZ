@@ -5,7 +5,10 @@ import type {
 } from "@prisma/client";
 
 import { getAgeTierSettings, type AgeTierSettingData } from "@/lib/age-tier";
-import { normalizeMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
+import {
+  loadMembershipLockoutSettings,
+  normalizeMembershipLockoutSettings,
+} from "@/lib/membership-lockout-settings";
 import {
   NOT_CHOSEN_LIABILITY_SETTINGS,
   liabilityRuleFor,
@@ -128,6 +131,33 @@ export async function readSubscriptionLiabilitySettings(
   const { requiredTypeAgeRule, liabilityAgeSource } =
     normalizeMembershipLockoutSettings(row);
   return { requiredTypeAgeRule, liabilityAgeSource };
+}
+
+/**
+ * Whether one member owes a subscription on the access side of the liability
+ * rule, reading the club's settings and age tiers itself (#5190). For the Xero
+ * sync (`checkMembershipStatus`), which judges one member outside any booking
+ * transaction: while the club has not chosen its rule that is the pre-#5190 sync
+ * rule exactly — a `BASED_ON_AGE_TIER` member whose season row is already
+ * `NOT_REQUIRED` stays not required (#2041 dominance, so a mid-season tier
+ * promotion cannot re-mint an invoice), and otherwise the stored tier decides.
+ * Once chosen, the club's pair decides and the row exempts nobody.
+ */
+export async function owesSubscriptionForAccess(
+  input: Omit<
+    Parameters<typeof resolveMemberSubscriptionLiability>[0],
+    "rule" | "ageTierSettings"
+  >,
+): Promise<boolean> {
+  const [lockoutSettings, ageTierSettings] = await Promise.all([
+    loadMembershipLockoutSettings(),
+    getAgeTierSettings(),
+  ]);
+  return resolveMemberSubscriptionLiability({
+    ...input,
+    rule: liabilityRuleFor("access", lockoutSettings),
+    ageTierSettings,
+  }).owes;
 }
 
 /**

@@ -42,8 +42,7 @@ import {
   xeroInstant,
 } from "@/lib/xero-provider-dates";
 import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
-import { getAgeTierSettings } from "@/lib/age-tier";
-import { liabilityRuleFor, resolveMemberSubscriptionLiability } from "@/lib/policies/subscription";
+import { owesSubscriptionForAccess } from "@/lib/subscription-lockout-facts";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
@@ -569,27 +568,13 @@ export async function checkMembershipStatus(
     { memberId, seasonYear: year },
   );
 
-  // #5190: the ONE liability rule, access side — the rule the booking gates
-  // read. While the club has not chosen its rule that is the pre-#5190 sync
-  // rule exactly: a BASED_ON_AGE_TIER member whose season row is already
-  // NOT_REQUIRED stays not required (#2041 dominance, so a mid-season tier
-  // promotion cannot re-mint an invoice), and otherwise the stored tier
-  // decides. Once chosen, the club's pair decides and the row exempts nobody.
-  // The not-required outcome flows through the SAME
-  // writeXeroDerivedSubscriptionState NOT_REQUIRED path below, so Xero op
-  // shapes are byte-unchanged.
-  const [lockoutSettings, ageTierSettings] = await Promise.all([
-    loadMembershipLockoutSettings(),
-    getAgeTierSettings(),
-  ]);
-  const subscriptionRequired = resolveMemberSubscriptionLiability({
+  // #5190: a not-required member takes the SAME NOT_REQUIRED write below.
+  const subscriptionRequired = await owesSubscriptionForAccess({
     subscriptionBehavior: membershipTypePolicy?.subscriptionBehavior,
     member,
     seasonRowStatus: manualPaidGuard?.status,
     seasonYear: year,
-    rule: liabilityRuleFor("access", lockoutSettings),
-    ageTierSettings,
-  }).owes;
+  });
 
   if (!subscriptionRequired) {
     const write = await writeXeroDerivedSubscriptionState({
