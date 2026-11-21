@@ -88,6 +88,7 @@ import { checkCardRefundResend } from "@/lib/card-refund-resend-preflight";
 import { disputedCaptureRefusal } from "@/lib/stripe-dispute-hold";
 import { refundPlanOrRetryRefusals } from "@/lib/refused-card-refund-retry";
 import { predatesRefundLedger } from "@/lib/payment-transaction-status";
+import { CARD_REFUND_BANK_RECORD_TASK_WHERE } from "@/lib/manual-refund-task-settlement-rules";
 import {
   cancelRefundableBaseCents,
   getRemainingRefundableCents,
@@ -154,9 +155,10 @@ function createRefundStore() {
   // #3640 D2: the account credit this booking issued (MemberCredit
   // dispositions), which the failed-refund floor reads.
   const credit = { dispositionCents: 0 };
-  // #4280: the bank cash the payment's "Paid another way" closes recorded,
-  // which the failed-refund floor also reads (one reader, grouped by payment).
-  const bankClose = { paidAnotherWayCents: 0 };
+  // #4280, #4488: the completed records of a card refund paid back by bank -
+  // "Paid another way" closes and card refund shortfalls - which the
+  // failed-refund floor also reads (one reader, by payment and kind).
+  const bankRecords: Array<{ occurrenceKey: string; amountCents: number }> = [];
 
   const store = {
     // #3640: the one raw read the card-refund writer makes - the ledger
@@ -174,8 +176,8 @@ function createRefundStore() {
       aggregate: vi.fn(async () => ({ _sum: { amountCents: credit.dispositionCents } })),
     },
     manualRefundTask: {
-      groupBy: vi.fn(async () =>
-        bankClose.paidAnotherWayCents > 0 ? [{ paymentId: payment.id, _sum: { amountCents: bankClose.paidAnotherWayCents } }] : [],
+      findMany: vi.fn(async () =>
+        bankRecords.map((record) => ({ paymentId: payment.id, kind: "CANCELLED_BOOKING_HAND_BACK", ...record })),
       ),
     },
     // #3581: `reconcilePaymentAggregates` now ends by syncing the booking
@@ -369,7 +371,7 @@ function createRefundStore() {
     },
   };
 
-  return { store, payment, transaction, transactions, refunds, ledger, credit, bankClose };
+  return { store, payment, transaction, transactions, refunds, ledger, credit, bankRecords };
 }
 
 describe("payment refund ledger", () => {
@@ -2387,7 +2389,7 @@ describe("#3640 / INV-PAY-103 - a card refund adds to the refunded total", () =>
     async function closePaidAnotherWay(ctx: Ctx, amountCents: number) {
       await applyLocalRefundAllocation({ paymentId: "payment_1", amountCents, store: ctx.store as never });
       // The completed close record the real close writes alongside.
-      ctx.bankClose.paidAnotherWayCents += amountCents;
+      ctx.bankRecords.push({ occurrenceKey: `card-refund-paid-another-way:op-${ctx.bankRecords.length}`, amountCents });
     }
 
     it("#4280: a late card refund the cap kept out, failing, leaves the close's bank cash in the total", async () => {
@@ -2403,9 +2405,29 @@ describe("#3640 / INV-PAY-103 - a card refund adds to the refunded total", () =>
       expect(ctx.transaction.refundedAmountCents).toBe(PAID_CENTS);
       expect(ctx.payment.refundedAmountCents).toBe(PAID_CENTS);
       expect(delta).toBe(0);
-      expect(ctx.store.manualRefundTask.groupBy).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ paymentId: "payment_1", occurrenceKey: { startsWith: "card-refund-paid-another-way:" }, status: "COMPLETED" }) }),
+      // Read on the writer's own client, under the Payment row it holds.
+      expect(ctx.store.manualRefundTask.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { ...CARD_REFUND_BANK_RECORD_TASK_WHERE, paymentId: "payment_1" } }),
       );
+    });
+
+    // #4488 (owner, 11 Nov 2026): a completed card refund shortfall's bank cash
+    // is part of the floor too. The real-PostgreSQL proof drives both worked
+    // examples through the real writers: `card-refund-reversal-shortfall-floor.realdb.test.ts`.
+    it("#4488: a late card refund the cap kept out, failing, leaves a completed shortfall's bank cash beside the close's", async () => {
+      const ctx = paidStore();
+      await closePaidAnotherWay(ctx, PAID_CENTS - CREDIT_CENTS);
+      // The shortfall the card could not carry, paid back by bank: its completion and its record.
+      await applyLocalRefundAllocation({ paymentId: "payment_1", amountCents: CREDIT_CENTS, store: ctx.store as never });
+      ctx.bankRecords.push({ occurrenceKey: "cancel-card-shortfall:booking_1", amountCents: CREDIT_CENTS });
+      await webhookSync(ctx, cardRefund("re_late", PAID_CENTS - CREDIT_CENTS, "pending"));
+      expect(ctx.transaction.refundedAmountCents).toBe(PAID_CENTS);
+
+      await webhookSync(ctx, cardRefund("re_late", PAID_CENTS - CREDIT_CENTS, "failed"));
+
+      // Without the shortfall the floor is the close's $300 alone, and $100 of headroom reopens.
+      expect(ctx.transaction.refundedAmountCents).toBe(PAID_CENTS);
+      expect(ctx.payment.refundedAmountCents).toBe(PAID_CENTS);
     });
 
     it("#4280: a part close keeps only what it paid, and credit beside it adds", async () => {

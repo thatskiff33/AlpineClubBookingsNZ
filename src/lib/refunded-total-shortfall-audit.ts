@@ -12,18 +12,20 @@
  * For each captured payment:
  *
  *   expected floor = min(captured, counted card refunds + account-credit dispositions
- *                        + "Paid another way" bank cash)
+ *                        + "Paid another way" bank cash + card refund shortfalls paid back)
  *   shortfall      = expected floor - stored refunded total   (reported when > 0)
  *
  * - Counted card refunds: the payment's `PaymentRefund` rows in a counted status
  *   (`isRecordedRefundStatus`), the same rows the mirror's own writer counts.
  * - Account-credit dispositions: `ACCOUNT_CREDIT_DISPOSITION_WHERE`, the one
  *   definition `stripe-cash-refund-evidence.ts` also reads.
- * - #4280: the bank cash "Paid another way" closes recorded
- *   (`readPaidAnotherWayCloseBankCashByPayment`), the one reader the card-refund
- *   writer's floor also reads. Before #4280 a late card refund's failure could
- *   take it out of the total; such a payment is listed here, short for another
- *   reason, and never rewritten by code.
+ * - #4280, #4488: the bank cash a card refund's bank records hold - "Paid
+ *   another way" closes and completed card refund shortfalls, a cancel's or a
+ *   capacity race's (`readCardRefundBankCashByPayment`), the one reader the
+ *   card-refund writer's floor also reads. Before #4280 (a close) and #4488 (a
+ *   shortfall) a late card refund's failure could take that cash out of the
+ *   total; such a payment is listed here, short for another reason, and never
+ *   rewritten by code.
  *
  * It is a FLOOR, not an identity: the mirror also carries value no row records
  * (pre-ledger card refunds, #1491's folded modification credit notes), so a
@@ -42,9 +44,10 @@
  * later FAILED - its row no longer counts, so nothing card-side is left to
  * attribute. Since #3640 the writer's floor stops such a subtraction going
  * below the credit, so this can only predate the fix. Those need a person's
- * reading, not the #3640 repair. So does (#4280) any part of a shortfall only
- * a close's bank cash explains: attribution is measured against the floor
- * without that cash, so a payment's #3640 figure is what it was before.
+ * reading, not the #3640 repair. So does (#4280, #4488) any part of a
+ * shortfall only a close's or a paid-back card refund shortfall's bank cash
+ * explains: attribution is measured against the floor without either, so a
+ * payment's #3640 figure is what it was before.
  *
  * REPORT ONLY - IT NEVER WRITES AND NEVER REPAIRS. It issues typed SELECTs
  * through Prisma (`INV-OPS-001`), and calls no provider. #4280: in ONE
@@ -61,7 +64,7 @@ import {
   isRecordedRefundStatus,
 } from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
-import { readPaidAnotherWayCloseBankCashByPayment } from "@/lib/card-refund-paid-another-way-cash";
+import { NO_CARD_REFUND_BANK_CASH, readCardRefundBankCashByPayment } from "@/lib/card-refund-paid-another-way-cash";
 import { withReadOnlySnapshot } from "@/lib/read-only-snapshot";
 import { ACCOUNT_CREDIT_DISPOSITION_WHERE } from "@/lib/stripe-cash-refund-evidence";
 import { formatCents } from "@/lib/utils";
@@ -77,6 +80,8 @@ export interface RefundedTotalShortfallRow {
   accountCreditCents: number;
   /** #4280: bank cash the payment's "Paid another way" closes recorded. */
   paidAnotherWayCents: number;
+  /** #4488: bank cash the payment's completed card refund shortfalls recorded. */
+  shortfallPaybackCents: number;
 }
 
 export interface RefundedTotalShortfallFinding extends RefundedTotalShortfallRow {
@@ -103,13 +108,14 @@ export function deriveRefundedTotalShortfall(
   if (shortfallCents <= 0) {
     return null;
   }
-  // #4280: only the shortfall below the floor WITHOUT the closes' bank cash is
-  // the old arithmetic's to explain; what that cash adds is another reason.
-  const shortfallBeforeClosesCents =
-    expectedRefundedFloorCents({ ...row, paidAnotherWayCents: 0 }) - row.refundedAmountCents;
+  // #4280, #4488: only the shortfall below the floor WITHOUT the card refunds'
+  // bank cash is the old arithmetic's to explain; what that cash adds is
+  // another reason.
+  const shortfallBeforeBankCashCents =
+    expectedRefundedFloorCents({ ...row, ...NO_CARD_REFUND_BANK_CASH }) - row.refundedAmountCents;
   const attributableCents =
     row.cardRefundCents > 0
-      ? Math.max(0, Math.min(row.cardRefundCents, row.accountCreditCents, shortfallBeforeClosesCents))
+      ? Math.max(0, Math.min(row.cardRefundCents, row.accountCreditCents, shortfallBeforeBankCashCents))
       : 0;
   return {
     ...row,
@@ -172,7 +178,7 @@ async function auditInSnapshot(db: Prisma.TransactionClient): Promise<RefundedTo
     );
   }
 
-  const paidAnotherWayCentsByPayment = await readPaidAnotherWayCloseBankCashByPayment(db, "all");
+  const bankCashByPayment = await readCardRefundBankCashByPayment(db, "all");
 
   const result: RefundedTotalShortfallAuditResult = {
     scannedPayments: payments.length,
@@ -188,7 +194,7 @@ async function auditInSnapshot(db: Prisma.TransactionClient): Promise<RefundedTo
       refundedAmountCents: payment.refundedAmountCents,
       cardRefundCents: cardRefundCentsByPayment.get(payment.id) ?? 0,
       accountCreditCents: accountCreditCentsByBooking.get(payment.bookingId) ?? 0,
-      paidAnotherWayCents: paidAnotherWayCentsByPayment.get(payment.id) ?? 0,
+      ...(bankCashByPayment.get(payment.id) ?? NO_CARD_REFUND_BANK_CASH),
     });
     if (finding) {
       result.findings.push(finding);
@@ -214,7 +220,8 @@ export function formatRefundedTotalShortfallReport(
   const describe = (finding: RefundedTotalShortfallFinding) =>
     `(captured ${formatCents(finding.amountCents, format)}, stored refunded ${formatCents(finding.refundedAmountCents, format)},` +
     ` card refunds ${formatCents(finding.cardRefundCents, format)}, account credit ${formatCents(finding.accountCreditCents, format)},` +
-    ` paid another way ${formatCents(finding.paidAnotherWayCents, format)})`;
+    ` paid another way ${formatCents(finding.paidAnotherWayCents, format)},` +
+    ` card refund shortfall paid back ${formatCents(finding.shortfallPaybackCents, format)})`;
 
   const lines = [
     "Refunded-total shortfall audit (#3640, INV-PAY-103) - read only",
@@ -241,7 +248,9 @@ export function formatRefundedTotalShortfallReport(
       "  - a card refund the old arithmetic never added later failed and was taken out;",
       "  - (#4280) a late card refund failed after a Paid another way close and took the close's",
       "    bank cash with it;",
-      "  - a #3640 loss that a later close's cash masked: it counts here, not above;",
+      "  - (#4488) a late card refund failed after a card refund shortfall was paid back by bank",
+      "    and took that bank cash with it;",
+      "  - a #3640 loss that a later close's or shortfall's cash masked: it counts here, not above;",
       "  - on a payment with several charges, a close and a counted card refund that paid the same",
       "    charge (the member paid twice): see Stuck States' \"paid twice\" list. A late card refund",
       "    still pending is transient - re-run once Stripe settles it."

@@ -25,7 +25,7 @@ import { alertCardRefundCapOverflow, readCardRefundCapOverflow, type CardRefundC
 import logger from "@/lib/logger";
 import { IntentLedgerRowOnAnotherPaymentError, writePaymentIntentTransaction } from "@/lib/payment-intent-ledger-row-write";
 import { accountCreditDispositionCents } from "@/lib/stripe-cash-refund-evidence";
-import { readPaidAnotherWayCloseBankCashByPayment } from "@/lib/card-refund-paid-another-way-cash";
+import { NO_CARD_REFUND_BANK_CASH, readCardRefundBankCashByPayment } from "@/lib/card-refund-paid-another-way-cash";
 import type { ClubFormat } from "@/lib/club-format";
 import { DisputedCaptureRefundRefusedError, disputedCaptureCents } from "@/lib/stripe-dispute-hold";
 import { MemberMoneyReservationRefused, postBookingReceipts, postCardRefundCash, reserveCardRefundSlice, resolveBookingMoneyPostingContext,
@@ -695,6 +695,14 @@ export async function lockPaymentForRefundedTotal(
  * mirrors, which may already hold it, come off it rather than count it twice.
  * Read on the caller's client, under the Payment row it holds: a close takes
  * that row before it writes its record.
+ *
+ * #4488: likewise a completed card refund shortfall's bank cash. $200 by card
+ * on A and $100 by bank on B, cancelled: A's dead card refund closed as paid
+ * another way for $200, the $100 shortfall paid back on B. The lost card
+ * refund recorded late is capped; when it fails, a floor of the close's $200
+ * less B's $100 would take A to $100 while $300 went back. Counted beside the
+ * close, the floor is $300 less B's $100, and A keeps its $200. A completion
+ * also takes the Payment row before its claim, so this read sees it whole.
  */
 async function reversalFloorForTransaction(
   db: PaymentStore,
@@ -718,7 +726,7 @@ async function reversalFloorForTransaction(
       .reduce((sum, transaction) => sum + transaction.amountCents, 0),
     cardRefundCents: counted._sum.amountCents ?? 0,
     accountCreditCents: await accountCreditDispositionCents(db, payment.bookingId),
-    paidAnotherWayCents: (await readPaidAnotherWayCloseBankCashByPayment(db, { paymentId })).get(paymentId) ?? 0,
+    ...((await readCardRefundBankCashByPayment(db, { paymentId })).get(paymentId) ?? NO_CARD_REFUND_BANK_CASH),
   });
   const otherTransactionsCents = payment.transactions
     .filter((transaction) => transaction.id !== paymentTransactionId)
