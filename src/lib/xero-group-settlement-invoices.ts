@@ -251,15 +251,16 @@ export async function createXeroInvoiceForGroupSettlement(
     return null;
   }
 
-  // #4919: raised and bound, but its email is owed. Ask again through the same
-  // fence — every in-lock check re-run, the same idempotency key — and never
-  // raise or re-bind the invoice. A failure keeps the marker, so an operator's
-  // Retry of the FAILED row comes back here rather than closing it unemailed.
   // #4525 (ALP-437): a bound invoice's export manifest, replayed from the request that raised it. Never throws.
   const replayManifest = (invoiceId: string) => recordCombinedGroupInvoiceManifest(
     { kind: "REPLAY", operationId: options?.syncOperation?.id ?? null },
     { settlementId, organiserBookingId: settlement.groupBooking.organiserBookingId, providerInvoiceId: invoiceId },
   );
+
+  // #4919: raised and bound, but its email is owed. Ask again through the same
+  // fence — every in-lock check re-run, the same idempotency key — and never
+  // raise or re-bind the invoice. A failure keeps the marker, so an operator's
+  // Retry of the FAILED row comes back here rather than closing it unemailed.
   if (settlement.xeroInvoiceId && initialFence.deferredEmail && options?.syncOperation) {
     const deferred = initialFence.deferredEmail;
     const createdInvoice = { invoiceID: settlement.xeroInvoiceId, invoiceNumber: settlement.xeroInvoiceNumber };
