@@ -790,6 +790,11 @@ import "./login-throttle.realdb.test";
 // claim does not. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
 // cleans its own `race-4616-` member.
 import "./session-reauth.realdb.test";
+// #5261 reuses it to prove the stored-password cost upgrade, a compare-and-swap
+// on the proved hash, never overwrites a password changed at the same moment,
+// including a change it waited on. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
+// it owns and cleans its own `race-5261-` member.
+import "./password-rehash.realdb.test";
 // #4617 reuses it to prove one of two concurrent passkey challenge claims
 // succeeds, and one of two concurrent counter updates. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4617-` member.
