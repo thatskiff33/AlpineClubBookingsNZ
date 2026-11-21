@@ -40,7 +40,7 @@ const cancellationLedger = vi.hoisted(() => ({
 // a case says so (`supersededDoor.owned`, no refund started).
 const supersededDoor = vi.hoisted(() => ({ owned: new Set<string>(), handOff: vi.fn() }));
 /** #5240: the saved-card capture's "not yet settled" flag (`unsettled-capture-marker.ts`). */
-const mockAlertCooldownUpsert = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({})));
+const mockAlertCooldownUpsert = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<object>>(async () => ({})));
 
 vi.mock("@/lib/superseded-capture-ownership", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/superseded-capture-ownership")),

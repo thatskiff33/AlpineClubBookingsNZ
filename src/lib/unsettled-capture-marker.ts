@@ -28,7 +28,7 @@ export const UNSETTLED_CAPTURE_HAND_OVER_MS = 7 * 24 * 60 * 60 * 1000;
 
 type FlagStore = Pick<Prisma.TransactionClient, "alertCooldown">;
 
-export function unsettledCaptureKey(paymentIntentId: string): string {
+function unsettledCaptureKey(paymentIntentId: string): string {
   return `${UNSETTLED_CAPTURE_PREFIX}${paymentIntentId}`;
 }
 

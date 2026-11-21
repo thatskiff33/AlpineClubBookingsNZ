@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 /** #5240: the saved-card capture's "not yet settled" flag, written by the adoption's settle. */
-const mockAlertCooldownUpsert = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({})));
+const mockAlertCooldownUpsert = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<object>>(async () => ({})));
 
 const {
   mockConstructWebhookEvent,
