@@ -333,6 +333,28 @@ Operators can switch the writes off with no deploy
 ([how](../xero/ARCHITECTURE.md#the-inbound-credit-note-mirror-4270)); while off, the log
 says what it would have done.
 
+### Unallocated payments
+
+Sometimes a member pays more than they owe, or pays before any invoice exists.
+Xero records that money as an **overpayment** or a **prepayment** on the
+member's contact. **Finance → Xero Unallocated Payments**
+(`/admin/xero/unallocated-payments`) lists every one that still has a balance:
+
+- its type, date and balance left (and the original amount when some has been
+  used);
+- the member whose Xero contact it is, or **No member linked** when no member is
+  linked to that contact (an organisation, or a contact not yet linked);
+- a link to the contact in Xero, where the document is listed.
+
+The list refreshes nightly. **Refresh from Xero** reads it again now (finance
+edit only, a few times a minute at most). A refresh reads every page from Xero
+before it changes anything, so a failed read leaves the list as it was and says
+so. A document that is fully used or voided in Xero drops off the list at the
+next refresh.
+
+For now the list is for looking only: allocate the money in Xero as before.
+Turning one into member credit is coming in a later release.
+
 ### Manage auto-grouping (Xero member grouping)
 
 1. **Xero member grouping** (`/admin/xero/member-grouping`, also linked from the

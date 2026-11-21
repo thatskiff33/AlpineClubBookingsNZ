@@ -7,6 +7,7 @@ import { pluralHutLeaderLabel } from "@/config/hut-leader-label";
 import {
   LayoutDashboard,
   Users,
+  Wallet,
   ArrowRightLeft,
   BookOpen,
   CalendarDays,
@@ -248,6 +249,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
       { ...adminLink("reports"), icon: BarChart2 },
       { ...adminLink("xero"), icon: RefreshCw },
       { ...adminLink("xero-member-grouping"), icon: Users },
+      { ...adminLink("xero-unallocated-payments"), icon: Wallet },
     ],
   },
   {

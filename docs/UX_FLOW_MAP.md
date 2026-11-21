@@ -713,6 +713,16 @@ Journey: Inspect connection and operations status; open a failed item to follow 
 
 [Guide](guides/xero.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
+### Xero Unallocated Payments — xero
+
+Screen: `/admin/xero/unallocated-payments` (Finance menu → Xero Unallocated Payments; served under the Finance hub). Needs finance view; Refresh from Xero needs finance edit.
+
+Shows: Each overpayment and prepayment in Xero that still has a balance, with its date, balance, the member whose Xero contact it is (or "No member linked") and a link to that contact in Xero, plus when the list was last refreshed (#5204). Read-only: nothing here turns one into credit yet.
+
+Journey: Open the page to see the list as of the nightly refresh; press Refresh from Xero to read it again now. A failed read changes nothing and says so.
+
+[Guide](guides/xero.md#unallocated-payments) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
 ## Admin content
 
 ### Site Appearance & Content — appearance
