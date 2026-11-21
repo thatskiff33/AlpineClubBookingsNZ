@@ -289,6 +289,7 @@ async function captureAnonymisationPayload(
     twoFactorRecoveryCode: vi.fn().mockResolvedValue({ count: 0 }),
     twoFactorSessionChallenge: vi.fn().mockResolvedValue({ count: 0 }),
     sessionReauthChallenge: vi.fn().mockResolvedValue({ count: 0 }),
+    mcpGrant: vi.fn().mockResolvedValue({ count: 0 }),
   };
   mockedPrisma.$transaction.mockImplementation((async (
     fn: (client: unknown) => unknown,
@@ -328,6 +329,8 @@ async function captureAnonymisationPayload(
       sessionReauthChallenge: {
         deleteMany: revokedTokens.sessionReauthChallenge,
       },
+      // ALP-653: an AI app connection signs in as the member, so erasure ends it.
+      mcpGrant: { deleteMany: revokedTokens.mcpGrant },
       // #4617: erasure reads the passkey count, then deletes the credentials
       // and their challenges, on this same transaction.
       webAuthnCredential: {

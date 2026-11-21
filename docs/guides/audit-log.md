@@ -741,7 +741,7 @@ completed booking, or a caller without permission.
 
 ### Booking invoice and credit-note downloads (#5066)
 
-When the club's Xero module is on, every successful **Download invoice** or
+Every successful **Download invoice** or, when the club's Xero module is on,
 **Download credit note** on a booking page records one entry in the
 **Booking** category: `booking.invoice.downloaded` or
 `booking.credit_note.downloaded`.
@@ -755,6 +755,13 @@ When the club's Xero module is on, every successful **Download invoice** or
 - **Only real downloads.** The entry is written after Xero has returned the
   PDF, and if it cannot be written the PDF is not handed over. A refused,
   throttled or failed download records nothing.
+- **With Xero off** (#5066 slice 2), the invoice the app makes itself records
+  the same `booking.invoice.downloaded` entry, summarised "Booking invoice
+  generated and downloaded", with `source` `GENERATED` and what was issued:
+  the document's date (`documentDate`), its total and balance in cents
+  (`totalCents`, `balanceCents`) and whether it was marked Not yet approved
+  (`notYetApproved`). The document has no number and is not stored, so this
+  entry is the club's record of what it sent.
 
 ### Email inheritance source entries (#2822)
 

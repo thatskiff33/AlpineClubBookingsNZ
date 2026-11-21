@@ -708,6 +708,7 @@ model Member {
   twoFactorSessionChallenges                 TwoFactorSessionChallenge[]
   sessionReauthChallenges                    SessionReauthChallenge[]
   webAuthnCredentials                        WebAuthnCredential[]
+  mcpGrants                                  McpGrant[]
   webAuthnChallenges                         WebAuthnChallenge[]
   subscriptions                              MemberSubscription[]
   memberSubscriptionsManuallyPaid            MemberSubscription[]                    @relation("MemberSubscriptionManualPaidBy")
@@ -4801,18 +4802,18 @@ model XeroSyncOperation {
   lastErrorCode          String?
   lastErrorMessage       String?
   requestPayload         Json?
-  // Denormalized copy of the outbox discriminator, captured once at enqueue in
+  // The outbox discriminator, captured once at enqueue in
   // `startXeroSyncOperation` and never updated afterward (#1271, item 3 of
-  // #1208). Dispatch reads queueType from `requestPayload` (not this column),
-  // BEFORE handlers may overwrite `requestPayload` -- so after dispatch this
-  // column can diverge from the payload (some handlers, e.g. the booking-invoice
-  // create/update, rewrite requestPayload wholesale and drop queueType). That is
-  // expected and safe: the pending-outbox scan (processQueuedXeroOutboxOperations,
-  // #1272) filters on this column only for rows still awaiting dispatch (PENDING /
-  // WAITING_PAYMENT), where it faithfully mirrors the enqueue-time queueType, so
-  // post-dispatch divergence is never observed. Because that scan depends on it,
-  // the column MUST remain immutable after enqueue. Null for REQUEUE, BACKFILL,
-  // inbound, and any other row enqueued with no queueType.
+  // #1208). Handlers may overwrite `requestPayload` with their execution request
+  // (e.g. the booking invoice and refund note rewrite it wholesale and drop
+  // queueType), so after dispatch the payload can lose it while this column
+  // keeps it. A row CAN come back to PENDING after that: a pre-HTTP cooldown
+  // give-back or an officer's Retry (#2423). So the pending-outbox scan
+  // (processQueuedXeroOutboxOperations, #1272) selects AND claims on this
+  // column, and every PENDING writer leaves a queued request for it
+  // (`returnOutboxRowToPending`, #5228; docs/xero/ARCHITECTURE.md). Because both
+  // depend on it, the column MUST remain immutable after enqueue. Null for
+  // REQUEUE, BACKFILL, inbound, and any other row enqueued with no queueType.
   queueType              String?
   // The creation-time Xero-invoice-email delivery instruction (#2929, MAD epic
   // #2725), captured once at enqueue and, like `queueType` above, NEVER updated
@@ -5683,6 +5684,12 @@ model ClubModuleSettings {
   // as a defaulted column because every read narrows to
   // CLUB_MODULE_SETTINGS_COLUMN_SELECT.
   skifieldWhakapapa       Boolean  @default(false)
+  // AI app connections (ALP-653): the MCP endpoint at /api/mcp, its OAuth
+  // endpoints, the approval screen and the member and admin connection lists.
+  // Default OFF so a club opts in: a connection sends the connected person's
+  // club data to their AI app's provider. Safe to add as a defaulted column
+  // because every read narrows to CLUB_MODULE_SETTINGS_COLUMN_SELECT.
+  mcpServer               Boolean  @default(false)
   updatedByMemberId       String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @default(now()) @updatedAt
@@ -6125,6 +6132,12 @@ model ClubIdentitySettings {
   shortName         String?
   hutLeaderLabel    String?
   facebookUrl       String?
+  // The supplier on the app's generated booking invoice (#5066, Xero off): the
+  // club's legal name (null prints the club name) and its postal address,
+  // free text, one line per line (null prints no address). No club.json
+  // fallback; admin-edited on Club identity.
+  legalName         String?
+  postalAddress     String?
   updatedByMemberId String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -6231,6 +6244,27 @@ model ClubTaxSettings {
   updatedByMemberId  String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @default(now()) @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
+// The club's tax categories mapped to its own Xero organisation's tax rates
+// (#5209; INV-CONFIG-007). Sales tax on income is NOT stored here: it is the
+// dated ClubTaxSettings schedule above, so the enum has no income value and the
+// fact cannot be recorded twice. One row per remaining category, undated, and
+// scoped to the Xero organisation it was chosen in: a row whose xeroTenantId is
+// not the connected tenant reads as unmapped. An absent row is an unmapped
+// category, which a registered club's line in that category refuses to send.
+// Written only by src/lib/xero-tax-category-write.ts (Full Admin, audited);
+// updatedByMemberId is that admin, kept as attribution, with no foreign key.
+model XeroTaxCategoryMapping {
+  id                String          @id @default(cuid())
+  category          XeroTaxCategory @unique
+  taxType           String
+  xeroTenantId      String
+  updatedByMemberId String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @default(now()) @updatedAt
 
   @@index([updatedByMemberId])
 }
@@ -9887,6 +9921,140 @@ model PrivacyHostingSettings {
   updatedAt         DateTime @default(now()) @updatedAt
 
   @@index([updatedByMemberId])
+}
+
+// ---------------------------------------------------------------------------
+// AI app connections (ALP-653, INV-MCP). A member approves an AI app (an MCP
+// client) to act as them through /api/mcp. All five models are club-wide, not
+// lodge-scoped: a connection is a way of signing in, and a sign-in has no lodge.
+// ---------------------------------------------------------------------------
+
+/// The most a connection may do. READ runs view-only actions; READ_WRITE also
+/// runs actions that change something.
+enum McpGrantScope {
+  READ
+  READ_WRITE
+}
+
+/// ACTIVE until the member or an officer removes it (REVOKED) or the sign-in
+/// that approved it ends (EXPIRED). Neither end state returns to ACTIVE.
+enum McpGrantStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum McpTokenKind {
+  ACCESS
+  REFRESH
+}
+
+/// An AI app that registered itself (OAuth dynamic client registration). A
+/// public client: it holds no secret, so PKCE and the exact redirect address
+/// are what bind an authorisation to it.
+model McpClient {
+  id           String        @id @default(cuid())
+  name         String        @db.VarChar(120)
+  /// Exact-match redirect addresses, each checked against the approved-app
+  /// list when registered and again when a member approves.
+  redirectUris String[]
+  createdAt    DateTime      @default(now())
+  grants       McpGrant[]
+  authCodes    McpAuthCode[]
+
+  @@index([createdAt])
+}
+
+/// One member's approval of one AI app. The connection signs in as the member
+/// through the same session refresh a browser session uses, measured from
+/// `sessionIssuedAt`, so it ends when that sign-in would.
+model McpGrant {
+  id                String         @id @default(cuid())
+  memberId          String
+  clientId          String
+  scope             McpGrantScope  @default(READ)
+  status            McpGrantStatus @default(ACTIVE)
+  /// When the browser session that approved this connection signed in. Never
+  /// moved forward: session max age and revocation are measured from it.
+  sessionIssuedAt   DateTime
+  /// Whether that browser session had passed its two-factor challenge.
+  twoFactorVerified Boolean        @default(false)
+  /// Why the connection ended, for the member and admin lists.
+  endedReason       String?        @db.VarChar(40)
+  endedAt           DateTime?
+  lastUsedAt        DateTime?
+  createdAt         DateTime       @default(now())
+  member            Member         @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  client            McpClient      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  tokens            McpToken[]
+  authCodes         McpAuthCode[]
+
+  @@index([memberId, status])
+  @@index([clientId])
+  @@index([status, createdAt])
+}
+
+/// A single-use authorisation code, stored as a SHA-256 hash and bound to the
+/// client, its redirect address and its PKCE challenge.
+model McpAuthCode {
+  id            String    @id @default(cuid())
+  codeHash      String    @unique
+  grantId       String
+  clientId      String
+  redirectUri   String
+  codeChallenge String
+  expiresAt     DateTime
+  usedAt        DateTime?
+  createdAt     DateTime  @default(now())
+  grant         McpGrant  @relation(fields: [grantId], references: [id], onDelete: Cascade)
+  client        McpClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([grantId])
+  @@index([clientId])
+  @@index([expiresAt])
+}
+
+/// An access or refresh token, stored as a SHA-256 hash. A refresh token is
+/// single-use: `usedAt` is stamped when it is exchanged, and presenting it
+/// again revokes the whole connection.
+model McpToken {
+  id        String       @id @default(cuid())
+  tokenHash String       @unique
+  kind      McpTokenKind
+  grantId   String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime     @default(now())
+  grant     McpGrant     @relation(fields: [grantId], references: [id], onDelete: Cascade)
+
+  @@index([grantId])
+  @@index([expiresAt])
+}
+
+/// The club's AI-connection policy. A singleton; a missing row reads as these
+/// defaults. Members may connect, officers may not until the club says so,
+/// and a connection is view-only until the club raises `maxScope`.
+model McpSettings {
+  id                   String        @id @default("default")
+  membersMayConnect    Boolean       @default(true)
+  officersMayConnect   Boolean       @default(false)
+  maxScope             McpGrantScope @default(READ)
+  /// Hosts an AI app's redirect address may use. An app on the person's own
+  /// computer (a loopback address) is always allowed.
+  allowedRedirectHosts String[]      @default(["claude.ai", "claude.com", "chatgpt.com"])
+  updatedByMemberId    String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @default(now()) @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
+// The tax categories a club maps to its Xero organisation's tax rates (#5209).
+// Sales tax on income has no value: it is the ClubTaxSettings schedule.
+enum XeroTaxCategory {
+  SALES_TAX_ON_EXPENSES
+  EXEMPT
+  ZERO_RATED
 }
 
 /// Food orders (fork #121). Whether an order is open or the food arrived.

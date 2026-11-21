@@ -453,3 +453,29 @@ home for that explanation and is not repeated here.
   `club-tax-settings-one-writer-census.test.ts` holds every other path to reads.
 - **It is instance-local:** a legal fact about this club, excluded from config
   transfer.
+
+## INV-CONFIG-008
+
+- **A Xero line's tax comes from one of four club tax categories, mapped to the
+  club's own Xero tax rates, never a code in the source** (#5209, owner
+  decision 17 Nov 2026): Sales tax on income, Sales tax on expenses, Exempt and
+  Zero rated ([`xero-tax-categories.ts`](../../src/lib/xero-tax-categories.ts)).
+  `xeroCategoryLineTax` in
+  [`xero-tax-rendering.ts`](../../src/lib/xero-tax-rendering.ts) renders all
+  four; `resolveXeroCategoryLineTax` resolves one for a document's anchor.
+- **Sales tax on income is `INV-CONFIG-007`'s dated schedule**, never stored
+  again: the mapping enum has no income value. The other three are undated rows
+  of `XeroTaxCategoryMapping`, each stamped with the Xero organisation it was
+  chosen in; a row from another organisation reads as unmapped.
+- **An unregistered period renders no tax type in any category.** While a
+  registered period applies, a line whose category is unmapped, mapped in
+  another organisation, or mapped to a rate failing `xeroTaxCategoryRateFault`
+  (the writer's own test), or whose rates cannot be read, throws `XeroTaxCategoryUnavailableError` before
+  any provider write; there is no fallback code.
+- **The one writer is behind Full Admin, audited:** `mapXeroTaxCategory`/
+  `clearXeroTaxCategory`
+  ([`xero-tax-category-write.ts`](../../src/lib/xero-tax-category-write.ts)),
+  through `PUT`/`DELETE /api/admin/xero/tax-categories`, refusing a rate the
+  connected organisation does not carry active and fit for the category.
+  `xero-tax-category-one-writer-census.test.ts` holds every other path to
+  reads; the Xero health check reports a mapping that stops passing.

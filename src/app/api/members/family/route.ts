@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getMemberFamily } from "@/lib/member-family-service";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import { servingMcpConnection } from "@/lib/mcp-connection-request";
+import { familyForConnection } from "@/lib/member-self-read";
 
 /**
  * GET /api/members/family
@@ -18,5 +20,14 @@ export async function GET() {
   }
 
   const result = await getMemberFamily(session.user.id);
+  // ALP-653: an AI app connection is sent who can go on a booking and nothing
+  // else; the website's answer is unchanged.
+  const ok = (result.init?.status ?? 200) === 200;
+  if (ok && (await servingMcpConnection())) {
+    return NextResponse.json(
+      familyForConnection(result.body as Parameters<typeof familyForConnection>[0]),
+      result.init,
+    );
+  }
   return NextResponse.json(result.body, result.init);
 }

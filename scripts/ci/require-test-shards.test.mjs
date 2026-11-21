@@ -662,11 +662,12 @@ describe("e2e.yml's required jobs, their shards and the run action", () => {
 
 // #5192: `ubuntu-latest` is a moving label. While GitHub rolled it from 24.04
 // to 26.04, the same commit got either image by chance, and on 26.04 the
-// runner's PostgreSQL 17 `pg_dump` broke the required roles proof against the
+// runner's newer `pg_dump` broke the required roles proof against the
 // PostgreSQL 16 service. Every job in every workflow names one pinned image;
-// moving to a newer one changes this constant and every workflow together.
+// moving to a newer one changes this constant and every workflow together
+// (#5193 made the move to 26.04).
 describe("every workflow job runs on the one pinned runner image (#5192)", () => {
-  const RUNNER_IMAGE = "ubuntu-24.04";
+  const RUNNER_IMAGE = "ubuntu-26.04";
 
   it("names the pinned image on every job, never a moving label", () => {
     const workflowsDir = path.join(root, ".github", "workflows");

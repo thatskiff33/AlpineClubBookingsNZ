@@ -70,6 +70,8 @@ const h = vi.hoisted(() => {
   function matchValue(actual: unknown, expected: unknown): boolean {
     if (expected && typeof expected === "object" && !(expected instanceof Date)) {
       const e = expected as Record<string, unknown>;
+      // #5228: a JSON column compared whole, as a PENDING write's compare-and-set does.
+      if ("equals" in e && !("path" in e)) return JSON.stringify(actual ?? null) === JSON.stringify(e.equals);
       if ("gt" in e) return (actual as number) > (e.gt as number);
       if ("lt" in e) return (actual as number) < (e.lt as number);
       if ("in" in e) return (e.in as unknown[]).includes(actual);
@@ -91,7 +93,9 @@ const h = vi.hoisted(() => {
     return Object.entries(where).every(([key, expected]) =>
       key === "OR"
         ? (expected as Record<string, unknown>[]).some((branch) => matches(row, branch))
-        : matchValue(valueAt(row, key), expected),
+        : key === "AND"
+          ? (expected as Record<string, unknown>[]).every((branch) => matches(row, branch))
+          : matchValue(valueAt(row, key), expected),
     );
   }
   function table(name: string) {

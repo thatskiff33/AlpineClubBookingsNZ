@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import { cleanup, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, it, vi } from "vitest";
 import { render } from "@/lib/__tests__/support/club-time-render";
 import type { ClubIdentity } from "@/config/club-identity-types";
 
@@ -23,12 +23,7 @@ vi.mock("@/components/club-identity-provider", () => ({
 import LodgeInstructionsPage from "../(authenticated)/lodge-instructions/page";
 import { GroupJoinPageClient } from "../(website-dynamic)/join/[code]/group-join-page-client";
 import { MemberGroupJoinPanel } from "../(website-dynamic)/join/[code]/member-group-join-panel";
-
-function expectOneLevelOneHeading(name: string) {
-  const headings = screen.getAllByRole("heading", { level: 1 });
-  expect(headings).toHaveLength(1);
-  expect(headings[0]).toHaveAccessibleName(name);
-}
+import { expectOneLevelOneHeading } from "@/lib/__tests__/support/heading-outline";
 
 function stubPendingFetch() {
   vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));

@@ -43,10 +43,14 @@ Guarded row claims and leases:
 [organiser extra invoices (#4299)](#organiser-bank-transfer-extra-invoices-4299) ·
 [one refund note in flight (#3880)](#one-refund-credit-note-in-flight-per-payment-by-claim-order-3880) ·
 [Xero retry (#2262)](#a-xero-retry-claims-the-original-row-it-writes-2262-h3-3462-4256-4259) ·
+[a refund-note repair's pointer (#4279)](#a-refund-note-repair-adopts-its-pointer-only-in-its-won-completion-4279) ·
 [two callers on one Xero row (#4356)](#two-callers-on-one-xero-operation-row-guarded-outcomes-4356) ·
+[a Xero row back on PENDING (#5228)](#a-xero-outbox-row-back-on-pending-and-the-stuck-row-release-compare-and-sets-no-advisory-key-5228) ·
 [Xero token refresh (#3454)](#the-xero-token-refresh-uses-a-row-lease-3454-3806) ·
 [data-key re-encrypt (#4456)](#the-data-key-re-encrypt-joins-the-row-claims-and-takes-no-advisory-key-4456) ·
 [password cost upgrade (#5261)](#stored-password-cost-upgrade-5261).
+
+[AI app connections and settings (ALP-653)](#ai-app-connection-writers-alp-653).
 
 **Writer classes.**
 
@@ -118,6 +122,25 @@ the legacy `hashtext(<memberId>)` contact-link key's in
 [Migration lock timeout (#3377)](#the-migration-lock-timeout-3377) ·
 [reauthentication challenge (#4616)](#reauthentication-challenge-4616) ·
 [rules of thumb](#rules-of-thumb-when-working-here).
+
+## AI app connection writers (ALP-653)
+
+`approveMcpConnection` takes the existing member lifecycle key through
+`acquireMemberLifecycleLocks` before reading or replacing grants, so two
+approvals cannot leave two active connections to the same app. Under that
+lock it re-reads the member (`deletedAt`, `canLogin`) and writes nothing if
+an erasure, merge or disabled login committed while it waited. It takes no
+booking, lodge or money key: member lifecycle precedes grant rows and the
+new grant's member foreign-key reference, matching merge and deletion's
+member-before-grant order (`INV-LOCK-001`, `INV-LOCK-002`). Token issuance
+claims the ACTIVE grant row before inserting tokens; revocation claims that
+same row before deleting credentials. None calls a provider under a lock.
+
+The MCP settings writer claims its singleton with an upsert that updates its
+id to itself, then reads the returned previous values and writes the new
+settings and audit row in that transaction. Even concurrent first saves are
+ordered before the previous-value snapshot. These sites are covered by
+`mcp-approval.test.ts` and `mcp-admin-routes.test.ts` (`INV-LOCK-003`).
 
 ## The two-tier protocol (#1881)
 
@@ -484,6 +507,76 @@ to FAILED, which then needs Resolve in Xero or a by-hand payment check. Proven a
 `xero-partial-repair-claim.realdb.test.ts` and
 `xero-modification-note-repair-claim.realdb.test.ts`.
 
+### A refund-note repair adopts its pointer only in its won completion (#4279)
+
+The PARTIAL and FAILED refund-note repairs (`repairRefundCreditNoteFollowUpActions`)
+make the note the payment's one refund note (`Payment.xeroRefundCreditNoteId`).
+They used to write that pointer in an autocommit `payment.update` of their own,
+before any Xero call or completion. An inbound void queued on the Payment row
+(#4200) committed first and cleared the pointer; the repair's write then landed
+over it; a stale reset took the repair's claim; and its refused completion
+wrote nothing, so the link normalisation that releases a voided note's pointer
+never ran. The payment named a voided note (`INV-ADDPAY-041`) until the job
+was finished or resolved by hand (#4161's heal defers while it is open).
+
+Now the completion carries the adoption (`canonicalRefundNote`, set by
+`refundCreditNoteCompletion` when asked, never for a refund request's own
+note) through both repair arms, directly and through
+`finishRefundCreditNoteSettlement`. `completeXeroSyncOperation` hands such a
+completion to `completeAdoptingCanonicalRefundNote`
+(`xero-refund-note-adoption.ts`), whose one transaction takes, in order:
+
+1. the Payment row (`lockPaymentForRefundedTotal`, the existing helper and
+   site), within `PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS`;
+2. the operation row, by the retry claim's status-guarded `updateMany`;
+3. only on a won claim, the pointer through `adoptCanonicalRefundNote`, which
+   re-asks `mayRecordAsCanonicalRefundNote` on this transaction (never a
+   per-refund note, #3880, nor one recorded VOIDED or DELETED);
+4. the links, as before: a stored void keeps the mirror inactive and releases
+   the pointer, its Payment row already this transaction's.
+
+This is the create's record order (`recordCreatedRefundNote`, which now writes
+its pointer through the same helper). Nothing waits on the Payment row while
+holding the operation row or a link. A refused retry claim writes no pointer
+and no link. Only a retry claim's own completion may carry the adoption: one
+with an injected `store`, or without `retryClaim`, is refused before any write.
+Every other completion keeps its transaction and lock set. The Xero payment
+stays outside every transaction. A completion that cannot get the Payment row
+in time fails after the payment was sent; the settlement leg still records the
+payment's manifest (#4525), and the next retry reads the payment back as
+already settled and closes on it with no second payment.
+
+Reconciled with the neighbouring fixes, none of which changes:
+
+- **#4260, the guarded completion.** The adoption rides on its claim: the
+  pointer is written only after the status-guarded `updateMany` wins, in the
+  same transaction, so a refused completion (`refusedOutcomeWrite`) commits
+  neither the pointer nor a link, as it already committed no link.
+- **#4235, a statusless link write never reactivates a voided note.** The
+  repair's link writes carry no status, so a void stored before them keeps
+  the mirror inactive (`keepStoredRefundNoteVoid`), and the adoption's
+  re-check refuses a note recorded VOIDED or DELETED before it writes.
+- **#4192, the nightly heal of pointers to inactive notes**
+  (`findPointedInactiveCancelledMirrors`). It still defers while a credit-note
+  job on the payment is open, so it never raced this; after #4279 a lost
+  repair leaves no such pointer for it to find.
+
+Classified under `INV-LOCK-001`: no settlement money, booking status or
+capacity, so no advisory key. `INV-LOCK-002`: Payment row, operation row,
+pointer, link - the create's record's order, and consistent with an explicit
+void (#4200) and the enqueue's existing-note branch, which take the Payment row
+before their link and no operation row; the #4161 heal takes the link then the
+Payment row `NOWAIT` and so defers; a kept void (#4223) tries the Payment row
+`SKIP LOCKED`; resolve by hand (#4421) takes `lock(1)` then the Payment row and
+never the reverse. `INV-LOCK-003`: no new row-lock statement; the site is
+recorded in the advisory-lock guard's inventory and its order pinned there.
+Proven against real PostgreSQL by
+`xero-refund-repair-lost-claim-void.realdb.test.ts` (it failed before this
+change) through the real retry, inbound void and stale reset: lost claims
+after VOIDED and DELETED, a lost claim on a live note and its replay, a won
+claim after a stored void, Xero answering voided, live adoption, and the
+per-refund and refund-request roles.
+
 ### Two callers on one Xero operation row: guarded outcomes (#4356)
 
 A start that loses the insert race on the one-ACTIVE-row index (#1354) is
@@ -574,6 +667,45 @@ once-ever alert claim are independent single-row writes that hold no lock
 across the email. `INV-LOCK-002`: no new key or order. `INV-LOCK-003`: no new
 participant to register. The membership cancellation credit note's limit
 above applies to its late PARTIAL too. Proven by the same suite.
+
+### A Xero outbox row back on PENDING, and the stuck-row release: compare-and-sets, no advisory key (#5228)
+
+Every write that puts an outbound row with a queue type back on PENDING goes
+through `returnOutboxRowToPending` (`xero-outbox-pending-request.ts`;
+`INV-INT-041`): the caller's own status and claim guard, unchanged, narrowed
+to the stored request the call read, so the request it leaves (kept, or the
+dispatch's queued request written back) is decided against the row as it
+stands. The owner's release (`releaseStuckQueuedRequestRows`,
+`xero-stuck-queued-request.ts`) is the same shape the other way: PENDING ->
+FAILED, guarded on outbound, PENDING, `startedAt` null, unresolved, the
+reported queue type and the stored request it re-read.
+
+Counterpart writers on the same row, each a status-guarded single-row write,
+so of any two exactly one wins and the loser writes nothing:
+
+- the outbox claim, PENDING -> RUNNING (`claimXeroSyncOperationToRunning`): a
+  release or give-back that loses to it is skipped or reported lost;
+- the handler's own outcome (`INV-INT-029`): a give-back matches only this
+  claim's RUNNING or self-failed FAILED row, never a later claim's;
+- an officer's Resolve (`manuallyResolvedAt`, `INV-INT-025`) and Retry
+  (`runWithClaimedOriginal`, and the in-place requeues that are themselves
+  through this write): the release and give-backs exclude a resolved row;
+- the supplementary restate and the release of a waiting invoice, which
+  rewrite a PENDING row's request or status: the stored-request half of the
+  compare-and-set loses to the restate, the status half to the release;
+- cancels and withdrawals of PENDING rows (`invoice-paid-effects`, the kept
+  late-capture withdrawal): status-guarded, so the release skips a cancelled
+  row;
+- the stale reset, which matches RUNNING only and never writes PENDING.
+
+Classified per `INV-LOCK-001`: no global, lodge or member tier - nothing here
+moves a balance, a booking status or capacity; callers that already hold
+`lock(1)` or a supplementary anchor key keep them and write through their own
+client (`store`). `INV-LOCK-002`: no new key or order. `INV-LOCK-003`: no new
+participant to register. Proven against real PostgreSQL by
+`xero-pending-request-transitions.realdb.test.ts` and
+`xero-stuck-queued-request.realdb.test.ts`; reconciled against #4356, #4373,
+#4673, #4686 and #4687, whose claim guards it keeps unchanged.
 
 ### The Xero token refresh uses a row lease (#3454, #3806)
 
@@ -8016,7 +8148,7 @@ names it. It then calls `upsertXeroObjectLink` with that client, which writes
 the link and then the payment it already holds: link, then Payment, the order
 of the #2901 repair apply and of the funnel's own pointer release (#4046).
 
-**The accepted inversion, and why it cannot deadlock.** Two writers take the
+**The accepted inversion, and why it cannot deadlock.** Three writers take the
 same two rows Payment first, inside their own transactions:
 
 - the refund-note create's record (`recordCreatedRefundNote`, from
@@ -8027,7 +8159,10 @@ same two rows Payment first, inside their own transactions:
 - the outbox enqueue's existing-note branch
   (`enqueueXeroRefundCreditNoteOperation`, "already linked"): the pointer,
   then the link write, inside the caller's transaction (a group cancel or an
-  edit review's refund leg).
+  edit review's refund leg);
+- a refund-note repair's completion that adopts its note (#4279,
+  `completeAdoptingCanonicalRefundNote`): the Payment row, its claim of its own
+  operation row, the pointer, then the link writes.
 
 The heal never waits on Payment while it holds the link: `NOWAIT` turns a held
 Payment row into SQLSTATE 55P03 at once (`isPostgresLockNotAvailable`), the
@@ -8463,8 +8598,9 @@ Counterparts:
   `NOWAIT`, then calls the same write, whose own-row lock it already holds. It
   never waits, so it is never one side of a cycle. A void that already holds
   the Payment row defers it.
-- **The Payment-first writers** (the create's record and the enqueue's
-  existing-note branch, see "Refund-note link heal (#4161)" above) take the
+- **The Payment-first writers** (the create's record, the enqueue's
+  existing-note branch, see "Refund-note link heal (#4161)" above, and since
+  #4279 a refund-note repair's completion that adopts its note) take the
   Payment row, then the link write, the same order as an explicit void. A kept
   void must never wait back on their
   Payment row. A statusless retry holds the link while it keeps a stored void.

@@ -65,8 +65,8 @@ import { DELETE, GET, PUT } from "@/app/api/admin/club-tax/route";
 
 const ACTOR = "member-full-admin";
 const RATES = [
-  { taxType: "OUTPUT2", name: "15% GST on Income", rateBasisPoints: 1500, active: true, revenue: true },
-  { taxType: "INPUT2", name: "15% GST on Expenses", rateBasisPoints: 1500, active: true, revenue: false },
+  { taxType: "OUTPUT2", name: "15% GST on Income", rateBasisPoints: 1500, active: true, revenue: true, expenses: false },
+  { taxType: "INPUT2", name: "15% GST on Expenses", rateBasisPoints: 1500, active: true, revenue: false, expenses: true },
 ];
 const UNREGISTER = { gstRegistered: false, taxRateBasisPoints: 0, xeroTaxType: null, effectiveFrom: "2026-08-01", confirmed: true };
 

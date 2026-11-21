@@ -26,6 +26,7 @@ import {
   financialReviewNoteBesideAnAmount,
 } from "@/lib/booking-financial-review-copy";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { expectOneLevelOneHeading } from "@/lib/__tests__/support/heading-outline";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ token: "public-token" }),
@@ -1164,12 +1165,6 @@ describe("the /pay link has exactly one h1 in every state (#4951)", () => {
   // Reached from a booking email, this page is one card; its title is the
   // page's only heading. Before #4951 a screen reader's heading list here was
   // empty, and the loading state had no title at all.
-  function expectOneLevelOneHeading(name: string) {
-    const headings = screen.getAllByRole("heading", { level: 1 });
-    expect(headings).toHaveLength(1);
-    expect(headings[0]).toHaveAccessibleName(name);
-  }
-
   function installContext(response: { ok: boolean; body: Record<string, unknown> }) {
     vi.stubGlobal(
       "fetch",
@@ -1234,12 +1229,6 @@ describe("the /pay link has exactly one h1 in every state (#4951)", () => {
 describe("the /pay link keeps its one h1 on the redirect-return screens (#4951, #4955)", () => {
   // Both screens replace the whole page after a payer comes back from their
   // bank, so each must still hand a screen reader exactly one level-1 heading.
-  function expectOneLevelOneHeading(name: string) {
-    const headings = screen.getAllByRole("heading", { level: 1 });
-    expect(headings).toHaveLength(1);
-    expect(headings[0]).toHaveAccessibleName(name);
-  }
-
   beforeEach(() => {
     vi.restoreAllMocks();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
