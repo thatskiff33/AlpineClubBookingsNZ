@@ -97,6 +97,7 @@ const MODULES_OFF = {
   alpineCentralServer: false,
   commsPortal: false,
   memberLodgeRoster: false,
+  foodOrders: false,
   multiPromoCodes: false,
 };
 
