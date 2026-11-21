@@ -229,6 +229,16 @@ describe("never existed and removed-but-not-yours are the same answer", () => {
     expect(html).toContain(DELETED_BOOKING_MESSAGE.replaceAll("'", "&#x27;"));
     expect(notFound).not.toHaveBeenCalled();
   });
+
+  it("sends a signed-out visitor to sign in before any booking is read", async () => {
+    mocks.auth.mockResolvedValue(null);
+    for (const id of [REMOVED.id, LIVE.id, "bk-made-up"]) {
+      await expect(BookingDetailPage({ params: Promise.resolve({ id }) })).rejects.toThrow("redirect:/login");
+    }
+    expect(mocks.findUnique).not.toHaveBeenCalled();
+    expect(mocks.findFirst).not.toHaveBeenCalled();
+    expect(notFound).not.toHaveBeenCalled();
+  });
 });
 
 describe("the where form agrees with the page's own viewer rule", () => {
