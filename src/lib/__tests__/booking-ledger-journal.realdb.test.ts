@@ -20,7 +20,6 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { BookingJournalContext } from "@/lib/member-money/doors";
 import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
-import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 import {
   cleanHistories,
@@ -545,6 +544,9 @@ async function expectAgreed(bookingId: string) {
       where: { id: { in: ids } }, select: { id: true, lodgeId: true, finalPriceCents: true, payment: { select: { changeFeeCents: true } } },
     });
     const groupSync = await import("@/lib/booking-ledger-group-settlement-sync");
+    // Imported here, not at the top: `db-transaction` loads `@/lib/prisma`, which
+    // must not bind before `beforeAll` points DATABASE_URL at the race database.
+    const { LOCK1_HOLDER_TRANSACTION_BUDGET } = await import("@/lib/db-transaction");
     // The judge is the settle's own budget, not a stopwatch (#5213). Prisma
     // rolls back a transaction whose body outruns `timeout` (P2028), so this
     // resolving with 40 R01s committed is the proof that they fit. A wall-clock
