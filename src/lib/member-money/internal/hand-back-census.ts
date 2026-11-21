@@ -4,7 +4,7 @@ import { openHandBackOwedCents } from "../../manual-refund-task-settlement-rules
 import { isOwedCardRefundOperation, OPEN_CARD_REFUND_OPERATION_WHERE } from "../../open-card-refund-owed";
 import { exactPrefix } from "../../prisma-exact-prefix";
 import { eventPosted } from "./booking-journal-read";
-import { memberMoneyEventKeys } from "./keys";
+import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
 import { memberMoneyChainTip } from "./refund-family";
 import { refundDoorOfObligationKey, resolveCardRefundObligation } from "./refund-obligation-map";
 import type { HandBackCensusClass } from "./refund-census";
@@ -92,7 +92,7 @@ const balance = (side: MemberMoneySide, cents: number) => (side === "CREDIT" ? c
 const isPopulationTask = (task: HandBackCensusTask) => task.paymentId !== null && isJournalHandBackTask(task);
 
 /** The live tip of an event chain, if posted, with whether it applied anything. */
-async function liveEvent(db: Db, base: ReturnType<typeof memberMoneyEventKeys.handBackPaid>) {
+async function liveEvent(db: Db, base: MemberMoneyEventKey) {
   const tip = await memberMoneyChainTip(db, base);
   return db.memberMoneyEvent.findUnique({ where: { eventKey: tip }, select: { journal: { select: { applications: { select: { id: true }, take: 1 } } } } });
 }
@@ -113,7 +113,7 @@ async function journalCardRefundKeys(db: Db, bookingIds: readonly string[]): Pro
 /**
  * What the journal holds of these bookings' hand-backs, inside the caller's read-only snapshot. Pass only bookings
  * whose R01 is in the journal. The per-task reads (a live R14, a live keep) are made only for the tasks that can
- * have one, so a page with no hand-back reads three queries.
+ * have one, so a page with no hand-back, late capture or open card refund makes four reads.
  */
 export async function readBookingHandBackJournal(db: Db, bookingIds: readonly string[]): Promise<Map<string, BookingHandBackJournal>> {
   const result = new Map<string, BookingHandBackJournal>();
