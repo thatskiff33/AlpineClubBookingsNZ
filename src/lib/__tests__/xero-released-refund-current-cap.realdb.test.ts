@@ -89,10 +89,10 @@ let sequence = 0;
     /** A $50 refund's note, stuck before #5228, then released by the owner. */
     async function releasedRefundNote() {
       const { paymentId, invoiceRow } = await paidCardBooking(prisma, names, `${PREFIX}b${++sequence}`, PRICE);
-      expect(await runOutboxRow(prisma, invoiceRow)).toMatchObject({ succeeded: 1 });
+      expect(await runOutboxRow(prisma, invoiceRow, PREFIX)).toMatchObject({ succeeded: 1 });
       await recordCardRefund(prisma, paymentId, REFUND, "a");
       const noteRow = await queueRefundNote(paymentId, REFUND);
-      await strandAsBeforeTheFix(prisma, noteRow, refuse, "createCreditNotes");
+      await strandAsBeforeTheFix(prisma, noteRow, refuse, "createCreditNotes", PREFIX);
       const { findStuckQueuedRequestRows, releaseStuckQueuedRequestRows } = await import("@/lib/xero-stuck-queued-request");
       const report = (await findStuckQueuedRequestRows(prisma)).filter((row) => row.id === noteRow);
       expect(await releaseStuckQueuedRequestRows(prisma, report, new Date())).toMatchObject({ released: [noteRow] });

@@ -891,6 +891,18 @@ import "./card-refund-group-settle.realdb.test";
 // change, guest removal, batch edit): one treasurer task, no money moved. It
 // owns and cleans its own `race-5061e-` fixtures.
 import "./stripe-dispute-edit.realdb.test";
+// #5228 reuses it to prove a queued Xero row a pre-HTTP cooldown refuses after
+// its handler saved the execution request goes back to PENDING with its queued
+// request (five real handlers); that every PENDING writer leaves a claimable
+// request or writes nothing; that rows stuck before the fix are listed,
+// released and retried, sized on today's cover; and that a stale reset never
+// leaves such a row PENDING. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; each
+// owns and cleans its own `race-5228`-prefixed fixtures.
+import "./xero-cooldown-giveback-queued-request.realdb.test";
+import "./xero-pending-request-transitions.realdb.test";
+import "./xero-stuck-queued-request.realdb.test";
+import "./xero-released-refund-current-cap.realdb.test";
+import "./xero-stale-request-recovery.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

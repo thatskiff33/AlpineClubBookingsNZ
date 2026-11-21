@@ -98,10 +98,10 @@ let sequence = 0;
     /** A paid booking whose $50 refund note a pre-#5228 give-back left stuck. */
     async function stuckRefundNote() {
       const { paymentId, invoiceRow } = await paidCardBooking(prisma, names, `${PREFIX}b${++sequence}`, PRICE);
-      expect(await runOutboxRow(prisma, invoiceRow)).toMatchObject({ succeeded: 1 });
+      expect(await runOutboxRow(prisma, invoiceRow, PREFIX)).toMatchObject({ succeeded: 1 });
       await recordCardRefund(prisma, paymentId, 5_000, "a");
       const noteRow = await queueRefundNote(paymentId, 5_000);
-      await strandAsBeforeTheFix(prisma, noteRow, refuse, "createCreditNotes");
+      await strandAsBeforeTheFix(prisma, noteRow, refuse, "createCreditNotes", PREFIX);
       sent.length = 0;
       return { paymentId, invoiceRow, noteRow };
     }
@@ -110,7 +110,7 @@ let sequence = 0;
       const { paymentId, invoiceRow, noteRow } = await stuckRefundNote();
       const before = await readRow(noteRow);
 
-      expect(await runOutboxRow(prisma, noteRow)).toEqual({ found: 1, processed: 0, succeeded: 0, failed: 0, skipped: 1, unclaimableRequest: 1 });
+      expect(await runOutboxRow(prisma, noteRow, PREFIX)).toEqual({ found: 1, processed: 0, succeeded: 0, failed: 0, skipped: 1, unclaimableRequest: 1 });
       expect(sent).toEqual([]);
 
       // Not listed: the SUCCEEDED invoice row (its execution request is history), a

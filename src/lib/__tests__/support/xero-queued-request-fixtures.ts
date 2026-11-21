@@ -8,6 +8,7 @@ import type { PrismaClient } from "@prisma/client";
 import { expect, vi } from "vitest";
 
 import { createHistoryBooking, settleHistoryByCard, type HistoryNames } from "./booking-ledger-history";
+import { assertNoForeignPendingXeroOperations } from "./race-harness-outbox-guard";
 
 export type SentDocument = { operation: "createInvoices" | "createCreditNotes"; cents: number };
 
@@ -91,8 +92,14 @@ export async function breakerRefusal(): Promise<() => Error> {
 /** Each run's row is dated a second before the last one's, so it is always the oldest. */
 let runs = 0;
 
-/** The outbox worker running `operationId` alone: made the oldest row, so the scan takes it first (after 2010, where the tax schedule starts). */
-export async function runOutboxRow(prisma: PrismaClient, operationId: string) {
+/**
+ * The outbox worker running `operationId` alone: made the oldest row, so the
+ * scan takes it first (after 2010, where the tax schedule starts). #4234:
+ * first, no PENDING row but the suite's own (`prefix`) may be there to consume.
+ */
+export async function runOutboxRow(prisma: PrismaClient, operationId: string, prefix: string) {
+  const pending = await prisma.xeroSyncOperation.findMany({ where: { status: "PENDING", localId: { startsWith: prefix } }, select: { localId: true } });
+  await assertNoForeignPendingXeroOperations(prisma, pending.map((row) => row.localId!));
   const oldest = new Date(Date.UTC(2020, 0, 1) - ++runs * 1_000);
   await prisma.$executeRaw`UPDATE "XeroSyncOperation" SET "createdAt" = ${oldest}, "updatedAt" = ${oldest} WHERE "id" = ${operationId}`;
   const { processQueuedXeroOutboxOperations } = await import("@/lib/xero-operation-outbox");
@@ -141,9 +148,9 @@ export async function queueRefundNote(paymentId: string, cents: number): Promise
  * pre-#5228 give-back wrote it - PENDING, unclaimed, errors cleared, the
  * execution request left in place. The one hand-written step is that write.
  */
-export async function strandAsBeforeTheFix(prisma: PrismaClient, operationId: string, refuse: Map<string, () => Error>, call: string): Promise<void> {
+export async function strandAsBeforeTheFix(prisma: PrismaClient, operationId: string, refuse: Map<string, () => Error>, call: string, prefix: string): Promise<void> {
   refuse.set(call, () => new Error("refused before #5228's fix"));
-  expect(await runOutboxRow(prisma, operationId)).toMatchObject({ processed: 1, failed: 1 });
+  expect(await runOutboxRow(prisma, operationId, prefix)).toMatchObject({ processed: 1, failed: 1 });
   const stranded = await prisma.xeroSyncOperation.updateMany({
     where: { id: operationId, status: "FAILED" },
     data: { status: "PENDING", startedAt: null, completedAt: null, lastErrorCode: null, lastErrorMessage: null },

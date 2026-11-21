@@ -103,14 +103,14 @@ let role: SuiteEnvironmentRoleDeclaration | undefined;
     async function refusedThenSent(operationId: string, call: SentDocument["operation"], queued: Record<string, unknown>, cents: number) {
       refuse.set(call, await breakerRefusal());
 
-      const refused = await runOutboxRow(prisma, operationId);
+      const refused = await runOutboxRow(prisma, operationId, PREFIX);
       expect(refused).toMatchObject({ processed: 1, skipped: 1, failed: 0, cooldownDeferred: 1 });
       expect(sent).toEqual([]);
       const given = await row(operationId);
       expect(given).toMatchObject({ status: "PENDING", startedAt: null, completedAt: null, lastErrorCode: null });
       expect(given.requestPayload).toMatchObject(queued);
 
-      const resent = await runOutboxRow(prisma, operationId);
+      const resent = await runOutboxRow(prisma, operationId, PREFIX);
       expect(resent).toMatchObject({ processed: 1, succeeded: 1, skipped: 0, failed: 0 });
       expect(sent).toEqual([{ operation: call, cents }]);
       expect((await row(operationId)).status).toBe("SUCCEEDED");
@@ -123,7 +123,7 @@ let role: SuiteEnvironmentRoleDeclaration | undefined;
 
     it("REPRO: a refund credit note refused by the breaker after its handler saved the note goes back PENDING with its queued request, and the next pass sends it once", async () => {
       const { paymentId, invoiceRow } = await paidCardBooking(prisma, names, `${PREFIX}b${++sequence}`, PRICE);
-      expect(await runOutboxRow(prisma, invoiceRow)).toMatchObject({ succeeded: 1 });
+      expect(await runOutboxRow(prisma, invoiceRow, PREFIX)).toMatchObject({ succeeded: 1 });
       sent.length = 0;
       await recordCardRefund(prisma, paymentId, 5_000, "a");
       const noteRow = await queueRefundNote(paymentId, 5_000);
@@ -133,7 +133,7 @@ let role: SuiteEnvironmentRoleDeclaration | undefined;
 
     it("a booking change's credit note refused by the breaker after its handler saved the note goes back PENDING with its queued request, and the next pass sends it once", async () => {
       const { bookingId, invoiceRow } = await paidCardBooking(prisma, names, `${PREFIX}b${++sequence}`, PRICE);
-      expect(await runOutboxRow(prisma, invoiceRow)).toMatchObject({ succeeded: 1 });
+      expect(await runOutboxRow(prisma, invoiceRow, PREFIX)).toMatchObject({ succeeded: 1 });
       sent.length = 0;
       const modificationId = `${bookingId}-edit`;
       await postHistoryEdit(prisma, names, bookingId, modificationId, { removeGuestId: `${bookingId}-g2`, changeFeeCents: 0 });
