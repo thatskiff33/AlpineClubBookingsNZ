@@ -124,6 +124,21 @@ export async function editRefundHasCardToReturnTo(
   return paidByOrganiserCard(booking) || paymentHasRefundableCardIntent(db, booking.payment);
 }
 
+/**
+ * What `calculateFullReductionSettlementOptions` takes from its caller, read
+ * under the caller's locks: the dispute hold (#5061 follow-up, `INV-PAY-154`)
+ * and whether the refund has a card to go back to (#5303, `INV-PAY-160`).
+ */
+export async function fullReductionLockedReads(
+  db: EditDisputeHoldDb & Pick<Prisma.TransactionClient, "payment">,
+  booking: Pick<LoadedBookingForModify, "status" | "payment" | "organiserSettled" | "parentBookingId">,
+): Promise<{ refundHeldForDispute: boolean; hasCardToReturnTo: boolean }> {
+  return {
+    refundHeldForDispute: (await editReductionDisputeHold(db, booking)).cents > 0,
+    hasCardToReturnTo: await editRefundHasCardToReturnTo(db, booking),
+  };
+}
+
 /** One cash cap for the quote and save, after unpaid asks have been netted. */
 export async function refundableCashForModification(
   db: ModificationRefundCashDb,
@@ -304,9 +319,9 @@ export function calculateFullReductionSettlementOptions({
   /** The edit's cash basis (`refundableCashForModification`), read by the caller. */
   refundableCashCents: number;
   todayAtClub: CalendarDate;
-  /** #5061 follow-up: `editReductionDisputeHold` above zero, read by the caller under its locks (`INV-PAY-154`). */
+  /** #5061 follow-up: `editReductionDisputeHold` above zero (`INV-PAY-154`); see `fullReductionLockedReads`. */
   refundHeldForDispute: boolean;
-  /** #5303: `editRefundHasCardToReturnTo`, read by the caller under its locks; else the refund is a bank transfer. */
+  /** #5303: `editRefundHasCardToReturnTo`, else the refund is a bank transfer; see `fullReductionLockedReads`. */
   hasCardToReturnTo: boolean;
 }): BookingModificationSettlementOptions | null {
   const basisAmountCents = settlementBasisCents(booking, netChargeCents, refundableCashCents);
