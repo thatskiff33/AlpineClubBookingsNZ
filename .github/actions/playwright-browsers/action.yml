@@ -17,9 +17,9 @@ description: >
 #     ~7.5 minutes unpacking X fonts and libraries.
 #
 # So the expensive, flake-prone half was the apt half, and it was running on
-# every green run to install packages the `ubuntu-latest` runner image already
-# ships. That is also the half that breaks outright when the third-party apt
-# sources preinstalled on the runners serve invalid clearsigned metadata
+# every green run to install packages the runner image already ships. That
+# is also the half that breaks outright when the third-party apt sources
+# preinstalled on the runners serve invalid clearsigned metadata
 # (#1634) — the failure the retry loop was added to ride out. Retrying a
 # nine-minute step three times is a 27-minute way to fail.
 #
@@ -40,17 +40,24 @@ runs:
       shell: bash
       # The cache key is the version of the package that will DRIVE the
       # browsers, read from the installed tree rather than hand-maintained —
-      # a version bump must miss the cache, and nothing else should.
+      # a version bump must miss the cache — and the runner's OS release.
+      # Playwright downloads a build per Ubuntu release (`ubuntu24.04-x64`,
+      # `ubuntu26.04-x64`), and `playwright install` takes a restored
+      # directory of the right revision as installed, so a cache written on
+      # another release would hand this runner a browser built for that one
+      # (#5193). `runner.os` alone is just "Linux".
       run: |
         version="$(node -p "require('@playwright/test/package.json').version")"
+        os_release="$(. /etc/os-release && echo "${ID}-${VERSION_ID}")"
         echo "version=${version}" >> "$GITHUB_OUTPUT"
-        echo "Playwright ${version}"
+        echo "os-release=${os_release}" >> "$GITHUB_OUTPUT"
+        echo "Playwright ${version} on ${os_release}"
 
     - name: Restore the browser cache
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ~/.cache/ms-playwright
-        key: ${{ runner.os }}-playwright-chromium-${{ steps.playwright.outputs.version }}
+        key: ${{ runner.os }}-${{ steps.playwright.outputs.os-release }}-playwright-chromium-${{ steps.playwright.outputs.version }}
 
     - name: Install browsers
       shell: bash

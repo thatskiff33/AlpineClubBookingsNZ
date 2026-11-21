@@ -51,12 +51,13 @@ jobs:
     if: github.event_name == 'pull_request'
     # Every job names its runner image, never `ubuntu-latest` (#5192). GitHub
     # moves that label to a new Ubuntu release over several weeks, so the same
-    # commit ran on 24.04 or 26.04 by chance. On 26.04 the runner's pg_dump is
-    # PostgreSQL 17 and writes `SET transaction_timeout`, which the PostgreSQL
-    # 16 service refuses, failing `Migration drift check` for every pull
-    # request. Moving to a newer image is a deliberate change: update every
-    # workflow together; `require-test-shards.test.mjs` keeps them equal.
-    runs-on: ubuntu-24.04
+    # commit ran on 24.04 or 26.04 by chance, and the 26.04 runner's newer
+    # pg_dump broke the roles proof against the PostgreSQL 16 service. The
+    # real-PostgreSQL jobs now take their client tools from the service's own
+    # image (#5193), so the runner's client version no longer matters. Moving
+    # to a newer image is a deliberate change: update every workflow together;
+    # `require-test-shards.test.mjs` keeps them equal.
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -135,7 +136,7 @@ jobs:
   # advisory. This one is required and also runs on pushes to `main`.
   dependency-audit:
     name: Dependency audit
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -186,7 +187,7 @@ jobs:
 
   static-analysis:
     name: Static analysis gate
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -365,7 +366,7 @@ jobs:
   # pass or a real failure.
   secret-scan:
     name: Secret scan (gitleaks)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -505,7 +506,7 @@ jobs:
   # GitHub treats a skipped required job as satisfying branch protection.
   test-shard:
     name: Test shard (${{ matrix.shard }}/4)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -564,7 +565,7 @@ jobs:
   # environment as `verify` (`require-test-shards.test.mjs` pins all of it).
   typecheck:
     name: Typecheck
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       AUTH_SECRET: ci-auth-secret
@@ -613,7 +614,7 @@ jobs:
 
   lint:
     name: Lint
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       AUTH_SECRET: ci-auth-secret
@@ -654,7 +655,7 @@ jobs:
 
   build:
     name: Production build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       AUTH_SECRET: ci-auth-secret
@@ -767,7 +768,7 @@ jobs:
           fi
 
   verify:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # A BACKSTOP AGAINST A HUNG JOB, NOT A TARGET (#3425). 75 does not mean a
     # 75-minute run is acceptable; it means a genuinely wedged job is still
     # killed rather than burning an hour of budget indefinitely.
@@ -1086,7 +1087,7 @@ jobs:
 
   migration-drift:
     name: Migration drift check
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # #2672 raised this from 15: this job also hosts every opt-in real-Postgres
     # lock harness, and the member-merge shared-double suite added below drives
     # ten real merge/writer interleavings whose own describe budget is 120s each.
@@ -1547,7 +1548,7 @@ jobs:
   # fails inside this job when the URL is absent, rather than skipping quietly.
   data-migration-verification:
     name: Data migration verification
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -1662,7 +1663,7 @@ jobs:
   # `scripts/booking-ledger-seed-gate.sh`) is in the quarantine file.
   realdb-all:
     name: Real-PostgreSQL suites (all)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # PR CI measured this job at 9m02s (#4476). By 8 Nov 2026 it took 16-18
     # minutes on `main` and was cancelled at the old 20-minute limit in 4 of 7
     # runs, so a cancelled run proved nothing (#4793). 35 is about twice the
@@ -1776,7 +1777,7 @@ jobs:
   # instead of weakening anything.
   docker-image-security:
     name: Image security gate (Trivy CRITICAL)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -1913,7 +1914,7 @@ jobs:
   publish-ghcr-images:
     name: Publish GHCR images
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     needs:
       - verify

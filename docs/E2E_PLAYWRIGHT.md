@@ -352,7 +352,9 @@ Both E2E jobs get their browser from the composite action
 `.github/actions/playwright-browsers`, and the order it works in is the point:
 
 1. **Restore `~/.cache/ms-playwright`**, keyed on the resolved `@playwright/test`
-   version, so a version bump misses the cache and nothing else does.
+   version and the runner's Ubuntu release, so a version bump or a runner-image
+   move misses the cache and nothing else does. Playwright downloads a build per
+   Ubuntu release, so a cache from another release would hand over the wrong one.
 2. **`pnpm exec playwright install chromium`** — run even on a cache hit, where it is a
    ~2s no-op that verifies the restored tree and re-downloads anything partial.
 3. **Launch the browser and render a page** (`launch-check.mjs`). A browser that
@@ -364,8 +366,8 @@ CI used to run `npx playwright install --with-deps chromium` on every run
 instead. It was measured at 9m15s on one run (job 32304150140, 19 Aug 2026)
 against a ~25s norm, and the split is why the order above changed: the browser
 downloads took **ten seconds**, and the rest was `apt-get update` plus seven and
-a half minutes of unpacking X fonts and libraries that the `ubuntu-latest`
-runner image already ships. That apt step is also the one that fails outright
+a half minutes of unpacking X fonts and libraries that the runner image
+already ships. That apt step is also the one that fails outright
 when the runners' preinstalled third-party apt sources serve invalid clearsigned
 metadata (#1634), so the retry loop that was there to survive it was retrying a
 nine-minute step. Now apt is the recovery path, not the default one, and a
