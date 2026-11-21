@@ -19,7 +19,12 @@ GitHub withdrew the advisory on 23 Oct 2026.
 widened one rule, by owner decision on 18 Nov 2026: a record may cover an
 advisory reported against more than one installed copy, when every copy is an
 exact, patched `package@version` the record lists with its exact dependency
-paths. The live records are listed under "Current records" below. This page
+paths. That record, for `picomatch` (GHSA-fc5q-39xc-vjpf), and its two
+patches were retired in
+[#5293](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5293) after
+GitHub withdrew the advisory on 18 Nov 2026; there are no live records now (see
+"Current records" below), and the mechanism, with the widened rule, stays for
+the next case. This page
 is the **one home** for what a record is, who may add one, exactly when the
 wrapper accepts it, and how to retire it; `scripts/ci/dependency-mitigation.mjs`
 implements those rules and every other document links here.
@@ -162,8 +167,9 @@ result is unaffected and still fails.
 ## Retiring a record
 
 Retire a record when a fixed release is published or the advisory is
-withdrawn (the #3843 record was retired on the withdrawal, in
-[#3851](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3851)),
+withdrawn (the #3843 and #5252 records were both retired on a withdrawal, in
+[#3851](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3851) and
+[#5293](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5293)),
 and delete an expired one rather than leave it: an expired record changes
 nothing — the check is red either way — but the directory should say what is
 true. One pull request, under the `AGENTS.md` merge gate (no owner comment
@@ -174,8 +180,10 @@ needed, #4473):
 2. Delete the record from this directory, each covered copy's patch from
    `patches/`, and each patch's line under `patchedDependencies` in
    `pnpm-workspace.yaml` (remove the key, and its comment, too if it is left
-   empty). Delete any test that pins the patch's behaviour (for #5252,
-   `scripts/ci/picomatch-redos-patch.test.ts`).
+   empty). Delete any test that pins the patch's behaviour (#5293 deleted
+   #5252's `scripts/ci/picomatch-redos-patch.test.ts`). Lower
+   `MAX_OWNED_OUTSIDE_SRC_LIB` in `src/lib/__tests__/codeowners-census.test.ts`
+   by the number of files removed here, which that census owns.
 3. Run `pnpm install` to re-lock, so `pnpm-lock.yaml` no longer records the
    patch hash.
 4. Leave `patches/.gitkeep` in place: the Docker `deps` stage copies
@@ -198,11 +206,17 @@ This table is the one list of live records; other documents link here rather
 than restate a record. Each record's own `knownUncoveredCopies` is the one list
 of the copies it does not cover.
 
-The earlier record, `3843-braces-ghsa-vfj7-8cjw-p6xm.json`
-(GHSA-vfj7-8cjw-p6xm, `braces@3.0.3`), was retired with its patch in
+There are no live records. The last one,
+`5252-picomatch-ghsa-fc5q-39xc-vjpf.json` (GHSA-fc5q-39xc-vjpf, `picomatch@4.0.7`
+and `picomatch@2.3.2`), was retired with its two patches in
+[#5293](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5293) after
+GitHub withdrew the advisory on 18 Nov 2026. The one before it,
+`3843-braces-ghsa-vfj7-8cjw-p6xm.json` (GHSA-vfj7-8cjw-p6xm, `braces@3.0.3`),
+was retired with its patch in
 [#3851](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3851) after
-GitHub withdrew the advisory on 23 Oct 2026.
+GitHub withdrew that advisory on 23 Oct 2026.
+
+When a record is added, list it here:
 
 | Record | Advisory | Expires | Scope | Retirement |
 | --- | --- | --- | --- | --- |
-| [`5252-picomatch-ghsa-fc5q-39xc-vjpf.json`](5252-picomatch-ghsa-fc5q-39xc-vjpf.json) | [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) (CVE-2026-112366, high): ReDoS through single-branch repeated extglobs, `picomatch <=4.0.7`, no fixed release. | 2026-12-01T00:00:00Z | `picomatch@4.0.7` (74 paths) and `picomatch@2.3.2` (1 path), patched with upstream [#246](https://github.com/micromatch/picomatch/pull/246), an unmerged contributor proposal (ported unchanged in substance to 4.0.7). Covers the advisory's named patterns and every single-branch body of literals and single stars; other shapes and the bundled copies listed in the record are not covered. | When picomatch publishes a fix or GitHub withdraws the advisory; renew before expiry otherwise ([#5271](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5271)). |
