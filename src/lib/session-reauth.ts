@@ -244,14 +244,15 @@ export async function proveSessionReauth(input: {
     if (!(await claimPasswordAttempt(member.email)).allowed) {
       return throttleResult();
     }
-    const valid = await verifyPassword(input.password ?? "", member.passwordHash);
+    const password = input.password ?? "";
+    const valid = await verifyPassword(password, member.passwordHash);
     if (!valid) {
       return { ok: false, status: 400, error: INVALID_PROOF_ERROR };
     }
     await clearPasswordAttempts(member.email);
     await upgradePasswordHashAfterProof({
       memberId: member.id,
-      plain: input.password ?? "",
+      plain: password,
       storedHash: member.passwordHash,
     });
   }
