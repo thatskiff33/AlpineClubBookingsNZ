@@ -57,7 +57,7 @@ describe("GET /api/images/[id]", () => {
     expect(response.headers.get("Content-Disposition")).toBe("inline");
     expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(response.headers.get("Content-Security-Policy")).toBe(
-      "default-src 'none'; style-src 'unsafe-inline'",
+      "default-src 'none'; style-src 'unsafe-inline'; sandbox",
     );
 
     const buffer = Buffer.from(await response.arrayBuffer());
@@ -98,7 +98,7 @@ describe("GET /api/images/[id]", () => {
     expect(response.headers.get("Content-Disposition")).toBe("inline");
     expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(response.headers.get("Content-Security-Policy")).toBe(
-      "default-src 'none'; style-src 'unsafe-inline'",
+      "default-src 'none'; style-src 'unsafe-inline'; sandbox",
     );
   });
 

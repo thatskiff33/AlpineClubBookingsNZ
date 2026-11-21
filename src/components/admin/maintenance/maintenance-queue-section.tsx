@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Camera, CheckCircle2, Trash2, Wrench } from "lucide-react";
 
+import { Pagination } from "@/components/admin/admin-pagination";
+import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -106,6 +108,7 @@ type ListPayload = {
   total: number;
   page: number;
   pageSize: number;
+  totalPages: number;
   outstandingCount: number;
 };
 
@@ -148,6 +151,55 @@ function useMaintenanceStampFormatter() {
   return (value: Date) => clubTime.instantDateTime(value);
 }
 
+/** One report in the queue list: its badges, summary, reporter and Open button. */
+function MaintenanceQueueRow({
+  report,
+  formatStamp,
+  onOpen,
+  openDisabled,
+}: {
+  report: QueueReport;
+  formatStamp: (value: Date) => string;
+  onOpen: () => void;
+  openDisabled: boolean;
+}) {
+  return (
+    <li className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0 space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={STATUS_VARIANTS[report.status]}>
+            {STATUS_LABELS[report.status]}
+          </Badge>
+          <Badge variant="outline">{report.lodge.name}</Badge>
+          {report.source === "LODGE_QR" ? (
+            <Badge variant="outline">QR code</Badge>
+          ) : null}
+          {report.photo.retained ? (
+            <Badge variant="outline" className="gap-1">
+              <Camera className="h-3 w-3" aria-hidden="true" />
+              Photo
+            </Badge>
+          ) : null}
+        </div>
+        <p className="truncate font-medium">{report.summary}</p>
+        <p className="text-xs text-muted-foreground">
+          {describeReporter(report)} ·{" "}
+          {formatStamp(new Date(report.createdAt))}
+        </p>
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        className="shrink-0"
+        onClick={onOpen}
+        disabled={openDisabled}
+      >
+        Open
+      </Button>
+    </li>
+  );
+}
+
 export function MaintenanceQueueSection() {
   const formatStamp = useMaintenanceStampFormatter();
   const canEdit = useAdminAreaEditAccess("lodge");
@@ -155,6 +207,15 @@ export function MaintenanceQueueSection() {
   const [status, setStatus] = useState<QueueReport["status"] | "ALL">("OPEN");
   const [lodgeId, setLodgeId] = useState("ALL");
   const [source, setSource] = useState<QueueReport["source"] | "ALL">("ALL");
+
+  // INV-OPS-020: the queue pages through the shared hook, so a filter change
+  // returns to page 1, a page a triage emptied steps back one, and a slower read
+  // for a page or filter left behind never replaces the one shown. The page
+  // stays in memory, as the filters do.
+  const queuePage = useAdminQueuePage({
+    filterKey: `${status}|${lodgeId}|${source}`,
+  });
+  const { page, receive, beginLoad } = queuePage;
 
   const [payload, setPayload] = useState<ListPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -166,20 +227,25 @@ export function MaintenanceQueueSection() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
+    const isCurrent = beginLoad();
     setLoading(true);
     setError("");
     try {
-      const params = new URLSearchParams({ status, source });
+      const params = new URLSearchParams({ status, source, page: String(page) });
       if (lodgeId !== "ALL") params.set("lodgeId", lodgeId);
       const res = await fetch(`/api/admin/maintenance-reports?${params.toString()}`);
       if (!res.ok) throw new Error("Failed to load the maintenance queue");
-      setPayload((await res.json()) as ListPayload);
+      const body = (await res.json()) as ListPayload;
+      if (!isCurrent()) return; // a newer read owns the list
+      setPayload(body);
+      receive(body, Array.isArray(body?.reports) ? body.reports.length : 0);
     } catch {
+      if (!isCurrent()) return;
       setError("The maintenance queue could not be loaded. Please try again.");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [status, lodgeId, source]);
+  }, [beginLoad, receive, status, lodgeId, source, page]);
 
   useEffect(() => {
     void load();
@@ -333,50 +399,22 @@ export function MaintenanceQueueSection() {
           ) : (
             <ul className="divide-y rounded-md border">
               {reports.map((report) => (
-                <li
+                <MaintenanceQueueRow
                   key={report.id}
-                  className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant={STATUS_VARIANTS[report.status]}>
-                        {STATUS_LABELS[report.status]}
-                      </Badge>
-                      <Badge variant="outline">{report.lodge.name}</Badge>
-                      {report.source === "LODGE_QR" ? (
-                        <Badge variant="outline">QR code</Badge>
-                      ) : null}
-                      {report.photo.retained ? (
-                        <Badge variant="outline" className="gap-1">
-                          <Camera className="h-3 w-3" aria-hidden="true" />
-                          Photo
-                        </Badge>
-                      ) : null}
-                    </div>
-                    <p className="truncate font-medium">{report.summary}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {describeReporter(report)} ·{" "}
-                      {formatStamp(new Date(report.createdAt))}
-                    </p>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0"
-                    onClick={() => void openDetail(report.id)}
-                    disabled={detailLoading}
-                  >
-                    Open
-                  </Button>
-                </li>
+                  report={report}
+                  formatStamp={formatStamp}
+                  onOpen={() => void openDetail(report.id)}
+                  openDisabled={detailLoading}
+                />
               ))}
             </ul>
           )}
 
-          {payload && payload.total > reports.length ? (
-            <p className="text-xs text-muted-foreground">
-              Showing the newest {reports.length} of {payload.total}.
-            </p>
+          {queuePage.pagination ? (
+            <Pagination
+              {...queuePage.pagination}
+              aria-label="Maintenance report pages"
+            />
           ) : null}
         </CardContent>
       </Card>

@@ -36,6 +36,8 @@ const CAPPED_QUEUE_ROUTES: Record<string, readonly string[]> = {
   "/api/admin/member-lifecycle-action-requests": ["src/lib/member-lifecycle-actions.ts"],
   "/api/admin/booking-exception-requests": ["src/lib/booking-exception-request-service.ts"],
   "/api/admin/deletion-requests": ["src/app/api/admin/deletion-requests/route.ts"],
+  "/api/admin/maintenance-reports": ["src/app/api/admin/maintenance-reports/route.ts"],
+  "/api/admin/communications/history": ["src/app/api/admin/communications/history/route.ts"],
 };
 
 /** Client files that read a capped queue route without listing its rows. */
@@ -136,10 +138,12 @@ describe("row-capped officer queues page through every row (INV-OPS-020)", () =>
       "src/app/(admin)/admin/membership/deletion-requests/deletion-requests-client.tsx",
       "src/app/(admin)/admin/membership/member-applications/page.tsx",
       "src/app/(admin)/admin/membership/membership-cancellations/page.tsx",
+      "src/app/(admin)/admin/messages/communications/_components/send-history-card.tsx",
       "src/components/admin/booking-requests/booking-approvals-panel.tsx",
       "src/components/admin/booking-requests/booking-change-requests-panel.tsx",
       "src/components/admin/booking-requests/policy-exception-requests-panel.tsx",
       "src/components/admin/booking-requests/public-booking-requests-panel.tsx",
+      "src/components/admin/maintenance/maintenance-queue-section.tsx",
     ]);
   });
 
