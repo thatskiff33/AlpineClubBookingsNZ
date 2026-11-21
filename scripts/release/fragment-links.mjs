@@ -6,7 +6,7 @@
  */
 import path from "node:path";
 
-import { FENCE_TOGGLE, INLINE_LINK, REF_DEF } from "../lib/markdown-links.mjs";
+import { FENCE_TOGGLE, inlineLinkTargets, REF_DEF } from "../lib/markdown-links.mjs";
 
 /** Directory holding one Markdown fragment per merged PR. */
 export const FRAGMENTS_DIRNAME = "changelog.d";
@@ -58,13 +58,13 @@ export function rebaseFragmentLinks(body, fragmentName) {
       // Blank out inline code spans (same length, so offsets still match the
       // real line) and splice each rebased target back into the real line.
       const masked = line.replace(/`[^`]*`/g, (span) => " ".repeat(span.length));
-      const edits = [...masked.matchAll(INLINE_LINK)];
+      const edits = inlineLinkTargets(masked);
       const ref = masked.match(REF_DEF);
-      if (ref) edits.push(ref);
+      if (ref) edits.push({ start: ref.index + ref[1].length, target: ref[2] });
+      // Splice from the end so earlier offsets stay valid; an image nested in
+      // a link has its own target, so both are rebased.
       let out = line;
-      for (const match of edits.sort((a, b) => b.index - a.index)) {
-        const [, lead, target] = match;
-        const start = match.index + lead.length;
+      for (const { start, target } of edits.sort((a, b) => b.start - a.start)) {
         out = out.slice(0, start) + rebaseFragmentLink(target, fragmentName) + out.slice(start + target.length);
       }
       return out;

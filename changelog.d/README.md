@@ -68,7 +68,8 @@ routing row are for.
 Write a relative link the way it works from this directory, so it is correct
 where you write it: `[the guide](../docs/guides/club-time.md)`. When the
 compiler copies the fragment into `CHANGELOG.md` at the repository root, it
-rewrites each relative link to resolve from there instead
+rewrites each relative link — both targets of an image used as a link,
+`[![alt](../img.png)](../docs/A.md)`, included — to resolve from there instead
 (`docs/guides/club-time.md`), so `docs:linkcheck` passes both before and after
 a release (#5214). Absolute URLs, `#anchor` links and links shown inside code
 are left alone. A link that climbs out of the repository (`../../x.md`) has no

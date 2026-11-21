@@ -796,6 +796,12 @@ describe("compile-changelog", () => {
     );
   });
 
+  it("rebases both targets of an image wrapped in a link (#5214)", () => {
+    expect(rebaseFragmentLinks("- Badge [![alt](../img/a.png)](../docs/A.md).", "x.md")).toBe(
+      "- Badge [![alt](img/a.png)](docs/A.md).",
+    );
+  });
+
   it("refuses a fragment link that points outside the repository, before writing anything (#5214)", () => {
     const changelog = changelogWith("");
     const root = makeRepo({
