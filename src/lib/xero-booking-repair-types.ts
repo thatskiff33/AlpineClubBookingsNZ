@@ -607,14 +607,10 @@ export interface BookingClassificationContext {
    */
   refundNoteUncoveredCents: number | null;
   /**
-   * #4328: from the same `readRefundCreditNoteGap` read as
-   * `refundNoteUncoveredCents` (plus one read for a bank payment with a live
-   * per-refund note that is not cancelled), the cents the payment's live refund
-   * notes cover together (`coveredCents`) and the cash a note may answer
-   * (`cashRefundCents`, the figure every note-sizing cap reads). `"unreadable"`
-   * when the read threw, read no note-eligible cash, or met a hand-resolved
-   * note with no readable amount; null when not read. The refund-note amount
-   * check of a bank payment with several live notes compares the two.
+   * #4328: `readRefundCreditNoteGap`'s `coveredCents` (all live notes) and
+   * `cashRefundCents` (note-eligible cash), compared by the several-note
+   * amount check (`readRefundNoteGaps`). `"unreadable"` when the read threw,
+   * found no such cash or an unreadable resolved note; null when not read.
    */
   refundNoteCoverage: { coveredCents: number; cashRefundCents: number } | "unreadable" | null;
   /**
