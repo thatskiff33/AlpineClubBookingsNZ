@@ -238,7 +238,8 @@ whole file. `writeOneBooking` takes `lock(1)`, then the selected lodge's
 `acquireLodgeCapacityLock`, then sorted member-night keys. Its manual settlement
 re-enters the first two locks and takes the owner's credit key through the
 existing settlement body (`INV-LOCK-001`, `INV-LOCK-002`). The registered site
-is `writeOneBooking#1` (`INV-LOCK-003`).
+is `writeOneBooking#1` (`INV-LOCK-003`). Each booking's transaction runs on
+`LOCK1_HOLDER_TRANSACTION_BUDGET` (`INV-LOCK-006`).
 
 The lodge id and parsed file are immutable inputs. Under the locks the writer
 re-reads the lodge, members and imported reference, repeats the planner's
