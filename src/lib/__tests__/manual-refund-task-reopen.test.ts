@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => ({
   disputes: [] as { stripeDisputeId: string; status: string; amountCents: number; paymentId: string | null }[],
   restoreHandBackObligation: vi.fn(),
   latestCancellation: null as { occurredAt: Date } | null,
+  dismissalAudit: null as { metadata: Record<string, unknown> } | null,
   alertCooldownUpsert: vi.fn(),
 }));
 
@@ -82,6 +83,7 @@ import {
   REOPEN_ONLY_OFFICER_DISMISSAL_MESSAGE,
   REOPEN_RACED_MESSAGE,
   LATE_WIN_REOPEN_NOT_WON_MESSAGE,
+  ReopenCountedByCancellationError,
   reopenHandBackAfterLateWin,
   reopenManualRefundTask,
 } from "@/lib/manual-refund-task-reopen";
@@ -92,7 +94,8 @@ const calls: string[] = [];
 
 const tx = {
   $executeRaw: (...a: unknown[]) => {
-    calls.push(`lock:${String((a[0] as { raw?: string[] })?.raw?.join("") ?? a[0])}`);
+    const sql = a[0] as { raw?: string[]; strings?: string[] };
+    calls.push(`lock:${String(sql?.raw?.join("") ?? sql?.strings?.join("") ?? a[0])}`);
     return mocks.executeRaw(...a);
   },
   manualRefundTask: {
@@ -113,8 +116,13 @@ const tx = {
   memberCredit: {
     aggregate: (...a: unknown[]) => mocks.creditAggregate(...a),
   },
+  // #5197: the dismissal's audit row, then any cancellation after it.
+  auditLog: {
+    findFirst: async () => mocks.dismissalAudit,
+  },
   bookingEvent: {
-    findFirst: async () => mocks.latestCancellation,
+    findFirst: async ({ where }: { where: { occurredAt: { gt: Date } } }) =>
+      mocks.latestCancellation && mocks.latestCancellation.occurredAt > where.occurredAt.gt ? { id: "event-1" } : null,
   },
   alertCooldown: {
     upsert: (...a: unknown[]) => mocks.alertCooldownUpsert(...a),
@@ -159,6 +167,7 @@ beforeEach(() => {
   mocks.cardRefundOperations = [];
   mocks.disputes = [];
   mocks.latestCancellation = null;
+  mocks.dismissalAudit = null;
   mocks.executeRaw.mockResolvedValue(1);
   mocks.transaction.mockImplementation(
     async (fn: (store: typeof tx) => Promise<unknown>) => fn(tx),
@@ -594,8 +603,9 @@ describe("reopening a dismissed hand-back on a joiner the organiser paid for by 
 /**
  * #5197: a dispute-loss hand-back (a cancellation's own, or an edit's held by a dispute) dismissed while its card
  * dispute read lost. Only a lost dispute lets an edit's be dismissed once its booking is cancelled (#4516, owner
- * decision 18 Nov 2026), and then the cancel counted it as going back: a dismissal after the latest cancellation is
- * spared the after-cancel refusal. Reopening a dispute-loss hand-back owes the member again, so its debt is restored.
+ * decision 18 Nov 2026), and then the cancel counted it as going back: a dismissal whose own audit row read the
+ * booking cancelled, with no cancellation since, is spared the after-cancel refusal. Reopening a dispute-loss
+ * hand-back owes the member again, so its debt is restored.
  */
 describe("reopening a dispute-loss hand-back (#5197)", () => {
   const DISMISSED_AT = new Date("2026-06-20T03:00:00.000Z");
@@ -611,9 +621,11 @@ describe("reopening a dispute-loss hand-back (#5197)", () => {
   };
   const dispute = (status: string) => ({ stripeDisputeId: "dp_1", status, amountCents: 40000, paymentId: "pay-1" });
   const cancelledAt = (offsetMs: number) => ({ occurredAt: new Date(DISMISSED_AT.getTime() + offsetMs) });
+  const dismissedOn = (bookingStatusAtClosure?: string) => ({ metadata: bookingStatusAtClosure ? { bookingStatusAtClosure } : {} });
 
   it("an officer reopens an edit's dismissed after its booking was cancelled, and its debt is restored", async () => {
     mocks.findUnique.mockResolvedValue(LOST_EDIT);
+    mocks.dismissalAudit = dismissedOn("CANCELLED");
     mocks.latestCancellation = cancelledAt(-60_000);
 
     await expect(reopen()).resolves.toMatchObject({ status: ManualRefundTaskStatus.OPEN });
@@ -622,18 +634,21 @@ describe("reopening a dispute-loss hand-back (#5197)", () => {
     }));
   });
 
-  it("MUTATION: dismissed before the latest cancellation, at the same moment, or with none recorded, it is refused", async () => {
+  it("MUTATION: dismissed on a live booking, with no status recorded, or cancelled again since, it is refused as counted by the cancellation", async () => {
     mocks.findUnique.mockResolvedValue(LOST_EDIT);
-    for (const latest of [cancelledAt(60_000), cancelledAt(0), null]) {
+    for (const [audit, latest] of [[dismissedOn("PAID"), null], [dismissedOn(), null], [null, null], [dismissedOn("CANCELLED"), cancelledAt(60_000)]] as const) {
+      mocks.dismissalAudit = audit;
       mocks.latestCancellation = latest;
-      await expect(reopen()).rejects.toMatchObject({ status: 409, message: EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE });
+      const refusal = await reopen().catch((err: unknown) => err);
+      expect(refusal).toBeInstanceOf(ReopenCountedByCancellationError);
+      expect(refusal).toMatchObject({ status: 409, message: EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE });
     }
     expect(mocks.updateMany).not.toHaveBeenCalled();
   });
 
   it("a lost claim restores nothing", async () => {
     mocks.findUnique.mockResolvedValue(LOST_EDIT);
-    mocks.latestCancellation = cancelledAt(-60_000);
+    mocks.dismissalAudit = dismissedOn("CANCELLED");
     mocks.updateMany.mockResolvedValue({ count: 0 });
 
     await expect(reopen()).rejects.toMatchObject({ message: REOPEN_RACED_MESSAGE });
@@ -646,7 +661,7 @@ describe("reopening a dispute-loss hand-back (#5197)", () => {
     it("bounds its lock waits before lock(1), reopens as STRIPE with no actor, names the dispute and marks the task", async () => {
       mocks.findUnique.mockResolvedValue(LOST_EDIT);
       mocks.disputes = [dispute("WON")];
-      mocks.latestCancellation = cancelledAt(-60_000);
+      mocks.dismissalAudit = dismissedOn("CANCELLED");
 
       await expect(lateWin()).resolves.toBe("reopened");
 

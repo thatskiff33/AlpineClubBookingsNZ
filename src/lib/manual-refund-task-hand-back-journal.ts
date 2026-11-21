@@ -121,12 +121,24 @@ export const NO_HAND_BACK_DISPUTES: HandBackDisputeContext = { disputes: [], pay
  * only change these tasks' amounts take).
  */
 export function lossAppliedByTask(task: Pick<PaymentHandBackTask, "status" | "amountCents" | "raisedAmountCents">): number {
-  const raised = task.raisedAmountCents ?? task.amountCents ?? 0;
+  const raised = handBackRaisedCents(task);
   return task.status === "DISMISSED" ? raised : Math.max(0, raised - (task.amountCents ?? 0));
 }
 
-const olderThan = (a: PaymentHandBackTask, b: PaymentHandBackTask) =>
+/** What a task was raised for: a legacy row with no `raisedAmountCents` was never reduced, so its amount. */
+export function handBackRaisedCents(task: Pick<PaymentHandBackTask, "amountCents" | "raisedAmountCents">): number {
+  return task.raisedAmountCents ?? task.amountCents ?? 0;
+}
+
+/** The allocation's order (oldest first, then by id); #5197's late win walks it in reverse. */
+export const olderThan = (a: Pick<PaymentHandBackTask, "createdAt" | "id">, b: Pick<PaymentHandBackTask, "createdAt" | "id">) =>
   a.createdAt.getTime() < b.createdAt.getTime() || (a.createdAt.getTime() === b.createdAt.getTime() && a.id < b.id);
+
+/** The cents of the disputes on this payment that read lost: what the allocation applies. */
+export function lostCentsOnPayment(paymentId: string | null, disputes: HandBackDisputes): number {
+  return disputesOnTaskPayment({ paymentId }, disputes).filter((dispute) => disputeIsLost(dispute.status))
+    .reduce((sum, dispute) => sum + dispute.amountCents, 0);
+}
 
 /**
  * THE ONCE-ONLY ALLOCATION (owner decision, 18 Nov 2026, #4516; `INV-SSOT`): the lost cents this task may take. The
@@ -137,8 +149,7 @@ const olderThan = (a: PaymentHandBackTask, b: PaymentHandBackTask) =>
  */
 export function disputeLossAvailableToTask(task: PaymentHandBackTask, context: HandBackDisputeContext): number {
   if (task.paymentId === null) return 0;
-  const lost = disputesOnTaskPayment(task, context.disputes).filter((dispute) => disputeIsLost(dispute.status))
-    .reduce((sum, dispute) => sum + dispute.amountCents, 0);
+  const lost = lostCentsOnPayment(task.paymentId, context.disputes);
   const tasks = [task, ...context.paymentTasks.filter((other) => other.id !== task.id)]
     .filter((other) => other.paymentId === task.paymentId && isDisputeLossHandBack(other));
   const applied = tasks.reduce((sum, other) => sum + lossAppliedByTask(other), 0);

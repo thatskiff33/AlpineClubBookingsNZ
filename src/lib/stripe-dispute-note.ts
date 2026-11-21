@@ -76,8 +76,9 @@ export type StripeDisputeAlertStage = "opened" | "closed" | "won-after-loss";
 /**
  * #5197: what a late win did about the hand-back tasks on the disputed payment, for the won-after-loss alert. A task
  * dismissed while the dispute read lost is reopened by the app (`reopened`), was already back on the queue
- * (`alreadyOpen`), or could not be reopened (`notReopened`, with the reason); a reduction made for the loss is owed
- * again but changes nothing in the app (`reduced`). `cents` is what the late win makes owed again.
+ * (`alreadyOpen`), could not be reopened (`notReopened`, with the reason), or is an edit's refund dismissed before its
+ * booking's cancellation, which then counted that money in its own refund (`countedByCancellation`); a reduction made
+ * for the loss is owed again but changes nothing in the app (`reduced`). `cents` is what the late win makes owed again.
  */
 export type LateWinHandBackReport =
   | { kind: "no-payment" }
@@ -87,6 +88,7 @@ export type LateWinHandBackReport =
       reopened: readonly { taskId: string; cents: number; taskCents: number }[];
       alreadyOpen: readonly { taskId: string }[];
       notReopened: readonly { taskId: string; cents: number; reason: string }[];
+      countedByCancellation: readonly { taskId: string; cents: number }[];
       reduced: readonly { taskId: string; cents: number }[];
     };
 
@@ -122,6 +124,9 @@ export function stripeDisputeWonAfterLossNextStep(report: LateWinHandBackReport,
     const named = report.notReopened.map((item) => `${task(item)}: ${item.reason}`);
     parts.push(`These refund tasks were dismissed while the dispute read lost, and the app could not reopen them: ${named.join(" ")} ` +
       "Reopen them under Finance → Payments, or take them to the treasurer.");
+  }
+  if (report.countedByCancellation.length > 0) {
+    parts.push(`Not reopened, because the booking was cancelled after they were dismissed and its cancellation counted that money in its own refund: ${report.countedByCancellation.map(task).join("; ")}.`);
   }
   if (report.reduced.length > 0) {
     parts.push(`These refund tasks were reduced while the dispute read lost, and the amount taken off is owed to the member again: ${report.reduced.map(task).join("; ")}. ` +

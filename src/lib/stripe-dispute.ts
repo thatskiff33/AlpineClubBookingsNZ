@@ -56,6 +56,7 @@ import type { StripeDisputeAlertFields } from "@/lib/email-templates/admin-strip
 import { emailClubDateTime } from "@/lib/email-templates-club-time";
 import logger from "@/lib/logger";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { setTransactionLockTimeout } from "@/lib/member-merge-booking-lock";
 import { prisma } from "@/lib/prisma";
 import { getChargePaymentIntentId } from "@/lib/stripe-charge";
 import {
@@ -273,7 +274,7 @@ async function claimRecord(dispute: Stripe.Dispute, event: Stripe.Event): Promis
 }
 
 /** #5197: how long a WON event waits for `lock(1)` before the webhook answers 500 and Stripe redelivers. */
-export const STRIPE_DISPUTE_WON_LOCK_TIMEOUT = "5s";
+export const STRIPE_DISPUTE_WON_LOCK_TIMEOUT_MS = 5_000;
 
 /**
  * Apply this event to the stored row under its lock; a replay writes nothing. A WON event first takes `lock(1)`
@@ -284,7 +285,7 @@ export const STRIPE_DISPUTE_WON_LOCK_TIMEOUT = "5s";
 async function applyEvent(row: StripeDispute, snapshot: DisputeSnapshot): Promise<StripeDispute> {
   return prisma.$transaction(async (tx) => {
     if (snapshot.status === StripeDisputeStatus.WON) {
-      await tx.$executeRaw`SELECT set_config('lock_timeout', ${STRIPE_DISPUTE_WON_LOCK_TIMEOUT}, true)`;
+      await setTransactionLockTimeout(tx, STRIPE_DISPUTE_WON_LOCK_TIMEOUT_MS);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     }
     // Lock raw, read typed (`INV-OPS-001`): a concurrent event's merge waits.

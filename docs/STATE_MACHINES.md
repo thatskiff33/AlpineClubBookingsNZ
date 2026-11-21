@@ -2832,8 +2832,11 @@ reduced task's rest withdrawal is reversed exactly (`restoreHandBackObligation`)
 so the journal owes what the task does. An officer's reopen of a dispute-loss
 hand-back restores it the same way, and dismissing it again withdraws it again.
 A refused or timed-out reopen leaves it DISMISSED and the alert names it. An
-edit's hand-back dismissed after its booking's latest cancellation (only a
-lost dispute allows it) is spared the after-cancel reopen refusal.
+edit's hand-back dismissed on a cancelled booking (only a lost dispute allows
+it; the dismissal's audit row records the booking's status) with no
+cancellation since is spared the after-cancel reopen refusal; one dismissed
+before the cancellation is refused, and the alert says the cancellation
+counted it.
 
 **#3498: and one of the two terminal states is no longer terminal.** A DISMISSED
 row can be put back OPEN by an officer, which is the arm above; a COMPLETED row

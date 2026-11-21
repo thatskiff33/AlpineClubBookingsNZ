@@ -227,14 +227,20 @@ member is told the club will arrange their refund.
    with the member's refund owed again, and sends Finance a "Lost card payment
    dispute now won" alert naming each one: pay them as usual. If another lost
    dispute still covers part of a reopened task, the alert says so: reduce it
-   again before paying. A task the app could not reopen (the booking was busy,
-   or it was dismissed before its booking was cancelled) is named with the
-   reason: reopen it here (the recently dismissed list offers it for 30 days;
-   after that, take it to the treasurer). A reduction made for the loss stays
-   as it is: the alert names the amount now owed again, so pay the member that
-   by bank transfer with the rest and take it to the treasurer to record. A
-   booking change's refund dismissed for a lost dispute after its booking was
-   cancelled can be reopened like any other.
+   again before paying. A task the app could not reopen (the booking was busy, for
+   example) is named with the reason: reopen it here (the recently dismissed
+   list offers it for 30 days; after that, take it to the treasurer). A
+   booking change's refund dismissed before its booking was cancelled is named
+   as counted by the cancellation, whose own refund already includes it. A
+   reduction made for the loss stays as it is: the alert names the amount now
+   owed again, so pay the member that by bank transfer with the rest and take
+   it to the treasurer to record. A booking change's refund dismissed for a
+   lost dispute after its booking was cancelled can be reopened like any other,
+   if it was dismissed after this change (earlier dismissals did not record
+   that the booking was cancelled). Like the lost-dispute allocation itself, a
+   late win counts a refund task dismissed for another reason by older code as
+   dismissed for the loss, so it may reopen it: dismiss it again only through
+   the treasurer.
    A task dismissed before this change can still be reopened.
 
 **The same task for a booking change (#3827).** When a member or an officer

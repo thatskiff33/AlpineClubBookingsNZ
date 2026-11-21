@@ -27,6 +27,7 @@ import {
 } from "@/lib/manual-subscription-payment";
 import { prisma } from "@/lib/prisma";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { setTransactionLockTimeout } from "@/lib/member-merge-booking-lock";
 
 /**
  * #3498 (owner decision D2, epic #2797): put a DISMISSED money task back in the
@@ -177,7 +178,18 @@ export const LATE_WIN_REOPEN_NOT_DISPUTE_LOSS_MESSAGE =
   "It is not a disputed card payment's hand-back.";
 
 /** #5197: how long a late win's reopen waits for a lock before it gives up and the alert names the task instead. */
-export const LATE_WIN_REOPEN_LOCK_TIMEOUT = "5s";
+export const LATE_WIN_REOPEN_LOCK_TIMEOUT_MS = 5_000;
+
+/**
+ * #3827 (`INV-PAY-117`): the after-cancel reopen refusal, its own class so a late win (#5197) can tell the alert that
+ * the cancellation counted the money, rather than that an officer should reopen it.
+ */
+export class ReopenCountedByCancellationError extends ManualBookingPaymentError {
+  constructor(message: string) {
+    super(message, 409);
+    this.name = "ReopenCountedByCancellationError";
+  }
+}
 
 /** Who is reopening: an officer, with their reason, or the app for a lost dispute Stripe now reports won (#5197). */
 type ReopenBy =
@@ -253,7 +265,7 @@ export async function reopenManualRefundTask({
  * on the queue by the app once Stripe reports that dispute won (a "late win"): the club holds the money again and
  * owes the member. The officer's own rules and order apply, with no officer: origin `STRIPE`, no actor (as the inbound
  * Xero sync reopens a part-payment review, `part-payment-review-cover.ts`), the dispute named in the audit entry, and
- * its debt posted again. Every lock wait is bounded (`LATE_WIN_REOPEN_LOCK_TIMEOUT`), so a busy officer holding the
+ * its debt posted again. Every lock wait is bounded (`LATE_WIN_REOPEN_LOCK_TIMEOUT_MS`), so a busy officer holding the
  * booking makes the webhook give up rather than stall; the caller reports that, as it reports every refusal
  * (`ManualBookingPaymentError`), never retrying here. A task already open (reopened by an officer, or by an earlier
  * delivery) answers `already-open` and writes nothing. The `AlertCooldown` marker for (dispute, task) commits with
@@ -262,7 +274,7 @@ export async function reopenManualRefundTask({
 export async function reopenHandBackAfterLateWin({ taskId, disputeId }: { taskId: string; disputeId: string }): Promise<"reopened" | "already-open"> {
   const { journal } = await resolveBookingDoorClock();
   return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT set_config('lock_timeout', ${LATE_WIN_REOPEN_LOCK_TIMEOUT}, true)`;
+    await setTransactionLockTimeout(tx, LATE_WIN_REOPEN_LOCK_TIMEOUT_MS);
     const task = await reopenInTransaction(tx, journal, taskId, { by: "late-win", disputeId });
     if (task === "already-open") return "already-open";
     const key = stripeDisputeLateWinReopenKey(disputeId, task.id);
@@ -329,7 +341,7 @@ async function reopenInTransaction(
   // dispute allows (#4516, owner decision 18 Nov 2026): the cancel counted the
   // task as going back, so putting it back restores what the cancel assumed.
   if (isEditRefundHandBackTask(task) && task.booking.status === BookingStatus.CANCELLED && !(await dismissedAfterCancellation(tx, task))) {
-    throw new ManualBookingPaymentError(editRefundHandBackReopenAfterCancelMessage(task.booking), 409); // #3949
+    throw new ReopenCountedByCancellationError(editRefundHandBackReopenAfterCancelMessage(task.booking)); // #3949
   }
   // #3827 (`INV-PAY-117`): never promise back more cash than was taken - for
   // an edit's refund and (D-3813-7) an approved appeal's alike, an appeal's
@@ -414,19 +426,27 @@ async function assertLateWinDisputeWon(tx: Prisma.TransactionClient, task: Reope
 
 /**
  * #5197: whether this edit hand-back was dismissed AFTER its booking's latest cancellation. The after-cancel
- * dismissal refusal (`INV-PAY-117`) lets only a lost dispute through (#4516, owner decision 18 Nov 2026), so such a
- * dismissal was a dispute-loss one, and the cancellation counted the task as going back. Every cancellation records
- * a CANCELLED or REFUNDED booking event; a later REFUNDED event (another task paid) only makes this answer no, the
- * safe side. No such event, or no dismissal time, is no evidence: no.
+ * dismissal refusal (`INV-PAY-117`) lets only a lost dispute through (#4516, owner decision 18 Nov 2026), and then the
+ * cancellation counted the task as going back. Two records, both required, each failing towards a refusal:
+ * - the dismissal's own audit row, written in its transaction, says the booking read CANCELLED under its locks
+ *   (`bookingStatusAtClosure`; a dismissal recorded before #5197 has none, so it is refused);
+ * - no CANCELLED or REFUNDED booking event after the dismissal: a booking restored and cancelled again since sized
+ *   that cancellation without the task.
  */
 async function dismissedAfterCancellation(tx: Prisma.TransactionClient, task: ReopenTask): Promise<boolean> {
   if (task.completedAt === null) return false;
-  const latest = await tx.bookingEvent.findFirst({
-    where: { bookingId: task.bookingId, type: { in: [BookingEventType.CANCELLED, BookingEventType.REFUNDED] } },
-    orderBy: { occurredAt: "desc" },
-    select: { occurredAt: true },
+  const dismissal = await tx.auditLog.findFirst({
+    where: { entityType: "ManualRefundTask", entityId: task.id, action: "booking-payment.manual-refund-task.dismiss" },
+    orderBy: { createdAt: "desc" },
+    select: { metadata: true },
   });
-  return latest !== null && task.completedAt.getTime() > latest.occurredAt.getTime();
+  const metadata = dismissal?.metadata as { bookingStatusAtClosure?: unknown } | null | undefined;
+  if (metadata?.bookingStatusAtClosure !== BookingStatus.CANCELLED) return false;
+  const laterCancellation = await tx.bookingEvent.findFirst({
+    where: { bookingId: task.bookingId, type: { in: [BookingEventType.CANCELLED, BookingEventType.REFUNDED] }, occurredAt: { gt: task.completedAt } },
+    select: { id: true },
+  });
+  return laterCancellation === null;
 }
 
 export { MANUAL_PAYMENT_NOTE_MAX };

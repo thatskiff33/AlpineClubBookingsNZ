@@ -38,7 +38,7 @@ const mocks = vi.hoisted(() => ({
   lockedIds: vi.fn(),
   /** #5197: every raw statement, in order, as its SQL text. */
   statements: [] as string[],
-  settleLateWin: vi.fn<(...args: unknown[]) => Promise<LateWinHandBackReport>>(async () => ({ kind: "read", reopened: [], alreadyOpen: [], notReopened: [], reduced: [] })),
+  settleLateWin: vi.fn<(...args: unknown[]) => Promise<LateWinHandBackReport>>(async () => ({ kind: "read", reopened: [], alreadyOpen: [], notReopened: [], countedByCancellation: [], reduced: [] })),
 }));
 
 vi.mock("@/lib/prisma", () => {
@@ -100,8 +100,9 @@ vi.mock("@/lib/prisma", () => {
     booking: {
       findUnique: async ({ where }: { where: { id: string } }) => state.bookings.get(where.id) ?? null,
     },
-    $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
-      const sql = strings.join("?");
+    $executeRaw: async (strings: TemplateStringsArray | { strings: string[] }, ...values: unknown[]) => {
+      // A tagged template, or a `Prisma.sql` object (`setTransactionLockTimeout`).
+      const sql = ("strings" in strings ? strings.strings : strings).join("?");
       mocks.statements.push(sql);
       if (sql.includes('"StripeDispute"')) mocks.lockedIds(...values);
       return 1;
@@ -253,7 +254,7 @@ function reset() {
   mocks.settleLateWin.mockResolvedValue(NOTHING_OWED_AGAIN);
 }
 
-const NOTHING_OWED_AGAIN: LateWinHandBackReport = { kind: "read", reopened: [], alreadyOpen: [], notReopened: [], reduced: [] };
+const NOTHING_OWED_AGAIN: LateWinHandBackReport = { kind: "read", reopened: [], alreadyOpen: [], notReopened: [], countedByCancellation: [], reduced: [] };
 const money = (cents: number) => unrecognisedPaymentAmountLabel(cents, "nzd", CLUB_FORMAT_TEST);
 
 describe("recordStripeDispute (#4911)", () => {
@@ -648,7 +649,7 @@ describe("a lost dispute later won (#5061 follow-up, INV-PAY-154)", () => {
     matchedCapture();
     const report: LateWinHandBackReport = { kind: "read", reopened: [{ taskId: "task_1", cents: 30000, taskCents: 30000 }], alreadyOpen: [],
       notReopened: [{ taskId: "task_2", cents: 10000, reason: "The booking was busy with another change, so the app did not wait for it." }],
-      reduced: [{ taskId: "task_3", cents: 5000 }] };
+      countedByCancellation: [], reduced: [{ taskId: "task_3", cents: 5000 }] };
     mocks.settleLateWin.mockResolvedValue(report);
     await lost();
     expect(mocks.settleLateWin).not.toHaveBeenCalled();

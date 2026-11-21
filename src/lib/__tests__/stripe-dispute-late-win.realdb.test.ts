@@ -25,7 +25,7 @@ vi.hoisted(() => {
   }
 });
 
-const sent = vi.hoisted(() => ({ alerts: [] as { stage: string; disputeId: string; disputeNextStep: string }[] }));
+const sent = vi.hoisted(() => ({ alerts: [] as { stage: string; disputeId: string; disputeNextStep: string }[], undelivered: 0 }));
 
 /** The one shared double: the LAST file to register a factory wins, so every realdb file registers this same one. */
 vi.mock("@/lib/stripe", async (importOriginal) =>
@@ -36,6 +36,10 @@ vi.mock("@/lib/auth", async () => (await import("./support/race-session-double")
 vi.mock("@/lib/email", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/email")),
   sendAdminStripeDisputeAlert: async (fields: { stage: string; disputeId: string; disputeNextStep: string }) => {
+    if (sent.undelivered > 0) {
+      sent.undelivered -= 1;
+      return "undelivered";
+    }
     sent.alerts.push(fields);
     return "sent";
   },
@@ -134,6 +138,7 @@ const liveHandBackDebts = (taskId: string) => db.memberMoneyEvent.count({ where:
   }, 60_000);
   beforeEach(() => {
     sent.alerts.length = 0;
+    sent.undelivered = 0;
   });
 
   async function cleanup() {
@@ -224,7 +229,7 @@ const liveHandBackDebts = (taskId: string) => db.memberMoneyEvent.count({ where:
     expect(lateWinAlerts(disputeId)[0]!.disputeNextStep).toContain(`task ${cancel} ($300.00); task ${edit} ($100.00)`);
   });
 
-  it("an edit hand-back dismissed before the cancel is not reopened, and the alert says why", async () => {
+  it("an edit hand-back dismissed before the cancel is not reopened: the alert says the cancellation counted it", async () => {
     const id = await cardBooking();
     const disputeId = await dispute(id, 10_000);
     const edit = await raise(id, "edit", 10_000, 1);
@@ -235,7 +240,10 @@ const liveHandBackDebts = (taskId: string) => db.memberMoneyEvent.count({ where:
 
     expect(await task(edit)).toEqual({ status: "DISMISSED", amountCents: 10_000 });
     expect(await refundPayable(id)).toBe(0);
-    expect(lateWinAlerts(disputeId)[0]!.disputeNextStep).toContain(`could not reopen them: task ${edit} ($100.00): ${EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE}`);
+    expect(lateWinAlerts(disputeId)[0]!.disputeNextStep).toContain(`its cancellation counted that money in its own refund: task ${edit} ($100.00).`);
+    expect(lateWinAlerts(disputeId)[0]!.disputeNextStep).not.toContain("could not reopen");
+    // The officer meets the same refusal, in its own words.
+    await expect(officerReopen(edit)).rejects.toMatchObject({ status: 409, message: EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE });
   });
 
   it("a part win: one of two lost disputes won reopens the task whole, says how much is owed again, and Reduce takes the rest", async () => {
@@ -245,9 +253,13 @@ const liveHandBackDebts = (taskId: string) => db.memberMoneyEvent.count({ where:
     const cancel = await raise(id, "cancel", 40_000, 1);
     await dismiss(cancel);
 
+    // The first alert reaches nobody: the redelivery plans the same reopen from its marker, with the same cents.
+    sent.undelivered = 1;
+    expect(await deliverWon(won)).toBe(500);
     expect(await deliverWon(won)).toBe(200);
 
     expect(await task(cancel)).toEqual({ status: "OPEN", amountCents: 40_000 });
+    expect(await reopenAudits(cancel)).toBe(1);
     expect(await refundPayable(id)).toBe(40_000);
     expect(lateWinAlerts(won)[0]!.disputeNextStep).toContain(`task ${cancel} ($400.00, of which $100.00 is owed again`);
     expect(await reduce(cancel, 40_000, 30_000)).toMatchObject({ stillOwedCents: 10_000 });

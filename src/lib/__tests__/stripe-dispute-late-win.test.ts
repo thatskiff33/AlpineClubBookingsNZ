@@ -77,7 +77,7 @@ describe("lateWinOwedAgain (#5197)", () => {
 
 describe("the won-after-loss alert's next step (#5197)", () => {
   const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
-  const read = { kind: "read" as const, reopened: [], alreadyOpen: [], notReopened: [], reduced: [] };
+  const read = { kind: "read" as const, reopened: [], alreadyOpen: [], notReopened: [], countedByCancellation: [], reduced: [] };
 
   it("never reads a failed read as no tasks", () => {
     const step = stripeDisputeWonAfterLossNextStep({ kind: "read-failed" }, money);
