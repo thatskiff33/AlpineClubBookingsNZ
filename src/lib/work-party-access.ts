@@ -7,8 +7,10 @@ import {
 
 /**
  * Who sees the member side of work parties (#5148): the Work Parties
- * dashboard card, the `/dashboard/work-parties/[id]` page and API, and its "Join Work
- * Party" button. The ONE rule all four use (INV-SSOT).
+ * dashboard card, the `/dashboard/work-parties/[id]` page and API, its "Join Work
+ * Party" button, and a work party's Events Calendar entries (owner decision,
+ * 20 Nov 2026, applied by `whereVisibleCalendarEvent`). The ONE rule all of
+ * them use (INV-SSOT).
  *
  * MEMBERS ONLY (owner decision 7, fork #118). That is narrower than the Events
  * calendar's `canViewCalendarEvents`, which only shuts out organisation
