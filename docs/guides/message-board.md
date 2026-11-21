@@ -126,11 +126,16 @@ entry per post, removed posts included:
   this site holds no central server id for it. Ask whoever runs the site to
   find the id in the error log using the **Post reference** shown, then ask
   the central server's administrator to take the copy down. Click **Mark as
-  dealt with** once that is done, or once you know there is no copy.
+  dealt with** once that is done, or once you know there is no copy. This
+  button appears only once the send is 15 minutes old: before that, the site
+  may still be recording its own result.
 
 If **Withdraw the shared copy** fails, the reason shows under the entry and the
 id is kept. Send the id to the central server's administrator and ask them to
-take the copy down.
+take the copy down. A removed post can hold two copies; if one came down
+before the other failed, the message says which. Every attempt, including a
+failed or half-finished one, is written to the audit log with the ids
+withdrawn and the ids still outstanding.
 
 In the list below, a post with one of these problems carries a **Sharing
 problem** badge. A post whose share failed outright, so nothing reached other

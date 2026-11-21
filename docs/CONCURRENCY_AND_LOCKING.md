@@ -2878,10 +2878,15 @@ mispricing a booking.
   Making those writers id-ordered is not done here. Post-only writers (hide, edit, the
   share's failure record, the withdrawal stamp, the mirror's own-post takedown,
   and since #5246 `withdrawOutstandingCopies`' guarded clear of
-  `unrecordedServerPostId` and `dismissShareOutcome`'s guarded clear of
-  `shareSentAt`) take no image row, and none takes an advisory lock
-  (`INV-LOCK-001`): each is one guarded `updateMany` or `update` on the post
-  row, and none writes `shareRequestedAt`, so none can cause a send. The image-only writers touch no post row: upload, and the
+  `unrecordedServerPostId` and `dismissShareOutcome`'s clear of
+  `shareSentAt`, guarded on the 15-minute grace) take no image row, and none
+  takes an advisory lock (`INV-LOCK-001`): each is one guarded `updateMany`
+  or `update` on the post row, and none writes `shareRequestedAt`, so none
+  can cause a send. The withdrawal stamp is guarded on `withdrawnAt: null`
+  since #5246, so when the admin's **Withdraw the shared copy**, a removal and
+  the withdrawal sweep race on one post, each sends its DELETE (the server
+  answers the later ones 404, which counts as confirmed) and only the first
+  confirmation writes. The image-only writers touch no post row: upload, and the
   orphan sweep, which since #4588 deletes one row at a time and only while
   `postId` is still null, deleting a file only for a row it deleted, so a
   claim committing first keeps its image and a single-row delete cannot

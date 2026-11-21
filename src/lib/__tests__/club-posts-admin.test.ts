@@ -241,12 +241,10 @@ describe("removal", () => {
     await removeClubPost("post-1");
 
     expect(mocks.withdrawClubPost).toHaveBeenCalledWith("server-9");
-    expect(mocks.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: "post-1" },
-        data: { withdrawnAt: expect.any(Date) },
-      }),
-    );
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { id: "post-1", serverPostId: "server-9", withdrawnAt: null },
+      data: { withdrawnAt: expect.any(Date) },
+    });
   });
 
   it("leaves the removal standing and withdrawnAt unset when the withdrawal fails", async () => {
@@ -256,7 +254,7 @@ describe("removal", () => {
     // NOT fatal: the local removal is what the admin asked for.
     await expect(removeClubPost("post-1")).resolves.toBeUndefined();
 
-    const stamped = mocks.update.mock.calls.find(
+    const stamped = [...mocks.update.mock.calls, ...mocks.updateMany.mock.calls].find(
       ([args]) => args.data.withdrawnAt !== undefined,
     );
     expect(stamped).toBeUndefined();
@@ -277,7 +275,9 @@ describe("removal", () => {
     // Removed locally all the same...
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
     // ...withdrawnAt left for the sweep...
-    expect(mocks.update.mock.calls.find(([args]) => args.data.withdrawnAt !== undefined)).toBeUndefined();
+    expect(
+      [...mocks.update.mock.calls, ...mocks.updateMany.mock.calls].find(([args]) => args.data.withdrawnAt !== undefined),
+    ).toBeUndefined();
     // ...and recorded as expected, not as a fault: info with the two numbers.
     expect(mocks.logger.error).not.toHaveBeenCalled();
     expect(mocks.logger.info).toHaveBeenCalledWith(
@@ -514,7 +514,10 @@ describe("withdrawing a shared copy on the admin's request (#5246)", () => {
     mocks.withdrawClubPost.mockResolvedValue(undefined);
 
     await expect(withdrawSharedCopy("post-1")).resolves.toEqual({ serverPostIds: ["server-2"] });
-    expect(mocks.update).toHaveBeenCalledWith({ where: { id: "post-1" }, data: { withdrawnAt: expect.any(Date) } });
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { id: "post-1", serverPostId: "server-2", withdrawnAt: null },
+      data: { withdrawnAt: expect.any(Date) },
+    });
   });
 
   it("refuses when no copy's id is held, and never touches a live post's own share", async () => {
@@ -561,16 +564,168 @@ describe("withdrawing a shared copy on the admin's request (#5246)", () => {
     mocks.findUnique.mockResolvedValue(null);
     await expect(withdrawSharedCopy("nope")).rejects.toBeInstanceOf(ClubPostNotFoundError);
   });
+
+  it("reports what a half-successful withdrawal did take down, for the audit row (#5246 review)", async () => {
+    held({ removedAt: NOW, serverPostId: "server-1", unrecordedServerPostId: "server-9" });
+    mocks.withdrawClubPost.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("503 unavailable"));
+
+    const failure = await withdrawSharedCopy("post-1").catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(ClubPostWithdrawalFailedError);
+    expect((failure as ClubPostWithdrawalFailedError).attempt).toEqual({
+      withdrawnServerPostIds: ["server-9"],
+      outstandingServerPostIds: ["server-1"],
+    });
+    expect((failure as Error).message).toMatch(/server-9 was withdrawn; the rest was not/);
+    // The stray's confirmation is kept even though the call failed overall.
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { id: "post-1", unrecordedServerPostId: "server-9" },
+      data: { unrecordedServerPostId: null, shareError: null },
+    });
+  });
+
+  it("a pause after the stray came down still names it as withdrawn", async () => {
+    held({ removedAt: NOW, serverPostId: "server-1", unrecordedServerPostId: "server-9" });
+    mocks.withdrawClubPost.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new mocks.FakeVersionError());
+
+    const failure = await withdrawSharedCopy("post-1").catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(ClubPostWithdrawalPausedError);
+    expect((failure as ClubPostWithdrawalPausedError).attempt).toEqual({
+      withdrawnServerPostIds: ["server-9"],
+      outstandingServerPostIds: ["server-1"],
+    });
+  });
+});
+
+/**
+ * Two writers on the same post at once (#5246 review). Each reads the row
+ * before either writes, so both ask the server; the second DELETE is a 404,
+ * which `withdrawClubPost` treats as success. What keeps the row right is that
+ * every confirmation is a guarded `updateMany` the loser matches nothing with,
+ * and that no path writes the share request, so nothing is ever sent again.
+ */
+describe("concurrent withdrawals of the same copy (#5246 review)", () => {
+  const strayLive = removedRow({ removedAt: null, serverPostId: "server-1", sharedAt: NOW, unrecordedServerPostId: "server-9" });
+  const awaitingTakedown = removedRow({ serverPostId: "server-2" });
+
+  /** The first guarded write wins; every later one with the same guard matches nothing. */
+  function firstGuardedWriteWins() {
+    const seen = new Set<string>();
+    mocks.updateMany.mockImplementation(async ({ where }: { where: object }) => {
+      const key = JSON.stringify(where);
+      if (seen.has(key)) return { count: 0 };
+      seen.add(key);
+      return { count: 1 };
+    });
+  }
+
+  function writes() {
+    return [...mocks.update.mock.calls, ...mocks.updateMany.mock.calls].map(([args]) => args);
+  }
+
+  function neverResends() {
+    expect(writes().some(({ data }) => "shareRequestedAt" in data || "sharedAt" in data || "shareSentAt" in data)).toBe(false);
+    expect(mocks.update).not.toHaveBeenCalled();
+  }
+
+  beforeEach(() => {
+    firstGuardedWriteWins();
+    mocks.withdrawClubPost.mockResolvedValue(undefined);
+  });
+
+  it("two admins: both succeed, the stray is cleared once, and the post's own share is untouched", async () => {
+    mocks.findUnique.mockResolvedValue(strayLive);
+
+    const results = await Promise.all([withdrawSharedCopy("post-1"), withdrawSharedCopy("post-1")]);
+
+    expect(results).toEqual([{ serverPostIds: ["server-9"] }, { serverPostIds: ["server-9"] }]);
+    expect(mocks.withdrawClubPost.mock.calls).toEqual([["server-9"], ["server-9"]]);
+    expect(mocks.withdrawClubPost).not.toHaveBeenCalledWith("server-1");
+    expect(writes()).toEqual([
+      { where: { id: "post-1", unrecordedServerPostId: "server-9" }, data: { unrecordedServerPostId: null, shareError: null } },
+      { where: { id: "post-1", unrecordedServerPostId: "server-9" }, data: { unrecordedServerPostId: null, shareError: null } },
+    ]);
+    expect(await Promise.all(mocks.updateMany.mock.results.map((r) => r.value))).toEqual([{ count: 1 }, { count: 0 }]);
+    neverResends();
+  });
+
+  it("two admins on a removed post: one confirmation time is stamped, the other writes nothing", async () => {
+    mocks.findUnique.mockResolvedValue(awaitingTakedown);
+
+    await Promise.all([withdrawSharedCopy("post-1"), withdrawSharedCopy("post-1")]);
+
+    const stamps = writes().filter(({ data }) => "withdrawnAt" in data);
+    expect(stamps.map(({ where }) => where)).toEqual([
+      { id: "post-1", serverPostId: "server-2", withdrawnAt: null },
+      { id: "post-1", serverPostId: "server-2", withdrawnAt: null },
+    ]);
+    expect(await Promise.all(mocks.updateMany.mock.results.map((r) => r.value))).toEqual([{ count: 1 }, { count: 0 }]);
+    neverResends();
+  });
+
+  it("an admin's withdrawal racing the removal: the removal still stands and both writes are guarded", async () => {
+    mocks.findUnique.mockResolvedValue(strayLive);
+    mocks.txFindUniqueOrThrow.mockResolvedValue({ ...strayLive, removedAt: NOW, images: [] });
+
+    await Promise.all([withdrawSharedCopy("post-1"), removeClubPost("post-1")]);
+
+    // The removal alone claims the row and clears the request; the admin's
+    // action never writes removedAt or the request.
+    expect(mocks.txUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.txUpdateMany.mock.calls[0][0].data).toMatchObject({ shareRequestedAt: null, removedAt: expect.any(Date) });
+    // Both took the stray down; only the first clear matched.
+    expect(mocks.withdrawClubPost.mock.calls.filter(([id]) => id === "server-9")).toHaveLength(2);
+    const clears = writes().filter(({ data }) => "unrecordedServerPostId" in data);
+    expect(clears).toHaveLength(2);
+    expect(clears.every(({ where }) => where.unrecordedServerPostId === "server-9")).toBe(true);
+    // The removal then withdraws the post's own share, guarded once.
+    expect(writes().filter(({ data }) => "withdrawnAt" in data).map(({ where }) => where)).toEqual([
+      { id: "post-1", serverPostId: "server-1", withdrawnAt: null },
+    ]);
+    neverResends();
+  });
+
+  it("an admin's withdrawal racing the sweep: both succeed and the confirmation is stamped once", async () => {
+    const { isServerSyncPaused } = await import("@/lib/servernz-version-check");
+    vi.mocked(isServerSyncPaused).mockResolvedValue(false);
+    const { retryPendingWithdrawals } = await import("@/lib/club-post-sharing");
+    mocks.findUnique.mockResolvedValue(awaitingTakedown);
+    mocks.findMany.mockResolvedValue([awaitingTakedown]);
+
+    const [admin, sweep] = await Promise.all([withdrawSharedCopy("post-1"), retryPendingWithdrawals()]);
+
+    expect(admin).toEqual({ serverPostIds: ["server-2"] });
+    expect(sweep).toEqual({ attempted: 1, confirmed: 1, failed: 0 });
+    expect(await Promise.all(mocks.updateMany.mock.results.map((r) => r.value))).toEqual([{ count: 1 }, { count: 0 }]);
+    neverResends();
+  });
 });
 
 describe("marking an unrecorded share as dealt with (#5246)", () => {
-  it("clears only the marker, and only while the post holds no server id", async () => {
-    await dismissShareOutcome("post-1");
+  it("clears only the marker, and only while the post holds no server id and the grace has passed", async () => {
+    await dismissShareOutcome("post-1", NOW);
 
     expect(mocks.updateMany).toHaveBeenCalledWith({
-      where: { id: "post-1", shareSentAt: { not: null }, sharedAt: null, serverPostId: null },
+      where: {
+        id: "post-1",
+        // Fifteen minutes before the frozen clock.
+        shareSentAt: { not: null, lt: new Date("2026-06-30T23:45:00.000Z") },
+        sharedAt: null,
+        serverPostId: null,
+      },
       data: { shareSentAt: null },
     });
+  });
+
+  it("refuses a send still inside the grace, which may yet record its own result (#5246 review)", async () => {
+    // What the guarded write does to a send made one minute ago: no match.
+    mocks.updateMany.mockImplementation(async ({ where }: { where: { shareSentAt: { lt: Date } } }) => ({
+      count: new Date("2026-06-30T23:59:00.000Z") < where.shareSentAt.lt ? 1 : 0,
+    }));
+    mocks.findUnique.mockResolvedValue({ id: "post-1" });
+
+    await expect(dismissShareOutcome("post-1", NOW)).rejects.toBeInstanceOf(ClubPostNoShareProblemError);
   });
 
   it("says there is nothing to deal with when the marker is gone, and 404s an unknown post", async () => {

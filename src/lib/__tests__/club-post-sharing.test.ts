@@ -691,12 +691,11 @@ describe("retryPendingShares", () => {
     });
     expect(mocks.withdrawClubPost).toHaveBeenCalledWith("server-9");
     // The confirmed one is stamped; the failed one is left for the next pass.
-    expect(mocks.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: "p9" },
-        data: { withdrawnAt: expect.any(Date) },
-      }),
-    );
+    // Guarded: a confirmation already stamped by another writer is kept.
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { id: "p9", serverPostId: "server-9", withdrawnAt: null },
+      data: { withdrawnAt: expect.any(Date) },
+    });
   });
 });
 
@@ -826,8 +825,11 @@ describe("the withdrawal sweep takes down an unrecorded copy too (#5246)", () =>
 
     expect(result).toMatchObject({ withdrawalsConfirmed: 0, withdrawalsFailed: 1 });
     expect(mocks.withdrawClubPost.mock.calls).toEqual([["server-9"], ["server-1"]]);
-    expect(mocks.updateMany).not.toHaveBeenCalled();
-    expect(mocks.update).toHaveBeenCalledWith({ where: { id: "p9" }, data: { withdrawnAt: expect.any(Date) } });
+    // Only the recorded share's confirmation is written; the stray stays.
+    expect(mocks.updateMany.mock.calls).toEqual([[{
+      where: { id: "p9", serverPostId: "server-1", withdrawnAt: null },
+      data: { withdrawnAt: expect.any(Date) },
+    }]]);
   });
 });
 

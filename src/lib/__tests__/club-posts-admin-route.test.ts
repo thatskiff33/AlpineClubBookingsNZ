@@ -13,8 +13,14 @@ const mocks = vi.hoisted(() => {
     }
   }
   class ClubPostNoShareProblemError extends Named { constructor() { super("ClubPostNoShareProblemError", "That post has no shared copy left to deal with."); } }
-  class ClubPostWithdrawalPausedError extends Named { constructor() { super("ClubPostWithdrawalPausedError", "paused; ask the central server's administrator"); } }
-  class ClubPostWithdrawalFailedError extends Named { constructor() { super("ClubPostWithdrawalFailedError", "refused; ask the central server's administrator"); } }
+  type Attempt = { withdrawnServerPostIds: string[]; outstandingServerPostIds: string[] };
+  const none: Attempt = { withdrawnServerPostIds: [], outstandingServerPostIds: ["server-9"] };
+  class ClubPostWithdrawalPausedError extends Named {
+    constructor(readonly attempt: Attempt = none) { super("ClubPostWithdrawalPausedError", "paused; ask the central server's administrator"); }
+  }
+  class ClubPostWithdrawalFailedError extends Named {
+    constructor(readonly attempt: Attempt = none) { super("ClubPostWithdrawalFailedError", "refused; ask the central server's administrator"); }
+  }
   return {
     ClubPostNoShareProblemError,
     ClubPostWithdrawalPausedError,
@@ -80,11 +86,19 @@ describe("withdrawing a shared copy", () => {
     }));
   });
 
+  it("answers 409 when nothing is left to withdraw, with no audit row: nothing was attempted", async () => {
+    mocks.withdrawSharedCopy.mockRejectedValue(new mocks.ClubPostNoShareProblemError());
+
+    const res = await patch({ withdrawSharedCopy: true });
+
+    expect(res.status).toBe(409);
+    expect(mocks.logAudit).not.toHaveBeenCalled();
+  });
+
   it.each([
-    ["nothing left to withdraw", () => new mocks.ClubPostNoShareProblemError(), 409],
-    ["a version pause", () => new mocks.ClubPostWithdrawalPausedError(), 409],
-    ["the server's refusal", () => new mocks.ClubPostWithdrawalFailedError(), 502],
-  ])("answers %s with its plain message and no audit row", async (_label, error, status) => {
+    ["a version pause", () => new mocks.ClubPostWithdrawalPausedError(), 409, /paused by a version difference/],
+    ["the server's refusal", () => new mocks.ClubPostWithdrawalFailedError(), 502, /server did not confirm/],
+  ])("answers %s with its plain message and audits the failed attempt (#5246 review)", async (_label, error, status, reason) => {
     const thrown = error();
     mocks.withdrawSharedCopy.mockRejectedValue(thrown);
 
@@ -92,7 +106,31 @@ describe("withdrawing a shared copy", () => {
 
     expect(res.status).toBe(status);
     expect(await res.json()).toEqual({ error: thrown.message });
-    expect(mocks.logAudit).not.toHaveBeenCalled();
+    expect(mocks.logAudit).toHaveBeenCalledTimes(1);
+    const audit = mocks.logAudit.mock.calls[0]![0];
+    expect(audit).toMatchObject({
+      action: "club_post.withdraw_shared_copy.failed",
+      category: "communication",
+      memberId: "admin-1",
+      entityId: "post-1",
+    });
+    expect(audit.details).toMatch(reason);
+    expect(audit.details).toContain("Withdrawn: none. Still outstanding: server-9.");
+  });
+
+  it.each([
+    ["a refusal", (attempt: { withdrawnServerPostIds: string[]; outstandingServerPostIds: string[] }) => new mocks.ClubPostWithdrawalFailedError(attempt), 502],
+    ["a pause", (attempt: { withdrawnServerPostIds: string[]; outstandingServerPostIds: string[] }) => new mocks.ClubPostWithdrawalPausedError(attempt), 409],
+  ])("audits the copy a half-successful withdrawal did take down, before %s (#5246 review)", async (_label, error, status) => {
+    mocks.withdrawSharedCopy.mockRejectedValue(error({ withdrawnServerPostIds: ["server-9"], outstandingServerPostIds: ["server-1"] }));
+
+    const res = await patch({ withdrawSharedCopy: true });
+
+    expect(res.status).toBe(status);
+    expect(mocks.logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "club_post.withdraw_shared_copy.failed",
+      details: expect.stringContaining("Withdrawn: server-9. Still outstanding: server-1."),
+    }));
   });
 
   it("accepts only `true`", async () => {
