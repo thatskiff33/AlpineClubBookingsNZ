@@ -64,6 +64,42 @@ export async function postHandBackObligation(tx: Db, context: BookingJournalCont
   });
 }
 
+/**
+ * #5197: a hand-back put back on the queue after its dismissal or rest withdrawal, posting its refund debt again so
+ * the journal owes the member what the reopened task does. Its debt's trace decides how:
+ * - the dismissal reversed its whole R05 (none live): an R05 for the task's amount at the chain's next key;
+ * - a reduced hand-back's dismissal withdrew its open rest (`handBackRestWithdrawn`): that withdrawal reversed
+ *   exactly, so the reductions stay and the rest is owed again;
+ * - no trace (raised before the journal, or its R05 is live and nothing withdrew the rest): nothing posts.
+ * Called with the reopen's status claim, so a replay finds the task open and never reaches here. Returns what posted.
+ */
+export async function restoreHandBackObligation(tx: Db, context: BookingJournalContext, input: {
+  bookingId: string;
+  taskId: string;
+  amountCents: number;
+  origin: MemberMoneyOrigin;
+  actorMemberId: string | null;
+  reason: string;
+}): Promise<"reposted" | "rest-restored" | null> {
+  if (isBookingJournalInactive(context)) return null;
+  if (!(await eventPosted(tx, memberMoneyEventKeys.bookingCharge(input.bookingId)))) return null;
+  await lockMemberMoneyPayment(tx, input.bookingId);
+  const chain = await refundObligationChain(tx, "hand-back", input.taskId);
+  if (!chain.live) {
+    // The chain moved past its base only by reversing a posted R05: a debt that was never posted stays unposted.
+    if (chain.next === memberMoneyEventKeys.refundObligation("hand-back", input.taskId)) return null;
+    await postRefundObligation(tx, context, { bookingId: input.bookingId, scope: "hand-back", id: input.taskId, amountCents: input.amountCents,
+      origin: input.origin, actorMemberId: input.actorMemberId, debtorRead: "booking-row", reason: input.reason });
+    return "reposted";
+  }
+  const rest = await memberMoneyChainTip(tx, memberMoneyEventKeys.handBackRestWithdrawn(input.taskId));
+  const withdrawal = await tx.memberMoneyEvent.findUnique({ where: { eventKey: rest }, select: { journal: { select: { id: true } } } });
+  if (!withdrawal?.journal) return null;
+  await reverseMemberMoneyJournal(tx, context, { reversesJournalId: withdrawal.journal.id, origin: input.origin, actorMemberId: input.actorMemberId,
+    source: { kind: "BOOKING", id: input.bookingId, version: memberMoneyEventKeys.reversal(withdrawal.journal.id) }, reason: input.reason });
+  return "rest-restored";
+}
+
 /** The live hand-back debt for this task, or the review debt a by-hand review posted in the same completion. */
 async function liveHandBackDebt(tx: Db, taskId: string): Promise<MemberMoneyEventKey | null> {
   return (await refundObligationChain(tx, "hand-back", taskId)).live
