@@ -620,8 +620,14 @@ How the pause meets queued and in-flight work:
 - Invoices already sent keep their amounts. An update copies Xero's stored
   amounts, so it never adds or strips an override; it is still checked.
 - A retry under the same idempotency key is compared only on lines that
-  attempt sent a `TaxAmount` for, and a reply that bills other lines (Xero
-  returning the ORIGINAL invoice) is not compared at all.
+  attempt sent a `TaxAmount` for. Xero answers a replay with the ORIGINAL
+  invoice, so a reply is not compared at all when any earlier attempt under
+  the key sent other line tax (sent while paused, or by the release before)
+  or when it bills other line amounts; the manifest still records the
+  difference as a `TAX_CENTS` or `STAY_CENTS` conflict.
+- The check runs as soon as Xero answers. A run that dies before it is not
+  checked again: the replay path records the manifest from the stored request
+  and does not ask Xero for the invoice.
 - Clearing claims only the rows listed and still open, so an invoice flagged
   after the card loaded keeps the pause on. Nothing is re-sent; overrides
   resume on the next run.
