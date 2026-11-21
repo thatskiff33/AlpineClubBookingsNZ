@@ -315,8 +315,14 @@ let retry: typeof import("@/lib/xero-operation-retry");
     ] as const)("MUTATION: a repair that died mid-claim comes back PARTIAL through %s, and the retry makes one payment write", async (_label, remedy) => {
       await seedPartial(45.67);
       const apiClient = await import("@/lib/xero-api-client");
-      vi.mocked(apiClient.getAuthenticatedXeroClient).mockImplementationOnce(() => new Promise(() => {}));
+      const client = vi.mocked(apiClient.getAuthenticatedXeroClient);
+      client.mockImplementationOnce(() => new Promise(() => {}));
       void retry.retryXeroSyncOperation(OPERATION_ID, CLUB_FORMAT_TEST).catch(() => {});
+
+      // #5215: the claim is written before the run asks for the Xero client, so
+      // the row reading RUNNING does not show the one-shot hang was taken by this
+      // run. Wait for its call, so a second run can never take the hang instead.
+      await waitUntil(() => client.mock.calls.length > 0, "The first run never asked for the Xero client.");
       await claimThenStrand();
 
       const stale = await import("@/lib/xero-stale-operations");
