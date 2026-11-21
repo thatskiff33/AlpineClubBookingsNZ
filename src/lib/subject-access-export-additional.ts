@@ -21,6 +21,7 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     BookingModification, NewBookingPolicyExceptionRequest, MemberLodgeAccess, FamilyGroupJoinRequest,
     DeletionRequest, AdminCreditAdjustmentRequest, CommitteeAssignment, OrganisationContact,
     SchoolMemberClassification, MemberMoneyObligation, MemberInductionAssignedSigner, MemberInductionSignOff,
+    McpGrant,
     FoodOrder, FoodOrderItem, XeroCashCredit,
   ] = await Promise.all([
     prisma.membershipSubscriptionChargeCoverage.findMany({ where: own, select: { chargeId: true, releasedAt: true, createdAt: true } }),
@@ -67,6 +68,10 @@ export async function readAdditionalSubjectRecords(memberId: string) {
       where: { signerMemberId: memberId },
       select: { signerName: true, signerRole: true, signedAt: true, declarationAccepted: true },
     }),
+    prisma.mcpGrant.findMany({
+      where: own,
+      select: { scope: true, status: true, createdAt: true, lastUsedAt: true, endedAt: true, client: { select: { name: true } } },
+    }),
     // The member's own food orders. Who received or priced one is an officer's
     // snapshot id and is left out, like a maintenance report's resolver.
     prisma.foodOrder.findMany({
@@ -99,6 +104,7 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     BookingModification, NewBookingPolicyExceptionRequest, MemberLodgeAccess, FamilyGroupJoinRequest,
     DeletionRequest, AdminCreditAdjustmentRequest, CommitteeAssignment, OrganisationContact,
     SchoolMemberClassification, MemberMoneyObligation, MemberInductionAssignedSigner, MemberInductionSignOff,
+    McpGrant,
     FoodOrder, FoodOrderItem, XeroCashCredit,
   } satisfies Record<AdditionalRecordModel, unknown>;
 }

@@ -119,6 +119,12 @@ Journey: Use the section rail to open personal details, sign-in security, notifi
 
 [Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
+### Connect an AI app
+
+Screen: `/connect/authorize`; `/profile`.
+
+[Guide](guides/mcp-server.md)
+
 ### Family and household
 
 Screen: Family Group and Partner sections of `/profile`.
@@ -842,6 +848,12 @@ Shows: Assistant configuration, usage and spending controls.
 Journey: Read usage and the spend cap before changing the assistant settings.
 
 [Guide](guides/ai-help.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### AI app connections — ai-connections
+
+Screen: `/admin/ai-connections`.
+
+[Guide](guides/mcp-server.md)
 
 ### Audit Log — audit-log
 
