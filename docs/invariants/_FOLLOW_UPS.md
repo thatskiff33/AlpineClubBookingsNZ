@@ -141,12 +141,13 @@ prompts checking the others — which is the actual risk the finding identified.
 The scheme's supersede machinery (`SCHEME.md` §1.4) stays available for a genuine
 duplicate; this was not one.
 
-**One thing here is not a defect and must not be "fixed".** Inside
-`INV-HOST-023` the bullet "Coverage is existential, not an assignment" appears
-twice, verbatim, the second time prefaced "Stated again because it is the
-invariant most easily broken by an optimisation". That repetition is deliberate
-in the source. It is recorded here only so a later editor does not remove one
-copy believing it a mistake.
+**One thing here was not a defect.** Inside `INV-HOST-023` the bullet "Coverage
+is existential, not an assignment" appeared twice, the second time prefaced
+"Stated again because it is the invariant most easily broken by an
+optimisation". That repetition was deliberate in the source. The #4990
+compaction to the 300-word budget merged the two into one bullet on purpose,
+keeping what each said; nothing was dropped by mistake, and the second copy is
+not to be restored.
 
 ## 5. Headings that stopped describing their content — closed by #2707
 

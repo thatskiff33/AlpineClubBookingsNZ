@@ -38,8 +38,8 @@ function collectionKind(operation: XeroOperationRecord, bookingId: string): "ban
   return "unknown";
 }
 
-/** Complete display discovery; intentionally separate from the narrower clearing selector. */
-export async function readBookingSupplementaryInvoiceIdentities(bookingId: string): Promise<SupplementaryInvoiceIdentities> {
+/** Every supplementary-invoice row anchored to the booking, before any classification. */
+async function loadSupplementaryInvoiceEvidence(bookingId: string) {
   const [modifications, tasks] = await Promise.all([
     prisma.bookingModification.findMany({ where: { bookingId }, select: { id: true } }),
     prisma.manualRefundTask.findMany({ where: { bookingId, ...editReviewChargeShareTaskWhere }, select: { id: true, reviewContext: true } }),
@@ -70,6 +70,25 @@ export async function readBookingSupplementaryInvoiceIdentities(bookingId: strin
     !(row.localModel === "Booking" && getOperationQueueTypeHint(row) === null &&
       [row.correlationKey, row.idempotencyKey].includes(primaryKey) &&
       ![row.correlationKey, row.idempotencyKey].some((key) => isXeroSupplementaryInvoiceKeyForAnchor(key, row.localModel, row.localId))));
+  return { tasks, eligibleTasks, anchors, links, operations, supplementaryOperations };
+}
+
+/**
+ * Whether the booking has ANY supplementary invoice, or evidence of one: a bank
+ * demand, a card receipt (which the reader below leaves out by design), a create
+ * not yet sent or failed, an inactive link, or an unclassifiable second ask.
+ * Over-reports on purpose — a superset of every id and every `incomplete` the
+ * reader below can produce — for a surface that must not hand over the primary
+ * invoice as the whole record (#5066).
+ */
+export async function bookingHasAnySupplementaryInvoiceEvidence(bookingId: string): Promise<boolean> {
+  const { tasks, eligibleTasks, links, supplementaryOperations } = await loadSupplementaryInvoiceEvidence(bookingId);
+  return tasks.length !== eligibleTasks.length || links.length > 0 || supplementaryOperations.length > 0;
+}
+
+/** Complete display discovery; intentionally separate from the narrower clearing selector. */
+export async function readBookingSupplementaryInvoiceIdentities(bookingId: string): Promise<SupplementaryInvoiceIdentities> {
+  const { tasks, eligibleTasks, anchors, links, operations, supplementaryOperations } = await loadSupplementaryInvoiceEvidence(bookingId);
   const bankIds = new Set<string>();
   const receiptIds = new Set<string>();
   let incomplete = tasks.length !== eligibleTasks.length;
