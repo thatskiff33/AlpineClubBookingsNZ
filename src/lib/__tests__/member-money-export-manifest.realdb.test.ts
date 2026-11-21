@@ -8,7 +8,7 @@ import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { writeExportManifest, type ExportManifestRow } from "@/lib/member-money/internal/store";
 import { describeUniqueConstraintTarget } from "@/lib/prisma-errors";
-import { createMemberMoneyScratchDatabase, type MemberMoneyScratchDatabase } from "./support/member-money-fixtures";
+import { createMemberMoneyScratchDatabase, MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS, type MemberMoneyScratchDatabase } from "./support/member-money-fixtures";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -79,13 +79,13 @@ async function stored(bookingId: string) {
     appPrisma = new Prisma({ adapter: createPrismaPgAdapter(scratch.appUrl) });
     app = new Client({ connectionString: scratch.appUrl });
     await app.connect();
-  }, 30_000);
+  }, MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS);
 
   afterAll(async () => {
     await appPrisma?.$disconnect();
     await app?.end();
     await scratch?.drop();
-  });
+  }, MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS);
 
   it("writes a COVERED manifest with its coverage, and a same-hash repeat is a no-op", async () => {
     const id = await booking();

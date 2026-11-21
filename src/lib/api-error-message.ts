@@ -111,6 +111,8 @@
  *  - {@link apiRefusalFromResponse} and {@link refusalMessageOr}: a typed throw
  *    and its matching catch, so only a refusal's own sentence reaches the
  *    screen and a dropped connection shows the screen's fallback.
+ *  - {@link wordedForbiddenRefusal}: whether a 403 carries a sentence worth
+ *    keeping, or only the bare word a screen replaces with its own copy.
  */
 
 /**
@@ -213,6 +215,27 @@ export async function apiRefusalFromResponse(
   fallback: string,
 ): Promise<ApiRefusalError> {
   return new ApiRefusalError(await apiErrorMessageFromResponse(response, fallback));
+}
+
+/**
+ * The bare word `requireAdmin` answers a plain permission refusal with
+ * (`forbiddenResponse` in `src/lib/session-guards.ts`).
+ */
+const BARE_FORBIDDEN_ERROR = "Forbidden";
+
+/**
+ * A 403's own worded refusal, or `null` when it says nothing better than the
+ * bare word "Forbidden" (or nothing readable, such as a proxy's HTML page).
+ *
+ * The bare word is the ONE 403 body worth replacing with a screen's own
+ * permission copy: the guard's other 403s — "Two-factor verification
+ * required", "Password change required", "Account is deactivated" — are
+ * curated, specific and actionable, and overwriting them with a generic
+ * sentence about roles would be a wrong diagnosis.
+ */
+export function wordedForbiddenRefusal(body: unknown): ApiRefusalError | null {
+  const message = apiErrorMessageFromBody(body, BARE_FORBIDDEN_ERROR);
+  return message === BARE_FORBIDDEN_ERROR ? null : new ApiRefusalError(message);
 }
 
 /** The sentence for a caught error: a refusal's own, otherwise `fallback`. */

@@ -27,6 +27,7 @@ import {
   type PrismaClient,
 } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
+import { createZeroPriceConfirmationPayment } from "@/lib/booking-zero-price-payment";
 import { assertMemberMayBookLodge } from "@/lib/lodge-access";
 import {
   lodgeNullTolerantScope,
@@ -1178,14 +1179,8 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         }
 
         isZeroDollarConfirmed = true;
-        await tx.payment.create({
-          data: {
-            bookingId: newBooking.id,
-            amountCents: 0,
-            creditAppliedCents,
-            status: PaymentStatus.SUCCEEDED,
-          },
-        });
+        // The $0 Payment row, shared with the import's free stay (#5167).
+        await createZeroPriceConfirmationPayment(tx, { bookingId: newBooking.id, creditAppliedCents });
         await tx.booking.update({
           where: { id: newBooking.id },
           data: {

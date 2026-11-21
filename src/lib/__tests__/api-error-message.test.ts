@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ApiRefusalError,
   MODULE_DISABLED_ERROR_CODE,
   apiErrorCodeFromBody,
   apiErrorMessageFromBody,
@@ -9,6 +10,7 @@ import {
   readApiObjectOrEmpty,
   readApiObjectOrNull,
   refusalMessageOr,
+  wordedForbiddenRefusal,
 } from "@/lib/api-error-message";
 import { templateErrorMessage } from "@/components/admin/email-settings/email-message-settings-panel";
 
@@ -216,5 +218,24 @@ describe("refusalMessageOr", () => {
     ["a non-error value", "boom"],
   ])("shows the fallback, not the error's text, for %s", (_label, err) => {
     expect(refusalMessageOr(err, FALLBACK)).toBe(FALLBACK);
+  });
+});
+
+describe("wordedForbiddenRefusal (ALP-749)", () => {
+  it("keeps a worded 403 as its own refusal", () => {
+    const refusal = wordedForbiddenRefusal({ error: "Password change required" });
+    expect(refusal).toBeInstanceOf(ApiRefusalError);
+    expect(refusal?.message).toBe("Password change required");
+  });
+
+  it.each([
+    ["the bare word Forbidden", { error: "Forbidden" }],
+    ["the bare word padded with spaces", { error: "  Forbidden  " }],
+    ["an unreadable body, such as an HTML page", null],
+    ["an object with no error", {}],
+    ["an empty error", { error: "" }],
+    ["a non-string error", { error: 403 }],
+  ])("has nothing worth keeping for %s", (_label, body) => {
+    expect(wordedForbiddenRefusal(body)).toBeNull();
   });
 });
