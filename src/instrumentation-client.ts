@@ -1,5 +1,6 @@
 import { initializeBrowserSentry } from "@/lib/observability/browser-sentry-client";
 import * as Sentry from "@sentry/nextjs";
+import { getAppVersion } from "@/lib/app-version";
 import {
   redactSensitiveJson,
   redactSensitiveQueryParams,
@@ -18,6 +19,8 @@ void initializeBrowserSentry(dsn => {
     dsn,
 
     environment: process.env.NODE_ENV || "development",
+    // Stamped at build time like the server's (#5262); public, never a secret.
+    release: getAppVersion(),
 
     // Performance tracing
     tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
