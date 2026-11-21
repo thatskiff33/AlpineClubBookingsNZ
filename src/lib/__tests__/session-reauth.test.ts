@@ -11,6 +11,7 @@ vi.mock("@/lib/club-identity-settings", () => ({
 const mockClaim = vi.hoisted(() => vi.fn());
 const mockClear = vi.hoisted(() => vi.fn());
 const mockCompare = vi.hoisted(() => vi.fn());
+const mockUpgrade = vi.hoisted(() => vi.fn());
 
 const mockPrisma = vi.hoisted(() => ({
   $transaction: vi.fn(async (operations: Array<Promise<unknown>>) => Promise.all(operations)),
@@ -41,6 +42,7 @@ vi.mock("@/lib/login-throttle", () => ({
   claimPasswordAttempt: mockClaim,
   clearPasswordAttempts: mockClear,
 }));
+vi.mock("@/lib/password-rehash", () => ({ upgradePasswordHashAfterProof: mockUpgrade }));
 vi.mock("@/lib/password-hashing", async (importOriginal) => {
   const { passwordHashingModuleMock } = await import("@/lib/__tests__/helpers/password-hashing-mock");
   return passwordHashingModuleMock(await importOriginal(), { verifyPassword: mockCompare });
@@ -186,6 +188,7 @@ describe("session reauthentication (#4616)", () => {
     expect(mockClaim).toHaveBeenCalledWith("member@example.com");
     expect(mockClear).not.toHaveBeenCalled();
     expect(mockPrisma.member.update).not.toHaveBeenCalled();
+    expect(mockUpgrade).not.toHaveBeenCalled();
 
     mockCompare.mockResolvedValue(true);
     const right = await proveSessionReauth({
@@ -196,6 +199,12 @@ describe("session reauthentication (#4616)", () => {
     expect(right.ok).toBe(true);
     expect(mockClear).toHaveBeenCalledWith("member@example.com");
     expect(mockPrisma.sessionReauthChallenge.create).toHaveBeenCalled();
+    // #5261: a proved password is brought up to the current hashing cost.
+    expect(mockUpgrade).toHaveBeenCalledExactlyOnceWith({
+      memberId: "member-1",
+      plain: "correct",
+      storedHash: "stored-hash",
+    });
   });
 
   it("does not compare a password while the account is waiting", async () => {
