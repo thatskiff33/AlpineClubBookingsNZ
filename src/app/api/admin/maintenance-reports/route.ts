@@ -8,7 +8,7 @@ import {
 } from "@/lib/maintenance-report-admin";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-import { adminListPageQueryFields } from "@/lib/admin-list-page";
+import { adminListPage, adminListPageQueryFields } from "@/lib/admin-list-page";
 
 /**
  * The maintenance queue's list read (#2780). Lodge Operations `view`.
@@ -73,9 +73,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       reports: rows.map((row) => mapMaintenanceReportForList(row, now)),
       lodges,
-      total,
-      page,
-      pageSize,
+      ...adminListPage({ page, pageSize, total }),
       outstandingCount: openCount,
     });
   } catch (err) {

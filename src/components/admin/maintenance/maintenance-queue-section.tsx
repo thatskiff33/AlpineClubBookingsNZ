@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Camera, CheckCircle2, Trash2, Wrench } from "lucide-react";
 
+import { Pagination } from "@/components/admin/admin-pagination";
+import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -106,6 +108,7 @@ type ListPayload = {
   total: number;
   page: number;
   pageSize: number;
+  totalPages: number;
   outstandingCount: number;
 };
 
@@ -156,6 +159,15 @@ export function MaintenanceQueueSection() {
   const [lodgeId, setLodgeId] = useState("ALL");
   const [source, setSource] = useState<QueueReport["source"] | "ALL">("ALL");
 
+  // INV-OPS-020: the queue pages through the shared hook, so a filter change
+  // returns to page 1, a page a triage emptied steps back one, and a slower read
+  // for a page or filter left behind never replaces the one shown. The page
+  // stays in memory, as the filters do.
+  const queuePage = useAdminQueuePage({
+    filterKey: `${status}|${lodgeId}|${source}`,
+  });
+  const { page, receive, beginLoad } = queuePage;
+
   const [payload, setPayload] = useState<ListPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -166,20 +178,25 @@ export function MaintenanceQueueSection() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
+    const isCurrent = beginLoad();
     setLoading(true);
     setError("");
     try {
-      const params = new URLSearchParams({ status, source });
+      const params = new URLSearchParams({ status, source, page: String(page) });
       if (lodgeId !== "ALL") params.set("lodgeId", lodgeId);
       const res = await fetch(`/api/admin/maintenance-reports?${params.toString()}`);
       if (!res.ok) throw new Error("Failed to load the maintenance queue");
-      setPayload((await res.json()) as ListPayload);
+      const body = (await res.json()) as ListPayload;
+      if (!isCurrent()) return; // a newer read owns the list
+      setPayload(body);
+      receive(body, Array.isArray(body?.reports) ? body.reports.length : 0);
     } catch {
+      if (!isCurrent()) return;
       setError("The maintenance queue could not be loaded. Please try again.");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [status, lodgeId, source]);
+  }, [beginLoad, receive, status, lodgeId, source, page]);
 
   useEffect(() => {
     void load();
@@ -373,10 +390,11 @@ export function MaintenanceQueueSection() {
             </ul>
           )}
 
-          {payload && payload.total > reports.length ? (
-            <p className="text-xs text-muted-foreground">
-              Showing the newest {reports.length} of {payload.total}.
-            </p>
+          {queuePage.pagination ? (
+            <Pagination
+              {...queuePage.pagination}
+              aria-label="Maintenance report pages"
+            />
           ) : null}
         </CardContent>
       </Card>
