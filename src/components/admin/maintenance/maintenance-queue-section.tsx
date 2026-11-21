@@ -151,6 +151,55 @@ function useMaintenanceStampFormatter() {
   return (value: Date) => clubTime.instantDateTime(value);
 }
 
+/** One report in the queue list: its badges, summary, reporter and Open button. */
+function MaintenanceQueueRow({
+  report,
+  formatStamp,
+  onOpen,
+  openDisabled,
+}: {
+  report: QueueReport;
+  formatStamp: (value: Date) => string;
+  onOpen: () => void;
+  openDisabled: boolean;
+}) {
+  return (
+    <li className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0 space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={STATUS_VARIANTS[report.status]}>
+            {STATUS_LABELS[report.status]}
+          </Badge>
+          <Badge variant="outline">{report.lodge.name}</Badge>
+          {report.source === "LODGE_QR" ? (
+            <Badge variant="outline">QR code</Badge>
+          ) : null}
+          {report.photo.retained ? (
+            <Badge variant="outline" className="gap-1">
+              <Camera className="h-3 w-3" aria-hidden="true" />
+              Photo
+            </Badge>
+          ) : null}
+        </div>
+        <p className="truncate font-medium">{report.summary}</p>
+        <p className="text-xs text-muted-foreground">
+          {describeReporter(report)} ·{" "}
+          {formatStamp(new Date(report.createdAt))}
+        </p>
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        className="shrink-0"
+        onClick={onOpen}
+        disabled={openDisabled}
+      >
+        Open
+      </Button>
+    </li>
+  );
+}
+
 export function MaintenanceQueueSection() {
   const formatStamp = useMaintenanceStampFormatter();
   const canEdit = useAdminAreaEditAccess("lodge");
@@ -350,42 +399,13 @@ export function MaintenanceQueueSection() {
           ) : (
             <ul className="divide-y rounded-md border">
               {reports.map((report) => (
-                <li
+                <MaintenanceQueueRow
                   key={report.id}
-                  className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant={STATUS_VARIANTS[report.status]}>
-                        {STATUS_LABELS[report.status]}
-                      </Badge>
-                      <Badge variant="outline">{report.lodge.name}</Badge>
-                      {report.source === "LODGE_QR" ? (
-                        <Badge variant="outline">QR code</Badge>
-                      ) : null}
-                      {report.photo.retained ? (
-                        <Badge variant="outline" className="gap-1">
-                          <Camera className="h-3 w-3" aria-hidden="true" />
-                          Photo
-                        </Badge>
-                      ) : null}
-                    </div>
-                    <p className="truncate font-medium">{report.summary}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {describeReporter(report)} ·{" "}
-                      {formatStamp(new Date(report.createdAt))}
-                    </p>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0"
-                    onClick={() => void openDetail(report.id)}
-                    disabled={detailLoading}
-                  >
-                    Open
-                  </Button>
-                </li>
+                  report={report}
+                  formatStamp={formatStamp}
+                  onOpen={() => void openDetail(report.id)}
+                  openDisabled={detailLoading}
+                />
               ))}
             </ul>
           )}
