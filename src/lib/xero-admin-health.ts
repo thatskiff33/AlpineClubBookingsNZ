@@ -2,7 +2,10 @@ import { getXeroWebhookHealth } from "@/lib/xero-webhook-health";
 import type { BookingStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { getXeroMemberGroupingSnapshot } from "@/lib/xero-member-grouping-resync";
-import type { ContactGroupMismatchCounts } from "@/lib/xero-contact-group-mismatch-summary";
+import {
+  contactGroupMismatchTotal,
+  type ContactGroupMismatchCounts,
+} from "@/lib/xero-contact-group-mismatch-summary";
 import { prisma } from "@/lib/prisma";
 import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
 import { readPaidAnotherWayUncoveredCents } from "@/lib/card-refund-paid-another-way-cash";
@@ -556,9 +559,10 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
       // Parity with the retired age-tier snapshot: information-only entries
       // (parked members in managed groups, never written to) count toward the
       // surfaced total so the operator still sees them (owner decision, #5234).
-      count:
-        contactGroupMismatches.mismatchCount +
-        contactGroupMismatches.informationalCount,
+      count: contactGroupMismatchTotal({
+        resyncCount: contactGroupMismatches.mismatchCount,
+        reviewByHandCount: contactGroupMismatches.informationalCount,
+      }),
       resyncCount: contactGroupMismatches.mismatchCount,
       reviewByHandCount: contactGroupMismatches.informationalCount,
       cacheReady: contactGroupMismatches.cacheReady,

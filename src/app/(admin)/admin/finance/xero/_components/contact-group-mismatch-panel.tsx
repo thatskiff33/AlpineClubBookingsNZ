@@ -10,9 +10,11 @@ import { requireInstant } from "@/lib/club-time"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { formatAgeTierName } from "@/lib/use-age-tier-options"
 import {
+  contactGroupMismatchTotal,
   describeContactGroupMismatchCounts,
   REVIEW_BY_HAND_REASON,
   reviewByHandFix,
+  type ContactGroupMismatchCounts,
 } from "@/lib/xero-contact-group-mismatch-summary"
 import { buildXeroContactUrl } from "@/lib/xero-links"
 import { SectionCard, ToneChip, type ToggleSection } from "./shared"
@@ -97,6 +99,10 @@ function ReviewByHandList({
   )
 }
 
+function mismatchCounts(data: ContactGroupMismatchResponse): ContactGroupMismatchCounts {
+  return { resyncCount: data.mismatchCount, reviewByHandCount: data.informationalCount }
+}
+
 export function ContactGroupMismatchPanel({
   open,
   shortCode,
@@ -138,8 +144,8 @@ export function ContactGroupMismatchPanel({
                 <Badge variant="outline">{formatGroupingMode(data.mode)}</Badge>
                 {!data.cacheReady ? (
                   <ToneChip tone="neutral" icon={Circle}>Cache needed</ToneChip>
-                ) : data.mismatchCount + data.informationalCount > 0 ? (
-                  <ToneChip tone="warning" icon={AlertTriangle}>{describeContactGroupMismatchCounts({ resyncCount: data.mismatchCount, reviewByHandCount: data.informationalCount })}</ToneChip>
+                ) : contactGroupMismatchTotal(mismatchCounts(data)) > 0 ? (
+                  <ToneChip tone="warning" icon={AlertTriangle}>{describeContactGroupMismatchCounts(mismatchCounts(data))}</ToneChip>
                 ) : (
                   <ToneChip tone="success" icon={CheckCircle2}>No mismatches</ToneChip>
                 )}
@@ -167,7 +173,7 @@ export function ContactGroupMismatchPanel({
           </div>
           {!data.cacheReady ? (
             <p className="text-sm text-muted-foreground">Refresh Xero contact groups before relying on this audit.</p>
-          ) : data.mismatchCount + data.informationalCount === 0 ? (
+          ) : contactGroupMismatchTotal(mismatchCounts(data)) === 0 ? (
             <p className="text-sm text-success">No linked members are currently mismatched against the active grouping rules.</p>
           ) : (
             <div className="space-y-6">

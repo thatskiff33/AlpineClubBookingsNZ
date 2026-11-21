@@ -18,6 +18,17 @@ export interface ContactGroupMismatchCounts {
   reviewByHandCount: number;
 }
 
+/**
+ * The one total the health tile, Stuck States and the panel all show:
+ * information-only entries count too (owner decision, #5234).
+ */
+export function contactGroupMismatchTotal({
+  resyncCount,
+  reviewByHandCount,
+}: ContactGroupMismatchCounts): number {
+  return resyncCount + reviewByHandCount;
+}
+
 /** The total split by kind, e.g. "2 to re-sync, 1 to review by hand". */
 export function describeContactGroupMismatchCounts({
   resyncCount,
