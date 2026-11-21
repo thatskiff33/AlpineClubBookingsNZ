@@ -246,9 +246,9 @@ describe("the words name the group organiser as the payee (owner decision, 21 Oc
       "Booking b1 lowered by a date change; the group organiser paid for it by internet banking, so the club refunds the difference to the group organiser by bank transfer.",
     );
     expect(refundRequestHandBackReason({ bookingId: "b1", payee: "organiser" })).toContain("refunds this to the group organiser by bank transfer");
-    // The member wording is exactly what it was.
+    // The member wording, which also covers a card payment with no Stripe record (#5212).
     expect(editRefundHandBackReason({ bookingId: "b1", editLabel: "date change", payee: "member" })).toBe(
-      "Booking b1 lowered by a date change; paid by internet banking or by hand, so the club refunds the difference by bank transfer (#3827).",
+      "Booking b1 lowered by a date change; paid by internet banking or by hand, or by a card payment with no Stripe record, so the club refunds the difference by bank transfer (#3827).",
     );
     expect(refundRequestHandBackReason({ bookingId: "b1", payee: "member" })).toBe(
       "Refund appeal approved on booking b1; not paid by card, so the club refunds this by bank transfer (#3827).",

@@ -54,6 +54,34 @@ export function isInternetBankingPrimary(row: { kind: PaymentTransactionKind; so
 export function receiptCountsInvoiceCorrections(
   rows: ReadonlyArray<{ kind: PaymentTransactionKind; source: PaymentSource; status: PaymentStatus; reason: string | null }>,
 ): boolean {
-  const receipts = rows.filter((row) => isInternetBankingPrimary(row) && isCapturedTransactionStatus(row.status));
+  const receipts = rows.filter(isCapturedInternetBankingPrimary);
   return receipts.length > 0 && receipts.every((row) => STORED_FIGURE_RECEIPT_REASONS.has(row.reason));
+}
+
+/**
+ * A captured bank-transfer PRIMARY receipt: the one row filter both
+ * `receiptCountsInvoiceCorrections` and `isStoredFigureBankReceipt` apply
+ * before asking about the stored figure, so it is written once.
+ */
+function isCapturedInternetBankingPrimary(row: {
+  kind: PaymentTransactionKind;
+  source: PaymentSource;
+  status: PaymentStatus;
+}): boolean {
+  return isInternetBankingPrimary(row) && isCapturedTransactionStatus(row.status);
+}
+
+/**
+ * #4069 (`INV-PAY-159`): a captured bank-transfer PRIMARY receipt holding the
+ * figure its payment was born with (`STORED_FIGURE_RECEIPT_REASONS`), not cash
+ * read from Xero. The cash-cover reader (`booking-cash-evidence.ts`) cannot
+ * prove what such a receipt took, so it reads it as unknown.
+ */
+export function isStoredFigureBankReceipt(row: {
+  kind: PaymentTransactionKind;
+  source: PaymentSource;
+  status: PaymentStatus;
+  reason: string | null;
+}): boolean {
+  return isCapturedInternetBankingPrimary(row) && STORED_FIGURE_RECEIPT_REASONS.has(row.reason);
 }
