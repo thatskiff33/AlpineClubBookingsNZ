@@ -30,6 +30,8 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUnique: h.bookingFindUnique },
     familyGroupMember: { findMany: h.familyFindMany },
+    // No ledger row took money, unless a case says otherwise (`workPartyPaidWithNoMoneyTaken`).
+    paymentTransaction: { count: vi.fn(async () => 0) },
   },
 }));
 vi.mock("@/lib/lodges", () => ({ getDefaultLodgeId: vi.fn(async () => "lodge-1") }));
@@ -64,6 +66,7 @@ vi.mock("@/lib/work-party-booking-correction", async (importOriginal) => ({
 import { ApiError } from "@/lib/api-error";
 import {
   WORK_PARTY_OWN_BOOKING_MESSAGE,
+  WORK_PARTY_PAID_WITH_NO_MONEY_MESSAGE,
   WorkPartyCorrectionFiguresChangedError,
 } from "@/lib/work-party-booking-correction";
 import { GET, POST } from "../route";
@@ -397,6 +400,24 @@ describe("GET", () => {
     ] });
     const refused = await (await GET(new Request("http://localhost/x") as never, { params })).json();
     expect(refused.removal).toMatchObject({ eligible: false, reason: expect.stringMatching(/current status/) });
+  });
+
+  it("#5149 owner decision 20 Nov: the list refuses Remove on a booking paid by account credit alone", async () => {
+    const onWorkParty = [{ id: "r-1", applicationOrder: 0, promoCode: { workPartyEvent: { id: "wp-1", name: "Here" } } }];
+    const creditOnly = { id: "p-1", status: "SUCCEEDED", amountCents: 0, creditAppliedCents: 10_000, source: "STRIPE" };
+    h.bookingFindUnique.mockResolvedValue({ ...ownBooking("member-1"), promoRedemptions: onWorkParty, payment: creditOnly });
+    h.findActiveWorkParties.mockResolvedValue(oneWorkParty);
+    const body = await (await GET(new Request("http://localhost/x") as never, { params })).json();
+    expect(body.removal).toEqual({ eligible: false, reason: WORK_PARTY_PAID_WITH_NO_MONEY_MESSAGE });
+
+    // Money on the payment (an organiser-paid joiner's share, or a card capture): allowed.
+    h.bookingFindUnique.mockResolvedValue({
+      ...ownBooking("member-1"),
+      promoRedemptions: onWorkParty,
+      payment: { ...creditOnly, amountCents: 5_000 },
+    });
+    const allowed = await (await GET(new Request("http://localhost/x") as never, { params })).json();
+    expect(allowed.removal).toEqual({ eligible: true, reason: null });
   });
 
   it("404s an unknown booking", async () => {

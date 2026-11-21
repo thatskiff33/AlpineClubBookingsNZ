@@ -21,7 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *    differ ONLY in the method is refused, and the edit's own quoted-figures
  *    check (`INV-MOD-062`) runs on the save;
  *  - an unpaid ask that took the whole reduction offers no method (B-L1), and
- *    a Remove on a booking PAID with nothing taken is refused.
+ *    a Remove on a booking PAID with no money taken (nothing, or credit alone) is refused.
  *
  * The real money paths are proved on PostgreSQL in
  * `work-party-booking-correction.realdb.test.ts`.
@@ -105,7 +105,7 @@ import {
   WORK_PARTY_NOT_ON_BOOKING_MESSAGE,
   WORK_PARTY_OWN_BOOKING_MESSAGE,
   WORK_PARTY_REMOVAL_MONEY_BACK_MESSAGE,
-  WORK_PARTY_SETTLED_AT_ZERO_MESSAGE,
+  WORK_PARTY_PAID_WITH_NO_MONEY_MESSAGE,
   WorkPartyCorrectionFiguresChangedError,
   type WorkPartyCorrectionFigures,
 } from "@/lib/work-party-booking-correction";
@@ -608,19 +608,21 @@ describe("Remove from work party (fork #130): the service's own guards", () => {
     expect(h.modifyCalls).toEqual([]);
   });
 
-  it("owner decision 18 Nov: refuses a booking PAID with nothing taken, before the edit runs", async () => {
-    const SETTLED_AT_ZERO = { status: "SUCCEEDED", amountCents: 0, creditAppliedCents: 0, source: "STRIPE" };
-    seedBooking({ finalPriceCents: 0, promoRedemptions: ON_WORK_PARTY, payment: SETTLED_AT_ZERO });
-    expect(await refusal(removeBookingFromWorkParty({ ...common, dryRun: true }))).toEqual({
-      status: 409,
-      message: WORK_PARTY_SETTLED_AT_ZERO_MESSAGE,
-    });
+  it("owner decisions 18 and 20 Nov: refuses a booking PAID with no money taken, nothing or credit alone, before the edit runs", async () => {
+    const NOTHING_TAKEN = { id: "payment-1", status: "SUCCEEDED", amountCents: 0, creditAppliedCents: 0, source: "STRIPE", stripePaymentIntentId: null };
+    const refused = { status: 409, message: WORK_PARTY_PAID_WITH_NO_MONEY_MESSAGE };
+    seedBooking({ finalPriceCents: 0, promoRedemptions: ON_WORK_PARTY, payment: NOTHING_TAKEN });
+    expect(await refusal(removeBookingFromWorkParty({ ...common, dryRun: true }))).toEqual(refused);
+    // 20 Nov: account credit alone is no money taken either.
+    seedBooking({ finalPriceCents: 10_000, promoRedemptions: ON_WORK_PARTY, payment: { ...NOTHING_TAKEN, creditAppliedCents: 10_000 } });
+    expect(await refusal(removeBookingFromWorkParty({ ...common, dryRun: true }))).toEqual(refused);
     expect(h.modifyCalls).toEqual([]);
-    // Something was taken (a captured ledger row), or credit applied: allowed.
+    // Money was taken: a captured ledger row, or money on the payment (an organiser-paid
+    // joiner's mirror records its share, credit or not): allowed.
     h.takenTransactions = 1;
     expect((await removeBookingFromWorkParty({ ...common, dryRun: true })).outcome).toBe("quoted");
     h.takenTransactions = 0;
-    seedBooking({ finalPriceCents: 0, promoRedemptions: ON_WORK_PARTY, payment: { ...SETTLED_AT_ZERO, creditAppliedCents: 1 } });
+    seedBooking({ finalPriceCents: 15_000, promoRedemptions: ON_WORK_PARTY, payment: { ...NOTHING_TAKEN, amountCents: 5_000, creditAppliedCents: 10_000 } });
     expect((await removeBookingFromWorkParty({ ...common, dryRun: true })).outcome).toBe("quoted");
   });
 });

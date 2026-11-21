@@ -42,7 +42,11 @@
  *     guest on another member's booking is not.
  *  8. #5149 (the maintainers' second comment): a disputed card payment is
  *     refused up front; a Remove after a 100% Add (PAID, nothing taken) is
- *     refused; Add, Remove, Add moves no money and offers no method when the
+ *     refused, and (owner decision, 20 Nov 2026) so is one on a booking PAID
+ *     with account credit alone, whether a 50% Add brought it to the credit or
+ *     credit paid it in full before any work party, while an organiser-paid
+ *     joiner is not caught; a card payment Stripe holds no record of is
+ *     refunded by bank transfer (`INV-PAY-160`); Add, Remove, Add moves no money and offers no method when the
  *     unpaid ask takes the reduction; two Removes at once apply once; started
  *     stays of every payment shape, a held night sold above the season rate,
  *     a partly refunded booking, and Removes of every payment shape.
@@ -105,7 +109,13 @@ const STARTED_PROMO_CODE = "RACE119STARTEDBEE";
 const FULL_EVENT_ID = "race-5149-full-event";
 const FULL_PROMO_ID = "race-5149-full-promo";
 const FULL_PROMO_CODE = "RACE5149FULLBEE";
-const ALL_PROMO_IDS = [PROMO_ID, OTHER_PROMO_ID, PUBLIC_PROMO_ID, STARTED_PROMO_ID, MEMBER_PROMO_ID, FULL_PROMO_ID];
+/** #5149 owner decision of 20 Nov 2026: a 50% work party over every night of the August stay. */
+const HALF_EVENT_ID = "race-5149-half-event";
+const HALF_PROMO_ID = "race-5149-half-promo";
+const HALF_PROMO_CODE = "RACE5149HALFBEE";
+/** The decision's example: $100 of the member's credit on the $200 booking. */
+const DECISION_CREDIT_CENTS = 10_000;
+const ALL_PROMO_IDS = [PROMO_ID, OTHER_PROMO_ID, PUBLIC_PROMO_ID, STARTED_PROMO_ID, MEMBER_PROMO_ID, FULL_PROMO_ID, HALF_PROMO_ID];
 const GROUP_ID = "race-129-group";
 const SETTLEMENT_ID = "race-129-settlement";
 const SETTLEMENT_PI = "pi_race_129_group";
@@ -245,7 +255,7 @@ async function clean(): Promise<void> {
 }
 
 async function teardownFixtures(): Promise<void> {
-  await prisma.workPartyEvent.deleteMany({ where: { id: { in: [EVENT_ID, OTHER_EVENT_ID, STARTED_EVENT_ID, FULL_EVENT_ID] } } });
+  await prisma.workPartyEvent.deleteMany({ where: { id: { in: [EVENT_ID, OTHER_EVENT_ID, STARTED_EVENT_ID, FULL_EVENT_ID, HALF_EVENT_ID] } } });
   await prisma.promoCode.deleteMany({ where: { id: { in: ALL_PROMO_IDS } } });
   await prisma.membershipTypeSeasonRate.deleteMany({ where: { seasonId: SEASON_ID } });
   await prisma.season.deleteMany({ where: { id: SEASON_ID } });
@@ -259,6 +269,7 @@ async function teardownFixtures(): Promise<void> {
 type Shape =
   | "unpaid"
   | "unpaid-credit"
+  | "unpaid-half-credit"
   | "paid"
   | "part-paid"
   | "credit-paid"
@@ -284,6 +295,8 @@ const ORGANISER_PAYS_SHAPES: readonly Shape[] = ["organiser-paid", "organiser-un
  *  - bank-paid: PAID by Internet Banking, the whole price received;
  *  - card-and-credit (#5149): PAID, `CARD_AND_CREDIT_CREDIT_CENTS` with account
  *    credit and the rest captured by card;
+ *  - unpaid-half-credit (#5149 owner decision, 20 Nov 2026): as unpaid-credit,
+ *    with `DECISION_CREDIT_CENTS` applied, half the price;
  *  - organiser-unpaid / organiser-settling (#5149 review A1): a joiner of an
  *    organiser-pays group before its settlement has succeeded — PAYMENT_PENDING
  *    with no settlement, or CONFIRMED with the settlement still PENDING — and
@@ -338,7 +351,7 @@ async function seed(
       checkIn,
       checkOut: stay.checkOut,
       status:
-        shape === "unpaid" || shape === "unpaid-credit" || shape === "organiser-unpaid"
+        shape === "unpaid" || shape === "unpaid-credit" || shape === "unpaid-half-credit" || shape === "organiser-unpaid"
           ? "PAYMENT_PENDING"
           : shape === "organiser-settling"
             ? "CONFIRMED"
@@ -370,16 +383,17 @@ async function seed(
   // Before the group settlement succeeds a joiner has no payment mirror.
   if (shape === "organiser-unpaid" || shape === "organiser-settling") return;
 
-  if (shape === "unpaid-credit") {
+  if (shape === "unpaid-credit" || shape === "unpaid-half-credit") {
     // PAYMENT_PENDING with the owner's account credit applied and the rest
     // still to pay by card: the opening credit, then its BOOKING_APPLIED row.
-    const cardCents = price - UNPAID_CREDIT_APPLIED_CENTS;
+    const creditCents = shape === "unpaid-half-credit" ? DECISION_CREDIT_CENTS : UNPAID_CREDIT_APPLIED_CENTS;
+    const cardCents = price - creditCents;
     await prisma.payment.create({
       data: {
         id: PAYMENT_ID,
         bookingId: BOOKING_ID,
         amountCents: cardCents,
-        creditAppliedCents: UNPAID_CREDIT_APPLIED_CENTS,
+        creditAppliedCents: creditCents,
         source: "STRIPE",
         status: "PENDING",
         stripePaymentIntentId: "pi_race_129_open",
@@ -396,10 +410,10 @@ async function seed(
       },
     });
     await prisma.memberCredit.create({
-      data: { memberId: ownerId, amountCents: UNPAID_CREDIT_APPLIED_CENTS, type: "ADMIN_ADJUSTMENT", description: "race 129 opening balance" },
+      data: { memberId: ownerId, amountCents: creditCents, type: "ADMIN_ADJUSTMENT", description: "race 129 opening balance" },
     });
     await prisma.$transaction((tx) =>
-      memberCredit.applyCreditToBooking(ownerId, UNPAID_CREDIT_APPLIED_CENTS, BOOKING_ID, tx, CLUB_FORMAT_TEST),
+      memberCredit.applyCreditToBooking(ownerId, creditCents, BOOKING_ID, tx, CLUB_FORMAT_TEST),
     );
     return;
   }
@@ -603,6 +617,15 @@ async function removalRefusal(workPartyEventId = EVENT_ID): Promise<{ status: nu
     () => null,
     (error: { status: number; message: string }) => ({ status: error.status, message: error.message }),
   );
+}
+
+/** The removal facts the list and the service read (`readWorkPartyBookingFacts`), fresh. */
+async function removalFacts() {
+  const facts = await import("@/lib/work-party-booking-facts");
+  return prisma.$transaction(async (tx) => {
+    const booking = await tx.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: facts.WORK_PARTY_BOOKING_SELECT });
+    return (await facts.readWorkPartyBookingFacts(tx, BOOKING_ID, booking, OFFICER_ID)).remove;
+  });
 }
 
 /** Everything the correction could write, for the "writes nothing" claims. */
@@ -836,6 +859,31 @@ async function batchRefusal(params: {
         active: true,
         lodgeId: LODGE_ID,
         promoCodeId: FULL_PROMO_ID,
+      },
+    });
+    // #5149 owner decision of 20 Nov 2026: a 50% work party over all four August nights.
+    await prisma.promoCode.create({
+      data: {
+        id: HALF_PROMO_ID,
+        code: HALF_PROMO_CODE,
+        internal: true,
+        description: "Working bee: Race 5149 half working bee",
+        type: "PERCENTAGE",
+        percentOff: 50,
+        membersOnly: true,
+        active: true,
+      },
+    });
+    await prisma.workPartyEvent.create({
+      data: {
+        id: HALF_EVENT_ID,
+        name: "Race 5149 half working bee",
+        startDate: NIGHTS[0]!,
+        endDate: NIGHTS[NIGHTS.length - 1]!,
+        discountPercent: 50,
+        active: true,
+        lodgeId: LODGE_ID,
+        promoCodeId: HALF_PROMO_ID,
       },
     });
     // H1: a member's own code (its validity window is set per test).
@@ -1897,9 +1945,82 @@ async function batchRefusal(params: {
     await modificationXeroOps(0);
     const before = await snapshot();
     stripeAsksFail();
-    expect(await removalRefusal(FULL_EVENT_ID)).toEqual({ status: 409, message: correction.WORK_PARTY_SETTLED_AT_ZERO_MESSAGE });
+    expect(await removalRefusal(FULL_EVENT_ID)).toEqual({ status: 409, message: correction.WORK_PARTY_PAID_WITH_NO_MONEY_MESSAGE });
     expect(await snapshot()).toEqual(before);
     expect(await prisma.promoRedemption.count({ where: { bookingId: BOOKING_ID, promoCodeId: FULL_PROMO_ID } })).toBe(1);
+  }, 90_000);
+
+  it("#5149 owner decision 20 Nov: an unpaid $200 booking with $100 credit, after a 50% Add, is PAID by credit alone and Remove is refused", async () => {
+    // The decision's example (https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-7035299228).
+    await seed("unpaid-half-credit");
+    const figures = await quote({}, HALF_EVENT_ID);
+    expect(figures).toMatchObject({
+      previousFinalPriceCents: PRICE_CENTS,
+      newFinalPriceCents: PRICE_CENTS - DECISION_CREDIT_CENTS,
+      priceDiffCents: -DECISION_CREDIT_CENTS,
+      refundAmountCents: 0,
+      refundedExcessCreditCents: 0,
+    });
+    const result = await apply(figures, {}, HALF_EVENT_ID);
+    expect(result, JSON.stringify(result)).toMatchObject({ outcome: "applied" });
+    // The ordinary $0 auto-pay: the credit covers the new price, so PAID with no money taken.
+    expect(await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { status: true } })).toEqual({ status: "PAID" });
+    expect(await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } })).toMatchObject({
+      status: "SUCCEEDED",
+      amountCents: 0,
+      creditAppliedCents: DECISION_CREDIT_CENTS,
+    });
+    await modificationXeroOps(0);
+    const before = await snapshot();
+    stripeAsksFail();
+    expect(await removalRefusal(HALF_EVENT_ID)).toEqual({ status: 409, message: correction.WORK_PARTY_PAID_WITH_NO_MONEY_MESSAGE });
+    expect(await snapshot()).toEqual(before);
+    expect(await prisma.promoRedemption.count({ where: { bookingId: BOOKING_ID, promoCodeId: HALF_PROMO_ID } })).toBe(1);
+    // The list reads the same fact.
+    expect(await removalFacts()).toMatchObject({ paidWithNoMoneyTaken: true, workPartyEventId: HALF_EVENT_ID });
+  }, 90_000);
+
+  it("#5149 owner decision 20 Nov: a booking paid in full by credit before any work party may be added, and Remove is refused", async () => {
+    // The trade-off the owner accepted: credit alone is refused, whenever the credit was applied.
+    await seed("credit-paid");
+    stripeAsksFail();
+    const added = await apply(await quote());
+    expect(added, JSON.stringify(added)).toMatchObject({ outcome: "applied" });
+    await modificationXeroOps(1);
+    const before = await snapshot();
+    expect(await removalRefusal()).toEqual({ status: 409, message: correction.WORK_PARTY_PAID_WITH_NO_MONEY_MESSAGE });
+    expect(await snapshot()).toEqual(before);
+    expect(await workPartyRedemptions()).toHaveLength(1);
+  }, 90_000);
+
+  it("#5149 owner decision 20 Nov: an organiser-paid joiner is never paid by credit alone, as the group settlement records its share", async () => {
+    await seed("organiser-paid");
+    stripeRefundsFail();
+    const added = await apply(await quote());
+    expect(added, JSON.stringify(added)).toMatchObject({ outcome: "applied" });
+    // The joiner's payment holds the share the organiser paid, so the fact is false.
+    expect(await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { amountCents: true } })).toEqual({ amountCents: PRICE_CENTS });
+    expect(await removalFacts()).toMatchObject({ paidWithNoMoneyTaken: false });
+    // Remove is answered by the edit's own rule for a card-paid joiner, not this refusal.
+    expect(await removalRefusal()).toEqual({ status: 409, message: expect.stringContaining("group organiser") });
+  }, 90_000);
+
+  it("#5212 (INV-PAY-160): a card payment Stripe holds no record of is offered Refund to bank account, the edit's hand-back", async () => {
+    await seed("paid");
+    stripeRefundsFail();
+    await prisma.paymentTransaction.update({ where: { id: PRIMARY_TXN_ID }, data: { stripePaymentIntentId: null } });
+    await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { stripePaymentIntentId: null } });
+    const offered = await quoted();
+    expect(offered.settlementOptions).toEqual({ methods: ["credit", "card"], paidByOrganiser: false, refundTo: "bank" });
+    const figures = await quote({ settlementMethod: "card" });
+    expect(figures).toMatchObject({ accountCreditAmountCents: 0, refundAmountCents: DISCOUNT_CENTS, settlementMethod: "card" });
+    const result = await apply(figures, { settlementMethod: "card" });
+    expect(result, JSON.stringify(result)).toMatchObject({ outcome: "applied", figures });
+    expect(
+      await prisma.manualRefundTask.findMany({ where: { bookingId: BOOKING_ID }, select: { paymentId: true, amountCents: true } }),
+    ).toEqual([{ paymentId: PAYMENT_ID, amountCents: DISCOUNT_CENTS }]);
+    expect(await refundOperations()).toEqual([]);
+    expect(await prisma.memberCredit.count({ where: { memberId: OWNER_ID } })).toBe(0);
   }, 90_000);
 
   it("#5149 Add, Remove, Add by credit: no money moves twice, and the second Add offers no method", async () => {
@@ -1962,7 +2083,8 @@ async function batchRefusal(params: {
     expect(await bookingRow()).toMatchObject({ finalPriceCents: PRICE_CENTS });
   }, 90_000);
 
-  it.each(["bank-paid", "credit-paid", "part-paid"] as const)(
+  // A credit-paid booking is refused Remove (owner decision, 20 Nov 2026), proved above.
+  it.each(["bank-paid", "part-paid"] as const)(
     "#5149 Remove on a %s booking: the price goes back up, nothing comes back, and credit already given stays",
     async (shape) => {
       await seed(shape);

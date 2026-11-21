@@ -5,7 +5,7 @@ import { BookingStatus } from "@prisma/client";
 import {
   WORK_PARTY_NOT_ON_BOOKING_MESSAGE,
   WORK_PARTY_OWN_BOOKING_MESSAGE,
-  WORK_PARTY_SETTLED_AT_ZERO_MESSAGE,
+  WORK_PARTY_PAID_WITH_NO_MONEY_MESSAGE,
   workPartyBookingEligibility,
   workPartyRemovalEligibility,
   type WorkPartyCorrectionFigures,
@@ -72,7 +72,7 @@ describe("workPartyRemovalEligibility (fork #130)", () => {
     quotePriced: false,
     workPartyEventId: "event-1",
     actorIsOwnerOrFamily: false,
-    settledAtZero: false,
+    paidWithNoMoneyTaken: false,
   };
 
   it("accepts a booking that carries this work party, future or started", () => {
@@ -112,11 +112,11 @@ describe("workPartyRemovalEligibility (fork #130)", () => {
     ).toEqual(refusal(WORK_PARTY_OWN_BOOKING_MESSAGE));
   });
 
-  it("owner decision 18 Nov: refuses a booking PAID with nothing taken, telling the officer to cancel or ask the treasurer", () => {
-    expect(workPartyRemovalEligibility({ ...onBooking, settledAtZero: true }, context, "event-1")).toEqual(
-      refusal(WORK_PARTY_SETTLED_AT_ZERO_MESSAGE),
+  it("owner decisions 18 and 20 Nov: refuses a booking PAID with no money taken, telling the officer to cancel or ask the treasurer", () => {
+    expect(workPartyRemovalEligibility({ ...onBooking, paidWithNoMoneyTaken: true }, context, "event-1")).toEqual(
+      refusal(WORK_PARTY_PAID_WITH_NO_MONEY_MESSAGE),
     );
-    expect(WORK_PARTY_SETTLED_AT_ZERO_MESSAGE).toMatch(/Cancel it, or ask the treasurer/);
+    expect(WORK_PARTY_PAID_WITH_NO_MONEY_MESSAGE).toMatch(/Cancel it, or ask the treasurer/);
   });
 });
 

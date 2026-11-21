@@ -197,10 +197,17 @@ What happens:
 - it isn't pending, confirmed or paid, its stay has finished, or it is priced
   by its quote;
 - it isn't on that work party;
-- it is marked paid with nothing taken: for example an unpaid booking a 100%
-  work party brought to nothing, which was then marked paid and given its
+- it is marked paid but no money was taken: for example an unpaid booking a
+  100% work party brought to nothing, which was then marked paid and given its
   beds. Removing the work party would leave it paid and holding beds while
-  owing its whole price, so **cancel the booking, or ask the treasurer**.
+  owing what the work party took off, so **cancel the booking, or ask the
+  treasurer**;
+- it is marked paid with account credit alone, and no money taken: for example
+  an unpaid $200 booking with $100 of credit applied, which a 50% work party
+  brought down to the credit, so it was marked paid. The same applies, for the
+  same reason. A booking paid in full by credit before any work party is
+  refused too. A joiner's booking the group organiser paid is not: the
+  organiser's payment counts as money taken.
 
 ## Settings reference
 
@@ -226,7 +233,7 @@ What happens:
 | A work party is "not available" in **Add to work party** | One of the reasons listed under "When a booking can't be added" | The dialog names the reason |
 | "This is your own or your family's booking, so another officer must change its work party" | You, or someone in your family group, own the booking or organise the group that pays for it | Ask another Booking Officer or Full Admin to add or remove it |
 | "This booking's card payment is disputed" after **Show the new total** | The member's card payment has an open or lost Stripe dispute, and money would come back | Ask the treasurer, who settles the held money by hand |
-| "This booking is marked paid with nothing taken" on **Remove** | For example, a 100% work party brought an unpaid booking to nothing and it was marked paid | Cancel the booking, or ask the treasurer |
+| "This booking is marked paid, but no money was taken" on **Remove** | It was paid with nothing or with account credit alone: for example, a work party brought an unpaid booking down to nothing, or to the credit applied, and it was marked paid | Cancel the booking, or ask the treasurer |
 | There's no Delete button on an event | It already has attending bookings | Deactivate it instead — delete is blocked to keep the discount history |
 | A member says the discount didn't apply | The event is inactive, their nights fall outside the window, or they didn't tick the working-bee option | Check the event is Active, its dates cover their nights, and that they selected it when booking |
 | "Discount must be a whole number between 1 and 100" | A non-integer or out-of-range discount was entered | Enter a whole number from 1 to 100 |

@@ -12,8 +12,9 @@
  *  - the acting officer is the booking's owner, or for an organiser-paid
  *    joiner the organiser who paid, or in either's family groups (owner
  *    decision 3, 18 Nov 2026), whatever the money does;
- *  - the booking is PAID with nothing taken (owner decision, 18 Nov 2026), so a
- *    Remove would leave a paid, bed-holding booking owing its whole price.
+ *  - the booking is PAID with no money taken, nothing or account credit alone
+ *    (owner decisions of 18 and 20 Nov 2026), so a Remove would leave a paid,
+ *    bed-holding booking owing what the work party took off.
  */
 import { BookingStatus, type Prisma } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -92,18 +93,25 @@ export async function workPartyActorIsOwnerOrFamily(
 }
 
 /**
- * Owner decision, 18 Nov 2026 (maintainers' second comment): PAID with nothing
- * taken — no money on the payment (`amountCents` 0), no account credit applied,
- * and no ledger row that took any. The ordinary $0 auto-pay writes exactly this
- * shape when an Add brings an unpaid booking to nothing.
+ * PAID with no money taken: no money on the payment (`amountCents` 0) and no
+ * ledger row that took any, whatever account credit paid. Owner decision,
+ * 18 Nov 2026 (maintainers' second comment): nothing at all, the shape the
+ * ordinary $0 auto-pay writes when an Add brings an unpaid booking to nothing.
+ * Owner decision, 20 Nov 2026
+ * (https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-7035299228):
+ * account credit alone too, the shape the auto-pay writes when an Add brings
+ * the price down to the credit applied. A booking paid in full by credit
+ * before any work party is caught as well; the owner accepted that. An
+ * organiser-paid joiner never is: the group settlement records the joiner's
+ * share on its payment (`amountCents`).
  */
-export async function workPartySettledAtZero(
+export async function workPartyPaidWithNoMoneyTaken(
   db: Pick<Prisma.TransactionClient, "paymentTransaction">,
   booking: Pick<WorkPartyBooking, "status" | "payment">,
 ): Promise<boolean> {
   const payment = booking.payment;
   if (booking.status !== BookingStatus.PAID || !payment) return false;
-  if (payment.amountCents > 0 || payment.creditAppliedCents > 0) return false;
+  if (payment.amountCents > 0) return false;
   const taken = await db.paymentTransaction.count({
     where: { paymentId: payment.id, amountCents: { gt: 0 }, status: { in: ["SUCCEEDED", "PARTIALLY_REFUNDED"] } },
   });
@@ -144,7 +152,7 @@ export async function readWorkPartyBookingFacts(
     remove: {
       ...shared,
       workPartyEventId: current?.id ?? null,
-      settledAtZero: current ? await workPartySettledAtZero(db, booking) : false,
+      paidWithNoMoneyTaken: current ? await workPartyPaidWithNoMoneyTaken(db, booking) : false,
     },
   };
 }

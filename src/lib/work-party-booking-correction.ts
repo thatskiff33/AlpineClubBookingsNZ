@@ -133,8 +133,8 @@ export const WORK_PARTY_OWN_BOOKING_MESSAGE =
 export const WORK_PARTY_DISPUTED_PAYMENT_MESSAGE =
   "This booking's card payment is disputed, so any money back would be held for the treasurer to settle by hand. Ask the treasurer.";
 
-export const WORK_PARTY_SETTLED_AT_ZERO_MESSAGE =
-  "This booking is marked paid with nothing taken. Cancel it, or ask the treasurer.";
+export const WORK_PARTY_PAID_WITH_NO_MONEY_MESSAGE =
+  "This booking is marked paid, but no money was taken (it was paid with account credit, or nothing). Cancel it, or ask the treasurer.";
 
 /**
  * The refusals Add and Remove share: owner decision 3 (never the officer's own
@@ -224,8 +224,8 @@ export interface WorkPartyRemovalEligibilityBooking {
   workPartyEventId: string | null;
   /** Owner decision 3, as for an Add. */
   actorIsOwnerOrFamily: boolean;
-  /** PAID with nothing taken (`workPartySettledAtZero`). */
-  settledAtZero: boolean;
+  /** PAID with no money taken: nothing, or account credit alone (`workPartyPaidWithNoMoneyTaken`). */
+  paidWithNoMoneyTaken: boolean;
 }
 
 export const WORK_PARTY_NOT_ON_BOOKING_MESSAGE = "This booking is not on that work party.";
@@ -235,11 +235,13 @@ export const WORK_PARTY_NOT_ON_BOOKING_MESSAGE = "This booking is not on that wo
  * owner decision 2 of 18 Nov 2026): the stay rules Add has, owner decision 3
  * included, and the booking must carry exactly this work party. The event's
  * own state does not matter: an inactive work party can still be removed from
- * a booking it was added to by mistake. A booking PAID with nothing taken is
- * refused (owner decision, 18 Nov 2026, maintainers' comment
- * https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6952444211):
- * a 100% Add settled it at $0 and gave it its beds, and a Remove would leave it
- * paid and holding them while owing its whole price.
+ * a booking it was added to by mistake. A booking PAID with no money taken is
+ * refused: with nothing taken (owner decision, 18 Nov 2026, maintainers' comment
+ * https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6952444211),
+ * or with account credit alone (owner decision, 20 Nov 2026,
+ * https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-7035299228).
+ * An Add brought it to $0 owed and gave it its beds, and a Remove would leave
+ * it paid and holding them while owing what the work party took off.
  */
 export function workPartyRemovalEligibility(
   booking: WorkPartyRemovalEligibilityBooking,
@@ -251,7 +253,7 @@ export function workPartyRemovalEligibility(
   if (booking.workPartyEventId !== workPartyEventId) {
     return { ok: false, reason: WORK_PARTY_NOT_ON_BOOKING_MESSAGE };
   }
-  if (booking.settledAtZero) return { ok: false, reason: WORK_PARTY_SETTLED_AT_ZERO_MESSAGE };
+  if (booking.paidWithNoMoneyTaken) return { ok: false, reason: WORK_PARTY_PAID_WITH_NO_MONEY_MESSAGE };
   return { ok: true };
 }
 
