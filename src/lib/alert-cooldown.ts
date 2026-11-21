@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
@@ -17,29 +18,37 @@ import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
  * reading between claim attempts) is bounded and acceptable for noise control;
  * it must never be relied on for money correctness.
  *
+ * `awaitingSend` (#5255, once-ever claims only) also stamps the claim as
+ * having no email behind it yet: the alert's own email row clears that
+ * (`confirmAlertCooldownSend`), and the sweep gives back a claim still marked
+ * after its grace (`releaseUnsentAlertCooldown`).
+ *
  * @returns true when this caller holds the claim and should send.
  */
 export async function claimAlertCooldown({
   key,
   windowMs,
   now = new Date(),
+  awaitingSend = false,
   store = prisma,
 }: {
   key: string;
   windowMs: number;
   now?: Date;
+  awaitingSend?: boolean;
   store?: Pick<typeof prisma, "alertCooldown">;
 }): Promise<boolean> {
   const windowStart = new Date(now.getTime() - windowMs);
+  const stamp = { lastAlertedAt: now, ...(awaitingSend ? { awaitingSendSince: now } : {}) };
 
   const claimed = await store.alertCooldown.updateMany({
     where: { key, lastAlertedAt: { lt: windowStart } },
-    data: { lastAlertedAt: now },
+    data: stamp,
   });
   if (claimed.count > 0) return true;
 
   try {
-    await store.alertCooldown.create({ data: { key, lastAlertedAt: now } });
+    await store.alertCooldown.create({ data: { key, ...stamp } });
     return true;
   } catch (error) {
     if (isPrismaUniqueConstraintError(error)) return false;
@@ -87,6 +96,7 @@ export async function releaseAlertCooldown({
  * out of the window, and `claimAlertCooldown` with the same `windowMs` succeeds
  * again, exactly `retryAfterMs` after the claim. Same own-stamp guard as
  * `releaseAlertCooldown`, so a newer claim by another sender is never touched.
+ * A deferred claim is settled for the day, so the sweep leaves it (#5255).
  */
 export async function deferAlertCooldown({
   key,
@@ -103,7 +113,69 @@ export async function deferAlertCooldown({
 }): Promise<void> {
   await store.alertCooldown.updateMany({
     where: { key, lastAlertedAt: claimedAt },
-    data: { lastAlertedAt: new Date(claimedAt.getTime() - windowMs + retryAfterMs) },
+    data: { lastAlertedAt: new Date(claimedAt.getTime() - windowMs + retryAfterMs), awaitingSendSince: null },
+  });
+}
+
+/**
+ * #5255 (`INV-INT-041`): record that the once-ever claim taken at `claimedAt`
+ * has an email behind it, so the sweep never gives it back. Guarded by the
+ * claim's own stamp, not the mark: every recipient's row confirms, and only
+ * the first finds the mark still set. Run in the email row's own transaction
+ * (`recordEmailAttempt`), the row lock orders it against the sweep's release:
+ * false means the claim is no longer this caller's (given back, or never
+ * landed), and the email must not be written or sent.
+ */
+export async function confirmAlertCooldownSend({
+  key,
+  claimedAt,
+  store = prisma,
+}: {
+  key: string;
+  claimedAt: Date;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<boolean> {
+  const confirmed = await store.alertCooldown.updateMany({
+    where: { key, lastAlertedAt: claimedAt },
+    data: { awaitingSendSince: null },
+  });
+  return confirmed.count > 0;
+}
+
+/**
+ * #5255: the sweep's give-back of a once-ever claim still marked as having no
+ * email behind it. Deletes only while both the stamp and the mark stand, so a
+ * claim confirmed meanwhile (its email row committed first) is kept, and a
+ * newer claim is never touched. Returns whether it gave the claim back.
+ */
+export async function releaseUnsentAlertCooldown({
+  key,
+  claimedAt,
+  store = prisma,
+}: {
+  key: string;
+  claimedAt: Date;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<boolean> {
+  const released = await store.alertCooldown.deleteMany({
+    where: { key, lastAlertedAt: claimedAt, awaitingSendSince: { not: null } },
+  });
+  return released.count > 0;
+}
+
+/** #5255: once-ever claims marked unsent since before `markedBefore`, oldest first, 50 a run. */
+export async function listStaleUnsentAlertCooldowns({
+  markedBefore,
+  store = prisma,
+}: {
+  markedBefore: Date;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<{ key: string; lastAlertedAt: Date }[]> {
+  return store.alertCooldown.findMany({
+    where: { awaitingSendSince: { lt: markedBefore } },
+    select: { key: true, lastAlertedAt: true },
+    orderBy: { awaitingSendSince: "asc" },
+    take: 50,
   });
 }
 
@@ -114,24 +186,27 @@ export async function deferAlertCooldown({
  * delivered. `due` says when (#3635 N1): a send that THREW is due on the very
  * next run (the stamp is back-dated by `retryAfterMs`), while one that ran and
  * reached nobody waits `retryAfterMs`. The key is its own namespace, beside
- * the window key the send claimed.
+ * the window key the send claimed. `replayAlert` stores what to send again,
+ * for a drain that has nothing else to rebuild it from (#5255).
  */
 export async function markAlertOwed({
   key,
   due,
   retryAfterMs,
+  replayAlert,
   now = new Date(),
   store = prisma,
 }: {
   key: string;
   due: "next-run" | "after-retry";
   retryAfterMs: number;
+  replayAlert?: Prisma.InputJsonValue;
   now?: Date;
   store?: Pick<typeof prisma, "alertCooldown">;
 }): Promise<void> {
   const lastAlertedAt = due === "next-run" ? new Date(now.getTime() - retryAfterMs) : now;
   try {
-    await store.alertCooldown.create({ data: { key, lastAlertedAt } });
+    await store.alertCooldown.create({ data: { key, lastAlertedAt, ...(replayAlert === undefined ? {} : { replayAlert }) } });
   } catch (error) {
     if (!isPrismaUniqueConstraintError(error)) throw error;
   }

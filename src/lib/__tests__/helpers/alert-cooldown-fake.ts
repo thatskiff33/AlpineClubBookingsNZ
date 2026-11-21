@@ -135,6 +135,8 @@ export function createAlertCooldownFake() {
   return {
     rows,
     delegate,
+    /** The `store` argument `alert-cooldown.ts`'s helpers take. */
+    store: { alertCooldown: delegate } as never,
     intercept(op: Op, fn: Interceptor) {
       interceptors.set(op, [...(interceptors.get(op) ?? []), fn]);
     },
