@@ -7,7 +7,7 @@
  * states the seven identities that say so and judges one booking against them
  * (one journal identity is added by `booking-ledger-projection-census-journal.ts`:
  * `JOURNAL` (#4627), or `JOURNAL_PENDING` (#4628) for a bank-transfer charge
- * still pending, never both),
+ * still pending, never both; and `JOURNAL_REFUND_PAYABLE`, #5185),
  * from a snapshot row it is handed. It reads nothing and writes nothing; the
  * one-snapshot read is `booking-ledger-projection-census-store.ts`, the
  * operator command `scripts/booking-ledger-census.ts`.
@@ -84,6 +84,7 @@ import {
   plannedGroupChildLines,
 } from "@/lib/booking-ledger-projection-census-group";
 import { reviewAdjustmentEvidence, type ReviewAdjustmentEvidence } from "@/lib/booking-ledger-projection-census-review-adjustments";
+import { HAND_BACK_CENSUS_CLASSES } from "@/lib/member-money";
 
 /**
  * The six identities of design §6, identity 1 in its corrected §5.3 form, and
@@ -93,7 +94,7 @@ import { reviewAdjustmentEvidence, type ReviewAdjustmentEvidence } from "@/lib/b
  * `BANK_REFUND` — could be missing, or wrong, with every column agreeing.
  * `JOURNAL` (#4627) and `JOURNAL_PENDING` (#4628) are judged apart, by
  * `booking-ledger-projection-census-journal.ts`, which the census store adds to
- * each evaluation: exactly one of them per booking.
+ * each evaluation: exactly one of them per booking, with `JOURNAL_REFUND_PAYABLE` (#5185).
  */
 export const BOOKING_LEDGER_IDENTITIES = [
   "PRICE",
@@ -107,10 +108,12 @@ export const BOOKING_LEDGER_IDENTITIES = [
   "JOURNAL",
   // #4628: a bank-transfer booking's pending journal charge against its final price plus fees.
   "JOURNAL_PENDING",
+  // #5185 (report v3): the journal's open refund payable against the refunds the legacy records still owe.
+  "JOURNAL_REFUND_PAYABLE",
 ] as const;
 export type BookingLedgerIdentity = (typeof BOOKING_LEDGER_IDENTITIES)[number];
 /** The identities the journal comparison adds to every evaluation, never the seven's own judgement. */
-const JOURNAL_IDENTITIES: ReadonlySet<BookingLedgerIdentity> = new Set(["JOURNAL", "JOURNAL_PENDING"]);
+const JOURNAL_IDENTITIES: ReadonlySet<BookingLedgerIdentity> = new Set(["JOURNAL", "JOURNAL_PENDING", "JOURNAL_REFUND_PAYABLE"]);
 
 export type BookingLedgerIdentityStatus = "NOT_APPLICABLE" | "AGREE" | "DISAGREE" | "CLASSIFIED" | "COVERAGE";
 
@@ -139,6 +142,8 @@ export const BOOKING_LEDGER_INTEGRITY_KINDS = [
   "CONFIRMED_WITHOUT_R01",
   // #4627: the club's currency cannot be charged by card, so the journal posts nothing (one finding).
   "JOURNAL_INACTIVE",
+  // #5185 (M4d): the hand-back classes, defined once with the refund census.
+  ...HAND_BACK_CENSUS_CLASSES,
 ] as const;
 export type BookingLedgerIntegrityKind = (typeof BOOKING_LEDGER_INTEGRITY_KINDS)[number];
 

@@ -1,16 +1,7 @@
 import { ManualRefundTaskKind, type Prisma, type StripeDisputeStatus } from "@prisma/client";
-import { isBankRefundVoidFollowUpTask } from "@/lib/bank-refund-void-follow-up-key";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
-import { isGroupOrganiserHandBackTask } from "@/lib/group-organiser-hand-back-rules";
-import { isLateCaptureHandBackTask } from "@/lib/late-capture-hand-back-task";
-import {
-  cancelCardShortfallPart,
-  editRefundHandBackOccurrenceKey,
-  isCardRefundPaidAnotherWayTask,
-  isEditRefundHandBackTask,
-  isNonCancellationHandBackTask,
-  isPartPaymentReviewTask,
-} from "@/lib/manual-refund-task-settlement-rules";
+import { isJournalHandBackTask, type HandBackFacts } from "@/lib/manual-refund-task-hand-back-population";
+import { cancelCardShortfallPart, isEditRefundHandBackTask, isNonCancellationHandBackTask } from "@/lib/manual-refund-task-settlement-rules";
 import { lockMemberCreditLedger, requireMemberCreditRecipient } from "@/lib/member-credit";
 import { postHandBackPayment, postRefundObligation, withdrawRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
 import { memberMoneyEventKeys } from "@/lib/member-money";
@@ -31,45 +22,10 @@ import { disputeHoldsCapture, disputeIsLost } from "@/lib/stripe-dispute-note";
  * 2026), so its debt stays open until the task is paid. A card shortfall's part to check keeps its dismissal, and a
  * disputed card payment's hand-back, a cancellation's or a dispute-held edit's, is dismissed once lost disputes cover
  * it (owner decisions, 15 Nov and 18 Nov 2026), lost cents counted once across the payment's tasks; either dismissal
- * withdraws its debt exactly. Split out of `manual-refund-task-resolution.ts` and
- * `manual-refund-task-settlement-rules.ts` so neither crosses its size budget; the lock order is unchanged.
+ * withdraws its debt exactly. Which tasks those are is `manual-refund-task-hand-back-population.ts`. Split out of
+ * `manual-refund-task-resolution.ts` and `manual-refund-task-settlement-rules.ts` so neither crosses its size
+ * budget; the lock order is unchanged.
  */
-
-type HandBackFacts = {
-  kind: ManualRefundTaskKind | string | null;
-  occurrenceKey: string | null;
-  partPaymentReviewPaymentId: string | null;
-  reason: string | null;
-};
-
-/**
- * An edit hand-back raised for organiser-extra raced cash. It wears an edit hand-back's key, but the cash is an
- * organiser share (M6), so it is not a member-money hand-back debt. The prefix is the key
- * `organiser-extra-raced-cash.ts` builds.
- */
-const ORGANISER_EXTRA_HAND_BACK_PREFIX = editRefundHandBackOccurrenceKey("organiser-extra-");
-export function isOrganiserExtraRacedHandBackTask(task: Pick<HandBackFacts, "kind" | "occurrenceKey">): boolean {
-  return task.kind === "CANCELLED_BOOKING_HAND_BACK" && (task.occurrenceKey?.startsWith(ORGANISER_EXTRA_HAND_BACK_PREFIX) ?? false);
-}
-
-/**
- * A hand-back the member-money journal records as a refund debt (R05, scope `hand-back`). Exactly the tasks a
- * raise posts: a cancellation's cash hand-back, a card shortfall's bank part or part to check, an edit hand-back,
- * a refund request's bank part, and an organisation's late cash. Not a part-payment review, a
- * group organiser's hand-back, a paid-another-way close, a bank-refund void follow-up, organiser-extra raced cash,
- * or a late capture's own question (including a legacy row whose only mark is its reason). A legacy row with no
- * kind and any other reason is a cancellation's hand-back.
- */
-export function isJournalHandBackTask(task: HandBackFacts): boolean {
-  if (task.kind !== "CANCELLED_BOOKING_HAND_BACK" && task.kind !== null) return false;
-  if (isPartPaymentReviewTask(task)) return false;
-  if (isGroupOrganiserHandBackTask(task)) return false;
-  if (isCardRefundPaidAnotherWayTask(task)) return false;
-  if (isBankRefundVoidFollowUpTask(task)) return false;
-  if (isOrganiserExtraRacedHandBackTask(task)) return false;
-  if (isLateCaptureHandBackTask({ kind: task.kind, reason: task.reason ?? "" })) return false;
-  return true;
-}
 
 /**
  * A card shortfall's part to check (`INV-PAY-129`), a capacity race's included (`INV-PAY-135`): money the records

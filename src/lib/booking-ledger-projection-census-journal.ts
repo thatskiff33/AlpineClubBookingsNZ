@@ -1,10 +1,12 @@
 /**
- * COMPARISON REPORTS V1 AND V2: THE JOURNAL AGAINST THE LEGACY LEDGER (#4627,
- * Ledger M3b; #4628, M3c; the M3 plan on #4515). Pure: the census row in, ONE
- * journal identity and its integrity findings out, added to the booking's
- * evaluation: `JOURNAL_PENDING` (v2, `pendingChargeComparison` below) for a
- * bank-transfer booking whose binding R01 is in the journal and none of whose
- * legacy lines is linked yet, `JOURNAL` (v1) for every other booking.
+ * COMPARISON REPORTS V1 TO V3: THE JOURNAL AGAINST THE LEGACY LEDGER (#4627,
+ * Ledger M3b; #4628, M3c; the M3 plan on #4515; #5185, M4d). Pure: the census
+ * row in, ONE charge identity and its integrity findings out, added to the
+ * booking's evaluation: `JOURNAL_PENDING` (v2, `pendingChargeComparison` below)
+ * for a bank-transfer booking whose binding R01 is in the journal and none of
+ * whose legacy lines is linked yet, `JOURNAL` (v1) for every other booking;
+ * then v3's refund identity, `JOURNAL_REFUND_PAYABLE`, and the hand-back
+ * classes (`journalRefundPayableComparison` below).
  *
  * V1: for every booking whose confirmation (R01) is in the member-money journal
  * and linked, the journal's live charge components must add up to the legacy
@@ -38,8 +40,17 @@
  * It counts on the ledger side as the gross the journal still carries, so the
  * two agree. A keep an invoice already bills adds no component.
  */
-import { isJournalEraBooking, journalComponentOfLegacyLine, keptCapturePaymentIntentOfIdentity, MemberMoneyPlanError, refundCloseOutRecordOfIdentity } from "@/lib/member-money";
+import {
+  classifyHandBacks,
+  heldHandBackOwedCents,
+  isJournalEraBooking,
+  journalComponentOfLegacyLine,
+  keptCapturePaymentIntentOfIdentity,
+  MemberMoneyPlanError,
+  refundCloseOutRecordOfIdentity,
+} from "@/lib/member-money";
 import { paidAnotherWayUnpaidCents } from "@/lib/manual-refund-task-settlement-rules";
+import { cardRefundOperationUnmadeCents, isOpenCardRefundOperationStatus, isOwedCardRefundOperation } from "@/lib/open-card-refund-owed";
 import type { BookingLedgerEvaluation, BookingLedgerIdentityResult, BookingLedgerIntegrityFinding } from "@/lib/booking-ledger-projection-census";
 import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-row";
 import type { BookingLedgerCensusReport } from "@/lib/booking-ledger-projection-census-report";
@@ -139,10 +150,50 @@ export function journalChargeComparison(row: BookingLedgerCensusRow): {
   };
 }
 
-/** The booking's evaluation with the journal comparison added. */
+/**
+ * COMPARISON REPORT V3 (#5185, M4d): for every booking whose R01 is in the
+ * journal, the journal's open refund payable (every refund debt's
+ * refund-payable lines, credits less debits) must equal what the legacy records
+ * still owe back on the debts the journal took on: each journal hand-back task
+ * whose R05 posted, at what it still owes (`heldHandBackOwedCents`), plus each
+ * open card refund row whose debt's R05 posted, at its slices not yet made
+ * (`cardRefundOperationUnmadeCents`, the figure `IN_FLIGHT_REFUND` reads; a
+ * dead row still owes until it is closed). A debt raised before its door
+ * posted R05s is M9's, so neither side counts it; a debt the journal holds
+ * with nothing behind it, or a refund that went back without paying its debt,
+ * disagrees. Identity `JOURNAL_REFUND_PAYABLE`: `columnCents` = the journal's
+ * figure, `ledgerCents` = the legacy one, the census's acknowledgement format.
+ * The hand-back classes (`classifyHandBacks`) are its integrity findings, each
+ * naming its task as the finding's `lineId`. A booking with no R01, or read
+ * without hand-back facts (the back-post's own judgement), is NOT_APPLICABLE.
+ */
+export function journalRefundPayableComparison(row: BookingLedgerCensusRow): {
+  identity: BookingLedgerIdentityResult;
+  integrity: BookingLedgerIntegrityFinding[];
+} {
+  const facts = row.journal?.charged ? row.handBacks : null;
+  if (!facts) {
+    return { identity: { identity: "JOURNAL_REFUND_PAYABLE", status: "NOT_APPLICABLE", columnCents: 0, ledgerCents: 0, deltaCents: 0, explainedBy: [] }, integrity: [] };
+  }
+  const cardCents = row.recoveryOperations
+    .filter((operation) => isOwedCardRefundOperation(operation) && isOpenCardRefundOperationStatus(operation.status) && facts.journalCardRefundKeys.has(operation.idempotencyKey))
+    .reduce((sum, operation) => sum + cardRefundOperationUnmadeCents(operation), 0);
+  const columnCents = facts.openRefundPayableCents;
+  const ledgerCents = heldHandBackOwedCents(facts) + cardCents;
+  return {
+    identity: { identity: "JOURNAL_REFUND_PAYABLE", status: columnCents === ledgerCents ? "AGREE" : "DISAGREE", columnCents, ledgerCents,
+      deltaCents: columnCents - ledgerCents, explainedBy: [] },
+    integrity: classifyHandBacks(row.booking.id, facts).map((finding) => ({ bookingId: finding.bookingId, lineId: finding.identity, kind: finding.kind,
+      detail: `${finding.detail} (${finding.cents} cents)` })),
+  };
+}
+
+/** The booking's evaluation with the journal comparisons added: its charge identity, then v3's refund identity. */
 export function withJournalChargeComparison(evaluation: BookingLedgerEvaluation, row: BookingLedgerCensusRow): BookingLedgerEvaluation {
-  const { identity, integrity } = journalChargeComparison(row);
-  return { ...evaluation, identities: [...evaluation.identities, identity], integrity: [...evaluation.integrity, ...integrity] };
+  const charge = journalChargeComparison(row);
+  const refund = journalRefundPayableComparison(row);
+  return { ...evaluation, identities: [...evaluation.identities, charge.identity, refund.identity],
+    integrity: [...evaluation.integrity, ...charge.integrity, ...refund.integrity] };
 }
 
 /**

@@ -42,7 +42,7 @@ export type RefundBooking = { bookingId: string; lodgeId: string };
  * live R05 is posted for it. `next` is the key a fresh R05 for that door posts under.
  */
 /** The live tip of a reversal chain. The reversal sits on the journal, never on the event. */
-export async function memberMoneyChainTip(tx: Db, base: MemberMoneyEventKey): Promise<MemberMoneyEventKey> {
+export async function memberMoneyChainTip(tx: Pick<Db, "memberMoneyEvent">, base: MemberMoneyEventKey): Promise<MemberMoneyEventKey> {
   return walkMemberMoneyChain(base, async (eventKey) =>
     (await tx.memberMoneyEvent.findUnique({ where: { eventKey }, select: { journal: { select: { reversedBy: { select: { id: true } } } } } }))?.journal ?? null);
 }
