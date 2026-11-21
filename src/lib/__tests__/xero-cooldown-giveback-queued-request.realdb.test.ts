@@ -7,18 +7,20 @@
  * Before the fix the handler's execution request (`creditNotes`/`invoices`, no
  * `queueType`) stayed on the row, the outbox built the fallback claim (an
  * invoice for a member) from it, could not claim the row, and skipped it for
- * ever: the refund note or booking invoice never reached Xero, and nothing
- * failed or alerted.
+ * ever: the refund note, booking invoice or group invoice never reached Xero,
+ * and nothing failed or alerted. The refund-note and booking-invoice cases
+ * failed on `main` before the fix (commit "Reproduce #5228").
  *
  * What is driven through the app's own writers, and what is seeded:
- * - SEEDED: the booking history (`booking-ledger-history`), its card refund as
- *   the webhook records it.
+ * - SEEDED: the booking and group histories (`booking-ledger-history`,
+ *   `booking-ledger-group-history`), a card refund as the webhook records it.
  * - REAL: the card settle (which enqueues the booking invoice), the refund-note
- *   enqueue, the outbox worker and the real handlers
- *   (`createXeroInvoiceForBooking`, `createXeroCreditNote`), each saving its
- *   execution request before the refused call. Xero itself is a fake (no
- *   provider call); `callXeroApi` refuses the named create once with the
- *   breaker's own pre-HTTP `XeroTransientOutageError`, as the breaker raises it.
+ *   and group-invoice enqueues, the outbox worker and the real handlers
+ *   (`createXeroInvoiceForBooking`, `createXeroCreditNote`,
+ *   `createXeroInvoiceForGroupSettlement`), each saving its execution request
+ *   before the refused call. Xero is a fake (no provider call); `callXeroApi`
+ *   refuses the named create once with the breaker's own pre-HTTP
+ *   `XeroTransientOutageError`, as the breaker raises it.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions, which
@@ -28,9 +30,20 @@
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { cleanHistories, createHistoryBooking, historyNames, seedHistoryFixtures, settleHistoryByCard } from "./support/booking-ledger-history";
+import { cleanHistories, historyNames, postHistoryEdit, seedHistoryFixtures } from "./support/booking-ledger-history";
+import { createGroupHistory, GROUP_CHILD_CENTS, groupHistory } from "./support/booking-ledger-group-history";
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
+import type { SuiteEnvironmentRoleDeclaration } from "./helpers/environment-role";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
+import {
+  breakerRefusal,
+  fakeXero,
+  paidCardBooking,
+  queueRefundNote,
+  recordCardRefund,
+  runOutboxRow,
+  type SentDocument,
+} from "./support/xero-queued-request-fixtures";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -41,72 +54,6 @@ const PRICE = 20_000;
 
 let prisma: PrismaClient;
 
-type Sent = { operation: string; cents: number };
-
-/** Xero's ids, unique across the file as Xero's own are. */
-let documents = 0;
-
-/**
- * A fake Xero for the real senders: the client, the invoiced party's contact,
- * the contact-repair wrapper and the refund settlement are stood in for, and
- * each create records what it was sent. `refuse` names the creates the
- * breaker refuses once each, before any call.
- */
-async function fakeXero(sent: Sent[], refuse: Set<string>) {
-  const apiClient = await import("@/lib/xero-api-client");
-  const contacts = await import("@/lib/xero-contacts");
-  const invoicedParty = await import("@/lib/organisation-xero-contacts");
-  const invoicePayments = await import("@/lib/xero-invoice-payments");
-  const cents = (lines: Array<{ unitAmount?: number; quantity?: number }>) =>
-    lines.reduce((sum, line) => sum + Math.round((line.unitAmount ?? 0) * 100) * (line.quantity ?? 1), 0);
-  const handlers: Record<string, (...args: never[]) => unknown> = {
-    createInvoices: async (_tenant: string, body: { invoices: Array<{ lineItems: Array<{ unitAmount?: number; quantity?: number }> }> }) => {
-      const total = cents(body.invoices[0]!.lineItems) / 100;
-      sent.push({ operation: "createInvoices", cents: Math.round(total * 100) });
-      const id = `${PREFIX}xero-invoice-${++documents}`;
-      return { body: { invoices: [{ invoiceID: id, invoiceNumber: `INV-${id}`, status: "AUTHORISED", total, amountDue: total, amountPaid: 0 }] } };
-    },
-    createPayment: async () => ({ body: { payments: [{ paymentID: `${PREFIX}xero-payment-${++documents}` }] } }),
-    createPayments: async () => ({ body: { payments: [{ paymentID: `${PREFIX}xero-payment-${++documents}` }] } }),
-    createCreditNotes: async (_tenant: string, body: { creditNotes: Array<{ lineItems: Array<{ unitAmount?: number; quantity?: number }> }> }) => {
-      const total = cents(body.creditNotes[0]!.lineItems) / 100;
-      sent.push({ operation: "createCreditNotes", cents: Math.round(total * 100) });
-      const id = `${PREFIX}xero-note-${++documents}`;
-      return { body: { creditNotes: [{ creditNoteID: id, creditNoteNumber: `CN-${id}`, status: "AUTHORISED", total, remainingCredit: total, payments: [] }] } };
-    },
-    createCreditNoteAllocation: async () => ({ body: { allocations: [{ amount: 0 }] } }),
-    getCreditNote: async () => ({ body: { creditNotes: [] } }),
-  };
-  const accountingApi = new Proxy(handlers, {
-    get(target, name: string) {
-      if (name in target) return target[name];
-      if (name === "then") return undefined;
-      return () => {
-        throw new Error(`The fake Xero was asked for ${name}, which this proof does not stand in for`);
-      };
-    },
-  });
-  vi.spyOn(apiClient, "getAuthenticatedXeroClient").mockResolvedValue({ xero: { accountingApi }, tenantId: "tenant-5228" } as never);
-  vi.spyOn(apiClient, "callXeroApi").mockImplementation((async (call: () => unknown, options?: { operation?: string }) => {
-    if (options?.operation && refuse.delete(options.operation)) {
-      // The breaker's own refusal, raised before any HTTP (`throwIfXeroTransientOutageActive`).
-      throw new apiClient.XeroTransientOutageError(60, true);
-    }
-    return call();
-  }) as never);
-  vi.spyOn(invoicedParty, "findOrCreateXeroContactForInvoicedParty").mockResolvedValue("contact-5228");
-  vi.spyOn(contacts, "retryXeroWriteWithContactRepair").mockImplementation((async (options: { run: (input: { contactId: string }) => unknown; currentContactId: string }) =>
-    options.run({ contactId: options.currentContactId })) as never);
-  vi.spyOn(invoicePayments, "resolveRefundSettlement").mockResolvedValue({ kind: "unsettled", reason: "race-5228" });
-}
-
-/** The outbox worker running `operationId` alone: it is made the oldest row so the scan takes it first. */
-async function runOutbox(operationId: string) {
-  await prisma.$executeRaw`UPDATE "XeroSyncOperation" SET "createdAt" = ${new Date("2000-01-01T00:00:00.000Z")}, "updatedAt" = ${new Date("2000-01-01T00:00:00.000Z")} WHERE "id" = ${operationId}`;
-  const { processQueuedXeroOutboxOperations } = await import("@/lib/xero-operation-outbox");
-  return processQueuedXeroOutboxOperations({ limit: 1 });
-}
-
 async function row(operationId: string) {
   return prisma.xeroSyncOperation.findUniqueOrThrow({
     where: { id: operationId },
@@ -115,6 +62,7 @@ async function row(operationId: string) {
 }
 
 let sequence = 0;
+let role: SuiteEnvironmentRoleDeclaration | undefined;
 
 (RUN ? describe : describe.skip)(
   "a queued Xero operation a pre-HTTP cooldown refuses goes back to PENDING claimable - real PostgreSQL (#5228)",
@@ -128,90 +76,100 @@ let sequence = 0;
       await seedHistoryFixtures(prisma, PREFIX);
     }, 120_000);
 
-    const sent: Sent[] = [];
-    const refuse = new Set<string>();
+    const sent: SentDocument[] = [];
+    const refuse = new Map<string, () => Error>();
     beforeEach(async () => {
       vi.setSystemTime(new Date(FROZEN_TEST_CLOCK_BASE_ISO));
       sent.length = 0;
       refuse.clear();
-      await fakeXero(sent, refuse);
+      await fakeXero(PREFIX, sent, refuse);
     });
 
     afterEach(async () => {
+      role?.restore();
+      role = undefined;
       vi.restoreAllMocks();
+      vi.setSystemTime(new Date(FROZEN_TEST_CLOCK_BASE_ISO));
       // Each case's rows, so a row one case left stuck is never the next case's oldest.
       await prisma.xeroObjectLink.deleteMany({ where: { localId: { startsWith: PREFIX } } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localId: { startsWith: PREFIX } } });
-      vi.setSystemTime(new Date(FROZEN_TEST_CLOCK_BASE_ISO));
     });
 
     afterAll(async () => {
       if (prisma) await cleanHistories(prisma, PREFIX);
     }, 120_000);
 
-    /** A card-paid booking, settled through the real settle; returns its id and its queued invoice row. */
-    async function paidBooking(): Promise<{ bookingId: string; paymentId: string; invoiceRow: string }> {
-      const bookingId = `${PREFIX}b${++sequence}`;
-      await createHistoryBooking(prisma, names, bookingId, { payment: { amountCents: PRICE, source: "STRIPE", intent: `pi_${bookingId}` } });
-      await settleHistoryByCard(bookingId, PRICE);
-      const paymentId = `${bookingId}-payment`;
-      const queued = await prisma.xeroSyncOperation.findFirst({
-        where: { localModel: "Payment", localId: paymentId, queueType: "BOOKING_INVOICE", status: "PENDING" },
-        select: { id: true },
-      });
-      if (queued) return { bookingId, paymentId, invoiceRow: queued.id };
-      const { enqueueXeroBookingInvoiceOperation } = await import("@/lib/xero-operation-outbox");
-      const enqueued = await enqueueXeroBookingInvoiceOperation(bookingId, { invoiceEmailDelivery: null });
-      return { bookingId, paymentId, invoiceRow: enqueued.queueOperationId! };
+    /** The refused pass gives the row back with its queued request; the next pass sends it once. */
+    async function refusedThenSent(operationId: string, call: SentDocument["operation"], queued: Record<string, unknown>, cents: number) {
+      refuse.set(call, await breakerRefusal());
+
+      const refused = await runOutboxRow(prisma, operationId);
+      expect(refused).toMatchObject({ processed: 1, skipped: 1, failed: 0, cooldownDeferred: 1 });
+      expect(sent).toEqual([]);
+      const given = await row(operationId);
+      expect(given).toMatchObject({ status: "PENDING", startedAt: null, completedAt: null, lastErrorCode: null });
+      expect(given.requestPayload).toMatchObject(queued);
+
+      const resent = await runOutboxRow(prisma, operationId);
+      expect(resent).toMatchObject({ processed: 1, succeeded: 1, skipped: 0, failed: 0 });
+      expect(sent).toEqual([{ operation: call, cents }]);
+      expect((await row(operationId)).status).toBe("SUCCEEDED");
     }
 
     it("REPRO: a booking invoice refused by the breaker after its handler saved the invoice goes back PENDING with its queued request, and the next pass sends it once", async () => {
-      const { invoiceRow } = await paidBooking();
-      refuse.add("createInvoices");
-
-      const refused = await runOutbox(invoiceRow);
-      expect(refused).toMatchObject({ processed: 1, skipped: 1, failed: 0, cooldownDeferred: 1 });
-      expect(sent).toEqual([]);
-      const given = await row(invoiceRow);
-      expect(given).toMatchObject({ status: "PENDING", queueType: "BOOKING_INVOICE", startedAt: null, completedAt: null, lastErrorCode: null });
-      expect(given.requestPayload).toMatchObject({ queueType: "BOOKING_INVOICE" });
-
-      const resent = await runOutbox(invoiceRow);
-      expect(resent).toMatchObject({ processed: 1, succeeded: 1, skipped: 0, failed: 0 });
-      expect(sent).toEqual([{ operation: "createInvoices", cents: PRICE }]);
-      expect((await row(invoiceRow)).status).toBe("SUCCEEDED");
+      const { bookingId, invoiceRow } = await paidCardBooking(prisma, names, `${PREFIX}b${++sequence}`, PRICE);
+      await refusedThenSent(invoiceRow, "createInvoices", { queueType: "BOOKING_INVOICE", bookingId }, PRICE);
     });
 
     it("REPRO: a refund credit note refused by the breaker after its handler saved the note goes back PENDING with its queued request, and the next pass sends it once", async () => {
-      const { paymentId, invoiceRow } = await paidBooking();
-      expect(await runOutbox(invoiceRow)).toMatchObject({ succeeded: 1 });
+      const { paymentId, invoiceRow } = await paidCardBooking(prisma, names, `${PREFIX}b${++sequence}`, PRICE);
+      expect(await runOutboxRow(prisma, invoiceRow)).toMatchObject({ succeeded: 1 });
       sent.length = 0;
+      await recordCardRefund(prisma, paymentId, 5_000, "a");
+      const noteRow = await queueRefundNote(paymentId, 5_000);
 
-      // A $50 card refund, as the webhook records it, and its note queued by the real enqueue.
-      const transaction = await prisma.paymentTransaction.findFirstOrThrow({ where: { paymentId }, select: { id: true, stripePaymentIntentId: true } });
-      await prisma.paymentRefund.create({
-        data: {
-          paymentId, paymentTransactionId: transaction.id, stripeRefundId: `re_${paymentId}`, stripePaymentIntentId: transaction.stripePaymentIntentId,
-          amountCents: 5_000, currency: "nzd", status: "succeeded", stripeCreatedAt: new Date("2026-06-30T00:00:00.000Z"),
-        },
-      });
-      await prisma.payment.update({ where: { id: paymentId }, data: { refundedAmountCents: { increment: 5_000 }, status: "PARTIALLY_REFUNDED" } });
-      const { enqueueXeroRefundCreditNoteOperation } = await import("@/lib/xero-operation-outbox");
-      const noteRow = (await enqueueXeroRefundCreditNoteOperation(paymentId, 5_000)).queueOperationId!;
+      await refusedThenSent(noteRow, "createCreditNotes", { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 5_000 }, 5_000);
+    });
+
+    it("a booking change's credit note refused by the breaker after its handler saved the note goes back PENDING with its queued request, and the next pass sends it once", async () => {
+      const { bookingId, invoiceRow } = await paidCardBooking(prisma, names, `${PREFIX}b${++sequence}`, PRICE);
+      expect(await runOutboxRow(prisma, invoiceRow)).toMatchObject({ succeeded: 1 });
+      sent.length = 0;
+      const modificationId = `${bookingId}-edit`;
+      await postHistoryEdit(prisma, names, bookingId, modificationId, { removeGuestId: `${bookingId}-g2`, changeFeeCents: 0 });
+      const { enqueueXeroModificationCreditNoteOperation } = await import("@/lib/xero-operation-outbox");
+      const noteRow = (await enqueueXeroModificationCreditNoteOperation({ bookingId, refundAmountCents: 10_000, bookingModificationId: modificationId })).queueOperationId!;
       expect(noteRow).toEqual(expect.any(String));
-      refuse.add("createCreditNotes");
 
-      const refused = await runOutbox(noteRow);
-      expect(refused).toMatchObject({ processed: 1, skipped: 1, failed: 0, cooldownDeferred: 1 });
-      expect(sent).toEqual([]);
-      const given = await row(noteRow);
-      expect(given).toMatchObject({ status: "PENDING", queueType: "REFUND_CREDIT_NOTE", startedAt: null, completedAt: null, lastErrorCode: null });
-      expect(given.requestPayload).toMatchObject({ queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 5_000 });
+      await refusedThenSent(noteRow, "createCreditNotes", { queueType: "MODIFICATION_CREDIT_NOTE", bookingId, refundAmountCents: 10_000 }, 10_000);
+    });
 
-      const resent = await runOutbox(noteRow);
-      expect(resent).toMatchObject({ processed: 1, succeeded: 1, skipped: 0, failed: 0 });
-      expect(sent).toEqual([{ operation: "createCreditNotes", cents: 5_000 }]);
-      expect((await row(noteRow)).status).toBe("SUCCEEDED");
+    it("a joining fee invoice refused by the breaker after its handler saved the invoice goes back PENDING with its queued request, and the next pass sends it once", async () => {
+      const { enqueueXeroEntranceFeeInvoiceOperation } = await import("@/lib/xero-operation-outbox");
+      const feeRow = (await enqueueXeroEntranceFeeInvoiceOperation(names.memberId, { amountCents: 7_500 })).queueOperationId!;
+      expect(feeRow).toEqual(expect.any(String));
+
+      await refusedThenSent(feeRow, "createInvoices", { queueType: "ENTRANCE_FEE_INVOICE", feeAmountCents: 7_500 }, 7_500);
+    });
+
+    it("a group settlement invoice refused by the breaker after its handler saved the invoice goes back PENDING with its queued request, and the next pass sends it once", async () => {
+      const g = groupHistory(PREFIX, `g${++sequence}`, "INTERNET_BANKING", 2);
+      await createGroupHistory(prisma, names, g);
+      // Not yet invoiced: the combined invoice is what the row raises.
+      await prisma.groupBookingSettlement.update({ where: { id: g.settlement }, data: { xeroInvoiceId: null } });
+      // The group invoice's email is gated on a declared environment; a copy, here.
+      const { declareEnvironmentRoleForSuite } = await import("./helpers/environment-role");
+      role = declareEnvironmentRoleForSuite("non-production");
+      const allow = { kind: "allow", clearance: {} } as never;
+      const invoiceEmail = await import("@/lib/xero-invoice-email");
+      vi.spyOn(invoiceEmail, "resolveXeroInvoiceEmailPolicy").mockResolvedValue(allow);
+      vi.spyOn(invoiceEmail, "reassertXeroInvoiceEmailPolicy").mockResolvedValue(allow);
+      vi.spyOn(invoiceEmail, "sendXeroInvoiceEmail").mockResolvedValue({ body: { emailed: true } } as never);
+      const { enqueueXeroGroupSettlementInvoiceOperation } = await import("@/lib/xero-group-settlement-invoice-outbox");
+      const groupRow = (await enqueueXeroGroupSettlementInvoiceOperation(g.settlement, { newAttempt: false })).queueOperationId!;
+      expect(groupRow).toEqual(expect.any(String));
+
+      await refusedThenSent(groupRow, "createInvoices", { queueType: "GROUP_SETTLEMENT_INVOICE", settlementId: g.settlement }, GROUP_CHILD_CENTS * 2);
     });
   },
 );

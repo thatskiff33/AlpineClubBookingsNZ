@@ -44,8 +44,8 @@ export type OutboxPendingRequest =
   | { replace: Prisma.InputJsonObject }
   | { keep: true; fallback?: Prisma.JsonValue | null };
 
-/** A filter matching exactly the stored request read, database NULL included. */
-function sameRequest(stored: Prisma.JsonValue | null): Prisma.JsonNullableFilter<"XeroSyncOperation"> {
+/** A filter matching exactly the stored request read, database NULL included: the compare-and-set's half. */
+export function sameStoredRequest(stored: Prisma.JsonValue | null): Prisma.JsonNullableFilter<"XeroSyncOperation"> {
   return stored === null ? { equals: Prisma.DbNull } : { equals: stored as Prisma.InputJsonValue };
 }
 
@@ -76,7 +76,7 @@ export async function returnOutboxRowToPending(params: {
   }
 
   const returned = await store.xeroSyncOperation.updateMany({
-    where: { AND: [params.where, { id: params.operationId, requestPayload: sameRequest(row.requestPayload) }] },
+    where: { AND: [params.where, { id: params.operationId, requestPayload: sameStoredRequest(row.requestPayload) }] },
     data: { ...params.data, status: "PENDING", ...(written !== undefined ? { requestPayload: written } : {}) },
   });
   return returned.count === 1 ? { outcome: "pending", requestWritten: written !== undefined } : { outcome: "lost" };
