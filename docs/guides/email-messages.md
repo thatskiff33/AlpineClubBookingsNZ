@@ -118,7 +118,8 @@ paid. A card refund reads "A refund of $X has been processed to your original
 payment method." once the card refund has gone through; until then — when the
 card refund failed, timed out or was not made — it reads "A refund of $X is on
 its way to your original payment method." (#4070). A refund on a booking
-paid by internet banking or in cash reads "The club will refund $X to you by
+paid by internet banking or in cash, or by a card payment Stripe holds no
+record of (#5212), reads "The club will refund $X to you by
 bank transfer." — it is promised, not reported, because a treasurer still has
 to send it from the **Money to settle** card (see the [payments guide](payments.md#pay-back-a-refund-for-a-cash-booking))
 (#3827). On a group booking the organiser paid for by card, the refund goes to
@@ -140,6 +141,27 @@ booking the club asks by card it reads "An additional payment of $X is
 required.", also while the card request waits to be retried; on a booking paid
 by internet banking it names an Internet Banking payment against the Xero
 invoice; any other amount still to pay is named without a method (#4052).
+
+`{{paymentNote}}` on the **Your Request Was Approved** message (an approved
+booking-rule exception that created a new booking) says what is left to pay, and
+it is worked out from the money the club has actually received for that booking,
+never from the booking's status (#4069). It is one of five lines:
+
+| What the records show | The line |
+| --- | --- |
+| Money is still owed and the booking holds its beds | "There is $X to pay on this booking. Your beds are held for now; open it from your account to pay or to see the payment details." |
+| Money is still owed and the beds are not held yet | "There is $X to pay on this booking. Open it from your account to pay now — the beds are not held until it is paid." |
+| The booking is covered (by a payment, account credit, or both) | Nothing: the line is left out |
+| A group organiser pays for this stay | "Your group organiser pays for this stay." |
+| The records cannot prove what is owed, or could not be read | "To see whether anything is still to pay on this booking, open it from your account or contact the club." |
+
+$X is what the booking costs, less account credit applied to it, less the money
+the club still holds for it — a payment still pending, a refund already made or
+owed, and a card charge that was replaced and is being refunded do not count as
+held. The raw `{{amount}}` token behind the line is that same figure, `$0.00`
+once the booking is covered, and **empty** on the last two rows: an override
+that prints `{{amount}}` on its own should keep `{{paymentNote}}` beside it, or
+it will show a blank where nobody can vouch for a figure.
 
 `{{refundSentence}}` on the **Refund Appeal Approved** message works the same
 way. A card refund reads "A refund of $X will be processed to your original

@@ -25,6 +25,16 @@ WAITLISTED -> WAITLIST_OFFERED -> CONFIRMED/PAID or WAITLISTED/CANCELLED
 AWAITING_REVIEW -> PENDING or PAYMENT_PENDING (officer approval after quote acceptance, the only writer of this transition, #3415) or CONFIRMED/PAID or CANCELLED
 ```
 
+A status is the booking's lifecycle, never proof of payment (#4069,
+`INV-PAY-159`). `CONFIRMED` can owe a whole bank transfer: the bed-holding
+Internet Banking switch, a saved-card claim mid-charge, or an approved
+whole-lodge request with no `Payment` row. `PAID` with a `PARTIALLY_REFUNDED`
+payment can be fully covered at a lower price. Whether a booking is covered is
+read from its cash records by `readBookingCashCover`
+(`src/lib/booking-cash-evidence.ts`), which can also answer that the records
+cannot prove it. The decisions that still read status are listed in
+[`design/paid-from-cash.md`](design/paid-from-cash.md).
+
 `AWAITING_REVIEW -> CANCELLED` is an officer's or the system's arc (review
 reject, request decline, hold release), never a member self-cancel: the
 member-facing cancel doors read `MEMBER_CANCELLABLE_BOOKING_STATUSES`, which
@@ -3242,6 +3252,39 @@ audited assignment update or deactivate
 published assignment appears on public committee surfaces
 contactable published assignment can receive server-routed contact form mail through the role email alias, or the linked member email when the role email is blank
 ```
+
+## Food Order Lifecycle
+
+Fork #121 (`src/lib/food-orders.ts`, guide [Food Orders](guides/food-orders.md)).
+
+```text
+member places an order -> OPEN, every item unreceived (order, items and audit
+  row in one transaction; the food officer email is queued only after it commits)
+items received (one or more, OPEN only), in ONE transaction:
+  1. take the order row: updateMany WHERE id AND status = 'OPEN' (touch
+     updatedAt); count 0 -> 409 "already received", nothing written. This row
+     lock serialises concurrent receipts on one order.
+  2. mark the chosen items still unreceived (receivedAt, receivedById); none
+     left to mark -> 409, rolled back
+  3. audit food_order.items_received (items marked, count remaining)
+  4. if no item remains unreceived: OPEN -> RECEIVED by updateMany WHERE
+     status = 'OPEN', receivedAt/receivedById = this moment and person, audit
+     food_order.received
+  partly received stays OPEN ("2 of 5 items received")
+item received and order RECEIVED are terminal: no unticking, no reopening
+price (either status): updateMany WHERE priceCents = the amount the caller's
+  screen showed; a mismatch answers 409 and writes nothing; each change audits
+  the old and new cents; the price moves no money
+```
+
+Who may make either transition is `canManageFoodOrder`: a hut leader whose
+access window covers today at that order's lodge, or Lodge Operations edit (a
+committee role alone does not; owner decision on PR #5143, 15 Nov 2026). No
+advisory lock is taken: the order shares no row or key with any booking,
+capacity or settlement writer. The receipt and price races are checked against
+real PostgreSQL by `food-order-races.realdb.test.ts`: two concurrent final
+ticks close the order once, and two price saves from one screen leave one
+winner and one conflict.
 
 ## Refund And Credit Lifecycle
 
