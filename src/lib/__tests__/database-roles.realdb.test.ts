@@ -297,7 +297,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
         throw new Error("This suite provisions roles and transfers ownership: CONCURRENCY_RACE_DATABASE_URL must be a superuser.");
       }
       const serverVersion = await admin.query<{ server_version_num: string }>("SHOW server_version_num");
-      assertClientToolsMatchServer(serverVersion.rows[0].server_version_num);
+      assertClientToolsMatchServer(serverVersion.rows[0]?.server_version_num ?? "");
 
       // FRESH: roles first, then every migration as the migration role.
       await admin.query(`CREATE DATABASE "${DATABASES.fresh}"`);
