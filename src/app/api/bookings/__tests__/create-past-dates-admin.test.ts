@@ -96,7 +96,8 @@ vi.mock("@/lib/access-roles", () => ({
   hasAdminAccess: h.hasAdminAccess,
   hasAccessRole: h.hasAccessRole,
 }));
-vi.mock("@/lib/admin-permissions", () => ({
+vi.mock("@/lib/admin-permissions", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/admin-permissions")),
   bookingManagementAuthorizationRole: h.managementRole,
 }));
 vi.mock("@/lib/module-settings", () => ({
@@ -922,7 +923,9 @@ describe("POST /api/bookings through an AI app connection", () => {
 
   beforeEach(() => {
     // A dual-hat Booking Officer booking for themselves through the member flow.
-    h.managementRole.mockReturnValue("ADMIN");
+    // Stands in for the real helper: the member-only session a connection
+    // decides with (`memberOnlySessionUser`, role USER) has no officer reach.
+    h.managementRole.mockImplementation((user: { role?: string }) => (user.role === "USER" ? "USER" : "ADMIN"));
     h.hasAdminAccess.mockReturnValue(true);
     h.hasAccessRole.mockReturnValue(true);
     h.memberFindUnique.mockResolvedValue({

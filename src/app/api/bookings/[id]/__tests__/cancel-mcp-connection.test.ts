@@ -11,16 +11,14 @@ import { NextRequest } from "next/server";
  *
  * The cancel service's own gate (non-owner, role USER, no bookings:edit flag
  * -> 403) is pinned in `booking-cancel.test.ts`; this file pins what the route
- * hands it.
+ * hands it. The role helpers are the real ones, fed a real officer session,
+ * so the test fails if the route decides with the officer's session rather
+ * than `memberOnlySessionUser`'s (ALP-718).
  */
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
   requireActiveSessionUser: vi.fn(),
   cancelBooking: vi.fn(),
-  authorizationRoleFromAccessRoles: vi.fn(),
-  managementRole: vi.fn(),
-  hasAdminAreaAccess: vi.fn(),
-  hasAdminAccess: vi.fn(),
   bookingFindUnique: vi.fn(),
 }));
 
@@ -30,16 +28,6 @@ vi.mock("@/lib/booking-cancel", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/booking-cancel")),
   cancelBooking: h.cancelBooking,
 }));
-vi.mock("@/lib/access-roles", async (importOriginal) => ({
-  ...((await importOriginal()) as typeof import("@/lib/access-roles")),
-  authorizationRoleFromAccessRoles: h.authorizationRoleFromAccessRoles,
-  hasAdminAccess: h.hasAdminAccess,
-}));
-vi.mock("@/lib/admin-permissions", async (importOriginal) => ({
-  ...((await importOriginal()) as typeof import("@/lib/admin-permissions")),
-  bookingManagementAuthorizationRole: h.managementRole,
-  hasAdminAreaAccess: h.hasAdminAreaAccess,
-}));
 vi.mock("@/lib/prisma", () => ({ prisma: { booking: { findUnique: h.bookingFindUnique } } }));
 vi.mock("@/lib/club-format-server", () => ({ clubFormatValues: vi.fn(async () => ({})) }));
 vi.mock("@/lib/logger", () => ({
@@ -48,6 +36,7 @@ vi.mock("@/lib/logger", () => ({
 
 import { POST } from "@/app/api/bookings/[id]/cancel/route";
 import { GET as preview } from "@/app/api/bookings/[id]/cancel-preview/route";
+import { officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
 import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
 
 const OFFICER = "officer-1";
@@ -73,12 +62,8 @@ function previewRequest(viaConnection: boolean) {
 beforeEach(() => {
   vi.clearAllMocks();
   // A Full Admin who is also a Booking Officer: the widest reach the website gives.
-  h.auth.mockResolvedValue({ user: { id: OFFICER } });
+  h.auth.mockResolvedValue(officerMemberSession(OFFICER));
   h.requireActiveSessionUser.mockResolvedValue(null);
-  h.authorizationRoleFromAccessRoles.mockReturnValue("ADMIN");
-  h.managementRole.mockReturnValue("ADMIN");
-  h.hasAdminAreaAccess.mockReturnValue(true);
-  h.hasAdminAccess.mockReturnValue(true);
   h.cancelBooking.mockResolvedValue({
     status: 200,
     data: { success: true, refundAmountCents: 0, refundPercentage: 0, refundMethod: "card", message: "ok" },
@@ -97,6 +82,13 @@ describe("POST /api/bookings/[id]/cancel through an AI app connection", () => {
       enforceStartedStayBlock: true,
       enforceMemberCancelDoor: true,
     });
+  });
+
+  it("refuses an officer's hosting-coverage override from a connection before the service runs", async () => {
+    const override = { acknowledged: true, reason: "The custodian covers this stay.", strandedStateKey: `v1:${"a".repeat(64)}` };
+    const res = await POST(cancelRequest({ refundMethod: "card", hostingCoverageOverride: override }, true), { params });
+    expect(res.status).toBe(403);
+    expect(h.cancelBooking).not.toHaveBeenCalled();
   });
 
   it("refuses the officer-only email choice from a connection before the service runs", async () => {

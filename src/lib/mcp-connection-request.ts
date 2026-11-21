@@ -49,7 +49,7 @@ export function memberOnlySessionUser<U extends Session["user"]>(request: Reques
   return {
     ...user,
     role: "USER",
-    accessRoles: user.accessRoles.filter((role) => role === "USER"),
+    accessRoles: (user.accessRoles ?? []).filter((role) => role === "USER"),
     adminPermissionMatrix: emptyAdminPermissionMatrix(),
   };
 }
