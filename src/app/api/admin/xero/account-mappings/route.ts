@@ -10,6 +10,7 @@ import {
   normalizeMappingCode,
   type XeroMappingWritableKey,
 } from "@/lib/xero-account-mapping-keys";
+import { openingCreditsMappingSaveRefusal } from "@/lib/xero-opening-credits-exempt-guards";
 
 // The writable key set comes from the ONE registry (#2717): adding a mapping
 // key used to mean editing this allowlist, this zod schema, the admin picker's
@@ -126,6 +127,16 @@ export async function PUT(request: NextRequest) {
   const updates = parsed.data;
 
   try {
+    // #4988: Opening Credits never shares its account with another mapped role
+    // (owner decision, 21 Nov 2026), and a GST-registered club maps the Exempt
+    // tax category before it maps the account. Decided before any row is
+    // written, so a refused save changes nothing.
+    const refusal = await openingCreditsMappingSaveRefusal({
+      stored: await prisma.xeroAccountMapping.findMany({ select: { key: true, code: true } }),
+      updates,
+    });
+    if (refusal) return NextResponse.json({ error: refusal }, { status: 409 });
+
     type MappingValue = { code?: string | null; itemCode?: string | null };
     const ops = (Object.entries(updates) as [XeroMappingWritableKey, MappingValue | undefined][])
       .filter(([, val]) => val !== undefined)

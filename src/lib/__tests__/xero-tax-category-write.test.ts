@@ -6,6 +6,8 @@
  * transaction.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CLUB_TAX_SETTINGS_DEFAULTS, type ClubTaxSchedule } from "@/lib/club-tax-settings";
+import { requireCalendarDate } from "@/lib/club-time";
 import type { XeroTaxRateOption } from "@/lib/xero-tax-rate-options";
 
 const h = vi.hoisted(() => {
@@ -18,14 +20,23 @@ const h = vi.hoisted(() => {
     tx,
     prisma: {
       xeroConnection: { findUnique: vi.fn() },
+      // #4988: whether the Opening Credits account is mapped, read before a clear of Exempt.
+      xeroAccountMapping: { findUnique: vi.fn() },
       $transaction: vi.fn(async (callback: (client: unknown) => unknown, _options?: unknown) => callback(tx)),
     },
     readXeroTaxRates: vi.fn(),
+    schedule: vi.fn(),
   };
 });
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
 vi.mock("@/lib/xero-tax-rates", () => ({ readXeroTaxRates: h.readXeroTaxRates }));
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
+vi.mock("@/lib/club-time-zone-runtime", () => ({ readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland" }));
+vi.mock("@/lib/club-tax-settings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/club-tax-settings")),
+  loadClubTaxSchedule: h.schedule,
+}));
 
 import { clearXeroTaxCategory, mapXeroTaxCategory } from "@/lib/xero-tax-category-write";
 
@@ -37,6 +48,16 @@ const RATES: XeroTaxRateOption[] = [
   { taxType: "OUTPUT2", name: "15% GST on Income", rateBasisPoints: 1500, active: true, revenue: true, expenses: false },
 ];
 const connected = (tenantId: string | null) => (tenantId === null ? null : { tenantId, expiresAt: new Date() });
+// The frozen clock's club today is 2026-07-01.
+const REGISTERED: ClubTaxSchedule = [CLUB_TAX_SETTINGS_DEFAULTS];
+const NOT_REGISTERED: ClubTaxSchedule = [
+  CLUB_TAX_SETTINGS_DEFAULTS,
+  { gstRegistered: false, taxRateBasisPoints: 0, xeroTaxType: null, effectiveFrom: requireCalendarDate("2026-01-01") },
+];
+const REGISTERING_LATER: ClubTaxSchedule = [
+  ...NOT_REGISTERED,
+  { gstRegistered: true, taxRateBasisPoints: 1500, xeroTaxType: "OUTPUT2", effectiveFrom: requireCalendarDate("2026-10-01") },
+];
 
 function auditData(): Record<string, unknown> {
   expect(h.tx.auditLog.create).toHaveBeenCalledTimes(1);
@@ -49,6 +70,8 @@ beforeEach(() => {
   h.prisma.xeroConnection.findUnique.mockResolvedValue(connected(TENANT));
   h.tx.xeroConnection.findUnique.mockResolvedValue(connected(TENANT));
   h.tx.xeroTaxCategoryMapping.findUnique.mockResolvedValue(null);
+  h.prisma.xeroAccountMapping.findUnique.mockResolvedValue(null);
+  h.schedule.mockResolvedValue(REGISTERED);
 });
 
 describe("mapXeroTaxCategory", () => {
@@ -113,5 +136,58 @@ describe("clearXeroTaxCategory", () => {
     await expect(clearXeroTaxCategory({ category: "ZERO_RATED", actingMemberId: ACTOR, request }))
       .resolves.toEqual({ refused: "not-found" });
     expect(h.tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  describe("Exempt while the Opening Credits account is mapped (#4988)", () => {
+    const clearExempt = () => clearXeroTaxCategory({ category: "EXEMPT", actingMemberId: ACTOR, request });
+
+    beforeEach(() => {
+      h.tx.xeroTaxCategoryMapping.findUnique.mockResolvedValue({ taxType: "EXEMPTOUTPUT" });
+      h.prisma.xeroAccountMapping.findUnique.mockResolvedValue({ code: "2100" });
+    });
+
+    it("MUTATION: refuses the clear for a GST-registered club, and says to unmap Opening Credits first", async () => {
+      await expect(clearExempt()).resolves.toEqual({
+        refused: "in-use",
+        message: expect.stringMatching(/Unmap the Opening Credits account under Account Mappings first, then clear Exempt\.$/),
+      });
+      expect(h.prisma.xeroAccountMapping.findUnique).toHaveBeenCalledWith({
+        where: { key: "openingCredits" },
+        select: { code: true },
+      });
+      expect(h.tx.xeroTaxCategoryMapping.delete).not.toHaveBeenCalled();
+      expect(h.tx.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("refuses it for a club that is only scheduled to register", async () => {
+      h.schedule.mockResolvedValue(REGISTERING_LATER);
+      await expect(clearExempt()).resolves.toMatchObject({ refused: "in-use" });
+      expect(h.tx.xeroTaxCategoryMapping.delete).not.toHaveBeenCalled();
+    });
+
+    it("clears it for a club that is not registered: no line names a tax type there", async () => {
+      h.schedule.mockResolvedValue(NOT_REGISTERED);
+      await expect(clearExempt()).resolves.toEqual({ changed: true });
+    });
+
+    it.each([null, { code: null }, { code: "  " }])(
+      "clears it once Opening Credits is unmapped (stored row %j)",
+      async (row) => {
+        h.prisma.xeroAccountMapping.findUnique.mockResolvedValue(row);
+        await expect(clearExempt()).resolves.toEqual({ changed: true });
+        expect(h.tx.xeroTaxCategoryMapping.delete).toHaveBeenCalledWith({ where: { category: "EXEMPT" } });
+      },
+    );
+
+    it("holds only Exempt: another category clears, and the account mapping is not even read", async () => {
+      await expect(clearXeroTaxCategory({ category: "ZERO_RATED", actingMemberId: ACTOR, request }))
+        .resolves.toEqual({ changed: true });
+      expect(h.prisma.xeroAccountMapping.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("still answers not-found when Exempt was never mapped", async () => {
+      h.tx.xeroTaxCategoryMapping.findUnique.mockResolvedValue(null);
+      await expect(clearExempt()).resolves.toEqual({ refused: "not-found" });
+    });
   });
 });
