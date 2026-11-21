@@ -14,7 +14,11 @@ import { cn } from "@/lib/utils";
 import { useClubTime } from "@/components/club-time-provider";
 import type { CalendarEventDTO } from "@/lib/calendar-events";
 import type { CalendarDate } from "@/lib/club-time";
-import { formatDayKeyLong, formatEventTime } from "@/lib/calendar-client";
+import {
+  formatDayKeyLong,
+  formatEventTime,
+  showsRepeatMarker,
+} from "@/lib/calendar-client";
 
 interface DayEventsDialogProps {
   open: boolean;
@@ -79,7 +83,7 @@ export function DayEventsDialog({
               >
                 <span className="mt-0.5 flex shrink-0 items-center gap-1">
                   {event.isMeeting && <Video aria-hidden className="h-4 w-4" />}
-                  {event.seriesId && !event.isMeeting && (
+                  {showsRepeatMarker(event) && (
                     <Repeat aria-hidden className="h-4 w-4 opacity-70" />
                   )}
                 </span>

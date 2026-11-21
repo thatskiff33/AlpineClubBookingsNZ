@@ -661,7 +661,7 @@ describe("next.config.ts over the part-moved Lodge hub (C11 part 1 #4808)", () =
       "lodge-setup",
       "lodges",
     ]);
-    expect(lodge.filter((page) => !page.moved)).toHaveLength(11);
+    expect(lodge.filter((page) => !page.moved)).toHaveLength(12);
   });
 
   it("off: the preview's hub URL redirects to its old URL, and the old URL is served from the moved file, query kept", async () => {

@@ -51,6 +51,7 @@ const SECTION_EDIT_ADOPTERS = [
   "src/components/admin/booking-policies/public-booking-requests-section.tsx",
   "src/components/admin/club-identity-panel.tsx",
   "src/components/admin/club-posts/club-post-retention-section.tsx",
+  "src/components/admin/food-orders/food-order-settings-section.tsx",
   "src/components/admin/google-security-card.tsx",
   "src/components/admin/magic-link-security-card.tsx",
   "src/components/admin/maintenance/maintenance-questions-section.tsx",

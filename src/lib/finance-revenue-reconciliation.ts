@@ -330,14 +330,12 @@ async function loadChartOfAccountsContext(): Promise<ChartOfAccountsContext> {
  * never stands in for an unpriced night, which is filtered out by SQL before
  * the aggregate is formed.
  *
- * THIS SUM IS WINDOWED BY NIGHT, so recording what a stay's nights sold for
- * (#3214) can move a figure this report has already produced. Filling or
- * creating rows adds revenue into a window and closes the variance described
- * above — the desirable half. Re-apportioning a strand whose rows do not add up
- * moves income ACROSS a month end while the booking's total is unchanged, so an
- * earlier period's figure stops reproducing. Recoverable: the reconcile's audit
- * entry keeps what each night held before. Analysed where it is caused, in
- * `stored-night-price-strand-reconcile.ts`'s module docblock.
+ * THIS SUM IS WINDOWED BY NIGHT, so anything that rewrites a stay's night
+ * prices can move a figure this report has already produced. #3214's officer
+ * reconcile did (retired by #4344): re-apportioning a strand moved income ACROSS
+ * a month end while the booking's total was unchanged, so an earlier period's
+ * figure stopped reproducing. Its audit entries keep what each night held
+ * before, so those moves stay traceable.
  */
 async function loadBookingHutFees(
   start: Date,
