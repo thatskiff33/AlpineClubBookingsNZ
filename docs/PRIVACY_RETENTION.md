@@ -132,6 +132,16 @@ the Image Manager, member photos, the club logo and a configuration restore
 | AVIF (still) | EXIF and XMP items, every non-picture property and box, the handler name, data-reference paths, unknown brand names | The picture, blanked in place so its bytes are unchanged |
 | SVG | Metadata, comments, `title` and `desc`, editor attributes and file paths, scripts, event handlers, outside links, any text outside the drawing's text elements | The drawing: shapes, gradients, clips, masks, patterns, filters, styles, drawn text, and embedded photos cleaned the same way |
 
+Two limits remain, because removing them would mean decoding or redrawing the
+picture:
+
+- **GIF picture data is copied as it is.** Each frame's compressed data is kept
+  byte for byte, so bytes hidden after a frame's end-of-picture code, but
+  inside its data blocks, survive. A normal image editor never writes any.
+- **JPEG, PNG and WebP keep their colour profile** (ICC profile). A profile is
+  needed to show colours correctly, but its description and copyright text
+  can name the device or the software that made it.
+
 An upload is **refused**, with a plain message asking for a fresh copy from an
 image editor, when the app cannot confirm it is clean: a damaged or truncated
 file, an animated AVIF, or an SVG that reaches outside itself (an `@import` or

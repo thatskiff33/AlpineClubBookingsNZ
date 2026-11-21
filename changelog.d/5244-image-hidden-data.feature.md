@@ -7,8 +7,9 @@
   AVIF hidden data is blanked, and SVG drawings are rebuilt from their drawing
   alone, dropping metadata, comments, titles, editor file paths and scripts.
 
-  An image the app cannot confirm clean — a damaged file, an animated AVIF, or
-  an SVG that loads something from outside itself — is no longer stored with a
+  An image the app cannot confirm clean — a damaged file, an animated AVIF, an
+  SVG that loads something from outside itself, or a file named `.svg` that is
+  not an SVG drawing — is no longer stored with a
   line in the server log. It is refused with a message asking for a fresh copy
   from an image editor. This applies to the image library, the Image Manager
   (the rest of a batch still uploads), member photos, the club logo, and a
@@ -17,6 +18,10 @@
   Portrait photos taken on a phone now stay upright: their rotation was
   dropped along with the other hidden details. A photo uploaded sideways since
   v0.14.0 needs uploading again.
+
+  Two things are not removed: bytes hidden inside a GIF frame's picture data,
+  and the colour profile of a JPEG, PNG or WebP, which can name the device.
+  The privacy guide's "Hidden details in uploaded images" section explains.
 
   **Images uploaded before this release are not changed** and may still carry
   hidden details. The Image Manager guide's "Cleaning an older image" section

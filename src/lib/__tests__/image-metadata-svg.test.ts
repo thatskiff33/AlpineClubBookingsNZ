@@ -106,12 +106,46 @@ describe("SVG hidden-data removal", () => {
     ["an embedded SVG image", svgWith('<image href="data:image/svg+xml;base64,PHN2Zy8+"/>')],
     ["an embedded image that is not an image", svgWith('<image href="data:image/png;base64,bm90IGFuIGltYWdl"/>')],
     ["no svg root", "<html><body>not a drawing</body></html>"],
+    ["an svg root whose default namespace is XHTML",
+      '<svg xmlns="http://www.w3.org/1999/xhtml" width="10" height="10"><script>alert(1)</script></svg>'],
+    ["an svg root with no namespace", '<svg width="10" height="10"><rect width="1" height="1"/></svg>'],
+    ["a prefixed svg root under an XHTML default namespace",
+      '<svg:svg xmlns:svg="http://www.w3.org/2000/svg" xmlns="http://www.w3.org/1999/xhtml" width="10" height="10">' +
+      "<script>alert(1)</script><svg:rect width=\"1\" height=\"1\"/></svg:svg>"],
+    ["a prefixed svg root with a prefixed script",
+      '<s:svg xmlns:s="http://www.w3.org/2000/svg" width="10" height="10"><s:script>alert(1)</s:script></s:svg>'],
     ["invalid UTF-8", Buffer.concat([Buffer.from(svgWith("<text>")), Buffer.from([0xc3, 0x28]), Buffer.from("</text></svg>")])],
   ])("refuses an SVG with %s", (_label, svg) => {
     const bytes = Buffer.from(svg);
     const result = stripImageMetadata(bytes, "image/svg+xml");
     expect(result.ok).toBe(false);
     expect(result.bytes.equals(bytes)).toBe(true);
+  });
+
+  // Known SVG script and exfiltration routes (security review of #5244): the
+  // allow-list drops each; these pin it so a widened list is caught.
+  it.each([
+    ["a javascript: href on <use>", svgWith('<use href="javascript:alert(1)"/><rect width="1" height="1"/>')],
+    ["a javascript: xlink:href on <use>", svgWith('<use xlink:href="javascript:alert(1)"/><rect width="1" height="1"/>')],
+    ["a javascript: href on <image>", svgWith('<image href="javascript:alert(1)" width="1" height="1"/><rect width="1" height="1"/>')],
+    ["a javascript: xlink:href on <image>",
+      svgWith('<image xlink:href="javascript:alert(1)" width="1" height="1"/><rect width="1" height="1"/>')],
+    ["<set attributeName=\"href\">",
+      svgWith('<a href="#r"><set attributeName="href" to="javascript:alert(1)"/><rect id="r" width="1" height="1"/></a>')],
+    ["<animate attributeName=\"href\">",
+      svgWith('<a href="#r"><animate attributeName="href" values="javascript:alert(1)"/><rect id="r" width="1" height="1"/></a>')],
+    ["an <?xml-stylesheet?> instruction",
+      '<?xml-stylesheet type="text/css" href="https://example.test/x.css"?>' + svgWith('<rect width="1" height="1"/>')],
+    ["a prefixed svg:script element",
+      svgWith('<svg:script xmlns:svg="http://www.w3.org/2000/svg">alert(1)</svg:script><rect width="1" height="1"/>')],
+  ])("removes %s and keeps the drawing", (_label, svg) => {
+    const cleaned = strip(svg);
+    expect(cleaned).not.toBeNull();
+    for (const gone of ["javascript", "alert", "<set", "<animate", "attributeName", "xml-stylesheet", "example.test", "script"]) {
+      expect(cleaned).not.toContain(gone);
+    }
+    expect(cleaned).toMatch(/<rect [^>]*width="1"/);
+    expect(strip(cleaned!)).toBe(cleaned);
   });
 
   it("removes a CSS comment split by XML comments, checking the style text whole", () => {

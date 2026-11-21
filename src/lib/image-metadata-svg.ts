@@ -25,7 +25,8 @@ import sanitizeHtml from "sanitize-html";
  * Fail-CLOSED, returning `null` for the caller to refuse: bytes that are not
  * valid UTF-8, CSS holding `@import`, an escape, an unterminated comment or a
  * `url()` that is not `#id`, an embedded image that cannot be cleaned, or
- * output without an `<svg` root. A second pass returns identical bytes.
+ * output without an `<svg` root in the SVG namespace. A second pass returns
+ * identical bytes.
  */
 
 /** Cleans an embedded raster image; `null` when it cannot be confirmed clean. */
@@ -229,7 +230,12 @@ function rebuildSvg(bytes: Buffer, cleanImage: EmbeddedImageCleaner): Buffer {
 
   if (doubt) throw doubt;
   const output = cleanStyleElements(rebuilt).trim();
-  if (!/^<svg[\s>]/.test(output)) throw new UnconfirmedSvg("no <svg> root");
+  // The root must be in the SVG namespace: `cleanAttributes` drops any other
+  // `xmlns`, so an `<svg>` declared as XHTML (or with none) has no drawing.
+  const rootTag = /^<svg(?:\s[^>]*)?>/.exec(output)?.[0];
+  if (!rootTag?.includes(` xmlns="${NAMESPACE_VALUES.xmlns}"`)) {
+    throw new UnconfirmedSvg("no <svg> root in the SVG namespace");
+  }
   return Buffer.from(output, "utf8");
 }
 

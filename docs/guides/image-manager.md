@@ -48,7 +48,7 @@ the owner's name. The app removes these from every image before saving it, so
 nothing hidden is published with your pictures. The picture itself is not
 changed: a GIF keeps its animation and a portrait photo stays upright.
 [Hidden details in uploaded images](../PRIVACY_RETENTION.md#hidden-details-in-uploaded-images)
-lists what is removed for each file type.
+lists what is removed for each file type, and the two things that are not.
 
 If the app cannot confirm a file is clean — usually because the file is
 damaged or in an unusual form, or because it is an animated AVIF — it refuses
