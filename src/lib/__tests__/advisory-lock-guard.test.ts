@@ -277,7 +277,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "PUT /api/admin/refund-requests/[id]#2",
     tier: "GLOBAL",
     reason:
-      "#3827 (INV-PAY-118): releasing an approval whose Stripe refund AND recovery enqueue both failed puts the request back to PENDING and deletes the OPEN bank-transfer task the approval raised, in one transaction under the key every reader of the open-task sum and every approval holds, so no approval can size its cap between the two writes. Takes the global key alone; no provider call.",
+      "#3827 (INV-PAY-118): releasing an approval whose Stripe refund AND recovery enqueue both failed puts the request back to PENDING and deletes the OPEN bank-transfer task the approval raised, in one transaction under the key every reader of the open-task sum and every approval holds, so no approval can size its cap between the two writes. #5191: then the booking row (lockBookingRowForOwnerRead), before the request's claim, as the approval orders them (#4516 review F1), so the withdrawn refund debts read the owner their merged-debtor residue moves to under it. No other advisory key; no provider call.",
     invariant: "INV-LOCK-001",
   },
 
