@@ -517,6 +517,13 @@ import "./membership-subscription-charge-close.realdb.test";
 // index that still refuses a second LIVE family charge. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4110-` fixtures.
 import "./membership-family-rebill.realdb.test";
+// #5190 reuses it to prove a club's subscription-liability opt-in moves only
+// untouched NOT_REQUIRED rows, that billing confirm, the settings save and the
+// seasonal-assignment reconcile serialise on the billing season key in both
+// orders, and that the SQL date-of-birth filter agrees with the TS rule at every
+// tier birthday. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans
+// its own `race-5190-` fixtures.
+import "./subscription-liability-opt-in.realdb.test";
 // #4131 reuses it to prove the booking's own payment captured after its booking
 // was cancelled is refunded from its own charge through the real webhook
 // processor: never a fee the cancel kept on another charge, and only what a part
