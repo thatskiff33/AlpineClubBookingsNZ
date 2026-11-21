@@ -7,7 +7,6 @@
  */
 import { ApiError } from "@/lib/api-error";
 import { paidByOrganiser } from "@/lib/group-organiser-paid";
-import { hasSettledCardPayment } from "@/lib/booking-payment-state";
 import { defaultCorrectionSettlementMethod } from "@/lib/booking-finished-stay-correction";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify";
 import type { ClubFormat } from "@/lib/club-format";
@@ -63,11 +62,12 @@ export interface WorkPartySettlementBooking {
  *  - An organiser-paid joiner (`paidByOrganiser`): one disposition, the
  *    organiser's, as every edit of such a booking settles
  *    (`defaultCorrectionSettlementMethod` with `paidByOrganiser`).
- *  - `editAsksForMethod`: the edit's own settlement asked for a method
+ *  - `edit.asksForMethod`: the edit's own settlement asked for a method
  *    (`requiresSettlementMethod` on its response) — a paid booking with cash a
  *    reduction can return, whatever it was paid by. Credit, or a refund: to the
- *    card when paid by card (`hasSettledCardPayment`, the test that also
- *    decides a Stripe refund), else by the bank-transfer hand-back.
+ *    card where the edit refunds one (`edit.refundsToCard`, the service's read
+ *    of `editReductionRefundsToCard`, the answer that also decides a Stripe
+ *    refund, `INV-PAY-160`), else by the bank-transfer hand-back.
  *  - `unpaidAskOffsetCents`, all of it: an unpaid ask took the whole reduction (after
  *    Add, Remove, Add the reduction cancels the ask the Remove raised; B-L1 of
  *    the maintainers' comment
@@ -78,7 +78,7 @@ export interface WorkPartySettlementBooking {
  */
 export function workPartySettlementOptions(
   booking: WorkPartySettlementBooking,
-  editAsksForMethod: boolean,
+  edit: { asksForMethod: boolean; refundsToCard: boolean },
   ask: WorkPartyAskOffset = { unpaidAskOffsetCents: 0, wholly: false },
 ): WorkPartySettlementOptions {
   if (paidByOrganiser(booking)) {
@@ -90,11 +90,11 @@ export function workPartySettlementOptions(
   }
   const offset = ask.unpaidAskOffsetCents > 0 ? { unpaidAskOffsetCents: ask.unpaidAskOffsetCents } : {};
   if (ask.wholly) return { methods: [], paidByOrganiser: false, refundTo: null, ...offset };
-  if (!editAsksForMethod) return { methods: ["credit"], paidByOrganiser: false, refundTo: null, ...offset };
+  if (!edit.asksForMethod) return { methods: ["credit"], paidByOrganiser: false, refundTo: null, ...offset };
   return {
     methods: ["credit", "card"],
     paidByOrganiser: false,
-    refundTo: hasSettledCardPayment(booking) ? "card" : "bank",
+    refundTo: edit.refundsToCard ? "card" : "bank",
     ...offset,
   };
 }

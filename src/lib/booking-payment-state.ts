@@ -163,9 +163,8 @@ export function hasCapturedPayment(
 /** The `Payment.source` a card ask is minted against, checked by the compiler. */
 const CARD_PAYMENT_SOURCE = "STRIPE" satisfies PaymentSource;
 
-/** Paid by card: a settled booking holding captured Stripe money a reduction can refund to the card. The one
- * answer for `applyPaymentAdjustments` (`hasSucceededPayment`: a Stripe refund, not the bank-transfer hand-back) and
- * for where "Add to work party"'s refund goes (fork #129). */
+/** Paid by card: a settled booking holding captured Stripe money. `applyPaymentAdjustments` reads it for an
+ * increase; a reduction also needs a card to return to (`editReductionRefundsToCard`, `INV-PAY-160`). */
 export function hasSettledCardPayment(booking: { status: string; payment: (BookingPaymentState & { source: string }) | null | undefined }): boolean {
   const { status, payment } = booking;
   return isSettledBookingStatus(status) && hasCapturedPayment(payment) && payment?.source === CARD_PAYMENT_SOURCE;

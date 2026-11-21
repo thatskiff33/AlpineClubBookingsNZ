@@ -111,7 +111,8 @@ import {
 } from "@/lib/work-party-booking-correction";
 import { WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE } from "@/lib/work-party-settlement-options";
 
-const PAID_BY_CARD = { status: "SUCCEEDED", amountCents: 20_000, creditAppliedCents: 0, source: "STRIPE" };
+// Stripe holds its intent, so a reduction goes back to the card (`editReductionRefundsToCard`, `INV-PAY-160`).
+const PAID_BY_CARD = { id: "payment-1", status: "SUCCEEDED", amountCents: 20_000, creditAppliedCents: 0, source: "STRIPE", stripePaymentIntentId: "pi_1" };
 
 function seedBooking(change: Record<string, unknown> = {}) {
   h.booking = {

@@ -17,7 +17,7 @@ import {
   loadCancellationPolicy,
   type CancellationPolicyDb,
 } from "@/lib/cancellation";
-import { hasCapturedPayment, isSettledBookingStatus } from "@/lib/booking-payment-state";
+import { hasCapturedPayment, hasSettledCardPayment, isSettledBookingStatus } from "@/lib/booking-payment-state";
 import {
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
@@ -111,6 +111,21 @@ export async function editRefundHasCardToReturnTo(
 ): Promise<boolean> {
   if (!booking.payment) return false;
   return paidByOrganiserCard(booking) || paymentHasRefundableCardIntent(db, booking.payment);
+}
+
+/**
+ * #5212 (`INV-PAY-160`): does a REDUCTION on this booking go back to its card?
+ * Paid by card (`hasSettledCardPayment`) with a card to return to
+ * (`editRefundHasCardToReturnTo`); otherwise a refund is the bank-transfer
+ * hand-back. The one answer `applyPaymentAdjustments` settles a reduction by
+ * and "Add to work party" names its refund by (#5149), read under the door's
+ * locks.
+ */
+export async function editReductionRefundsToCard(
+  db: Pick<Prisma.TransactionClient, "payment">,
+  booking: Pick<LoadedBookingForModify, "status" | "payment" | "organiserSettled" | "parentBookingId">,
+): Promise<boolean> {
+  return hasSettledCardPayment(booking) && (await editRefundHasCardToReturnTo(db, booking));
 }
 
 /** One cash cap for the quote and save, after unpaid asks have been netted. */

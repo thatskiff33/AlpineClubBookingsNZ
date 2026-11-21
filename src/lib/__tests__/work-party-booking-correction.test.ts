@@ -323,26 +323,32 @@ describe("workPartySettlementOptions and the settlement guard (fork #129, upstre
     payment: { status: "SUCCEEDED", amountCents: 20_000, creditAppliedCents: 0, source: "STRIPE" },
   };
   const paidBank = { ...paidCard, payment: { ...paidCard.payment, source: "INTERNET_BANKING" } };
+  // The edit's own answers: whether it asks for a method, and whether its refund goes to the card.
+  const ASKS_CARD = { asksForMethod: true, refundsToCard: true };
+  const ASKS_BANK = { asksForMethod: true, refundsToCard: false };
+  const NO_ASK = { asksForMethod: false, refundsToCard: false };
 
   // `editAsks` is the ordinary edit's own answer (`requiresSettlementMethod`):
   // the options mirror it, so a refund is offered exactly where the edit offers one.
   it.each([
-    ["paid by card", paidCard, true, ["credit", "card"], false, "card"],
-    ["paid by card with some credit", { ...paidCard, payment: { ...paidCard.payment, creditAppliedCents: 5_000 } }, true, ["credit", "card"], false, "card"],
-    ["paid by Internet Banking: a refund by bank transfer, as on an ordinary edit", paidBank, true, ["credit", "card"], false, "bank"],
-    ["paid, but the edit offers no choice (nothing refundable)", paidCard, false, ["credit"], false, null],
-    ["paid by Internet Banking, but the edit offers no choice", paidBank, false, ["credit"], false, null],
-    ["paid wholly with account credit", { ...paidCard, payment: { ...paidCard.payment, amountCents: 0, creditAppliedCents: 20_000 } }, false, ["credit"], false, null],
-    ["unpaid (card intent open)", { ...paidCard, status: BookingStatus.PAYMENT_PENDING, payment: { ...paidCard.payment, status: "PENDING" } }, false, ["credit"], false, null],
-    ["with no payment row", { ...paidCard, status: BookingStatus.PENDING, payment: null }, false, ["credit"], false, null],
-    ["an organiser-paid joiner (card)", { ...paidCard, organiserSettled: true, parentBookingId: "parent" }, false, ["card"], true, null],
-    ["an organiser-paid joiner (Internet Banking)", { ...paidBank, organiserSettled: true, parentBookingId: "parent" }, false, ["card"], true, null],
-  ] as const)("%s", (_label, shape, editAsks, methods, organiser, refundTo) => {
-    expect(workPartySettlementOptions(shape, editAsks)).toEqual({ methods, paidByOrganiser: organiser, refundTo });
+    ["paid by card", paidCard, ASKS_CARD, ["credit", "card"], false, "card"],
+    ["paid by card with some credit", { ...paidCard, payment: { ...paidCard.payment, creditAppliedCents: 5_000 } }, ASKS_CARD, ["credit", "card"], false, "card"],
+    // #5212 (`INV-PAY-160`): a card payment Stripe holds no record of is refunded by bank transfer.
+    ["paid by card with no Stripe record: a refund by bank transfer", paidCard, ASKS_BANK, ["credit", "card"], false, "bank"],
+    ["paid by Internet Banking: a refund by bank transfer, as on an ordinary edit", paidBank, ASKS_BANK, ["credit", "card"], false, "bank"],
+    ["paid, but the edit offers no choice (nothing refundable)", paidCard, NO_ASK, ["credit"], false, null],
+    ["paid by Internet Banking, but the edit offers no choice", paidBank, NO_ASK, ["credit"], false, null],
+    ["paid wholly with account credit", { ...paidCard, payment: { ...paidCard.payment, amountCents: 0, creditAppliedCents: 20_000 } }, NO_ASK, ["credit"], false, null],
+    ["unpaid (card intent open)", { ...paidCard, status: BookingStatus.PAYMENT_PENDING, payment: { ...paidCard.payment, status: "PENDING" } }, NO_ASK, ["credit"], false, null],
+    ["with no payment row", { ...paidCard, status: BookingStatus.PENDING, payment: null }, NO_ASK, ["credit"], false, null],
+    ["an organiser-paid joiner (card)", { ...paidCard, organiserSettled: true, parentBookingId: "parent" }, NO_ASK, ["card"], true, null],
+    ["an organiser-paid joiner (Internet Banking)", { ...paidBank, organiserSettled: true, parentBookingId: "parent" }, NO_ASK, ["card"], true, null],
+  ] as const)("%s", (_label, shape, edit, methods, organiser, refundTo) => {
+    expect(workPartySettlementOptions(shape, edit)).toEqual({ methods, paidByOrganiser: organiser, refundTo });
   });
 
   it("B-L1: offers no method when an unpaid ask took the whole reduction, and refuses one with the reason", () => {
-    const absorbed = workPartySettlementOptions(paidCard, false, { unpaidAskOffsetCents: 5_000, wholly: true });
+    const absorbed = workPartySettlementOptions(paidCard, NO_ASK, { unpaidAskOffsetCents: 5_000, wholly: true });
     expect(absorbed).toEqual({ methods: [], paidByOrganiser: false, refundTo: null, unpaidAskOffsetCents: 5_000 });
     expect(resolveWorkPartySettlementMethod(absorbed, undefined, CLUB_FORMAT_TEST)).toBeNull();
     for (const method of ["card", "credit"] as const) {
@@ -355,12 +361,12 @@ describe("workPartySettlementOptions and the settlement guard (fork #129, upstre
     );
     // An organiser-paid joiner keeps the organiser's one disposition.
     expect(
-      workPartySettlementOptions({ ...paidCard, organiserSettled: true, parentBookingId: "parent" }, false, { unpaidAskOffsetCents: 5_000, wholly: true }).methods,
+      workPartySettlementOptions({ ...paidCard, organiserSettled: true, parentBookingId: "parent" }, NO_ASK, { unpaidAskOffsetCents: 5_000, wholly: true }).methods,
     ).toEqual(["card"]);
   });
 
   it("M4: an ask that took part of the reduction is named beside the choice the rest still has", () => {
-    expect(workPartySettlementOptions(paidCard, true, { unpaidAskOffsetCents: 3_000, wholly: false })).toEqual({
+    expect(workPartySettlementOptions(paidCard, ASKS_CARD, { unpaidAskOffsetCents: 3_000, wholly: false })).toEqual({
       methods: ["credit", "card"],
       paidByOrganiser: false,
       refundTo: "card",
