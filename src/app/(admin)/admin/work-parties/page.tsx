@@ -41,6 +41,7 @@ import {
   type EventDetail,
 } from "./_components/event-bookings";
 import { useClubFormat } from "@/components/club-format-provider";
+import { StatusRegion } from "@/components/status-region";
 
 interface WorkPartyEventRow {
   id: string;
@@ -54,6 +55,10 @@ interface WorkPartyEventRow {
   lodgeName: string | null;
   bookingCount: number;
   totalDiscountCents: number;
+  /** #5148: whether it has Events Calendar entries. */
+  onCalendar: boolean;
+  /** #5148: upcoming, active, not on the calendar, calendar module on. */
+  canAddToCalendar: boolean;
 }
 
 interface EventFormState {
@@ -85,11 +90,23 @@ export default function AdminWorkPartiesPage() {
   const [events, setEvents] = useState<WorkPartyEventRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // #5148: the calendar outcome of the last action: a new work party that
+  // saved but did not reach the calendar, or "Add to calendar" succeeding. It
+  // is read from a StatusRegion mounted before the request, and each new
+  // outcome bumps the key so focus moves to it (the button it replaces
+  // disappears once the work party is on the calendar).
+  const [calendarNotice, setCalendarNotice] = useState("");
+  const [calendarOutcome, setCalendarOutcome] = useState(0);
+  const showCalendarNotice = (text: string) => {
+    setCalendarNotice(text);
+    if (text) setCalendarOutcome((key) => key + 1);
+  };
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<EventFormState>(emptyForm);
   // #2257 — the example lives UNDER the field, not inside it as grey pseudo-content.
   const nameHint = useFieldHint();
+  const descriptionHint = useFieldHint();
   const [saving, setSaving] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, EventDetail>>({});
@@ -217,6 +234,8 @@ export default function AdminWorkPartiesPage() {
         return;
       }
       if (!res.ok) throw await apiRefusalFromResponse(res, fallback);
+      const data = await res.json();
+      showCalendarNotice(data.calendarWarning || "");
       setShowForm(false);
       setEditingId(null);
       setForm(emptyForm);
@@ -231,6 +250,7 @@ export default function AdminWorkPartiesPage() {
   async function toggleActive(event: WorkPartyEventRow) {
     if (!lodgeScopeReady) return;
     setError("");
+    setCalendarNotice("");
     const fallback = "Failed to update work party event";
     try {
       const res = await fetch(`/api/admin/work-parties/${event.id}`, {
@@ -258,10 +278,31 @@ export default function AdminWorkPartiesPage() {
     await fetchEvents();
   }
 
+  async function addToCalendar(event: WorkPartyEventRow) {
+    if (!lodgeScopeReady) return;
+    setError("");
+    setCalendarNotice("");
+    const fallback = "Failed to add the work party to the calendar";
+    try {
+      const res = await fetch(`/api/admin/work-parties/${event.id}/calendar`, { method: "POST" });
+      if (res.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        return;
+      }
+      if (!res.ok) throw await apiRefusalFromResponse(res, fallback);
+    } catch (err) {
+      setError(refusalMessageOr(err, fallback));
+      return;
+    }
+    showCalendarNotice(`${event.name} is now on the Events Calendar.`);
+    await fetchEvents();
+  }
+
   async function handleDelete(event: WorkPartyEventRow) {
     if (!lodgeScopeReady) return;
     if (!confirm(`Delete work party event "${event.name}"?`)) return;
     setError("");
+    setCalendarNotice("");
     const fallback = "Failed to delete work party event";
     const res = await fetch(`/api/admin/work-parties/${event.id}`, {
       method: "DELETE",
@@ -345,6 +386,15 @@ export default function AdminWorkPartiesPage() {
         what="work parties for a particular lodge"
       />
 
+      {lodgeScopeReady && (
+        <StatusRegion
+          visible={calendarNotice !== ""}
+          visibleClassName="rounded-md border p-3 text-sm text-muted-foreground"
+          outcomeKey={calendarOutcome}
+        >
+          {calendarNotice}
+        </StatusRegion>
+      )}
       {lodgeScopeReady && error && (
         <div role="alert" className="rounded-md border border-danger/20 bg-danger-muted p-3 text-sm text-danger">{error}</div>
       )}
@@ -429,7 +479,12 @@ export default function AdminWorkPartiesPage() {
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
                 maxLength={1000}
                 rows={3}
+                {...descriptionHint.fieldProps}
               />
+              <FieldHint {...descriptionHint.hintProps}>
+                Shown to members on the work party page and the calendar, and in the
+                booking form to anyone booking those nights.
+              </FieldHint>
             </div>
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input
@@ -486,6 +541,9 @@ export default function AdminWorkPartiesPage() {
                       <Badge variant={event.active ? "default" : "secondary"}>
                         {event.active ? "Active" : "Inactive"}
                       </Badge>
+                      {event.onCalendar && (
+                        <Badge variant="outline">On calendar</Badge>
+                      )}
                     </CardTitle>
                     <CardDescription>
                       {formatStoredDate(event.startDate)} to {formatStoredDate(event.endDate)}
@@ -506,6 +564,11 @@ export default function AdminWorkPartiesPage() {
                     <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => toggleActive(event)}>
                       {event.active ? "Deactivate" : "Activate"}
                     </ViewOnlyActionButton>
+                    {event.canAddToCalendar && (
+                      <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => addToCalendar(event)}>
+                        Add to calendar
+                      </ViewOnlyActionButton>
+                    )}
                     {event.bookingCount === 0 && (
                       <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => handleDelete(event)}>
                         Delete
