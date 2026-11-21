@@ -528,6 +528,7 @@ describe("the hub prefix census", () => {
       "/admin/finance/reports",
       "/admin/finance/xero",
       "/admin/finance/xero/member-grouping",
+      "/admin/finance/xero/unallocated-payments",
       "/admin/finance/xero/records/[localModel]/[localId]",
       "/admin/finance/xero/setup",
     ];
@@ -872,6 +873,7 @@ describe("the entries' shape", () => {
       "xero-member-grouping",
       "xero-record",
       "xero-setup",
+      "xero-unallocated-payments",
     ]);
     expect(new Set(ADMIN_PAGES.filter((page) => page.moved).map((page) => page.hub))).toEqual(
       new Set(["website", "finance", "rules", "messages", "system", "bookings", "members", "lodge-ops"]),
@@ -1867,6 +1869,7 @@ describe("buildAdminUrlRules", () => {
       ["/admin/xero", "/admin/finance/xero"],
       ["/admin/xero/member-grouping", "/admin/finance/xero/member-grouping"],
       ["/admin/xero/setup", "/admin/finance/xero/setup"],
+      ["/admin/xero/unallocated-payments", "/admin/finance/xero/unallocated-payments"],
     ] as const;
     const inductionPrint = ["/admin/induction/[id]/print", "/admin/membership/induction/[id]/print"] as const;
     const lodgePages = (["", "/central-lodge", "/display", "/roster", "/setup"] as const).map(
@@ -2254,6 +2257,7 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/finance/subscriptions/page.tsx": "C5: its own address is adminHref",
     "src/app/(admin)/admin/finance/xero/records/[localModel]/[localId]/page.tsx":
       "C5: the fallback back link is adminLink",
+    "src/app/(admin)/admin/finance/xero/unallocated-payments/page.tsx": "#5204: a member row links the member at adminHref",
     "src/app/(admin)/admin/finance/xero/setup/xero-wizard-steps.tsx":
       "C5: the OAuth connect step returns to Xero Setup at its adminHref",
     "src/app/api/admin/xero/callback/route.ts":

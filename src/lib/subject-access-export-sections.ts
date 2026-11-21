@@ -189,6 +189,9 @@ async function readMemberSections(memberId: string) {
         amountCents: true, type: true, description: true, createdAt: true,
         sourceBookingId: true, appliedToBookingId: true,
         noteAllocations: { select: { amountCents: true, appliedToBookingId: true, createdAt: true } },
+        // #5204: a backed lot's slices on booking invoices, and what a restoration handed back.
+        cashAllocations: { select: { heldCents: true, returningCents: true, appliedToBookingId: true, createdAt: true } },
+        cashReturns: { select: { amountCents: true, createdAt: true } },
       },
     }),
     getMemberCreditBalance(memberId),

@@ -195,6 +195,10 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MemberCredit: "personal",
   MemberCreditNoteAllocation: "personal",
   AdminCreditAdjustmentRequest: "personal",
+  // #5204: a contact's unallocated Xero money, and the backed-credit slices and returns.
+  XeroCashCredit: "personal",
+  MemberCreditCashAllocation: "personal",
+  MemberCreditCashReturn: "personal",
   GroupDiscountSetting: "non-personal",
   PublicContentSettings: "personal",
   ClubTheme: "non-personal",

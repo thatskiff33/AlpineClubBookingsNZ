@@ -462,6 +462,18 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
+        // #5204: runs in the credit-sync slot, right after it.
+        jobName: XERO_CRON_JOB_NAMES["cash-credits"],
+        label: "Xero overpayments and prepayments",
+        schedule: "45 2 * * *",
+        timezone: clubTimeZone,
+        expectedLocalTime: `02:45 daily in ${clubTimeZone}`,
+        staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
         jobName: XERO_CRON_JOB_NAMES.outbox,
         label: "Xero outbox processing",
         schedule: "*/15 * * * *",

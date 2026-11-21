@@ -1992,11 +1992,13 @@ officer queue screen that reads it for that list pages through `useAdminQueuePag
 `Pagination` with its "Showing 1–25 of 40" total line, shown even on a single
 page. The officer queues — member applications, refund appeals, booking
 approvals, change requests, public requests, policy exceptions, the
-membership cancellation and archive queues, and both deletion-request
-queues — do so today: pending filters read
-oldest first, a filter change returns to page 1, the page is kept in the URL
-wherever the screen keeps its filter there (not the deletion-request queues or
-the policy exceptions tab, which keep it in memory), a slower read for a page
+membership cancellation and archive queues, both deletion-request
+queues, the maintenance queue and the communications send history (which has
+no filter, and returns to page 1 after a send, where the new send is) — do so
+today: pending filters (the maintenance queue's is Open) read oldest first, a filter change returns to page 1, the page is kept in the URL
+wherever the screen keeps its filter there (not the deletion-request queues,
+the policy exceptions tab, the maintenance queue or the send history, which keep
+it in memory), a slower read for a page
 the officer has left never replaces the list, the pager stays mounted through a
 read so keyboard focus survives a page change, and a focused `bookingId=` /
 `requestId=` link pins its record when it is off the page (approvals, change
@@ -2011,13 +2013,9 @@ than the hook, show the range line once the list has more than one page, and
 share `formatAdminListRange` for the range text and
 `parseAdminListPageParam` / `setAdminListPageParam` for the URL page; the same
 census fails hand-rolled range arithmetic, an unparsed page read or a
-hand-written page write. Five capped lists sit outside this. System issue
+hand-written page write. Three capped lists sit outside this: system issue
 reports, messages notice reads and the privacy retention preview keep their own
-pagers until next changed. The communications history and the maintenance queue
-have no pager yet: the history reads its newest 25 sends with no total, and the
-queue says "Showing the newest N of T". Both predate #4960, which left them out
-of scope, and both routes already take their page fields from the shared schema,
-so a pager needs no route change.
+pagers until next changed.
 
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same
@@ -3639,7 +3637,7 @@ flowchart TD
     Leader --> Q15["Every 15 min<br/>payment-recovery, internet-banking-hold-release,<br/>xero-waiting-invoice-reaper, late-capture-held-alert,<br/>credit-release-asks, duplicate-capture-kept-alert, xero-outbox,<br/>xero-operation-replay, xero-inbound-reconcile,<br/>xero-credit-note-outside-spend-mirror"]
     Leader --> Q30["Every 30 min<br/>waitlist-processor, email-retry"]
     Leader --> Q3h["Every 3 h<br/>additional-payment-reminders, confirm-pending,<br/>placeholder-guest-name-reminders, pre-arrival-reminders,<br/>purge-booking-requests, quote-expiry-reminders,<br/>school-attendee-confirmations, group-settlement-reaper,<br/>policy-exception-hold-reaper, hosting-coverage-reevaluation"]
-    Leader --> Daily["Daily<br/>complete-bookings, data-pruning, draft-cleanup,<br/>age-up, email-inheritance-reconcile,<br/>capacity-warnings, admin-digest,<br/>credit-reconciliation, hut-leader-auto-assign,<br/>checkin-reminders, pending-deadline-alerts,<br/>member-guest-consent-expiry,<br/>nomination-reminders, finance-daily-sync,<br/>xero-membership-refresh, xero-link-backfill,<br/>xero-link-cleanup, xero-bank-refund-void-follow-up,<br/>xero-reconciliation-report,<br/>xero-credit-sync-check"]
+    Leader --> Daily["Daily<br/>complete-bookings, data-pruning, draft-cleanup,<br/>age-up, email-inheritance-reconcile,<br/>capacity-warnings, admin-digest,<br/>credit-reconciliation, hut-leader-auto-assign,<br/>checkin-reminders, pending-deadline-alerts,<br/>member-guest-consent-expiry,<br/>nomination-reminders, finance-daily-sync,<br/>xero-membership-refresh, xero-link-backfill,<br/>xero-link-cleanup, xero-bank-refund-void-follow-up,<br/>xero-reconciliation-report,<br/>xero-credit-sync-check, xero-cash-credit-refresh"]
     Leader --> Cfg["Configurable<br/>backup"]
 ```
 
@@ -3674,6 +3672,7 @@ flowchart TD
 | `xero-bank-refund-void-follow-up` | Daily | Right after the link cleanup: undo each voided bank-transfer refund note and put it back on the refund list (#4162; report-only until `XERO_ENABLE_BANK_REFUND_VOID_WRITES=true`) |
 | `xero-reconciliation-report` | Daily | Send the Xero reconciliation report |
 | `xero-credit-sync-check` | Daily | Reconcile BookingApp's stamped applied credit against Xero's live invoice allocations and warn admins on drift with the exact amount (#2501); read-only, self-throttled |
+| `xero-cash-credit-refresh` | Daily (in the credit-sync check's slot) | Refresh the snapshot of unallocated Xero overpayments and prepayments the finance queue shows (#5204); reads Xero, writes only that snapshot, and a failed read changes nothing |
 | `finance-daily-sync` | Daily when the finance dashboard module is enabled | Refresh finance report/invoice/balance snapshots from the operational Xero connection |
 | `data-pruning` | Daily | Prune expired tokens/logs and idle login-throttle rows, and run audit retention |
 | `draft-cleanup` | Daily | Delete expired draft bookings; leave out and report any that financial history names (`INV-MONEY-043`) |

@@ -13,6 +13,11 @@ type CreditNote = {
 type Payment = { paymentID: string; amountCents: number; status: "AUTHORISED" | "DELETED" } &
   ({ invoiceID: string; creditNoteID?: never } | { creditNoteID: string; invoiceID?: never });
 type Allocation = { allocationID: string; creditNoteID: string; invoiceID: string; amountCents: number };
+/** A receive overpayment or prepayment: money a contact paid that no invoice has taken (#5204). */
+type CashCredit = {
+  cashCreditID: string; kind: "OVERPAYMENT" | "PREPAYMENT"; contactID: string; date: string;
+  totalCents: number; remainingCents: number; status: "AUTHORISED" | "PAID" | "VOIDED";
+};
 
 export class XeroValidationError extends Error {
   readonly response;
@@ -32,6 +37,7 @@ export class XeroFake {
   private payments = new Map<string, Payment>();
   private creditNotes = new Map<string, CreditNote>();
   private allocations = new Map<string, Allocation>();
+  private cashCredits = new Map<string, CashCredit>();
   private readonly write = createReplayWriter(() => new XeroValidationError("Idempotency key reused with different parameters"));
 
   private cents(value: number) {
@@ -164,10 +170,31 @@ export class XeroFake {
     note.status = "VOIDED";
   }
 
+  /** #5204: an overpayment or prepayment received from a contact, dated `date` (YYYY-MM-DD). */
+  createCashCredit(key: string, kind: CashCredit["kind"], contactID: string, totalCents: number, date: string) {
+    return this.write(key, ["cash-credit", kind, contactID, totalCents, date], () => {
+      this.get(this.contacts, contactID);
+      this.cents(totalCents);
+      const cashCredit: CashCredit = {
+        cashCreditID: `${this.idPrefix}${kind.toLowerCase()}-${this.cashCredits.size + 1}`,
+        kind, contactID, date, totalCents, remainingCents: totalCents, status: "AUTHORISED",
+      };
+      this.cashCredits.set(cashCredit.cashCreditID, cashCredit);
+      return cashCredit;
+    });
+  }
+
+  voidCashCredit(cashCreditID: string) {
+    const cashCredit = this.get(this.cashCredits, cashCreditID);
+    if (cashCredit.remainingCents !== cashCredit.totalCents) throw new XeroValidationError("Overpayment has allocations");
+    cashCredit.status = "VOIDED";
+    cashCredit.remainingCents = 0;
+  }
+
   /** Snapshots are detached: a retained read can arrive after a later void. */
   snapshot() {
     return structuredClone({
-      contacts: [...this.contacts.values()], payments: [...this.payments.values()], allocations: [...this.allocations.values()],
+      contacts: [...this.contacts.values()], cashCredits: [...this.cashCredits.values()], payments: [...this.payments.values()], allocations: [...this.allocations.values()],
       invoices: [...this.invoices.values()].map(i => ({ ...i, amountPaidCents: this.paid(i.invoiceID), amountCreditedCents: this.credited(i.invoiceID), amountDueCents: i.status === "VOIDED" ? 0 : i.totalCents - this.paid(i.invoiceID) - this.credited(i.invoiceID) })),
       creditNotes: [...this.creditNotes.values()].map(n => ({ ...n, remainingCreditCents: n.status === "VOIDED" ? 0 : this.remaining(n) })),
     });
