@@ -80,7 +80,13 @@ vi.mock("@/lib/additional-capture-receipt-gate", async (importOriginal) => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     xeroSyncOperation: {
-      findUnique: mocks.findUniqueOperation,
+      // #5228: a row's `queueType` column as enqueue writes it - its queued payload's own - unless a case sets it.
+      findUnique: async (...a: unknown[]) => {
+        const row = await mocks.findUniqueOperation(...a);
+        if (!row || typeof row !== "object" || "queueType" in row) return row;
+        const queueType = (row as { requestPayload?: { queueType?: unknown } | null }).requestPayload?.queueType;
+        return typeof queueType === "string" ? { ...row, queueType } : row;
+      },
       updateMany: mocks.updateManyOperation,
       findFirst: mocks.findFirstOperation,
     },
@@ -240,6 +246,11 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { cardRefundNoteKeyTag } from "@/lib/card-refund-paid-another-way-cash";
 import { setXeroInvoicingEnabled } from "@/lib/__tests__/helpers/xero-invoicing-guard-mock";
 import { SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE } from "@/lib/xero-invoicing-off";
+
+/** #5228: a Retry's requeue (`returnOutboxRowToPending`) - its guard, narrowed to the request it read. */
+function requeuedWhere(guard: unknown) {
+  return { AND: [guard, { id: "op_123", requestPayload: { equals: expect.anything() } }] };
+}
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
   return {
@@ -2788,9 +2799,12 @@ describe("retryXeroSyncOperation", () => {
       expect.objectContaining({
         status: "SUCCEEDED",
         responsePayload: expect.objectContaining({ refundPaymentSkipped: true, refundPaymentSkipReason: "unset" }),
+        // #4279: the note is adopted inside that completion, only if its claim wins.
+        canonicalRefundNote: { paymentId: "pay_123", creditNoteId: "cn_123" },
       }),
       { retryClaim: true },
     );
+    expect(mocks.updatePayment).not.toHaveBeenCalledWith(expect.objectContaining({ data: { xeroRefundCreditNoteId: "cn_123" } }));
   });
 
   it("MUTATION (INV-ADDPAY-041): a PARTIAL row's repair never writes a note Xero voided into the payment's pointer", async () => {
@@ -2845,16 +2859,15 @@ describe("retryXeroSyncOperation", () => {
     });
 
     expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
-    expect(mocks.updatePayment).toHaveBeenCalledWith({
-      where: { id: "pay_123" },
-      data: { xeroRefundCreditNoteId: "cn_123" },
-    });
+    // #4279: no pointer write of its own; the completion adopts the note once its claim wins.
+    expect(mocks.updatePayment).not.toHaveBeenCalledWith(expect.objectContaining({ data: { xeroRefundCreditNoteId: "cn_123" } }));
     expect(mocks.finishRefundCreditNoteSettlement).toHaveBeenCalledWith(
       expect.objectContaining({
         operation: expect.objectContaining({ id: "op_123" }),
         paymentId: "pay_123",
         originalInvoiceId: "inv_123",
         creditNoteId: "cn_123",
+        adoptAsCanonicalRefundNote: true,
         // `INV-PAY-101`: a pre-#3529 row carries no method, and this payment's
         // source is Stripe, so the repair settles it as the card refund it was.
         refundMethod: "card",
@@ -2909,16 +2922,15 @@ describe("retryXeroSyncOperation", () => {
 
     expect(mocks.createXeroCreditNote).not.toHaveBeenCalled();
     expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
-    expect(mocks.updatePayment).toHaveBeenCalledWith({
-      where: { id: "pay_123" },
-      data: { xeroRefundCreditNoteId: "cn_legacy_123" },
-    });
+    // #4279: the FAILED arm hands the adoption to the completion too.
+    expect(mocks.updatePayment).not.toHaveBeenCalledWith(expect.objectContaining({ data: { xeroRefundCreditNoteId: "cn_legacy_123" } }));
     expect(mocks.finishRefundCreditNoteSettlement).toHaveBeenCalledWith(
       expect.objectContaining({
         operation: expect.objectContaining({ id: "op_123" }),
         paymentId: "pay_123",
         originalInvoiceId: "inv_legacy_123",
         creditNoteId: "cn_legacy_123",
+        adoptAsCanonicalRefundNote: true,
         refundMethod: "card",
       })
     );
@@ -3087,7 +3099,7 @@ describe("retryXeroSyncOperation", () => {
         message: "Queued the kept-payment Xero invoice for retry.",
       });
       expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-        where: { id: "op_123", status: { in: ["FAILED", "PARTIAL"] }, manuallyResolvedAt: null },
+        where: requeuedWhere({ status: { in: ["FAILED", "PARTIAL"] }, manuallyResolvedAt: null }),
         data: expect.objectContaining({ status: "PENDING", requestPayload: queued }),
       });
     }
@@ -3138,7 +3150,7 @@ describe("retryXeroSyncOperation", () => {
         message: "Queued the failed-card-refund reversal invoice for retry.",
       });
       expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-        where: { id: "op_123", status: { in: ["FAILED", "PARTIAL"] }, manuallyResolvedAt: null },
+        where: requeuedWhere({ status: { in: ["FAILED", "PARTIAL"] }, manuallyResolvedAt: null }),
         data: expect.objectContaining({ status: "PENDING", requestPayload: expected }),
       });
     }
@@ -3182,7 +3194,7 @@ describe("retryXeroSyncOperation", () => {
       select: { id: true },
     });
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_123", status: "FAILED", manuallyResolvedAt: null },
+      where: requeuedWhere({ status: "FAILED", manuallyResolvedAt: null }),
       // #3953 round 11: the stored payload - the intent the note step reads,
       // and the charge day - is kept as it stands, never written back.
       data: expect.objectContaining({ status: "PENDING" }),
@@ -3525,9 +3537,11 @@ describe("retryXeroSyncOperation", () => {
     mocks.findUniqueOperation
       .mockReset()
       .mockResolvedValueOnce(kept)
+      // #5228: the requeue's own read, before the resolve lands.
+      .mockResolvedValueOnce(kept)
       .mockResolvedValueOnce({ ...resolved });
-    mocks.updateManyOperation.mockImplementation(async (args: { where: Record<string, unknown> }) => ({
-      count: args.where.manuallyResolvedAt === null ? 0 : 1,
+    mocks.updateManyOperation.mockImplementation(async (args: { where: { AND: Array<Record<string, unknown>> } }) => ({
+      count: args.where.AND[0]!.manuallyResolvedAt === null ? 0 : 1,
     }));
     await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
       XeroOperationResolvedInXeroError
@@ -3557,7 +3571,7 @@ describe("retryXeroSyncOperation", () => {
       message: "Queued the group settlement invoice operation for retry.",
     });
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_123", status: "FAILED", manuallyResolvedAt: null },
+      where: requeuedWhere({ status: "FAILED", manuallyResolvedAt: null }),
       data: expect.objectContaining({ status: "PENDING", requestPayload: payload }),
     });
   });
@@ -3599,7 +3613,7 @@ describe("retryXeroSyncOperation", () => {
     await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
 
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_123", status: "FAILED", manuallyResolvedAt: null },
+      where: requeuedWhere({ status: "FAILED", manuallyResolvedAt: null }),
       data: expect.objectContaining({
         status: "PENDING",
         requestPayload: { queueType: "GROUP_SETTLEMENT_INVOICE", settlementId: "settle_1" },
@@ -3700,7 +3714,7 @@ describe("retryXeroSyncOperation", () => {
       );
       expect(mocks.updateManyOperation).toHaveBeenCalledTimes(1);
       expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-        where: { id: "op_123", status: "FAILED", manuallyResolvedAt: null },
+        where: requeuedWhere({ status: "FAILED", manuallyResolvedAt: null }),
         data: expect.objectContaining({
           status: "PENDING",
           // The blanked id is dropped, not carried back into the queue.
@@ -3828,10 +3842,7 @@ describe("retryXeroSyncOperation", () => {
 
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
       // No resolved guard: applied-credit rows are retry-only (#3635 N2).
-      where: {
-        id: "op_123",
-        status: { in: ["FAILED", "PARTIAL"] },
-      },
+      where: requeuedWhere({ status: { in: ["FAILED", "PARTIAL"] } }),
       data: {
         status: "PENDING",
         startedAt: null,
@@ -3842,6 +3853,29 @@ describe("retryXeroSyncOperation", () => {
     });
     expect(mocks.allocateAppliedCreditForBooking).not.toHaveBeenCalled();
     expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
+  });
+
+  // #5228: a Retry never puts a row on PENDING with a request the outbox cannot
+  // claim - there it would be skipped on every pass, silently. It refuses and
+  // leaves the row FAILED, where an officer still sees it.
+  it("MUTATION (#5228): refuses to queue an applied-credit row whose stored request names no queue type, and leaves it as it is", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "ALLOCATION",
+        operationType: "ALLOCATE",
+        localModel: "Payment",
+        localId: "pay_123",
+        queueType: XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
+        requestPayload: { allocations: [{ invoice: { invoiceID: "inv_1" }, amount: 20 }] },
+      })
+    );
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining("not queued again"),
+    });
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+    expect(mocks.allocateAppliedCreditForBooking).not.toHaveBeenCalled();
   });
 
   it("never executes a failed applied-credit child inline after its parent can race deallocation", async () => {
@@ -4823,7 +4857,7 @@ describe("admin grant credit note retry (#4431)", () => {
     });
     expect(mocks.updateManyOperation).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ id: "op_123", status: { in: ["FAILED", "PARTIAL"] } }),
+        where: requeuedWhere(expect.objectContaining({ status: { in: ["FAILED", "PARTIAL"] } })),
         data: expect.objectContaining({
           status: "PENDING",
           startedAt: null,

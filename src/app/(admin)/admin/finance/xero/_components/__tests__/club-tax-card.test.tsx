@@ -42,8 +42,8 @@ const STATE = {
   ],
   earliestChangeDate: "2026-07-02",
   xeroRevenueRates: [
-    { taxType: "OUTPUT2", name: "15% GST on Income", rateBasisPoints: 1500, active: true, revenue: true },
-    { taxType: "TAX009", name: "17% GST on Income", rateBasisPoints: 1700, active: true, revenue: true },
+    { taxType: "OUTPUT2", name: "15% GST on Income", rateBasisPoints: 1500, active: true, revenue: true, expenses: false },
+    { taxType: "TAX009", name: "17% GST on Income", rateBasisPoints: 1700, active: true, revenue: true, expenses: false },
   ],
 }
 

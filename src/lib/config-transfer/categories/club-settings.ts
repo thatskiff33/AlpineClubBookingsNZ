@@ -1,3 +1,4 @@
+export { DEFAULTS_INTENTIONALLY_PARTIAL, COMMON_EXCLUDED_COLUMNS, excludedColumnsFor } from "./singleton-exclusions";
 import { privacyHostingSchema, PRIVACY_HOSTING_DEFAULTS, PRIVACY_HOSTING_TEXT_REFUSAL } from "@/lib/privacy-hosting";
 import { strToU8, strFromU8 } from "fflate";
 import { Prisma } from "@prisma/client";
@@ -88,7 +89,7 @@ interface SingletonFieldConstraint {
   validate?: (value: unknown) => string | null;
 }
 
-interface SingletonSpec {
+export interface SingletonSpec {
   entity: string;
   /** Prisma delegate name, e.g. "bookingDefaults". */
   delegate: string;
@@ -150,45 +151,6 @@ interface SingletonSpec {
    * so the loop below still gets to refuse it.
    */
   reconcile?: (incoming: Record<string, unknown>) => Record<string, unknown>;
-}
-
-/**
- * The singletons whose `defaults()` legitimately covers none (or only some) of
- * their fields. Both are made entirely of nullable OVERRIDE columns resolved
- * through the deployment's `config/club.json` / environment fallback chain, so
- * "never saved" means "no override" — exactly what their admin GETs synthesise
- * — and the fallback values belong to the install rather than to the club's
- * portable configuration. Guarded by a test so a genuinely under-specified new
- * singleton cannot join them silently.
- */
-export const DEFAULTS_INTENTIONALLY_PARTIAL = new Set([
-  "club-identity-settings",
-  "email-message-setting",
-]);
-
-/**
- * Columns present on (most) singletons that are never portable club
- * configuration: the fixed singleton primary key, the audit FK to the member
- * who last saved on the SOURCE install (that id need not exist on the target),
- * and the row timestamps. They are excluded from every export by omission from
- * `fields`; enumerated here so the reverse drift guard (#2178) treats the
- * omission as a deliberate decision rather than an oversight. Kept as one shared
- * set so the exclusion mechanism stays uniform across all 12 singletons. A model
- * that lacks one of these columns (e.g. BookingDefaults has no timestamps) is
- * unaffected: the guard only requires columns ⊆ fields ∪ excluded, never the
- * reverse, so this can be a tolerant superset.
- */
-export const COMMON_EXCLUDED_COLUMNS: Record<string, string> = {
-  id: 'singleton primary key (always "default") — identity, not configuration',
-  updatedByMemberId:
-    "audit FK to the source install's member; the id need not exist on the target",
-  createdAt: "row creation timestamp — instance-local bookkeeping",
-  updatedAt: "row mutation timestamp — instance-local bookkeeping",
-};
-
-/** Full column-exclusion set for a singleton: the shared columns plus its own. */
-export function excludedColumnsFor(spec: SingletonSpec): Record<string, string> {
-  return { ...COMMON_EXCLUDED_COLUMNS, ...spec.excluded };
 }
 
 // #4932: the admin form's (and the database CHECK's) 1–30 day bound.
@@ -339,6 +301,15 @@ export const SINGLETONS: SingletonSpec[] = [
       // would advertise an outward data-sharing arrangement the target club has
       // not entered into. A fresh import keeps the target's own value (default
       // OFF) and its admin turns it on after being issued a key.
+      // AI app connections (ALP-653): NON-TRAVELLING. Switching it on opens a
+      // new way into this deployment's live data and sends that data to
+      // outside AI providers, so it is a per-install security and privacy
+      // decision like magicLink/googleLogin. Its settings (McpSettings) and
+      // every connection stay behind as well.
+      mcpServer:
+        "opens an authenticated machine door onto this deployment's live data " +
+        "and sends it to outside AI providers; a per-install security and " +
+        "privacy decision, not portable club config (ALP-653)",
       alpineCentralServer:
         "outward data-sharing integration gated on a deployment-local encrypted " +
         "ServerNZ API key and per-install central-server base URL (both " +

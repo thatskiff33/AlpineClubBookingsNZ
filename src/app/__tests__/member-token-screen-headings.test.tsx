@@ -76,12 +76,7 @@ import PartnerInvitePage from "../(public)/family-invite/[token]/page";
 import MembershipCancellationConfirmationPage from "../(public)/membership-cancellation/[token]/page";
 import { BookingRequestRespondClient } from "../(website-dynamic)/booking-requests/respond/[token]/booking-request-respond-client";
 import { BookingRequestVerifyClient } from "../(website-dynamic)/booking-requests/verify/[token]/booking-request-verify-client";
-
-function expectOneLevelOneHeading(name: string | RegExp) {
-  const headings = screen.getAllByRole("heading", { level: 1 });
-  expect(headings).toHaveLength(1);
-  expect(headings[0]).toHaveAccessibleName(name);
-}
+import { expectOneLevelOneHeading } from "@/lib/__tests__/support/heading-outline";
 
 const tokenParams = { params: Promise.resolve({ token: "tok-1" }) };
 

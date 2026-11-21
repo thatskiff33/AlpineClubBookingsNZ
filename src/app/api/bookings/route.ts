@@ -12,7 +12,6 @@ import {
 } from "@/lib/policies/booking-route-decisions";
 import { BookingStatus } from "@prisma/client";
 import { z } from "zod";
-import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { ARRIVAL_TIME_ERROR_MESSAGE, ARRIVAL_TIME_PATTERN } from "@/lib/arrival-time";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
@@ -63,7 +62,6 @@ import {
   MemberGuestAddThrottledError,
   startMemberGuestRefusalClock,
 } from "@/lib/member-guest-probe-guard";
-import { nameField } from "@/lib/zod-helpers";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
   checkInternetBankingLeadTime,
@@ -123,12 +121,12 @@ import {
   getBookingMemberNightConflictResponse,
 } from "@/lib/booking-member-night-conflicts";
 import {
-  GUEST_CHANGE_LIST_BOUND, BookingGuestStayRangeValidationError, guestRequestSchemaError, guestStayFieldsSchema,
+  BookingGuestStayRangeValidationError, guestRequestSchemaError,
   normalizeGuestStayRanges,
 } from "@/lib/booking-guest-stay-range-input";
+import { bookingCreateCoreShape } from "@/lib/booking-create-fields";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { addDaysDateOnly } from "@/lib/date-only";
-import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
@@ -141,28 +139,16 @@ import {
 } from "@/lib/access-roles";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { refuseOnBehalfUnlessBookingOfficer } from "@/lib/on-behalf-booking";
+import { arrivesAsMcpConnection } from "@/lib/mcp-connection-request";
+import { getMemberDraftSummary } from "@/lib/member-draft-summary";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
 const createBookingSchema = z.object({
-  checkIn: parsedDateOnlySchema,
-  checkOut: parsedDateOnlySchema,
-  guests: z
-    .array(
-      z.object({
-        firstName: nameField(),
-        lastName: nameField(),
-        ageTier: bookableAgeTierEnum,
-        isMember: z.boolean(),
-        memberId: z.string().min(1).optional(),
-        // Date In and Date Out, or the night set (#713), which may be
-        // non-contiguous; the booking range auto-expands to cover them (#4199).
-        ...guestStayFieldsSchema.shape,
-      })
-    )
-    .min(1)
-    .max(...GUEST_CHANGE_LIST_BOUND),
+  // The stay, the party, the lodge and the note: shared with the AI app
+  // action catalogue, which offers a draft booking these fields (ALP-653).
+  ...bookingCreateCoreShape,
   // #2721: the booker's answers to "this guest has the same name as your own
   // recorded dependant". One entry per dependant the collision was with, each
   // naming that dependant explicitly — see `booking-dependant-identity.ts` for
@@ -173,7 +159,6 @@ const createBookingSchema = z.object({
     .array(dependantIdentityDeclarationSchema)
     .max(50)
     .optional(),
-  notes: z.string().max(500).optional(),
   promoCode: z.string().max(50).optional(),
   promoGuestIndexes: z.array(z.number().int().min(0)).optional(),
   // #3827: several codes, each opted in by the booker, in the booker's order
@@ -201,10 +186,6 @@ const createBookingSchema = z.object({
     .regex(ARRIVAL_TIME_PATTERN, ARRIVAL_TIME_ERROR_MESSAGE)
     .optional(),
   requestedRoomId: z.string().min(1).optional(),
-  // Lodge the booking is for (multi-lodge phase 8). Optional at schema-parse
-  // time only, so the route can return its own BOOKING_LODGE_REQUIRED 400;
-  // every create must name a lodge and omission never defaults one.
-  lodgeId: z.string().min(1).optional(),
   // Cross-lodge waitlist opt-in (ADR-004): other lodges the member would
   // also accept. Only meaningful with waitlist: true; ignored otherwise.
   alternateLodgeIds: z.array(z.string().min(1)).max(20).optional(),
@@ -253,6 +234,16 @@ function bookingCreateContendedResponse(
   return transactionContendedResponse(err, logMessage, { code: BOOKING_CREATE_CONTENDED_CODE });
 }
 
+/**
+ * ALP-653: `create_draft_booking` (an AI app connection, which only reaches
+ * the draft branch) is sent the draft's narrow summary, with no dietary,
+ * consent or internal columns; the website's answer is unchanged.
+ */
+async function draftCreatedForConnection(memberId: string, bookingId: string) {
+  const summary = await getMemberDraftSummary(memberId, bookingId);
+  return NextResponse.json(summary ?? { id: bookingId }, { status: 201 });
+}
+
 export async function POST(request: NextRequest) {
   // #2388: taken at the top so the collapsed-refusal timing floor covers the
   // whole request, not only the part after the refusal was detected.
@@ -272,10 +263,10 @@ export async function POST(request: NextRequest) {
   // Dual-hat detection: a USER token alongside admin roles means this account
   // books for itself through the member flow under full member rules (#1442).
   const isMember = hasAccessRole(session.user, "USER");
-  // bookings:edit holders (Full Admin, Booking Officer, custom roles) may
-  // create on-behalf bookings — aligned with the modification path (#1313);
-  // `refuseOnBehalfUnlessBookingOfficer` below is the one check.
-  const actorRole = bookingManagementAuthorizationRole(session.user);
+  // bookings:edit holders may create on-behalf bookings (#1313; the one check is
+  // `refuseOnBehalfUnlessBookingOfficer` below). An AI app connection never carries
+  // that reach (ALP-653, INV-MCP-006): it books and sees night clashes as a member.
+  const actorRole = arrivesAsMcpConnection(request) ? "USER" : bookingManagementAuthorizationRole(session.user);
 
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
@@ -1553,7 +1544,7 @@ export async function POST(request: NextRequest) {
       });
       await notifyMemberGuestAdds(newBooking);
       await notifyFamilyAdds(newBooking);
-      return NextResponse.json(newBooking, { status: 201 });
+      return arrivesAsMcpConnection(request) ? draftCreatedForConnection(effectiveMemberId, newBooking.id) : NextResponse.json(newBooking, { status: 201 });
     } catch (err) {
       const deferred = deferredServiceRefusal(err);
       if (deferred) return deferred;

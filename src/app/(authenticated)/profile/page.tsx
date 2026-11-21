@@ -24,6 +24,7 @@ import { DeleteAccountButton } from "./delete-account-button";
 import { MembershipCancellationPanel } from "./membership-cancellation-panel";
 import { TwoFactorSecurityCard } from "./two-factor-security-card";
 import { GoogleAccountCard } from "./google-account-card";
+import { ConnectedAppsSection } from "./connected-apps-section";
 import { loadProfilePendingRequests } from "./pending-requests";
 import { googleCredentialsConfigured } from "@/lib/google-oauth";
 import { memberHoldsRetiredRecoveryCodes } from "@/lib/two-factor";
@@ -40,7 +41,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
-import { getSafeInternalReturnPath } from "@/lib/internal-return-path";
+import { profileQuery } from "./profile-query";
 import { getAvailablePromoCodesForMember } from "@/lib/promo";
 import {
   subscriptionStatusClass,
@@ -59,10 +60,6 @@ import {
   grantSelfDietaryAccess,
   loadDietaryRequirementsForDisplay,
 } from "@/lib/member-dietary";
-
-function singleSearchParam(value?: string | string[]) {
-  return Array.isArray(value) ? value[0] : value;
-}
 
 function formatPromoBenefit(promo: {
   fixedNightlyMode: string | null;
@@ -141,12 +138,8 @@ export default async function ProfilePage({
 }) {
   const session = await auth();
   if (!session?.user?.id) redirect("/login");
-  const params = await searchParams;
-  const emailChangeError = singleSearchParam(params.emailChangeError);
-  const emailChanged = singleSearchParam(params.emailChanged) === "true";
-  const googleLinked = singleSearchParam(params.googleLinked) === "1";
-  const googleError = singleSearchParam(params.googleError);
-  const returnTo = getSafeInternalReturnPath(params.returnTo);
+  const { emailChangeError, emailChanged, googleLinked, googleError, returnTo } =
+    profileQuery(await searchParams);
 
   // `createdAt` and `passwordChangedAt` are real INSTANTS, so the civil day each
   // reads as comes from the club's PERSISTED timezone rather than the
@@ -494,6 +487,8 @@ export default async function ProfilePage({
             ) : null}
           </CardContent>
         </Card>
+
+        {modules.mcpServer ? <ConnectedAppsSection user={session.user} /> : null}
 
         {/* Subscription History */}
         <ProfileSectionCard

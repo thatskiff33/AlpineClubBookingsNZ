@@ -106,6 +106,20 @@ describe("cleaned-literal registry stays byte-exact with the migrations (#2511)"
   });
 });
 
+describe("the #5305 privacy literal", () => {
+  it("is exactly the body #5007 wrote, which its migration guards", () => {
+    const entries = CLEANED_LITERALS.filter((l) => l.issue === "#5305");
+    expect(entries.map((e) => [e.entity, e.key, e.field, e.migration])).toEqual([
+      ["page-content", "privacy", "contentHtml", "20270101020000_add_ai_apps_to_starter_privacy"],
+    ]);
+    const sql = migrationSql(entries[0]!.migration);
+    expect(sql).toContain(`AND "contentHtml" = $previous$${entries[0]!.literal}$previous$;`);
+    expect(entries[0]!.literal).toBe(
+      migrationSql("20261222030000_rewrite_starter_privacy_recipients").match(/\$cms\$([\s\S]*?)\$cms\$/)?.[1],
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Detector / stripper / warning — pure unit behaviour.
 // ---------------------------------------------------------------------------

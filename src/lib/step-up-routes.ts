@@ -53,6 +53,8 @@ export const STEP_UP_PRISMA_WRITES = {
   accessRoleDefinition: ["create", "createMany", "delete", "deleteMany", "update", "updateMany", "upsert"],
   loginSecuritySetting: ["create", "update", "updateMany", "upsert"],
   clubModuleSettings: ["create", "update", "updateMany", "upsert"],
+  // ALP-653: who may connect an AI app, and how much a connection may do.
+  mcpSettings: ["create", "update", "updateMany", "upsert"],
 } as const;
 
 /**
@@ -113,6 +115,7 @@ export const STEP_UP_ROUTES = [
   { method: "PUT", file: "src/app/api/admin/security/magic-link/route.ts" },
   { method: "PUT", file: "src/app/api/admin/security/officer-two-factor/route.ts" },
   { method: "PUT", file: "src/app/api/admin/modules/route.ts" },
+  { method: "PUT", file: "src/app/api/admin/mcp/settings/route.ts" },
   { method: "PUT", file: "src/app/api/admin/refund-requests/[id]/route.ts" },
   { method: "POST", file: "src/app/api/admin/payments/card-refunds/[id]/try-card-again/route.ts" },
   { method: "POST", file: "src/app/api/admin/payments/card-refunds/[id]/paid-another-way/route.ts" },
