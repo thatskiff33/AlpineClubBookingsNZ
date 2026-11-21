@@ -212,7 +212,8 @@ describe("Admin modules schema contract", () => {
 */
 describe("Modules page setup affordance", () => {
   it("deep-links the analytics module at the Integrations hub", () => {
-    const page = readRepoFile("src/app/(admin)/admin/modules/page.tsx");
+    // The card, and its setup-link map, moved out of the page in #5243.
+    const page = readRepoFile("src/app/(admin)/admin/modules/_components/module-card.tsx");
     const map = sliceFrom(page, "const MODULE_SETUP_HREFS", "};");
 
     expect(map).toContain('analytics: "/admin/integrations"');

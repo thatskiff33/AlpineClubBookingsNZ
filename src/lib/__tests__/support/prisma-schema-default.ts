@@ -17,7 +17,7 @@ export function schemaDefaultToken(
     if (inModel && line.startsWith("}")) break;
     if (inModel && line.match(new RegExp(`^${fieldName}\\s`))) {
       const m = line.match(/@default\(([^)]*)\)/);
-      return m ? m[1].replace(/^"|"$/g, "") : null;
+      return m?.[1] === undefined ? null : m[1].replace(/^"|"$/g, "");
     }
   }
   return null;

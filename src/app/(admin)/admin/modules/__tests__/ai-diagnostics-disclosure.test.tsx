@@ -42,7 +42,7 @@ vi.mock("next-auth/react", () => ({
 import AdminModulesPage from "../page";
 
 function payloadFor(settings: ModuleSettingsValues) {
-  const module = (key: "aiDiagnostics" | "magicLink", label: string) => ({
+  const moduleStatus = (key: "aiDiagnostics" | "magicLink", label: string) => ({
     key,
     label,
     description: `${label} description.`,
@@ -52,7 +52,7 @@ function payloadFor(settings: ModuleSettingsValues) {
   });
   return {
     settings,
-    modules: [module("aiDiagnostics", "AI Diagnostics"), module("magicLink", "Magic link")],
+    modules: [moduleStatus("aiDiagnostics", "AI Diagnostics"), moduleStatus("magicLink", "Magic link")],
     updatedAt: null,
     updatedByMemberId: null,
   };
