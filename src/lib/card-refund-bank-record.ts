@@ -1,4 +1,4 @@
-import type { ManualRefundTaskKind, ManualRefundTaskStatus } from "@prisma/client";
+import type { ManualRefundTaskKind, ManualRefundTaskStatus, Prisma } from "@prisma/client";
 
 import {
   CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE,
@@ -20,7 +20,7 @@ import {
  */
 export const CARD_REFUND_BANK_RECORD_TASK_WHERE = {
   OR: [CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE, COMPLETED_CANCEL_CARD_SHORTFALL_TASK_WHERE],
-} as const;
+} satisfies Prisma.ManualRefundTaskWhereInput;
 
 /** The same question of one task: is it a card refund's bank record? */
 export function isCardRefundBankRecordTask(task: {
