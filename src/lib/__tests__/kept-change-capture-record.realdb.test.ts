@@ -1070,6 +1070,40 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     }
   }
 
+  for (const order of ["keep first", "release first"] as const) {
+    it(`#5220 (c): keep and release race on a revival the capture does not cover, ${order}: one stamp, and only its winner alerts`, { timeout: 30_000 }, async () => {
+      await seed("DISMISSED", { marked: false });
+      const operationId = await seedRetiredChangeInvoice({ priceDiffCents: 20_000 });
+      const holder = await holdLock((tx) => supplementary.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID));
+      let outcomes: [Awaited<ReturnType<typeof repairRecord>>, Awaited<ReturnType<typeof release.releaseXeroSupplementaryInvoiceForCapturedPaymentIntent>>] | undefined;
+      try {
+        const keeping = order === "keep first" ? repairRecord() : null;
+        if (keeping) expect(await untilQueuedBehind(holder.pid, 1)).toBe(1);
+        const releasing = release.releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(CHANGE_INTENT);
+        if (!keeping) expect(await untilQueuedBehind(holder.pid, 1)).toBe(1);
+        const keepingLast = keeping ?? repairRecord();
+        expect(await untilQueuedBehind(holder.pid, 2)).toBe(2);
+        holder.release();
+        await holder.done;
+        outcomes = await Promise.all([keepingLast, releasing]);
+      } finally {
+        holder.release();
+        await holder.done.catch(() => undefined);
+      }
+      const [plan, released] = outcomes!;
+      await expect(prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).resolves.toMatchObject({
+        status: "CANCELLED",
+        lastErrorCode: "STALE_WAITING_PAYMENT_CAPTURED",
+      });
+      // The release's "alerted" is its own email; the keep's is the alert its plan carries to finish. Exactly one.
+      const keepAlerts = plan.kind === "change-payment" && plan.refusalAlert ? 1 : 0;
+      const releaseAlerts = released.outcome === "alerted" ? 1 : 0;
+      expect(keepAlerts + releaseAlerts).toBe(1);
+      expect(order === "keep first" ? keepAlerts : releaseAlerts).toBe(1);
+      expect(await receiptRows()).toEqual([]);
+    });
+  }
+
   /** #5220: each reason a capture cannot revive its retired change invoice. */
   const refusals = [
     { reason: "short-of-ask", arrange: () => seedRetiredChangeInvoice({ priceDiffCents: 20_000 }) },

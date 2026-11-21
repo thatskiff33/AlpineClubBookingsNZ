@@ -11634,6 +11634,8 @@ describe("#5220: the repair tool's run of the keep's decision on a retired chang
     expect(deps.alertKeptCaptureRefusal).toHaveBeenCalledWith(plan);
     expect(order).toEqual(["commit", "alert"]);
     expect(planned.status).toBe("skipped");
+    // Not "a change invoice already answers": no invoice was issued, and the report says so.
+    expect(planned.resultMessage).toContain("could not be re-issued");
   });
 
   it("reports the receipt it queued beside a revived unpaid invoice", async () => {

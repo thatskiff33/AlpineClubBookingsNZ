@@ -203,6 +203,22 @@ function pickRetiredInvoiceToRevive<T extends { id: string; lastErrorCode: strin
   };
 }
 
+/** The officer alert for a retired row a capture refused to revive: one shape for the release and the keep (`INV-SSOT`). */
+function retiredRefusalAlert(
+  operation: Pick<RetiredInvoiceCandidate, "id" | "localModel" | "localId">,
+  paymentIntentId: string,
+  reason: IssueRefusal,
+): InvoiceNotIssuedAlert {
+  return {
+    operationId: operation.id,
+    localModel: operation.localModel,
+    localId: operation.localId,
+    paymentIntentId,
+    reason,
+    wasRetired: true,
+  };
+}
+
 async function loadRetiredInvoiceCandidates(
   db: Prisma.TransactionClient | typeof prisma,
   paymentIntentId: string,
@@ -336,14 +352,7 @@ export async function releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
       requeuedIds.push(newest.id);
     } else if (verdict.outcome === "refused") {
       alerted = true;
-      await alertInvoiceNotIssuedOnCapture({
-        operationId: newest.id,
-        localModel: newest.localModel,
-        localId: newest.localId,
-        paymentIntentId,
-        reason: verdict.reason,
-        wasRetired: true,
-      });
+      await alertInvoiceNotIssuedOnCapture(retiredRefusalAlert(newest, paymentIntentId, verdict.reason));
     }
   }
 
@@ -509,17 +518,7 @@ export async function reviveRetiredChangeInvoiceForKeptCapture(params: {
   });
   if (verdict.outcome === "requeued") return { outcome: "requeued", operationId: newest.id };
   if (verdict.outcome === "already") return verdict;
-  return {
-    outcome: "refused",
-    alert: {
-      operationId: newest.id,
-      localModel: newest.localModel,
-      localId: newest.localId,
-      paymentIntentId: params.paymentIntentId,
-      reason: verdict.reason,
-      wasRetired: true,
-    },
-  };
+  return { outcome: "refused", alert: retiredRefusalAlert(newest, params.paymentIntentId, verdict.reason) };
 }
 
 /**
