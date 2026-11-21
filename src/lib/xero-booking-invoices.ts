@@ -102,6 +102,7 @@ import {
 import { PRIMARY_INVOICE_NOTHING_LEFT_DUE_REASON } from "@/lib/xero-primary-invoice-fee-at-link";
 import { readBookingForPrimaryInvoice } from "@/lib/xero-primary-invoice-read";
 import { planPrimaryInvoiceManifest, recordPrimaryInvoiceManifest, recordPrimaryInvoiceUpdateManifest } from "@/lib/member-money/doors";
+import { readXeroTaxOverridePause, recordXeroTaxOverrideMismatch } from "@/lib/xero-tax-override-safeguard";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export interface CreateXeroBookingInvoiceOptions
@@ -518,11 +519,14 @@ export async function createXeroInvoiceForBooking(
     taxRendering,
   };
   const primaryLines = buildPrimaryInvoiceLines(primaryLineInput);
-  const lineItems = primaryLines.lines;
   const promoLineRecord = promoAdjustmentLineRecord(primaryLines.promoLinePlan);
-  // #4525 (Ledger M13): the same composition, planned against the journal's components.
-  // Kept aside for the manifest once the link is stored; these lines are still what is sent.
-  const manifestPlan = await planPrimaryInvoiceManifest({ bookingId, ...primaryLineInput });
+  // #4525 (Ledger M13): the same composition, planned against the journal's components,
+  // and kept for the manifest once the link is stored. #5208 (Option A): a COVERED plan's
+  // lines are what is sent, carrying the journal's GST on each line unless the overrides
+  // are paused, read here outside any transaction (`INV-LOCK-004`); otherwise the builders'.
+  const taxOverrides = await readXeroTaxOverridePause();
+  const manifestPlan = await planPrimaryInvoiceManifest({ bookingId, ...primaryLineInput, taxOverrides });
+  const lineItems = manifestPlan?.outcome === "COVERED" ? manifestPlan.lines : primaryLines.lines;
   // #3980: the worth this read gives and what its lines bill, stored with the link.
   const builtFrom = {
     worthCents: bookingWorthCents({ finalPriceCents: booking.finalPriceCents, changeFeeCents: booking.payment.changeFeeCents }),
@@ -1061,6 +1065,16 @@ export async function createXeroInvoiceForBooking(
       { kind: "BUILT", bookingId, plan: manifestPlan, billedLines: createdInvoice.lineItems ?? lineItems },
       createdInvoice.invoiceID,
     );
+    // #5208: Xero must keep the GST sent on each line; a difference pauses the overrides. Never throws.
+    await recordXeroTaxOverrideMismatch({
+      xeroSyncOperationId: operationId!,
+      bookingId,
+      providerInvoiceId: createdInvoice.invoiceID,
+      invoiceNumber: createdInvoice.invoiceNumber ?? null,
+      documentKind: "CREATE",
+      sent: lineItems,
+      returned: createdInvoice.lineItems ?? [],
+    });
     await prisma.paymentTransaction.updateMany({
       where: {
         paymentId: booking.payment.id,
@@ -1546,6 +1560,16 @@ export async function updateXeroBookingInvoiceForBooking(
       lines: updatedInvoice.lineItems ?? [],
       lineAmountTypes: updatedInvoice.lineAmountTypes!,
       providerTotal: updated?.total ?? currentInvoice.total,
+    });
+    // #5208: the copied lines carry Xero's own stored tax; it must come back unchanged. Never throws.
+    await recordXeroTaxOverrideMismatch({
+      xeroSyncOperationId: operationId,
+      bookingId,
+      providerInvoiceId: updated?.invoiceID ?? invoiceId,
+      invoiceNumber: updated?.invoiceNumber ?? currentInvoice.invoiceNumber ?? null,
+      documentKind: "UPDATE",
+      sent: updatedInvoice.lineItems ?? [],
+      returned: updated?.lineItems ?? [],
     });
 
     return updated?.invoiceID ?? invoiceId;

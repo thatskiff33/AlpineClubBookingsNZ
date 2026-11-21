@@ -63,6 +63,8 @@ vi.mock("@/lib/prisma", () => {
       findUnique: (...a: unknown[]) => mocks.xeroSyncOperationFindUnique(...a),
       update: (...a: unknown[]) => mocks.xeroSyncOperationUpdate(...a),
     },
+    // #5208: no GST mismatch pauses the overrides.
+    xeroTaxOverrideMismatch: { findFirst: async () => null },
   };
   return { prisma: { ...client, $transaction: async (run: (tx: typeof client) => unknown) => run(client) } };
 });
