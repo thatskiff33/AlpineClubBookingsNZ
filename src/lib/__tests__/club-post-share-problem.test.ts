@@ -39,6 +39,10 @@ describe("classifyShareProblem", () => {
       .toMatchObject({ kind: "copy-not-recorded", serverPostId: "server-9" });
   });
 
+  it("never calls the post's own recorded share a stray copy (#5246 review)", () => {
+    expect(classifyShareProblem(row({ sharedAt: NOW, serverPostId: "server-9", unrecordedServerPostId: "server-9" }), NOW)).toBeNull();
+  });
+
   it("names a removed post whose takedown is unconfirmed, and nothing once it is confirmed", () => {
     expect(classifyShareProblem(row({ removedAt: NOW, sharedAt: NOW, serverPostId: "server-2" }), NOW)).toMatchObject({
       kind: "withdrawal-pending", serverPostId: "server-2",

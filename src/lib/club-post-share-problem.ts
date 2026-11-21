@@ -67,6 +67,16 @@ export const SHARE_PROBLEM_SELECT = {
 } satisfies Record<keyof ShareProblemRow, true>;
 
 /**
+ * The id of an accepted copy that is NOT this post's recorded share, or null.
+ * An `unrecordedServerPostId` equal to `serverPostId` is the post's own share
+ * (a stamp that committed with its answer lost), never a stray to withdraw.
+ */
+export function strayCopyId(row: Pick<ShareProblemRow, "serverPostId" | "unrecordedServerPostId">): string | null {
+  const id = row.unrecordedServerPostId;
+  return id && id !== row.serverPostId ? id : null;
+}
+
+/**
  * A removed post's recorded share that the central server has not yet
  * confirmed taken down (#3091 review 1). A live post's own share never
  * qualifies: it is never withdrawn from the admin screen.
@@ -95,9 +105,8 @@ export const OUTSTANDING_WITHDRAWAL_WHERE = {
 
 export function classifyShareProblem(row: ShareProblemRow, now: Date): ShareProblem | null {
   if (row.originClubCode !== null) return null;
-  if (row.unrecordedServerPostId) {
-    return { kind: "copy-not-recorded", shareError: row.shareError, serverPostId: row.unrecordedServerPostId };
-  }
+  const stray = strayCopyId(row);
+  if (stray) return { kind: "copy-not-recorded", shareError: row.shareError, serverPostId: stray };
   if (recordedShareAwaitsWithdrawal(row)) {
     return { kind: "withdrawal-pending", shareError: row.shareError, serverPostId: row.serverPostId };
   }

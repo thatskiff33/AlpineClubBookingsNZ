@@ -524,6 +524,13 @@ describe("withdrawing a shared copy on the admin's request (#5246)", () => {
     expect(mocks.withdrawClubPost).not.toHaveBeenCalled();
   });
 
+  it("never withdraws an unrecorded id that is the live post's own share (#5246 review)", async () => {
+    held({ serverPostId: "server-9", sharedAt: NOW, unrecordedServerPostId: "server-9" });
+
+    await expect(withdrawSharedCopy("post-1")).rejects.toBeInstanceOf(ClubPostNoShareProblemError);
+    expect(mocks.withdrawClubPost).not.toHaveBeenCalled();
+  });
+
   it("refuses a mirror, whose copy belongs to the club that wrote it", async () => {
     held({ originClubCode: "RUAPEHU", unrecordedServerPostId: "server-9" });
 

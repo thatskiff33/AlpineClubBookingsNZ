@@ -10,6 +10,7 @@ import {
   type ShareProblem,
   classifyShareProblem,
   recordedShareAwaitsWithdrawal,
+  strayCopyId,
   strayCopyWhere,
 } from "@/lib/club-post-share-problem";
 import logger from "@/lib/logger";
@@ -364,8 +365,9 @@ export async function removeClubPost(postId: string): Promise<void> {
 export async function withdrawSharedCopy(postId: string): Promise<{ serverPostIds: string[] }> {
   const post = await prisma.clubPost.findUnique({ where: { id: postId }, select: OUTSTANDING_COPY_SELECT });
   if (!post) throw new ClubPostNotFoundError();
+  const stray = strayCopyId(post);
   const serverPostIds = [
-    ...(post.unrecordedServerPostId ? [post.unrecordedServerPostId] : []),
+    ...(stray ? [stray] : []),
     ...(recordedShareAwaitsWithdrawal(post) ? [post.serverPostId] : []),
   ];
   if (post.originClubCode !== null || serverPostIds.length === 0) throw new ClubPostNoShareProblemError();

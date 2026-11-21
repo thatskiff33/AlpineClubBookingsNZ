@@ -139,7 +139,9 @@ function post(overrides: Record<string, unknown> = {}) {
  * one), or the stamp without the lock (our post holding no id).
  */
 type GuardedWrite = { where: Record<string, unknown>; data: Record<string, unknown> };
-function writeKind({ where }: GuardedWrite): "claim" | "restore" | "stamp" | "unlocked-stamp" {
+function writeKind({ where, data }: GuardedWrite): "claim" | "restore" | "stamp" | "unlocked-stamp" | "record" {
+  // The last resort after every stamp failed (#5246): the id kept as unrecorded.
+  if ("unrecordedServerPostId" in data) return "record";
   if ("OR" in where) return "stamp";
   if (where.shareRequestedAt === null) return "restore";
   if ("shareRequestedAt" in where) return "claim";
@@ -285,7 +287,7 @@ describe("a share the server accepted is recorded with the id it returned (#4590
   it("names the server id in shareError when every recording fails", async () => {
     mocks.lockServerNzSettings.mockRejectedValue(new Error("database unavailable"));
     mocks.updateMany.mockImplementation(async (args: GuardedWrite) => {
-      if (writeKind(args) === "claim") return { count: 1 };
+      if (writeKind(args) === "claim" || writeKind(args) === "record") return { count: 1 };
       throw new Error("database unavailable");
     });
 
@@ -293,18 +295,38 @@ describe("a share the server accepted is recorded with the id it returned (#4590
 
     expect(outcome).toMatchObject({ status: "failed", retryable: false });
     expect(mocks.shareClubPost).toHaveBeenCalledTimes(1);
-    expect(mocks.update).toHaveBeenLastCalledWith({
-      where: { id: "post-1" },
+    expect(writes("record")).toEqual([{
+      // Never on a post that already holds this id (#5246 review).
+      where: { id: "post-1", OR: [{ serverPostId: null }, { serverPostId: { not: "server-9" } }] },
       data: {
         shareAttempts: 1,
         shareError: expect.stringContaining("server-9"),
         unrecordedServerPostId: "server-9",
         shareSentAt: null,
       },
-    });
+    }]);
     expect(mocks.logger.error).toHaveBeenCalledWith(
       expect.objectContaining({ serverPostId: "server-9" }), expect.stringMatching(/will not be sent again/),
     );
+  });
+
+  it("reports the share recorded, and keeps no stray id, when a stamp committed with its answer lost (#5246 review)", async () => {
+    mocks.lockServerNzSettings.mockRejectedValue(new Error("connection reset"));
+    mocks.updateMany.mockImplementation(async (args: GuardedWrite) => {
+      if (writeKind(args) === "claim") return { count: 1 };
+      // The guard refuses: our post already holds this very id.
+      if (writeKind(args) === "record") return { count: 0 };
+      throw new Error("connection reset");
+    });
+    let reads = 0;
+    mocks.findUnique.mockImplementation(async ({ where }: { where: { id?: string } }) => {
+      if (!where.id) return null;
+      reads += 1;
+      return reads === 1 ? post() : post({ serverPostId: "server-9", sharedAt: REQUESTED });
+    });
+
+    expect(await shareOnePost("post-1")).toEqual({ status: "shared", serverPostId: "server-9" });
+    expect(mocks.shareClubPost).toHaveBeenCalledTimes(1);
   });
 
   it("never writes over a DIFFERENT id our post already holds, and names the abandoned one (#4590 review)", async () => {
@@ -692,7 +714,7 @@ describe("an accepted share that is not recorded is kept for the admin, and stil
     ["every stamp failing", () => {
       mocks.lockServerNzSettings.mockRejectedValue(new Error("database unavailable"));
       mocks.updateMany.mockImplementation(async (args: GuardedWrite) => {
-        if (writeKind(args) === "claim") return { count: 1 };
+        if (writeKind(args) === "claim" || writeKind(args) === "record") return { count: 1 };
         throw new Error("database unavailable");
       });
     }],
@@ -806,5 +828,21 @@ describe("the withdrawal sweep takes down an unrecorded copy too (#5246)", () =>
     expect(mocks.withdrawClubPost.mock.calls).toEqual([["server-9"], ["server-1"]]);
     expect(mocks.updateMany).not.toHaveBeenCalled();
     expect(mocks.update).toHaveBeenCalledWith({ where: { id: "p9" }, data: { withdrawnAt: expect.any(Date) } });
+  });
+});
+
+describe("an unrecorded id equal to the post's own share is never withdrawn (#5246 review)", () => {
+  it("clears the marker and asks the server nothing", async () => {
+    mocks.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([removed({ serverPostId: "server-9", withdrawnAt: REQUESTED, unrecordedServerPostId: "server-9" })]);
+
+    await retryPendingShares(REQUESTED);
+
+    expect(mocks.withdrawClubPost).not.toHaveBeenCalled();
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { id: "p9", unrecordedServerPostId: "server-9" },
+      data: { unrecordedServerPostId: null },
+    });
   });
 });

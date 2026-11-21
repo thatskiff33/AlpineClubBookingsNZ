@@ -2,7 +2,11 @@ import "server-only";
 
 import type { Prisma } from "@prisma/client";
 
-import { OUTSTANDING_WITHDRAWAL_WHERE, recordedShareAwaitsWithdrawal } from "@/lib/club-post-share-problem";
+import {
+  OUTSTANDING_WITHDRAWAL_WHERE,
+  recordedShareAwaitsWithdrawal,
+  strayCopyId,
+} from "@/lib/club-post-share-problem";
 import logger from "@/lib/logger";
 import { deletePostImage, readPostImage } from "@/lib/post-image-storage";
 import { prisma } from "@/lib/prisma";
@@ -418,8 +422,12 @@ async function recordAcceptedShare(
   }
   const message = `Shared to the central server as ${serverPostId}, but recording that here failed; it will not be sent again.`.slice(0, 300);
   try {
-    await prisma.clubPost.update({
-      where: { id: post.id },
+    // Never on a post that already holds this very id (#5246 review): a stamp
+    // can commit with its answer lost, and the id would then read as a stray
+    // copy of the post's own share, which "Withdraw the shared copy" would
+    // take down. Written out as an OR because `not` alone skips a null.
+    const recorded = await prisma.clubPost.updateMany({
+      where: { id: post.id, OR: [{ serverPostId: null }, { serverPostId: { not: serverPostId } }] },
       data: {
         shareAttempts: post.shareAttempts + 1,
         shareError: message,
@@ -427,6 +435,10 @@ async function recordAcceptedShare(
         shareSentAt: null,
       },
     });
+    if (recorded.count === 0) {
+      const row = await prisma.clubPost.findUnique({ where: { id: post.id }, select: { serverPostId: true } });
+      if (row?.serverPostId === serverPostId) return { status: "shared", serverPostId };
+    }
   } catch (error) {
     // Nothing more can be recorded; the log is the record, and the claim's
     // `shareSentAt` stays to say so on screen. The request was already taken
@@ -468,8 +480,8 @@ type OutstandingCopyPost = Prisma.ClubPostGetPayload<{ select: typeof OUTSTANDIN
  * Withdraw every copy of this club's post the central server may still show
  * (#3091 review 1, #5246), and record each confirmation.
  *
- * Two copies can be outstanding. The UNRECORDED one (`unrecordedServerPostId`,
- * a copy the server accepted that is not the post's recorded share) is
+ * Two copies can be outstanding. The UNRECORDED one ({@link strayCopyId}, a
+ * copy the server accepted that is not the post's recorded share) is
  * withdrawn whenever it is held, live post or removed: it is a stray. The
  * RECORDED one (`serverPostId`) is withdrawn only once the post is removed and
  * the takedown is not yet confirmed: a live post's own share is never taken
@@ -487,8 +499,8 @@ export async function withdrawOutstandingCopies(post: OutstandingCopyPost): Prom
   let confirmed = 0;
   let firstError: unknown = null;
 
-  if (post.unrecordedServerPostId) {
-    const stray = post.unrecordedServerPostId;
+  const stray = strayCopyId(post);
+  if (stray) {
     try {
       await withdrawClubPost(stray);
       // The reason went with the copy: `shareError` names it.
@@ -500,6 +512,13 @@ export async function withdrawOutstandingCopies(post: OutstandingCopyPost): Prom
     } catch (error) {
       firstError = error;
     }
+  } else if (post.unrecordedServerPostId) {
+    // The post's own recorded share, never a stray (#5246 review): the marker
+    // is cleared and nothing is withdrawn.
+    await prisma.clubPost.updateMany({
+      where: { id: post.id, unrecordedServerPostId: post.unrecordedServerPostId },
+      data: { unrecordedServerPostId: null },
+    });
   }
 
   // The pause answers for both copies: the second is not asked.
