@@ -20,7 +20,8 @@
   v0.14.0 needs uploading again.
 
   Two things are not removed: bytes hidden inside a GIF frame's picture data,
-  and the colour profile of a JPEG, PNG or WebP, which can name the device.
+  and the colour profile of a JPEG, PNG, WebP or AVIF, which can name the
+  device.
   The privacy guide's "Hidden details in uploaded images" section explains.
 
   **Images uploaded before this release are not changed** and may still carry
