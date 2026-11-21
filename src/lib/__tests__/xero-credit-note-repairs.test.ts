@@ -587,6 +587,15 @@ describe("a modification note's allocations are summed per note, each allocation
     });
   const refundedWrites = () =>
     mocks.paymentUpdate.mock.calls.map((call) => call[0].data.refundedAmountCents).filter((cents) => cents !== undefined);
+  // The payment also links cn-refund directly as its refund note, with this metadata.
+  const linkAsRefundNote = (metadata: Record<string, unknown>) => {
+    const findLinks = mocks.xeroObjectLinkFindMany.getMockImplementation()!;
+    mocks.xeroObjectLinkFindMany.mockImplementation(async (args: { where: { role?: { in: string[] } } }) =>
+      args.where.role && typeof args.where.role === "object" && args.where.role.in?.includes("REFUND_CREDIT_NOTE")
+        ? [{ localId: "pay-1", xeroObjectId: "cn-refund", metadata }]
+        : findLinks(args),
+    );
+  };
 
   it("MUTATION: a note applied as $60 and $40 counts 6000 + 4000 = 10000, never one part", async () => {
     // Two allocations, one per invoice, on the payment's own (older) links: the
@@ -602,6 +611,15 @@ describe("a modification note's allocations are summed per note, each allocation
     mocks.paymentFindMany.mockResolvedValue([payment({ source: PaymentSource.INTERNET_BANKING, amountCents: 30_000, xeroInvoiceId: "inv-1" })]);
     paymentLinks = [allocation("alloc-60", "inv-1", 6000)];
     invoiceLinks = [onEdit(allocation("alloc-60", "inv-1", 6000))];
+
+    await recount();
+    expect(refundedWrites()).toEqual([6000]);
+  });
+
+  it("MUTATION: a bank note the payment links as its refund note and holds an allocation of counts once, by that link", async () => {
+    mocks.paymentFindMany.mockResolvedValue([payment({ source: PaymentSource.INTERNET_BANKING, amountCents: 30_000, xeroInvoiceId: "inv-1" })]);
+    paymentLinks = [allocation("alloc-60", "inv-1", 6000)];
+    linkAsRefundNote({ amountCents: 6000, status: "AUTHORISED", total: 60 });
 
     await recount();
     expect(refundedWrites()).toEqual([6000]);
@@ -657,15 +675,33 @@ describe("a modification note's allocations are summed per note, each allocation
 
     it("MUTATION: an earlier note the payment also links as its refund note counts once, by that link", async () => {
       mocks.paymentFindMany.mockResolvedValue([CARD_PAYMENT(5000)]);
+      linkAsRefundNote({ amountCents: 5000, status: "AUTHORISED", total: 50 });
+
+      await recountWithLaterNote();
+      expect(refundedWrites()).toEqual([8000]);
+    });
+
+    it("MUTATION: a refund-note link whose amount can't be read counts nothing, so the note's allocation still counts it once", async () => {
+      mocks.paymentFindMany.mockResolvedValue([CARD_PAYMENT(5000)]);
+      linkAsRefundNote({ status: "AUTHORISED" });
+
+      await recountWithLaterNote();
+      expect(refundedWrites()).toEqual([8000]);
+    });
+
+    it("MUTATION: an earlier edit note voided in Xero counts nothing", async () => {
+      mocks.paymentFindMany.mockResolvedValue([
+        payment({ amountCents: 40_000, xeroInvoiceId: "inv-1", refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED }),
+      ]);
       const findLinks = mocks.xeroObjectLinkFindMany.getMockImplementation()!;
-      mocks.xeroObjectLinkFindMany.mockImplementation(async (args: { where: { role?: { in: string[] } } }) =>
-        args.where.role && typeof args.where.role === "object" && args.where.role.in?.includes("REFUND_CREDIT_NOTE")
-          ? [{ localId: "pay-1", xeroObjectId: "cn-refund", metadata: { amountCents: 5000, status: "AUTHORISED", total: 50 } }]
+      mocks.xeroObjectLinkFindMany.mockImplementation(async (args: { where: LinkWhere }) =>
+        args.where.role === "MODIFICATION_CREDIT_NOTE"
+          ? [{ xeroObjectId: "cn-refund", metadata: { status: "VOIDED" } }]
           : findLinks(args),
       );
 
       await recountWithLaterNote();
-      expect(refundedWrites()).toEqual([8000]);
+      expect(refundedWrites()).toEqual([3000]);
     });
 
     it("MUTATION: a card note being synced that the payment links as its refund note counts once, never again by its allocation", async () => {

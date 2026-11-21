@@ -214,8 +214,13 @@ export async function decideLinkedRefundedTotalCents(
   // (`sumAppliedCentsByCreditNote`).
   const modificationAllocationsByPaymentId = new Map<string, CreditNoteAllocationCents[]>();
   // #4444: a note the payment also links as its own refund or account note is
-  // counted there, by its direct link; its allocation never adds it again.
-  const directNoteKeys = new Set(directRefundLinks.map((link) => `${link.localId}|${link.xeroObjectId}`));
+  // counted there, by its direct link; its allocation never adds it again. Only
+  // a direct link that was counted (its amount read) suppresses the allocation.
+  const directNoteKeys = new Set(
+    [...directRefundCentsByPaymentId].flatMap(([paymentId, refunds]) =>
+      [...refunds.keys()].map((creditNoteId) => `${paymentId}|${creditNoteId}`),
+    ),
+  );
   for (const { creditNoteId, paymentId, amountCents } of existingModificationAllocations) {
     if (creditNoteId === excluded || directNoteKeys.has(`${paymentId}|${creditNoteId}`)) continue;
     if (
