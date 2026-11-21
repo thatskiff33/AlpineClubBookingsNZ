@@ -51,6 +51,8 @@ const BUDGET = vi.hoisted(() => ({ maxWait: 10_000, timeout: 30_000 }));
 
 vi.mock("@/lib/prisma", () => {
   const client = {
+    // The payment's refund-note links before this record: none voided or per-refund.
+    xeroObjectLink: { findMany: vi.fn(async () => []) },
     payment: {
       update: vi.fn(async ({ data }: { data: Row }) => {
         mocks.pointer();
@@ -98,7 +100,11 @@ vi.mock("@/lib/xero-sync", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.audit }));
 vi.mock("@/lib/payment-transactions", () => ({ lockPaymentForRefundedTotal: mocks.paymentLock, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS: BUDGET }));
-vi.mock("@/lib/xero-refund-note-status", () => ({ assertFreshRefundNoteFromCreate: mocks.fresh }));
+// #4279: the real shared pointer adoption (`adoptCanonicalRefundNote`), over the payment's refund-note links read below.
+vi.mock("@/lib/xero-refund-note-status", async (importOriginal) => ({
+  ...((await importOriginal()) as object),
+  assertFreshRefundNoteFromCreate: mocks.fresh,
+}));
 vi.mock("@/lib/club-format-server", () => ({ clubFormatValues: async () => CLUB_FORMAT_TEST }));
 vi.mock("@/lib/alert-cooldown", () => ({
   ALERT_ONCE_EVER_WINDOW_MS: 1_000_000,

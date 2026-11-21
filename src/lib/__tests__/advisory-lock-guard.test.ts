@@ -1731,6 +1731,10 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // of its invoice (`writeCurrentCreditNoteAllocation`, no lock(1), lodge or
   // member key), before its allocation row, so the Internet Banking settle
   // (lock(1) -> lodge -> member -> this row) and the write serialise here.
+  // #4279: and by a refund-note repair's completion that adopts its note as the
+  // payment's pointer (`completeAdoptingCanonicalRefundNote`, a retry claim's own
+  // transaction, no lock(1)), FIRST, before the operation row's guarded claim,
+  // the pointer and the links - the create's record order. No new key.
   "src/lib/payment-transactions.ts": 1,
   // #4161 / #4192: the nightly link cleanup's refund-note heal takes two
   // lock-only statements: the one `XeroObjectLink` row it is about to re-write
@@ -2007,6 +2011,35 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
         "their counterpart writers and order against advisory and row locks " +
         "in docs/CONCURRENCY_AND_LOCKING.md.",
     ).toEqual(ROW_LOCK_SITE_INVENTORY);
+  });
+
+  // #4279 (INV-LOCK-002, INV-LOCK-003): a completion that adopts a refund note
+  // as the payment's pointer takes the Payment row before the operation row's
+  // claim, adopts only after the claim wins, and writes its links after that.
+  // Only that completion shape takes the row; every other keeps its transaction.
+  it("keeps a refund-note repair's adopting completion on Payment row -> guarded claim -> pointer -> links", () => {
+    const text = (rel: string) => stripComments(sources.find((source) => source.rel === rel)?.text ?? "");
+    const inOrder = (body: string, markers: string[]) => {
+      const at = markers.map((marker) => body.indexOf(marker));
+      markers.forEach((marker, i) => expect(at[i], `${marker} is missing`).toBeGreaterThanOrEqual(0));
+      for (let i = 1; i < at.length; i += 1) {
+        expect(at[i], `${markers[i]} must follow ${markers[i - 1]}`).toBeGreaterThan(at[i - 1]);
+      }
+    };
+    const status = text("src/lib/xero-refund-note-status.ts");
+    const adopting = status.slice(status.indexOf("export async function completeAdoptingCanonicalRefundNote<"));
+    inOrder(adopting, ["options?.store || !options?.retryClaim", "db.$transaction(", "lockPaymentForRefundedTotal(tx, adoption.paymentId)", "complete(tx)", "}, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS);"]);
+    expect(adopting).not.toMatch(/pg_advisory|acquireLodgeCapacityLock|lockMemberCreditLedger/);
+    const sync = text("src/lib/xero-sync.ts");
+    const complete = sync.slice(sync.indexOf("export async function completeXeroSyncOperation("));
+    inOrder(complete, [
+      "tx.xeroSyncOperation.updateMany({ where: { id: operationId, ...guard }, data })",
+      "if (claimed.count === 0)",
+      "adoptCanonicalRefundNote(completion.canonicalRefundNote, tx)",
+      "for (const link of completion.extraLinks ?? []) {",
+      "completeAdoptingCanonicalRefundNote(prisma, completion.canonicalRefundNote, options, completeWithClient)",
+      ": await prisma.$transaction(completeWithClient)",
+    ]);
   });
 
   // #4449 (INV-LOCK-002, INV-LOCK-003): the credit-note allocation write is a

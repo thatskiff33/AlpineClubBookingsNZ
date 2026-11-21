@@ -96,7 +96,7 @@ let retry: typeof import("@/lib/xero-operation-retry");
      * A $200 bank transfer refunded in full by one note, whose create raised the
      * note and failed its refund payment: the row is PARTIAL, the repair's to finish.
      */
-    async function seed(options: { pointer: string | null; linkMetadata?: Record<string, unknown>; refundRequestId?: string }) {
+    async function seed(options: { pointer: string | null; linkMetadata?: Record<string, unknown>; refundRequestId?: string; settledEarlier?: true }) {
       await deleteFixtures();
       await prisma.payment.create({
         data: {
@@ -120,7 +120,10 @@ let retry: typeof import("@/lib/xero-operation-retry");
             refundMethod: "internet-banking",
             ...(options.refundRequestId ? { refundRequestId: options.refundRequestId } : {}),
           },
-          responsePayload: { refundPayment: null, refundPaymentError: { message: "Xero 503 on the refund payment" }, refundPaymentSkipped: false },
+          // `settledEarlier`: the payment leg is done, so the repair completes with no Xero call.
+          responsePayload: options.settledEarlier
+            ? { refundPayment: { paymentID: "race-4279-earlier-payment" }, refundPaymentError: null, refundPaymentSkipped: false }
+            : { refundPayment: null, refundPaymentError: { message: "Xero 503 on the refund payment" }, refundPaymentSkipped: false },
           xeroObjectType: "CREDIT_NOTE", xeroObjectId: NOTE, xeroObjectNumber: "CN-4279", completedAt: new Date(),
         },
       });
@@ -236,7 +239,7 @@ let retry: typeof import("@/lib/xero-operation-retry");
       return { pointer: payment.xeroRefundCreditNoteId, liveLinks };
     }
 
-    it.fails.each(["VOIDED", "DELETED"] as const)(
+    it.each(["VOIDED", "DELETED"] as const)(
       "a repair that read the note as live, then lost its claim after Xero %s it, leaves no pointer and no live link to it (race)",
       async (status) => {
         await seed({ pointer: NOTE });
@@ -266,7 +269,100 @@ let retry: typeof import("@/lib/xero-operation-retry");
 
         expect(await state()).toEqual({ pointer: null, liveLinks: [] });
         expect(await readRow()).toMatchObject({ status: "PARTIAL", lastErrorCode: "ORPHANED_STALE_RUNNING" });
+        expect(createPayments).toHaveBeenCalledTimes(1);
+
+        // A replay of the same void changes nothing; the next retry finds the note
+        // cancelled in Xero and stops: no second payment, no pointer, no live link.
+        await inboundCancelled(status);
+        xeroShowsNote(status, "race-4279-xero-payment-1");
+        await expect(retry.retryXeroSyncOperation(OPERATION_ID, CLUB_FORMAT_TEST)).rejects.toThrow(`is ${status} in Xero`);
+        expect(createPayments).toHaveBeenCalledTimes(1);
+        expect(await state()).toEqual({ pointer: null, liveLinks: [] });
       },
     );
+
+    it("MUTATION: a repair that loses its claim on a live note adopts nothing, and the retry after it adopts the note with no second payment", async () => {
+      await seed({ pointer: null });
+      const repairAtXero = await holdRepairAtXero();
+      const repair = retry.retryXeroSyncOperation(OPERATION_ID, CLUB_FORMAT_TEST);
+      await repairAtXero.atXero;
+      expect(await resetStaleClaim()).toEqual({ failed: 0, partial: 1 });
+      repairAtXero.open();
+      await expect(repair).resolves.toEqual({ message: retry.PARTIAL_REPAIR_CLAIM_LOST_MESSAGE });
+      // A pointer written before the claim, or by a refused completion, would name the note here.
+      expect(await state()).toEqual({
+        pointer: null,
+        liveLinks: [{ xeroObjectType: "CREDIT_NOTE", xeroObjectId: NOTE, role: "REFUND_CREDIT_NOTE" }],
+      });
+
+      // The handed-back row's next retry reads the payment the lost run sent as
+      // Xero's settlement and closes on it, adopting the note under its won claim.
+      xeroShowsNote("PAID", "race-4279-xero-payment-1");
+      await expect(retry.retryXeroSyncOperation(OPERATION_ID, CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: "Repaired Xero refund credit note follow-up actions.",
+      });
+      expect(createPayments).toHaveBeenCalledTimes(1);
+      expect(await readRow()).toMatchObject({ status: "SUCCEEDED" });
+      expect(await state()).toEqual({
+        pointer: NOTE,
+        liveLinks: [
+          { xeroObjectType: "CREDIT_NOTE", xeroObjectId: NOTE, role: "REFUND_CREDIT_NOTE" },
+          { xeroObjectType: "PAYMENT", xeroObjectId: "race-4279-xero-payment-1", role: "REFUND_PAYMENT" },
+        ],
+      });
+    });
+
+    it("a repair that wins its claim adopts a live note as the payment's refund note", async () => {
+      await seed({ pointer: null });
+      await expect(retry.retryXeroSyncOperation(OPERATION_ID, CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: "Repaired Xero refund credit note follow-up actions.",
+      });
+      expect(createPayments).toHaveBeenCalledTimes(1);
+      expect(await state()).toEqual({
+        pointer: NOTE,
+        liveLinks: [
+          { xeroObjectType: "CREDIT_NOTE", xeroObjectId: NOTE, role: "REFUND_CREDIT_NOTE" },
+          { xeroObjectType: "PAYMENT", xeroObjectId: "race-4279-xero-payment-1", role: "REFUND_PAYMENT" },
+        ],
+      });
+    });
+
+    it.each(["VOIDED", "DELETED"] as const)("a repair that wins its claim after an inbound %s keeps the note's link inactive and adopts nothing", async (status) => {
+      await seed({ pointer: NOTE, settledEarlier: true });
+      await inboundCancelled(status);
+      await expect(retry.retryXeroSyncOperation(OPERATION_ID, CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: "Repaired Xero refund credit note follow-up actions.",
+      });
+      expect(getCreditNote).not.toHaveBeenCalled();
+      expect(await readRow()).toMatchObject({ status: "SUCCEEDED" });
+      expect(await state()).toEqual({ pointer: null, liveLinks: [] });
+    });
+
+    it("a repair Xero answers with a voided note writes no pointer, before or after", async () => {
+      await seed({ pointer: null });
+      xeroShowsNote("VOIDED");
+      await expect(retry.retryXeroSyncOperation(OPERATION_ID, CLUB_FORMAT_TEST)).rejects.toThrow("is VOIDED in Xero");
+      expect(createPayments).not.toHaveBeenCalled();
+      expect(await readRow()).toMatchObject({ status: "PARTIAL" });
+      expect((await state()).pointer).toBeNull();
+    });
+
+    it("MUTATION: a per-refund note's repair, though it wins its claim, never makes it the payment's refund note (#3880 F1)", async () => {
+      await seed({ pointer: null, linkMetadata: { amountCents: 20_000, perDelta: true } });
+      await expect(retry.retryXeroSyncOperation(OPERATION_ID, CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: "Repaired Xero refund credit note follow-up actions.",
+      });
+      expect((await state()).pointer).toBeNull();
+    });
+
+    it("a refund request's own note's repair never makes it the payment's refund note (#3827)", async () => {
+      await seed({ pointer: null, refundRequestId: "race-4279-request" });
+      await expect(retry.retryXeroSyncOperation(OPERATION_ID, CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: "Repaired Xero refund credit note follow-up actions.",
+      });
+      const after = await state();
+      expect(after.pointer).toBeNull();
+      expect(after.liveLinks).toContainEqual({ xeroObjectType: "CREDIT_NOTE", xeroObjectId: NOTE, role: "REFUND_REQUEST_CREDIT_NOTE" });
+    });
   },
 );
