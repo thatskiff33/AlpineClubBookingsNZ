@@ -670,12 +670,13 @@ export async function register() {
         );
 
         try {
-          const { runXeroCronTasks } = await import(
+          const { runXeroCronTaskList } = await import(
             "./lib/xero-cron-runner"
           );
-          const result = await runXeroCronTasks("credit-sync");
+          // #5204: the overpayment and prepayment refresh shares this daily slot.
+          const result = await runXeroCronTaskList(["credit-sync", "cash-credits"], { taskLabel: "credit-sync" });
           logger.info(
-            { job: XERO_CRON_JOB_NAMES["credit-sync"], result: result.creditSyncCheck },
+            { job: XERO_CRON_JOB_NAMES["credit-sync"], result: result.creditSyncCheck, cashCredits: result.cashCreditRefresh },
             "Xero credit-sync check complete"
           );
           Sentry.captureCheckIn({ checkInId, monitorSlug: XERO_CRON_JOB_NAMES["credit-sync"], status: "ok" });
