@@ -769,20 +769,21 @@ jobs:
 
   verify:
     runs-on: ubuntu-26.04
-    # A BACKSTOP AGAINST A HUNG JOB, NOT A TARGET (#3425). 75 does not mean a
-    # 75-minute run is acceptable; it means a genuinely wedged job is still
-    # killed rather than burning an hour of budget indefinitely.
+    # A BACKSTOP AGAINST A HUNG JOB, NOT A TARGET (#3425). 130 does not mean a
+    # 130-minute run is acceptable; it means a genuinely wedged job is still
+    # killed rather than burning budget indefinitely.
     #
     # Raised from 30 when `verify` ran the suite itself: a healthy run could be
     # cancelled mid-`Test` and skip every later build proof. #3431 moved the
     # full suite to independent shard jobs, and #4425 moved typecheck, lint and
     # the build with its proofs to jobs of their own; `verify` fails closed on
-    # all of their results, so this timeout must outlast its gate's wait.
+    # all of their results, so this timeout must outlast its gate's wait (110
+    # minutes, set on the gate step below) plus the steps before it (#5222).
     #
     # Historical baseline (13-14 Sep 2026): fourteen consecutive unsharded
     # runs measured 14.8 to 23.4 minutes. On #3431's first green hosted run,
     # four shards took 4m33s to 5m17s and this required job took 7m31s.
-    timeout-minutes: 75
+    timeout-minutes: 130
     permissions:
       contents: read
       actions: read # poll this run attempt's shard, typecheck, lint, build and real-PostgreSQL jobs
@@ -1069,12 +1070,20 @@ jobs:
       # jobs, fails at once on the first failure, and times out rather than
       # making `verify` vacuously green. `realdb-all` is the slowest of them
       # (18-25 minutes, median 23, over the 14 successful `main` push runs of
-      # 12-14 Nov 2026, measured for #4907); its 35-minute limit ends a hung
-      # run inside this poll's 45-minute wait, and both sit inside this job's 75.
+      # 12-14 Nov 2026, measured for #4907).
+      #
+      # The wait (#5222) is the runner queue an awaited job may sit in, then
+      # the longest `timeout-minutes` among them (the test shards' 45), then
+      # 5 minutes' grace: 60 + 45 + 5 = 110. On 17 Nov 2026 `realdb-all`
+      # queued for 37 minutes and ran 24, past the old flat 45-minute wait,
+      # and `verify` went red over a green run. GitHub ends each job at its
+      # own limit and the gate fails at once on that result, so the wait only
+      # fires for a job that never gets a runner. `require-test-shards.test.mjs`
+      # pins the run allowance to the jobs' limits and this job's timeout.
       - name: Require the unit-test shards, typecheck, lint, build and real-PostgreSQL suites to pass
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/ci/require-test-shards.mjs --job Typecheck --job Lint --job "Production build" --job "Real-PostgreSQL suites (all)"
+        run: node scripts/ci/require-test-shards.mjs --max-queue-minutes 60 --max-run-minutes 45 --job Typecheck --job Lint --job "Production build" --job "Real-PostgreSQL suites (all)"
 
       # #3432: deliberately LAST. Keep the detailed base-selection contract
       # above beside the full-history checkout it depends on; placing this

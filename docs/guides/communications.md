@@ -92,7 +92,9 @@ reaches only members who turned Club newsletters on.
 
 The **Send History** table lists each past send: date, subject, recipient
 filter, total recipients matched, and how many were actually sent (eligible
-after preference filtering).
+after preference filtering). It lists the newest first, 25 at a time with its
+total ("Showing 1–25 of 40"); use **Previous page** and **Next page** to reach
+older sends. After a send it returns to the first page, where the new send is.
 
 ## Troubleshooting
 

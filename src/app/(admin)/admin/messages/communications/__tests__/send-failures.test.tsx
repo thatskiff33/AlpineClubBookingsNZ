@@ -102,7 +102,7 @@ describe("sending a bulk message", () => {
     expect(await screen.findByText("Sent to 12 recipients (2 opted out).")).toBeInTheDocument();
     await vi.waitFor(() =>
       expect(
-        fetchMock.mock.calls.filter(([input]) => String(input) === "/api/admin/communications/history"),
+        fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/admin/communications/history?")),
       ).toHaveLength(2),
     );
   });

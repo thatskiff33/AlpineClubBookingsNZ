@@ -478,7 +478,7 @@ A run used to take ~29 minutes: each of the two E2E jobs built the app image
 | --- | --- |
 | `E2E app image` | builds the image once and uploads it (`docker save`, zstd) as a run artifact. Turbopack's build cache (`.next/cache`, a BuildKit cache mount in the `Dockerfile`) is restored from the last push to `main` before the build and, on a push, saved after it (`scripts/ci/next-build-cache.sh`). The Docker layer cache is exported only after the upload, so the shards do not wait for it |
 | `E2E seeded database` | in parallel: migrates, runs the single-lodge seeds and dumps the result with its club day (`scripts/e2e-stack.sh snapshot`). It holds **no secrets**: the dump is downloadable from a public repository, so Stripe test credentials are seeded on each runner after the restore |
-| `Playwright E2E` | **required check.** Runs shard 1 itself (`E2E_SHARD=1/3`, with `pre-setup`), then requires `E2E shard (2/3)` and `(3/3)` to pass (`scripts/ci/require-test-shards.mjs --from 2`, the gate `verify` uses for the unit shards) |
+| `Playwright E2E` | **required check.** Runs shard 1 itself (`E2E_SHARD=1/3`, with `pre-setup`), then requires `E2E shard (2/3)` and `(3/3)` to pass (`scripts/ci/require-test-shards.mjs --from 2`, the gate `verify` uses for the unit shards; its wait: [CONTRIBUTING.md](../CONTRIBUTING.md#branch-protection)) |
 | `E2E shard (2/3)`, `(3/3)` | the other two thirds of the `chromium` spec files, each on its own stack |
 | `E2E multi-lodge` | **required check.** Runs the `multi-lodge` project itself, on the restored database plus the second-lodge seed |
 

@@ -97,7 +97,7 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
   if (init?.method && init.method !== "GET") return response({ eligibleRecipients: 1, filteredByPreference: 0 });
   if (url.startsWith("/api/admin/payments?")) return failure ? fail() : response({ data: [payment], total: 60, summary: { netCollectedCents: 12345, refundedCents: 200, count: 1 } });
   if (url.startsWith("/api/admin/subscriptions?")) return failure ? fail() : response({ data: [subscription], total: 60, summary: { total: 17, paid: 13, unpaid: 4, overdue: 2, notInvoiced: 0, notRequired: 0 } });
-  if (url === "/api/admin/communications/history") return failure ? fail() : response({ history: [history] });
+  if (url.startsWith("/api/admin/communications/history?")) return failure ? fail() : response({ history: [history] });
   if (url === "/api/admin/communications/send") return response({ limit: 10 });
   // #4964, #4987: the count beside the form and in the confirmation step.
   if (url.startsWith("/api/admin/communications/send?")) return response({ totalRecipients: 1, eligibleRecipients: 1, optedOut: 0, neverOptedIn: 0 });

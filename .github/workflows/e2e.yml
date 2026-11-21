@@ -261,8 +261,8 @@ jobs:
   playwright:
     name: Playwright E2E
     runs-on: ubuntu-26.04
-    # Setup + the artifact wait (45) + its own shard + the gate (75): the
-    # gate's own error reports before this fires.
+    # Setup + the artifact wait (45) + its own shard + the gate (25 queue +
+    # 45 shard limit + 5 grace = 75): the gate's own error reports first.
     timeout-minutes: 165
     permissions:
       contents: read
@@ -317,11 +317,13 @@ jobs:
       # A STEP, not a `needs:` edge. Fails on a missing, duplicate, skipped,
       # cancelled or failed shard, at once if an upstream job failed, and
       # times out rather than going vacuously green (the #3431 gate `verify`
-      # uses). `--from 2`: this job ran shard 1 itself.
+      # uses). `--from 2`: this job ran shard 1 itself. The wait is the
+      # runner queue a shard can sit in (25 minutes, run 40248216639) plus
+      # `e2e-shard`'s own `timeout-minutes` (#5222).
       - name: Require shards 2 and 3 to pass
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/ci/require-test-shards.mjs --label "E2E shard" --count 3 --from 2 --max-wait-minutes 75 --upstream "E2E app image" --upstream "E2E seeded database"
+        run: node scripts/ci/require-test-shards.mjs --label "E2E shard" --count 3 --from 2 --max-queue-minutes 25 --max-run-minutes 45 --upstream "E2E app image" --upstream "E2E seeded database"
 
   # Shards 2 and 3 of the single-lodge suite, each on its own stack and
   # database. Workers stay at one per stack: specs share seeded personas and
