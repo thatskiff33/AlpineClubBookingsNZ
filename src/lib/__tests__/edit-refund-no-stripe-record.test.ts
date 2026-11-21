@@ -31,7 +31,7 @@ vi.mock("@/lib/cancellation", async (importOriginal) => ({
 }));
 
 const { applyPaymentAdjustments } = await import("@/lib/booking-modify-settlement");
-const { editRefundHasCardToReturnTo } = await import("@/lib/booking-modify-settlement-options");
+const { calculateModificationSettlementOptions, editRefundHasCardToReturnTo } = await import("@/lib/booking-modify-settlement-options");
 const { noReductionAgainstUnpaidAsk } = await import("@/lib/additional-ask-reduction");
 const { editRefundBankTransferPayee, editRefundGoesBackByHand } = await import("@/lib/edit-refund-hand-back");
 const { paymentHasRefundableCardIntent, readRefundableCardIntentId } = await import("@/lib/refundable-card-intent");
@@ -172,6 +172,39 @@ describe("whether an edit's reduction has a card to go back to", () => {
     const child = cardPaidBooking({}, { organiserSettled: true, parentBookingId: "organiser_booking" });
     expect(await editRefundHasCardToReturnTo(tx, child)).toBe(true);
     expect(paymentFindUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("what the edit quote names as the money-back route", () => {
+  // #5303: the quote's label is the settlement's own answer, so it never
+  // promises the card a refund the save sends to the treasurer.
+  const quoteOptions = (booking: ReturnType<typeof cardPaidBooking>) =>
+    calculateModificationSettlementOptions({
+      booking,
+      netChargeCents: -5_000,
+      reduction: noReductionAgainstUnpaidAsk(-5_000),
+      db: tx as never,
+      todayAtClub: TODAY,
+    });
+
+  it("a card payment Stripe holds no record of: a bank transfer, as the save sends it", async () => {
+    const booking = cardPaidBooking();
+    expect(await quoteOptions(booking)).toMatchObject({ requiresSettlementMethod: true, refundByBankTransfer: true });
+    expect(editRefundGoesBackByHand(await adjust(booking, -5_000))).toBe(true);
+  });
+
+  it("an Internet Banking payment: a bank transfer, with no read of Stripe's record", async () => {
+    // Even one carrying a stale intent: there is no card to return to.
+    const booking = cardPaidBooking({ source: PaymentSource.INTERNET_BANKING, stripePaymentIntentId: "pi_stale" });
+    expect(await quoteOptions(booking)).toMatchObject({ requiresSettlementMethod: true, refundByBankTransfer: true });
+    expect(await editRefundHasCardToReturnTo(tx, booking)).toBe(false);
+    expect(paymentFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("control: a card payment naming its intent is still the card's", async () => {
+    const booking = cardPaidBooking({ stripePaymentIntentId: "pi_payment" });
+    expect(await quoteOptions(booking)).toMatchObject({ requiresSettlementMethod: true, refundByBankTransfer: false });
+    expect(editRefundGoesBackByHand(await adjust(booking, -5_000))).toBe(false);
   });
 });
 

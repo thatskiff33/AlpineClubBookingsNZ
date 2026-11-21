@@ -50,6 +50,9 @@ vi.mock("@/lib/prisma", () => ({
     // it asserted before.
     // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
     paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
+    // #5061 follow-up: a card payment's reduction reads its captures for a dispute hold; none is disputed.
+    paymentTransaction: { findMany: vi.fn(async () => []) },
+    stripeDispute: { findMany: vi.fn(async () => []) },
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })), findFirst: vi.fn().mockResolvedValue(null) },
     booking: {
       findUnique: vi.fn(),
@@ -935,6 +938,8 @@ describe("P2.3: Guest subscription check", () => {
         amountCents: 10000,
         refundedAmountCents: 0,
         status: "SUCCEEDED",
+        source: "STRIPE",
+        stripePaymentIntentId: "pi_card",
       },
       promoRedemption: null,
     });
@@ -960,6 +965,7 @@ describe("P2.3: Guest subscription check", () => {
       requiresSettlementMethod: true,
       returnsToOrganiser: false,
       organiserRefundByBankTransfer: false,
+      refundByBankTransfer: false,
       refundHeldForDispute: false,
     });
   });

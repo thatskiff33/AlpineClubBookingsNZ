@@ -437,7 +437,8 @@ export function PriceSummaryCard({
                         className="mt-1"
                       />
                       <span>
-                        Refund to original card:{" "}
+                        {/* #5303: the settlement's own route - a bank transfer is never called the card. */}
+                        {quote.settlementOptions.refundByBankTransfer ? "Refund by bank transfer" : "Refund to original card"}:{" "}
                         <span className="font-medium">
                           {formatCents(quote.settlementOptions.cardRefundAmountCents, format)}
                         </span>{" "}

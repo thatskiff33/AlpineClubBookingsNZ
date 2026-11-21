@@ -134,7 +134,7 @@ import {
 } from "@/lib/roster-lock";
 import { formatDateOnly } from "@/lib/date-only";
 import { loadCancellationPolicy } from "@/lib/cancellation";
-import { calculateFullReductionSettlementOptions, editReductionDisputeHold, refundableCashForModification } from "@/lib/booking-modify-settlement-options";
+import { calculateFullReductionSettlementOptions, editRefundHasCardToReturnTo, editReductionDisputeHold, refundableCashForModification } from "@/lib/booking-modify-settlement-options";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
@@ -1497,6 +1497,8 @@ export async function modifyBookingBatch({
             todayAtClub: moneyTierDay,
             // #5061 follow-up (`INV-PAY-154`): read under this edit's locks.
             refundHeldForDispute: (await editReductionDisputeHold(tx, booking)).cents > 0,
+            // #5303: the settlement's own read, so the quote's label names the same route.
+            hasCardToReturnTo: await editRefundHasCardToReturnTo(tx, booking),
           })
         : await calculateModificationSettlementOptions({
       booking,

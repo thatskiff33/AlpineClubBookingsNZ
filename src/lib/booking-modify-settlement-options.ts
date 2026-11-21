@@ -59,6 +59,15 @@ export type BookingModificationSettlementOptions = {
    */
   organiserRefundByBankTransfer: boolean;
   /**
+   * #5303: the member's own refund (the card arm) is a bank transfer the
+   * treasurer sends - an Internet Banking payment, or (#5212, `INV-PAY-160`) a
+   * card payment Stripe holds no record of - so the quote never promises the
+   * card. The settlement's own answer (`editRefundHasCardToReturnTo`) read for
+   * the quote. Always false where `returnsToOrganiser` is true, which has its
+   * own flag above.
+   */
+  refundByBankTransfer: boolean;
+  /**
    * #5061 follow-up (`INV-PAY-154`): an OPEN or LOST Stripe dispute holds the
    * member's card payment (`editReductionDisputeHold`), so the reduction is
    * handed to the treasurer: no choice is offered, no card refund is made and
@@ -97,10 +106,12 @@ export async function editReductionDisputeHold(
 }
 
 /**
- * #5212 (`INV-PAY-160`): does a reduction on this card-paid booking have a card
- * to go back to? Only where Stripe holds a record of the payment - otherwise
- * the refund is the treasurer's to send by bank transfer, as an Internet
- * Banking payment's is, and no card refund is promised or owed. A joiner the
+ * #5212 (`INV-PAY-160`): does a reduction on this booking have a card to go
+ * back to? Only where it was paid through Stripe and Stripe holds a record of
+ * the payment - otherwise the refund is the treasurer's to send by bank
+ * transfer, as an Internet Banking payment's is, and no card refund is
+ * promised or owed. The settlement (`applyPaymentAdjustments`) and the quote's
+ * label (`refundByBankTransfer`, #5303) both ask it. A joiner the
  * organiser paid for by card is answered by the organiser's combined payment,
  * which holds the intent; the joiner's mirror never has one of its own. Read
  * under the door's locks, beside the dispute hold.
@@ -109,7 +120,7 @@ export async function editRefundHasCardToReturnTo(
   db: Pick<Prisma.TransactionClient, "payment">,
   booking: Pick<LoadedBookingForModify, "payment" | "organiserSettled" | "parentBookingId">,
 ): Promise<boolean> {
-  if (!booking.payment) return false;
+  if (booking.payment?.source !== PaymentSource.STRIPE) return false;
   return paidByOrganiserCard(booking) || paymentHasRefundableCardIntent(db, booking.payment);
 }
 
@@ -225,6 +236,7 @@ export async function calculateModificationSettlementOptions({
       requiresSettlementMethod: false,
       returnsToOrganiser: true,
       organiserRefundByBankTransfer: paidByOrganiserInternetBanking(booking),
+      refundByBankTransfer: false,
       refundHeldForDispute: false,
     };
   }
@@ -241,6 +253,7 @@ export async function calculateModificationSettlementOptions({
       !refundHeldForDispute && (cardRefundAmountCents > 0 || creditRefundAmountCents > 0),
     returnsToOrganiser: false,
     organiserRefundByBankTransfer: false,
+    refundByBankTransfer: !(await editRefundHasCardToReturnTo(db, booking)),
     refundHeldForDispute,
   };
 }
@@ -281,6 +294,7 @@ export function calculateFullReductionSettlementOptions({
   refundableCashCents,
   todayAtClub,
   refundHeldForDispute,
+  hasCardToReturnTo,
 }: {
   booking: Pick<
     LoadedBookingForModify,
@@ -292,6 +306,8 @@ export function calculateFullReductionSettlementOptions({
   todayAtClub: CalendarDate;
   /** #5061 follow-up: `editReductionDisputeHold` above zero, read by the caller under its locks (`INV-PAY-154`). */
   refundHeldForDispute: boolean;
+  /** #5303: `editRefundHasCardToReturnTo`, read by the caller under its locks; else the refund is a bank transfer. */
+  hasCardToReturnTo: boolean;
 }): BookingModificationSettlementOptions | null {
   const basisAmountCents = settlementBasisCents(booking, netChargeCents, refundableCashCents);
   if (basisAmountCents === null) return null;
@@ -311,6 +327,7 @@ export function calculateFullReductionSettlementOptions({
       requiresSettlementMethod: false,
       returnsToOrganiser: true,
       organiserRefundByBankTransfer: paidByOrganiserInternetBanking(booking),
+      refundByBankTransfer: false,
       refundHeldForDispute: false,
     };
   }
@@ -324,6 +341,7 @@ export function calculateFullReductionSettlementOptions({
     requiresSettlementMethod: !refundHeldForDispute,
     returnsToOrganiser: false,
     organiserRefundByBankTransfer: false,
+    refundByBankTransfer: !hasCardToReturnTo,
     refundHeldForDispute,
   };
 }
