@@ -119,6 +119,9 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       await prisma.xeroObjectLink.deleteMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "ManualRefundTask", localId: APPROVAL_TASK_ID } });
       await prisma.xeroObjectLink.deleteMany({ where: { localModel: "ManualRefundTask", localId: APPROVAL_TASK_ID } });
+      // #4383: the capture's own receipt row and its payment link.
+      await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "PaymentTransaction", localId: TRANSACTION_ID } });
+      await prisma.xeroObjectLink.deleteMany({ where: { localModel: "PaymentTransaction", localId: TRANSACTION_ID } });
       // #4627: the doors post journal batches bridged to these lines; release them first.
       await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
@@ -974,6 +977,87 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       }
       const runWorker = async (operationId: string, paused?: Promise<void>, invoicesCalled?: () => void) =>
         createXeroKeptLateCaptureInvoice({ syncOperation: await currentXeroClaim(prisma, operationId) }, providers(paused, invoicesCalled));
+
+      // #4383 watchpoint (`INV-PAY-122`): the capture's own receipt recorded
+      // $150 of its $200 (its invoice had room for no more), so its card note
+      // stops at $150. A close of its refund that failed later is answered by
+      // that card note for the $150 it credits - never the $200 refunded.
+      it("MUTATION #4383: a capped capture's card note answers a failed-later close for what the receipt recorded", async () => {
+        const RECORDED_CENTS = 15_000;
+        await prisma.xeroSyncOperation.create({
+          data: {
+            direction: "OUTBOUND",
+            entityType: "PAYMENT",
+            operationType: "CREATE",
+            localModel: "PaymentTransaction",
+            localId: TRANSACTION_ID,
+            queueType: "ADDITIONAL_CAPTURE_RECEIPT",
+            status: "SUCCEEDED",
+            requestPayload: {
+              queueType: "ADDITIONAL_CAPTURE_RECEIPT",
+              bookingId: BOOKING_ID,
+              paymentId: PAYMENT_ID,
+              paymentTransactionId: TRANSACTION_ID,
+              paymentIntentId: LATE_INTENT,
+              plan: {
+                target: "PRIMARY_INVOICE",
+                invoiceId: "inv_race_3372_paw",
+                amountCents: RECORDED_CENTS,
+                capturedCents: PAID_CENTS,
+                date: "2026-08-01",
+                legs: [{ target: "PRIMARY_INVOICE", invoiceId: "inv_race_3372_paw", amountCents: RECORDED_CENTS }],
+              },
+            },
+          },
+        });
+        await prisma.xeroObjectLink.create({
+          data: {
+            localModel: "PaymentTransaction",
+            localId: TRANSACTION_ID,
+            xeroObjectType: "PAYMENT",
+            xeroObjectId: "pay_race_4383_receipt",
+            role: "ADDITIONAL_CAPTURE_PAYMENT",
+            active: true,
+            metadata: { invoiceId: "inv_race_3372_paw", leg: 0 },
+          },
+        });
+        const refund = await prisma.paymentRefund.create({
+          data: {
+            paymentId: PAYMENT_ID,
+            paymentTransactionId: TRANSACTION_ID,
+            stripeRefundId: "re_race_4383_full",
+            stripePaymentIntentId: LATE_INTENT,
+            amountCents: PAID_CENTS,
+            currency: "nzd",
+            status: "succeeded",
+          },
+        });
+        await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: PAID_CENTS } });
+        // The capped card note, in Xero.
+        await prisma.xeroObjectLink.create({
+          data: {
+            localModel: "Payment",
+            localId: PAYMENT_ID,
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_race_4383_card",
+            role: "REFUND_CREDIT_NOTE",
+            active: true,
+            metadata: { amountCents: RECORDED_CENTS, paymentIntentId: LATE_INTENT },
+          },
+        });
+        const payment = { id: PAYMENT_ID, bookingId: BOOKING_ID, refundedAmountCents: PAID_CENTS };
+        await expect(resolveRefundNoteEligibleCash(payment)).resolves.toMatchObject({
+          eligibleCashCents: RECORDED_CENTS,
+          lateCaptureExcludedCents: PAID_CENTS - RECORDED_CENTS,
+        });
+        const failedLater = { idempotencyKey: `card_refund_failed_later_${refund.stripeRefundId}`, amountCents: PAID_CENTS };
+        // While the refund stands, the note answers it exactly: nothing above the cash.
+        expect(await failedLaterCardNoteCoverCents(prisma as never, failedLater, PAYMENT_ID)).toBe(0);
+
+        // Stripe fails the refund later: the note now answers the close, for what it credited.
+        await prisma.paymentRefund.update({ where: { id: refund.id }, data: { status: "failed" } });
+        expect(await failedLaterCardNoteCoverCents(prisma as never, failedLater, PAYMENT_ID)).toBe(RECORDED_CENTS);
+      });
 
       it("a close that waits on the approval task's row behind the REAL receipt worker reads the receipt recorded and queues its own note", async () => {
         // The capture was kept and its receipt claimed while it was; the worker
