@@ -236,7 +236,8 @@ describe("AiConnectionsClient: the club's connections", () => {
       "/api/admin/mcp/grants/grant-2",
       expect.objectContaining({ method: "DELETE" }),
     );
-    expect(screen.queryByText("Ben Hale")).toBeNull();
+    // The list re-reads after the disconnect; the row goes when that read lands.
+    await waitFor(() => expect(screen.queryByText("Ben Hale")).toBeNull());
     expect(screen.getByText("Ana Reid")).toBeTruthy();
   });
 

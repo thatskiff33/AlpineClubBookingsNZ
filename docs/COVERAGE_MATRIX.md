@@ -164,7 +164,7 @@ For what an officer sees and does on each screen, use the
 
 ## Summary
 
-- **85** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`, `membership`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
+- **86** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`, `membership`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
 - **2** areas are already served by a **feature hub** (`display` → lobby-display,
   `lodges` → multi-lodge). #2050 should extend, not duplicate, those hubs.
 - **13** areas have **no reference coverage** beyond their operator guide
