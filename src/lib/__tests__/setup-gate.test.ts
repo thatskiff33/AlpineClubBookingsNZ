@@ -45,6 +45,7 @@ import {
   isPublicWebsitePath,
   NON_WEBSITE_ROOT_SEGMENTS,
   resetSetupGateCache,
+  SETUP_STATE_READ_TIMEOUT_MS,
   SETUP_STATE_TTL_MS,
 } from "@/lib/setup-gate";
 import {
@@ -625,6 +626,67 @@ describe("an expired answer is served while it refreshes (#5264)", () => {
         isComplete: false,
       });
     });
+  });
+
+  it("closes the site on a positive 'not complete' even if building the screen throws", async () => {
+    // A positive answer must not fall into the refresh's failure arm, which
+    // keeps the stale "complete".
+    await getSetupGateState();
+    mocks.completion.mockResolvedValue({ readFailed: false, isComplete: false });
+    mocks.themeState.mockRejectedValue(new Error("palette generator failed"));
+
+    await afterTtl(async () => {
+      await getSetupGateState();
+      await settle();
+      const state = await getSetupGateState();
+      expect(state.isComplete).toBe(false);
+      expect(state).toMatchObject({
+        document: expect.stringContaining(SETUP_IN_PROGRESS_COPY.eyebrow),
+      });
+    });
+  });
+
+  it("abandons a hung read after the timeout, so the next expiry retries", async () => {
+    // Prisma has no query timeout: a query on a half-open connection can hang
+    // for ever, which would pin the single-flight promise and stop all retries.
+    await getSetupGateState();
+    mocks.completion.mockReturnValue(new Promise(() => {}));
+
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    try {
+      vi.setSystemTime(Date.now() + SETUP_STATE_TTL_MS + 1);
+      await expect(getSetupGateState()).resolves.toEqual({ isComplete: true });
+      expect(mocks.completion).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(SETUP_STATE_READ_TIMEOUT_MS);
+      // Timed out: kept "complete", stamped fresh, single-flight cleared.
+      await expect(getSetupGateState()).resolves.toEqual({ isComplete: true });
+      expect(mocks.completion).toHaveBeenCalledTimes(2);
+
+      setupIncomplete();
+      vi.setSystemTime(Date.now() + SETUP_STATE_TTL_MS + 1);
+      await getSetupGateState();
+      expect(mocks.completion).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(getSetupGateState()).resolves.toMatchObject({
+        isComplete: false,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails closed on a cold start whose read hangs", async () => {
+    mocks.completion.mockReturnValue(new Promise(() => {}));
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const pending = getSetupGateState();
+      await vi.advanceTimersByTimeAsync(SETUP_STATE_READ_TIMEOUT_MS);
+      await expect(pending).resolves.toMatchObject({ isComplete: false });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does close the site when the database positively says setup is incomplete", async () => {

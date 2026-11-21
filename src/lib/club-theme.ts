@@ -201,7 +201,11 @@ export async function getWebsiteThemeRenderState() {
   const readFailed = theme === READ_FAILED;
   const row = readFailed ? null : (theme as Exclude<typeof theme, symbol>);
   const values = normaliseThemeValues(row ?? DEFAULT_CLUB_THEME_VALUES);
-  const { css, appCss } = themeStylesheets(values);
+  // A failed read renders the default palette but is not memoised: it would
+  // evict the club's real stylesheets, which the next good read then rebuilds.
+  const { css, appCss } = readFailed
+    ? buildThemeStylesheets(values)
+    : themeStylesheets(values);
 
   return {
     values,
@@ -238,12 +242,21 @@ function themeStylesheets(values: ClubThemeValues) {
     return lastThemeStylesheets;
   }
 
-  lastThemeStylesheets = {
+  lastThemeStylesheets = buildThemeStylesheets(values);
+  return lastThemeStylesheets;
+}
+
+function buildThemeStylesheets(values: ClubThemeValues) {
+  return {
     values,
     css: buildClubThemeCss(values),
     appCss: buildClubThemeAppCss(values),
   };
-  return lastThemeStylesheets;
+}
+
+// test seam
+export function resetThemeStylesheetCache() {
+  lastThemeStylesheets = null;
 }
 
 function sameThemeValues(a: ClubThemeValues, b: ClubThemeValues) {

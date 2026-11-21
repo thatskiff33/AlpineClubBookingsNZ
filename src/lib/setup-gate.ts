@@ -93,8 +93,29 @@ type SetupGateState =
  */
 export const SETUP_STATE_TTL_MS = 15_000;
 
+/**
+ * How long one refresh may take before it counts as a thrown read. Prisma has
+ * no query timeout, so a query on a half-open connection (after a database
+ * failover, say) can hang indefinitely; without this bound the single-flight
+ * promise would never clear and the stale answer would be served forever with
+ * no retry. The hung query is abandoned, not cancelled; its late result is
+ * ignored.
+ */
+export const SETUP_STATE_READ_TIMEOUT_MS = 5_000;
+
 let cachedState: { expiresAt: number; state: SetupGateState } | null = null;
 let inFlight: Promise<SetupGateState> | null = null;
+
+function withReadTimeout<T>(read: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error("setup-gate read timed out")),
+      SETUP_STATE_READ_TIMEOUT_MS,
+    );
+  });
+  return Promise.race([read, timeout]).finally(() => clearTimeout(timer));
+}
 
 /**
  * Last-resort holding screen, for the case where even resolving the setup state
@@ -129,6 +150,23 @@ async function loadSetupGateState(): Promise<{
     return { state: { isComplete: true }, readFailed: false };
   }
 
+  if (completion.readFailed) {
+    return loadHoldingScreen(completion);
+  }
+
+  // The database positively said "not complete". That is a real answer, so a
+  // throw while building the screen must not fall into the refresh's rejection
+  // arm, which would keep a stale "complete": close with the config screen.
+  try {
+    return await loadHoldingScreen(completion);
+  } catch {
+    return { state: fallbackSetupGateState(), readFailed: false };
+  }
+}
+
+async function loadHoldingScreen(
+  completion: Awaited<ReturnType<typeof readSetupCompletion>>,
+): Promise<{ state: SetupGateState; readFailed: boolean }> {
   const theme = await getWebsiteThemeRenderState();
 
   // Setup finished between the two reads.
@@ -170,9 +208,12 @@ async function loadSetupGateState(): Promise<{
  * the same launch-state lie `getWebsiteThemeRenderState()`'s `readFailed`
  * exists to prevent. Either way the result is stamped fresh, so a failing
  * database is retried once per TTL rather than on every request.
+ *
+ * A read that neither answers nor fails within
+ * {@link SETUP_STATE_READ_TIMEOUT_MS} counts as thrown (see `withReadTimeout`).
  */
 function refreshSetupGateState(): Promise<SetupGateState> {
-  inFlight ??= loadSetupGateState()
+  inFlight ??= withReadTimeout(loadSetupGateState())
     .then(
       ({ state, readFailed }) =>
         readFailed && cachedState?.state.isComplete ? cachedState.state : state,
@@ -212,7 +253,9 @@ export async function getSetupGateState(): Promise<SetupGateState> {
   }
 
   if (cachedState.expiresAt <= Date.now()) {
-    void refreshSetupGateState();
+    // The refresh handles its own failures; the catch is insurance against an
+    // unhandled rejection taking the process down.
+    refreshSetupGateState().catch(() => {});
   }
 
   return cachedState.state;

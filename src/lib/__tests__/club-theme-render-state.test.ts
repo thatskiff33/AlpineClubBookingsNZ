@@ -36,10 +36,12 @@ import {
 import {
   getWebsiteThemeRenderState,
   readSetupCompletion,
+  resetThemeStylesheetCache,
 } from "@/lib/club-theme";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetThemeStylesheetCache();
 });
 
 describe("getWebsiteThemeRenderState", () => {
@@ -115,6 +117,23 @@ describe("the theme stylesheets are reused while the values are unchanged (#5264
 
     expect(after.css).not.toBe(before.css);
     expect(after.css).toContain("letter-spacing:1px");
+  });
+
+  it("does not let a failed read evict the club's stylesheets", async () => {
+    mocks.findUnique.mockResolvedValue({ brandGold: "#2a6f97" });
+    const real = await getWebsiteThemeRenderState();
+
+    mocks.findUnique.mockRejectedValueOnce(new Error("Can't reach database server"));
+    const failed = await getWebsiteThemeRenderState();
+    expect(failed.readFailed).toBe(true);
+
+    vi.mocked(buildClubThemeCss).mockClear();
+    vi.mocked(buildClubThemeAppCss).mockClear();
+    const again = await getWebsiteThemeRenderState();
+
+    expect(again.css).toBe(real.css);
+    expect(buildClubThemeCss).not.toHaveBeenCalled();
+    expect(buildClubThemeAppCss).not.toHaveBeenCalled();
   });
 });
 
