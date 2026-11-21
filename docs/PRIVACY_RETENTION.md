@@ -155,6 +155,29 @@ folders, the club logo or a member photo may still carry hidden details until
 it is uploaded again; [`image-manager.md`](guides/image-manager.md#cleaning-an-older-image)
 says how.
 
+**A photo stored sideways needs its original file.** JPEG, PNG and WebP
+photos were already cleaned before #5244, and that earlier cleaning removed a
+photo's rotation setting with the rest of its EXIF, so a phone portrait could
+be stored sideways. The stored copy no longer has the setting, so uploading
+that copy again leaves it sideways; uploading the original file keeps the
+setting, and the photo shows upright.
+
+**Uploading an image again changes the copy the app stores, and nothing
+else.** Two kinds of older copy stay as they were:
+
+- **Copies in browsers.** A browser that has already downloaded an image can go
+  on showing its own copy. Library images and the club logo are served to be
+  kept for up to a year under their link; uploading one again gives it a new
+  link, so a page pointed at the new copy fetches the cleaned file. Image
+  Manager images and publicly shown member photos keep their link, and are
+  served to be checked again after five minutes. A member photo that is not
+  shown publicly is served with an instruction not to keep it.
+- **Copies in backups.** A [database backup](guides/backups.md) holds library
+  images, club logos and member photos as they were when it was taken, until it
+  is pruned or deleted. Image Manager images are files on the server's disk,
+  not in the database, so the database backup never holds them; any copy the
+  host keeps of that folder is outside the app.
+
 ## Model schedule
 
 | Prisma model | Purpose / personal data | Retention period or retained purpose | End action |
