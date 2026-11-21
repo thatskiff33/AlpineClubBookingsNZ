@@ -1665,8 +1665,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       if (paymentIntent.status === "succeeded") {
         paymentSucceeded = true;
 
-        // #5240: new money is flagged for the settle below to consume.
-        await settleSavedCardChargeAttempt({
+        await settleSavedCardChargeAttempt({ // #5240: flags new money for the settle below to consume
             journal,
           attemptRowId: resolution.attempt.attemptRowId,
           paymentId: resolution.paymentId,

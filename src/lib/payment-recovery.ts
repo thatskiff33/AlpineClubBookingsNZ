@@ -2366,8 +2366,7 @@ async function processBookingModificationRefundOperation(
   );
   if (duplicatePaymentIntentId !== null) {
     if (await completePaymentRecoveryOperation(operation, { lossExpected: true })) {
-      // #5240: the settler recorded on the payment (#4211) as it stands now;
-      // never the duplicate itself, and null with none or a bank settler.
+      // #5240: the payment's recorded settler (#4211), never the duplicate itself; null with none or a bank settler.
       const settledPaymentIntentId = await readSettlingPaymentIntentId(prisma, operation.paymentId);
       await recordDuplicateCaptureRefundEvent({
         bookingId: operation.bookingId,

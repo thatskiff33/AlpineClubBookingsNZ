@@ -750,8 +750,7 @@ async function settleBookingPaymentInTransaction(
     await lockPaymentForRefundedTotal(tx, payment.id);
 
     let refundedIntentHistory = false;
-    // #4285 review: the arriving capture's row was already SUCCEEDED (a replay)
-    // and (#5240) not a saved-card capture whose settle has not run yet.
+    // #4285 review: the arriving capture's row was already SUCCEEDED (a replay), with no saved-card "not yet settled" flag (#5240).
     let arrivingAlreadyCaptured = false;
 
     if (settlement.kind === "stripe") {
@@ -773,11 +772,7 @@ async function settleBookingPaymentInTransaction(
         priorTransaction !== null &&
         (priorTransaction.status === PaymentStatus.REFUNDED ||
           priorTransaction.status === PaymentStatus.PARTIALLY_REFUNDED);
-      // #5240: consumed only on a row already SUCCEEDED, the one case it decides;
-      // a flag still standing marks money no settle has seen (`unsettled-capture-marker.ts`).
-      arrivingAlreadyCaptured =
-        priorTransaction?.status === PaymentStatus.SUCCEEDED &&
-        !(await consumeCaptureAwaitingSettle(tx, settlement.paymentIntentId));
+      arrivingAlreadyCaptured = priorTransaction?.status === PaymentStatus.SUCCEEDED && !(await consumeCaptureAwaitingSettle(tx, settlement.paymentIntentId));
 
       if (!refundedIntentHistory) {
         await upsertPaymentIntentTransaction({
