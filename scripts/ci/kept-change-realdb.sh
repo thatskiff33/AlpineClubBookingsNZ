@@ -16,6 +16,9 @@ export CONCURRENCY_RACE_DATABASE_URL="$DATABASE_URL"
 export RUN_CONCURRENCY_RACE_TESTS=1
 export TMPDIR=/tmp/scratch
 export NODE_OPTIONS=--max-old-space-size=1800
+# Regenerate the client from this tree's schema: a workspace generated before a
+# merge added an enum value rejects it client-side (PrismaClientValidationError).
+pnpm run db:generate
 pnpm run db:migrate
 files=(
   # #4069: cash-cover evidence and snapshot coherence over the real writers.
