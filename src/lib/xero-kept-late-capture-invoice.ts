@@ -94,6 +94,9 @@ import { lockKeptCaptureAnchor, withdrawUndecidedKeptCaptureReceipt } from "@/li
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import { returnOutboxRowToPending } from "@/lib/xero-outbox-pending-request";
 
+/** #5228: a row put back to run, as one never picked up. */
+const UNCLAIMED = { startedAt: null, completedAt: null, lastErrorCode: null, lastErrorMessage: null };
+
 /** Stamped on a row withdrawn because the task stopped keeping the money. */
 export const KEPT_LATE_CAPTURE_WITHDRAWN_ERROR_CODE = "KEPT_LATE_CAPTURE_WITHDRAWN";
 
@@ -213,19 +216,11 @@ export async function enqueueXeroKeptLateCaptureInvoiceOperation(params: {
       // Status-guarded: only the FAILED row this read found goes back to run,
       // and (#5228) only with a request the outbox can claim and send.
       const requeued = await returnOutboxRowToPending({
-        operationId: live.id,
-        store: db,
-        where: { status: "FAILED", manuallyResolvedAt: null },
-        data: { startedAt: null, completedAt: null, lastErrorCode: null, lastErrorMessage: null },
-        request: { keep: true },
+        operationId: live.id, store: db, where: { status: "FAILED", manuallyResolvedAt: null }, data: UNCLAIMED, request: { keep: true },
       });
       if (requeued.outcome === "unclaimable") {
-        return {
-          queueOperationId: live.id,
-          awaitingOfficerRetry: true,
-          message:
-            "The failed Xero invoice for this payment holds no request the outbox can send, so it is not run again automatically. Check Xero, then retry it from the Xero operations list.",
-        };
+        const message = "The failed Xero invoice for this payment holds no request the outbox can send, so it is not run again automatically. Check Xero, then retry it from the Xero operations list.";
+        return { queueOperationId: live.id, awaitingOfficerRetry: true, message };
       }
       if (requeued.outcome === "lost") {
         // Round 8 (concurrency): an officer retried or resolved it after the
@@ -349,13 +344,7 @@ export async function settleKeptLateCaptureRecordOnApproval(params: {
     const partial = { ...KEPT_INVOICE_CREATE, localId: params.manualRefundTaskId, status: "PARTIAL", manuallyResolvedAt: null } as const;
     for (const row of await db.xeroSyncOperation.findMany({ where: partial, select: { id: true } })) {
       // #5228: with the queued request its worker keeps; one the outbox could not send stays PARTIAL, for Retry.
-      await returnOutboxRowToPending({
-        operationId: row.id,
-        store: db,
-        where: partial,
-        data: { startedAt: null, completedAt: null, lastErrorCode: null, lastErrorMessage: null },
-        request: { keep: true },
-      });
+      await returnOutboxRowToPending({ operationId: row.id, store: db, where: partial, data: UNCLAIMED, request: { keep: true } });
     }
   }
   await db.xeroSyncOperation.updateMany({
