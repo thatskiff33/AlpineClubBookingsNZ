@@ -356,8 +356,10 @@ export function getAdminCronJobDefinitions(
     // recorded under its own name so a missing run is visible. #3635 re-announces
     // an OPEN held late-capture payment nobody has been told about; #4285 review
     // delivers an owed alert for a card payment kept on a paid booking that
-    // nothing else paid for.
+    // nothing else paid for. #5255 gives back once-ever alert claims with no
+    // email behind them and re-sends raised-once alerts.
     ...([
+      ["once-ever-alert-sweep", "Once-ever admin alert sweep"],
       ["payment-recovery", "Stripe payment recovery"],
       ["internet-banking-hold-release", "Expired Internet Banking hold release"],
       ["xero-waiting-invoice-reaper", "Stale waiting Xero invoice reaper"],
