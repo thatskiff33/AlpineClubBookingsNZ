@@ -52,6 +52,16 @@ export function formatCents(cents: number, format: ClubFormat): string {
 }
 
 /**
+ * `formatCents` with the currency's ISO code in place of its symbol (`zł` ->
+ * `PLN`, `₹` -> `INR`), in the club's locale (#5066). Only for a surface that
+ * cannot draw the symbol — the generated invoice PDF falls back to it when a
+ * formatted amount has a character its font lacks.
+ */
+export function formatCentsWithCurrencyCode(cents: number, format: ClubFormat): string {
+  return clubMoneyFormatter(format, "centsCode").format((cents === 0 ? 0 : cents) / 100);
+}
+
+/**
  * The bare two-decimal rendering `formatCents` deliberately does not do: no
  * currency symbol, no thousands grouping. For seeding an editable dollars
  * input (`"10.00"`, not `"$10.00"` — nobody types a symbol into an amount box)
