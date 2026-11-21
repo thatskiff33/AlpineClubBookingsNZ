@@ -185,6 +185,7 @@ describe("what the offer says about the money (#3232)", () => {
       combinedOrganiserRefundCents: 0,
       combinedOrganiserBankTransferRefundCents: 0,
       settlementMethodRequired: false,
+      refundRoute: "CARD",
       settlementMethodChosen: false,
       bothChangeFeesCharged: true,
       linkedCount: 1,

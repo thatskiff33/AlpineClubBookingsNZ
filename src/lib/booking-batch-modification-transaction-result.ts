@@ -61,6 +61,8 @@ export type BatchModificationTransactionResult =
      * `combineLinkedMoveQuote`.
      */
     requiresSettlementMethod: boolean;
+    /** #5303: that choice's refund is a bank transfer, not the card (the settlement options' own answer). */
+    refundByBankTransfer: boolean;
     refundAmountCents: number;
     accountCreditAmountCents: number;
     promoRemoved: boolean;
