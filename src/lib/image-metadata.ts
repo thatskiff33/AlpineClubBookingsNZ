@@ -1,5 +1,10 @@
-import logger from "@/lib/logger";
+import { crc32 } from "node:zlib";
+
 import { must } from "@/lib/indexed-access";
+import { stripAvifMetadata } from "@/lib/image-metadata-avif";
+import { orientationOnlyExif, readExifOrientation } from "@/lib/image-metadata-exif";
+import { stripGifMetadata } from "@/lib/image-metadata-gif";
+import { stripSvgMetadata } from "@/lib/image-metadata-svg";
 
 /**
  * Shared constants and helpers for the database-backed image library
@@ -343,13 +348,18 @@ export function extractImageDimensions(
  * a clean structural walk AND any privacy-sensitive metadata present was removed
  * (or there was validly none) — `bytes` is safe to store & serve publicly.
  * `ok: false` means the strip could not be positively confirmed (malformed or
- * nonstandard structure, a thrown exception, or a content type this module has
- * no stripper for); `bytes` is the ORIGINAL, unchanged. Never treat `ok: false`
- * as "clean": the caller's policy decides whether to reject it (fail-CLOSED —
- * the member-photo route) or to store it and log (fail-OPEN —
- * `storableImageBytes` below).
+ * nonstandard structure, a thrown exception, or an animated AVIF); `bytes` is
+ * the ORIGINAL, unchanged, and must never be stored (#5244).
  */
-export type StripImageResult = { ok: boolean; bytes: Buffer };
+export type StripImageResult =
+  | { ok: true; bytes: Buffer }
+  | { ok: false; bytes: Buffer; reason: "unconfirmed" | "animated-avif" };
+
+function unconfirmed(bytes: Buffer): StripImageResult {
+  return { ok: false, bytes, reason: "unconfirmed" };
+}
+
+const EXIF_APP1_PREFIX = "Exif\0\0";
 
 /**
  * Remove metadata from a JPEG by copying only the colour/rendering marker
@@ -359,17 +369,23 @@ export type StripImageResult = { ok: boolean; bytes: Buffer };
  * any of which can carry creator contact info, location or GPS. The parser runs
  * through the entropy-coded scan(s) to the primary EOI and STOPS there, dropping
  * any bytes appended after it — an MPF multi-picture / motion-photo JPEG appends
- * a second image with its own EXIF/GPS. Fail-CLOSED: `ok` is true ONLY on the
- * primary-EOI-terminated path; any malformed/nonstandard structure returns
- * `ok: false` with the original bytes so the caller rejects the upload.
+ * a second image with its own EXIF/GPS. The first EXIF APP1 is replaced by one
+ * holding only its Orientation, so a phone portrait keeps its rotation; `FF`
+ * fill bytes before a marker are accepted and dropped. Fail-CLOSED: `ok` is true
+ * ONLY on the primary-EOI-terminated path; any malformed/nonstandard structure
+ * returns `ok: false` with the original bytes so the caller rejects the upload.
  */
 function stripJpegMetadata(bytes: Buffer): StripImageResult {
   if (bytes.length < 2 || bytes[0] !== 0xff || bytes[1] !== 0xd8)
-    return { ok: false, bytes };
+    return unconfirmed(bytes);
   const kept: Buffer[] = [bytes.subarray(0, 2)]; // SOI
   let offset = 2;
+  let orientationWritten = false;
   while (offset + 2 <= bytes.length) {
-    if (bytes[offset] !== 0xff) return { ok: false, bytes }; // not at a marker
+    if (bytes[offset] !== 0xff) return unconfirmed(bytes); // not at a marker
+    // Any run of 0xFF fill bytes may precede a marker (T.81 §B.1.1.2); skip
+    // to the last one, dropping the padding.
+    while (offset + 2 < bytes.length && bytes[offset + 1] === 0xff) offset += 1;
     const marker = must(bytes[offset + 1], "stripJpegMetadata: offset within bytes.length");
 
     if (marker === 0xd9) {
@@ -385,10 +401,10 @@ function stripJpegMetadata(bytes: Buffer): StripImageResult {
       // real marker (an 0xff not part of 0xff00 byte-stuffing or an RSTn
       // 0xd0-0xd7), then continue so a following EOI truncates any trailer and a
       // following scan (progressive JPEG) is handled normally.
-      if (offset + 4 > bytes.length) return { ok: false, bytes };
+      if (offset + 4 > bytes.length) return unconfirmed(bytes);
       const sosLen = bytes.readUInt16BE(offset + 2);
       let scan = offset + 2 + sosLen;
-      if (scan > bytes.length) return { ok: false, bytes };
+      if (scan > bytes.length) return unconfirmed(bytes);
       while (scan + 1 < bytes.length) {
         if (bytes[scan] === 0xff) {
           const m = must(bytes[scan + 1], "stripJpegMetadata scan: scan+1 within bytes.length");
@@ -406,10 +422,10 @@ function stripJpegMetadata(bytes: Buffer): StripImageResult {
     }
 
     // Length-prefixed marker segment (APPn, COM, DQT, DHT, SOFn, DRI, …).
-    if (offset + 4 > bytes.length) return { ok: false, bytes };
+    if (offset + 4 > bytes.length) return unconfirmed(bytes);
     const segLen = bytes.readUInt16BE(offset + 2);
     const segEnd = offset + 2 + segLen;
-    if (segLen < 2 || segEnd > bytes.length) return { ok: false, bytes }; // truncated/invalid
+    if (segLen < 2 || segEnd > bytes.length) return unconfirmed(bytes); // truncated/invalid
     // Allow-list, not deny-list: metadata lives across many APPn markers (APP1
     // EXIF/XMP, APP13 IPTC/Photoshop, APP12 Ducky, vendor APP3-APP11), any of
     // which can carry creator contact info, location or GPS. Preserve ONLY the
@@ -427,44 +443,81 @@ function stripJpegMetadata(bytes: Buffer): StripImageResult {
       (isAppSegment && !isJfifOrAdobe && !isIccApp2) || marker === 0xfe; // COM
     if (!drop) {
       kept.push(bytes.subarray(offset, segEnd));
+    } else if (
+      marker === 0xe1 &&
+      !orientationWritten &&
+      bytes.toString("latin1", offset + 4, offset + 10) === EXIF_APP1_PREFIX
+    ) {
+      // The first EXIF APP1 is replaced, in place, by one holding only the
+      // Orientation, so a phone portrait is not turned sideways.
+      orientationWritten = true;
+      const orientation = readExifOrientation(bytes.subarray(offset + 10, segEnd));
+      if (orientation !== null) kept.push(jpegOrientationSegment(orientation));
     }
     offset = segEnd;
   }
-  return { ok: false, bytes }; // no primary EOI found → reject (fail-closed)
+  return unconfirmed(bytes); // no primary EOI found → reject (fail-closed)
+}
+
+function jpegOrientationSegment(orientation: number): Buffer {
+  const tiff = orientationOnlyExif(orientation);
+  const header = Buffer.alloc(4 + EXIF_APP1_PREFIX.length);
+  header.writeUInt16BE(0xffe1, 0);
+  header.writeUInt16BE(2 + EXIF_APP1_PREFIX.length + tiff.length, 2);
+  header.write(EXIF_APP1_PREFIX, 4, "latin1");
+  return Buffer.concat([header, tiff]);
 }
 
 const PNG_METADATA_CHUNKS = new Set(["tEXt", "zTXt", "iTXt", "eXIf", "tIME"]);
 
 /**
  * Remove text/EXIF/timestamp ancillary chunks from a PNG (eXIf can carry GPS),
- * keeping all critical and colour chunks. Fail-CLOSED: `ok` is true only if the
+ * keeping all critical and colour chunks; the first eXIf is replaced by one
+ * holding only its Orientation. Fail-CLOSED: `ok` is true only if the
  * chunk walk actually reaches an IEND chunk; a truncated chunk or a walk that
  * ends without IEND returns `ok: false` with the original bytes.
  */
 function stripPngMetadata(bytes: Buffer): StripImageResult {
   const SIG = 8;
-  if (bytes.length < SIG + 12) return { ok: false, bytes };
+  if (bytes.length < SIG + 12) return unconfirmed(bytes);
   const kept: Buffer[] = [bytes.subarray(0, SIG)];
   let offset = SIG;
+  let orientationWritten = false;
   while (offset + 12 <= bytes.length) {
     const len = readUInt32BE(bytes, offset);
     const type = bytes.toString("ascii", offset + 4, offset + 8);
     const chunkEnd = offset + 12 + len; // len(4) + type(4) + data(len) + crc(4)
-    if (chunkEnd > bytes.length) return { ok: false, bytes }; // truncated
+    if (chunkEnd > bytes.length) return unconfirmed(bytes); // truncated
     if (!PNG_METADATA_CHUNKS.has(type)) {
       kept.push(bytes.subarray(offset, chunkEnd));
+    } else if (type === "eXIf" && !orientationWritten) {
+      // Replaced in place by a chunk holding only the Orientation.
+      orientationWritten = true;
+      const orientation = readExifOrientation(bytes.subarray(offset + 8, chunkEnd - 4));
+      if (orientation !== null) kept.push(pngChunk("eXIf", orientationOnlyExif(orientation)));
     }
     if (type === "IEND") return { ok: true, bytes: Buffer.concat(kept) };
     offset = chunkEnd;
   }
-  return { ok: false, bytes }; // walk ended without IEND → reject (fail-closed)
+  return unconfirmed(bytes); // walk ended without IEND → reject (fail-closed)
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const chunk = Buffer.alloc(12 + data.length);
+  chunk.writeUInt32BE(data.length, 0);
+  chunk.write(type, 4, "ascii");
+  data.copy(chunk, 8);
+  chunk.writeUInt32BE(crc32(chunk.subarray(4, 8 + data.length)), 8 + data.length);
+  return chunk;
 }
 
 /**
- * Remove EXIF and XMP chunks from a WebP RIFF container and clear the matching
- * VP8X metadata flag bits, recomputing the RIFF size. Fail-CLOSED: `ok` is true
- * when the chunk walk completes cleanly to EOF — including the "nothing to
- * strip" (`!changed`) case and the legitimate final-odd-pad case. A malformed
+ * Remove XMP chunks from a WebP RIFF container, replace the first EXIF chunk by
+ * one holding only its Orientation (dropping it when there is none), set the
+ * matching VP8X metadata flag bits and recompute the RIFF size. Fail-CLOSED:
+ * `ok` is true when the chunk walk completes cleanly to EOF — including the
+ * "nothing to strip" case (the input is returned as is) and the legitimate
+ * final-odd-pad case. A malformed
  * non-final-chunk overrun (or a bad RIFF/WEBP header) returns `ok: false` with
  * the original bytes.
  */
@@ -474,11 +527,13 @@ function stripWebpMetadata(bytes: Buffer): StripImageResult {
     bytes.toString("ascii", 0, 4) !== "RIFF" ||
     bytes.toString("ascii", 8, 12) !== "WEBP"
   ) {
-    return { ok: false, bytes };
+    return unconfirmed(bytes);
   }
   const kept: Buffer[] = [];
+  let vp8xIndex: number | null = null;
+  let orientation: number | null = null;
+  let exifSeen = false;
   let offset = 12;
-  let changed = false;
   while (offset + 8 <= bytes.length) {
     const fourCC = bytes.toString("ascii", offset, offset + 4);
     const size = bytes.readUInt32LE(offset + 4);
@@ -492,72 +547,70 @@ function stripWebpMetadata(bytes: Buffer): StripImageResult {
       if (offset + 8 + size === bytes.length) {
         chunkEnd = bytes.length;
       } else {
-        return { ok: false, bytes };
+        return unconfirmed(bytes);
       }
     }
-    if (fourCC === "EXIF" || fourCC === "XMP ") {
-      changed = true;
-      offset = chunkEnd;
-      continue;
-    }
-    let chunk = bytes.subarray(offset, chunkEnd);
-    if (fourCC === "VP8X" && chunk.length > 8) {
-      // Clear the EXIF (0x08) and XMP (0x04) flag bits in the first payload byte.
-      const flags = must(chunk[8], "stripWebpMetadata: chunk has more than 8 bytes");
-      const cleared = flags & ~0b0000_1100;
-      if (cleared !== flags) {
-        chunk = Buffer.from(chunk);
-        chunk[8] = cleared;
-        changed = true;
+    if (fourCC === "EXIF") {
+      // Replaced in place by a chunk holding only the Orientation. Some
+      // writers prefix the TIFF data with JPEG's "Exif\0\0".
+      if (!exifSeen) {
+        exifSeen = true;
+        let tiff = bytes.subarray(offset + 8, offset + 8 + size);
+        if (tiff.toString("latin1", 0, 6) === EXIF_APP1_PREFIX) tiff = tiff.subarray(6);
+        orientation = readExifOrientation(tiff);
+        if (orientation !== null) {
+          const data = orientationOnlyExif(orientation); // even length: no pad
+          const header = Buffer.alloc(8);
+          header.write("EXIF", 0, "ascii");
+          header.writeUInt32LE(data.length, 4);
+          kept.push(header, data);
+        }
       }
+    } else if (fourCC !== "XMP ") {
+      if (fourCC === "VP8X" && chunkEnd - offset > 8) vp8xIndex = kept.length;
+      kept.push(bytes.subarray(offset, chunkEnd));
     }
-    kept.push(chunk);
     offset = chunkEnd;
   }
-  // Clean walk to EOF. Nothing to strip is a confirmed-clean result too.
-  if (!changed) return { ok: true, bytes };
+  if (vp8xIndex !== null) {
+    // The VP8X flags byte says which metadata chunks follow: XMP (0x04) never
+    // does now, EXIF (0x08) only when an Orientation was kept.
+    const vp8x = Buffer.from(must(kept[vp8xIndex], "stripWebpMetadata: VP8X index recorded from kept"));
+    const flags = must(vp8x[8], "stripWebpMetadata: VP8X chunk has more than 8 bytes");
+    vp8x[8] = (flags & ~0b0000_1100) | (orientation !== null ? 0b0000_1000 : 0);
+    kept[vp8xIndex] = vp8x;
+  }
   const body = Buffer.concat(kept);
   const out = Buffer.alloc(12 + body.length);
   out.write("RIFF", 0, "ascii");
   out.writeUInt32LE(4 + body.length, 4); // "WEBP" tag + chunk bytes
   out.write("WEBP", 8, "ascii");
   body.copy(out, 12);
-  return { ok: true, bytes: out };
+  // Clean walk to EOF. Nothing to strip is a confirmed-clean result too, and
+  // returns the input itself.
+  return { ok: true, bytes: out.equals(bytes) ? bytes : out };
 }
 
 /**
- * Strip privacy-sensitive metadata (EXIF/GPS, XMP, comments) from an uploaded
- * image before it is stored and potentially served publicly. The result carries
- * `ok: true` ONLY when the parser completed a clean structural walk and any
- * metadata present was removed (or there was validly none); `ok: false`
- * (malformed/nonstandard structure, an unsupported type, or a thrown exception)
- * means the strip could not be positively confirmed and `bytes` is the unchanged
- * original. Content re-encoded client-side (the crop canvas) is already
- * metadata-free and passes cleanly; this also covers the direct-upload paths
- * where a phone-camera JPEG could carry GPS coordinates.
+ * Strip privacy-sensitive metadata (EXIF/GPS, XMP, comments, embedded text) from
+ * an uploaded image before it is stored and potentially served publicly. Every
+ * allowed type has a cleaner, so the switch is exhaustive (#5244):
+ *  - JPEG, PNG and WebP drop their metadata segments and chunks, keeping only
+ *    an EXIF Orientation (`@/lib/image-metadata-exif`);
+ *  - GIF keeps only picture, frame-timing and looping blocks
+ *    (`@/lib/image-metadata-gif`);
+ *  - AVIF blanks every non-picture item, property and box in place
+ *    (`@/lib/image-metadata-avif`); an animated AVIF is refused;
+ *  - SVG is rebuilt from drawing elements and attributes
+ *    (`@/lib/image-metadata-svg`).
  *
- * How an `ok: false` result is handled is the CALLER's policy, and the callers
- * deliberately differ:
- *  - `src/app/api/members/[id]/photo/route.ts` fails CLOSED — it rejects the
- *    upload rather than store personal-data bytes it could not prove were
- *    scrubbed.
- *  - the admin image library, the image manager, and the config-transfer bundle
- *    import all fail OPEN through `storableImageBytes` below, which stores the
- *    original and logs (see that helper for why).
- *
- * The `default` branch covers the three allowed types this module has NO
- * stripper for — gif, avif and svg+xml — and returns `ok: false` with the
- * ORIGINAL bytes. That is not a formality: AVIF is a HEIF container carrying
- * EXIF (including `GPSLatitude`/`GPSLongitude`) as an `Exif` item, SVG carries
- * `<metadata>` RDF with creator identity and, from many editors, the author's
- * local file path, and GIF carries the Comment Extension and XMP via an
- * Application Extension. Reporting those as a confirmed strip would silence the
- * very warning that is meant to make an unstripped upload visible in operations.
- * The branch is UNREACHABLE from the fail-CLOSED member-photo route, which
- * rejects anything outside `ALLOWED_MEMBER_PHOTO_CONTENT_TYPES` (jpeg/png/webp)
- * before it ever calls this, so it cannot start rejecting member photos; on the
- * fail-OPEN callers it stores exactly the same bytes as before and merely starts
- * logging.
+ * The result carries `ok: true` ONLY when the parser completed a clean
+ * structural walk and any metadata present was removed (or there was validly
+ * none); `ok: false` means the strip could not be positively confirmed and
+ * `bytes` is the unchanged original. Every caller refuses an `ok: false` image,
+ * through `cleanImageForStorage` / `storableLogoDataUrl` or (the member-photo
+ * route) directly. Each cleaner is lossless and returns identical bytes on a
+ * second pass.
  */
 export function stripImageMetadata(
   bytes: Buffer,
@@ -571,57 +624,90 @@ export function stripImageMetadata(
         return stripPngMetadata(bytes);
       case "image/webp":
         return stripWebpMetadata(bytes);
-      default:
-        return { ok: false, bytes };
+      case "image/gif": {
+        const cleaned = stripGifMetadata(bytes);
+        return cleaned ? { ok: true, bytes: cleaned } : unconfirmed(bytes);
+      }
+      case "image/avif": {
+        const outcome = stripAvifMetadata(bytes);
+        if (outcome.ok) return outcome;
+        return outcome.reason === "animated"
+          ? { ok: false, bytes, reason: "animated-avif" }
+          : unconfirmed(bytes);
+      }
+      case "image/svg+xml": {
+        const cleaned = stripSvgMetadata(bytes, cleanEmbeddedRaster);
+        return cleaned ? { ok: true, bytes: cleaned } : unconfirmed(bytes);
+      }
     }
   } catch {
-    return { ok: false, bytes };
+    return unconfirmed(bytes);
   }
 }
 
+const EMBEDDABLE_RASTER_TYPES: ReadonlySet<AllowedMediaImageContentType> = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+]);
+
+/** Cleans a raster image embedded in an SVG; never another SVG or an AVIF. */
+function cleanEmbeddedRaster(bytes: Buffer): { bytes: Buffer; contentType: string } | null {
+  const contentType = detectImageContentType(bytes);
+  if (!contentType || !EMBEDDABLE_RASTER_TYPES.has(contentType)) return null;
+  const stripped = stripImageMetadata(bytes, contentType);
+  return stripped.ok ? { bytes: stripped.bytes, contentType } : null;
+}
+
 /**
- * Bytes to store on a FAIL-OPEN image path: metadata stripped when the strip can
- * be positively confirmed, otherwise the unchanged original plus a warning.
- *
- * Shared by every fail-open image-storing path so the policy, the log shape and
- * the bytes are identical on all of them:
+ * Shown to whoever uploaded an image the app could not confirm clean, on every
+ * path that refuses one (#5244). Plain English for a club volunteer.
+ */
+export const IMAGE_NOT_CLEAN_MESSAGE =
+  "This image was not saved: it may hold hidden details, such as where it was taken, the device or the owner's name, and they could not be removed. Open it in an image editor, export a fresh copy and upload that instead.";
+
+/** The refusal for an animated AVIF, which has no cleaner. */
+export const ANIMATED_AVIF_NOT_CLEAN_MESSAGE =
+  "Animated AVIF images cannot be checked for hidden details, such as where they were taken, the device or the owner's name, so this one was not saved. Upload it as an animated GIF or a still image instead.";
+
+export type CleanImageResult =
+  | { ok: true; bytes: Buffer }
+  | { ok: false; message: string };
+
+/**
+ * The bytes to store for an uploaded image, with every hidden detail removed —
+ * or a refusal, with the message to show the uploader, when that cannot be
+ * confirmed (#5244). The one storage policy for every path that keeps an
+ * uploaded image:
  *  - `src/app/api/admin/image-library/route.ts` (DB `MediaImage`, served
  *    anonymously from `/api/images/[id]` with `max-age=31536000, immutable`),
  *  - `src/lib/config-transfer/media.ts` (bundle images recreated as the same
  *    kind of anonymously-served `MediaImage`),
  *  - `src/app/api/admin/image-manager/upload/route.ts` (files written under
- *    `public/images`, served directly by Next.js/Caddy).
+ *    `public/images`, served directly by Next.js/Caddy),
+ *  - `storableLogoDataUrl` below (the inline club logo).
  *
- * FAIL-OPEN, deliberately, and the asymmetry with the member-photo route (which
- * fails CLOSED and rejects) is intentional: `stripJpegMetadata` rejects some
- * spec-legal JPEG fill-byte sequences (T.81 §B.1.1.2), and blocking a legitimate
- * admin content upload — or an operator's configuration-bundle restore — is the
- * worse outcome on these paths, whereas a member photo is personal data on a
- * narrow, purpose-built path where the reverse is true. An unconfirmed strip is
- * logged so it is visible in operations.
+ * FAIL-CLOSED: nothing is ever stored unconfirmed. `contentType` is nullable so
+ * a caller whose bytes sniffed as no allowed type gets the same refusal.
  *
- * `contentType` is nullable so a caller that could not sniff the bytes at all
- * (the image-manager batch uploader trusts the declared MIME + extension and
- * must not start rejecting files) still goes down the logged, store-the-original
- * path rather than silently skipping the strip.
- *
- * Callers MUST derive any stored size/metadata from the RETURNED buffer, not the
- * input, or the recorded byteSize will not describe the bytes actually written.
+ * Callers MUST derive any stored size/dimensions from the RETURNED buffer, not
+ * the input, or the recorded values will not describe the bytes written.
  */
-export function storableImageBytes(
+export function cleanImageForStorage(
   bytes: Buffer,
   contentType: AllowedMediaImageContentType | null,
-  context: Record<string, unknown> & { source: string },
-): Buffer {
-  const stripped: StripImageResult = contentType
-    ? stripImageMetadata(bytes, contentType)
-    : { ok: false, bytes };
-  if (stripped.ok) return stripped.bytes;
-  logger.warn(
-    { ...context, contentType, byteSize: bytes.length },
-    "Image stored without a confirmed metadata strip",
-  );
-  return bytes;
+): CleanImageResult {
+  if (!contentType) return { ok: false, message: IMAGE_NOT_CLEAN_MESSAGE };
+  const stripped = stripImageMetadata(bytes, contentType);
+  if (stripped.ok) return { ok: true, bytes: stripped.bytes };
+  return {
+    ok: false,
+    message:
+      stripped.reason === "animated-avif"
+        ? ANIMATED_AVIF_NOT_CLEAN_MESSAGE
+        : IMAGE_NOT_CLEAN_MESSAGE,
+  };
 }
 
 /**
@@ -633,55 +719,42 @@ export function storableImageBytes(
 const BASE64_DATA_URL = /^data:([^;,]+);base64,([A-Za-z0-9+/]*={0,2})$/;
 
 /**
- * Bytes to store for an image held INLINE as a base64 `data:` URI rather than as
- * a `MediaImage` row — today that is `ClubTheme.logoDataUrl`, which the public
- * header, footer and mobile menu render inline on every public page.
+ * The value to store for an image held INLINE as a base64 `data:` URI rather
+ * than as a `MediaImage` row — today that is `ClubTheme.logoDataUrl`, which the
+ * public header, footer and mobile menu render inline on every public page.
  *
- * Same FAIL-OPEN policy, log line and reasoning as `storableImageBytes` above
- * (it delegates to it): a club logo that cannot be confirmed clean is stored
- * unchanged and logged, because blocking a site-style save or an operator's
- * whole configuration restore over one unparseable decorative image is the worse
- * outcome. The inline column is a legacy/escape-hatch path — new logos go
- * through `POST /api/admin/site-style/logo`, which re-encodes through sharp and
- * is metadata-free by construction — but a hand-crafted or bundled inline logo
- * can still be a straight-from-phone photo carrying GPS, and it renders on every
- * public page, so it gets the same treatment as every other stored image.
+ * Same FAIL-CLOSED policy as `cleanImageForStorage` (it delegates to it): a
+ * logo that cannot be confirmed clean — including a value that is not a base64
+ * data URI at all — is refused, and the site-style save or configuration
+ * restore reports the message (#5244). New logos normally go through
+ * `POST /api/admin/site-style/logo`, which re-encodes through sharp and is
+ * metadata-free by construction; this inline column is the legacy/escape-hatch
+ * path, and a hand-crafted or bundled logo can still be a phone photo carrying
+ * GPS.
  *
- * Returns the ORIGINAL string byte for byte whenever nothing was removed (an
- * empty/absent value, a value that is not a base64 data URI, an unsniffable or
- * unstrippable payload, or an image that simply had no metadata). That matters:
+ * `value` is `null` for no logo (null/undefined/empty). Otherwise it is the
+ * ORIGINAL string byte for byte whenever nothing was removed. That matters:
  * re-emitting a re-encoded payload that decodes to identical bytes would churn
  * the stored value — and, on the config-transfer import, would turn an
  * "unchanged" dry-run into a spurious "update" — for no privacy gain.
  */
 export function storableLogoDataUrl(
   value: string | null | undefined,
-  context: Record<string, unknown> & { source: string },
-): string | null {
-  if (!value) return null; // no logo (null/undefined/empty) — nothing to strip
+): { ok: true; value: string | null } | { ok: false; message: string } {
+  if (!value) return { ok: true, value: null };
   const match = BASE64_DATA_URL.exec(value.trim());
-  if (!match) {
-    // Not a base64 data URI at all. The caller's sanitiser normally rules this
-    // out; log rather than throw so a hand-edited row cannot break a save.
-    logger.warn(
-      { ...context, contentType: null, byteSize: value.length },
-      "Image stored without a confirmed metadata strip",
-    );
-    return value;
-  }
+  if (!match) return { ok: false, message: IMAGE_NOT_CLEAN_MESSAGE };
   const declaredType = must(match[1], "storableLogoDataUrl: matched data URI has no media-type capture group");
   const base64 = must(match[2], "storableLogoDataUrl: matched data URI has no base64 capture group");
   const bytes = Buffer.from(base64, "base64");
-  const stored = storableImageBytes(bytes, detectImageContentType(bytes), {
-    ...context,
-    declaredContentType: declaredType,
-  });
-  if (stored.equals(bytes)) return value;
+  const cleaned = cleanImageForStorage(bytes, detectImageContentType(bytes));
+  if (!cleaned.ok) return cleaned;
+  if (cleaned.bytes.equals(bytes)) return { ok: true, value };
   // Keep the DECLARED media type: a strip never changes the container format
   // (JPEG keeps its SOI, PNG its signature, WebP its RIFF header), so rewriting
   // the type here could only introduce a mismatch the browser then renders
   // differently.
-  return `data:${declaredType};base64,${stored.toString("base64")}`;
+  return { ok: true, value: `data:${declaredType};base64,${cleaned.bytes.toString("base64")}` };
 }
 
 /**
