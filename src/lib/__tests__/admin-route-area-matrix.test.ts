@@ -434,6 +434,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
     "membership",
   "/api/admin/membership-cancellation-settings": "membership",
   "/api/admin/membership-lockout-settings": "membership",
+  "/api/admin/membership-lockout-settings/liability-impact": "membership",
   "/api/admin/membership-nomination-settings": "membership",
   "/api/admin/membership-types": "membership",
   "/api/admin/membership-types/[id]": "membership",
