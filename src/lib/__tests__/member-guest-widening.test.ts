@@ -1308,6 +1308,7 @@ describe("the module flag now gates the widening, and says so", () => {
     for (const file of [
       "src/lib/module-settings.ts",
       "src/app/(admin)/admin/modules/page.tsx",
+      "src/app/(admin)/admin/modules/_components/module-card.tsx",
     ]) {
       expect(readRepoFile(file), file).not.toMatch(
         /status:\s*["']not_available_yet["']/,
@@ -1338,13 +1339,19 @@ describe("the admin Modules card renders memberGuests as an ordinary module (D-1
   // badge a working feature amber and label it unavailable, and no behavioural
   // test would notice that either. So the same three helpers are pinned
   // structurally, in the opposite direction.
-  const PAGE = "src/app/(admin)/admin/modules/page.tsx";
+  // getReadiness stays on the page; the card's two badge helpers moved into the
+  // card component in #5243.
+  const SOURCES = [
+    "src/app/(admin)/admin/modules/page.tsx",
+    "src/app/(admin)/admin/modules/_components/module-card.tsx",
+  ];
 
   /** The text of a top-level `function name(...) {...}` declaration. */
   function functionBody(name: string): string {
-    const source = readRepoFile(PAGE);
+    const source =
+      SOURCES.map((file) => readRepoFile(file)).find((text) => text.includes(`function ${name}(`)) ?? "";
     const at = source.indexOf(`function ${name}(`);
-    expect(at, `${name} is not declared in the Modules page`).toBeGreaterThan(-1);
+    expect(at, `${name} is not declared in the Modules page or its card`).toBeGreaterThan(-1);
     // Top-level declarations close on a brace in column one.
     const end = source.indexOf("\n}", at);
     expect(end, `${name} has no closing brace`).toBeGreaterThan(at);

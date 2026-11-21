@@ -182,6 +182,7 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/app/api/admin/membership-types/reorder/route.ts::POST#0": {"category":"admin","sink":"auditLog.create","action":"MEMBERSHIP_TYPES_REORDERED"},
   "src/app/api/admin/membership-types/route.ts::POST.created#0": {"category":"admin","sink":"auditLog.create","action":"MEMBERSHIP_TYPE_CREATED"},
   "src/app/api/admin/modules/route.ts::PUT.record#0": {"category":"admin","sink":"auditLog.create","action":"CLUB_MODULE_SETTINGS_UPDATED"},
+  "src/app/api/admin/modules/route.ts::PUT.record#1": {"category":"admin","sink":"auditLog.create","action":"AI_DIAGNOSTICS_DISCLOSURE_ACKNOWLEDGED"},
   "src/app/api/admin/notices/[id]/route.ts::DELETE#0": {"category":"admin","sink":"auditLog.create","action":"NOTICE_DELETED"},
   "src/app/api/admin/notices/[id]/route.ts::PATCH.updated#0": {"category":"admin","sink":"auditLog.create","action":"(dynamic) becamePublished ? \"NOTICE_PUBLISHED\" : \"NOTICE_UPDATED\""},
   "src/app/api/admin/notices/route.ts::POST.created#0": {"category":"admin","sink":"auditLog.create","action":"NOTICE_CREATED"},

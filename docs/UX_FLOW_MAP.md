@@ -165,7 +165,7 @@ Journey: When enabled, open Order food from the dashboard, choose the lodge (onl
 
 Screen: `/admin/ai-diagnostics`.
 
-Shows: Diagnostic access, provisioning and deployment information.
+Shows: Diagnostic access, provisioning and deployment information, and "Where your data goes": the statement that questions send excerpts to Anthropic outside New Zealand, what they include, and that retention is arranged on the club's Anthropic account.
 
 Journey: Inspect diagnostic access and follow the deployment guide to provision it.
 
@@ -959,9 +959,9 @@ Journey: Filter reports, open the evidence, and update the report status.
 
 Screen: `/admin/modules`.
 
-Shows: Feature switches and their setup prerequisites.
+Shows: Feature switches and their setup prerequisites. The AI Diagnostics card states where Diagnostics sends data.
 
-Journey: Review each module’s purpose and prerequisites before enabling or disabling it.
+Journey: Review each module’s purpose and prerequisites before enabling or disabling it. Switching AI Diagnostics on needs the data statement ticked before Save.
 
 [Guide](guides/modules.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

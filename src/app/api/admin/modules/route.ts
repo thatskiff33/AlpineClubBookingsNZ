@@ -29,6 +29,7 @@ import {
 } from "@/config/modules";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { AI_DIAGNOSTICS_DISCLOSURE_VERSION } from "@/lib/ai-diagnostics-disclosure";
 
 const moduleSettingsSchema = z
   .object(
@@ -42,6 +43,9 @@ const moduleSettingsSchema = z
 const updateSchema = z
   .object({
     settings: moduleSettingsSchema,
+    // The disclosure version the administrator ticked on the Modules page (#5243).
+    // Required only when this save switches AI Diagnostics on.
+    aiDiagnosticsDisclosureAcknowledgedVersion: z.number().int().optional(),
   })
   .strict();
 
@@ -127,6 +131,28 @@ export async function PUT(request: Request) {
     }
   }
 
+  // AI Diagnostics sends excerpts of club data to its provider outside New
+  // Zealand, so switching it on needs the administrator to have acknowledged the
+  // CURRENT disclosure (ADR-006 §2, #5243). Any save that would turn it on is
+  // checked, whichever screen sent it: a screen that saves the whole module set
+  // after a stale read cannot switch it on unseen. Switching it off, or saving
+  // while it is already on, needs no acknowledgement.
+  const enablesAiDiagnostics = !before.aiDiagnostics && after.aiDiagnostics;
+  const acknowledgedVersion =
+    parsed.data.aiDiagnosticsDisclosureAcknowledgedVersion;
+  if (
+    enablesAiDiagnostics &&
+    acknowledgedVersion !== AI_DIAGNOSTICS_DISCLOSURE_VERSION
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Read and tick the statement about where AI Diagnostics sends data, on Admin → Modules, before switching it on. Reload the page if you have already ticked it.",
+      },
+      { status: 409 },
+    );
+  }
+
   const write = prisma.clubModuleSettings.upsert({
     where: { id: CLUB_MODULE_SETTINGS_ID },
     create: {
@@ -167,6 +193,30 @@ export async function PUT(request: Request) {
                 request: getAuditRequestContext(request),
               }),
             ),
+            ...(enablesAiDiagnostics
+              ? [
+                  prisma.auditLog.create(
+                    buildStructuredAuditLogCreateArgs({
+                      action: "AI_DIAGNOSTICS_DISCLOSURE_ACKNOWLEDGED",
+                      actor: { memberId: session.user.id },
+                      entity: {
+                        type: "ClubModuleSettings",
+                        id: CLUB_MODULE_SETTINGS_ID,
+                      },
+                      category: "admin",
+                      severity: "important",
+                      outcome: "success",
+                      summary:
+                        "AI Diagnostics provider disclosure acknowledged when switching it on",
+                      metadata: {
+                        disclosureVersion: AI_DIAGNOSTICS_DISCLOSURE_VERSION,
+                        recipient: "anthropic",
+                      },
+                      request: getAuditRequestContext(request),
+                    }),
+                  ),
+                ]
+              : []),
           ])
         )[0]
       : await write;
