@@ -126,12 +126,12 @@ function seedTwoMismatchesOneCorrectOneNoContact() {
   ]);
   // c1, c3 are mis-grouped (in youth); c2 is correct (in adult).
   mocks.membershipCacheFindMany.mockResolvedValue([
-    { contactId: "c1", contactGroupId: "g_youth" },
-    { contactId: "c2", contactGroupId: "g_adult" },
-    { contactId: "c3", contactGroupId: "g_youth" },
-    { contactId: "c5", contactGroupId: "g_adult" },
-    { contactId: "c5", contactGroupId: "g_unrelated" },
-    { contactId: "c6", contactGroupId: "g_unrelated" },
+    { contactId: "c1", contactGroupId: "g_youth", group: { name: "Youth" } },
+    { contactId: "c2", contactGroupId: "g_adult", group: { name: "Adults" } },
+    { contactId: "c3", contactGroupId: "g_youth", group: { name: "Youth" } },
+    { contactId: "c5", contactGroupId: "g_adult", group: { name: "Adults" } },
+    { contactId: "c5", contactGroupId: "g_unrelated", group: { name: "Newsletter" } },
+    { contactId: "c6", contactGroupId: "g_unrelated", group: { name: "Newsletter" } },
   ]);
   mocks.resolveMemberGroupingsForMembers.mockResolvedValue(
     new Map([
@@ -256,8 +256,9 @@ describe("getXeroMemberGroupingSnapshot", () => {
         memberEmail: "e@x",
         ageTier: "NOT_APPLICABLE",
         xeroContactId: "c5",
-        // Only the managed-universe intersection — g_unrelated is not listed.
-        unexpectedManagedGroupIds: ["g_adult"],
+        // Only the managed-universe intersection — g_unrelated is not listed —
+        // named from the cache so the panel can say which group to leave (#5234).
+        unexpectedManagedGroups: [{ id: "g_adult", name: "Adults" }],
       },
     ]);
     // Never in the actionable mismatch list...
