@@ -78,6 +78,8 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       await prisma.processedWebhookEvent.deleteMany({ where: { eventId: { startsWith: "evt_race_4211_" } } });
       await prisma.webhookLog.deleteMany({ where: { eventId: { startsWith: "evt_race_4211_" } } });
       await prisma.alertCooldown.deleteMany({ where: { key: { contains: BOOKING_ID } } });
+      // #5240: a saved-card capture's "not yet settled" flag is keyed by its intent alone.
+      await prisma.alertCooldown.deleteMany({ where: { key: { startsWith: "saved-card-capture-unsettled:pi_race_4211_" } } });
       await prisma.auditLog.deleteMany({ where: { targetId: { in: [BOOKING_ID, PAYMENT_ID] } } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [PAYMENT_ID, BOOKING_ID] } } });
@@ -393,6 +395,36 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
         [savedCardIntent, "REFUNDED"],
         [settling, "SUCCEEDED"],
       ]);
+    });
+
+    it("#5240: a saved-card capture whose settle never ran, arriving after the booking was paid another way, is kept and the admins told - not read as a replay", async () => {
+      const asked = stripeMakesRefunds();
+      const savedCardIntent = "pi_race_4211_interrupted";
+      const attempt = await prisma.paymentTransaction.create({
+        data: { paymentId: PAYMENT_ID, kind: "PRIMARY", source: "STRIPE", amountCents: PRICE_CENTS, status: "PENDING", reason: "race_4211_saved_card_attempt" },
+        select: { id: true },
+      });
+      // The charging code's pre-record commits the capture, then the caller stops before its settle.
+      const { settleSavedCardChargeAttempt } = await import("@/lib/saved-card-charge-settle");
+      const recorded = await settleSavedCardChargeAttempt({
+        journal: memberMoneyTestContext(),
+        attemptRowId: attempt.id,
+        paymentId: PAYMENT_ID,
+        paymentIntent: { id: savedCardIntent, status: "succeeded", amount: PRICE_CENTS, payment_method: null },
+      });
+      expect(recorded).toMatchObject({ ledgerStatus: "SUCCEEDED", newlyCaptured: true });
+      const flagKey = `saved-card-capture-unsettled:${savedCardIntent}`;
+      expect(await prisma.alertCooldown.findUnique({ where: { key: flagKey } }), "the pre-record committed its flag").not.toBeNull();
+      // Paid another way (account credit, a $0 total, the organiser): PAID with no capture recorded as its settler.
+      await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAID" } });
+
+      expect((await arrive(savedCardIntent)).outcome).toBe("duplicate_capture_kept");
+      expect(asked, "nothing is refunded automatically").toEqual([]);
+      expect(await prisma.alertCooldown.findUnique({ where: { key: flagKey } }), "the settle consumed the flag").toBeNull();
+      // The day's alert window is claimed for this capture: the admins were told.
+      expect(
+        await prisma.alertCooldown.findUnique({ where: { key: `duplicate-capture-unrecorded-settler:${BOOKING_ID}:${savedCardIntent}` } }),
+      ).not.toBeNull();
     });
 
     /** A capture whose money is held without any duplicate-capture refund owning it. */
