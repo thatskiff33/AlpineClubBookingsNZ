@@ -3,6 +3,7 @@ import { PaymentSource } from "@prisma/client";
 import {
   editReviewRefundGoesBackOnCard,
   editReviewRefundIsPaidBackByHand,
+  feeOwedAfterEditCents,
   formatPaidRefundedBreakdown,
   getPaymentNetOfRefundsCents,
   getRemainingRefundableCents,
@@ -689,5 +690,17 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
         cents,
       ),
     ).toBeNull();
+  });
+});
+
+describe("the fee an edit's credit clamp keeps credit for (#5039, INV-MOD-042)", () => {
+  it("adds this edit's fee to the fee the payment carried before the edit", () => {
+    expect(feeOwedAfterEditCents({ changeFeeCents: 2500 }, 5000)).toBe(7500);
+    expect(feeOwedAfterEditCents({ changeFeeCents: 0 }, 5000)).toBe(5000);
+  });
+  it("reads no earlier fee from a missing payment or a null column", () => {
+    expect(feeOwedAfterEditCents(null, 5000)).toBe(5000);
+    expect(feeOwedAfterEditCents(undefined, 0)).toBe(0);
+    expect(feeOwedAfterEditCents({ changeFeeCents: null }, 1200)).toBe(1200);
   });
 });
