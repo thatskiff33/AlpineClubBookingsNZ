@@ -60,6 +60,7 @@ import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { formatCents } from "@/lib/utils";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { recordCombinedGroupInvoiceManifest } from "@/lib/member-money/doors";
 
 export interface CreateXeroGroupSettlementInvoiceOptions
   extends FindOrCreateXeroContactOptions {
@@ -254,9 +255,15 @@ export async function createXeroInvoiceForGroupSettlement(
   // fence — every in-lock check re-run, the same idempotency key — and never
   // raise or re-bind the invoice. A failure keeps the marker, so an operator's
   // Retry of the FAILED row comes back here rather than closing it unemailed.
+  // #4525 (ALP-437): a bound invoice's export manifest, replayed from the request that raised it. Never throws.
+  const replayManifest = (invoiceId: string) => recordCombinedGroupInvoiceManifest(
+    { kind: "REPLAY", operationId: options?.syncOperation?.id ?? null },
+    { settlementId, organiserBookingId: settlement.groupBooking.organiserBookingId, providerInvoiceId: invoiceId },
+  );
   if (settlement.xeroInvoiceId && initialFence.deferredEmail && options?.syncOperation) {
     const deferred = initialFence.deferredEmail;
     const createdInvoice = { invoiceID: settlement.xeroInvoiceId, invoiceNumber: settlement.xeroInvoiceNumber };
+    await replayManifest(settlement.xeroInvoiceId);
     try {
       const { xero, tenantId } = await getAuthenticatedXeroClient();
       return await finishGroupSettlementInvoiceEmail({
@@ -278,6 +285,7 @@ export async function createXeroInvoiceForGroupSettlement(
   // Already raised: its link was written beside the pointer under the lock (#3642), and re-writing it here could
   // re-activate a retired invoice's link. #4710: a claimed row closes SUCCEEDED on the bound invoice, never left RUNNING.
   if (settlement.xeroInvoiceId) {
+    await replayManifest(settlement.xeroInvoiceId);
     if (options?.syncOperation) await completeXeroSyncOperation(options.syncOperation, boundGroupSettlementInvoiceCompletion({ id: settlement.xeroInvoiceId, number: settlement.xeroInvoiceNumber ?? null }));
     return settlement.xeroInvoiceId;
   }
@@ -458,6 +466,13 @@ export async function createXeroInvoiceForGroupSettlement(
       });
       return null;
     }
+
+    // #4525 (ALP-437): the kept invoice's export manifest, in its own transaction after the bind. Never throws.
+    // A replayed create returns the ORIGINAL invoice, so the plan is held to the lines it bills.
+    await recordCombinedGroupInvoiceManifest(
+      { kind: "BUILT", attempt, lines, taxRendering, billedLines: createdInvoice.lineItems ?? lineItems },
+      { settlementId, organiserBookingId, providerInvoiceId: createdInvoice.invoiceID },
+    );
 
     return await finishGroupSettlementInvoiceEmail({
       settlementId,

@@ -20,7 +20,7 @@
  */
 import type { LineItem } from "xero-node";
 import type { XeroTaxRendering } from "@/lib/xero-tax-rendering";
-import { BookingStatus } from "@prisma/client";
+import { BookingStatus, type Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { getStayNights } from "./pricing";
 import { buildPrimaryInvoiceLines } from "./xero-primary-invoice-lines";
@@ -79,6 +79,20 @@ export interface GroupSettlementInvoiceLines {
   operationRecord: { promoLines?: Array<{ bookingId: string } & PromoAdjustmentLineRecord> };
 }
 
+/**
+ * The children a settlement commits and its combined invoice bills: the
+ * organiser's CONFIRMED, organiser-settled, undeleted children. The one
+ * definition the lines and the export manifest's replay read (`INV-SSOT`).
+ */
+export function committedGroupChildrenWhere(organiserBookingId: string) {
+  return {
+    parentBookingId: organiserBookingId,
+    organiserSettled: true,
+    deletedAt: null,
+    status: BookingStatus.CONFIRMED,
+  } satisfies Prisma.BookingWhereInput;
+}
+
 /** Build the combined invoice's lines from the settlement's committed children. */
 export async function buildGroupSettlementInvoiceLines(
   organiserBookingId: string,
@@ -86,12 +100,7 @@ export async function buildGroupSettlementInvoiceLines(
   taxRendering: XeroTaxRendering,
 ): Promise<GroupSettlementInvoiceLines> {
   const children = await prisma.booking.findMany({
-    where: {
-      parentBookingId: organiserBookingId,
-      organiserSettled: true,
-      deletedAt: null,
-      status: BookingStatus.CONFIRMED,
-    },
+    where: committedGroupChildrenWhere(organiserBookingId),
     include: {
       guests: { include: { nights: true } },
       promoRedemptions: { include: { promoCode: true, allocations: true } },

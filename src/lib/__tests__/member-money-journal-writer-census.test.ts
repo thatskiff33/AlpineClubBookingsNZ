@@ -134,6 +134,9 @@ const DOORS: Record<string, string> = {
   "src/lib/xero-kept-late-capture-invoice.ts": "M13: a kept late capture's payment, its capture receipt",
   "src/lib/capture-receipt-senders.ts": "M13: the primary invoice's Stripe payment (raised or replayed) and a PARTIAL repair's payment, their capture receipts",
   "src/lib/xero-card-refund-reversal-invoice.ts": "M13: a failed-later refund reversal invoice's export manifest, after its operation completes",
+  // #4525 (ALP-437): the organiser's combined group invoice.
+  "src/lib/xero-group-settlement-invoices.ts": "M13: the combined group invoice's export manifest, after a kept bind, and replayed on its already-bound returns",
+  "src/lib/xero-group-settlement-invoice-voids.ts": "M13: a combined group invoice's coverage released once Xero holds it void or holds no such invoice",
 };
 /**
  * M3b (#4627): the doors' callers, which resolve the posting context BEFORE
@@ -191,8 +194,8 @@ const BOUNDARY = "src/lib/member-money/";
 const WRITER = "src/lib/member-money/internal/store.ts";
 /** The command's entry points: nothing outside the boundary calls them; M3b's doors go through `./doors`. */
 const POSTING_COMMAND = /\b(postMemberMoneyEvent|reverseMemberMoneyJournal|writeMemberMoneyBatch)\b/;
-/** M3b's door entry points (#4627), M3c's pending charge (#4628), M4's hand-back and kept capture (#4516), and M13's invoice, refund-note, capture-receipt and failed-later reversal manifests (#4525). */
-const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn|postHandBackObligation|postHandBackPayment|postKeptCapture|reverseKeptCapture|planPrimaryInvoiceManifest|recordPrimaryInvoiceManifest|recordPrimaryInvoiceUpdateManifest|recordSupplementaryInvoiceManifest|recordRefundNoteManifest|recordRefundNotePaymentManifest|recordCaptureReceiptManifest|recordFailedLaterRefundReversalManifest)\b/;
+/** M3b's door entry points (#4627), M3c's pending charge (#4628), M4's hand-back and kept capture (#4516), and M13's invoice, refund-note, capture-receipt, failed-later reversal and combined group invoice manifests (#4525). */
+const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn|postHandBackObligation|postHandBackPayment|postKeptCapture|reverseKeptCapture|planPrimaryInvoiceManifest|recordPrimaryInvoiceManifest|recordPrimaryInvoiceUpdateManifest|recordSupplementaryInvoiceManifest|recordRefundNoteManifest|recordRefundNotePaymentManifest|recordCaptureReceiptManifest|recordFailedLaterRefundReversalManifest|recordCombinedGroupInvoiceManifest|releaseCombinedGroupInvoiceManifest)\b/;
 const DELEGATE_WRITE = /\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/;
 /**
  * Every name that reaches a journal row through Prisma: each relation's
