@@ -99,7 +99,7 @@ const NAMESPACE_VALUES: Record<string, string> = {
   "xmlns:xlink": "http://www.w3.org/1999/xlink",
 };
 
-const LOCAL_REFERENCE = /^#[A-Za-z_][\w.:-]*$/;
+const LOCAL_REFERENCE = /^#[^\s()'"\\]+$/;
 const URL_FUNCTION = /url\s*\(\s*(['"]?)(.*?)\1\s*\)/gi;
 const EMBEDDED_IMAGE = /^data:image\/(?:png|jpeg|webp|gif);base64,([A-Za-z0-9+/=\s]+)$/i;
 
