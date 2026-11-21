@@ -125,7 +125,9 @@ export async function readBookingHandBackJournal(db: Db, bookingIds: readonly st
   const lines = await db.memberMoneyLine.findMany({ where: { bookingId: { in: ids }, account: "REFUND_PAYABLE" }, orderBy: { id: "asc" },
     select: { bookingId: true, side: true, amountCents: true, obligation: { select: { obligationKey: true } } } });
   const cards = await journalCardRefundKeys(db, ids);
-  const intents = tasks.flatMap((task) => (task.status === "DISMISSED" && task.lateCaptureApprovalIntentId ? [task.lateCaptureApprovalIntentId] : []));
+  // A keep posts only for a dismissed approval task with a payment (`prepareLateCaptureDecision`).
+  const keptIntent = (task: HandBackCensusTask) => (task.status === "DISMISSED" && task.paymentId !== null ? task.lateCaptureApprovalIntentId : null);
+  const intents = tasks.flatMap((task) => keptIntent(task) ?? []);
   const captures = intents.length === 0 ? [] : await db.paymentTransaction.findMany({ where: { stripePaymentIntentId: { in: intents }, amountCents: { gt: 0 } },
     select: { stripePaymentIntentId: true } });
 
@@ -146,7 +148,7 @@ export async function readBookingHandBackJournal(db: Db, bookingIds: readonly st
     }
     const keeps = new Map<string, boolean>();
     for (const task of own) {
-      const intent = task.status === "DISMISSED" ? task.lateCaptureApprovalIntentId : null;
+      const intent = keptIntent(task);
       if (!intent || !captures.some((capture) => capture.stripePaymentIntentId === intent)) continue;
       keeps.set(intent, Boolean((await liveEvent(db, memberMoneyEventKeys.keptCapture(intent)))?.journal));
     }
