@@ -3694,9 +3694,29 @@ page and both routes, so neither can serve what the page does not offer.
   deleted invoice), no update is queued for that change, and neither of those
   applies, the page says instead that the invoice stays as it was issued. A
   failed credit note outranks a queued one, and both outrank this state.
-- **Later work.** A single statement PDF for the booking (invoice, credits,
-  payments and balance in one document) belongs to #5066's generated-document
-  slice, which waits on the club GST status work (#5153).
+- **Xero off** (#5066 slice 2). The same offer serves the app's own document
+  instead (`GENERATED`, `generatedBookingInvoiceOnOffer`) and makes no Xero
+  read; it is never offered while the module is on, so a Xero club has one
+  invoice of record. A booking holding Xero documents from when the module was
+  on (a primary invoice id, supplementary-invoice evidence or a held credit
+  note) gets `ASK_CLUB` with reason `XERO_DOCUMENTS` instead, never a second
+  "Invoice". The flags are read strictly (`loadEffectiveModuleFlagsStrict`): a
+  failed read offers nothing.
+- **A recorded GST-registered period** (owner decision, 20 Nov 2026). The
+  document is titled "Invoice" and prints no tax wording. A booking whose tax
+  anchor (`readBookingTaxAnchorInstant`: when it was made, or for a group place
+  its organiser's booking) falls in a GST-registered period the club recorded
+  gets `ASK_CLUB` with reason `REGISTERED_TAX_PERIOD` instead, until the "Tax
+  invoice" form and the club GST number setting exist (#5291). The period comes
+  from the one schedule (`resolveAnchoredClubTax` in
+  `xero-tax-anchors.ts`); a club that never recorded a status (the code
+  baseline an absent `"default"` row stands for, `clubTaxPeriodIsRecorded`) or
+  a period recorded as not registered gets the document. The schedule is read
+  strictly: a failed read offers nothing and the download answers 503. See
+  `src/lib/booking-invoice.ts`.
+- **Later work.** A single statement PDF for a Xero club's booking (invoice,
+  credits, payments and balance in one document) is #5292; any bank details on
+  the generated document wait on #4526.
 
 ## OAuth and token lifecycle (supporting flow)
 

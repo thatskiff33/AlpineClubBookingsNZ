@@ -6132,6 +6132,12 @@ model ClubIdentitySettings {
   shortName         String?
   hutLeaderLabel    String?
   facebookUrl       String?
+  // The supplier on the app's generated booking invoice (#5066, Xero off): the
+  // club's legal name (null prints the club name) and its postal address,
+  // free text, one line per line (null prints no address). No club.json
+  // fallback; admin-edited on Club identity.
+  legalName         String?
+  postalAddress     String?
   updatedByMemberId String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
