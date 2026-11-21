@@ -81,8 +81,9 @@ members at a time.
   that season (assign one on their record first), or are on an archived
   membership type (change it on their record first).
 - A member already **paid or invoiced** for that season is flagged but still
-  changed: the billing run does not re-bill them, so the new category takes
-  effect from the next season's invoice.
+  changed: the billing run does not re-bill them, so that season's invoice
+  stays as it is. A category is set per season and is not carried into the
+  next one.
 - An archived category cannot be chosen; archive it after moving its members.
 
 A member whose membership type needs no subscription, or whose age tier is
