@@ -139,8 +139,15 @@ describe("MaintenanceQueueSection paging", () => {
     // Another officer resolves the reports on page 2 before it is read.
     total = 25;
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    // The total line is drawn from the stepped-back page number as soon as the
+    // empty page 2 is received, a render before the effect that asks for page 1
+    // again. So the third request is awaited, never counted straight after the
+    // line appears (#5361: the send history's copy of this order failed once on
+    // main).
+    await waitFor(() => expect(fetches.pages()).toEqual(["1", "2", "1"]));
     expect(await screen.findByText("Showing 1–25 of 25")).toBeInTheDocument();
-    expect(fetches.pages()).toEqual(["1", "2", "1"]);
+    // Page 1's row is back, so the step-back read was answered and shown.
+    expect(await screen.findByText("Fault 1")).toBeInTheDocument();
   });
 
   it("never lets a slower read for a page it has left replace the list shown", async () => {
