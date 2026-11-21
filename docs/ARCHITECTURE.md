@@ -1238,12 +1238,11 @@ When one body decides between success and failure, parse it once with
 told apart) and hand the result to `apiErrorMessageFromBody`; do not spell the
 "unreadable counts as empty" rule again.
 `admin-failed-response-json-census.test.ts` fails on a new bare
-`await res.json()` read of a failed reply under `src/app/(admin)` or
-`src/components/admin`. It does not see a `.then((r) => r.json())` chain or an
-`err.message` shown from a catch, so review those by eye. It has no allowance
-list under `src/app/(admin)`; under `src/components/admin` the files that
-already failed when the scan widened (ALP-749) are listed in it, and that list
-may only shrink.
+`await res.json()` read of a failed reply under `src/app/(admin)`, and in the
+password policy card (#5323 widens it to all of `src/components/admin`). It does
+not see a `.then((r) => r.json())` chain or an `err.message` shown from a catch,
+so review those by eye. It has no allowance list: an unguarded failure read
+anywhere it scans fails.
 
 Admin settings sections follow one canonical edit model (developer rule, binding
 for new or modified sections; the `AGENTS.md` routing table sends you here for it, and this page is where it is stated in full).
