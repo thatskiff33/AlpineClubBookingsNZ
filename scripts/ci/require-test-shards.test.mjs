@@ -698,12 +698,13 @@ describe("the CONTRIBUTING.md gate-limits table matches the workflows (#5362)", 
   // The table's body rows, from the header to the first line that is not a row.
   const tableRows = () => {
     const lines = contributing.split(/\r?\n/);
-    const start = lines.indexOf(HEADER);
+    // Runs of spaces collapsed, so re-padding the table's columns does not fail this.
+    const start = lines.findIndex((line) => line.replace(/ +/g, " ").trim() === HEADER);
     expect(start, "the limits table's header row").toBeGreaterThan(-1);
     const rows = [];
     for (const line of lines.slice(start + 2)) {
       if (!line.startsWith("|")) break;
-      const cells = line.split("|").slice(1, -1).map((cell) => cell.trim());
+      const cells = line.split("|").slice(1, -1).map((cell) => cell.replace(/ +/g, " ").trim());
       expect(cells, line).toHaveLength(5);
       rows.push({ line, gate: cells[0].match(/^`([^`]+)`/)?.[1], cells });
     }

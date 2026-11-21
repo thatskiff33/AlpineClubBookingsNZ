@@ -6,7 +6,8 @@
  * with plain `await`s, the first failure skips the rest, and a skipped role
  * drop outlives the run (roles are server-wide, not per database) while a
  * skipped `end()` leaves a connection open. `database-roles.realdb.test.ts`
- * already catches each drop; this is that shape as one helper.
+ * already catches each drop; this is that shape as one helper, except that it
+ * throws at the end, where that suite swallows.
  *
  * Every step is attempted whatever an earlier one did. Each step that fails is
  * logged by name, so the log says what was left behind, and the teardown then

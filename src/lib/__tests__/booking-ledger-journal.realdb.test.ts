@@ -124,17 +124,19 @@ async function receivable(bookingId: string): Promise<Record<string, number>> {
   return out;
 }
 
-/** A phase not reached reads "not reached", so a stall shows which step it was in (#5350). */
+/** A phase with no figure reads "not finished": it had not completed, or never began, so a stall shows which step it was in (#5350). */
 function describeSettlePhases(phases: { startMs?: number; lockWaitMs?: number; bodyMs?: number }, totalMs: number): string {
-  const ms = (value: number | undefined) => (value === undefined ? "not reached" : `${Math.round(value)} ms`);
+  const ms = (value: number | undefined) => (value === undefined ? "not finished" : `${Math.round(value)} ms`);
   return `start ${ms(phases.startMs)}; wait for lock(1) ${ms(phases.lockWaitMs)}; body ${ms(phases.bodyMs)}; total ${Math.round(totalMs)} ms`;
 }
 
 /**
- * Every other backend holding `pg_advisory_xact_lock(1)` right now, for a
- * failure message only (#5350): pid, application name, state, how long its
- * transaction has been open and the start of its current query. It never
- * throws, so a diagnostic read cannot change the test's verdict.
+ * Every other backend holding `pg_advisory_xact_lock(1)` in this database
+ * right now, for a failure message only (#5350): pid, application name, state,
+ * how long its transaction has been open and the start of its current query.
+ * Advisory locks are per database, so a lock(1) held in another database on
+ * the same server is left out. It never throws, so a diagnostic read cannot
+ * change the test's verdict.
  */
 async function lock1HoldersOtherThan(pid: number): Promise<string> {
   try {
@@ -144,6 +146,7 @@ async function lock1HoldersOtherThan(pid: number): Promise<string> {
         left(a.query, 200) AS query
       FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
       WHERE l.locktype = 'advisory' AND l.classid = 0 AND l.objid = 1 AND l.objsubid = 1
+        AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
         AND l.granted AND l.pid <> ${pid}`;
     if (rows.length === 0) return "none";
     return rows.map((row) => `pid ${row.pid} (${row.application_name || "no application_name"}, ${row.state ?? "no state"}, `
@@ -590,9 +593,9 @@ async function expectAgreed(bookingId: string) {
     // lock(1) holders below are diagnostics for a failure (#5350): they say how
     // long the transaction took to start, how long it waited for lock(1) and how
     // long the postings ran, and which other backends held lock(1) as it began
-    // to wait. They never decide the result. A blocked lock(1) wait is not cut
-    // short by Prisma's `timeout`, so if Vitest's own timeout ends the test
-    // first, `onTestFailed` prints the same diagnostics.
+    // to wait. They never decide the result. In a local probe on Prisma 7.10.1,
+    // `timeout` did not interrupt a blocked lock wait, so if Vitest's own
+    // timeout ends the test first, `onTestFailed` prints the same diagnostics.
     const calledAt = process.hrtime.bigint();
     const phases: { startMs?: number; lockWaitMs?: number; bodyMs?: number } = {};
     let holdersAtWait: Promise<string> = Promise.resolve("not read: the transaction never reached its lock(1) wait");

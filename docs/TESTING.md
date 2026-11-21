@@ -1039,9 +1039,9 @@ generalised.
    child to PAID and reconciles beds in the same budget (#5350). Its failure
    message reports the time to start, the wait for lock(1) and the body, and
    names any other backend holding lock(1) as it began to wait (through
-   `onTestFailed` when Vitest's own timeout ends the test first, because
-   Prisma's `timeout` does not interrupt a blocked lock wait); keep those
-   diagnostics out of the verdict.
+   `onTestFailed` when Vitest's own timeout ends the test first: in a local
+   probe on Prisma 7.10.1, `timeout` did not interrupt a blocked lock wait);
+   keep those diagnostics out of the verdict.
 6. **Remember the environment's zone follows `process.env.TZ`.** The seed
    reader (`club-time-zone-env.ts`) answers `TZ || NEXT_PUBLIC_TZ ||
    "Pacific/Auckland"` whenever no zone is stored — which is every unit test
