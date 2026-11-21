@@ -13,9 +13,19 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import type { AdminClubPost, AdminPostTab } from "@/lib/club-posts-admin";
+import type {
+  AdminClubPost,
+  AdminPostTab,
+  AdminShareProblemPost,
+} from "@/lib/club-posts-admin";
+import { ClubPostShareProblems } from "@/components/admin/club-posts/club-post-share-problems";
 import { useClubTime } from "@/components/club-time-provider";
 import { adminHref } from "@/lib/admin-hubs";
+
+/** A recorded reason ends as a sentence, whatever the server's text did. */
+function sentence(text: string): string {
+  return /[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`;
+}
 
 /**
  * Club message board moderation (#2998, epic #2992).
@@ -29,18 +39,22 @@ import { adminHref } from "@/lib/admin-hubs";
  *
  * The tab and the search live in the URL, so switching either is an ordinary
  * navigation and there is no fetch-on-mount to get wrong.
+ *
+ * Above the list, the "Sharing problems" panel (#5246) names every post that
+ * may be on other clubs' boards in a way this site did not record; each card
+ * below carries a badge when its own share ended in an error.
  */
 export function ClubPostsAdmin({
   posts,
   tab,
   query,
-  pendingWithdrawals,
+  shareProblems,
 }: {
   posts: AdminClubPost[];
   tab: AdminPostTab;
   query: string;
-  /** Removed posts whose network takedown is not yet confirmed (#3091 r1). */
-  pendingWithdrawals: number;
+  /** Posts that may have a copy on other clubs' boards (#3091 r1, #5246). */
+  shareProblems: AdminShareProblemPost[];
 }) {
   const club = useClubTime();
 
@@ -49,6 +63,11 @@ export function ClubPostsAdmin({
   const [pending, startTransition] = useTransition();
   const [search, setSearch] = useState(query);
   const [error, setError] = useState<string | null>(null);
+  // A failed action from the sharing-problems panel, shown on its own entry.
+  const [panelError, setPanelError] = useState<{
+    postId: string;
+    message: string;
+  } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -57,10 +76,12 @@ export function ClubPostsAdmin({
     id: string,
     request: () => Promise<Response>,
     confirmText?: string,
+    { inline = false }: { inline?: boolean } = {},
   ) {
     if (confirmText && !window.confirm(confirmText)) return;
     setBusyId(id);
     setError(null);
+    setPanelError(null);
     try {
       const res = await request();
       if (!res.ok) {
@@ -72,9 +93,10 @@ export function ClubPostsAdmin({
       setEditingId(null);
       startTransition(() => router.refresh());
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "That change could not be saved.",
-      );
+      const message =
+        err instanceof Error ? err.message : "That change could not be saved.";
+      if (inline) setPanelError({ postId: id, message });
+      else setError(message);
     } finally {
       setBusyId(null);
     }
@@ -114,17 +136,29 @@ export function ClubPostsAdmin({
         </Alert>
       ) : null}
 
-      {pendingWithdrawals > 0 ? (
-        // #3091 review 1: a removal the central server has not confirmed is
-        // only removed LOCALLY — other clubs may still see it. Named here so
-        // the admin who clicked Remove is not left believing it is gone
-        // everywhere; the retry runs automatically each cron cycle.
-        <Alert variant="warning" className="mb-4">
-          {pendingWithdrawals === 1
-            ? "1 removed post is still being taken down from the shared network — other clubs may see it until the central server confirms. Retrying automatically."
-            : `${pendingWithdrawals} removed posts are still being taken down from the shared network — other clubs may see them until the central server confirms. Retrying automatically.`}
-        </Alert>
-      ) : null}
+      <ClubPostShareProblems
+        posts={shareProblems}
+        canEdit={canEdit}
+        busyId={busyId}
+        pending={pending}
+        inlineError={panelError}
+        onWithdraw={(id) =>
+          void act(
+            id,
+            () => patch(id, { withdrawSharedCopy: true }),
+            "Withdraw this post's copy from other clubs' boards?\n\nThe post stays on this club's board as it is.",
+            { inline: true },
+          )
+        }
+        onDismiss={(id) =>
+          void act(
+            id,
+            () => patch(id, { dismissShareProblem: true }),
+            "Mark this as dealt with?\n\nDo this once any copy on other clubs' boards has been taken down, or you have confirmed there is none.",
+            { inline: true },
+          )
+        }
+      />
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {tabs.map((entry) => (
@@ -185,6 +219,15 @@ export function ClubPostsAdmin({
                           Hidden from members
                         </span>
                       ) : null}
+                      {post.shareProblem?.kind === "share-failed" ? (
+                        <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                          Not shared with other clubs
+                        </span>
+                      ) : post.shareProblem ? (
+                        <span className="rounded-full bg-warning-3 px-2 py-0.5 text-xs font-medium text-warning-11">
+                          Sharing problem
+                        </span>
+                      ) : null}
                     </div>
 
                     {isEditing ? (
@@ -225,6 +268,14 @@ export function ClubPostsAdmin({
                         {post.content}
                       </p>
                     )}
+
+                    {post.shareProblem?.kind === "share-failed" ? (
+                      <p className="text-xs text-muted-foreground">
+                        Sharing failed and was not retried:{" "}
+                        {sentence(post.shareProblem.shareError ?? "")} This
+                        post is only on this club&apos;s board.
+                      </p>
+                    ) : null}
 
                     {!isEditing ? (
                       <div className="flex flex-wrap gap-2">
