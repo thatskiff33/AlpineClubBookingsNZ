@@ -239,8 +239,8 @@ member is told the club will arrange their refund.
    if it was dismissed after this change (earlier dismissals did not record
    that the booking was cancelled). Like the lost-dispute allocation itself, a
    late win counts a refund task dismissed for another reason by older code as
-   dismissed for the loss, so it may reopen it: dismiss it again only through
-   the treasurer.
+   dismissed for the loss, so it may reopen it: take such a task to the
+   treasurer.
    A task dismissed before this change can still be reopened.
 
 **The same task for a booking change (#3827).** When a member or an officer
