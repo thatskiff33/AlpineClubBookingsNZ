@@ -2987,8 +2987,8 @@ pnpm run xero:stuck-queued-report --release   # fails exactly the rows it has ju
 
 1. **Inspect.** Run the report. Each line names the row, its queue type, the
    record it belongs to (`Payment:<id>`, `GroupBookingSettlement:<id>`, ...),
-   when it was queued, and why the outbox cannot send it (`no-queue-type` for
-   the rows #5228 describes). Look the records up before going on. The output
+   and when it was queued; every row listed holds a request that names no
+   queue type. Look the records up before going on. The output
    names members' payments, so never post it publicly.
 2. **Release.** Run it again with `--release`. It lists the rows again and
    moves exactly those from PENDING to FAILED with

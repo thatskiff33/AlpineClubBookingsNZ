@@ -82,8 +82,8 @@ import { outboxScanSpacesWaitingReceipts } from "@/lib/additional-capture-receip
 import { scanSpacesRefundNotesAwaitingResolve } from "@/lib/xero-refund-note-in-flight";
 import { XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE } from "@/lib/admin-grant-credit-note-payload";
 import { isXeroConnected } from "@/lib/xero-token-store";
-import { returnOutboxRowToPending } from "@/lib/xero-outbox-pending-request";
-import { countStuckQueuedRequestRows, NAMES_NO_QUEUE_TYPE } from "@/lib/xero-stuck-queued-request";
+import { returnOutboxRowToPending, UNCLAIMED } from "@/lib/xero-outbox-pending-request";
+import { countStuckQueuedRequestRows, NAMES_NO_QUEUE_TYPE, OUTBOX_PENDING_WHERE } from "@/lib/xero-stuck-queued-request";
 import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
 import {
   voidXeroInvoiceForAbandonedGroupSettlement,
@@ -117,7 +117,6 @@ import {
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
-  XERO_OUTBOX_QUEUE_TYPES,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
   XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
@@ -2196,11 +2195,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
     // once at enqueue and never updated, so it names the row's queue type even
     // after a handler saved its execution request over the queued one (#5228).
     where: {
-      status: "PENDING",
-      direction: "OUTBOUND",
-      queueType: {
-        in: [...XERO_OUTBOX_QUEUE_TYPES],
-      },
+      ...OUTBOX_PENDING_WHERE,
       // Rows waiting their turn are looked at only every few minutes, not on every kick (#3954, #3953, #4692 `INV-INT-035`); an owed group invoice email every minute (#4919).
       AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date()), scanSpacesRefundNotesAwaitingResolve(new Date()), scanSpacesAdminGrantNotesAwaitingRetry(new Date()), scanSpacesGroupInvoiceEmailsDeferred(new Date())],
       // #5228: never a row whose request names no queue type - it is not sent
@@ -2580,7 +2575,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
             manuallyResolvedAt: null,
             ...NOT_A_XERO_REPAIR_CLAIM,
           },
-          data: { startedAt: null, completedAt: null, lastErrorCode: null, lastErrorMessage: null },
+          data: UNCLAIMED,
           request: { keep: true, fallback: claimedRequest },
         });
         if (returned.outcome === "pending") {

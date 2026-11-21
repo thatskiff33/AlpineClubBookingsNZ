@@ -37,7 +37,7 @@ import { XERO_OUTBOX_QUEUE_TYPES } from "@/lib/xero-operation-outbox-payload";
 type OperationStore = Pick<Prisma.TransactionClient, "xeroSyncOperation">;
 
 /** The PENDING rows the outbox scan reads (`processQueuedXeroOutboxOperations`), before its spacing filters. */
-const OUTBOX_PENDING_WHERE = {
+export const OUTBOX_PENDING_WHERE = {
   direction: "OUTBOUND",
   status: "PENDING",
   queueType: { in: [...XERO_OUTBOX_QUEUE_TYPES] },

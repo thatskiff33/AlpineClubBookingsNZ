@@ -92,10 +92,7 @@ import {
 } from "@/lib/xero-operation-outbox-payload";
 import { lockKeptCaptureAnchor, withdrawUndecidedKeptCaptureReceipt } from "@/lib/kept-late-capture-change-receipt";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
-import { returnOutboxRowToPending } from "@/lib/xero-outbox-pending-request";
-
-/** #5228: a row put back to run, as one never picked up. */
-const UNCLAIMED = { startedAt: null, completedAt: null, lastErrorCode: null, lastErrorMessage: null };
+import { returnOutboxRowToPending, UNCLAIMED } from "@/lib/xero-outbox-pending-request";
 
 /** Stamped on a row withdrawn because the task stopped keeping the money. */
 export const KEPT_LATE_CAPTURE_WITHDRAWN_ERROR_CODE = "KEPT_LATE_CAPTURE_WITHDRAWN";

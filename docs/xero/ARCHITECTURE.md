@@ -1083,7 +1083,7 @@ note.
    | Officer REQUEUE row and its drain | the REQUEUE row has no queue type and the outbox never scans it; its drain is the Retry above | `xero-stuck-queued-request.realdb.test.ts` |
    | Kept late-capture requeues (paid another way, approval) | the stored queued request; else held for an officer or left PARTIAL | `xero-kept-late-capture-invoice.test.ts` |
    | Supplementary-invoice revival (CANCELLED → PENDING) | the stored queued request, matched on the column; unreadable is refused | `xero-operation-outbox.test.ts`, `late-capture-kept-xero.test.ts` |
-   | WAITING_PAYMENT releases (supplementary, organiser refund notes) | the enqueue's queued request: these rows were never dispatched | `xero-pending-request-transitions.realdb.test.ts` |
+   | WAITING_PAYMENT releases (supplementary, organiser refund notes) | the enqueue's queued request: these rows were never dispatched | `xero-pending-request-transitions.realdb.test.ts` (supplementary); organiser refund notes are only named in `xero-pending-writer-census.test.ts` |
 
    A stale reset never writes PENDING: a dead worker's row goes to FAILED (a
    stuck PARTIAL repair to PARTIAL) with its request, response and Xero ids
@@ -4321,8 +4321,8 @@ These are candidates for future issues, not commitments.
    knowledge. **Done (#1271):** `queueType` is now a denormalized, indexed
    `XeroSyncOperation` column (`@@index([queueType, status, createdAt])`),
    captured once at enqueue in `startXeroSyncOperation` (and backfilled from
-   `requestPayload->>'queueType'`) and never updated afterward. The payload field
-   stays canonical — the PENDING-scan `OR` and the parsing switch still read it.
+   `requestPayload->>'queueType'`) and never updated afterward. The PENDING
+   scan and (since #5228) the claim read the column; the `OR` is gone.
    **Why the column, not the payload, is the discriminator:** once a row is
    dispatched some handlers (the booking invoice, the refund and change credit
    notes, the joining fee and group invoices) overwrite `requestPayload` with
@@ -4333,7 +4333,7 @@ These are candidates for future issues, not commitments.
    claimed as an invoice for a member, never matched, and skipped on every pass
    with nothing sent or alerted. The outbox now claims from the column and
    reads the payload only as a queued request for that column, and every
-   PENDING writer leaves one (see "What a PENDING outbox row holds", below).
+   PENDING writer leaves one (see "What a PENDING outbox row holds", above).
 4. **Unify the operation-replay stack.** `xero-operation-outbox`,
    `xero-operation-outbox-payload`, `xero-operation-queue`, and
    `xero-operation-retry` describe one lifecycle (enqueue → scan/dispatch →

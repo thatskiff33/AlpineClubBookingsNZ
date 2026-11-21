@@ -33,7 +33,7 @@ import { XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE } from "@/lib/admin-grant-cred
 import { getModificationNetAmountCents } from "@/lib/xero-booking-repair-analysis";
 import type { Prisma, XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { returnOutboxRowToPending } from "@/lib/xero-outbox-pending-request";
+import { returnOutboxRowToPending, UNCLAIMED } from "@/lib/xero-outbox-pending-request";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import {
   isResolvedInXero,
@@ -217,7 +217,7 @@ async function requeueOutboxRowForRetry(
   const queued = await returnOutboxRowToPending({
     operationId,
     where: { status: fromStatuses.length === 1 ? fromStatuses[0] : { in: fromStatuses }, manuallyResolvedAt: null },
-    data: { startedAt: null, completedAt: null, lastErrorCode: null, lastErrorMessage: null },
+    data: UNCLAIMED,
     request: requestPayload ? { replace: requestPayload as Prisma.InputJsonObject } : { keep: true },
   }).catch((error: unknown) => {
     if (isPrismaUniqueConstraintError(error)) return { outcome: "lost" as const };
@@ -1344,7 +1344,7 @@ export async function retryXeroSyncOperation(
       // No `manuallyResolvedAt` guard here, deliberately (#3635 N2): these
       // rows are retry-only, and a mark on one is void for the retry path.
       where: { status: { in: ["FAILED", "PARTIAL"] } },
-      data: { startedAt: null, completedAt: null, lastErrorCode: null, lastErrorMessage: null },
+      data: UNCLAIMED,
       // #5228: their checkpoints keep the queued request, which stays.
       request: { keep: true },
     });

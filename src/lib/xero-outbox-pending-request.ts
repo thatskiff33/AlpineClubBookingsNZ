@@ -45,9 +45,16 @@ export type OutboxPendingRequest =
   | { replace: Prisma.InputJsonObject }
   | { keep: true; fallback?: Prisma.JsonValue | null };
 
-/** A filter matching exactly the stored request read, database NULL included: the compare-and-set's half. */
+/** #5228: a row put back to run, as one never picked up - the rest of most PENDING writes. */
+export const UNCLAIMED = { startedAt: null, completedAt: null, lastErrorCode: null, lastErrorMessage: null } as const;
+
+/**
+ * A filter matching exactly the stored request read: the compare-and-set's
+ * half. A null read matches database or JSON null alike (`AnyNull`), as the
+ * stuck-row filter selects both (`NAMES_NO_QUEUE_TYPE`).
+ */
 export function sameStoredRequest(stored: Prisma.JsonValue | null): Prisma.JsonNullableFilter<"XeroSyncOperation"> {
-  return stored === null ? { equals: Prisma.DbNull } : { equals: stored as Prisma.InputJsonValue };
+  return stored === null ? { equals: Prisma.AnyNull } : { equals: stored as Prisma.InputJsonValue };
 }
 
 /**
@@ -59,7 +66,10 @@ export function sameStoredRequest(stored: Prisma.JsonValue | null): Prisma.JsonN
  * reading (`readQueuedOutboxPayload`) unchanged, so the next run is driven by
  * exactly the request the dispatch claimed - never by an execution-time
  * `refundMethod` or watermark; if the whole still reads differently, the
- * queued request is written alone.
+ * queued request is written alone. The handler's "create reached" markers
+ * (`creditNotes`, `invoices`) stay too: a pre-HTTP refusal may have hit a call
+ * after a create that landed, and the give-back cannot tell which, so their
+ * readers keep answering "may be in Xero" rather than risk a second document.
  */
 function layeredOverStored(stored: Prisma.JsonValue | null, queued: Prisma.JsonValue): Prisma.JsonValue {
   const storedRecord = asRecord(stored);

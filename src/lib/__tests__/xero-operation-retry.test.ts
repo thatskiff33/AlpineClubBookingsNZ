@@ -3149,7 +3149,7 @@ describe("retryXeroSyncOperation", () => {
         message: "Queued the failed-card-refund reversal invoice for retry.",
       });
       expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-        where: { id: "op_123", status: { in: ["FAILED", "PARTIAL"] }, manuallyResolvedAt: null },
+        where: requeuedWhere({ status: { in: ["FAILED", "PARTIAL"] }, manuallyResolvedAt: null }),
         data: expect.objectContaining({ status: "PENDING", requestPayload: expected }),
       });
     }
