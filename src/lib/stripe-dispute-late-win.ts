@@ -114,7 +114,10 @@ export async function settleLateWinHandBacks(row: Pick<StripeDispute, "stripeDis
     }
   }
   // A task already open was reopened by another delivery of this late win (its marker) or by an officer.
-  const markedNow = await reopenedByThisLateWin(disputeId, tasks).catch(() => new Set<string>());
+  const markedNow = await reopenedByThisLateWin(disputeId, tasks).catch((err: unknown) => {
+    logger.error({ disputeId, err }, "A late-won Stripe dispute's reopen markers could not be read; the alert calls those tasks already open (#5197)");
+    return new Set<string>();
+  });
   const alreadyOpen = open.filter((item) => !markedNow.has(item.taskId)).map((item) => ({ taskId: item.taskId }));
   reopened.push(...open.filter((item) => markedNow.has(item.taskId)));
   return { kind: "read", reopened, alreadyOpen, notReopened, countedByCancellation, reduced: owedAgain.reduced };
