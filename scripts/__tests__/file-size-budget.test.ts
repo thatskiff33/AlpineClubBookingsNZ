@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { run } from "../ci/check-file-size-budget";
+import { run, upstreamRefFrom } from "../ci/check-file-size-budget";
+import { UPSTREAM_IGNORED_LINE } from "../lib/budget-upstream-ref";
 import { evaluateComputedRatchet } from "../lib/file-size-base";
 import { ALLOWANCE_DIR } from "../lib/file-size-allowances";
 import { FUNCTION_LENGTH_LIMIT } from "../lib/function-length-ratchet";
@@ -1188,6 +1189,93 @@ describe("the epic sync: main's allowances are spent, the epic's are judged (#48
     expect(result.stderr).toContain("UNUSABLE");
     expect(result.stderr).toContain("Could not resolve the base ref `origin/main`");
   });
+});
+
+describe("a deployment fork's sync-down: --upstream-ref (#5196)", () => {
+  /**
+   * Upstream adds a module over its budget; the fork, cut from the same
+   * commit, merges that upstream tip into a sync branch. `panelLines` decides
+   * whether the ordinary gate would pass it.
+   */
+  function syncFixture(panelLines = 900) {
+    const repo = newRepo();
+    repo.write("src/lib/existing.ts", 10);
+    const common = repo.commit("common");
+    git(repo.root, "checkout", "--quiet", "-b", "upstream");
+    repo.write("src/lib/panel.ts", panelLines);
+    const upstreamTip = repo.commit("upstream adds a panel");
+    git(repo.root, "checkout", "--quiet", "main");
+    repo.write("src/lib/fork.ts", 10);
+    const base = repo.commit("fork work");
+    git(repo.root, "checkout", "--quiet", "-b", "sync");
+    git(repo.root, "merge", "--quiet", "--no-ff", "--no-edit", "upstream");
+    return { ...repo, common, upstreamTip, base };
+  }
+
+  it("reads the option in both spellings, and refuses it without a value", () => {
+    expect(upstreamRefFrom([])).toEqual({ ok: true, ref: null });
+    expect(upstreamRefFrom(["--upstream-ref", "up/main"])).toEqual({ ok: true, ref: "up/main" });
+    expect(upstreamRefFrom(["--upstream-ref=up/main"])).toEqual({ ok: true, ref: "up/main" });
+    expect(upstreamRefFrom(["--upstream-ref"]).ok).toBe(false);
+    expect(upstreamRefFrom(["--upstream-ref="]).ok).toBe(false);
+    expect(upstreamRefFrom(["--upstream-ref", "--base", "x"]).ok).toBe(false);
+
+    const repo = syncFixture();
+    const missing = captureRun(repo.root, ["--base", repo.base, "--upstream-ref"]);
+    expect(missing.code).toBe(1);
+    expect(missing.stderr).toContain("--upstream-ref needs a value");
+    expect(missing.stdout).toBe("");
+  });
+
+  it("passes upstream's over-budget module and names the commit it trusted", () => {
+    const repo = syncFixture();
+    const ordinary = captureRun(repo.root, ["--base", repo.base]);
+    expect(ordinary.code).toBe(1);
+    expect(ordinary.stderr).toContain("a NEW file is over its budget");
+    expect(`${ordinary.stdout}${ordinary.stderr}`).not.toContain("Trusted upstream");
+
+    const trusted = captureRun(repo.root, ["--base", repo.base, "--upstream-ref", "upstream"]);
+    expect(trusted.stderr).toBe("");
+    expect(trusted.code).toBe(0);
+    expect(trusted.stdout).toContain(
+      `Trusted upstream ${repo.upstreamTip.slice(0, 12)} "upstream adds a panel": ` +
+        "1 file(s) judged against its longer length, 0 allowance fragment(s) ignored as its own.",
+    );
+    expect(trusted.stdout).toContain(
+      `Trusted upstream ${repo.upstreamTip.slice(0, 12)} "upstream adds a panel": 0 function(s)`,
+    );
+  });
+
+  it("names the trusted commit on failure too, and fails an upstream ref that does not resolve", () => {
+    const repo = syncFixture();
+    repo.write("src/lib/fork.ts", 900);
+    const failed = captureRun(repo.root, ["--base", repo.base, "--upstream-ref=upstream"]);
+    expect(failed.code).toBe(1);
+    expect(failed.stderr).toContain(`Trusted upstream ${repo.upstreamTip.slice(0, 12)}`);
+    expect(failed.stderr).toContain("src/lib/fork.ts");
+    expect(failed.stderr).not.toContain("src/lib/panel.ts");
+
+    const unresolved = captureRun(repo.root, ["--base", repo.base, "--upstream-ref", "nope/main"]);
+    expect(unresolved.code).toBe(1);
+    expect(unresolved.stderr).toContain("could not be resolved");
+  });
+
+  it.each([
+    ["failing", 900, 1],
+    ["passing", 600, 0],
+  ])(
+    "on a %s run where the upstream is HEAD, prints one ignored line and otherwise changes nothing",
+    (_label, panelLines, code) => {
+      const repo = syncFixture(panelLines);
+      git(repo.root, "checkout", "--quiet", "upstream");
+      const ordinary = captureRun(repo.root, ["--base", repo.common]);
+      const ignored = captureRun(repo.root, ["--base", repo.common, "--upstream-ref", "upstream"]);
+      expect(ordinary.code).toBe(code);
+      expect(ignored.code).toBe(ordinary.code);
+      expect(ignored.stderr).toBe(ordinary.stderr);
+      expect(ignored.stdout).toBe(`${UPSTREAM_IGNORED_LINE}\n${ordinary.stdout}`);
+    },
+  );
 });
 
 describe("this repository", () => {
