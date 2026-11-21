@@ -156,8 +156,8 @@ export async function syncCreatedWorkPartyCalendar(
 
 /**
  * On edit: save the work party and regenerate the entries of one that already
- * has some, in ONE transaction (#5148, review finding F9). The lock comes
- * first, before the update takes its row locks, the order every writer of a
+ * has some, in ONE transaction (#5148). The lock comes first, before the
+ * update takes its row locks, the order every writer of a
  * work party's entries uses (`lockWorkPartyCalendar`), so an edit racing a
  * delete or an "Add to calendar" waits rather than deadlocks. A failed
  * rewrite fails the save, so the calendar can never be left showing the old

@@ -301,7 +301,6 @@ export function workPartyEventDatesError(
   return null;
 }
 
-
 export interface WorkPartyEventInput {
   name: string;
   description?: string | null;

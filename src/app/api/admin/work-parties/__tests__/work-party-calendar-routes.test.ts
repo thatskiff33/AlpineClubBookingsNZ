@@ -120,7 +120,8 @@ describe("edit", () => {
       expect.objectContaining({ name: "Spring", discountPercent: 50 }),
       "admin-1",
     );
-    // One transaction (review F9): there is no separate warning to report.
+    // The edit and its entries save in one transaction, so there is no
+    // separate warning to report.
     expect(await res.json()).not.toHaveProperty("calendarWarning");
   });
 
@@ -134,7 +135,7 @@ describe("edit", () => {
     expect(h.remove).not.toHaveBeenCalled();
   });
 
-  it("refuses a window longer than the calendar can show (review F10)", async () => {
+  it("refuses a window longer than the calendar series limit", async () => {
     const res = await updateRoute(
       json("PUT", { ...body, startDate: "2026-07-10", endDate: "2027-07-11" }),
       { params },

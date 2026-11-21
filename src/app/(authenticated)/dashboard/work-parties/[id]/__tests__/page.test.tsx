@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * #5148 (review F5): the member work party page's own gate. The proxy gates
+ * #5148: the member work party page's own gate. The proxy gates
  * the module only, so the page's `canViewWorkParties` check is what keeps an
  * organisation account or a non-member login out; removing it must fail here,
  * not only in the API route's test. Every refusal is the same 404.
@@ -78,7 +78,7 @@ describe("/dashboard/work-parties/[id]", () => {
     expect(html).toContain("50% off");
     expect(html).toContain('href="/book?workParty=wp-1"');
     expect(html).toContain("Join Work Party");
-    // One h1 (the name); the card title is a level-2 heading (#4951, review F7).
+    // One h1 (the name); the card title is a level-2 heading (#4951).
     expect(html.match(/<h1/g)).toHaveLength(1);
     expect(html).toMatch(/role="heading" aria-level="2"[^>]*>Details</);
     expect(h.findMemberWorkParty).toHaveBeenCalledWith(

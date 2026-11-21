@@ -526,7 +526,7 @@ describe("the booking wizard keeps the member's work in this tab (#4950)", () =>
     expect(loadWizardWork("member-1")?.checkIn).toBe(CHECK_IN);
   });
 
-  // #5148 review: a Join visit keeps its OWN work, so the profile detour
+  // #5148: a Join visit keeps its OWN work, so the profile detour
   // (PROFILE_FAMILY_GROUP_RETURN_TO_BOOK returns to plain /book) brings back
   // the Join dates and guests rather than an older kept booking.
   it("keeps a filled-in Join visit's work, and a plain visit after the detour restores it", async () => {

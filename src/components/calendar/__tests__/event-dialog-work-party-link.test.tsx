@@ -13,7 +13,7 @@ import { EventDialog } from "../event-dialog";
 import { adminHref } from "@/lib/admin-hubs";
 
 /**
- * #5148 (review F5): a work party's calendar entry opens read-only for
+ * #5148: a work party's calendar entry opens read-only for
  * everyone, even an admin who may edit ordinary events, and its link goes to
  * the admin Work Parties page, the member page, or nowhere. A multi-night
  * entry is stored as a daily series, but it is one event: no recurrence line.

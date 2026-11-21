@@ -19,8 +19,8 @@ export const WORK_PARTY_DASHBOARD_CARD_LIMIT = 5;
  * dashboard renders it only while the `workParties` module is on and only for
  * members (`canViewWorkParties`, owner decision 7).
  *
- * With no upcoming work party the card renders nothing (review question 3,
- * built to its recommendation): the module is on by default, so an empty card
+ * With no upcoming work party the card renders nothing (owner decision,
+ * 20 Nov 2026): the module is on by default, so an empty card
  * would otherwise sit on every member's dashboard at a club that never runs a
  * working bee. Each entry is its own link, so the card is not one big link the
  * way the summary cards are.
@@ -52,10 +52,7 @@ export function WorkPartyDashboardCard({
                 <span className="shrink-0 text-xs font-medium text-muted-foreground">
                   {formatWindow(workParty, format)}
                 </span>
-                <span
-                  className="min-w-0 flex-1 truncate text-foreground"
-                  title={workParty.name}
-                >
+                <span className="min-w-0 flex-1 break-words text-foreground">
                   {workParty.name}
                   {workParty.lodgeName && (
                     <span className="ml-1 text-xs text-muted-foreground">

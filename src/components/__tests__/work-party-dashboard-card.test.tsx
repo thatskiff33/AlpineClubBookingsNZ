@@ -5,7 +5,8 @@ import type { MemberWorkPartyDTO } from "@/lib/work-party-member";
 import { WorkPartyDashboardCard } from "../work-party-dashboard-card";
 
 /**
- * #5148 (review F5, F7, question 3): the dashboard's Work Parties card.
+ * #5148: the dashboard's Work Parties card — a level-2 heading, one link per
+ * work party, and nothing at all when none is upcoming.
  */
 const workParty = (
   overrides: Partial<MemberWorkPartyDTO> = {},
@@ -29,7 +30,7 @@ function render(workParties: MemberWorkPartyDTO[]) {
 }
 
 describe("WorkPartyDashboardCard", () => {
-  it("renders nothing when no work party is upcoming (review question 3)", () => {
+  it("renders nothing when no work party is upcoming (owner decision, 20 Nov 2026)", () => {
     expect(render([])).toBe("");
   });
 

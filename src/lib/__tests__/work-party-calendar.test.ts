@@ -144,7 +144,7 @@ describe("syncCreatedWorkPartyCalendar", () => {
   });
 });
 
-describe("updateWorkPartyWithCalendar (review F9: one transaction)", () => {
+describe("updateWorkPartyWithCalendar (the edit and its entries save in one transaction)", () => {
   const input = {
     name: "Spring Working Bee",
     description: "Bring gloves",

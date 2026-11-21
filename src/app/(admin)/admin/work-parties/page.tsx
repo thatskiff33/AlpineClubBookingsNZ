@@ -106,6 +106,7 @@ export default function AdminWorkPartiesPage() {
   const [form, setForm] = useState<EventFormState>(emptyForm);
   // #2257 — the example lives UNDER the field, not inside it as grey pseudo-content.
   const nameHint = useFieldHint();
+  const descriptionHint = useFieldHint();
   const [saving, setSaving] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, EventDetail>>({});
@@ -478,7 +479,11 @@ export default function AdminWorkPartiesPage() {
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
                 maxLength={1000}
                 rows={3}
+                {...descriptionHint.fieldProps}
               />
+              <FieldHint {...descriptionHint.hintProps}>
+                Shown to members on the work party page and the calendar.
+              </FieldHint>
             </div>
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input
