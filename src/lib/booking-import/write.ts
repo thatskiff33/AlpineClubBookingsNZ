@@ -60,6 +60,7 @@ import {
 } from "@/lib/member-dietary-booking-writes";
 import { buildMemberGuestConsentWrite } from "@/lib/member-guest-consent";
 import { ManualBookingPaymentError, settleImportedBookingInTransaction } from "@/lib/payment-reconciliation";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { prisma } from "@/lib/prisma";
 
 /** Thrown inside a booking's transaction to roll it back and record the row refused. */
@@ -256,9 +257,9 @@ type ImportOneInput = {
 async function importOneBooking(input: ImportOneInput): Promise<void> {
   let created: { bookingId: string; resolved: ResolvedImportBooking } | null;
   try {
-    created = await prisma.$transaction((tx) => writeOneBooking(tx, input), {
-      timeout: 30_000,
-    });
+    // `INV-LOCK-006`: the transaction waits for lock(1), so it runs on the
+    // shared holder budget and can outlast the longest holder it queues behind.
+    created = await prisma.$transaction((tx) => writeOneBooking(tx, input), LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
     const refusals =
       err instanceof ImportRowRefused
