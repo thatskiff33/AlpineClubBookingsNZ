@@ -91,6 +91,11 @@ export function describeUnsettledPaymentIntent(
   { claimReleased = true }: { claimReleased?: boolean } = {}
 ): string {
   if (!claimReleased) {
+    // Recovery skips a payment still processing (it may yet capture), so the
+    // general deferred notice's "returns it to pending" holds only if it fails.
+    if (status === "processing") {
+      return "The charge is still being processed by the card network, and the booking could not be returned to pending just now. It stays confirmed until the payment finishes: if it succeeds the booking is paid; if it fails, the next scheduled pending-booking run returns it to pending automatically.";
+    }
     return `The charge did not complete (Stripe reports the payment as "${status}"). ${SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE}`;
   }
   switch (status) {
