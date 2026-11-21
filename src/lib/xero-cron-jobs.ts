@@ -23,6 +23,8 @@ export const XERO_CRON_TASKS = [
   "credit-sync",
   // #4270: after the inbound cycle, whose webhook path mirrors a note as it changes.
   "credit-note-mirror",
+  // #5204: the finance queue's overpayment and prepayment snapshot.
+  "cash-credits",
 ] as const;
 
 export type XeroCronTask = (typeof XERO_CRON_TASKS)[number];
@@ -40,4 +42,5 @@ export const XERO_CRON_JOB_NAMES = {
   "credit-sync": "xero-credit-sync-check",
   // #4270: the mirror's backstop sweep.
   "credit-note-mirror": "xero-credit-note-outside-spend-mirror",
+  "cash-credits": "xero-cash-credit-refresh",
 } as const satisfies Record<XeroCronTask, string>;

@@ -761,7 +761,8 @@ module every provider call goes through (`INV-OPS-013`). Shared JSON-guard micro
 | `xero-resolve-refund-note` | "Resolve by hand" on a FAILED payment refund-note create that names no note (#4421, `INV-INT-028`): which rows ask for the Xero note's number (`refundNoteResolveShape`, `resolveCreditNotePrompt`), the note's check (reusing `verifyHandMadeRefundNote`), the `lock(1)`-then-Payment-row claim that records it on the row and as the payment's link (`writeHandMadeRefundNoteLink`), refusing a retry that ran or a note any other create row or link records, and the withdrawal that retires both (alerting if it fails). It also carries the resolve route's refund-note half (`resolveRecordingRefundNote`, `withdrawRecordedNoteOrAlert`, `answerExistingResolveMark`), and `xero-operation-resolve-guards.ts` its other pre-mark checks and plain mark writes, so the route stays a thin handler. Its words live in `bank-refund-void-follow-up-copy.ts`; the operator reason bounds in `xero-operation-resolution.ts`. |
 | `xero-invoice-rounding-audit` | Read-only diagnostic that replays the pre-#1231 line maths in integer cents to flag issued invoices that would have carried the #1163 rounding drift, across **both** builder callers — per-booking invoices (`Payment.xeroInvoiceId`) and group-settlement invoices (`GroupBookingSettlement.xeroInvoiceId`). Makes **no** live-provider calls and mutates nothing (only `booking.findMany` + `groupBookingSettlement.findMany`). CLI entry: `scripts/audit-xero-invoice-rounding.ts`. See "Historical rounding-drift audit" below. |
 | `xero-credit-sync-checker` | #2501 detect-and-warn reconciliation of **applied account credit**: compares each booking's stamped `BOOKING_APPLIED` sum (BookingApp's known credit, the same figure the #2483 email nets from) against its live Xero invoice `amountCredited`, and warns admins on drift with the exact per-booking amount. Read-only, idempotent, fail-safe. See "Credit-sync drift checker" below. |
-| `xero-cron-runner` | Maps the 8 cron tasks to the workers above, records `CronJobRun` rows, gates on module + connection. |
+| `xero-cash-credits` | #5204: the snapshot of unallocated receive overpayments and prepayments (`XeroCashCredit`) and the finance queue read from it. Read-only toward Xero; a refresh reads every page before it writes, and an older read never overwrites a newer one. See "Unallocated overpayments and prepayments (#5204)" below. |
+| `xero-cron-runner` | Maps each Xero cron task to its worker above, records `CronJobRun` rows, gates on module + connection. |
 | `xero-admin-failures`, `xero-admin-health`, `xero-record-activity`, `xero-admin-cache` | Admin overviews: failed-operation triage states, missing-invoice/missing-credit-note health snapshot, per-record activity timeline, cached chart-of-accounts/items. |
 
 ### HTTP surface
@@ -776,7 +777,7 @@ module every provider call goes through (`INV-OPS-013`). Shared JSON-guard micro
   ITR marker newer than a server-issued verify-start AND matching the currently
   stored key's fingerprint (so a stale marker or one under a replaced key never
   satisfies a new verify). Any admin may read; the key write is Full-Admin-only.
-- `POST /api/cron/xero?task=memberships|outbox|retries|inbound|backfill|link-cleanup|report|credit-sync|all`
+- `POST /api/cron/xero?task=memberships|outbox|retries|inbound|backfill|link-cleanup|bank-refund-voids|report|credit-sync|credit-note-mirror|cash-credits|all`
   — `CRON_SECRET`-gated; `all` runs the tasks in that order; `backfill` also
   runs `link-cleanup` by default. Tasks needing a connection are skipped (and
   recorded as SKIPPED) when Xero is disconnected or the `xeroIntegration`
@@ -800,6 +801,7 @@ module every provider call goes through (`INV-OPS-013`). Shared JSON-guard micro
 | `ProcessedWebhookEvent` | Provider-scoped processing dedupe (`source`+`eventId` unique); the inbound worker claims a row before reconciling and releases it on failure. |
 | `WebhookValidationReceipt` | One row per provider recording the last valid intent-to-receive (ITR) validation ping (#2081): `validatedAt` + a non-reversible SHA-256 `keyFingerprint` of the webhook key that signed it (never the key). Drives the wizard's freshness-scoped, key-bound webhook Verify and the persistent amber "webhooks not configured" badge. |
 | `XeroSyncCursor` | Incremental checkpoints per (`resourceType`, `scope`) for contact/membership/invoice reconciliation. |
+| `XeroCashCredit` | #5204: one row per Xero receive overpayment or prepayment the refresh has seen, with its contact, currency, date, total and remaining balance in cents (in that currency) and when the read that wrote it began (`syncedAt`). Never deleted; a document Xero no longer lists as open keeps a zero balance. |
 | `XeroContactCache`, `XeroContactGroupCache`, `XeroContactGroupMembershipCache` | Local snapshots of Xero contacts and group memberships (feed admin tooling, member import, group sync). |
 | `XeroApiUsageDaily`, `XeroApiUsageEvent` | Metered API usage vs. the daily budget; rate-limit hit tracking. |
 | `XeroAdminCache` | TTL cache of chart-of-accounts and items per tenant. |
@@ -4818,3 +4820,63 @@ joiner's private booking URL is never included. Xero does not email this invoice
 Historical B1 billing is an explicit reviewed repair action, described in
 [Maintenance](../MAINTENANCE.md); its findings join the place's ordinary repair
 findings rather than replacing them.
+
+## Unallocated overpayments and prepayments (#5204)
+
+A member who pays more than they owe, or before any invoice exists, leaves the
+money in Xero as a **receive overpayment** or **receive prepayment** on their
+contact. This release lets finance see that money from inside the app. It does
+not turn it into credit, allocate it or change any clearing amount; those are
+later releases on the same issue, and the schema for them
+(`MemberCredit.xeroCashCreditId`, `AdminCreditAdjustmentRequest.xeroCashCreditId`,
+`MemberCreditCashAllocation`, `MemberCreditCashReturn`) is created now and left
+unwritten.
+
+**The snapshot.** `refreshXeroCashCredits` (`src/lib/xero-cash-credits.ts`)
+pages `getOverpayments` and `getPrepayments` with `Status=="AUTHORISED"`, 100 a
+page, through `callXeroApi` with `armTransientBreaker: false`, and keeps only
+the `RECEIVE-*` types. It reads **every page of both kinds before any write**.
+A failed page, an answer with no list in it, more than 50 pages, or an open
+receive document it cannot read (no id, contact or currency, an unreadable
+amount) throws and changes nothing. A list read over several pages can skip a
+document, because one used up on an earlier page mid-read shifts the rest up a
+place; so when a kind took more than one page, every stored open document of
+that kind the list did not return is read again by id (`getOverpayment` /
+`getPrepayment`) before it may be zeroed; Xero's 404 for one counts as spent,
+so a removed document cannot fail every later refresh. Only a
+complete read reaches the write transaction, which upserts each listed document
+and sets the remaining balance of every stored open document the read did not
+list to zero. A zero is what Xero says of a document fully allocated or voided; the
+row is kept because backed credit may come to name it.
+
+**An older read never overwrites a newer one.** The read records when it began.
+The write transaction first advances the `XeroSyncCursor` row
+(`XERO_CASH_CREDITS` / `default`) only if its stamp is older than this read. That row
+lock serialises overlapping refreshes (the nightly cron and an officer's
+Refresh), and a read that began before the one already written writes nothing,
+so it cannot re-create a document the newer read found spent. Each row write
+repeats the condition on `XeroCashCredit.syncedAt`. Replaying the same read
+writes nothing. No advisory-lock key is involved.
+
+**The member** is matched when the queue is read: the member whose
+`Member.xeroContactId` (unique) is the document's contact. It is not stored, so
+linking or unlinking a contact shows at once. A contact no member is linked to
+(an organisation, an unlinked person) shows as "No member linked".
+
+**When it runs.** Daily in the credit-sync check's 02:45 slot as the Xero cron
+task `cash-credits` (job `xero-cash-credit-refresh`, recorded in cron health,
+skipped when Xero is not connected), and on demand from the queue page's
+**Refresh from Xero** (`POST /api/admin/xero/cash-credits`: finance edit, three
+a minute per officer, audited as `XERO_CASH_CREDITS_REFRESH` whether it succeeds
+or fails). Reading the queue (`GET`, finance view) makes no Xero call.
+
+**The link into Xero** opens the document's contact. Xero documents no web
+address for an overpayment or prepayment by its own id; an overpayment is shown
+through its bank transaction, whose id the list does not return. The owner's
+demo-company pass is where a direct address can be confirmed.
+
+**Currency.** Each row records the document's own `currencyCode`, and the queue
+marks a document not in the club's currency. Its cents are in that currency.
+
+**Stated limits.** No live Xero call was made to build this: the paging, `where` filter and
+field shapes rest on the vendored `xero-node` SDK and the in-repo Xero fake.
