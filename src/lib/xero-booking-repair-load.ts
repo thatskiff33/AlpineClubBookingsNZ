@@ -49,6 +49,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { isPartPaymentReviewTask, NOT_NON_CANCELLATION_HAND_BACK_WHERE } from "@/lib/manual-refund-task-settlement-rules";
 import { refundPaymentLinkWhere } from "@/lib/xero-refund-note-settlement";
 import { refundNoteSetsForPayments } from "@/lib/xero-refund-note-status";
+import { readsRefundNoteCoverage } from "./xero-booking-repair-refund-note-amount";
 
 /** A settled edit-review charge share, carrying the booking it was raised on. */
 type EditReviewChargeShareRecord = EditReviewChargeShareRow & {
@@ -542,11 +543,16 @@ export async function loadAuditData(
   // never asks for a late capture's refund no note may answer. #3880 round 3:
   // every source, so a bank payment's per-refund notes - never its canonical
   // note - still count as cover and a fully covered booking asks for nothing.
+  // #4328: the same read's coverage judges a bank payment's several notes
+  // together, read once more for one that is not cancelled - never twice.
   const refundNoteUncoveredCentsByPaymentId = new Map<string, number>();
+  const refundNoteCoveredCentsByPaymentId = new Map<string, number | "unreadable">();
   for (const booking of bookings) {
     const payment = booking.payment;
-    if (booking.status !== "CANCELLED" || !payment) continue;
-    if (payment.refundedAmountCents <= 0) continue;
+    if (!payment || payment.refundedAmountCents <= 0) continue;
+    const cancelled = booking.status === "CANCELLED";
+    const paymentLinks = linksByLocalKey.get(makeLocalKey("Payment", payment.id)) ?? [];
+    if (!cancelled && !readsRefundNoteCoverage(payment, paymentLinks, cancelledRefundNoteIds)) continue;
     try {
       const gap = await deps.readRefundCreditNoteGap({
         id: payment.id,
@@ -554,8 +560,11 @@ export async function loadAuditData(
         refundedAmountCents: payment.refundedAmountCents,
       });
       // #3924 round 8: a CARD note's ask, so a close's own bank cash is left out.
-      refundNoteUncoveredCentsByPaymentId.set(payment.id, gap.uncoveredCents - gap.paidAnotherWayUncoveredCents);
+      if (cancelled) refundNoteUncoveredCentsByPaymentId.set(payment.id, gap.uncoveredCents - gap.paidAnotherWayUncoveredCents);
+      // No note-eligible cash means the reader summed no coverage.
+      refundNoteCoveredCentsByPaymentId.set(payment.id, gap.cashRefundCents > 0 ? gap.coveredCents : "unreadable");
     } catch (err) {
+      refundNoteCoveredCentsByPaymentId.set(payment.id, "unreadable");
       logger.warn({ err, paymentId: payment.id }, "Could not read a payment's refund-note gap; sizing from the refunded total");
     }
   }
@@ -666,6 +675,7 @@ export async function loadAuditData(
     refundNoteUncoveredCents: booking.payment
       ? refundNoteUncoveredCentsByPaymentId.get(booking.payment.id) ?? null
       : null,
+    refundNoteCoveredCents: booking.payment ? refundNoteCoveredCentsByPaymentId.get(booking.payment.id) ?? null : null,
     closedPartPaymentReviewPaymentIds:
       closedPartPaymentReviewIdsByBookingId.get(booking.id) ?? new Set<string>(),
     openPartPaymentReviewPaymentIds:
