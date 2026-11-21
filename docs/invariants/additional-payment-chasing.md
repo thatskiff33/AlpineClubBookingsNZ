@@ -1518,33 +1518,35 @@ _Legacy: settles tasks raised before #4317._
 - **A later cancellation hand-back on a bank transfer gets its own Xero note,
   keyed and sized on its task** (#4287, owner decision 22 Oct 2026). An
   `INTERNET_BANKING` payment's first refund takes its one canonical note
-  (`INV-ADDPAY-020`). A completed cancellation hand-back is noted on its own
-  task (`paidAnotherWayTaskId`, as a close is, `INV-PAY-122`) when the
-  payment has that note linked or on its way (a create row PENDING, RUNNING,
-  FAILED or unreadable: two equal hand-backs would else dedupe into one
-  canonical row), or has any
-  STRIPE transaction row, in any status, or card refund row (a wrong "own" is
+  (`INV-ADDPAY-020`). A completed one is noted on its own task
+  (`paidAnotherWayTaskId`, as a close is, `INV-PAY-122`) when the payment has
+  that note linked or on its way (a create row PENDING, RUNNING, FAILED or
+  unreadable, so equal hand-backs never dedupe into one row), or has any
+  STRIPE transaction row (any status) or card refund row (a wrong "own" is
   harmless; `cancellationHandBackNotedOnItsOwnRecord`). Sized from its task less its
   own notes (`readPaidAnotherWayCloseShare`), never payment-wide cash less all
   coverage, which floors at nothing once card refunds exist.
-- **Its cash counts beside its note while its refund stands.** Once a note row
+- **Its cash counts while its refund stands.** Once a note row
   names it (any status), it - or a re-confirmed `bank-refund-void:` follow-up
   (#4315 item 2), also once a hand-made note is linked to it - is noted bank
-  cash (`readPaidAnotherWayCash`), so a card note is
-  never squeezed by that note, less what a follow-up naming it took back
-  (`INV-ADDPAY-042`): undone or dismissed, nothing.
-- **No new term in the recount or the coverage sum; three in the cash
+  cash (`readPaidAnotherWayCash`), so it never squeezes a card note, less what
+  a follow-up naming it took back (`INV-ADDPAY-042`): undone or dismissed, nothing.
+- **No new term in the recount or coverage sum; three in the cash
   reader** (the record, its netting, a hand-made note's cover in its share).
   They count its `perDelta` link; its payload names the hand-back
-  (`handBackTaskId`), so a void is matched to it.
+  (`handBackTaskId`), so a void matches it.
 - **Decided under the completion's Payment row lock** (#4217), after the
   allocation. No new advisory key.
-- **Never for a historical refund.** Only the completion asks; an older
-  absorbed refund stays on the #4230 deploy note's list.
+- **Never for a historical refund.** Only the completion asks; an absorbed
+  older refund stays on the #4230 deploy note's list.
+- **The repair tool sums every live note** (#4328): the canonical one is never
+  judged alone; coverage unequal to note-eligible cash (`INV-PAY-110`), or
+  unreadable, is manual review.
 - **A card refund is noted on its own record** (`INV-ADDPAY-047`).
-  Pinned by `xero-bt-per-refund-notes` (realdb), `bank-hand-back-refund-note`,
-  `card-refund-paid-another-way-cash`, `manual-refund-task`,
-  `payment-lock-before-rebuild` and `xero-bt-recount-handbacks`.
+  Pinned by `xero-bt-per-refund-notes`, `xero-bt-repair-amount-mismatch` (realdb),
+  `bank-hand-back-refund-note`, `card-refund-paid-another-way-cash`,
+  `manual-refund-task`, `payment-lock-before-rebuild` and
+  `xero-bt-recount-handbacks`.
 
 ### INV-ADDPAY-044
 
@@ -1647,7 +1649,7 @@ _Legacy: settles tasks raised before #4317._
   `INTERNET_BANKING` payment its note names the refund (`cardRefundId`) and
   answers its amount less its own notes (`readCardRefundNoteShare`), never the
   canonical note (`INV-ADDPAY-020`). One key for row and Xero
-  (`cardRefundNoteKey`), so two writers collide on one row; a `perDelta` link.
+  (`cardRefundNoteKey`), so two writers share one row; a `perDelta` link.
   The invoice it credits is read from the refund (`queueCardRefundOwnNotes`).
 - **Each writer asks where it first knows the refund.** A refund request's
   approval and replay, for each refund made, on any outcome
@@ -1666,8 +1668,8 @@ _Legacy: settles tasks raised before #4317._
   marker migration finished qualifies (`madeSinceCardRefundNoteCutover`);
   none if the marker never finished, when the approval takes the one note. An
   older one keeps its fold and the #4230 deploy note's list.
-- **No new term in a reader.** Coverage, gap and recount count its link, and
-  the hand-back cash reader (`INV-ADDPAY-043`) never does. A voided one is
+- **No new term in a reader.** Coverage, gap, recount and the repair check
+  (`INV-ADDPAY-043`) count its link; the hand-back cash reader never does. A voided one is
   never undone as a bank refund (`card-refund`, `INV-ADDPAY-042`).
 - **No lock.** Enqueued outside transactions; no new advisory key.
   Pinned by `xero-bt-card-refund-notes` (realdb), `card-refund-resend-answer`,
