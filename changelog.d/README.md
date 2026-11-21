@@ -63,6 +63,18 @@ routing row are for.
 3. Commit it with the rest of the pull request. The `verify` job checks that a
    code-bearing pull request carries one.
 
+### Linking a doc from a fragment
+
+Write a relative link the way it works from this directory, so it is correct
+where you write it: `[the guide](../docs/guides/club-time.md)`. When the
+compiler copies the fragment into `CHANGELOG.md` at the repository root, it
+rewrites each relative link to resolve from there instead
+(`docs/guides/club-time.md`), so `docs:linkcheck` passes both before and after
+a release (#5214). Absolute URLs, `#anchor` links and links shown inside code
+are left alone. A link that climbs out of the repository (`../../x.md`) has no
+root-relative form; `changelog-fragment-shape` refuses it, and so does the
+compiler.
+
 ## Patch or minor: the `.feature.md` suffix
 
 The fragment's filename is the only type it carries, and it decides the next

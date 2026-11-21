@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { FRAGMENTS_DIRNAME, rebaseFragmentLinks } from "../../../scripts/release/fragment-links.mjs";
+
 /**
  * `changelog.d/README.md` step 2 states the fragment format in one sentence: "one
  * or more top-level `- ` bullets in the house style below. Nothing else — no
@@ -18,11 +20,11 @@ import { describe, expect, it } from "vitest";
  * released entry is a flat bullet list — so the fragments had drifted from the
  * README, not the other way round.
  *
- * This scans the directory from disk rather than importing anything, which means
- * `vitest related` cannot reach it: it is deliberately a full-suite check, like
- * the other tree-wide contracts here.
+ * This scans the directory from disk, so `vitest related` reaches it only through
+ * `scripts/release/fragment-links.mjs`, never through a new fragment: it is
+ * deliberately a full-suite check, like the other tree-wide contracts here.
  */
-const FRAGMENT_DIR = "changelog.d";
+const FRAGMENT_DIR = FRAGMENTS_DIRNAME;
 
 /** The no-entry marker lives in the pull request body, never in a fragment. */
 const FRAGMENT_PATTERN = /\.md$/;
@@ -76,5 +78,21 @@ describe("changelog fragment shape (#3112)", () => {
       `A fragment's first line must be a top-level "- " bullet, per ` +
         `changelog.d/README.md. Offending fragment(s): ${offenders.join(", ")}`,
     ).toEqual([]);
+  });
+
+  it("links nothing the release compiler cannot rebase to the repository root (#5214)", () => {
+    // The compiler rewrites `../docs/X.md` to `docs/X.md` as it copies a
+    // fragment into CHANGELOG.md; a link that climbs out of the repository has
+    // no root-relative form, so it would stop the release cut. Catch it here.
+    const offenders = fragmentNames().flatMap((name) => {
+      try {
+        rebaseFragmentLinks(readFileSync(join(FRAGMENT_DIR, name), "utf8"), name);
+        return [];
+      } catch (error) {
+        return [(error as Error).message];
+      }
+    });
+
+    expect(offenders).toEqual([]);
   });
 });

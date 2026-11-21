@@ -205,6 +205,11 @@ const DECLARED_JAVASCRIPT_MODULES = [
     load: () => import("../../../scripts/lib/budget-base-ref.mjs"),
   },
   {
+    module: "scripts/release/fragment-links.mjs",
+    declaration: "scripts/release/fragment-links.d.mts",
+    load: () => import("../../../scripts/release/fragment-links.mjs"),
+  },
+  {
     module: "scripts/release/upgrade-docs.mjs",
     declaration: "scripts/release/upgrade-docs.d.mts",
     load: () => import("../../../scripts/release/upgrade-docs.mjs"),
