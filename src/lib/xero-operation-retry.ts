@@ -839,8 +839,9 @@ async function repairRefundCreditNoteFollowUpActions(
     message: claimLost ? PARTIAL_REPAIR_CLAIM_LOST_MESSAGE : "Repaired Xero refund credit note follow-up actions.",
   });
   // #4279: the note becomes the payment's refund note only in the completion, once its claim wins
-  // (`completeAdoptingCanonicalRefundNote`), never in a write of its own before it. #3827 (D-3813-8):
-  // never a refund request's own note; #3880 F1, `INV-ADDPAY-041`: nor a per-refund or voided one.
+  // (`completeAdoptingCanonicalRefundNote`), never in a write of its own before it. Never a refund
+  // request's own note (#3827, `refundCreditNoteCompletion`), nor a per-refund or voided one (#3880 F1,
+  // `INV-ADDPAY-041`, re-checked under the Payment row).
   const refundRequestId = readRefundRequestIdFromPayload(operation.requestPayload);
 
   // `INV-PAY-101`: the SAME decision the inline leg makes. A row that recorded
@@ -874,7 +875,7 @@ async function repairRefundCreditNoteFollowUpActions(
       priorResponse,
       refundRequestId,
       retryClaim: true,
-      adoptAsCanonicalRefundNote: !refundRequestId,
+      adoptAsCanonicalRefundNote: true,
     });
     if (outcome.refundPaymentErr) throw outcome.refundPaymentErr;
     return result(outcome.completionClaimLost);
@@ -891,7 +892,7 @@ async function repairRefundCreditNoteFollowUpActions(
       outcome: recordedRefundNoteOutcome(priorResponse),
       priorResponse,
       refundRequestId,
-      adoptAsCanonicalRefundNote: !refundRequestId,
+      adoptAsCanonicalRefundNote: true,
     }),
     { retryClaim: true },
   );

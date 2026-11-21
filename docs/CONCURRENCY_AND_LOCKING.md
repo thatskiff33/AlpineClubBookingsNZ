@@ -501,8 +501,9 @@ already settled and closes on it with no second payment.
 
 Classified under `INV-LOCK-001`: no settlement money, booking status or
 capacity, so no advisory key. `INV-LOCK-002`: Payment row, operation row,
-pointer, link - the order an explicit void (#4200), the create's record and the
-enqueue's existing-note branch take; the #4161 heal takes the link then the
+pointer, link - the create's record's order, and consistent with an explicit
+void (#4200) and the enqueue's existing-note branch, which take the Payment row
+before their link and no operation row; the #4161 heal takes the link then the
 Payment row `NOWAIT` and so defers; a kept void (#4223) tries the Payment row
 `SKIP LOCKED`; resolve by hand (#4421) takes `lock(1)` then the Payment row and
 never the reverse. `INV-LOCK-003`: no new row-lock statement; the site is
@@ -7946,7 +7947,7 @@ names it. It then calls `upsertXeroObjectLink` with that client, which writes
 the link and then the payment it already holds: link, then Payment, the order
 of the #2901 repair apply and of the funnel's own pointer release (#4046).
 
-**The accepted inversion, and why it cannot deadlock.** Two writers take the
+**The accepted inversion, and why it cannot deadlock.** Three writers take the
 same two rows Payment first, inside their own transactions:
 
 - the refund-note create's record (`recordCreatedRefundNote`, from
@@ -7957,7 +7958,10 @@ same two rows Payment first, inside their own transactions:
 - the outbox enqueue's existing-note branch
   (`enqueueXeroRefundCreditNoteOperation`, "already linked"): the pointer,
   then the link write, inside the caller's transaction (a group cancel or an
-  edit review's refund leg).
+  edit review's refund leg);
+- a refund-note repair's completion that adopts its note (#4279,
+  `completeAdoptingCanonicalRefundNote`): the Payment row, its claim of its own
+  operation row, the pointer, then the link writes.
 
 The heal never waits on Payment while it holds the link: `NOWAIT` turns a held
 Payment row into SQLSTATE 55P03 at once (`isPostgresLockNotAvailable`), the

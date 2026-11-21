@@ -617,11 +617,21 @@ export async function finishRefundCreditNoteSettlement(input: {
   recordOnly?: boolean;
   /** #3827 (D-3813-8): see `refundCreditNoteCompletion`. */
   refundRequestId?: string | null;
-  /** #4256: the row is a retry's claim (`operation`); complete onto that claim only. */
-  retryClaim?: true;
-  /** #4279: see `refundCreditNoteCompletion`; a retry claim's only. */
-  adoptAsCanonicalRefundNote?: boolean;
-}): Promise<RefundNoteSettlementOutcome & { completionClaimLost: boolean }> {
+} & (
+  | {
+      /** #4256: the row is a retry's claim (`operation`); complete onto that claim only. */
+      retryClaim?: true;
+      adoptAsCanonicalRefundNote?: never;
+    }
+  | {
+      retryClaim: true;
+      /**
+       * #4279: see `refundCreditNoteCompletion`. A retry claim's only, by type:
+       * the completion refuses it otherwise, which here would be after Xero was paid.
+       */
+      adoptAsCanonicalRefundNote: boolean;
+    }
+)): Promise<RefundNoteSettlementOutcome & { completionClaimLost: boolean }> {
   const settled = await settleRefundNoteFromXero(input);
   let completed: Awaited<ReturnType<typeof completeXeroSyncOperation>>;
   try {
