@@ -124,7 +124,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-046` | Subscription category is a second billing axis, independent of membership type |
 | `INV-MONEY-015` | Approval stands when billing setup is incomplete; billing records a visible exception |
 | `INV-MONEY-016` | Membership type governs liability, including archived role defaults; role grants no exemption |
-| `INV-MONEY-017` | Paid-up: NOT_REQUIRED type, PAID current-season row, exempt tier; nomination honours first |
+| `INV-MONEY-017` | Paid-up: liability rule, PAID row or no-invoice cover; nomination stricter |
 | `INV-MONEY-018` | Manual subscription mark-paid is cash-only, never clobbered; a Xero link reclaims authority |
 | `INV-MONEY-019` | Opt-in item-code look-through detects paid subscriptions from every fee-schedule component code |
 | `INV-MONEY-020` | Look-through on: subscription-invoice selection strong-first, settled, earliest; off keeps first-match |
@@ -1027,6 +1027,7 @@ headings the index keeps verbatim.
 | `INV-CONFIG-005` | Every application-managed Xero contact write consumes the canonical role; copies contained |
 | `INV-CONFIG-006` | One persisted currency and locale; the environment seeds them once |
 | `INV-CONFIG-007` | One GST schedule, dated periods; Xero and the journal resolve it |
+| `INV-CONFIG-008` | One chosen liability rule for billing and access; NOT_CHOSEN changes nobody |
 
 ## Single Source Of Truth
 

@@ -820,13 +820,14 @@ check the others.
   reversal rules (`INV-MONEY-018`, #4110) apply to both axes. Booking rights,
   rate and lockout stay with `MembershipType`.
 - **Exemption** (#4554 option A, owner, 11 Nov 2026: the type exemption
-  wins): both axes use `resolveSubscriptionTierExemption`, never the booking
-  resolver `resolveMemberSubscriptionSettlement`, which tier-gates a
-  `REQUIRED` type off the stored tier. The two agree on `NOT_REQUIRED` types;
-  their pre-existing age-tier edge is tracked from #4554. A tier-exempt child
-  is exempt inside a category family too, outside its coverage: the type
-  axis's `PER_FAMILY` carve-out (#2148 Q5) would bill a solo exempt child the
-  flat fee.
+  wins): both axes ask the one liability rule, billing side
+  (`resolveMemberSubscriptionLiability`, `INV-CONFIG-008`), the rule booking
+  access also reads. While the club is `NOT_CHOSEN` that is the pre-#5190
+  billing rule: a `REQUIRED` type always owes, a `BASED_ON_AGE_TIER` type owes
+  by its season-start tier, and a saved `NOT_REQUIRED` row is ignored. Once the
+  club chooses, its pair decides for both sides. A tier-exempt child is exempt
+  inside a category family too, outside its coverage: the type axis's
+  `PER_FAMILY` carve-out (#2148 Q5) would bill a solo exempt child the flat fee.
 - **One category per family:** a member whose family already has a charge,
   this run or earlier, on the other axis or another category raises
   `MIXED_AXIS_FAMILY_BILLING` and is withheld.
@@ -842,7 +843,8 @@ check the others.
 - **Membership type is the sole subscription authority; role carries no
   exemption (#2149).** Whether a member owes a subscription is decided ONLY by
   their effective membership type (`subscriptionBehavior`, plus the per-age-tier
-  flag where the type is `BASED_ON_AGE_TIER`). Access **role is a pure permission
+  flag where the type is `BASED_ON_AGE_TIER`, or where the club's chosen rule
+  lets an exempt tier exempt a `REQUIRED` type — `INV-CONFIG-008`). Access **role is a pure permission
   concept** and grants no exemption of its own — the retired
   `roleNeverRequiresSubscription` short-circuit is gone from every derivation
   (booking gate, profile, subscriptions list, admin members list + its SQL
@@ -871,38 +873,30 @@ check the others.
 
 ## INV-MONEY-017
 
-- **Paid-up semantics (one meaning, three facts).** A member counts as paid-up
-  (not owing a subscription) when ANY of: their membership-type policy
-  `subscriptionBehavior` is `NOT_REQUIRED` (Life/honorary/operational — no
-  subscription row needed); their current-season `MemberSubscription.status` is
-  `PAID`; OR their type is `BASED_ON_AGE_TIER` and their age tier does not
-  require a subscription — which, once the annual-fee sweep has run, is recorded
-  as a NOT_REQUIRED current-season `MemberSubscription` row that is thereafter
-  authoritative (the third fact, #2041). Booking (`findUnpaidMemberGuests`),
-  nomination eligibility (`verifyNominator`), the member-facing
-  `/api/member/subscription-status`, the admin members-list flag
-  (`admin-members-service`), and the Xero sync (`checkMembershipStatus`) all
-  resolve paid-up from these same facts. Before the sweep writes the row there is
-  a pre-sweep window in which a `BASED_ON_AGE_TIER` exempt member has no row yet;
-  every surface still reads exempt because the tier-flag check is the same fallback
-  the sweep uses, and once the row exists the members-list and Xero-sync surfaces
-  consult it so a manual mid-season tier promotion can never make them disagree
-  with the booking gate. Nomination deliberately honours ONLY the membership-type
-  `NOT_REQUIRED` rule, NOT the booking side's junior age-tier subscription
-  exemption (`requiresPaidSubscriptionForAgeTier`): nominating is an adult-member
-  act and widening it to un-subscribed junior tiers is an owner policy decision.
-  A third `subscriptionBehavior`, `BASED_ON_AGE_TIER` (#2041), defers the
-  subscription-required answer to the per-age-tier
-  `AgeTierSetting.subscriptionRequiredForBooking` flag — the SAME flag that gates
-  booking-lockout — so it is the single source of truth for both booking-lockout
-  and annual-fee invoice minting. Under it, the billing sweep skips a member
-  whose age tier AT THE START OF THE SEASON (the club financial year, derived
-  from DOB; stored tier as the fail-closed fallback when DOB is unknown) does not
-  require a subscription, and writes that member a NOT_REQUIRED
-  `MemberSubscription` row for the season. That NOT_REQUIRED status row is then
-  authoritative and dominates in the booking resolvers: it keeps booking status
-  consistent with billing even if the member's stored age tier is later promoted
-  mid-season. `REQUIRED` and `NOT_REQUIRED` type behavior is byte-unchanged.
+- **Paid-up semantics (one meaning).** A member counts as paid-up (not owing an
+  unpaid subscription) when the one liability rule (`INV-CONFIG-008`, access
+  side) says they owe none, or their current-season `MemberSubscription.status`
+  is `PAID`, or an active coverage claim on a `NO_INVOICE` charge covers them
+  (#5190: such a fee sends no invoice, so its member could never reach `PAID`).
+  The rule says they owe none when their type is `NOT_REQUIRED`
+  (Life/honorary/operational — no row needed), or their type is
+  `BASED_ON_AGE_TIER` (#2041) and their age tier does not require a
+  subscription. While the club is `NOT_CHOSEN`, two pre-#5190 facts also hold:
+  an exempt stored tier exempts a `REQUIRED` type, and a `BASED_ON_AGE_TIER`
+  member's saved `NOT_REQUIRED` row (the sweep writes it for a member tier-exempt
+  at season start) stays authoritative through a mid-season tier promotion. Once
+  the club chooses, its pair decides and the row exempts nobody.
+  Booking (`findUnpaidMemberGuests` and the owner gate), notices,
+  `/api/member/subscription-status`, the admin members list and export, the
+  subscriptions list and the Xero sync (`checkMembershipStatus`) all resolve
+  paid-up through that rule and the settlement loader, never a copy.
+  Nomination deliberately honours ONLY the membership-type `NOT_REQUIRED` rule,
+  NOT the junior age-tier exemption (`requiresPaidSubscriptionForAgeTier`):
+  nominating is an adult-member act and widening it to un-subscribed junior
+  tiers is an owner policy decision. `BASED_ON_AGE_TIER` defers to the
+  per-age-tier `AgeTierSetting.subscriptionRequiredForBooking` flag, the SAME
+  flag the billing sweep reads, so one flag governs both booking-lockout and
+  annual-fee invoice minting.
 
 ## INV-MONEY-018
 

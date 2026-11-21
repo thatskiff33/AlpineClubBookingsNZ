@@ -166,7 +166,6 @@ rows and 56,846 words (70,395 before it).
 | `INV-ADDPAY-009` | 333 |
 | `INV-CAP-032` | 331 |
 | `INV-LIFE-065` | 325 |
-| `INV-MONEY-017` | 323 |
 | `INV-MOD-016` | 319 |
 | `INV-DATE-027` | 316 |
 | `INV-HOST-004` | 310 |

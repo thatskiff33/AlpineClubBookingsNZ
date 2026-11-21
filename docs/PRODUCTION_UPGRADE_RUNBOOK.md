@@ -49,6 +49,14 @@ migration may rescale, round or re-time either.
 Reconciliation totals before and after the upgrade must match to the cent
 (see the [§3 spot-check](#3-post-upgrade-checklist)).
 
+Who owes a subscription does not change on upgrade either (#5190,
+`INV-CONFIG-008`): every club arrives on the **Not chosen** liability rule, which
+keeps billing and booking access on their old answers. The one change is that a
+member covered by a no-invoice fee may now book, since they were never sent an
+invoice to pay. Before choosing a rule afterwards, read the impact list
+(`GET /api/admin/membership-lockout-settings/liability-impact`) so you know who
+the choice will start or stop charging.
+
 ---
 
 ## 1. Pre-flight

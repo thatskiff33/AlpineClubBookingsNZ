@@ -1132,14 +1132,16 @@ reimplemented:
 - the **season** is the stored one keyed on the booking's own check-in night.
 
 It deliberately does **not** call `requiresPaidSubscriptionForMemberForBooking`,
-which is the function the routes call. That function reaches
-`requiresPaidSubscriptionForBooking`, which consults `resolveSubscriptionLockoutMode()`
-and the **cached** age-tier settings reader — both of which turn a database failure
-into a confident default, which is the exact defect the strict seams exist to keep
-out of an evidence path. What it computes is the same three branches, minus those
-two swallowing reads; the Xero-off bypass it also carries is covered here by the
-mode itself, because the strict mode reader already answers `NO_BLOCK` when the
-Xero module is effectively off.
+which is the function the routes call. That function consults
+`resolveSubscriptionLockoutPolicy()`, which turns a database failure into a
+confident default — the exact defect the strict seams exist to keep out of an
+evidence path. Both call the same settlement loader
+(`loadMemberSubscriptionSettlements`), which applies the shared liability rule
+(#5190) with the club's settings read strictly through the entry's transaction,
+and counts an active no-invoice coverage claim as settled; the Xero-off bypass
+the route function also carries is covered here by the mode itself, because the
+strict mode reader already answers `NO_BLOCK` when the Xero module is
+effectively off.
 
 **It is scoped to a ZERO-PRICE `DRAFT`, and that scope is the fix rather than a
 detail of it.** `confirm-draft` is a two-condition door and the code originally read
