@@ -9,13 +9,21 @@
  * The choreography is shared with the member-merge race suites (`support/member-merge-race.ts`): every wait is
  * matched to the backend it waits on (`pg_blocking_pids`), never counted across the database (#4861).
  *
+ * #5191: each door that withdraws a refund debt whole (an appeal's `release_claim`, a kept late capture, a dismissed
+ * part to check) racing the same merge in both orders. The door reads the owner under the booking row, so whichever
+ * commits second sees the first: merge first, the reversal lands on the duplicate and moves to the survivor by one
+ * `merge-residue` transfer; door first, the merge's snapshot nets the reversal and nothing moves. The survivor ends
+ * on the same balance either way, and the census reports no merged debtor.
+ *
  * Ordinary Vitest runs skip the file; CI's real-PostgreSQL job runs it against the guarded loopback race database.
  */
 import { NextRequest } from "next/server";
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { cleanHistories, createHistoryBooking, historyNames, seedHistoryFixtures, settleHistoryByCard } from "./support/booking-ledger-history";
+import { memberMoneyEventKeys } from "@/lib/member-money";
+import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { arrivingWhilePaused, clearPauses, createRaceMember, expectFulfilled, previewMerge, writerArrivingWhileMergeIsParked } from "./support/member-merge-race";
 import { raceSession } from "./support/race-session-double";
@@ -49,6 +57,11 @@ vi.mock("@/lib/member-money/doors", async (importOriginal) => {
     postRefundObligation: async (...args: Parameters<typeof real.postRefundObligation>) => {
       if (args[2].scope === "refund-request") await pauseIn("beforeAppealR05", args[0]);
       return real.postRefundObligation(...args);
+    },
+    // #5191: the dismissal's withdrawal, after the completion has taken lock(1), the booking row and its claim.
+    withdrawRefundObligation: async (...args: Parameters<typeof real.withdrawRefundObligation>) => {
+      await pauseIn(`beforeWithdraw:${args[2].bookingId}`, args[0]);
+      return real.withdrawRefundObligation(...args);
     },
   };
 });
@@ -131,6 +144,173 @@ async function conservationHolds(bookingId: string) {
     await prisma.memberAccessRole.deleteMany({ where: { memberId: members } });
     await prisma.member.deleteMany({ where: { id: members } });
   }
+
+  describe("a refund debt withdrawn whole racing the merge (#5191)", () => {
+    const context = memberMoneyTestContext();
+    const receivable = async (bookingId: string, memberId: string) => (await prisma.memberMoneyLine.findMany({
+      where: { bookingId, account: "MEMBER_RECEIVABLE", debtorKind: "MEMBER", memberId }, select: { side: true, amountCents: true } }))
+      .reduce((sum, l) => sum + (l.side === "DEBIT" ? l.amountCents : -l.amountCents), 0);
+    const residues = (bookingId: string) => prisma.memberMoneyEvent.count({ where: { eventKey: { startsWith: "merge-residue:" }, sourceIdentity: bookingId } });
+    async function mergedDebtorFindings(bookingId: string) {
+      const { readBookingReceiptCensus } = await import("@/lib/member-money");
+      return (await prisma.$transaction((tx) => readBookingReceiptCensus(tx, `${bookingId}-payment`))).filter((f) => f.kind === "MERGED_DEBTOR_BALANCE");
+    }
+    /** lock(1), then the booking row: the order every one of these doors opens with. A case may pause it there. */
+    async function openDoor(tx: Prisma.TransactionClient, bookingId: string) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      const { lockBookingRowForOwnerRead } = await import("@/lib/booking-row-lock");
+      await lockBookingRowForOwnerRead(tx, bookingId);
+      const { pauseIn } = await import("./support/member-merge-race");
+      await pauseIn(`door:${bookingId}`, tx);
+    }
+
+    interface Door {
+      /** What the door's reversal takes off the owner's receivable. */
+      cents: number;
+      /** The door's own transaction, or its real entry. Resolves truthy when it withdrew. */
+      run: () => Promise<unknown>;
+      /** Where a door-first case pauses it, holding the booking row. */
+      slot: string;
+      /** Replays the door's journal step; never a second residue move. */
+      replay: () => Promise<unknown>;
+    }
+
+    /** A card booking the duplicate owns, settled; a PENDING request of the duplicate's parks a merge right after its owner move. */
+    async function settled(tag: string) {
+      const loser = `${PREFIX}loser-${tag}`;
+      const master = `${PREFIX}master-${tag}`;
+      await createRaceMember(prisma, loser);
+      await createRaceMember(prisma, master);
+      const id = `${PREFIX}b-${tag}`;
+      await createHistoryBooking(prisma, { ...names, memberId: loser }, id, { payment: { amountCents: PRICE, source: "STRIPE", intent: `pi_${id}` } });
+      await settleHistoryByCard(id, PRICE);
+      const requestId = `${id}-request`;
+      await prisma.refundRequest.create({ data: { id: requestId, bookingId: id, memberId: loser, reason: "race 5191", requestedAmountCents: 500 } });
+      return { id, loser, master, requestId };
+    }
+
+    /** A kept late capture, as `prepareLateCaptureDecision` runs it: lock(1), the booking row, then the keep (which takes the Payment row). */
+    async function keep(id: string): Promise<Door> {
+      const { syncBookingLedgerSettlements } = await import("@/lib/booking-ledger-settlement-sync");
+      const { closeKeptCaptureReturn, postBookingReceipts, reserveCardRefundSlice } = await import("@/lib/member-money/doors");
+      const { recordStripeRefundsAgainstTransaction } = await import("@/lib/payment-transactions");
+      const { buildLateCaptureRefundStripeKeyPrefix, refundSliceStripeIdempotencyKey } = await import("@/lib/payment-recovery-keys");
+      const intent = `${id}-late`;
+      const late = await prisma.paymentTransaction.create({ data: { paymentId: `${id}-payment`, source: "STRIPE", kind: "ADDITIONAL", status: "SUCCEEDED", amountCents: 3_000, stripePaymentIntentId: intent } });
+      await prisma.$transaction((tx) => syncBookingLedgerSettlements({ paymentId: `${id}-payment`, store: tx }));
+      await prisma.$transaction((tx) => postBookingReceipts(tx, context, { paymentId: `${id}-payment`, decision: { paymentIntentId: intent, collect: false } }));
+      const prefix = buildLateCaptureRefundStripeKeyPrefix(id, intent);
+      const key = refundSliceStripeIdempotencyKey(prefix, { paymentTransactionId: late.id, amountCents: 3_000 });
+      await prisma.$transaction((tx) => reserveCardRefundSlice(tx, context, { paymentId: `${id}-payment`, obligation: { scope: "capture-return", id: intent, ensureFaceCents: 3_000 },
+        attemptKey: key, senderKeyPrefix: prefix, paymentTransactionId: late.id, amountCents: 3_000, planAttemptKeys: [key] }));
+      await recordStripeRefundsAgainstTransaction({ paymentId: `${id}-payment`, paymentTransactionId: late.id, journal: context, attemptKeys: new Map([[`re_${id}`, key]]),
+        refunds: [{ id: `re_${id}`, amount: 3_000, currency: "nzd", status: "failed", created: 1_782_864_000, payment_intent: intent, metadata: { refundSliceKey: key } }] });
+      const step = (tx: Prisma.TransactionClient) => closeKeptCaptureReturn(tx, context, { bookingId: id, paymentIntentId: intent, actorMemberId: ADMIN });
+      return { cents: 3_000, slot: `door:${id}`, run: () => prisma.$transaction(async (tx) => { await openDoor(tx, id); return step(tx); }),
+        replay: () => prisma.$transaction(async (tx) => { await openDoor(tx, id); return step(tx); }) };
+    }
+
+    /** A card shortfall's part to check, dismissed through the real `resolveManualRefundTask`. */
+    async function dismiss(id: string): Promise<Door> {
+      const { raiseCancelCardShortfallHandBack } = await import("@/lib/cancel-card-refund-shortfall");
+      const { CLUB_FORMAT_TEST } = await import("./support/club-format-fixture");
+      const shortfall = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        await tx.booking.update({ where: { id }, data: { status: "CANCELLED" } });
+        return raiseCancelCardShortfallHandBack(tx, { bookingId: id, paymentId: `${id}-payment`, refundAmountCents: PRICE, plannedCardRefundCents: 0, format: CLUB_FORMAT_TEST, journal: context, actorMemberId: ADMIN });
+      });
+      const check = shortfall!.check!;
+      const resolution = await import("@/lib/manual-refund-task-resolution");
+      const { withdrawRefundObligation } = await import("@/lib/member-money/doors");
+      return { cents: check.cents, slot: `beforeWithdraw:${id}`,
+        run: () => resolution.resolveManualRefundTask({ taskId: check.taskId, resolution: "dismissed", note: "Member has it", actingMemberId: ADMIN, recordedNightPrices: null }, CLUB_FORMAT_TEST),
+        replay: () => prisma.$transaction(async (tx) => {
+          await openDoor(tx, id);
+          return withdrawRefundObligation(tx, context, { bookingId: id, scope: "hand-back", id: check.taskId, actorMemberId: ADMIN, reason: "replay", senderKeyPrefix: `hand-back-dismiss:${check.taskId}`,
+            part: { eventKey: memberMoneyEventKeys.handBackRestWithdrawn(check.taskId), amountCents: "open", debtorRead: "booking-row" } });
+        }) };
+    }
+
+    /**
+     * An approved appeal released as `release_claim` runs it: lock(1), the booking row, the request's claim back to PENDING,
+     * its OPEN hand-back deleted, then both its debts withdrawn. Both are concessions, so neither leaves a receivable to move.
+     */
+    async function release(id: string, requestId: string): Promise<Door> {
+      const { postHandBackObligation, postRefundObligation, withdrawRefundObligation } = await import("@/lib/member-money/doors");
+      const taskId = `${requestId}-task`;
+      await prisma.refundRequest.update({ where: { id: requestId }, data: { status: "APPROVED", approvedAmountCents: 500, reviewedBy: ADMIN, reviewedAt: new Date() } });
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        await postRefundObligation(tx, context, { bookingId: id, scope: "refund-request", id: requestId, amountCents: 300, origin: "OFFICER", actorMemberId: ADMIN, debtorRead: "booking-row", concession: true });
+        await postHandBackObligation(tx, context, { bookingId: id, taskId, amountCents: 200, origin: "OFFICER", actorMemberId: ADMIN, debtorRead: "booking-row", concession: true });
+      });
+      const withdraw = async (tx: Prisma.TransactionClient) => [
+        await withdrawRefundObligation(tx, context, { bookingId: id, scope: "refund-request", id: requestId, actorMemberId: ADMIN, reason: "release_claim", senderKeyPrefix: `refund_request_refund_${requestId}` }),
+        await withdrawRefundObligation(tx, context, { bookingId: id, scope: "hand-back", id: taskId, actorMemberId: ADMIN, reason: "release_claim", senderKeyPrefix: `refund_request_refund_${requestId}` }),
+      ];
+      return { cents: 0, slot: `door:${id}`,
+        run: () => prisma.$transaction(async (tx) => {
+          await openDoor(tx, id);
+          const released = await tx.refundRequest.updateMany({ where: { id: requestId, status: "APPROVED" }, data: { status: "PENDING", approvedAmountCents: null, reviewedBy: null, reviewedAt: null } });
+          expect(released.count).toBe(1);
+          return withdraw(tx);
+        }),
+        replay: () => prisma.$transaction(async (tx) => { await openDoor(tx, id); return withdraw(tx); }) };
+    }
+
+    /** Every debt the door withdraws is reversed: the R05s of its booking carry a reversal each. */
+    async function withdrew(bookingId: string) {
+      const r05s = await prisma.memberMoneyEvent.findMany({ where: { sourceIdentity: bookingId, eventKey: { startsWith: "refund-obligation|" } }, select: { journal: { select: { reversedBy: { select: { id: true } } } } } });
+      return r05s.length > 0 && r05s.every((e) => e.journal?.reversedBy != null);
+    }
+
+    const doors = {
+      "the keep": async (f: Awaited<ReturnType<typeof settled>>) => keep(f.id),
+      "a part to check's dismissal": async (f: Awaited<ReturnType<typeof settled>>) => dismiss(f.id),
+      "an appeal's release_claim": async (f: Awaited<ReturnType<typeof settled>>) => release(f.id, f.requestId),
+    } as const;
+
+    for (const [name, make] of Object.entries(doors)) {
+      const tag = name.replace(/[^a-z]+/gi, "-").toLowerCase();
+
+      it(`${name}, merge first: the reversal follows the owner to the survivor, by one residue move when it leaves a receivable on the duplicate`, async () => {
+        const fixture = await settled(`5191-merge-first-${tag}`);
+        const door = await make(fixture);
+        const before = await receivable(fixture.id, fixture.loser);
+        const execute = await previewMerge(fixture.master, fixture.loser, ADMIN);
+        // Parked on the request's row, the merge holds the booking row from its owner move; the door queues behind it.
+        const { merged, written } = await writerArrivingWhileMergeIsParked(
+          prisma, (tx) => tx.$executeRaw`SELECT 1 FROM "RefundRequest" WHERE "id" = ${fixture.requestId} FOR UPDATE`, execute, door.run,
+        );
+        expectFulfilled(merged);
+        expectFulfilled(written);
+        expect(await withdrew(fixture.id)).toBe(true);
+        expect(await receivable(fixture.id, fixture.loser)).toBe(0);
+        expect(await receivable(fixture.id, fixture.master)).toBe(before - door.cents);
+        // MUTATION: reading the owner plainly before the booking row, or deleting the residue move, leaves the reversal here.
+        expect(await residues(fixture.id)).toBe(door.cents === 0 ? 0 : 1);
+        await door.replay();
+        expect(await residues(fixture.id)).toBe(door.cents === 0 ? 0 : 1);
+        expect(await mergedDebtorFindings(fixture.id)).toEqual([]);
+        await conservationHolds(fixture.id);
+      });
+
+      it(`${name}, door first: the merge waits on the booking row and its snapshot nets the reversal, so nothing moves`, async () => {
+        const fixture = await settled(`5191-door-first-${tag}`);
+        const door = await make(fixture);
+        const before = await receivable(fixture.id, fixture.loser);
+        const { held, arrived } = await arrivingWhilePaused(prisma, door.slot, door.run, async () => (await previewMerge(fixture.master, fixture.loser, ADMIN))());
+        expectFulfilled(held);
+        expectFulfilled(arrived);
+        expect(await withdrew(fixture.id)).toBe(true);
+        expect(await receivable(fixture.id, fixture.loser)).toBe(0);
+        expect(await receivable(fixture.id, fixture.master)).toBe(before - door.cents);
+        expect(await residues(fixture.id)).toBe(0);
+        expect(await mergedDebtorFindings(fixture.id)).toEqual([]);
+        await conservationHolds(fixture.id);
+      });
+    }
+  });
 
   it("MUTATION: the appeal holds the booking row first; the merge waits for it, and both commit", async () => {
     const { id, loser, master, requestId } = await appealOnDuplicatesBooking("appeal-first");

@@ -6,12 +6,14 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import logger from "@/lib/logger";
-import { memberMoneyEventKeys as keys, postMemberMoneyEvent, isCardRefundReservationRefusal, MemberMoneyReservationRefused, type MemberMoneyDebtor } from "@/lib/member-money";
+import { memberMoneyEventKeys as keys, postMemberMoneyEvent, isCardRefundReservationRefusal, MemberMoneyReservationRefused, readBookingReceiptCensus, type MemberMoneyDebtor } from "@/lib/member-money";
 import {
   cardRefundObligationOfRecoveryKey,
   closeKeptCaptureReturn,
   postBookingReceipts,
   postCardRefundCash,
+  postHandBackObligation,
+  postMemberMergeTransfer,
   postPaidAnotherWayClose,
   postRefundObligation,
   reserveCardRefundSlice,
@@ -680,6 +682,105 @@ describe("a kept late capture (review M5)", () => {
     expect(await keep()).toBe(false);
     expect(await closeKeptCaptureReturn(t.db.tx, INACTIVE, { bookingId: t.id, paymentIntentId: late.stripePaymentIntentId, actorMemberId: OFFICER })).toBe(false);
     expect(t.caps()).toEqual([]);
+  });
+});
+
+describe("a refund debt reversed after its owner merged away (#5191)", () => {
+  const C = "member-c";
+  type T = Awaited<ReturnType<typeof setup>>;
+  /** The member merge's order: the owner move, then the D4 transfer of the merged-away member's balances. */
+  const merge = async (t: T, from: string, to: string) => {
+    t.db.rows("booking", { id: t.id })[0]!.memberId = to;
+    await postMemberMergeTransfer(t.db.tx, context, { fromMemberId: from, toMemberId: to, actorMemberId: OFFICER });
+  };
+  const receivable = (t: T, memberId: string) => t.db.rows("memberMoneyLine", { bookingId: t.id, account: "MEMBER_RECEIVABLE", debtorKind: "MEMBER", memberId })
+    .reduce((sum, l) => sum + (l.side === "DEBIT" ? 1 : -1) * Number(l.amountCents), 0);
+  const residues = (t: T) => t.db.rows("memberMoneyEvent").filter((e) => String(e.eventKey).startsWith("merge-residue:")).length;
+  const mergedDebtorFindings = async (t: T) => (await readBookingReceiptCensus(t.db.tx, `${t.id}-payment`)).filter((f) => f.kind === "MERGED_DEBTOR_BALANCE");
+  /** The owner's balance after the reversal is what it would be with no merge: the booking's own, now on the survivor. */
+  const expectFollowed = async (t: T, gone: readonly string[], survivor: string, cents: number) => {
+    for (const memberId of gone) expect(receivable(t, memberId)).toBe(0);
+    expect(receivable(t, survivor)).toBe(cents);
+    expect(await mergedDebtorFindings(t)).toEqual([]);
+    expect(t.caps()).toEqual([]);
+  };
+
+  /**
+   * An approved appeal's two debts, as the approval posts them: its card part and its bank hand-back, each a concession
+   * (`edit-refund-hand-back.ts`), so each R05's receivable legs cancel and their reversals leave nothing to carry.
+   */
+  const appeal = async (t: T) => {
+    await t.r05("refund-request", "appeal", 1_000, { concession: true });
+    await postHandBackObligation(t.db.tx, context, { bookingId: t.id, taskId: "appeal-task", amountCents: 500, origin: "OFFICER", debtorRead: "booking-row", concession: true });
+  };
+  const releaseClaim = async (t: T) => [await t.withdraw("refund-request", "appeal", "appeal"), await t.withdraw("hand-back", "appeal-task", "appeal")];
+  /** A card refund shortfall's part to check (no concession): Dr AR, Cr RP on the owner. */
+  const checkPart = (t: T) => postHandBackObligation(t.db.tx, context, { bookingId: t.id, taskId: "check-task", amountCents: 700, origin: "APP", debtorRead: "booking-row" });
+  /** Its dismissal, as `withdrawDismissedHandBackDebt` asks: nothing paid, so the whole R05 is reversed. */
+  const dismiss = (t: T) => withdrawRefundObligation(t.db.tx, context, { bookingId: t.id, scope: "hand-back", id: "check-task", reason: "dismissed",
+    senderKeyPrefix: "hand-back-dismiss:check-task", part: { eventKey: keys.handBackRestWithdrawn("check-task"), amountCents: "open", debtorRead: "booking-row" } });
+
+  it("an appeal's release_claim: both reversals leave the merged-away member at nil and the census clean", async () => {
+    const t = await cancelled();
+    await appeal(t);
+    const before = receivable(t, A);
+    await merge(t, A, B);
+    expect(await releaseClaim(t)).toEqual([true, true]);
+    expect(t.reversed(R05("refund-request", "appeal")) && t.reversed(R05("hand-back", "appeal-task"))).toBe(true);
+    await expectFollowed(t, [A], B, before);
+    expect(residues(t)).toBe(0);
+  });
+
+  it("a kept late capture: the capture-return debt's reversal follows the merge to the survivor", async () => {
+    const t = await setup();
+    await t.capture(10_000);
+    const late = await t.capture(3_000, false);
+    await t.reserve(late, { scope: "capture-return", id: late.stripePaymentIntentId, ensureFaceCents: 3_000 }, "late_key", 3_000);
+    await t.refund(late, "re_refused", 3_000, "failed", "late_key");
+    const before = receivable(t, A);
+    await merge(t, A, B);
+    expect(await closeKeptCaptureReturn(t.db.tx, context, { bookingId: t.id, paymentIntentId: late.stripePaymentIntentId, actorMemberId: OFFICER })).toBe(true);
+    await expectFollowed(t, [A], B, before - 3_000);
+    expect(residues(t)).toBe(1);
+  });
+
+  it("a dismissed part to check: the hand-back debt's reversal follows the merge to the survivor", async () => {
+    const t = await cancelled();
+    await checkPart(t);
+    const before = receivable(t, A);
+    await merge(t, A, B);
+    expect(await dismiss(t)).toBe(true);
+    expect(t.reversed(R05("hand-back", "check-task"))).toBe(true);
+    await expectFollowed(t, [A], B, before - 700);
+    expect(residues(t)).toBe(1);
+  });
+
+  it("two hops: one residue move per merge, ending on the last survivor; a replay moves nothing again", async () => {
+    const t = await cancelled();
+    await checkPart(t);
+    const before = receivable(t, A);
+    await merge(t, A, B);
+    await merge(t, B, C);
+    expect(await dismiss(t)).toBe(true);
+    await expectFollowed(t, [A, B], C, before - 700);
+    expect(residues(t)).toBe(2);
+    expect(await dismiss(t)).toBe(false);
+    expect(residues(t)).toBe(2);
+  });
+
+  it("moves nothing without a merge, or when the merge came after the reversal and its snapshot netted it", async () => {
+    const plain = await cancelled();
+    await checkPart(plain);
+    expect(await dismiss(plain)).toBe(true);
+    expect(residues(plain)).toBe(0);
+
+    const t = await cancelled();
+    await checkPart(t);
+    const before = receivable(t, A);
+    expect(await dismiss(t)).toBe(true);
+    await merge(t, A, B);
+    await expectFollowed(t, [A], B, before - 700);
+    expect(residues(t)).toBe(0);
   });
 });
 
