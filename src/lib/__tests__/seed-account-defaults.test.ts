@@ -350,6 +350,8 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
     } = {},
   ) {
     return {
+      // #5190: the billing season key, taken before the liability rule is read.
+      $executeRaw: vi.fn().mockResolvedValue(1),
       memberSubscription: {
         findUnique: vi.fn().mockResolvedValue(existing),
         updateMany: vi.fn().mockResolvedValue({ count: updateCount }),
@@ -390,6 +392,15 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
     });
 
     expect(result).toEqual({ reconciled: true });
+    // #5190: the season key is taken before the liability rule is read, so an
+    // assignment cannot interleave with an opt-in's clear-up.
+    expect(db.$executeRaw).toHaveBeenCalledTimes(1);
+    const lockSql = (db.$executeRaw.mock.calls[0][0] as TemplateStringsArray).join("?");
+    expect(lockSql).toContain("pg_advisory_xact_lock(hashtext(");
+    expect(db.$executeRaw.mock.calls[0][1]).toBe("membership-subscription-billing:2026");
+    expect(db.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      db.membershipLockoutSettings.findUnique.mock.invocationCallOrder[0],
+    );
     // #2179: the coverage read must count ACTIVE claims only (a released claim
     // means the member is re-billable and must not block the reconcile).
     expect(db.memberSubscription.findUnique).toHaveBeenCalledWith({

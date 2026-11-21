@@ -163,16 +163,27 @@ async function owesUnderChosenRule(
  * says the member owes — for a BASED_ON_AGE_TIER type too — and left alone when
  * it says they do not (a REQUIRED-type child under AGE_TIER_EXEMPTS).
  *
- * The write is a narrow, idempotent, status-guarded `updateMany` — the same
- * classification as the Xero sync's `writeXeroDerivedSubscriptionState`: no
- * advisory lock is required because the WHERE guard makes clobbering structurally
- * impossible (it never touches a paid, invoiced, actively charge/family-covered
- * — releasedAt IS NULL, the #2147 "already billed" rule — or manually-marked
- * row) and a second run matches nothing. It performs NO provider
- * calls, so it is safe to run inside the caller's assignment transaction.
+ * The write is a narrow, idempotent, status-guarded `updateMany`: the WHERE
+ * guard makes clobbering a paid, invoiced, actively charge/family-covered
+ * (releasedAt IS NULL, the #2147 "already billed" rule) or manually-marked row
+ * structurally impossible, and a second run matches nothing.
+ *
+ * It takes the billing season key FIRST (#5190), before it reads the club's
+ * liability rule. Without it, an assignment committing while a club opts in
+ * could read the old (NOT_CHOSEN) rule, skip its row, and commit after the
+ * clear-up had already passed that row — leaving a stale NOT_REQUIRED row the
+ * chosen rule says should read NOT_INVOICED. Under the key, the reconcile runs
+ * wholly before the settings save (whose clear-up then sees the row) or wholly
+ * after it (and reads the chosen rule). The key is the LAST lock the assignment
+ * transaction takes — after the global, lodge and member locks its callers
+ * already hold — and no season-key holder takes another advisory lock, so the
+ * order is acyclic (docs/CONCURRENCY_AND_LOCKING.md, writer index). It performs
+ * NO provider calls, so it is safe to run inside the caller's assignment
+ * transaction.
  */
 export async function reconcileSeasonSubscriptionForAssignment(
-  db: Pick<Prisma.TransactionClient, "memberSubscription"> & LiabilityReadDb,
+  db: Pick<Prisma.TransactionClient, "memberSubscription" | "$executeRaw"> &
+    LiabilityReadDb,
   params: {
     memberId: string;
     seasonYear: number;
@@ -182,6 +193,7 @@ export async function reconcileSeasonSubscriptionForAssignment(
   if (params.subscriptionBehavior === "NOT_REQUIRED") {
     return { reconciled: false };
   }
+  await lockSubscriptionBillingSeason(db, params.seasonYear);
   const settings = await loadMembershipLockoutSettingsStrict(db);
   const owes = hasChosenLiabilityRule(settings)
     ? await owesUnderChosenRule(db, { ...params, settings })
