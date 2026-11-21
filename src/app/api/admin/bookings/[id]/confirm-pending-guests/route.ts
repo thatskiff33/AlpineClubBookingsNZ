@@ -66,6 +66,7 @@ import {
   confirmPendingGuestsSchema,
   getOverbookedNightDates,
   lockedClaimRefusalBody,
+  chargeFailedMessage,
 } from "@/lib/admin-confirm-pending-guests-shapes";
 
 /**
@@ -646,7 +647,8 @@ export async function POST(
           previousRange,
         });
       }, { bookingId, lodgeId: booking.lodgeId });
-      return outcome.ok ? outcome.value : { released: false };
+      // Never rejects. `false` (#4993): still CONFIRMED for the cron's recovery (#5279).
+      return outcome.ok;
     };
 
     // Charge the saved payment method through the one attempt contract every
@@ -675,12 +677,7 @@ export async function POST(
       // alert admins, exactly like the cron path (#1418). A definite Stripe
       // refusal has already ended the attempt row, so the next click starts a
       // fresh one; an ambiguous failure leaves it to be asked about.
-      await releaseChargeClaim().catch((revertErr) =>
-        logger.error(
-          { err: revertErr, bookingId },
-          "Failed to release confirm-pending-guests charge claim"
-        )
-      );
+      const claimReleased = await releaseChargeClaim();
       const stripeFields = readStripeErrorFields(chargeErr);
       // The claim's POST-LOCK amount — the one the charge asked Stripe for. A
       // price that moved between the pre-lock read and the claim would
@@ -714,7 +711,7 @@ export async function POST(
           : "";
       return NextResponse.json(
         {
-          error: `The card charge failed; the booking was returned to pending and admins have been alerted.${detail}`,
+          error: `${chargeFailedMessage(claimReleased)}${detail}`,
         },
         { status: 502 }
       );
@@ -729,18 +726,13 @@ export async function POST(
       // fresh), then release the claim if it is still ours and leave the
       // booking pending for the Stripe webhook to resolve rather than
       // confirming optimistically.
-      await releaseChargeClaim({
+      const claimReleased = await releaseChargeClaim({
         attemptRowId: claim.attempt.attemptRowId,
         paymentIntent,
-      }).catch((revertErr) =>
-        logger.error(
-          { err: revertErr, bookingId },
-          "Failed to release confirm-pending-guests charge claim"
-        )
-      );
+      });
       return NextResponse.json(
         {
-          error: describeUnsettledPaymentIntent(paymentIntent.status),
+          error: describeUnsettledPaymentIntent(paymentIntent.status, { claimReleased }),
           paymentStatus: paymentIntent.status,
         },
         { status: 409 }
