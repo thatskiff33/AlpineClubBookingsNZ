@@ -739,6 +739,16 @@ Journey: Inspect connection and operations status; open a failed item to follow 
 
 [Guide](guides/xero.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
+### Xero Unallocated Payments — xero
+
+Screen: `/admin/xero/unallocated-payments`.
+
+Shows: Open Xero overpayments and prepayments: date, balance, member or "No member linked", contact link (#5204).
+
+Journey: Read the nightly list; finance edit can Refresh from Xero.
+
+[Guide](guides/xero.md#unallocated-payments) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
 ## Admin content
 
 ### Site Appearance & Content — appearance

@@ -21,6 +21,9 @@ const mocks = vi.hoisted(() => ({
   auditLogFindMany: vi.fn(),
   auditLogCount: vi.fn(),
   emailLogFindMany: vi.fn(),
+  maintenanceReportFindMany: vi.fn(async () => []),
+  maintenanceReportCount: vi.fn(async () => 0),
+  lodgeFindMany: vi.fn(async () => []),
   parseApplicationAddress: vi.fn(),
   parseApplicationFamilyMembers: vi.fn(),
 }));
@@ -73,6 +76,11 @@ vi.mock("@/lib/prisma", () => ({
     emailLog: {
       findMany: mocks.emailLogFindMany,
     },
+    maintenanceReport: {
+      findMany: mocks.maintenanceReportFindMany,
+      count: mocks.maintenanceReportCount,
+    },
+    lodge: { findMany: mocks.lodgeFindMany },
   },
 }));
 
@@ -90,6 +98,7 @@ import { GET as getWaitlist } from "@/app/api/admin/waitlist/route";
 import { GET as getMemberApplications } from "@/app/api/admin/member-applications/route";
 import { GET as getDeletionRequests } from "@/app/api/admin/deletion-requests/route";
 import { GET as getCommunicationHistory } from "@/app/api/admin/communications/history/route";
+import { GET as getMaintenanceReports } from "@/app/api/admin/maintenance-reports/route";
 
 function request(path: string) {
   return new NextRequest(`http://localhost${path}`);
@@ -609,13 +618,50 @@ describe("admin query validation and pagination", () => {
         totalRecipients: 10,
         eligibleRecipients: 8,
       });
-      expect(body).toMatchObject({ page: 2, pageSize: 10, total: 1 });
+      expect(body).toMatchObject({ page: 2, pageSize: 10, total: 1, totalPages: 1 });
       expect(mocks.auditLogFindMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { action: "BULK_COMMUNICATION_SENT" },
+          // #5202: `id` breaks ties so a send never repeats or vanishes between pages.
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           take: 10,
           skip: 10,
         })
+      );
+    });
+  });
+
+  // #5202 / INV-OPS-020: the Open filter is the queue's pending work, so it
+  // reads oldest first; the others stay newest first. `id` breaks ties.
+  describe("GET /api/admin/maintenance-reports", () => {
+    it("reads the Open filter oldest first and answers through adminListPage", async () => {
+      mocks.maintenanceReportCount.mockResolvedValue(40);
+
+      const response = await getMaintenanceReports(
+        request("/api/admin/maintenance-reports?page=2")
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({ page: 2, pageSize: 25, total: 40, totalPages: 2 });
+      expect(mocks.maintenanceReportFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { status: "OPEN" },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          take: 25,
+          skip: 25,
+        })
+      );
+    });
+
+    it.each(["IN_PROGRESS", "RESOLVED", "ALL"])("reads the %s filter newest first", async (status) => {
+      const response = await getMaintenanceReports(
+        request(`/api/admin/maintenance-reports?status=${status}`)
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.maintenanceReportFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({ orderBy: [{ createdAt: "desc" }, { id: "desc" }] })
       );
     });
   });

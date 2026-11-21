@@ -107,6 +107,14 @@ than as an edit nobody made. Bundles are accepted only at the exact format versi
 that wrote them, so an older bundle is refused outright rather than importing this
 column as empty.
 
+**Images are cleaned on import.** Every image a bundle carries, and an inline
+club logo, has its hidden details (location, device, owner) removed before it
+is stored, as on every upload ([Image Manager](image-manager.md#hidden-details-are-removed)).
+An image the app cannot confirm clean is a validation **error** naming the file,
+so Apply stays disabled: replace that image in the source club with a fresh
+copy from an image editor, export again, and re-preview. Images already stored
+on the target before this cleaning existed are not changed (#5244).
+
 **Connected provider credentials never travel.** A bundle never carries the
 Xero/Stripe/Google/backup secrets your club has connected — not the encrypted
 values, and not even a note of which providers are configured. This is permanent

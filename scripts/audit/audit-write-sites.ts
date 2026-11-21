@@ -233,6 +233,8 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/app/api/admin/work-parties/[id]/route.ts::PUT#0": {"category":"admin","sink":"logAudit","action":"workparty.update","reviewed":["2765-lodge-keep"]},
   "src/app/api/admin/work-parties/route.ts::POST#0": {"category":"admin","sink":"logAudit","action":"workparty.create","reviewed":["2765-lodge-keep"]},
   "src/app/api/admin/xero/account-mappings/route.ts::PUT#0": {"category":"xero","sink":"logAudit","action":"xero_account_mappings_updated","reviewed":["2581-applied","2581-no-entity-id"]},
+  "src/app/api/admin/xero/cash-credits/route.ts::POST#0": {"category":"xero","sink":"createAuditLog","action":"XERO_CASH_CREDITS_REFRESH"},
+  "src/app/api/admin/xero/cash-credits/route.ts::POST#1": {"category":"xero","sink":"createAuditLog","action":"XERO_CASH_CREDITS_REFRESH"},
   "src/app/api/admin/xero/force-sync/route.ts::POST#0": {"category":"xero","sink":"logAudit","action":"XERO_FORCE_SYNC_CONTACT"},
   "src/app/api/admin/xero/force-sync/route.ts::POST#1": {"category":"xero","sink":"logAudit","action":"XERO_FORCE_SYNC_MEMBERSHIP"},
   "src/app/api/admin/xero/force-sync/route.ts::POST#2": {"category":"xero","sink":"logAudit","action":"XERO_FORCE_SYNC_INVOICE"},
