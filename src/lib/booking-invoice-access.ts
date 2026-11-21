@@ -35,8 +35,10 @@ export type BookingCreditNote = {
  *   to ask the club. With Xero off it carries a `reason` (absent, the Xero
  *   case above): `XERO_DOCUMENTS` when the booking already has Xero documents
  *   from when the module was on, so no generated "Invoice" is made beside
- *   them; `EXTRA_CHARGE` when an extra charge was asked, which the generated
- *   document's figures do not cover.
+ *   them; `EXTRA_CHARGE` when an extra charge was raised (asked or since
+ *   withdrawn), which the generated document's figures do not cover;
+ *   `REGISTERED_TAX_PERIOD` when the booking falls in a GST-registered period
+ *   the club recorded (`generatedInvoiceWaitsOnTaxPeriod`).
  * - `GENERATED` (Xero off only): the Download invoice button, for the app's own
  *   document (`buildBookingInvoiceData`), marked "Not yet approved" on a
  *   booking awaiting review (`notYetApproved`). Its account lines ride beside
@@ -55,7 +57,7 @@ export type BookingInvoiceOffer =
   | { kind: "GENERATED"; notYetApproved: boolean };
 
 /** Why a Xero-off booking is pointed at the club instead of a generated document. */
-export type BookingInvoiceAskClubReason = "XERO_DOCUMENTS" | "EXTRA_CHARGE";
+export type BookingInvoiceAskClubReason = "XERO_DOCUMENTS" | "EXTRA_CHARGE" | "REGISTERED_TAX_PERIOD";
 
 /**
  * The page-only account lines beside a `XERO_INVOICE` or `GENERATED` offer: the summary from
@@ -151,8 +153,9 @@ type GeneratedOfferBooking = BookingInvoiceLineSource & {
  *   module was on (`XERO_DOCUMENTS`), or an extra charge asked (any ADDITIONAL
  *   ledger row, `EXTRA_CHARGE`): the summary does not cover additional asks,
  *   which have their own pay link. The download refuses both. Other Xero
- *   documents (supplementary invoices, credit notes) need a read, so
- *   `resolveBookingInvoiceOffer` asks after this says GENERATED.
+ *   documents (supplementary invoices, credit notes) and the booking's tax
+ *   period need a read, so `resolveBookingInvoiceOffer` asks after this says
+ *   GENERATED (`generatedInvoiceWaitsOnTaxPeriod`).
  */
 export function generatedBookingInvoiceOnOffer(input: {
   viewer: { canSeeOwnerCredit: boolean; nonOwnerAdminViewer: boolean };
@@ -170,4 +173,24 @@ export function generatedBookingInvoiceOnOffer(input: {
   if (booking.payment?.xeroInvoiceId) return askClub("XERO_DOCUMENTS");
   if ((booking.payment?.transactions.length ?? 0) > 0) return askClub("EXTRA_CHARGE");
   return { kind: "GENERATED", notYetApproved: booking.status === BookingStatus.AWAITING_REVIEW };
+}
+
+/**
+ * The tax period in force at a booking's tax anchor (`readBookingTaxAnchorInstant`:
+ * when the booking was made, or for a group place its organiser's booking), as
+ * the generated document's offer needs it: whether the club recorded that period
+ * (`clubTaxPeriodIsRecorded`) and whether it is a GST-registered one.
+ */
+export type GeneratedInvoiceTaxPeriod = { recorded: boolean; registered: boolean };
+
+/**
+ * Owner decision of 20 Nov 2026 on #5066: the generated document is titled
+ * "Invoice" and carries no tax wording, so it is not made for a booking whose
+ * period the club recorded as GST-registered; that booking gets the
+ * ask-the-club line until the "Tax invoice" form and the club GST number
+ * setting exist (#5291). A club that never recorded a status, and a period it
+ * recorded as not registered, get the document.
+ */
+export function generatedInvoiceWaitsOnTaxPeriod(tax: GeneratedInvoiceTaxPeriod): boolean {
+  return tax.recorded && tax.registered;
 }

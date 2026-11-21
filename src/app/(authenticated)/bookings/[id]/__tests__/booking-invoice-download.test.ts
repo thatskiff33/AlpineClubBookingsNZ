@@ -19,6 +19,7 @@ vi.mock("@/lib/booking-credit-notes", () => ({ readBookingCreditNotes: vi.fn() }
 vi.mock("@/lib/club-identity-settings", () => ({ getClubIdentity: vi.fn() }));
 
 import {
+  BookingInvoiceSettingsUnavailableError,
   bookingInvoiceFileName,
   prepareBookingInvoiceDownload,
   resolveBookingInvoiceOffer,
@@ -89,9 +90,15 @@ const viewerFor = (b: never, id: string, role: string) =>
   resolveBookingDetailViewer({ session: session(id, role), booking: b });
 
 const CREDIT_NOTE = { creditNoteId: "xero-cn-1", creditNoteNumber: "CN-0007", kind: "CHANGE" as const };
+/** The tax period at the booking's anchor: a club that never recorded a status (the code baseline). */
+const NO_RECORDED_STATUS = { recorded: false, registered: true };
+const RECORDED_REGISTERED = { recorded: true, registered: true };
+const RECORDED_NOT_REGISTERED = { recorded: true, registered: false };
+const taxIs = (period: typeof NO_RECORDED_STATUS) => vi.fn(async () => period);
 const noSupplementary = {
   hasAnySupplementaryInvoice: vi.fn(async () => false),
   creditNotes: vi.fn(async () => [CREDIT_NOTE]),
+  generatedInvoiceTax: taxIs(NO_RECORDED_STATUS),
 };
 const XERO_ON = { xeroIntegration: true };
 const XERO_OFF = { xeroIntegration: false };
@@ -103,6 +110,7 @@ const offBooking = (overrides: Record<string, unknown> = {}, payment: Record<str
 const noXeroDocuments = {
   hasAnySupplementaryInvoice: vi.fn(async () => false),
   creditNotes: vi.fn(async () => []),
+  generatedInvoiceTax: taxIs(NO_RECORDED_STATUS),
 };
 
 function offer(b: never, id = OWNER_ID, role = "USER", modules = XERO_ON, deps: typeof noSupplementary = noSupplementary) {
@@ -174,11 +182,51 @@ describe("resolveBookingInvoiceOffer: the one rule for the button and the route"
     // A primary Xero invoice from when the module was on: no read needed.
     expect(await offer(booking(), OWNER_ID, "USER", XERO_OFF, noXeroDocuments)).toEqual(ask);
     // A supplementary invoice, or a credit note, found by the existing readers.
-    const supplementary = { hasAnySupplementaryInvoice: vi.fn(async () => true), creditNotes: vi.fn(async () => []) };
+    const supplementary = { ...noXeroDocuments, hasAnySupplementaryInvoice: vi.fn(async () => true) };
     expect(await offer(offBooking(), OWNER_ID, "USER", XERO_OFF, supplementary)).toEqual(ask);
-    const creditNote = { hasAnySupplementaryInvoice: vi.fn(async () => false), creditNotes: vi.fn(async () => [CREDIT_NOTE]) };
+    const creditNote = { ...noXeroDocuments, creditNotes: vi.fn(async () => [CREDIT_NOTE]) };
     expect(await offer(offBooking(), OWNER_ID, "USER", XERO_OFF, creditNote)).toEqual(ask);
     expect(await offer(booking(), "officer-1", "ADMIN_BOOKINGS", XERO_OFF, noXeroDocuments)).toEqual({ ...ask, staffViewer: true });
+  });
+
+  describe("with Xero off, the tax period at the booking's anchor (owner decision, 20 Nov 2026)", () => {
+    const withTax = (generatedInvoiceTax: ReturnType<typeof taxIs>) => ({ ...noXeroDocuments, generatedInvoiceTax });
+
+    it("offers the generated Invoice to a club that never recorded a status", async () => {
+      const tax = withTax(taxIs(NO_RECORDED_STATUS));
+      expect(await offer(offBooking(), OWNER_ID, "USER", XERO_OFF, tax)).toEqual({ kind: "GENERATED", notYetApproved: false });
+      expect(tax.generatedInvoiceTax).toHaveBeenCalledWith("ckbooking1234567");
+    });
+
+    it("offers the generated Invoice in a period the club recorded as not registered", async () => {
+      expect(await offer(offBooking(), OWNER_ID, "USER", XERO_OFF, withTax(taxIs(RECORDED_NOT_REGISTERED)))).toEqual({
+        kind: "GENERATED",
+        notYetApproved: false,
+      });
+    });
+
+    it("points a booking in a recorded GST-registered period at the club, in the reader's voice", async () => {
+      const tax = withTax(taxIs(RECORDED_REGISTERED));
+      const ask = { kind: "ASK_CLUB", staffViewer: false, reason: "REGISTERED_TAX_PERIOD" };
+      expect(await offer(offBooking(), OWNER_ID, "USER", XERO_OFF, tax)).toEqual(ask);
+      expect(await offer(offBooking({ status: "AWAITING_REVIEW" }), OWNER_ID, "USER", XERO_OFF, tax)).toEqual(ask);
+      expect(await offer(offBooking(), "officer-1", "ADMIN_BOOKINGS", XERO_OFF, tax)).toEqual({ ...ask, staffViewer: true });
+    });
+
+    it("refuses when the schedule cannot be read, never counting it as no recorded status", async () => {
+      const failing = withTax(vi.fn(async () => { throw new Error("schedule unreadable"); }));
+      await expect(offer(offBooking(), OWNER_ID, "USER", XERO_OFF, failing)).rejects.toBeInstanceOf(BookingInvoiceSettingsUnavailableError);
+    });
+
+    it("reads the schedule only when the answer would otherwise be the generated document", async () => {
+      const tax = withTax(taxIs(RECORDED_REGISTERED));
+      await offer(booking(), OWNER_ID, "USER", XERO_ON, tax);
+      await offer(offBooking(), "guest-1", "USER", XERO_OFF, tax);
+      await offer(offBooking({}, { transactions: [{}] }), OWNER_ID, "USER", XERO_OFF, tax);
+      await offer(booking(), OWNER_ID, "USER", XERO_OFF, tax);
+      await offer(offBooking(), OWNER_ID, "USER", XERO_OFF, { ...tax, hasAnySupplementaryInvoice: vi.fn(async () => true) });
+      expect(tax.generatedInvoiceTax).not.toHaveBeenCalled();
+    });
   });
 
   it("with Xero off, explains an extra charge asked instead of offering nothing", async () => {
@@ -223,7 +271,7 @@ describe("resolveBookingInvoiceOffer: the one rule for the button and the route"
   });
 
   it("asks the member to contact the club when any supplementary invoice exists — a card receipt with no ADDITIONAL row included", async () => {
-    const receiptOnly = { hasAnySupplementaryInvoice: vi.fn(async () => true), creditNotes: vi.fn(async () => []) };
+    const receiptOnly = { ...noXeroDocuments, hasAnySupplementaryInvoice: vi.fn(async () => true) };
     expect(await offer(booking(), OWNER_ID, "USER", XERO_ON, receiptOnly)).toEqual({ kind: "ASK_CLUB", staffViewer: false });
     expect(receiptOnly.hasAnySupplementaryInvoice).toHaveBeenCalledWith("ckbooking1234567");
   });
@@ -458,6 +506,33 @@ describe("prepareBookingInvoiceDownload", () => {
       expect(d.fetchXeroInvoicePdf).not.toHaveBeenCalled();
       expect(chargeBookingLimit).not.toHaveBeenCalled();
       expect(createAuditLog).not.toHaveBeenCalled();
+    });
+
+    it("refuses a booking in a recorded GST-registered period as not found, before any limit, render or audit", async () => {
+      const d = off({
+        offer: (input: Parameters<typeof resolveBookingInvoiceOffer>[0]) =>
+          resolveBookingInvoiceOffer(input, { ...noXeroDocuments, generatedInvoiceTax: taxIs(RECORDED_REGISTERED) }),
+      });
+      expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).toEqual({ kind: "NOT_FOUND" });
+      expect(d.renderGenerated).not.toHaveBeenCalled();
+      expect(chargeBookingLimit).not.toHaveBeenCalled();
+      expect(createAuditLog).not.toHaveBeenCalled();
+    });
+
+    it("refuses when the tax schedule cannot be read, rather than generating (#5066, 20 Nov 2026)", async () => {
+      const d = off({
+        offer: (input: Parameters<typeof resolveBookingInvoiceOffer>[0]) =>
+          resolveBookingInvoiceOffer(input, { ...noXeroDocuments, generatedInvoiceTax: vi.fn(async () => { throw new Error("schedule unreadable"); }) }),
+      });
+      expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).toEqual({ kind: "SETTINGS_UNAVAILABLE" });
+      expect(d.renderGenerated).not.toHaveBeenCalled();
+      expect(chargeBookingLimit).not.toHaveBeenCalled();
+      expect(createAuditLog).not.toHaveBeenCalled();
+    });
+
+    it("lets any other failure of the offer propagate", async () => {
+      const d = off({ offer: vi.fn(async () => { throw new Error("supplementary read failed"); }) });
+      await expect(prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).rejects.toThrow("supplementary read failed");
     });
 
     it("serves no credit note while Xero is off", async () => {

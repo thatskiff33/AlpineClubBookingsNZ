@@ -8,12 +8,15 @@
  *    nothing here runs, so a Xero club never gets a second document for the
  *    same debt.
  * 2. Titled "Invoice", with NO GST wording at all: no GST number, no "includes
- *    GST", no tax line. That is the decided form for a club that has not
- *    recorded its GST status, and nothing on main records it yet
- *    (`ClubTaxSettings` has no writer, `INV-CONFIG-007`). The GST-registered
- *    form ("Tax invoice", the club's GST number and the GST included) follows
- *    the GST-status setting (#4632, PR #5153); until then nothing here may read
- *    `ClubTaxSettings`.
+ *    GST", no tax line. Owner decision of 20 Nov 2026: that form is made only
+ *    for a booking whose tax anchor falls in no recorded period (the code
+ *    baseline) or in a period the club recorded as not registered. A booking
+ *    in a GST-registered period the club recorded (#5153's schedule,
+ *    `INV-CONFIG-007`) is pointed at the club instead
+ *    (`generatedInvoiceWaitsOnTaxPeriod`, read by the offer before this runs),
+ *    until the "Tax invoice" form and the club GST number setting are built
+ *    (#5291). Nothing here reads the schedule: the offer does, through
+ *    `resolveAnchoredClubTax`.
  * 4. The supplier is the club's legal name and postal address
  *    (`getClubInvoiceSupplier`), with the lodge named as the place of stay. No
  *    issuer contact line.

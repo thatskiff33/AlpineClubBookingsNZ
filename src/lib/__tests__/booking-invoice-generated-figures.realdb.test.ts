@@ -11,6 +11,12 @@ import { assertSafeRaceDbUrl } from "./support/race-db-url";
  * the one amount-owed read, so the PDF and the page's Invoice and credits card
  * (`bookingInvoiceSummary` over `loadBookingDetail` + `readBookingAmountOwed`)
  * cannot disagree. Each download writes its audit row in the database.
+ *
+ * The owner's decision of 20 Nov 2026 is read here too: a booking made in a
+ * GST-registered period the club recorded gets the ask-the-club line, one made
+ * in a period recorded as not registered gets the Invoice, through the real
+ * schedule (`ClubTaxSettings`) and anchor (`Booking.createdAt`). Every other
+ * case runs with no period recorded, the code baseline.
  */
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -21,7 +27,9 @@ const REVIEW = `${PREFIX}review-booking`;
 const KEPT = `${PREFIX}kept-booking`;
 const TWO_CODES = `${PREFIX}two-codes-booking`;
 const UNPRICED = `${PREFIX}unpriced-booking`;
-const BOOKINGS = [PAID, REVIEW, KEPT, TWO_CODES, UNPRICED];
+const MADE_REGISTERED = `${PREFIX}made-registered-booking`;
+const MADE_NOT_REGISTERED = `${PREFIX}made-not-registered-booking`;
+const BOOKINGS = [PAID, REVIEW, KEPT, TWO_CODES, UNPRICED, MADE_REGISTERED, MADE_NOT_REGISTERED];
 const PROMO = `${PREFIX}promo`;
 const PROMO_B = `${PREFIX}promo-b`;
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
@@ -84,6 +92,10 @@ async function seedGuest(bookingId: string, id: string, guest: { firstName: stri
       fetchXeroCreditNotePdf: neverXero,
       renderGenerated: renderGeneratedBookingInvoice,
     } as never;
+
+    await db.clubTaxSettings.deleteMany({ where: { id: { startsWith: PREFIX } } });
+    // Every case but the tax-period one reasons from the code baseline (no recorded status).
+    expect(await db.clubTaxSettings.count(), "ClubTaxSettings holds rows this suite did not write").toBe(0);
 
     previousIdentity = await db.clubIdentitySettings.findUnique({ where: { id: "default" } });
     await db.clubIdentitySettings.upsert({
@@ -176,11 +188,20 @@ async function seedGuest(bookingId: string, id: string, guest: { firstName: stri
     });
     await seedGuest(UNPRICED, `${PREFIX}unpriced-adult`, { firstName: "Kiri", ageTier: "ADULT", nights: [10_000, 10_000, null] });
 
+    // Two bookings made on known dates, for the tax-period case: 15 Sep and 15 Oct 2026.
+    for (const [id, createdAt] of [[MADE_REGISTERED, "2026-09-15T00:00:00.000Z"], [MADE_NOT_REGISTERED, "2026-10-15T00:00:00.000Z"]] as const) {
+      await db.booking.create({
+        data: { id, memberId: MEMBER, status: "CONFIRMED", checkIn: day("2026-08-03"), checkOut: day("2026-08-06"), totalPriceCents: 30_000, finalPriceCents: 30_000, createdAt: new Date(createdAt) },
+      });
+      await seedGuest(id, `${id}-adult`, { firstName: "Wiremu", ageTier: "ADULT", nights: [10_000, 10_000, 10_000] });
+    }
+
     lodgeName = (await db.booking.findUniqueOrThrow({ where: { id: PAID }, select: { lodge: { select: { name: true } } } })).lodge.name;
   }, 60_000);
 
   afterAll(async () => {
     if (!db) return;
+    await db.clubTaxSettings.deleteMany({ where: { id: { startsWith: PREFIX } } });
     await db.auditLog.deleteMany({ where: { entityId: { in: BOOKINGS } } });
     await db.memberCredit.deleteMany({ where: { memberId: MEMBER } });
     await db.promoRedemption.deleteMany({ where: { bookingId: { in: BOOKINGS } } });
@@ -314,5 +335,42 @@ async function seedGuest(bookingId: string, id: string, guest: { firstName: stri
       await download.prepareBookingInvoiceDownload(UNPRICED, session, { kind: "INVOICE" }, { ipAddress: null, chargeBookingLimit: allowed }, dependencies),
     ).toEqual({ kind: "NOT_FOUND" });
     expect(await db.auditLog.count({ where: { entityId: UNPRICED } })).toBe(0);
+  });
+
+  describe("the tax period at the booking's anchor (owner decision, 20 Nov 2026)", () => {
+    const offerFor = async (id: string) => {
+      const { loadBookingDetail } = await import("@/app/(authenticated)/bookings/[id]/_lib/load-booking-detail");
+      const { resolveBookingDetailViewer } = await import("@/app/(authenticated)/bookings/[id]/_lib/booking-detail-viewer");
+      const booking = (await loadBookingDetail(id))!;
+      return download.resolveBookingInvoiceOffer({ booking, viewer: resolveBookingDetailViewer({ session, booking }), modules: { xeroIntegration: false } });
+    };
+    const get = (id: string) => download.prepareBookingInvoiceDownload(id, session, { kind: "INVOICE" }, { ipAddress: null, chargeBookingLimit: allowed }, dependencies);
+
+    beforeAll(async () => {
+      // With no recorded status, a booking made on 15 Sep is the code baseline's: the Invoice.
+      expect(await offerFor(MADE_REGISTERED)).toEqual({ kind: "GENERATED", notYetApproved: false });
+      // The club records registration from 1 Sep 2026 and its end from 1 Oct 2026.
+      await db.clubTaxSettings.create({ data: { id: `${PREFIX}tax-registered`, gstRegistered: true, taxRateBasisPoints: 1500, xeroTaxType: "OUTPUT2", effectiveFrom: day("2026-09-01") } });
+      await db.clubTaxSettings.create({ data: { id: `${PREFIX}tax-not-registered`, gstRegistered: false, taxRateBasisPoints: 0, xeroTaxType: null, effectiveFrom: day("2026-10-01") } });
+    });
+
+    afterAll(async () => {
+      await db.clubTaxSettings.deleteMany({ where: { id: { startsWith: PREFIX } } });
+    });
+
+    it("asks the club for a booking made in a recorded GST-registered period, and refuses its download", async () => {
+      expect(await offerFor(MADE_REGISTERED)).toEqual({ kind: "ASK_CLUB", staffViewer: false, reason: "REGISTERED_TAX_PERIOD" });
+      expect(await get(MADE_REGISTERED)).toEqual({ kind: "NOT_FOUND" });
+      expect(await db.auditLog.count({ where: { entityId: MADE_REGISTERED } })).toBe(0);
+    });
+
+    it("generates the Invoice for a booking made in a period recorded as not registered", async () => {
+      expect(await offerFor(MADE_NOT_REGISTERED)).toEqual({ kind: "GENERATED", notYetApproved: false });
+      const result = await get(MADE_NOT_REGISTERED);
+      expect(result.kind).toBe("PDF");
+      if (result.kind !== "PDF") return;
+      expect(result.body.toString("latin1")).not.toMatch(/GST/i);
+      expect(await db.auditLog.count({ where: { entityId: MADE_NOT_REGISTERED, action: "booking.invoice.downloaded" } })).toBe(1);
+    });
   });
 });

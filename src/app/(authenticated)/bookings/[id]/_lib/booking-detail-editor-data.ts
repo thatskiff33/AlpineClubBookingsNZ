@@ -30,7 +30,7 @@ import { loadEffectiveModuleFlagsStrict } from "@/lib/module-settings";
 import type { BookingAmountOwed } from "@/lib/booking-payment-state";
 import { bookingInvoiceSummary } from "@/lib/booking-invoice-summary";
 import { resolveBookingInvoiceAccount } from "./booking-invoice-account";
-import { resolveBookingInvoiceOffer } from "./booking-invoice-download";
+import { BookingInvoiceSettingsUnavailableError, resolveBookingInvoiceOffer } from "./booking-invoice-download";
 
 /**
  * WHAT THE EDIT PANEL IS HANDED (#2958): the `BookingEditorData` payload — the
@@ -359,7 +359,9 @@ export async function buildBookingDetailEditorData({
  * `GET /api/bookings/[id]/invoice` serves, added as a conditional spread (absent
  * when nothing is offered, on `noEmails`' reasoning above). The module flags are
  * read strictly (`loadEffectiveModuleFlagsStrict`): a failed read offers nothing,
- * never the generated document a forgiving "every module off" would. With an
+ * never the generated document a forgiving "every module off" would; so is the
+ * tax schedule the generated document's offer reads
+ * (`BookingInvoiceSettingsUnavailableError`). With an
  * invoice on offer, its account lines ride too: for Xero's invoice through
  * `resolveBookingInvoiceAccount`; for the app's generated one (Xero off) the
  * same summary with no Xero notice, so the card and the PDF show one set of
@@ -376,7 +378,13 @@ async function withBookingInvoiceOffer(
   } catch {
     return editorData;
   }
-  const invoiceOffer = await resolveBookingInvoiceOffer({ ...input, modules });
+  let invoiceOffer: Awaited<ReturnType<typeof resolveBookingInvoiceOffer>>;
+  try {
+    invoiceOffer = await resolveBookingInvoiceOffer({ ...input, modules });
+  } catch (error) {
+    if (error instanceof BookingInvoiceSettingsUnavailableError) return editorData;
+    throw error;
+  }
   if (invoiceOffer.kind === "NONE") return editorData;
   if (invoiceOffer.kind === "GENERATED") {
     return { ...editorData, invoiceOffer, invoiceAccount: { summary: bookingInvoiceSummary(input.booking, amountOwed), invoiceUpdateNotice: null } };

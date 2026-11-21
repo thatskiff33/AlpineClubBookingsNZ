@@ -76,7 +76,9 @@ export function BookingDocumentDownloadButton({
 /**
  * The ask-the-club line for each reason (`BookingInvoiceOffer`), in the reader's
  * voice (#1289). `FURTHER_INVOICE` is the Xero club's case (no `reason`); the
- * other two are a Xero-off club's (#5066 slice 2).
+ * others are a Xero-off club's (#5066 slice 2). The extra-charge and tax-period
+ * member lines say only where to get a copy, since an extra charge may since
+ * have been withdrawn; the staff lines say why.
  */
 const ASK_CLUB_LINE: Readonly<Record<BookingInvoiceAskClubReason | "FURTHER_INVOICE", { member: string; staff: string }>> = {
   FURTHER_INVOICE: {
@@ -88,8 +90,12 @@ const ASK_CLUB_LINE: Readonly<Record<BookingInvoiceAskClubReason | "FURTHER_INVO
     staff: "This booking's invoice is in the club's accounts. Check the club's accounts for a copy.",
   },
   EXTRA_CHARGE: {
-    member: "This booking has an extra charge with its own payment link, so no single invoice covers it. Please ask the club if you need one.",
-    staff: "This booking has an extra charge asked, so no single invoice covers it. Check the booking's payments.",
+    member: "Please ask the club for a copy of this booking's invoice.",
+    staff: "An extra charge has been raised on this booking, so no invoice is generated for it here. Check the booking's payments.",
+  },
+  REGISTERED_TAX_PERIOD: {
+    member: "Please ask the club for a copy of this booking's invoice.",
+    staff: "This booking falls in a period the club recorded as GST-registered, so no invoice is generated for it here yet. Check the club's accounts.",
   },
 };
 

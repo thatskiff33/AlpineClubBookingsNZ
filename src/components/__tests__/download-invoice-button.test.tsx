@@ -47,13 +47,23 @@ describe("BookingInvoiceControl", () => {
     expect(screen.queryByText(/Xero/)).toBeNull();
   });
 
-  it("with Xero off, explains Xero documents and an extra charge in the reader's voice (#5066 slice 2)", () => {
+  it("with Xero off, explains Xero documents, an extra charge and a recorded GST-registered period in the reader's voice (#5066 slice 2)", () => {
     const { rerender } = render(<BookingInvoiceControl bookingId="bk-1" offer={{ kind: "ASK_CLUB", staffViewer: false, reason: "XERO_DOCUMENTS" }} />);
     expect(screen.getByText("This booking's invoice is in the club's accounts. Please ask the club for a copy.")).toBeInTheDocument();
     rerender(<BookingInvoiceControl bookingId="bk-1" offer={{ kind: "ASK_CLUB", staffViewer: true, reason: "XERO_DOCUMENTS" }} />);
     expect(screen.getByText(/Check the club's accounts for a copy/)).toBeInTheDocument();
     rerender(<BookingInvoiceControl bookingId="bk-1" offer={{ kind: "ASK_CLUB", staffViewer: false, reason: "EXTRA_CHARGE" }} />);
-    expect(screen.getByText(/extra charge with its own payment link/)).toBeInTheDocument();
+    // Neutral: a withdrawn extra charge lands here too, with nothing outstanding (re-review item 3).
+    expect(screen.getByText("Please ask the club for a copy of this booking's invoice.")).toBeInTheDocument();
+    expect(screen.queryByText(/payment link|no single invoice/)).toBeNull();
+    rerender(<BookingInvoiceControl bookingId="bk-1" offer={{ kind: "ASK_CLUB", staffViewer: true, reason: "EXTRA_CHARGE" }} />);
+    expect(screen.getByText("An extra charge has been raised on this booking, so no invoice is generated for it here. Check the booking's payments.")).toBeInTheDocument();
+    rerender(<BookingInvoiceControl bookingId="bk-1" offer={{ kind: "ASK_CLUB", staffViewer: false, reason: "REGISTERED_TAX_PERIOD" }} />);
+    expect(screen.getByText("Please ask the club for a copy of this booking's invoice.")).toBeInTheDocument();
+    expect(screen.queryByText(/GST|tax/i)).toBeNull();
+    rerender(<BookingInvoiceControl bookingId="bk-1" offer={{ kind: "ASK_CLUB", staffViewer: true, reason: "REGISTERED_TAX_PERIOD" }} />);
+    expect(screen.getByText(/period the club recorded as GST-registered/)).toBeInTheDocument();
+    expect(screen.getByText(/Check the club's accounts\./)).toBeInTheDocument();
     expect(screen.queryByText(/more than one invoice/)).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
   });

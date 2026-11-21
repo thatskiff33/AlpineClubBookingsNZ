@@ -6,10 +6,11 @@
  * out here beyond formatting cents in the club's currency and locale
  * (`formatCents`, `INV-CONFIG-006`). The table header repeats on every page.
  *
- * What it never prints (owner decisions of 15 Nov 2026 on #5066): any GST
- * wording, number or tax line (the GST-registered "Tax invoice" waits for the
- * club's recorded GST status, #5153); a payment box or bank details (#4526);
- * an invoice number; an issuer contact line.
+ * What it never prints (owner decisions of 15 and 20 Nov 2026 on #5066): any
+ * GST wording, number or tax line (a booking in a GST-registered period the
+ * club recorded is never offered this document; its "Tax invoice" form is
+ * #5291); a payment box or bank details (#4526); an invoice number; an issuer
+ * contact line.
  */
 import { jsPDF } from "jspdf";
 

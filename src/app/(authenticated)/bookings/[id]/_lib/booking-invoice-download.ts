@@ -9,16 +9,20 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { formatBookingReference } from "@/lib/booking-reference";
 import {
   generatedBookingInvoiceOnOffer,
+  generatedInvoiceWaitsOnTaxPeriod,
   primaryXeroInvoiceOnOffer,
   type BookingCreditNote,
   type BookingInvoiceOffer,
+  type GeneratedInvoiceTaxPeriod,
 } from "@/lib/booking-invoice-access";
 import { bookingHasAnySupplementaryInvoiceEvidence } from "@/lib/booking-supplementary-invoice-identities";
 import { clubDownloadFilename } from "@/lib/club-download-filename";
 import { getClubIdentity } from "@/lib/club-identity-settings";
+import { clubTaxPeriodIsRecorded } from "@/lib/club-tax-settings";
 import { loadEffectiveModuleFlagsStrict } from "@/lib/module-settings";
 import type { RateLimitResult } from "@/lib/rate-limit";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
+import { resolveAnchoredClubTax } from "@/lib/xero-tax-anchors";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { resolveBookingDetailViewer, type BookingDetailViewer } from "./booking-detail-viewer";
 import { renderGeneratedBookingInvoice } from "./booking-invoice-generated";
@@ -33,8 +37,12 @@ type BookingInvoiceSession = NonNullable<Awaited<ReturnType<typeof auth>>>;
  *
  * XERO OFF (slice 2, owner decision 1). The invoice is the app's own document
  * (`GENERATED`, `generatedBookingInvoiceOnOffer`, rendered by
- * `renderGeneratedBookingInvoice`); there are no credit notes. Everything below
- * about Xero applies only while the Xero module is on.
+ * `renderGeneratedBookingInvoice`); there are no credit notes. A booking in a
+ * GST-registered period the club recorded is pointed at the club instead (owner
+ * decision of 20 Nov 2026, `generatedInvoiceWaitsOnTaxPeriod`). The module flags
+ * and the tax schedule are both read strictly: a failed read offers nothing,
+ * and the download answers `SETTINGS_UNAVAILABLE`. Everything below about Xero
+ * applies only while the Xero module is on.
  *
  * WHICH INVOICE. Only the booking's primary Xero invoice (`Payment.xeroInvoiceId`),
  * and only when nothing says the booking has another invoice the member is
@@ -82,15 +90,37 @@ export type BookingInvoiceDownload =
   | { kind: "XERO_NOT_CONNECTED" }
   | { kind: "XERO_UNAVAILABLE" }
   | { kind: "AUDIT_FAILED" }
-  /** The club's module settings could not be read, so which document is the invoice is unknown. */
+  /** The club's module settings or tax schedule could not be read, so which document is the invoice is unknown. */
   | { kind: "SETTINGS_UNAVAILABLE" };
 
 /** Which of the booking's Xero documents a download asks for. */
 export type BookingInvoiceDocument = { kind: "INVOICE" } | { kind: "CREDIT_NOTE"; creditNoteId: string };
 
+/**
+ * The booking's tax schedule or anchor could not be read, so whether the
+ * generated document may be made is unknown. Never read as "no recorded
+ * status": the page offers nothing and the download refuses (`SETTINGS_UNAVAILABLE`).
+ */
+export class BookingInvoiceSettingsUnavailableError extends Error {
+  constructor(options?: { cause?: unknown }) {
+    super("The club's tax schedule could not be read, so no generated invoice is offered.", options);
+    this.name = "BookingInvoiceSettingsUnavailableError";
+  }
+}
+
+/**
+ * The period in force at the booking's tax anchor, through the one schedule
+ * lookup the Xero documents use (`resolveAnchoredClubTax`), never re-derived.
+ */
+async function readGeneratedInvoiceTaxPeriod(bookingId: string): Promise<GeneratedInvoiceTaxPeriod> {
+  const { period, treatment } = await resolveAnchoredClubTax({ kind: "booking", bookingId });
+  return { recorded: clubTaxPeriodIsRecorded(period), registered: treatment.registered };
+}
+
 const offerDependencies = {
   hasAnySupplementaryInvoice: bookingHasAnySupplementaryInvoiceEvidence,
   creditNotes: readBookingCreditNotes,
+  generatedInvoiceTax: readGeneratedInvoiceTaxPeriod,
 };
 
 /**
@@ -135,7 +165,9 @@ export async function resolveBookingInvoiceOffer(
  * says GENERATED, whether the booking already has Xero documents from when the
  * module was on (a supplementary invoice, or a credit note the app holds the
  * id of). One is enough to point the booking at the club instead: a generated
- * "Invoice" beside Xero's would be a second document for the same debt.
+ * "Invoice" beside Xero's would be a second document for the same debt. Last,
+ * the tax period at the booking's anchor (`generatedInvoiceWaitsOnTaxPeriod`);
+ * a failed read throws `BookingInvoiceSettingsUnavailableError`, never GENERATED.
  */
 async function generatedOffer(
   input: Parameters<typeof resolveBookingInvoiceOffer>[0],
@@ -154,7 +186,17 @@ async function generatedOffer(
         modificationIds: booking.modifications.map((modification) => modification.id),
       })
     ).length > 0;
-  return xeroDocuments ? { kind: "ASK_CLUB", staffViewer: viewer.nonOwnerAdminViewer, reason: "XERO_DOCUMENTS" } : offer;
+  if (xeroDocuments) return { kind: "ASK_CLUB", staffViewer: viewer.nonOwnerAdminViewer, reason: "XERO_DOCUMENTS" };
+  let tax: GeneratedInvoiceTaxPeriod;
+  try {
+    tax = await dependencies.generatedInvoiceTax(booking.id);
+  } catch (error) {
+    throw new BookingInvoiceSettingsUnavailableError({ cause: error });
+  }
+  if (generatedInvoiceWaitsOnTaxPeriod(tax)) {
+    return { kind: "ASK_CLUB", staffViewer: viewer.nonOwnerAdminViewer, reason: "REGISTERED_TAX_PERIOD" };
+  }
+  return offer;
 }
 
 /** `<club>-invoice-<number>.pdf` / `<club>-credit-note-<number>.pdf`, else the booking reference; header-safe characters only. */
@@ -304,7 +346,13 @@ export async function prepareBookingInvoiceDownload(
   } catch {
     return { kind: "SETTINGS_UNAVAILABLE" };
   }
-  const offer = await dependencies.offer({ booking, viewer, modules });
+  let offer: BookingInvoiceOffer;
+  try {
+    offer = await dependencies.offer({ booking, viewer, modules });
+  } catch (error) {
+    if (error instanceof BookingInvoiceSettingsUnavailableError) return { kind: "SETTINGS_UNAVAILABLE" };
+    throw error;
+  }
   const served = servedDocument(offer, booking, document);
   if (!served) return { kind: "NOT_FOUND" };
 

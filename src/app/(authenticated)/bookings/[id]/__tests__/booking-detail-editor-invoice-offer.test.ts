@@ -5,11 +5,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * spread — present only when something is offered, so a club with Xero off
  * ships exactly the payload it did before.
  */
-const mocks = vi.hoisted(() => ({ offer: vi.fn(), modules: vi.fn(), account: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  offer: vi.fn(),
+  modules: vi.fn(),
+  account: vi.fn(),
+  SettingsUnavailable: class extends Error {},
+}));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/module-settings", () => ({ loadEffectiveModuleFlagsStrict: mocks.modules }));
-vi.mock("../_lib/booking-invoice-download", () => ({ resolveBookingInvoiceOffer: mocks.offer }));
+vi.mock("../_lib/booking-invoice-download", () => ({
+  resolveBookingInvoiceOffer: mocks.offer,
+  BookingInvoiceSettingsUnavailableError: mocks.SettingsUnavailable,
+}));
 vi.mock("../_lib/booking-invoice-account", () => ({ resolveBookingInvoiceAccount: mocks.account }));
 vi.mock("@/lib/admin-modules", () => ({ isEffectiveModuleEnabled: async () => false }));
 vi.mock("@/lib/member-guest-settings", () => ({ loadMemberGuestSettings: vi.fn() }));
@@ -121,6 +129,19 @@ describe("buildBookingDetailEditorData carries the invoice offer", () => {
     expect(mocks.offer).not.toHaveBeenCalled();
     expect("invoiceOffer" in data).toBe(false);
     expect("invoiceAccount" in data).toBe(false);
+  });
+
+  it("offers nothing when the tax schedule cannot be read, never a generated document (#5066, 20 Nov 2026)", async () => {
+    mocks.modules.mockResolvedValue({ xeroIntegration: false });
+    mocks.offer.mockRejectedValue(new mocks.SettingsUnavailable("schedule unreadable"));
+    const data = await buildBookingDetailEditorData(input);
+    expect("invoiceOffer" in data).toBe(false);
+    expect("invoiceAccount" in data).toBe(false);
+  });
+
+  it("does not swallow any other failure of the offer", async () => {
+    mocks.offer.mockRejectedValue(new Error("supplementary read failed"));
+    await expect(buildBookingDetailEditorData(input)).rejects.toThrow("supplementary read failed");
   });
 
   it("leaves the key out entirely when nothing is offered", async () => {
