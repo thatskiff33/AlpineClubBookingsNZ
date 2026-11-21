@@ -1,10 +1,9 @@
 import type { Prisma } from "@prisma/client";
 
 import { paidAnotherWayCloseReceiptRecorded } from "@/lib/late-capture-paid-another-way";
+import { NO_CARD_REFUND_BANK_CASH, type CardRefundBankCash } from "@/lib/payment-transaction-status";
 import {
   CARD_REFUND_BANK_RECORD_TASK_WHERE,
-  CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE,
-  COMPLETED_CANCEL_CARD_SHORTFALL_TASK_WHERE,
   isCancelCardShortfallTask,
   isCardRefundPaidAnotherWayTask,
   NOT_NON_CANCELLATION_HAND_BACK_WHERE,
@@ -126,7 +125,7 @@ const COMPLETED_BANK_REFUND_VOID_FOLLOW_UP_WHERE = { ...BANK_REFUND_VOID_FOLLOW_
 
 /** The records whose bank cash this module reads: paid-another-way closes, (#4097) paid-back card refund shortfalls, (#4287) hand-backs noted on their own record and re-confirmed bank refunds. */
 const BANK_CASH_RECORD_WHERE = {
-  OR: [CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE, COMPLETED_CANCEL_CARD_SHORTFALL_TASK_WHERE, COMPLETED_CANCELLATION_HAND_BACK_WHERE, COMPLETED_BANK_REFUND_VOID_FOLLOW_UP_WHERE],
+  OR: [...CARD_REFUND_BANK_RECORD_TASK_WHERE.OR, COMPLETED_CANCELLATION_HAND_BACK_WHERE, COMPLETED_BANK_REFUND_VOID_FOLLOW_UP_WHERE],
 };
 
 export interface PaidAnotherWayCash {
@@ -267,17 +266,6 @@ export async function readPaidAnotherWayCash(db: CashStore, paymentId: string): 
   return cash;
 }
 
-/** #4488: the bank cash one payment's card refund bank records hold, by kind. */
-export interface CardRefundBankCash {
-  /** "Paid another way" closes (#4280). */
-  paidAnotherWayCents: number;
-  /** Completed card refund shortfalls, a cancel's or a capacity race's (#4488). */
-  shortfallPaybackCents: number;
-}
-
-/** A payment with no card refund bank record. */
-export const NO_CARD_REFUND_BANK_CASH: Readonly<CardRefundBankCash> = Object.freeze({ paidAnotherWayCents: 0, shortfallPaybackCents: 0 });
-
 /**
  * #4280, #4488 (`INV-PAY-141`; owner, 22 and 26 Oct and 11 Nov 2026): THE BANK
  * CASH A CARD REFUND'S BANK RECORDS HOLD, PER PAYMENT - what a card refund's
@@ -318,8 +306,7 @@ export async function readCardRefundBankCashByPayment(
     const cents = Math.max(0, record.amountCents ?? 0);
     if (record.paymentId === null || cents === 0) continue;
     const payment = cash.get(record.paymentId) ?? { ...NO_CARD_REFUND_BANK_CASH };
-    if (isCardRefundPaidAnotherWayTask(record)) payment.paidAnotherWayCents += cents;
-    else payment.shortfallPaybackCents += cents;
+    payment[isCardRefundPaidAnotherWayTask(record) ? "paidAnotherWayCents" : "shortfallPaybackCents"] += cents;
     cash.set(record.paymentId, payment);
   }
   return cash;

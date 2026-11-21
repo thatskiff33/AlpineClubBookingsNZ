@@ -503,8 +503,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 
 - **A card refund's reversal never takes a payment's refunded total below the
   bank cash its card refund's bank records hold** (#4280, #4488; owner, 22 and
-  26 Oct and 11 Nov 2026). A record is a "Paid another way" close or a
-  completed card refund shortfall, a cancel's or a capacity race's.
+  26 Oct and 11 Nov 2026): a "Paid another way" close or a completed card
+  refund shortfall, a cancel's or a capacity race's.
   The floor on a counted refund moving to failed or cancelled is the captured
   amount, or less: counted card refunds, account credit and that cash
   (`expectedRefundedFloorCents`), less what the payment's other charges hold. A late refund the cap kept out takes none of it.
@@ -512,7 +512,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   An open or dismissed shortfall moved no money. One definition
   (`CARD_REFUND_BANK_RECORD_TASK_WHERE`), one reader
   (`readCardRefundBankCashByPayment`), under the Payment row the writer holds,
-  which a close and a completion take first.
+  which a close and a completion take before their record.
 - **Why it stands.** A completion puts its amount on the payment in one
   transaction, and nothing undoes a record: #4162 never takes one
   (`isCardRefundBankRecordTask`); only a dismissed task reopens.

@@ -60,16 +60,22 @@ import type { Prisma } from "@prisma/client";
 import { CAPTURED_PAYMENT_STATUS_LIST } from "@/lib/booking-payment-state";
 import type { ClubFormat } from "@/lib/club-format";
 import {
+  type CardRefundBankCash,
   expectedRefundedFloorCents,
   isRecordedRefundStatus,
+  NO_CARD_REFUND_BANK_CASH,
 } from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
-import { NO_CARD_REFUND_BANK_CASH, readCardRefundBankCashByPayment } from "@/lib/card-refund-paid-another-way-cash";
+import { readCardRefundBankCashByPayment } from "@/lib/card-refund-paid-another-way-cash";
 import { withReadOnlySnapshot } from "@/lib/read-only-snapshot";
 import { ACCOUNT_CREDIT_DISPOSITION_WHERE } from "@/lib/stripe-cash-refund-evidence";
 import { formatCents } from "@/lib/utils";
 
-export interface RefundedTotalShortfallRow {
+/**
+ * #4280, #4488: with the bank cash its card refund's bank records hold, by kind
+ * (`paidAnotherWayCents`, `shortfallPaybackCents`).
+ */
+export interface RefundedTotalShortfallRow extends CardRefundBankCash {
   paymentId: string;
   bookingId: string;
   amountCents: number;
@@ -78,10 +84,6 @@ export interface RefundedTotalShortfallRow {
   cardRefundCents: number;
   /** Account-credit dispositions sourced from the payment's booking. */
   accountCreditCents: number;
-  /** #4280: bank cash the payment's "Paid another way" closes recorded. */
-  paidAnotherWayCents: number;
-  /** #4488: bank cash the payment's completed card refund shortfalls recorded. */
-  shortfallPaybackCents: number;
 }
 
 export interface RefundedTotalShortfallFinding extends RefundedTotalShortfallRow {
@@ -103,7 +105,7 @@ export interface RefundedTotalShortfallAuditResult {
 export function deriveRefundedTotalShortfall(
   row: RefundedTotalShortfallRow
 ): RefundedTotalShortfallFinding | null {
-  const expectedFloorCents = expectedRefundedFloorCents(row);
+  const expectedFloorCents = expectedRefundedFloorCents({ ...row, bankCash: row });
   const shortfallCents = expectedFloorCents - row.refundedAmountCents;
   if (shortfallCents <= 0) {
     return null;
@@ -112,7 +114,7 @@ export function deriveRefundedTotalShortfall(
   // bank cash is the old arithmetic's to explain; what that cash adds is
   // another reason.
   const shortfallBeforeBankCashCents =
-    expectedRefundedFloorCents({ ...row, ...NO_CARD_REFUND_BANK_CASH }) - row.refundedAmountCents;
+    expectedRefundedFloorCents({ ...row, bankCash: NO_CARD_REFUND_BANK_CASH }) - row.refundedAmountCents;
   const attributableCents =
     row.cardRefundCents > 0
       ? Math.max(0, Math.min(row.cardRefundCents, row.accountCreditCents, shortfallBeforeBankCashCents))

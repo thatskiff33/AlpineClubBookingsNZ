@@ -225,6 +225,9 @@ let example: ReturnType<typeof cardShortfallLateRefundExample>;
 
       async function cleanRace() {
         await prisma.alertCooldown.deleteMany({ where: { key: { startsWith: `card-refund-cap-overflow:${CAP_TXN}:` } } });
+        // The race's once-ever shortfall alert claim, so each case raises its own.
+        const { capacityRaceRefundShortfallAlertKey } = await import("@/lib/capacity-race-refund-shortfall");
+        await prisma.alertCooldown.deleteMany({ where: { key: capacityRaceRefundShortfallAlertKey(CAP_BOOKING) } });
         await prisma.auditLog.deleteMany({ where: { targetId: CAP_BOOKING } });
         await prisma.bookingEvent.deleteMany({ where: { bookingId: CAP_BOOKING } });
         await releaseBookingJournalForTeardown(prisma, [CAP_BOOKING]);

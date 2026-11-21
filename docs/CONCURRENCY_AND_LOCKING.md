@@ -5524,13 +5524,14 @@ booking-ledger lines. No provider call runs inside it. A failed refund's floor
 (#4280, #4488, `INV-PAY-141`) reads the payment's card refund bank records - its
 "Paid another way" closes and completed card refund shortfalls
 (`readCardRefundBankCashByPayment`) - on that same client, under the `Payment`
-row. The close takes `lock(1)`, then that row, before it writes its record; a
-shortfall's completion takes `lock(1)`, the booking row (and the member's
-credit-ledger key when part goes back as credit), then that row before its claim
-(`lockCancellationHandBackBeforeClaim`). So the writer sees either whole or
-waits for it. No key, order or registry entry is added. Proved in both orders by
-`card-refund-reversal-bank-cash-floor.realdb.test.ts` (closes) and
-`card-refund-reversal-shortfall-floor.realdb.test.ts` (shortfalls).
+row. The close takes `lock(1)`, then that row, before it writes its record. A
+shortfall's completion takes `lock(1)`, then the booking row, then that row
+while it chooses its route (`cardShortfallSettlement`; a capacity race's again
+in `capacityRaceChargeForHandBack`), all before its claim; it takes no member
+key, since a shortfall gives nothing back as credit. So the writer sees either
+whole or waits for it. No key, order or registry entry is added. Proved in both
+orders by `card-refund-reversal-bank-cash-floor.realdb.test.ts` (closes) and,
+for a cancel's bank part, `card-refund-reversal-shortfall-floor.realdb.test.ts`.
 
 **One order for the refunded total: `Payment` row, then refund rows, then
 transaction rows** — and, in a transaction that also takes the per-member
