@@ -4450,7 +4450,7 @@ window), **`INV-LOCK-001`** to **`INV-LOCK-003`**.
   `booking-exception-approved-interleaving.test.ts` and
   `amount-owed-one-home.test.ts`.
 
-## INV-PAY-160
+## INV-PAY-161
 
 **Related: `INV-PAY-001`** (manual provenance), **`INV-PAY-038`** (one
 settlement body), **`INV-PAY-040`** (the manual capacity refusal),

@@ -2063,7 +2063,7 @@ export type ManualBookingSettlementResult = {
 };
 
 /**
- * #5005 (child A, `INV-PAY-160`) — the paid-booking import's settle: a SIBLING
+ * #5005 (child A, `INV-PAY-161`) — the paid-booking import's settle: a SIBLING
  * ENTRY POINT into the manual arm of the one settlement body, called inside the
  * import's own creating transaction. That transaction already holds lock(1) and
  * the lodge key (both re-entrant), so this adds nothing a manual settle does not

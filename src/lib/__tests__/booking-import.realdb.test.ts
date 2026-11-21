@@ -1,6 +1,6 @@
 /**
  * Real-PostgreSQL proof of the paid-booking import engine (#5005 child A;
- * `INV-PAY-160`, `INV-CAP-040`), through the real planner, the real writer and
+ * `INV-PAY-161`, `INV-CAP-040`), through the real planner, the real writer and
  * the real settlement body — never a faked settle or a hand-inserted row.
  *
  *  1. Happy path: a mixed party is one PAID booking at the imported price, with
