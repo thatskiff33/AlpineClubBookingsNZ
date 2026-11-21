@@ -2688,6 +2688,12 @@ from. There is no environment variable.
   after the club's today, so no document already rendered changes, and is
   refused when Xero's own tax-rate list does not carry the chosen code,
   active and usable on revenue, at the chosen rate.
+- **Tax categories.** Sales tax on expenses, Exempt and Zero rated map to
+  the connected Xero organisation's own tax rates (`XeroTaxCategoryMapping`,
+  `INV-CONFIG-008`, #5209), set by a Full Admin on the Xero setup screen;
+  Sales tax on income is the schedule above. There is no environment
+  variable and nothing to do on upgrade: an unmapped category changes no
+  document until a line uses it.
 - **Charges are recorded.** Since M3b (#4627), the journal records each
   booking door's charge lines under the schedule above. A journal refusal
   stops the booking or payment change rather than being ignored

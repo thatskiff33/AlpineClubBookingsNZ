@@ -1,5 +1,6 @@
 import { LineAmountTypes } from "xero-node";
 import type { ClubTaxTreatment } from "@/lib/club-tax-settings";
+import { XeroTaxCategoryUnavailableError, type XeroTaxCategoryKey } from "@/lib/xero-tax-categories";
 
 /**
  * THE ONE XERO TAX RENDERER (#4632). The only module under `src/` that names a
@@ -57,6 +58,26 @@ export function xeroTaxRenderingOf(treatment: ClubTaxTreatment): XeroTaxRenderin
  */
 export function xeroLineTax(rendering: XeroTaxRendering): { taxType?: string } {
   return rendering.taxType === undefined ? {} : { taxType: rendering.taxType };
+}
+
+/**
+ * The tax field a line in one of the club's tax categories spreads in (#5209;
+ * `xero-tax-categories.ts`). An unregistered club's documents are `NoTax`, so
+ * no category names a tax type there and none needs mapping. Sales tax on
+ * income is the treatment's own code, exactly `xeroLineTax`. Any other category
+ * takes the tax type the club mapped for its connected Xero organisation, which
+ * the caller has already checked against Xero; unmapped, the line is refused
+ * before any provider write, never sent under a guessed code.
+ */
+export function xeroCategoryLineTax(
+  rendering: XeroTaxRendering,
+  category: XeroTaxCategoryKey,
+  mappedTaxType: string | null,
+): { taxType?: string } {
+  if (rendering.lineAmountTypes === LineAmountTypes.NoTax) return {};
+  if (category === "SALES_TAX_ON_INCOME") return xeroLineTax(rendering);
+  if (mappedTaxType === null) throw new XeroTaxCategoryUnavailableError(category, "unmapped");
+  return { taxType: mappedTaxType };
 }
 
 /**
