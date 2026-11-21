@@ -4474,8 +4474,7 @@ edit's card refund debt).
 - **One read decides it.** `readRefundableCardIntentId`
   (`src/lib/refundable-card-intent.ts`) answers the settlement
   (`editReductionRefundsToCard`, in `applyPaymentAdjustments` under the
-  door's locks, and the quote's `refundByBankTransfer` label, which a linked
-  move's `refundRoute` combines) and the debt's
+  door's locks, and the quote's `refundByBankTransfer` label) and the debt's
   writer (`enqueueLedgerRefundRecovery`), so they cannot disagree about a
   payment none has changed.
 - **A reserve that cannot write its debt rolls the edit back.**
