@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { journalRefundPayableComparison, withJournalChargeComparison } from "@/lib/booking-ledger-projection-census-journal";
 import type { BookingLedgerEvaluation } from "@/lib/booking-ledger-projection-census";
 import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-row";
-import { classifyHandBacks, type BookingHandBackJournal } from "@/lib/member-money";
+import { classifyHandBacks, HAND_BACK_CENSUS_CLASSES, type BookingHandBackJournal, type HandBackCensusClass } from "@/lib/member-money";
 
 const B = "census-5185";
 const ERA = new Date("2026-06-15T00:00:00.000Z");
@@ -27,7 +27,8 @@ const lateCapture = (id: string, intent: string, overrides: Partial<Task> = {}) 
   task(id, { kind: "DELETED_BOOKING_LATE_CAPTURE", lateCaptureApprovalIntentId: intent, status: "DISMISSED", completedAt: AFTER, amountCents: 2_500, ...overrides });
 
 function facts(overrides: Partial<BookingHandBackJournal> = {}): BookingHandBackJournal {
-  return { handBackSince: ERA, tasks: [], debts: new Map(), payments: new Map(), keeps: new Map(), openRefundPayableCents: 0, journalCardRefundKeys: new Set(), ...overrides };
+  return { handBackSince: ERA, tasks: [], debts: new Map(), payments: new Map(), keeps: new Map(), openRefundPayableCents: 0, journalCardRefundKeys: new Set(),
+    captureReturnDebts: new Set(), captureReturnsWithRow: new Set(), ...overrides };
 }
 const kinds = (input: BookingHandBackJournal) => classifyHandBacks(B, input).map((finding) => `${finding.kind} ${finding.identity}`);
 
@@ -105,6 +106,27 @@ describe("the hand-back classes (#5185)", () => {
   });
 });
 
+/** One seeded bad booking per class: a sixth class without a case here fails the `it.each` below. */
+const SEEDED: Record<HandBackCensusClass, BookingHandBackJournal> = {
+  HAND_BACK_WITHOUT_EVENT: facts({ tasks: [task("bad")] }),
+  HAND_BACK_PAID_WITHOUT_EVENT: facts({ tasks: [paidTask("bad")], debts: new Map([["bad", 0]]) }),
+  UNAPPLIED_HAND_BACK: facts({ tasks: [paidTask("bad")], debts: new Map([["bad", 0]]), payments: new Map([["bad", { applied: false }]]) }),
+  HAND_BACK_OBLIGATION_DRIFT: facts({ tasks: [paidTask("bad")], debts: new Map([["bad", 8_000]]), payments: new Map([["bad", { applied: true }]]) }),
+  KEEP_WITHOUT_EVENT: facts({ tasks: [lateCapture("bad", "pi_bad")], keeps: new Map([["pi_bad", false]]) }),
+};
+
+describe("every hand-back class is reported for a seeded bad row (#5185)", () => {
+  it("covers exactly the classes the census defines", () => {
+    expect(Object.keys(SEEDED).sort()).toEqual([...HAND_BACK_CENSUS_CLASSES].sort());
+  });
+
+  it.each(HAND_BACK_CENSUS_CLASSES)("%s alone", (kind) => {
+    const seeded = SEEDED[kind];
+    expect(seeded, `no seeded bad row for ${kind}`).toBeDefined();
+    expect(kinds(seeded)).toEqual([`${kind} bad`]);
+  });
+});
+
 function row(handBacks: BookingHandBackJournal | null, overrides: Partial<BookingLedgerCensusRow> = {}): BookingLedgerCensusRow {
   return {
     booking: { id: B, status: "CANCELLED", deletedAt: null, organiserSettled: false, finalPriceCents: 0 },
@@ -143,6 +165,27 @@ describe("comparison report v3: JOURNAL_REFUND_PAYABLE (#5185)", () => {
     }));
     expect(result.identity).toMatchObject({ identity: "JOURNAL_REFUND_PAYABLE", status: "AGREE", columnCents: 17_000, ledgerCents: 17_000 });
     expect(result.integrity).toEqual([]);
+  });
+
+  it("a late capture whose automatic refund Stripe refused agrees while held, once approved, and once kept (review fix 1)", () => {
+    // Held: the refund reserved its slice, so the capture-return R05 posted; Stripe refused, and the task holds it.
+    const held = facts({ tasks: [lateCapture("t", "pi_late", { status: "OPEN", completedAt: null })], captureReturnDebts: new Set(["pi_late"]), openRefundPayableCents: 2_500 });
+    expect(journalRefundPayableComparison(row(held)).identity).toMatchObject({ status: "AGREE", columnCents: 2_500, ledgerCents: 2_500 });
+    // A failed refund's row on the same debt is counted once: the row, not the task too.
+    const failed = cardRefund("failed-later", { status: "FAILED", amountCents: 2_500, paymentIntentId: "pi_late" });
+    expect(journalRefundPayableComparison(row({ ...held, journalCardRefundKeys: new Set(["failed-later"]), captureReturnsWithRow: new Set(["pi_late"]) },
+      { recoveryOperations: [failed] })).identity).toMatchObject({ status: "AGREE", ledgerCents: 2_500 });
+    // Approved: the task is completed and the approval's row owes the slice.
+    const approved = facts({ tasks: [lateCapture("t", "pi_late", { status: "COMPLETED" })], captureReturnDebts: new Set(["pi_late"]),
+      journalCardRefundKeys: new Set(["approval"]), captureReturnsWithRow: new Set(["pi_late"]), openRefundPayableCents: 2_500 });
+    expect(journalRefundPayableComparison(row(approved, { recoveryOperations: [cardRefund("approval", { amountCents: 2_500, paymentIntentId: "pi_late" })] })).identity)
+      .toMatchObject({ status: "AGREE", ledgerCents: 2_500 });
+    // Kept: the debt is reversed, so the reader keys no row on it (it is not live) and the dismissed task owes nothing.
+    const kept = facts({ tasks: [lateCapture("t", "pi_late")], captureReturnDebts: new Set(["pi_late"]), keeps: new Map([["pi_late", true]]) });
+    expect(journalRefundPayableComparison(row(kept, { recoveryOperations: [failed] })).identity).toMatchObject({ status: "AGREE", columnCents: 0, ledgerCents: 0 });
+    // A held capture the journal never took on (approval required, no automatic refund tried) is not counted.
+    expect(journalRefundPayableComparison(row(facts({ tasks: [lateCapture("t", "pi_late", { status: "OPEN", completedAt: null })] }))).identity)
+      .toMatchObject({ status: "AGREE", ledgerCents: 0 });
   });
 
   it("disagrees on a debt with nothing behind it: a card refund made without paying its debt, or a hand-back whose task is gone", () => {

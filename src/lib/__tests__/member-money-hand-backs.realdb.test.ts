@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
-import { postBookingReceipts, postHandBackObligation, withdrawRefundObligation } from "@/lib/member-money/doors";
+import { postBookingReceipts, postHandBackObligation, postRefundObligation, withdrawRefundObligation } from "@/lib/member-money/doors";
+import { buildLateCaptureApprovalRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
 import { HAND_BACK_CENSUS_CLASSES, memberMoneyEventKeys, postMemberMoneyEvent, readBookingRefundCensus } from "@/lib/member-money";
 import { readMemberMoneyApplicationState } from "@/lib/member-money/internal/application-read";
 import { memberMoneyApplicationTotals, memberMoneyConservationProblems } from "@/lib/member-money/internal/application-state";
@@ -646,6 +647,29 @@ async function cleanup() {
       expect(await refundPayable(id)).toMatchObject({ status: "DISAGREE", columnCents: 8_000, ledgerCents: 0 });
       await db.$transaction((tx) => withdrawRefundObligation(tx, context, { bookingId: id, scope: "hand-back", id: taskId, actorMemberId: ADMIN, reason: "census test", senderKeyPrefix: `census-${taskId}` }));
       expect(await handBackFindings()).toEqual([]);
+    });
+
+    it("(review fix 1) a late capture whose automatic refund Stripe refused agrees while held, with a failed row on its debt, and once kept", async () => {
+      const id = await chargedBooking([["STRIPE", 10_000]]);
+      const intent = `pi_${id}_refused`;
+      await db.paymentTransaction.create({ data: { paymentId: `${id}-payment`, source: "STRIPE", kind: "ADDITIONAL", status: "SUCCEEDED", amountCents: 2_500, stripePaymentIntentId: intent } });
+      // The automatic refund's reservation step posts the capture-return R05 (`ensureFaceCents`); Stripe's refusal
+      // releases only the reservation, so the R05 alone is what it leaves. Posted here through the same door.
+      await db.$transaction((tx) => postRefundObligation(tx, context, { bookingId: id, scope: "capture-return", id: intent, amountCents: 2_500, origin: "APP", debtorRead: "plain" }));
+      // The refusal holds the capture on an OPEN approval task (`holdLateCaptureForTreasurerIfRequired`).
+      const task = await db.manualRefundTask.create({ data: { bookingId: id, paymentId: `${id}-payment`, amountCents: 2_500, raisedAmountCents: 2_500,
+        kind: "DELETED_BOOKING_LATE_CAPTURE", lateCaptureApprovalIntentId: intent, reason: "A late card charge held for the treasurer.", status: "OPEN" } });
+      expect(await refundPayable(id)).toMatchObject({ status: "AGREE", columnCents: 2_500, ledgerCents: 2_500 });
+      // A card refund row left FAILED on the same debt is counted once: the row, not the task beside it.
+      await db.paymentRecoveryOperation.create({ data: { type: "REFUND_BOOKING_MODIFICATION", status: "FAILED", attempts: 9, bookingId: id, paymentId: `${id}-payment`,
+        paymentIntentId: intent, amountCents: 2_500, idempotencyKey: buildLateCaptureApprovalRefundRecoveryIdempotencyKey(intent) } });
+      expect(await refundPayable(id)).toMatchObject({ status: "AGREE", columnCents: 2_500, ledgerCents: 2_500 });
+      // The treasurer keeps it through the real door: the debt is reversed (`closeKeptCaptureReturn`) and the keep posts.
+      await resolve(task.id, "dismissed");
+      expect(await db.manualRefundTask.findUniqueOrThrow({ where: { id: task.id }, select: { status: true } })).toEqual({ status: "DISMISSED" });
+      expect(await refundPayable(id)).toMatchObject({ status: "AGREE", columnCents: 0, ledgerCents: 0 });
+      expect(await handBackFindings()).toEqual([]);
+      await db.paymentRecoveryOperation.deleteMany({ where: { bookingId: id } });
     });
 
     it("reports a late capture kept with no keep in the journal", async () => {

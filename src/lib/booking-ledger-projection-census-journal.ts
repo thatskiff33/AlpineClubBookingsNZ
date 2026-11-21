@@ -42,6 +42,7 @@
  */
 import {
   classifyHandBacks,
+  heldCaptureReturnOwedCents,
   heldHandBackOwedCents,
   isJournalEraBooking,
   journalComponentOfLegacyLine,
@@ -156,9 +157,12 @@ export function journalChargeComparison(row: BookingLedgerCensusRow): {
  * refund-payable lines, credits less debits) must equal what the legacy records
  * still owe back on the debts the journal took on: each journal hand-back task
  * whose R05 posted, at what it still owes (`heldHandBackOwedCents`), plus each
- * open card refund row whose debt's R05 posted, at its slices not yet made
+ * open card refund row whose debt is live in the journal (the live end of its
+ * chain, so a debt reversed since counts no row), at its slices not yet made
  * (`cardRefundOperationUnmadeCents`, the figure `IN_FLIGHT_REFUND` reads; a
- * dead row still owes until it is closed). A debt raised before its door
+ * dead row still owes until it is closed), plus each late capture held open
+ * for the treasurer whose capture-return R05 posted and no such row pays, at
+ * its task's amount (`heldCaptureReturnOwedCents`). A debt raised before its door
  * posted R05s is M9's, so neither side counts it; a debt the journal holds
  * with nothing behind it, or a refund that went back without paying its debt,
  * disagrees. Identity `JOURNAL_REFUND_PAYABLE`: `columnCents` = the journal's
@@ -175,11 +179,11 @@ export function journalRefundPayableComparison(row: BookingLedgerCensusRow): {
   if (!facts) {
     return { identity: { identity: "JOURNAL_REFUND_PAYABLE", status: "NOT_APPLICABLE", columnCents: 0, ledgerCents: 0, deltaCents: 0, explainedBy: [] }, integrity: [] };
   }
-  // The keys are of open card refund rows only (`readBookingHandBackJournal`), read in the same snapshot as these rows.
+  // The keys are of open card refund rows whose debt is live (`readBookingHandBackJournal`), read in the same snapshot as these rows.
   const cardCents = row.recoveryOperations.filter((operation) => facts.journalCardRefundKeys.has(operation.idempotencyKey))
     .reduce((sum, operation) => sum + cardRefundOperationUnmadeCents(operation), 0);
   const columnCents = facts.openRefundPayableCents;
-  const ledgerCents = heldHandBackOwedCents(facts) + cardCents;
+  const ledgerCents = heldHandBackOwedCents(facts) + heldCaptureReturnOwedCents(facts) + cardCents;
   return {
     identity: { identity: "JOURNAL_REFUND_PAYABLE", status: columnCents === ledgerCents ? "AGREE" : "DISAGREE", columnCents, ledgerCents,
       deltaCents: columnCents - ledgerCents, explainedBy: [] },

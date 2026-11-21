@@ -3,9 +3,8 @@ import { isJournalHandBackTask } from "../../manual-refund-task-hand-back-popula
 import { openHandBackOwedCents } from "../../manual-refund-task-settlement-rules";
 import { isOwedCardRefundOperation, OPEN_CARD_REFUND_OPERATION_WHERE } from "../../open-card-refund-owed";
 import { exactPrefix } from "../../prisma-exact-prefix";
-import { eventPosted } from "./booking-journal-read";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
-import { memberMoneyChainTip, refundPayableOpenCents } from "./refund-family";
+import { memberMoneyChainTip, refundObligationChain, refundPayableOpenCents } from "./refund-family";
 import { refundDoorOfObligationKey, resolveCardRefundObligation } from "./refund-obligation-map";
 import type { HandBackCensusClass } from "./refund-census";
 
@@ -65,8 +64,12 @@ export interface BookingHandBackJournal {
   keeps: ReadonlyMap<string, boolean>;
   /** The booking's open refund payable: every refund debt's refund-payable lines, credits less debits. */
   openRefundPayableCents: number;
-  /** The idempotency keys of the booking's open card refund rows whose debt's R05 the journal holds. */
+  /** The idempotency keys of the booking's open card refund rows whose debt is live in the journal (the live end of its chain). */
   journalCardRefundKeys: ReadonlySet<string>;
+  /** Each capture intent whose capture-return debt the journal holds (an R05 posted, even if reversed since). */
+  captureReturnDebts: ReadonlySet<string>;
+  /** Each capture intent whose capture-return debt an open card refund row in `journalCardRefundKeys` pays. */
+  captureReturnsWithRow: ReadonlySet<string>;
 }
 
 export interface HandBackCensusFinding { bookingId: string; identity: string; kind: HandBackCensusClass; cents: number; detail: string }
@@ -98,17 +101,24 @@ async function liveEvent(db: Db, base: MemberMoneyEventKey) {
   return db.memberMoneyEvent.findUnique({ where: { eventKey: tip }, select: { journal: { select: { applications: { select: { id: true }, take: 1 } } } } });
 }
 
-/** The keys of the booking's open card refund rows whose debt's R05 is in the journal. */
-async function journalCardRefundKeys(db: Db, bookingIds: readonly string[]): Promise<Map<string, Set<string>>> {
+/**
+ * The booking's open card refund rows whose debt is live in the journal: the live end of its chain, so a debt
+ * reversed since (a kept late capture's, `closeKeptCaptureReturn`; a withdrawal) no longer counts its row. With the
+ * capture intents those rows pay, for the capture-return term of report v3.
+ */
+async function journalCardRefunds(db: Db, bookingIds: readonly string[]): Promise<Map<string, { keys: Set<string>; captureReturns: Set<string> }>> {
   const operations = await db.paymentRecoveryOperation.findMany({ where: { bookingId: { in: [...bookingIds] }, ...OPEN_CARD_REFUND_OPERATION_WHERE },
     orderBy: { id: "asc" }, select: { type: true, idempotencyKey: true, bookingId: true, paymentIntentId: true, amountCents: true } });
-  const keys = new Map<string, Set<string>>();
+  const result = new Map<string, { keys: Set<string>; captureReturns: Set<string> }>();
   for (const operation of operations.filter(isOwedCardRefundOperation)) {
     const ref = await resolveCardRefundObligation(db, operation);
-    if (!ref || !(await eventPosted(db, memberMoneyEventKeys.refundObligation(ref.scope, ref.id)))) continue;
-    keys.set(operation.bookingId, (keys.get(operation.bookingId) ?? new Set()).add(operation.idempotencyKey));
+    if (!ref || !(await refundObligationChain(db, ref.scope, ref.id)).live) continue;
+    const own = result.get(operation.bookingId) ?? { keys: new Set<string>(), captureReturns: new Set<string>() };
+    own.keys.add(operation.idempotencyKey);
+    if (ref.scope === "capture-return") own.captureReturns.add(ref.id);
+    result.set(operation.bookingId, own);
   }
-  return keys;
+  return result;
 }
 
 /**
@@ -124,7 +134,7 @@ export async function readBookingHandBackJournal(db: Db, bookingIds: readonly st
   const tasks = await db.manualRefundTask.findMany({ where: { bookingId: { in: ids } }, orderBy: { id: "asc" }, select: TASK_SELECT });
   const lines = await db.memberMoneyLine.findMany({ where: { bookingId: { in: ids }, account: "REFUND_PAYABLE" }, orderBy: { id: "asc" },
     select: { bookingId: true, side: true, amountCents: true, obligation: { select: { obligationKey: true } } } });
-  const cards = await journalCardRefundKeys(db, ids);
+  const cards = await journalCardRefunds(db, ids);
   // A keep posts only for a dismissed approval task with a payment (`prepareLateCaptureDecision`).
   const keptIntent = (task: HandBackCensusTask) => (task.status === "DISMISSED" && task.paymentId !== null ? task.lateCaptureApprovalIntentId : null);
   const intents = tasks.flatMap((task) => keptIntent(task) ?? []);
@@ -135,9 +145,11 @@ export async function readBookingHandBackJournal(db: Db, bookingIds: readonly st
     const own = tasks.filter((task) => task.bookingId === bookingId);
     const bookingLines = lines.filter((candidate) => candidate.bookingId === bookingId);
     const debtLines = new Map<string, typeof bookingLines>();
+    const captureReturnDebts = new Set<string>();
     for (const line of bookingLines) {
       const door = line.obligation ? refundDoorOfObligationKey(line.obligation.obligationKey) : null;
       if (door?.scope === "hand-back") debtLines.set(door.id, [...(debtLines.get(door.id) ?? []), line]);
+      if (door?.scope === "capture-return") captureReturnDebts.add(door.id);
     }
     const debts = new Map([...debtLines].map(([taskId, own]) => [taskId, refundPayableOpenCents(own)]));
     const openRefundPayableCents = refundPayableOpenCents(bookingLines);
@@ -152,8 +164,9 @@ export async function readBookingHandBackJournal(db: Db, bookingIds: readonly st
       if (!intent || !captures.some((capture) => capture.stripePaymentIntentId === intent)) continue;
       keeps.set(intent, Boolean((await liveEvent(db, memberMoneyEventKeys.keptCapture(intent)))?.journal));
     }
+    const card = cards.get(bookingId);
     result.set(bookingId, { handBackSince, tasks: own, debts, payments, keeps, openRefundPayableCents,
-      journalCardRefundKeys: cards.get(bookingId) ?? new Set() });
+      journalCardRefundKeys: card?.keys ?? new Set(), captureReturnDebts, captureReturnsWithRow: card?.captureReturns ?? new Set() });
   }
   return result;
 }
@@ -167,6 +180,19 @@ const owedCents = (task: HandBackCensusTask) => openHandBackOwedCents([task]);
  */
 export function heldHandBackOwedCents(facts: BookingHandBackJournal): number {
   return facts.tasks.filter((task) => facts.debts.has(task.id) && isJournalHandBackTask(task)).reduce((sum, task) => sum + owedCents(task), 0);
+}
+
+/**
+ * What the booking's journal capture-return debts with no open card refund row stand for on the legacy side: each
+ * late capture held OPEN for the treasurer (`lateCaptureApprovalIntentId`) whose capture-return R05 the journal
+ * holds, at the task's amount, what its approval sends. That debt posts when an automatic refund of the capture
+ * reserves its slice; Stripe's refusal then holds the capture on the task until the treasurer approves it (a row
+ * takes over) or keeps it (the debt is reversed, the task dismissed). Report v3 adds it beside the card rows.
+ */
+export function heldCaptureReturnOwedCents(facts: BookingHandBackJournal): number {
+  return facts.tasks.filter((task) => task.status === "OPEN" && task.lateCaptureApprovalIntentId !== null
+    && facts.captureReturnDebts.has(task.lateCaptureApprovalIntentId) && !facts.captureReturnsWithRow.has(task.lateCaptureApprovalIntentId))
+    .reduce((sum, task) => sum + (task.amountCents ?? 0), 0);
 }
 
 /** The five classes for one booking. Pure: the facts read above in, findings out, in task order. */
