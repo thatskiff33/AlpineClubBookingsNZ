@@ -339,9 +339,9 @@ Journey: Choose recipients (the help line says who each reaches), choose the kin
 
 Screen: `/admin/message-board`.
 
-Shows: Club messages and moderation controls.
+Shows: Club messages and moderation controls, and a "Sharing problems" box naming any post that may be on other clubs' boards in a way this site did not record (#5246).
 
-Journey: Read club posts and use the moderation actions allowed by the current role.
+Journey: Read club posts and use the moderation actions allowed by the current role; for a sharing problem, copy the central server id, withdraw the shared copy, or mark an unrecorded share as dealt with.
 
 [Guide](guides/message-board.md) · [History](UX_FLOW_HISTORY.md#club-message-board-2994-epic-2992)
 
