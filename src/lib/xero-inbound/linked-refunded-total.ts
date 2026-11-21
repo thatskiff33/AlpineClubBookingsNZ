@@ -55,6 +55,16 @@ export async function paymentsCountingInvoiceCorrections(
 }
 
 /**
+ * #5289 D: a payment's refunded total as its links record it (`cents`), and
+ * how much of it is invoice corrections (`correctionCents`): money no refund
+ * moved, so never in the payment's own refund detail, which the bank-transfer
+ * floor adds back (`bankTransferFloorCents`). Every other part is either in
+ * that detail already (a refund note's or a cash edit note's hand-back, a
+ * refund request paid back) or comes off it (a card refund Stripe failed later).
+ */
+export type LinkedRefundedTotal = { cents: number; correctionCents: number };
+
+/**
  * Each payment's refunded total as its links record it, before any clamp or
  * floor: its direct refund and account notes, each modification note applied
  * to it or (#3979) to its bank-transfer invoice once (`distinctClearingAllocations`,
@@ -75,7 +85,7 @@ export async function decideLinkedRefundedTotalCents(
   store: Store,
   payments: ReadonlyArray<{ id: string; bookingId: string; refundedAmountCents: number; source: PaymentSource; xeroInvoiceId: string | null }>,
   options: { excludeCreditNoteId?: string | null; transactionRowsOverride?: ReadonlyMap<string, readonly ReceiptRow[]> } = {},
-): Promise<Map<string, number>> {
+): Promise<Map<string, LinkedRefundedTotal>> {
   const paymentIds = payments.map((payment) => payment.id);
   const excluded = options.excludeCreditNoteId ?? null;
   const readDirectRefundLinks = (db: Store) =>
@@ -228,8 +238,13 @@ export async function decideLinkedRefundedTotalCents(
       { creditNoteId, appliedCents: Math.round(amountCents) },
     ]);
   }
+  const correctionCents = new Map<string, number>();
   for (const [paymentId, allocations] of modificationAllocationsByPaymentId) {
-    for (const cents of sumAppliedCentsByCreditNote(allocations).values()) add(paymentId, cents);
+    for (const [creditNoteId, cents] of sumAppliedCentsByCreditNote(allocations)) {
+      add(paymentId, cents);
+      // Counted only as a correction (`validCorrectionNoteIds`), never as a note that moved cash.
+      if (!validModificationCreditNoteIds.has(creditNoteId)) correctionCents.set(paymentId, (correctionCents.get(paymentId) ?? 0) + cents);
+    }
   }
-  return linkedCents;
+  return new Map(paymentIds.map((paymentId) => [paymentId, { cents: linkedCents.get(paymentId) ?? 0, correctionCents: correctionCents.get(paymentId) ?? 0 }]));
 }

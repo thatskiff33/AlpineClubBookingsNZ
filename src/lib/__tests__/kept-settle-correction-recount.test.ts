@@ -181,11 +181,12 @@ describe("a keep sets the whole refunded total its links decide, in its own tran
     rows?: Row[];
     refundedAmountCents?: number;
     linkedCents?: number;
+    correctionCents?: number;
     cash?: { knownCents: number; complete: boolean };
     matchedPayments?: number;
   }) {
     mocks.readModificationNoteCash.mockResolvedValue(new Map([["cn-correction", "correction"]]));
-    mocks.decideLinked.mockResolvedValue(new Map([[PAYMENT_ID, input.linkedCents ?? 10_000]]));
+    mocks.decideLinked.mockResolvedValue(new Map([[PAYMENT_ID, { cents: input.linkedCents ?? 10_000, correctionCents: input.correctionCents ?? 0 }]]));
     const tx = {
       paymentTransaction: { findMany: vi.fn().mockResolvedValue(input.rows ?? [pendingReceipt()]) },
       memberCredit: { findMany: vi.fn().mockResolvedValue([]) },
@@ -251,6 +252,11 @@ describe("a keep sets the whole refunded total its links decide, in its own tran
     mocks.floor.mockResolvedValueOnce({ cents: 4_000, alert });
     await expect(decide({})).resolves.toMatchObject({ paymentColumns: { refundedAmountCents: 4_000 }, floorAlert: alert });
     expect(mocks.floor).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ xeroDerivedCents: 10_000, creditNoteId: null }));
+  });
+
+  it("MUTATION (#5289 D): the corrections the links count go to the floor, which adds them to the refund detail", async () => {
+    await decide({ correctionCents: 10_000 });
+    expect(mocks.floor).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ xeroDerivedCents: 10_000, correctionCents: 10_000 }));
   });
 
   it("MUTATION (#4449 review, item 2): a keep held at the floor that leaves the stored total where it was sends no alert", async () => {

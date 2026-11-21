@@ -46,6 +46,8 @@ export async function decideXeroRefundedColumns(
     };
     /** The links' figure: `decideLinkedRefundedTotalCents`, plus a recount's note being synced and its card-only rules. */
     decidedCents: number;
+    /** #5289 D: the invoice corrections in `decidedCents` (`LinkedRefundedTotal.correctionCents`), which the bank-transfer floor adds to the detail. */
+    correctionCents?: number;
     creditNoteId: string | null;
     creditNoteNumber?: string | null;
   },
@@ -55,6 +57,7 @@ export async function decideXeroRefundedColumns(
   const floored = await bankTransferFloorCents(store, {
     payment,
     xeroDerivedCents: clamped,
+    correctionCents: input.correctionCents ?? 0,
     creditNoteId: input.creditNoteId,
     creditNoteNumber: input.creditNoteNumber ?? null,
   });

@@ -281,7 +281,7 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
     paymentUpdate.mockResolvedValue({ count: 1 });
     mocks.decideLinked.mockImplementation(async () => {
       steps.push("decide");
-      return new Map([["pay-1", 15_000]]);
+      return new Map([["pay-1", { cents: 15_000, correctionCents: 0 }]]);
     });
     mocks.floor.mockImplementation(async (_tx: unknown, input: { xeroDerivedCents: number }) => ({ cents: input.xeroDerivedCents, alert: null }));
     mocks.refundedTotalStatus.mockImplementation(async (row: { status: string; amountCents: number }, cents: number) =>
@@ -309,7 +309,7 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
   });
 
   it("MUTATION (#4449 item 5): a written link with the total unchanged still moves updatedAt, so a recount that read the links before it loses its claim", async () => {
-    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 5_000]]));
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", { cents: 5_000, correctionCents: 0 }]]));
     await writeCurrentCreditNoteAllocation(link, target);
     expect(paymentUpdate).toHaveBeenCalledWith({ where: asRead, data: { updatedAt: expect.any(Date) } });
     // Forward, even on the frozen test clock that stamped the row.
@@ -317,7 +317,7 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
   });
 
   it("writes nothing to the payment when the link was not written and the total and status stand", async () => {
-    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 5_000]]));
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", { cents: 5_000, correctionCents: 0 }]]));
     // A newer stamp already on the row: this reading writes no link.
     mocks.findUnique.mockResolvedValue({ active: true, metadata: snapshot("AUTHORISED", "2099-01-01T00:00:00.000Z") });
     await expect(writeCurrentCreditNoteAllocation({ ...link, metadata: { ...link.metadata, ...snapshot("AUTHORISED", EARLY) } }, target)).resolves.toEqual({ written: false, floorAlert: null });
@@ -335,14 +335,14 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
   it("MUTATION (#4449 verify, low 2): a write held at the floor returns its alert whether or not it moves the total", async () => {
     // $50 recorded on the payment, its note still in the outbox: the stored total and the detail are $50, Xero shows $0.
     const alert = { paymentId: "pay-1", bookingId: "booking-1", creditNoteId: NOTE, creditNoteNumber: null, xeroDerivedCents: 0, floorCents: 5_000 };
-    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", { cents: 0, correctionCents: 0 }]]));
     mocks.floor.mockResolvedValue({ cents: 5_000, alert });
     await expect(writeCurrentCreditNoteAllocation(link, target)).resolves.toEqual({ written: true, floorAlert: alert });
   });
 
   it("the sync's writes hold their alerts for after its recount, which sends only those for payments it did not decide", async () => {
     const alert = { paymentId: "pay-1", bookingId: "booking-1", creditNoteId: NOTE, creditNoteNumber: null, xeroDerivedCents: 0, floorCents: 5_000 };
-    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", { cents: 0, correctionCents: 0 }]]));
     mocks.floor.mockResolvedValue({ cents: 5_000, alert });
     // The recount decided pay-1 and alerted it: nothing more.
     await withHeldFloorAlerts(async (held) => {
@@ -362,7 +362,7 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
 
   it("MUTATION (#4449 verify 3): a sync that throws still sends its held alerts, and the send never masks the error", async () => {
     const alert = { paymentId: "pay-1", bookingId: "booking-1", creditNoteId: NOTE, creditNoteNumber: null, xeroDerivedCents: 0, floorCents: 5_000 };
-    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", { cents: 0, correctionCents: 0 }]]));
     mocks.floor.mockResolvedValue({ cents: 5_000, alert });
     const failure = new Error("the recount failed");
     await expect(
@@ -384,7 +384,7 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
 
   it("with no holder, a write held at the floor sends its alert itself, once", async () => {
     const alert = { paymentId: "pay-1", bookingId: "booking-1", creditNoteId: NOTE, creditNoteNumber: null, xeroDerivedCents: 0, floorCents: 2_000 };
-    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", { cents: 0, correctionCents: 0 }]]));
     mocks.floor.mockResolvedValue({ cents: 2_000, alert });
     await writeCurrentCreditNoteAllocations([link], { isModificationNote: true });
     expect(mocks.sendFloorAlert).toHaveBeenCalledTimes(1);
@@ -392,7 +392,7 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
   });
 
   it("a total falling to nothing on a payment never captured returns it to its uncaptured state", async () => {
-    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", { cents: 0, correctionCents: 0 }]]));
     mocks.refundedTotalStatus.mockResolvedValue("PENDING");
     await writeCurrentCreditNoteAllocation(link, target);
     expect(mocks.refundedTotalStatus).toHaveBeenCalledWith(payment, 0, expect.anything());
@@ -477,14 +477,14 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
     }
 
     it("MUTATION: a modification note's removal takes the Payment row first and decides the total, as its write does", async () => {
-      mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
+      mocks.decideLinked.mockResolvedValue(new Map([["pay-1", { cents: 0, correctionCents: 0 }]]));
       await expect(retireRemoved(true)).resolves.toEqual({ retired: 1, decidedPaymentIds: ["pay-1"] });
       expect(steps).toEqual(["lock Payment", "lock allocation", "write allocation"]);
       expect(paymentUpdate).toHaveBeenCalledWith({ where: asRead, data: { refundedAmountCents: 0, status: "SUCCEEDED", updatedAt: expect.any(Date) } });
     });
 
     it("#4449 verify, nit 3: a removal's floor alert names its note, read from the link before the removal rewrites it", async () => {
-      mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
+      mocks.decideLinked.mockResolvedValue(new Map([["pay-1", { cents: 0, correctionCents: 0 }]]));
       mocks.floor.mockImplementation(async (_tx: unknown, input: { creditNoteId: string | null; xeroDerivedCents: number }) => ({
         cents: 2_000,
         alert: { paymentId: "pay-1", bookingId: "booking-1", creditNoteId: input.creditNoteId, creditNoteNumber: null, xeroDerivedCents: input.xeroDerivedCents, floorCents: 2_000 },
@@ -501,7 +501,7 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
     });
 
     it.each(["VOIDED", "DELETED"])("MUTATION (#5289 A, D1): a %s reading of a modification note lists nothing: every active link goes off under its payment's Payment row, the total decided", async (status) => {
-      mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
+      mocks.decideLinked.mockResolvedValue(new Map([["pay-1", { cents: 0, correctionCents: 0 }]]));
       // Even an invoice the cancelled reading still named stays listed for nothing.
       await expect(retireRemoved(true, status)).resolves.toEqual({ retired: 1, decidedPaymentIds: ["pay-1"] });
       expect(steps).toEqual(["lock Payment", "lock allocation", "write allocation"]);

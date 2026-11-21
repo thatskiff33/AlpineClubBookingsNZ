@@ -42,6 +42,8 @@ vi.mock("@/lib/prisma", () => ({
     },
     xeroSyncOperation: {
       findMany: mocks.xeroSyncOperationFindMany,
+      // #5289 D: the bank-transfer floor asks whether a refund note is queued for the payment; none here.
+      findFirst: async () => null,
     },
     paymentRefund: {
       aggregate: mocks.paymentRefundAggregate,
@@ -105,6 +107,8 @@ beforeEach(() => {
   aboveCash.read.mockResolvedValue(0);
   // No refund detail by default, so the #4162 floor has nothing to keep.
   mocks.paymentTransactionAggregate.mockResolvedValue({ _sum: { refundedAmountCents: 0 } });
+  // #5289 D: no outbound note rows unless a suite says so (the recount asks whether the note being synced is a correction).
+  mocks.xeroSyncOperationFindMany.mockResolvedValue([]);
 });
 
 // #4786: the recount reads a payment's allocations with the note's own role,
@@ -1030,6 +1034,23 @@ describe("a recount with no note being synced (#4095 review, item 2)", () => {
     );
   });
 
+  // #5289 D (owner decision D2): which part of the links' total no refund moved, so is never in the
+  // refund detail the bank-transfer floor reads. Only an invoice correction: a cash edit note's
+  // hand-back, a refund note and a refund request paid back are on the detail already, and a card
+  // refund Stripe failed later comes off the total (pinned in the #4449 and #4215 suites).
+  it("MUTATION (#5289 D): reports a correction it counts as correctionCents, the part the floor adds to the detail", async () => {
+    const decided = await decideLinkedRefundedTotalCents(prisma as never, [{ ...keptReceipt(), xeroInvoiceId: "inv-1" }]);
+    expect(decided.get("pay-1")).toEqual({ cents: 10_000, correctionCents: 10_000 });
+  });
+
+  it("#5289 D: a cash edit note's hand-back is counted but is no correction: it is on the refund detail already", async () => {
+    mocks.xeroSyncOperationFindMany.mockResolvedValue([
+      { xeroObjectId: "cn-correction", localModel: "BookingModification", requestPayload: { refundMethod: "internet-banking" } },
+    ]);
+    const decided = await decideLinkedRefundedTotalCents(prisma as never, [{ ...keptReceipt(), xeroInvoiceId: "inv-1" }]);
+    expect(decided.get("pay-1")).toEqual({ cents: 10_000, correctionCents: 0 });
+  });
+
   it("MUTATION: the creditNote passed adds nothing as a current note", async () => {
     mocks.paymentFindMany.mockResolvedValue([keptReceipt()]);
     mocks.xeroObjectLinkFindMany.mockResolvedValue([]);
@@ -1487,7 +1508,7 @@ describe("#4449: the extracted refunded-total decision gives the recount's answe
 
     // $80 + $30: the recount writes $110 clamped to the $100 paid; the decision, without the $30 being synced, $80.
     expect(recounted).toEqual([10000]);
-    expect(decided.get("pay-1")).toBe(8000);
+    expect(decided.get("pay-1")?.cents).toBe(8000);
   });
 
   it("MUTATION (#4370 lost from the module): on the root client a failed-later card refund comes off, read in one snapshot", async () => {
@@ -1496,7 +1517,7 @@ describe("#4449: the extracted refunded-total decision gives the recount's answe
     const decided = await decideLinkedRefundedTotalCents(prisma as never, [ibPayment]);
 
     // $80 + $30 of notes, less the $80 failure: $30. Without the subtraction, $110.
-    expect(decided.get("pay-1")).toBe(3000);
+    expect(decided.get("pay-1")?.cents).toBe(3000);
     expect(snapshot.open).toHaveBeenCalledTimes(1);
   });
 
@@ -1507,7 +1528,7 @@ describe("#4449: the extracted refunded-total decision gives the recount's answe
 
     const decided = await decideLinkedRefundedTotalCents(tx as never, [ibPayment]);
 
-    expect(decided.get("pay-1")).toBe(3000);
+    expect(decided.get("pay-1")?.cents).toBe(3000);
     // Never a second connection beside the caller's locked transaction.
     expect(snapshot.open).not.toHaveBeenCalled();
     expect(aboveCash.read).toHaveBeenCalledWith(expect.objectContaining({ id: "pay-1" }), tx);
@@ -1533,7 +1554,7 @@ describe("#4449: the extracted refunded-total decision gives the recount's answe
     const readings = tornBetweenReadings([["cn-current"], ["cn-current", "cn-failed"]]);
     const decided = await decideLinkedRefundedTotalCents({ ...(prisma as object) } as never, [ibPayment]);
     // $30 + $80 - $80 = $30. Taking the torn reading would be $30 - $80, clamped to nothing by every caller.
-    expect(decided.get("pay-1")).toBe(3000);
+    expect(decided.get("pay-1")?.cents).toBe(3000);
     expect(readings()).toBe(3);
   });
 
@@ -1551,6 +1572,6 @@ describe("#4449: the extracted refunded-total decision gives the recount's answe
     const decided = await decideLinkedRefundedTotalCents(prisma as never, [ibPayment]);
 
     // No note stands, and the whole unreversed failure is $80 (its cover is read as $80).
-    expect(decided.get("pay-1")).toBe(-8000);
+    expect(decided.get("pay-1")?.cents).toBe(-8000);
   });
 });

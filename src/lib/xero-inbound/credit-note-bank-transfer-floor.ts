@@ -1,6 +1,7 @@
 import { PaymentSource, type Prisma } from "@prisma/client";
 
 import { hasVoidAwaitingFollowUp } from "@/lib/bank-refund-void-scan";
+import { findBlockingRefundCreditNoteOperationId } from "@/lib/xero-refund-note-link-repair";
 
 import type { ClubFormat } from "@/lib/club-format";
 import logger from "@/lib/logger";
@@ -65,12 +66,24 @@ export type BankTransferFloorAlert = {
  * #4449: the floor's decision on the caller's client, its alert returned, not
  * sent, so a writer deciding the total inside its locked transaction (the kept
  * settle, the note sync's allocation write) sends it after its commit.
+ *
+ * #5289 D (owner decision D2): the floor is the detail PLUS the invoice
+ * corrections the links count (`LinkedRefundedTotal.correctionCents`), never
+ * above the stored total. A correction moved no money, so it is never in the
+ * detail; without it a $100 correction beside a $200 bank refund whose note is
+ * still in the outbox (stored $300, detail $200, links $100) was floored at
+ * $200, $100 too low. And while a refund note for the payment is still queued
+ * to be created (`findBlockingRefundCreditNoteOperationId`), Xero is behind
+ * by design: logged at info, no alert. If that note later fails for good, the
+ * next writer raises the alert.
  */
 export async function bankTransferFloorCents(
   store: Prisma.TransactionClient,
   input: {
     payment: { id: string; bookingId: string; source: PaymentSource; refundedAmountCents: number };
     xeroDerivedCents: number;
+    /** #5289 D: the invoice corrections in `xeroDerivedCents`; 0 when none. */
+    correctionCents?: number;
     creditNoteId: string | null;
     creditNoteNumber?: string | null;
   },
@@ -80,14 +93,26 @@ export async function bankTransferFloorCents(
     return { cents: xeroDerivedCents, alert: null };
   }
   const detail = await store.paymentTransaction.aggregate({ where: { paymentId: payment.id }, _sum: { refundedAmountCents: true } });
-  const floorCents = Math.min(payment.refundedAmountCents, Math.max(0, detail._sum.refundedAmountCents ?? 0));
+  const floorCents = Math.min(
+    payment.refundedAmountCents,
+    Math.max(0, detail._sum.refundedAmountCents ?? 0) + Math.max(0, input.correctionCents ?? 0),
+  );
   if (xeroDerivedCents >= floorCents) return { cents: xeroDerivedCents, alert: null };
   // A voided refund note the nightly follow-up has not handled yet explains
   // the divergence and resolves it: logged, not alerted (review, security 12).
   if (await hasVoidAwaitingFollowUp(store, payment.id)) {
     logger.info(
-      { creditNoteId: input.creditNoteId, paymentId: payment.id, detailCents: floorCents, xeroDerivedRefundedTotalCents: xeroDerivedCents },
+      { creditNoteId: input.creditNoteId, paymentId: payment.id, floorCents, xeroDerivedRefundedTotalCents: xeroDerivedCents },
       "Bank-transfer refund total kept at its detail while a voided refund note waits for the nightly follow-up (#4162 floor)",
+    );
+    return { cents: floorCents, alert: null };
+  }
+  // #5289 D: a refund recorded in the app whose note is still queued for Xero: Xero is behind, not short.
+  const queuedRefundNoteOperationId = await findBlockingRefundCreditNoteOperationId(payment.id, store);
+  if (queuedRefundNoteOperationId) {
+    logger.info(
+      { creditNoteId: input.creditNoteId, paymentId: payment.id, floorCents, xeroDerivedRefundedTotalCents: xeroDerivedCents, queuedRefundNoteOperationId },
+      "Bank-transfer refund total kept at its floor while a refund note for it waits in the Xero outbox (#5289 floor)",
     );
     return { cents: floorCents, alert: null };
   }
@@ -96,7 +121,7 @@ export async function bankTransferFloorCents(
       creditNoteId: input.creditNoteId,
       paymentId: payment.id,
       localRefundedAmountCents: payment.refundedAmountCents,
-      detailCents: floorCents,
+      floorCents,
       xeroDerivedRefundedTotalCents: xeroDerivedCents,
     },
     "Xero-derived refund total is below the bank-transfer payment's own refund detail; keeping the detail (#4162 floor)",

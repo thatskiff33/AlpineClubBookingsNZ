@@ -51,7 +51,7 @@ const allocation = {
 };
 
 /** A bank transfer invoiced at $300 and never paid (its PRIMARY row PENDING), $30 counted refunded by an older fold. */
-function arrange(input: { refundedAmountCents: number; status: string; detailCents: number }) {
+function arrange(input: { refundedAmountCents: number; status: string; detailCents: number; queuedRefundNote?: boolean }) {
   const payment = {
     id: "pay-1",
     bookingId: "booking-1",
@@ -73,6 +73,8 @@ function arrange(input: { refundedAmountCents: number; status: string; detailCen
       findMany: vi.fn().mockResolvedValue([]),
     },
     payment: { findUnique: vi.fn().mockResolvedValue(payment), updateMany },
+    // #5289 D: the floor's queued refund-note check; `queuedRefundNote` names one waiting in the outbox.
+    xeroSyncOperation: { findFirst: vi.fn().mockResolvedValue(input.queuedRefundNote ? { id: "op-refund-note" } : null) },
     paymentTransaction: {
       aggregate: vi.fn().mockResolvedValue({ _sum: { refundedAmountCents: input.detailCents } }),
       findMany: vi.fn().mockResolvedValue([{ kind: "PRIMARY", status: "PENDING", createdAt: new Date("2026-06-01T00:00:00.000Z"), insertionSeq: 1 }]),
@@ -93,7 +95,7 @@ beforeEach(() => {
 describe("the allocation write and its removal through the real floor and status rule (#4449)", () => {
   it("MUTATION (#3979): removing the correction's allocation returns a never-captured payment to its uncaptured status, total 0", async () => {
     const { updateMany } = arrange({ refundedAmountCents: 3_000, status: "PARTIALLY_REFUNDED", detailCents: 0 });
-    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", { cents: 0, correctionCents: 0 }]]));
 
     await expect(
       retireUnlistedCreditNoteAllocations({
@@ -115,7 +117,7 @@ describe("the allocation write and its removal through the real floor and status
 
   it("writing the allocation sets the total the links decide, and the status the rule gives it", async () => {
     const { updateMany } = arrange({ refundedAmountCents: 0, status: "PENDING", detailCents: 0 });
-    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 3_000]]));
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", { cents: 3_000, correctionCents: 0 }]]));
 
     await writeCurrentCreditNoteAllocations([allocation], { isModificationNote: true });
 
@@ -125,9 +127,9 @@ describe("the allocation write and its removal through the real floor and status
   });
 
   it("#4449 verify, low 2: held at the floor with the total unmoved, the real floor's alert is held for the sync, not sent by the write", async () => {
-    // $50 recorded and in the detail, its note still in the outbox: Xero shows $0. The recount alerts this once.
+    // $50 recorded and in the detail, and no note for it in Xero or the outbox: Xero shows $0. The recount alerts this once.
     const { updateMany } = arrange({ refundedAmountCents: 5_000, status: "PARTIALLY_REFUNDED", detailCents: 5_000 });
-    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", { cents: 0, correctionCents: 0 }]]));
 
     const held: unknown[] = [];
     await writeCurrentCreditNoteAllocations([allocation], { isModificationNote: true, heldFloorAlerts: held as never });
@@ -136,5 +138,30 @@ describe("the allocation write and its removal through the real floor and status
     expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { updatedAt: expect.any(Date) } }));
     expect(held).toEqual([expect.objectContaining({ paymentId: "pay-1", creditNoteId: NOTE, xeroDerivedCents: 0, floorCents: 5_000 })]);
     expect(mocks.sendFloorAlert).not.toHaveBeenCalled();
+  });
+  it("MUTATION (#5289 D): held at the floor while the refund's own note waits in the outbox: no alert, the total kept", async () => {
+    const { updateMany } = arrange({ refundedAmountCents: 5_000, status: "PARTIALLY_REFUNDED", detailCents: 5_000, queuedRefundNote: true });
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", { cents: 0, correctionCents: 0 }]]));
+
+    const held: unknown[] = [];
+    await writeCurrentCreditNoteAllocations([allocation], { isModificationNote: true, heldFloorAlerts: held as never });
+
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { updatedAt: expect.any(Date) } }));
+    expect(held).toEqual([]);
+  });
+
+  it("MUTATION (#5289 D, D2): the floor adds the corrections the links count to the detail, never above the stored total", async () => {
+    // Stored $300: a $100 correction counted and a $200 bank refund on the detail. The links count only the correction.
+    const { updateMany } = arrange({ refundedAmountCents: 30_000, status: "PARTIALLY_REFUNDED", detailCents: 20_000, queuedRefundNote: true });
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", { cents: 10_000, correctionCents: 10_000 }]]));
+    await writeCurrentCreditNoteAllocations([allocation], { isModificationNote: true });
+    // Kept at $300 (before #5289 the floor was the $200 detail): the total is not written.
+    expect(updateMany.mock.calls[0]?.[0].data).not.toHaveProperty("refundedAmountCents");
+
+    // A larger correction than the stored total leaves room for: the floor stops at the stored total.
+    const second = arrange({ refundedAmountCents: 10_000, status: "PARTIALLY_REFUNDED", detailCents: 5_000, queuedRefundNote: true });
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", { cents: 8_000, correctionCents: 8_000 }]]));
+    await writeCurrentCreditNoteAllocations([allocation], { isModificationNote: true });
+    expect(second.updateMany.mock.calls[0]?.[0].data).not.toHaveProperty("refundedAmountCents");
   });
 });

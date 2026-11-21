@@ -187,7 +187,8 @@ export async function decideBankTransferRefundedTotal(
   const linked = await decideLinkedRefundedTotalCents(tx, [payment]);
   const decided = await decideXeroRefundedColumns(tx, {
     payment,
-    decidedCents: linked.get(payment.id) ?? 0,
+    decidedCents: linked.get(payment.id)?.cents ?? 0,
+    correctionCents: linked.get(payment.id)?.correctionCents ?? 0,
     creditNoteId: target.creditNoteId,
   });
   const floorAlert = decided.floorAlert;

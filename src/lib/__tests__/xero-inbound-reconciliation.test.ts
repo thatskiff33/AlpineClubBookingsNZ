@@ -311,7 +311,7 @@ vi.mock("@/lib/xero-inbound/linked-refunded-total", async (importOriginal) => {
     ...actual,
     decideLinkedRefundedTotalCents: (...args: Parameters<typeof actual.decideLinkedRefundedTotalCents>) =>
       args[2]?.transactionRowsOverride
-        ? Promise.resolve(new Map(args[1].map((payment) => [payment.id, payment.refundedAmountCents])))
+        ? Promise.resolve(new Map(args[1].map((payment) => [payment.id, { cents: payment.refundedAmountCents, correctionCents: 0 }])))
         : actual.decideLinkedRefundedTotalCents(...args),
   };
 });

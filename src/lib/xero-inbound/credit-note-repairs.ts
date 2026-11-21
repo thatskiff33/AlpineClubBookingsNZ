@@ -20,6 +20,7 @@ import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credi
 import { getClubFormat } from "@/lib/club-format-settings";
 import { formatCents } from "@/lib/utils";
 import { decideLinkedRefundedTotalCents } from "./linked-refunded-total";
+import { invoiceCorrectionNoteIds } from "./account-credit-modification-notes";
 import { capOrganiserChildMirrorAtStripeRefunds } from "@/lib/organiser-child-refund";
 
 /** #3792: the operator alert, and the audit action, for a refused change. */
@@ -185,9 +186,13 @@ export async function repairRefundedPaymentBusinessState(input: {
   // #4449 (`INV-PAY-126`): what each payment's links record, less the note being synced (`decideLinkedRefundedTotalCents`),
   // read AFTER the payment rows, so a request paid back in between (#4215, `INV-PAY-118`) loses the claim below.
   // #4288: the note's own refund-note row too; its void may move no Payment column, so `repairOne` re-reads it locked.
-  const [linkedRefundedCentsByPaymentId, currentNoteRows] = await Promise.all([
+  const [linkedRefundedCentsByPaymentId, currentNoteRows, currentNoteIsCorrection] = await Promise.all([
     decideLinkedRefundedTotalCents(prisma, payments, { excludeCreditNoteId: input.creditNoteId }),
     input.creditNoteId === null ? new Map<string, { active: boolean; metadata: unknown }>() : readRefundNoteRowsByPayment(input.creditNoteId, paymentIds, prisma),
+    // #5289 D: whether the note being synced is an invoice correction, whose contribution the floor adds to the detail.
+    input.creditNoteId !== null && input.modificationRefundAmountsByPaymentId.size > 0
+      ? invoiceCorrectionNoteIds([input.creditNoteId]).then((ids) => ids.has(input.creditNoteId!))
+      : false,
   ]);
 
   // #4288: each payment's current note as its own refund-note row holds it NOW (read above, after the payment rows),
@@ -222,10 +227,13 @@ export async function repairRefundedPaymentBusinessState(input: {
         ? input.modificationRefundAmountsByPaymentId.get(payment.id) ?? 0
         : 0;
 
+    const linked = linkedRefundedCentsByPaymentId.get(payment.id);
     const rawRefundedTotalCents =
-      (linkedRefundedCentsByPaymentId.get(payment.id) ?? 0) +
+      (linked?.cents ?? 0) +
       currentDirectRefundContributionCents +
       currentModificationRefundContributionCents;
+    // #5289 D: the corrections counted, the note being synced's own when it is one, for the bank-transfer floor.
+    const correctionCents = (linked?.correctionCents ?? 0) + (currentNoteIsCorrection ? currentModificationRefundContributionCents : 0);
     const nextRefundedTotalCents = Math.min(
       Math.max(rawRefundedTotalCents, 0),
       payment.amountCents
@@ -289,6 +297,7 @@ export async function repairRefundedPaymentBusinessState(input: {
     const decided = await decideXeroRefundedColumns(prisma, {
       payment,
       decidedCents: effectiveRefundedTotalCents,
+      correctionCents,
       creditNoteId: input.creditNoteId,
       creditNoteNumber: input.creditNote.creditNoteNumber ?? null,
     });

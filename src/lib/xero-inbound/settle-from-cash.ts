@@ -199,7 +199,9 @@ async function keptRefundedTotal(
   // the keep leaves the payment in: captured, so SUCCEEDED before any refund.
   const decided = await decideXeroRefundedColumns(tx, {
     payment: { ...payment, source: PaymentSource.INTERNET_BANKING, status: PaymentStatus.SUCCEEDED, booking: { organiserSettled: false } },
-    decidedCents: linked.get(payment.id) ?? 0,
+    decidedCents: linked.get(payment.id)?.cents ?? 0,
+    // #5289 D: the corrections it counts are added to the floor's detail.
+    correctionCents: linked.get(payment.id)?.correctionCents ?? 0,
     creditNoteId: null,
   });
   // A keep that leaves the stored total where it was alerts nothing (as before #4449): a refund on
