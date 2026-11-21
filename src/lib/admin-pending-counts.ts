@@ -20,6 +20,7 @@ import {
 } from "@/lib/unpaid-finished-stays";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { getStuckStateAffectedCount } from "@/lib/stuck-state-affected-count";
+import { NOT_RETIRED_REVIEW_WHERE } from "@/lib/manual-refund-task-queue-reads";
 import {
   ADMIN_PENDING_COUNT_KEYS,
   type AdminPendingCountKey,
@@ -68,8 +69,13 @@ const PENDING_COUNTERS = {
   memberApplications: () =>
     prisma.memberApplication.count({ where: { status: "PENDING_ADMIN" } }),
   refundAppeals: () => prisma.refundRequest.count({ where: { status: "PENDING" } }),
+  // The finance queue's own OPEN where (#4344): a retired officer edit review
+  // is left out of the queue, so the badge leaves it out too rather than count
+  // a task the officer cannot see or settle there.
   manualRefundTasks: () =>
-    prisma.manualRefundTask.count({ where: { status: "OPEN" } }),
+    prisma.manualRefundTask.count({
+      where: { status: "OPEN", ...NOT_RETIRED_REVIEW_WHERE },
+    }),
   creditApprovals: () =>
     prisma.adminCreditAdjustmentRequest.count({ where: { status: "PENDING" } }),
   bookingReviews: async ({ bookingRequests }) =>

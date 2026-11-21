@@ -105,6 +105,36 @@ a member cannot use are never shown — and even a stale page could not save.
 2. For a **repeating** event you are asked whether the change applies to **This
    event only** or **All events in the series** — see below.
 
+### Work party entries
+
+With the **Events calendar** and **Work parties** modules on, each work party
+can put itself on the calendar: one all-day entry, titled "Work party: {name}", for each night of its
+window, stored as a daily series so the nights move together. It shows as one
+event, not a repeating one: no repeat marker and no "Daily" line. See
+[Work Parties](work-parties.md#the-events-calendar).
+
+- Only **members** see them, as with the Work Parties card and page (owner
+  decision, 20 Nov 2026). Non-member logins, kiosk and admin-only accounts see
+  the rest of the calendar without them, on the calendar and the dashboard
+  **Events** card alike; organisation accounts see no calendar at all.
+- They open **read-only** for everyone, admins included. While the Work parties
+  module is on, **Open the work party** takes admins (on the admin calendar) to
+  **Admin → Work Parties** and members to the work party page.
+  Change or delete the work party there and its entries follow.
+- The calendar API refuses to edit or delete them (**409**), so they cannot drift
+  from the work party.
+- While a work party is **inactive**, or the **Work parties** module is off,
+  its entries are hidden from the calendar and the dashboard **Events** card;
+  activating it, or turning the module back on, shows them again unchanged.
+- The dashboard **Events** card shows a work party as one line, on its first
+  night in the next two weeks, rather than one line per night.
+- A work party can run for at most 366 nights, the calendar's series limit;
+  new dates longer than that are refused when the work party is saved. One
+  saved longer before the limit shows its first 366 nights.
+- The entry's location is the lodge's name when the work party was last
+  saved. Renaming a lodge does not change existing entries until the work
+  party is saved again.
+
 ## Recurring events
 
 Set **Repeat** on an event to make it recur. The options are labelled from the
@@ -388,6 +418,7 @@ in the environment, where there is nobody to tell, grep the container logs for
 | A member should be able to **create** but cannot       | They have no active committee assignment and no lodge-edit role                                 | Add a committee assignment (**Admin → Members → [member] → Committee**) or grant lodge edit                                       |
 | A committee member cannot **edit or delete** an event  | Working as designed — committee members are create-only; only lodge-edit admins may edit/delete | Grant the member the lodge-edit admin role if they need to edit or delete events                                                 |
 | A repeating event shows on only one month             | The recurrence was not saved (older build)                                                      | Open the event, set **Repeat**, and **Save** (this converts it to a series), or delete and recreate; ensure the app is up to date |
+| An event opens read-only even for an admin, saying it is managed from Work Parties | It is a work party's entry | Edit, deactivate or delete the work party on **Admin → Work Parties**; the entries follow |
 | Saving or deleting says the event was not found        | Someone else deleted that event (or the whole series) while your dialog was open                | Close the dialog and reload the calendar; the event is already gone, so nothing was lost                                          |
 | Camera/mic blocked in the meeting                     | MiroTalk is served over plain HTTP (not localhost) or without a camera/mic `Permissions-Policy` | Serve MiroTalk over HTTPS on its own subdomain with camera/mic allowed                                                            |
 

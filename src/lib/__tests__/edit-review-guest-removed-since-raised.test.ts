@@ -2,10 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import { editFinancialReviewGuestsRemovedSinceRaised } from "@/lib/edit-review-guest-removed-since-raised";
-import { reviewGuestRemovedSinceRaisedWarning } from "@/lib/manual-refund-task-copy";
-import { toOpenManualRefundTaskPayload } from "@/lib/manual-refund-task-queue-payload";
-
-import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /**
  * #4317 (owner decision on #4302, after review round 1): AN OPEN REVIEW WHOSE
@@ -15,7 +11,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
  * never changed: it still holds the nights the review's edit gave back (settling
  * could credit them a second time) and never held the nights it added (settling
  * could charge for nights the guest no longer holds). Wave B's clean-up closes such a review with no
- * money moved; until then the settle screen says so. The guest that a parked
+ * money moved, reading this same answer (the settle screen's warning went with it in #4344). The guest that a parked
  * REMOVAL itself took off - deleted in the transaction that raised the review -
  * is not one of these: nothing was credited for it.
  */
@@ -177,83 +173,5 @@ describe("editFinancialReviewGuestsRemovedSinceRaised", () => {
         addedNights: true,
       },
     ]);
-  });
-});
-
-describe("reviewGuestRemovedSinceRaisedWarning: worded in the direction the nights moved", () => {
-  const guest = { ordinal: "Guest 1 of 2", guestTotalCents: 30_000 };
-  it("a credit strand could credit its nights again", () => {
-    const text = reviewGuestRemovedSinceRaisedWarning({ ...guest, gaveNightsBack: true, addedNights: false }, CLUB_FORMAT_TEST);
-    expect(text).toContain("could credit those nights again");
-    expect(text).not.toContain("could charge");
-  });
-  it("an add strand could charge for nights the guest no longer holds", () => {
-    const text = reviewGuestRemovedSinceRaisedWarning({ ...guest, gaveNightsBack: false, addedNights: true }, CLUB_FORMAT_TEST);
-    expect(text).toContain("could charge for nights this guest no longer holds");
-    expect(text).not.toContain("could credit");
-  });
-  it("a mixed strand warns both ways", () => {
-    const text = reviewGuestRemovedSinceRaisedWarning({ ...guest, gaveNightsBack: true, addedNights: true }, CLUB_FORMAT_TEST);
-    expect(text).toContain("could credit those nights again");
-    expect(text).toContain("could charge for nights this guest no longer holds");
-  });
-});
-
-describe("the queue payload's reviewGuestRemovedSinceRaised", () => {
-  const row = {
-    id: "task-1",
-    bookingId: "booking-1",
-    amountCents: null,
-    raisedAmountCents: null,
-    kind: "EDIT_FINANCIAL_REVIEW",
-    paymentId: null,
-    payment: null,
-    lateCaptureApprovalIntentId: null,
-    partPaymentReviewPaymentId: null,
-    partPaymentReviewXeroPaidAt: null,
-    partPaymentReviewXeroPaidCents: null,
-    occurrenceKey: "edit-financial-review:v1:abc",
-    reviewContext: SHORTENING,
-    reason: "r",
-    createdAt: new Date("2026-07-01T00:00:00.000Z"),
-    booking: {
-      checkIn: new Date("2026-08-01T00:00:00.000Z"),
-      checkOut: new Date("2026-08-04T00:00:00.000Z"),
-      member: { firstName: "Ann", lastName: "Owner" },
-      organisation: null,
-      memberId: "ann",
-      deletedAt: null,
-      organiserSettled: false,
-      parentBookingId: null,
-      status: "CONFIRMED",
-      payment: null,
-      guests: [{ id: "guest-b" }],
-    },
-  };
-
-  it("names the shortened guest, removed since, by place and stored total - never by id", () => {
-    expect(toOpenManualRefundTaskPayload(row, null, []).reviewGuestsRemovedSinceRaised).toEqual([
-      { strandIndex: 0, strandCount: 2, guestTotalCents: 30_000, gaveNightsBack: true, addedNights: false },
-    ]);
-  });
-
-  it("is empty while the guests are all still on the booking", () => {
-    const stillThere = { ...row, booking: { ...row.booking, guests: [{ id: "guest-a" }, { id: "guest-b" }] } };
-    expect(toOpenManualRefundTaskPayload(stillThere, null, []).reviewGuestsRemovedSinceRaised).toEqual([]);
-  });
-
-  it("is empty where the booking's guests were not read, and on a hand-back", () => {
-    const bookingWithoutGuests: Omit<typeof row.booking, "guests"> & { guests?: undefined } = {
-      ...row.booking,
-      guests: undefined,
-    };
-    expect(
-      toOpenManualRefundTaskPayload({ ...row, booking: bookingWithoutGuests }, null, [])
-        .reviewGuestsRemovedSinceRaised,
-    ).toEqual([]);
-    expect(
-      toOpenManualRefundTaskPayload({ ...row, kind: "CANCELLED_BOOKING_HAND_BACK" }, null, [])
-        .reviewGuestsRemovedSinceRaised,
-    ).toEqual([]);
   });
 });
