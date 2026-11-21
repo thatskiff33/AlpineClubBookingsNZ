@@ -5,6 +5,7 @@ import { Prisma } from "@prisma/client";
 import { assertValidClubPostContent } from "@/lib/club-posts";
 import { OUTSTANDING_COPY_SELECT, withdrawOutstandingCopies } from "@/lib/club-post-sharing";
 import {
+  SHARE_OUTCOME_GRACE_MS,
   SHARE_PROBLEM_SELECT,
   STRAY_COPY_KINDS,
   type ShareProblem,
@@ -167,21 +168,45 @@ export class ClubPostNoShareProblemError extends Error {
 const ASK_THE_ADMINISTRATOR =
   "If it keeps failing, send the central server id to the central server's administrator and ask them to take the copy down.";
 
-/** The server is on a different API version (#49): nothing was withdrawn. */
+/**
+ * What a failed admin withdrawal still did (#5246 review): a post can hold two
+ * copies, and the first may come down before the second fails. The route
+ * audits both lists, so a half-successful attempt is never unrecorded.
+ */
+interface WithdrawalAttempt {
+  /** Ids the central server confirmed down before the failure. */
+  withdrawnServerPostIds: string[];
+  /** Ids still outstanding after it. */
+  outstandingServerPostIds: string[];
+}
+
+function partSentence({ withdrawnServerPostIds }: WithdrawalAttempt): string {
+  return withdrawnServerPostIds.length > 0
+    ? ` The copy ${withdrawnServerPostIds.join(", ")} was withdrawn; the rest was not.`
+    : "";
+}
+
+/** The server is on a different API version (#49): the rest was not withdrawn. */
 export class ClubPostWithdrawalPausedError extends Error {
-  constructor() {
+  readonly attempt: WithdrawalAttempt;
+  constructor(attempt: WithdrawalAttempt = { withdrawnServerPostIds: [], outstandingServerPostIds: [] }) {
     super(
-      `Sharing with other clubs is paused because the central server is on a different version, so the copy was not withdrawn. ${ASK_THE_ADMINISTRATOR}`,
+      `Sharing with other clubs is paused because the central server is on a different version, so the copy was not withdrawn.${partSentence(attempt)} ${ASK_THE_ADMINISTRATOR}`,
     );
     this.name = "ClubPostWithdrawalPausedError";
+    this.attempt = attempt;
   }
 }
 
 /** The server did not confirm the withdrawal; the id is kept for another try. */
 export class ClubPostWithdrawalFailedError extends Error {
-  constructor(reason: string) {
-    super(`The central server did not confirm the withdrawal (${reason.slice(0, 200)}). ${ASK_THE_ADMINISTRATOR}`);
+  readonly attempt: WithdrawalAttempt;
+  constructor(reason: string, attempt: WithdrawalAttempt = { withdrawnServerPostIds: [], outstandingServerPostIds: [] }) {
+    super(
+      `The central server did not confirm the withdrawal (${reason.slice(0, 200)}).${partSentence(attempt)} ${ASK_THE_ADMINISTRATOR}`,
+    );
     this.name = "ClubPostWithdrawalFailedError";
+    this.attempt = attempt;
   }
 }
 
@@ -328,9 +353,8 @@ export async function removeClubPost(postId: string): Promise<void> {
   // retried. `withdrawOutstandingCopies` withdraws the recorded share and any
   // unrecorded copy (#5246), own-club posts only: a MIRROR row also carries a
   // serverPostId, but its network copy belongs to the club that wrote it.
-  try {
-    await withdrawOutstandingCopies(post);
-  } catch (error) {
+  const { error } = await withdrawOutstandingCopies(post);
+  if (error !== null) {
     // NOT fatal, and NOT forgotten (#3091 review 1): the local removal
     // stands, the ids stay, and that is exactly what
     // `retryPendingWithdrawals` sweeps every general-cron cycle and what the
@@ -360,7 +384,8 @@ export async function removeClubPost(postId: string): Promise<void> {
  * request (#5246): the unrecorded copy whenever one is held, and a removed
  * post's unconfirmed share. A live post's own recorded share is never taken
  * down here, and the share request is never touched, so this can only ever
- * remove a copy, never send one. Returns the ids withdrawn, for the audit row.
+ * remove a copy, never send one. Returns the ids withdrawn, for the audit row;
+ * a failure carries the ids it did withdraw and the ones still outstanding.
  */
 export async function withdrawSharedCopy(postId: string): Promise<{ serverPostIds: string[] }> {
   const post = await prisma.clubPost.findUnique({ where: { id: postId }, select: OUTSTANDING_COPY_SELECT });
@@ -371,14 +396,15 @@ export async function withdrawSharedCopy(postId: string): Promise<{ serverPostId
     ...(recordedShareAwaitsWithdrawal(post) ? [post.serverPostId] : []),
   ];
   if (post.originClubCode !== null || serverPostIds.length === 0) throw new ClubPostNoShareProblemError();
-  try {
-    await withdrawOutstandingCopies(post);
-  } catch (error) {
-    logger.warn({ postId, serverPostIds, err: error }, "An admin's withdrawal of a shared club post's copy failed");
-    if (error instanceof ServerNzVersionMismatchError) throw new ClubPostWithdrawalPausedError();
-    throw new ClubPostWithdrawalFailedError(error instanceof Error ? error.message : "no reason given");
-  }
-  return { serverPostIds };
+  const { confirmedServerPostIds, error } = await withdrawOutstandingCopies(post);
+  if (error === null) return { serverPostIds: confirmedServerPostIds };
+  const attempt: WithdrawalAttempt = {
+    withdrawnServerPostIds: confirmedServerPostIds,
+    outstandingServerPostIds: serverPostIds.filter((id) => !confirmedServerPostIds.includes(id)),
+  };
+  logger.warn({ postId, ...attempt, err: error }, "An admin's withdrawal of a shared club post's copy failed");
+  if (error instanceof ServerNzVersionMismatchError) throw new ClubPostWithdrawalPausedError(attempt);
+  throw new ClubPostWithdrawalFailedError(error instanceof Error ? error.message : "no reason given", attempt);
 }
 
 /**
@@ -386,9 +412,16 @@ export async function withdrawSharedCopy(postId: string): Promise<{ serverPostId
  * admin has had any copy taken down, or found there was none. Clears only the
  * marker, and only while the post still holds no server id.
  */
-export async function dismissShareOutcome(postId: string): Promise<void> {
+export async function dismissShareOutcome(postId: string, now: Date = new Date()): Promise<void> {
   const { count } = await prisma.clubPost.updateMany({
-    where: { id: postId, shareSentAt: { not: null }, sharedAt: null, serverPostId: null },
+    // Only once the grace has passed (#5246 review): inside it the send may
+    // still be recording its own result, and the screen does not offer this.
+    where: {
+      id: postId,
+      shareSentAt: { not: null, lt: new Date(now.getTime() - SHARE_OUTCOME_GRACE_MS) },
+      sharedAt: null,
+      serverPostId: null,
+    },
     data: { shareSentAt: null },
   });
   if (count === 1) return;

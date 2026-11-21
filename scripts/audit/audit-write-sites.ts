@@ -77,6 +77,7 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/app/api/admin/club-posts/[id]/route.ts::PATCH#1": {"category":"communication","sink":"logAudit","action":"club_post.share_problem.dismiss"},
   "src/app/api/admin/club-posts/[id]/route.ts::PATCH#2": {"category":"communication","sink":"logAudit","action":"club_post.edit"},
   "src/app/api/admin/club-posts/[id]/route.ts::PATCH#3": {"category":"communication","sink":"logAudit","action":"(dynamic) parsed.data.hidden ? \"club_post.hide\" : \"club_post.unhide\""},
+  "src/app/api/admin/club-posts/[id]/route.ts::PATCH#4": {"category":"communication","sink":"logAudit","action":"club_post.withdraw_shared_copy.failed"},
   "src/app/api/admin/club-posts/cleanup/route.ts::POST#0": {"category":"communication","sink":"logAudit","action":"club_post.retention.run"},
   "src/app/api/admin/club-posts/settings/route.ts::PUT#0": {"category":"communication","sink":"logAudit","action":"club_post.retention.update"},
   "src/app/api/admin/club-time-zone/route.ts::PUT.outcome#0": {"category":"admin","sink":"auditLog.create","action":"CLUB_TIME_ZONE_UPDATED"},

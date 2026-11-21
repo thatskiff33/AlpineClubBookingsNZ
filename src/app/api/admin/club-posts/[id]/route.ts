@@ -170,6 +170,25 @@ export async function PATCH(
       { status: 400 },
     );
   } catch (error) {
+    if (
+      parsed.data.withdrawSharedCopy &&
+      (error instanceof ClubPostWithdrawalFailedError || error instanceof ClubPostWithdrawalPausedError)
+    ) {
+      // A failed or half-successful withdrawal is audited too (#5246 review):
+      // a copy may already be down, and the attempt itself is a moderation act.
+      const { withdrawnServerPostIds, outstandingServerPostIds } = error.attempt;
+      logAudit({
+        action: "club_post.withdraw_shared_copy.failed",
+        category: "communication",
+        memberId: actorMemberId,
+        entityType: "ClubPost",
+        entityId: id,
+        details:
+          `Tried to withdraw a club message board post's copy from the central server; ` +
+          (error instanceof ClubPostWithdrawalPausedError ? "sharing is paused by a version difference. " : "the server did not confirm. ") +
+          `Withdrawn: ${withdrawnServerPostIds.join(", ") || "none"}. Still outstanding: ${outstandingServerPostIds.join(", ") || "none"}.`,
+      });
+    }
     const known = errorResponse(error);
     if (known) return known;
     logger.error({ err: error, postId: id }, "failed to moderate club post");

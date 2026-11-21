@@ -147,7 +147,10 @@ export function ClubPostsAdmin({
           void act(
             id,
             () => patch(id, { withdrawSharedCopy: true }),
-            "Withdraw this post's copy from other clubs' boards?\n\nThe post stays on this club's board as it is.",
+            // A removed post is no longer on this board (#5246 review).
+            shareProblems.find((post) => post.id === id)?.removedAt
+              ? "Withdraw this removed post's copy from other clubs' boards?\n\nThe post is already removed from this club's board."
+              : "Withdraw this post's copy from other clubs' boards?\n\nThe post stays on this club's board as it is.",
             { inline: true },
           )
         }

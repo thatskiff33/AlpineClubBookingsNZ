@@ -490,13 +490,22 @@ type OutstandingCopyPost = Prisma.ClubPostGetPayload<{ select: typeof OUTSTANDIN
  *
  * Each confirmation is a guarded write on the post row alone, never touching
  * the share request, so nothing here can send the post again. Every copy is
- * tried; the first failure is then thrown, the row keeps what is still
- * outstanding, and a version pause (`ServerNzVersionMismatchError`) reaches
- * the caller as itself. Returns how many copies were confirmed down.
+ * tried; the row keeps what is still outstanding. Nothing is thrown: the
+ * result carries the server ids confirmed down AND the first failure, so a
+ * half-successful withdrawal still reaches its caller's audit row (#5246
+ * review). A version pause comes back as the `ServerNzVersionMismatchError`
+ * itself.
  */
-export async function withdrawOutstandingCopies(post: OutstandingCopyPost): Promise<number> {
-  if (post.originClubCode !== null) return 0;
-  let confirmed = 0;
+export interface OutstandingCopyWithdrawal {
+  /** Server ids the central server confirmed down (a 404 counts). */
+  confirmedServerPostIds: string[];
+  /** The first failure, or null when every outstanding copy came down. */
+  error: unknown;
+}
+
+export async function withdrawOutstandingCopies(post: OutstandingCopyPost): Promise<OutstandingCopyWithdrawal> {
+  const confirmedServerPostIds: string[] = [];
+  if (post.originClubCode !== null) return { confirmedServerPostIds, error: null };
   let firstError: unknown = null;
 
   const stray = strayCopyId(post);
@@ -508,7 +517,7 @@ export async function withdrawOutstandingCopies(post: OutstandingCopyPost): Prom
         where: { id: post.id, unrecordedServerPostId: stray },
         data: { unrecordedServerPostId: null, shareError: null },
       });
-      confirmed += 1;
+      confirmedServerPostIds.push(stray);
     } catch (error) {
       firstError = error;
     }
@@ -529,18 +538,20 @@ export async function withdrawOutstandingCopies(post: OutstandingCopyPost): Prom
       // CONFIRMED down everywhere (#3091 review 1). Without this stamp the
       // row reads as withdrawal-pending forever and the sweep re-withdraws a
       // copy that is already gone (harmless, the server 404s, but noisy).
-      await prisma.clubPost.update({
-        where: { id: post.id },
+      // Guarded so two withdrawals at once (the sweep and an admin, or two
+      // admins) keep the first confirmation's time; the second's DELETE got
+      // a 404, which is success, and writes nothing.
+      await prisma.clubPost.updateMany({
+        where: { id: post.id, serverPostId: post.serverPostId, withdrawnAt: null },
         data: { withdrawnAt: new Date() },
       });
-      confirmed += 1;
+      confirmedServerPostIds.push(post.serverPostId);
     } catch (error) {
       firstError ??= error;
     }
   }
 
-  if (firstError !== null) throw firstError;
-  return confirmed;
+  return { confirmedServerPostIds, error: firstError };
 }
 
 /**
@@ -569,10 +580,10 @@ export async function retryPendingWithdrawals(): Promise<{
 
   const result = { attempted: pending.length, confirmed: 0, failed: 0 };
   for (const post of pending) {
-    try {
-      await withdrawOutstandingCopies(post);
+    const { error } = await withdrawOutstandingCopies(post);
+    if (error === null) {
       result.confirmed += 1;
-    } catch (error) {
+    } else {
       // The server's own 409 for version (recorded by the API client): the
       // rest of the page would only be refused the same way. Not a failure -
       // the rows stay for the pass after the versions match.

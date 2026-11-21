@@ -105,6 +105,26 @@ describe("the sharing problems panel", () => {
     }));
   });
 
+  it("words the confirmation by whether the post is still on this board", async () => {
+    const removed = adminPost({
+      id: "post-9",
+      removedAt: "2026-06-30T00:00:00.000Z",
+      shareProblem: { kind: "withdrawal-pending", shareError: null, serverPostId: "cmh3k9x2p0009qz1a" },
+    }) as AdminShareProblemPost;
+    show([notRecorded, removed]);
+    const confirm = vi.mocked(window.confirm);
+
+    const [liveButton, removedButton] = panel().getAllByRole("button", { name: "Withdraw the shared copy" });
+    fireEvent.click(liveButton!);
+    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    expect(confirm.mock.calls[0]![0]).toMatch(/stays on this club's board/);
+
+    fireEvent.click(removedButton!);
+    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(2));
+    expect(confirm.mock.calls[1]![0]).toMatch(/already removed from this club's board/);
+    expect(confirm.mock.calls[1]![0]).not.toMatch(/stays on this club's board/);
+  });
+
   it("shows a failed withdrawal on its own entry", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: "The central server did not confirm the withdrawal." }), { status: 502 }));
     show([notRecorded]);
