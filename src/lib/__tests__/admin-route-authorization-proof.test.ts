@@ -524,7 +524,7 @@ const REVIEWED_PERMISSION_DIVERGENCES: Divergence[] = [
     pathname: "/api/admin/xero/tax-categories",
     method: "PUT",
     gate: "Full Admin only",
-    why: "STRICTER than the map's finance:edit (#5209, INV-CONFIG-007). Mapping a tax category to a Xero tax rate decides the tax code on every line Xero receives in that category, the same decision as the club's GST treatment beside it on /api/admin/club-tax, so it is Full Admin. The read stays finance:view.",
+    why: "STRICTER than the map's finance:edit (#5209, INV-CONFIG-008). Mapping a tax category to a Xero tax rate decides the tax code on every line Xero receives in that category, the same decision as the club's GST treatment beside it on /api/admin/club-tax, so it is Full Admin. The read stays finance:view.",
   },
   {
     pathname: "/api/admin/xero/tax-categories",

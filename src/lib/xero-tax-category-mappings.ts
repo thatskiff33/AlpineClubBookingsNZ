@@ -11,7 +11,7 @@ import { readXeroTaxRates } from "@/lib/xero-tax-rates";
 import { xeroCategoryLineTax } from "@/lib/xero-tax-rendering";
 
 /**
- * THE CLUB'S TAX CATEGORY MAPPINGS, READ (#5209; `INV-CONFIG-007`). Each of
+ * THE CLUB'S TAX CATEGORY MAPPINGS, READ (#5209; `INV-CONFIG-008`). Each of
  * Sales tax on expenses, Exempt and Zero rated maps to a tax rate in the club's
  * own Xero organisation; Sales tax on income is the dated schedule and is never
  * stored here (`xero-tax-categories.ts`). The one writer is

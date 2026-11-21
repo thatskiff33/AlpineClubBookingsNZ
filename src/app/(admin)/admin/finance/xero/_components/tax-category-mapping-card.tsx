@@ -26,7 +26,7 @@ import {
 import type { XeroTaxRateOption } from "@/lib/xero-tax-rate-options"
 
 /**
- * The "Tax categories" card (#5209; `INV-CONFIG-007`), shown once Xero is
+ * The "Tax categories" card (#5209; `INV-CONFIG-008`), shown once Xero is
  * connected on the Xero setup screen's account-mapping step and on the Xero
  * page, served by `/api/admin/xero/tax-categories`.
  *

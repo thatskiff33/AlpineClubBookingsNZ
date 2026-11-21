@@ -1,5 +1,5 @@
 /**
- * ONE WRITER of the club's tax category mappings (#5209; `INV-CONFIG-007`):
+ * ONE WRITER of the club's tax category mappings (#5209; `INV-CONFIG-008`):
  * `xero-tax-category-write.ts`, which checks the rate against the connected
  * Xero organisation, stamps that organisation, and audits each change. Every
  * other production path — the app, a seed, a script, config transfer — stays a

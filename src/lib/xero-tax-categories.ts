@@ -2,7 +2,7 @@ import type { XeroTaxCategory } from "@prisma/client";
 import type { XeroTaxRateOption } from "@/lib/xero-tax-rate-options";
 
 /**
- * THE CLUB'S TAX CATEGORIES (#5209; `INV-CONFIG-007`). Four club-side answers
+ * THE CLUB'S TAX CATEGORIES (#5209; `INV-CONFIG-008`). Four club-side answers
  * to "what tax does this line carry?", each mapped to a rate the club's OWN
  * Xero organisation provides, so no Xero tax code is written into the code
  * (`INV-CONFIG-001`). Pure and client-safe, with no database, Xero client or

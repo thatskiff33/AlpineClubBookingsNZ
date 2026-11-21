@@ -15,7 +15,7 @@ import {
 
 /**
  * The club's tax categories mapped to its Xero organisation's tax rates (#5209;
- * `INV-CONFIG-007`), behind the "Tax categories" card on the Xero screens.
+ * `INV-CONFIG-008`), behind the "Tax categories" card on the Xero screens.
  *
  * FINANCE READS; ONLY A FULL ADMIN CHANGES, exactly as `/api/admin/club-tax`:
  * `GET` is `finance:view`, the area `/api/admin/xero` is registered under;

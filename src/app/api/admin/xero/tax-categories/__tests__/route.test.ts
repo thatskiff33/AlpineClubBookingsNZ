@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /*
-  The tax category mapping API (#5209; INV-CONFIG-007), proved against the REAL
+  The tax category mapping API (#5209; INV-CONFIG-008), proved against the REAL
   authorisation guard, as the club tax route's test is: a mocked
   `requireAdmin` cannot tell `{ permission: false }` (Full Admin only) from an
   area permission, so a widened write would still pass. GET is
