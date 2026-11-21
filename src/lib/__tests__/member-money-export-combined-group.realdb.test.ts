@@ -136,6 +136,43 @@ async function generations(chargeIdentity: string) {
     await expect(write(primary(second.child))).rejects.toMatchObject({ code: "P2002" });
   });
 
+  // The index, not a lock, is the exclusion: two recorders that both read
+  // generation 0 and both insert must leave exactly one cover. The first
+  // transaction holds its uncommitted row; the second has read nothing and
+  // waits on the index before the first commits.
+  it.each([
+    ["primary first", "PRIMARY_BOOKING_INVOICE"],
+    ["combined first", "COMBINED_GROUP_INVOICE"],
+  ] as const)("lets exactly one of a concurrent primary and combined recorder cover one component (%s)", async (_label, firstRole) => {
+    const ids = await group();
+    const documents = { PRIMARY_BOOKING_INVOICE: primary(ids.child), COMBINED_GROUP_INVOICE: combined(ids, 0) };
+    const secondRole = firstRole === "PRIMARY_BOOKING_INVOICE" ? "COMBINED_GROUP_INVOICE" : "PRIMARY_BOOKING_INVOICE";
+    let commitFirst!: () => void;
+    const held = new Promise<void>((resolve) => { commitFirst = resolve; });
+    let firstWrote!: () => void;
+    const wrote = new Promise<void>((resolve) => { firstWrote = resolve; });
+    const first = appPrisma.$transaction(async (tx) => {
+      const result = await writeExportManifest(tx, documents[firstRole]);
+      firstWrote();
+      await held;
+      return result;
+    }, { timeout: 20_000 });
+    await wrote;
+    const second = write(documents[secondRole]);
+    // The second recorder is blocked on the first's uncommitted index entry.
+    for (let waited = 0; ; waited += 1) {
+      const blocked = await app.query(`SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`);
+      if (blocked.rows.length > 0) break;
+      if (waited > 200) throw new Error("the second recorder never waited on the first");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    commitFirst();
+    const settled = await Promise.allSettled([first, second]);
+    expect(settled[0]).toEqual({ status: "fulfilled", value: "WRITTEN" });
+    expect(settled[1]).toMatchObject({ status: "rejected", reason: { code: "P2002" } });
+    expect(await generations(stayOf(ids.child))).toEqual([{ documentRole: firstRole, coverageGeneration: 0 }]);
+  });
+
   it("lets the next invoice cover a component at the next generation once the last one is released", async () => {
     const ids = await group();
     await write(combined(ids, 0));
