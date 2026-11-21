@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *
  * Drives the REAL decision (`decideLateCapture`), the real dismissal plan, the
  * real kept-capture enqueue and worker, the real approval settlement, the real
- * refund-note need (`hasXeroReceiptForLateCapture`, `stripeRefundNeedsXeroNoteNow`,
+ * refund-note need (`readLateCaptureXeroReceipt`, `stripeRefundNeedsXeroNoteNow`,
  * `queueLateCaptureRefundCreditNote`, `creditBackLateCaptureRefunds`) against an
  * in-memory store and a fake Xero that keeps a ledger of every document sent.
  * Each case then sums income, the Stripe bank account and receivables from
@@ -349,6 +349,7 @@ vi.mock("@/lib/xero-supplementary-invoice-late-capture", () => ({
       row.lastErrorCode = null;
       row.lastErrorMessage = null;
     }
+    return retired[0] ? { outcome: "requeued", operationId: retired[0].id } : { outcome: "none" };
   },
   // MODEL of the change's supplementary invoice (case e2): see the docblock.
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: async (paymentIntentId: string) => {
@@ -989,7 +990,7 @@ describe("#4324: a kept change capture on an invoiced, paid-cancelled booking is
     expect(sent()).toEqual([expect.objectContaining({ kind: "payment", invoiceId: "inv_primary", cents: 8000, date: CAPTURE_DAY })]);
     expect(rows("KEPT_LATE_CAPTURE_INVOICE")).toHaveLength(0);
     expect(rows("ADDITIONAL_CAPTURE_RECEIPT")).toEqual([expect.objectContaining({ status: "SUCCEEDED" })]);
-    expect(await readLateCaptureXeroReceipt(INTENT)).toEqual({ kind: "recorded", invoiceId: "inv_primary" });
+    expect(await readLateCaptureXeroReceipt(INTENT)).toEqual({ kind: "recorded", invoiceId: "inv_primary", recordedCents: 8000 });
   });
 
   it("(e3) a change that never had a supplementary invoice is billed by the primary too", async () => {
@@ -1057,6 +1058,50 @@ describe("#4324: a kept change capture on an invoiced, paid-cancelled booking is
     expect(books()).toEqual({ income: 38000, stripe: 38000, receivable: 0 });
   });
 
+  /** #4383: e3 with room for only $50 - $350 billed, $300 paid - so the receipt records $50 of the $80 kept. */
+  const e3Capped = () =>
+    seed({ kind: "ADDITIONAL", cents: 8000, paidPrimary: { billedCents: 35000, paidCents: 30000 }, change: { settledAgainstPrimary: true } });
+
+  it("MUTATION (#4383): a capture its receipt recorded as $50 of $80, refunded in full, gets one $50 note, and a replay asks nothing", async () => {
+    e3Capped();
+    await keep();
+    await runOutbox();
+    expect(sent()).toEqual([expect.objectContaining({ kind: "payment", invoiceId: "inv_primary", cents: 5000 })]);
+    expect(await readLateCaptureXeroReceipt(INTENT)).toEqual({ kind: "recorded", invoiceId: "inv_primary", recordedCents: 5000 });
+    await dashboardRefund(8000);
+    await runOutbox();
+    expect(refundNotes()).toEqual([expect.objectContaining({ cents: 5000, paymentIntentId: INTENT })]);
+    // Xero's Stripe account: $50 in and $50 out, as the receipt recorded; the $30 is the officer's.
+    expect(books().stripe).toBe(30000);
+    await expect(resolveRefundNoteEligibleCash(h.table("payment")[0] as never)).resolves.toMatchObject({
+      lateCaptureExcludedCents: 3000,
+      eligibleCashCents: 5000,
+    });
+    await expect(noteLateCaptureRefunds({ paymentId: PAYMENT, paymentIntentId: INTENT })).resolves.toBe("nothing-owed");
+    expect(await selfHealAfterGrace()).toBe(0);
+    expect(refundNotes()).toHaveLength(1);
+  });
+
+  it("MUTATION (#4383): the note's own ask stops at what was recorded, before any execution-time cap", async () => {
+    e3Capped();
+    await keep();
+    await runOutbox();
+    await dashboardRefund(8000);
+    expect(rows("REFUND_CREDIT_NOTE")).toEqual([
+      expect.objectContaining({ requestPayload: expect.objectContaining({ refundAmountCents: 5000, paymentIntentId: INTENT }) }),
+    ]);
+  });
+
+  it("(#4383) a refund of less than the receipt recorded is noted in full", async () => {
+    e3Capped();
+    await keep();
+    await runOutbox();
+    await dashboardRefund(3000);
+    await runOutbox();
+    expect(refundNotes()).toEqual([expect.objectContaining({ cents: 3000, paymentIntentId: INTENT })]);
+    expect(books().stripe).toBe(32000);
+  });
+
   it("MUTATION (e4): nothing bills the change, so the kept-capture invoice records it", async () => {
     e4();
     await keep();
@@ -1099,7 +1144,7 @@ describe("#4324: a kept change capture on an invoiced, paid-cancelled booking is
       status: "planned" as const,
       resultMessage: null,
     });
-    const deps = { prisma: h.db, planKeptLateCaptureXeroRecord };
+    const deps = { prisma: h.db, planKeptLateCaptureXeroRecord, alertKeptCaptureRefusal: async () => undefined };
     for (let run = 0; run < 2; run += 1) {
       const planned = action();
       await applyActionsForPass([{ bookingId: BOOKING, actions: [planned] } as never], deps as never, false, CLUB_FORMAT_TEST, new Set());

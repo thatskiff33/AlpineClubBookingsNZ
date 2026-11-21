@@ -58,6 +58,8 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   BookingGuest: "personal",
   BookingGuestNight: "personal",
   BookingGuestNightAdjustment: "personal",
+  BookingImportBatch: "personal",
+  BookingImportRow: "personal",
   GroupBooking: "personal",
   GroupBookingJoin: "personal",
   GroupBookingSettlement: "personal",
@@ -194,6 +196,10 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MemberCredit: "personal",
   MemberCreditNoteAllocation: "personal",
   AdminCreditAdjustmentRequest: "personal",
+  // #5204: a contact's unallocated Xero money, and the backed-credit slices and returns.
+  XeroCashCredit: "personal",
+  MemberCreditCashAllocation: "personal",
+  MemberCreditCashReturn: "personal",
   GroupDiscountSetting: "non-personal",
   PublicContentSettings: "personal",
   ClubTheme: "non-personal",
@@ -218,6 +224,12 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MaintenanceReport: "personal",
   MaintenanceReportAnswer: "personal",
   LodgeMaintenanceReportToken: "personal",
+  // Fork #121: an order names its member and the officers who closed and priced
+  // it; its items are that member's order; the settings hold the officer's
+  // address and who last saved them.
+  FoodOrderSettings: "personal",
+  FoodOrder: "personal",
+  FoodOrderItem: "personal",
   EnvironmentSafetySettings: "personal",
   XeroSandboxContactContainment: "personal",
   Organisation: "personal",

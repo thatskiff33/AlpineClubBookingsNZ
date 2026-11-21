@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import sharp from "sharp";
 
 vi.mock("server-only", () => ({}));
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+import { pngDataUrl } from "@/lib/__tests__/helpers/png-fixture";
 import {
   ALLOWED_MEDIA_IMAGE_CONTENT_TYPES,
   MAX_MEDIA_IMAGE_BYTES,
@@ -10,7 +12,8 @@ import {
   extractImageDimensions,
   mediaImageServingUrl,
   sanitiseMediaImageFilename,
-  storableImageBytes,
+  IMAGE_NOT_CLEAN_MESSAGE,
+  cleanImageForStorage,
   storableLogoDataUrl,
   stripImageMetadata,
 } from "@/lib/media-image";
@@ -628,40 +631,202 @@ describe("stripImageMetadata", () => {
     expect(result.bytes.equals(garbage)).toBe(true);
   });
 
-  // The three allowed types with NO stripper must never report a confirmed
-  // strip: AVIF carries EXIF/GPS as a HEIF `Exif` item, SVG carries <metadata>
-  // RDF (creator identity, editor file paths) and GIF carries the Comment and
-  // XMP Application Extensions. Reporting ok:true stored them byte-identical AND
-  // silenced the fail-open callers' warning — the one control meant to make an
-  // unstripped upload visible in operations (#2242).
-  it.each([
-    ["image/gif", buildGif(10, 20)],
-    ["image/avif", buildAvif()],
-    ["image/svg+xml", SVG_WITH_DIMENSIONS],
-  ] as const)(
-    "reports ok:false for %s (no stripper), leaving bytes unchanged",
-    (contentType, bytes) => {
-      const result = stripImageMetadata(bytes, contentType);
-      expect(result.ok).toBe(false);
-      expect(result.bytes.equals(bytes)).toBe(true);
+  it("accepts 0xFF fill bytes before a marker and drops them (ok:true)", () => {
+    // T.81 §B.1.1.2 allows any number of 0xFF fill bytes before a marker. The
+    // parser used to refuse them — the false refusal that once justified storing
+    // unconfirmed images unchanged.
+    const fill = Buffer.from([0xff, 0xff, 0xff]);
+    const jpeg = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      fill,
+      jpegAppSegment(0xe1, Buffer.from(`Exif\0\0${SECRET}`, "latin1")),
+      fill,
+      JPEG_SOF0,
+      JPEG_SOS_EOI,
+    ]);
+
+    const result = stripImageMetadata(jpeg, "image/jpeg");
+
+    expect(result.ok).toBe(true);
+    expect(result.bytes.includes(Buffer.from(SECRET, "latin1"))).toBe(false);
+    expect(result.bytes.equals(Buffer.concat([Buffer.from([0xff, 0xd8]), JPEG_SOF0, JPEG_SOS_EOI]))).toBe(true);
+  });
+
+  // A phone stores a portrait as landscape pixels plus EXIF Orientation; losing
+  // it turns the photo sideways. Each format keeps the Orientation alone.
+  it.each(["jpeg", "png", "webp"] as const)(
+    "keeps the EXIF Orientation of a %s and nothing else from its EXIF",
+    async (format) => {
+      const photo = await sharp({ create: { width: 6, height: 4, channels: 3, background: "red" } })
+        .withMetadata({ orientation: 6, exif: { IFD0: { Artist: "OWNERNAME", Make: "SECRETCAM" } } })
+        .toFormat(format)
+        .toBuffer();
+      expect((await sharp(photo).metadata()).orientation).toBe(6);
+
+      const result = stripImageMetadata(photo, `image/${format}`);
+
+      expect(result.ok).toBe(true);
+      const text = result.bytes.toString("latin1");
+      expect(text).not.toContain("OWNERNAME");
+      expect(text).not.toContain("SECRETCAM");
+      const meta = await sharp(result.bytes).metadata();
+      expect(meta.orientation).toBe(6);
+      expect(meta.autoOrient).toEqual({ width: 4, height: 6 });
     },
   );
 
-  it("covers every allowed content type without throwing", () => {
-    // A new entry in ALLOWED_MEDIA_IMAGE_CONTENT_TYPES must be a deliberate
-    // decision here: it either gets a stripper (ok:true on clean bytes) or falls
-    // to the unsupported branch (ok:false), never an unhandled throw.
+  it.each(["jpeg", "png", "webp"] as const)(
+    "drops EXIF entirely from an upright %s",
+    async (format) => {
+      const photo = await sharp({ create: { width: 6, height: 4, channels: 3, background: "red" } })
+        .withExif({ IFD0: { Artist: "OWNERNAME" } })
+        .toFormat(format)
+        .toBuffer();
+
+      const result = stripImageMetadata(photo, `image/${format}`);
+
+      expect(result.ok).toBe(true);
+      expect((await sharp(result.bytes).metadata()).exif).toBeUndefined();
+    },
+  );
+
+  it.each(["jpeg", "png", "webp"] as const)(
+    "returns identical bytes on a second pass over a %s",
+    async (format) => {
+      const photo = await sharp({ create: { width: 6, height: 4, channels: 3, background: "red" } })
+        .withMetadata({ orientation: 8, exif: { IFD0: { Artist: "OWNERNAME" } } })
+        .toFormat(format)
+        .toBuffer();
+      const once = stripImageMetadata(photo, `image/${format}`);
+      expect(once.ok).toBe(true);
+
+      const twice = stripImageMetadata(once.bytes, `image/${format}`);
+
+      expect(twice.ok).toBe(true);
+      expect(twice.bytes.equals(once.bytes)).toBe(true);
+    },
+  );
+
+  // Keep-lists, not deny-lists: a metadata chunk nobody has named yet, such as
+  // Content Credentials (C2PA), is removed without being listed.
+  it("drops an unlisted PNG metadata chunk and refuses an unknown critical one", () => {
+    const ihdr = Buffer.from([0, 0, 0, 4, 0, 0, 0, 4, 8, 2, 0, 0, 0]);
+    const png = (extra: Buffer) => Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      pngChunk("IHDR", ihdr),
+      extra,
+      pngChunk("IDAT", Buffer.from([0x00])),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+
+    const credentials = stripImageMetadata(png(pngChunk("caBX", Buffer.from(SECRET))), "image/png");
+    expect(credentials.ok).toBe(true);
+    expect(credentials.bytes.includes(Buffer.from(SECRET))).toBe(false);
+    expect(stripImageMetadata(png(pngChunk("ZZZZ", Buffer.from("x"))), "image/png").ok).toBe(false);
+  });
+
+  it("drops an unlisted WebP chunk, at the top level and inside an animation frame", async () => {
+    const frame = (colour: string) =>
+      sharp({ create: { width: 8, height: 8, channels: 3, background: colour } }).raw().toBuffer();
+    const animated = await sharp(Buffer.concat([await frame("red"), await frame("blue")]), {
+      raw: { width: 8, height: 16, channels: 3, pageHeight: 8 },
+    }).webp({ loop: 0, delay: [100, 100] }).toBuffer();
+    // A C2PA chunk at the top level, and an unknown chunk inside the first frame.
+    const anmf = animated.indexOf("ANMF", 12, "ascii");
+    const size = animated.readUInt32LE(anmf + 4);
+    const smuggled = webpChunk("XYZW", Buffer.from(SECRET));
+    const grownFrame = Buffer.concat([
+      Buffer.from("ANMF", "ascii"),
+      Buffer.alloc(4),
+      animated.subarray(anmf + 8, anmf + 8 + size),
+      smuggled,
+    ]);
+    grownFrame.writeUInt32LE(size + smuggled.length, 4);
+    const body = Buffer.concat([
+      animated.subarray(12, anmf),
+      grownFrame,
+      animated.subarray(anmf + 8 + size),
+      webpChunk("C2PA", Buffer.from(`author=${SECRET}`)),
+    ]);
+    const header = Buffer.from("RIFF\0\0\0\0WEBP", "latin1");
+    header.writeUInt32LE(4 + body.length, 4);
+
+    const result = stripImageMetadata(Buffer.concat([header, body]), "image/webp");
+
+    expect(result.ok).toBe(true);
+    expect(result.bytes.includes(Buffer.from(SECRET))).toBe(false);
+    expect(result.bytes.equals(animated)).toBe(true);
+    expect((await sharp(result.bytes, { animated: true }).metadata()).pages).toBe(2);
+  });
+
+  it("rebuilds JFIF without its thumbnail and refuses a reserved marker", () => {
+    const thumbnail = Buffer.concat([
+      Buffer.from("JFIF\0\x01\x01\x00\x00\x01\x00\x01\x02\x01", "latin1"),
+      Buffer.from(SECRET.slice(0, 6), "latin1"), // a 2x1 RGB thumbnail
+    ]);
+    const jpeg = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      jpegAppSegment(0xe0, thumbnail),
+      JPEG_SOF0,
+      JPEG_SOS_EOI,
+    ]);
+
+    const result = stripImageMetadata(jpeg, "image/jpeg");
+
+    expect(result.ok).toBe(true);
+    expect(result.bytes.includes(Buffer.from(SECRET.slice(0, 6), "latin1"))).toBe(false);
+    expect(result.bytes.subarray(2, 20)).toEqual(Buffer.concat([
+      Buffer.from([0xff, 0xe0, 0x00, 0x10]),
+      Buffer.from("JFIF\0\x01\x01\x00\x00\x01\x00\x01\x00\x00", "latin1"),
+    ]));
+    const reserved = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      jpegAppSegment(0xf7, Buffer.from(SECRET)),
+      JPEG_SOF0,
+      JPEG_SOS_EOI,
+    ]);
+    expect(stripImageMetadata(reserved, "image/jpeg").ok).toBe(false);
+    const lowReserved = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      jpegAppSegment(0x02, Buffer.from(SECRET)),
+      JPEG_SOF0,
+      JPEG_SOS_EOI,
+    ]);
+    expect(stripImageMetadata(lowReserved, "image/jpeg").ok).toBe(false);
+  });
+
+  it("keeps only the defined bytes of an Adobe segment", () => {
+    const adobe = Buffer.from("Adobe\x00\x64\x00\x00\x00\x00\x01", "latin1");
+    const jpeg = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      jpegAppSegment(0xee, Buffer.concat([adobe, Buffer.from(SECRET)])),
+      JPEG_SOF0,
+      JPEG_SOS_EOI,
+    ]);
+
+    const result = stripImageMetadata(jpeg, "image/jpeg");
+
+    expect(result.ok).toBe(true);
+    expect(result.bytes.includes(Buffer.from(SECRET))).toBe(false);
+    expect(result.bytes.includes(adobe)).toBe(true);
+  });
+
+  it("covers every allowed content type and refuses garbage for each", () => {
+    // A new entry in ALLOWED_MEDIA_IMAGE_CONTENT_TYPES must get a cleaner (the
+    // switch is exhaustive); garbage is never reported clean, never thrown.
     for (const contentType of ALLOWED_MEDIA_IMAGE_CONTENT_TYPES) {
-      const result = stripImageMetadata(Buffer.from("not-an-image"), contentType);
-      expect(typeof result.ok).toBe("boolean");
+      const garbage = Buffer.from("not-an-image");
+      const result = stripImageMetadata(garbage, contentType);
+      expect(result.ok, contentType).toBe(false);
+      expect(result.bytes.equals(garbage)).toBe(true);
     }
   });
 });
 
-describe("storableImageBytes (fail-open paths)", () => {
+describe("cleanImageForStorage (every image-storing path, #5244)", () => {
   const GPS = Buffer.from("GPS:-41.29,174.78", "latin1");
 
-  it("returns the STRIPPED bytes when the strip is confirmed", () => {
+  it("returns the CLEANED bytes when the strip is confirmed", () => {
     const jpeg = Buffer.concat([
       Buffer.from([0xff, 0xd8]),
       jpegAppSegment(0xe1, Buffer.concat([Buffer.from("Exif\0\0", "latin1"), GPS])),
@@ -669,52 +834,37 @@ describe("storableImageBytes (fail-open paths)", () => {
       JPEG_SOS_EOI,
     ]);
 
-    const stored = storableImageBytes(jpeg, "image/jpeg", { source: "test" });
+    const result = cleanImageForStorage(jpeg, "image/jpeg");
 
-    expect(jpeg.includes(GPS)).toBe(true);
-    expect(stored.includes(GPS)).toBe(false);
-    expect(stored.length).toBeLessThan(jpeg.length);
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.bytes.includes(GPS)).toBe(false);
   });
 
-  it("FAILS OPEN: returns the ORIGINAL bytes when the strip is unconfirmed", () => {
-    // No primary EOI → the fail-closed parser cannot confirm a clean walk. The
-    // fail-open callers store the original rather than refusing the upload.
+  it("FAILS CLOSED: refuses with the plain message when the strip is unconfirmed", () => {
+    // No primary EOI → the parser cannot confirm a clean walk. Nothing is
+    // stored; the uploader is told why and what to do.
     const noEoi = Buffer.concat([
       Buffer.from([0xff, 0xd8]),
       jpegAppSegment(0xe1, Buffer.concat([Buffer.from("Exif\0\0", "latin1"), GPS])),
       JPEG_SOF0,
     ]);
 
-    const stored = storableImageBytes(noEoi, "image/jpeg", { source: "test" });
-
-    expect(stored.equals(noEoi)).toBe(true);
+    expect(cleanImageForStorage(noEoi, "image/jpeg")).toEqual({
+      ok: false,
+      message: IMAGE_NOT_CLEAN_MESSAGE,
+    });
   });
 
-  it("FAILS OPEN for the unstripped types (gif/avif/svg) rather than dropping them", () => {
-    const gif = buildGif(10, 20);
-    expect(
-      storableImageBytes(gif, "image/gif", { source: "test" }).equals(gif),
-    ).toBe(true);
-    const svg = SVG_WITH_DIMENSIONS;
-    expect(
-      storableImageBytes(svg, "image/svg+xml", { source: "test" }).equals(svg),
-    ).toBe(true);
-  });
-
-  it("stores the original when the content type could not be sniffed at all", () => {
-    // The image-manager batch uploader trusts the declared MIME + extension and
-    // must never start rejecting files, so an unsniffable buffer takes the
-    // logged store-the-original path.
-    const unknown = Buffer.from("not-an-image-at-all");
-    expect(
-      storableImageBytes(unknown, null, { source: "test" }).equals(unknown),
-    ).toBe(true);
+  it("refuses bytes whose type could not be sniffed", () => {
+    expect(cleanImageForStorage(Buffer.from("not-an-image-at-all"), null)).toEqual({
+      ok: false,
+      message: IMAGE_NOT_CLEAN_MESSAGE,
+    });
   });
 });
 
-describe("storableLogoDataUrl (inline club logo, #2242)", () => {
+describe("storableLogoDataUrl (inline club logo, #2242, #5244)", () => {
   const GPS = Buffer.from("GPS:-41.29,174.78", "latin1");
-  const ctx = { source: "test" };
 
   function dataUrl(type: string, bytes: Buffer): string {
     return `data:${type};base64,${bytes.toString("base64")}`;
@@ -728,66 +878,57 @@ describe("storableLogoDataUrl (inline club logo, #2242)", () => {
     JPEG_SOS_EOI,
   ]);
 
+  function storedValue(value: string | null | undefined): string | null {
+    const result = storableLogoDataUrl(value);
+    if (!result.ok) throw new Error(`refused: ${result.message}`);
+    return result.value;
+  }
+
   it("strips EXIF/GPS from an inline logo and keeps the declared media type", () => {
     // ClubTheme.logoDataUrl renders inline in the public header, footer and
     // mobile menu, so an unstripped phone photo would publish its coordinates on
     // every public page.
     const before = dataUrl("image/jpeg", EXIF_JPEG);
-    expect(Buffer.from(before.split(",")[1], "base64").includes(GPS)).toBe(true);
 
-    const after = storableLogoDataUrl(before, ctx);
+    const after = storedValue(before);
 
-    expect(after).not.toBeNull();
     expect(after).toMatch(/^data:image\/jpeg;base64,/);
     const decoded = Buffer.from((after as string).split(",")[1], "base64");
     expect(decoded.includes(GPS)).toBe(false);
-    expect(decoded.length).toBeLessThan(EXIF_JPEG.length);
     // Still a JPEG: the strip is byte surgery, never a re-encode.
     expect(detectImageContentType(decoded)).toBe("image/jpeg");
   });
 
   it("is idempotent, so re-saving or re-importing converges", () => {
-    const once = storableLogoDataUrl(dataUrl("image/jpeg", EXIF_JPEG), ctx);
-    expect(storableLogoDataUrl(once, ctx)).toBe(once);
+    const once = storedValue(dataUrl("image/jpeg", EXIF_JPEG));
+    expect(storedValue(once)).toBe(once);
   });
 
   it("returns the ORIGINAL string byte for byte when nothing was removed", () => {
     // Anything else would churn the stored value on every save, and would turn
     // an "unchanged" config-transfer dry-run into a spurious update.
-    const clean = dataUrl("image/png", buildPng(4, 4));
-    expect(storableLogoDataUrl(clean, ctx)).toBe(clean);
+    const clean = pngDataUrl();
+    expect(storedValue(clean)).toBe(clean);
+  });
 
-    // Fail-open cases, all returned verbatim: a type with no stripper, an
-    // unsniffable payload, and a payload the fail-closed parser cannot confirm.
-    const gif = dataUrl("image/gif", buildGif(4, 4));
-    expect(storableLogoDataUrl(gif, ctx)).toBe(gif);
-    const notAnImage = "data:image/png;base64,AAAA";
-    expect(storableLogoDataUrl(notAnImage, ctx)).toBe(notAnImage);
-    const noEoi = dataUrl(
+  it("passes an absent logo through as no logo", () => {
+    expect(storedValue(null)).toBeNull();
+    expect(storedValue(undefined)).toBeNull();
+    expect(storedValue("")).toBeNull();
+  });
+
+  it.each([
+    ["an unsniffable payload", "data:image/png;base64,AAAA"],
+    ["a JPEG the parser cannot confirm", dataUrl(
       "image/jpeg",
       Buffer.concat([
         Buffer.from([0xff, 0xd8]),
-        jpegAppSegment(
-          0xe1,
-          Buffer.concat([Buffer.from("Exif\0\0", "latin1"), GPS]),
-        ),
+        jpegAppSegment(0xe1, Buffer.concat([Buffer.from("Exif\0\0", "latin1"), GPS])),
         JPEG_SOF0,
       ]),
-    );
-    expect(storableLogoDataUrl(noEoi, ctx)).toBe(noEoi);
-  });
-
-  it("passes an absent logo through untouched", () => {
-    expect(storableLogoDataUrl(null, ctx)).toBeNull();
-    expect(storableLogoDataUrl(undefined, ctx)).toBeNull();
-    expect(storableLogoDataUrl("", ctx)).toBeNull();
-  });
-
-  it("never rejects a value that is not a base64 data URI", () => {
-    // A hand-edited row must not be able to break a site-style save or an
-    // operator's whole configuration restore; the callers' sanitisers already
-    // rule this out, so this branch only logs.
-    const odd = "https://example.test/logo.png";
-    expect(storableLogoDataUrl(odd, ctx)).toBe(odd);
+    )],
+    ["a value that is not a base64 data URI", "https://example.test/logo.png"],
+  ])("refuses %s with the plain message", (_label, value) => {
+    expect(storableLogoDataUrl(value)).toEqual({ ok: false, message: IMAGE_NOT_CLEAN_MESSAGE });
   });
 });

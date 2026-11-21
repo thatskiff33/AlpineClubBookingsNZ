@@ -45,6 +45,8 @@ const EXPECTED_EXCLUDED_REPORT_STATUS_VALUES = [
 ] as const;
 
 const date = (value: string) => new Date(`${value}T00:00:00.000Z`);
+const EN_NZ = { locale: "en-NZ" } as const;
+const DE_CH = { locale: "de-CH" } as const;
 
 function booking(
   overrides: Partial<RevenueBookingLike> = {},
@@ -119,14 +121,80 @@ describe("admin reports helpers", () => {
       [booking({ finalPriceCents: 300 }), booking({ id: "booking-2", finalPriceCents: 600 })],
       date("2026-04-01"),
       date("2026-04-14"),
+      EN_NZ,
     );
     expect(result.granularity).toBe("daily");
     expect(result.data).toHaveLength(14);
     expect(result.data[6]).toMatchObject({
       periodStart: "2026-04-07",
-      label: "Tue 7 Apr",
+      label: "Tue, 7 Apr",
       revenueCents: 300,
       bookingCount: 2,
+    });
+  });
+
+  describe("writes its axis and tooltip text in the club's date format (#5258)", () => {
+    const labelsOf = (
+      rangeStart: string,
+      rangeEnd: string,
+      format: typeof EN_NZ | typeof DE_CH,
+    ) =>
+      buildRevenueSeries([booking({ finalPriceCents: 300 })], date(rangeStart), date(rangeEnd), format)
+        .data.slice(0, 2)
+        .map(({ label, tooltipLabel }) => ({ label, tooltipLabel }));
+
+    it("daily", () => {
+      expect(labelsOf("2026-04-01", "2026-04-14", EN_NZ)).toEqual([
+        { label: "Wed, 1 Apr", tooltipLabel: "Wednesday, 1 April 2026" },
+        { label: "Thu, 2 Apr", tooltipLabel: "Thursday, 2 April 2026" },
+      ]);
+      expect(labelsOf("2026-04-01", "2026-04-14", DE_CH)).toEqual([
+        { label: "Mi., 1. Apr.", tooltipLabel: "Mittwoch, 1. April 2026" },
+        { label: "Do., 2. Apr.", tooltipLabel: "Donnerstag, 2. April 2026" },
+      ]);
+    });
+
+    it("weekly", () => {
+      expect(labelsOf("2026-04-01", "2026-04-15", EN_NZ)).toEqual([
+        { label: "Week of 30 Mar", tooltipLabel: "Week of 30 Mar 2026 to 5 Apr 2026" },
+        { label: "Week of 6 Apr", tooltipLabel: "Week of 6 Apr 2026 to 12 Apr 2026" },
+      ]);
+      expect(labelsOf("2026-04-01", "2026-04-15", DE_CH)).toEqual([
+        { label: "Week of 30. März", tooltipLabel: "Week of 30.03.2026 to 05.04.2026" },
+        { label: "Week of 6. Apr.", tooltipLabel: "Week of 06.04.2026 to 12.04.2026" },
+      ]);
+    });
+
+    it("monthly", () => {
+      expect(labelsOf("2026-08-01", "2026-11-02", EN_NZ)).toEqual([
+        { label: "Aug 2026", tooltipLabel: "August 2026" },
+        { label: "Sept 2026", tooltipLabel: "September 2026" },
+      ]);
+      expect(labelsOf("2026-08-01", "2026-11-02", DE_CH)).toEqual([
+        { label: "Aug. 2026", tooltipLabel: "August 2026" },
+        { label: "Sept. 2026", tooltipLabel: "September 2026" },
+      ]);
+    });
+
+    it("changes only the text: buckets, keys and cents are the same in every locale", () => {
+      const withoutText = (format: typeof EN_NZ | typeof DE_CH) => {
+        const series = buildRevenueSeries(
+          [booking({ finalPriceCents: 300 }), booking({ id: "booking-2", finalPriceCents: 601 })],
+          date("2026-04-01"),
+          date("2026-04-15"),
+          format,
+        );
+        return {
+          granularity: series.granularity,
+          data: series.data.map(({ periodStart, periodEnd, revenueCents, bookingCount }) => ({
+            periodStart,
+            periodEnd,
+            revenueCents,
+            bookingCount,
+          })),
+        };
+      };
+      expect(withoutText(DE_CH)).toEqual(withoutText(EN_NZ));
     });
   });
 
@@ -135,6 +203,7 @@ describe("admin reports helpers", () => {
       [booking({ finalPriceCents: 300 })],
       date("2026-04-01"),
       date("2026-04-14"),
+      EN_NZ,
     );
     expect(result.granularity).toBe("daily");
 
@@ -142,6 +211,7 @@ describe("admin reports helpers", () => {
       [booking({ finalPriceCents: 300 })],
       date("2026-04-01"),
       date("2026-04-15"),
+      EN_NZ,
     );
     expect(weekly.granularity).toBe("weekly");
     expect(weekly.data.find((bucket) => bucket.periodStart === "2026-04-06")).toMatchObject({
@@ -169,6 +239,7 @@ describe("admin reports helpers", () => {
       [row],
       date("2026-02-01"),
       date("2026-05-02"),
+      EN_NZ,
     );
     expect(result.granularity).toBe("monthly");
     expect(result.data.find((bucket) => bucket.periodStart === "2026-04-01")).toMatchObject({
@@ -199,6 +270,7 @@ describe("admin reports helpers", () => {
       ],
       date("2026-04-01"),
       date("2026-04-14"),
+      EN_NZ,
     );
     expect(result.data.reduce((sum, bucket) => sum + bucket.revenueCents, 0)).toBe(300);
   });

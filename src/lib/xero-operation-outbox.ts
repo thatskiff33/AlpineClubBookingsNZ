@@ -1,3 +1,4 @@
+import { bookingHasExternalSettlement, externalSettlementCause } from "@/lib/booking-external-settlement";
 import { ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE, ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL } from "@/lib/organiser-billing";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { executeOrganiserExtraAdjustment } from "@/lib/organiser-extra-adjustment";
@@ -51,11 +52,11 @@ import {
   type RefundNoteWording,
 } from "@/lib/xero-refund-method";
 import { createXeroEntranceFeeInvoice } from "@/lib/xero-entrance-fee-invoices";
+import { buildPrecomputedEntranceFeeContext } from "@/lib/xero-outbox-entrance-fee-context";
 import {
   buildEntranceFeeInvoiceIdempotencyKey,
   ENTRANCE_FEE_EXEMPT_MESSAGE,
   getEntranceFeeContext,
-  type EntranceFeeContext,
 } from "@/lib/xero-mappings";
 import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
 import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-allocation";
@@ -121,7 +122,6 @@ import {
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
   XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
   type QueuedOutboxExpectedOperation,
-  type QueuedOutboxPayload,
 } from "@/lib/xero-operation-outbox-payload";
 import { linkReviewTaskId, queuedReviewTaskId, reviewTaskKeyParts } from "@/lib/xero-review-task-key";
 import { supplementaryInvoicePayload } from "@/lib/xero-supplementary-invoice-enqueue";
@@ -207,32 +207,6 @@ async function claimQueuedOutboxOperation(
       in: [...expectedOperation.localModels],
     },
   });
-}
-
-function buildPrecomputedEntranceFeeContext(
-  payload: QueuedOutboxPayload
-): EntranceFeeContext | null {
-  if (
-    payload.queueType !== XERO_OUTBOX_ENTRANCE_FEE_TYPE ||
-    !payload.category ||
-    payload.feeAmountCents === null ||
-    payload.feeAmountCents === undefined
-  ) {
-    return null;
-  }
-
-  const entranceFeeContext: EntranceFeeContext = {
-    category: payload.category,
-    feeMapping: {
-      itemCode: payload.itemCode ?? null,
-      amountCents: payload.feeAmountCents,
-    },
-  };
-  if (payload.description) {
-    entranceFeeContext.description = payload.description;
-  }
-
-  return entranceFeeContext;
 }
 
 export async function enqueueXeroEntranceFeeInvoiceOperation(
@@ -481,6 +455,7 @@ export async function enqueueXeroBookingInvoiceOperation(
     where: { id: bookingId },
     select: {
       id: true,
+      importRow: { select: { amountCents: true } },
       organiserSettled: true,
       parentBookingId: true,
       payment: {
@@ -524,7 +499,7 @@ export async function enqueueXeroBookingInvoiceOperation(
   // invoice precisely when source is INTERNET_BANKING) for money the club
   // already holds in cash.
   //
-  // Provenance is `manuallyMarkedPaidAt` ALONE — never conjoined with "has no
+  // Cash provenance is `manuallyMarkedPaidAt` ALONE — never conjoined with "has no
   // Xero id" — because two stampers outside the cash-settle loop can
   // legitimately stamp a Xero id onto a manual row, and that must not launder
   // the row's provenance away from this fence.
@@ -532,8 +507,9 @@ export async function enqueueXeroBookingInvoiceOperation(
   // Returns the existing skip shape, which every caller already handles (the
   // repair pass maps a null queueOperationId to "skipped"; the force-sync and
   // missing-invoices routes surface the message), but logs at WARN so a
-  // repeated attempt is visible rather than silent.
-  if (booking.payment.manuallyMarkedPaidAt) {
+  // repeated attempt is visible rather than silent. Imported free stays have
+  // no cash provenance; their import row is the equivalent fence (#5005).
+  if (bookingHasExternalSettlement(booking)) {
     logger.warn(
       {
         bookingId,
@@ -544,8 +520,7 @@ export async function enqueueXeroBookingInvoiceOperation(
     );
     return {
       queueOperationId: null,
-      message:
-        "Booking was manually marked paid (cash / off-Xero) — no Xero invoice is expected.",
+      message: `Booking was ${externalSettlementCause(booking.payment)} — no Xero invoice is expected.`,
     };
   }
 

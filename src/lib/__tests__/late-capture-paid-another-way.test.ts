@@ -24,8 +24,6 @@ vi.mock("@/lib/late-capture-xero-receipt", () => ({
   },
   readPaidAnotherWayLateCaptureXeroReceipt: (...args: unknown[]) => mocks.readLateCaptureXeroReceipt(...args),
   findLateCapturePaymentIntents: (...args: unknown[]) => mocks.lateIntents(...args),
-  hasXeroReceiptForLateCapture: async (...args: unknown[]) =>
-    ((await mocks.readLateCaptureXeroReceipt(...args)) as { kind: string }).kind === "recorded",
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroRefundCreditNoteOperation: (...args: unknown[]) => mocks.enqueueXeroRefundCreditNoteOperation(...args),

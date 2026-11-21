@@ -30,6 +30,8 @@ describe("the unpaid edit change-fee proof stays wired into CI (#4661)", () => {
     expect(suite).toContain("before a card booking's pay step: no fee-only payment row is opened");
     expect(suite).toContain("an unpaid whole-lodge booking keeps no payment row and no fee");
     expect(suite).toContain("a paid booking still records the policy fee once");
-    expect(suite).toContain("a credit-paid booking is charged the fee");
+    expect(suite).toContain("a booking credit settled in full, paid from %s");
+    expect(suite).toContain("records the fee on its payment once when %s");
+    expect(suite).toContain("moved for the fee alone");
   });
 });

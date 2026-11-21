@@ -114,6 +114,10 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-001",
   },
   {
+    site: "writeOneBooking#1", tier: "GLOBAL", invariant: "INV-LOCK-002",
+    reason: "#5005: an imported booking is created PAID by the manual settlement body in one transaction, so it joins the settle/cancel cohort, then takes the lodge capacity key and the person-night keys and re-runs every import check under them. One booking per transaction; nothing leaves the app.",
+  },
+  {
     // The one spelling of the carrying-ask queue's order, taken by the inline
     // mint, the re-issue's completion and the recovery runner's claim hold.
     site: "lockAdditionalAskQueue#1",
@@ -495,6 +499,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     tier: "GLOBAL",
     reason:
       "#3750: approving a LOCKED_PERIOD change request on a finished stay claims the request and runs the canonical batch modification on the same transaction — a money and booking-status transition that must exclude a concurrent cancel, capture or refund of the same booking, composed with a capacity re-check. Global first, then the booking's immutable lodge key, then (#4845) the booking row before the claim; the tx-aware service re-enters all three and takes the member keys after.",
+    invariant: "INV-LOCK-002",
+  },
+  {
+    site: "correctWorkParty#1",
+    tier: "GLOBAL",
+    reason:
+      "Fork #119: an officer adds an existing booking to a work party (fork #130: or removes it from one; both directions are this one writer, `addBookingToWorkParty` and `removeBookingFromWorkParty` its two entry points) — the canonical batch modification on the same transaction, which moves settlement money (account credit, a refund, or an amount owed) and must exclude a concurrent cancel, capture or refund of the same booking, composed with a capacity re-check on a booking that does not yet hold its beds. Global first, then the booking's immutable lodge key, then (#4845) the booking row before the officer's re-authorisation; the tx-aware service re-enters all three and takes the member keys after. No claim row: two concurrent applies serialise here and the second re-reads a booking that already carries (or no longer carries) the work party and is refused.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -1137,7 +1148,13 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // the milliseconds of a whole-series regenerate/propagate/collapse/delete so
   // two concurrent editors can't interleave a delete-and-regenerate and
   // duplicate/drop occurrences. Single-lock holder; its own keyspace, composed
-  // with no booking/money/capacity/lifecycle key (calendar rows only).
+  // with no booking/money/capacity/lifecycle key (calendar rows only). #5148:
+  // `lockWorkPartyCalendar` (calendar-work-party-entries.ts) calls the same
+  // helper with a calendar-series:work-party:{workPartyEventId} key, adding no
+  // raw lock site. Its holders (create's and Add to calendar's own
+  // transaction, the work-party edit, the work-party delete) each take it
+  // first, before any row, and hold no other advisory key
+  // (docs/CONCURRENCY_AND_LOCKING.md, the calendar-series row).
   "src/lib/calendar-service.ts": 1,
   "src/lib/config-transfer-lock.ts": 1,
   // TWO: the blocking `acquireLodgeCapacityLock`, and `tryAcquireLodgeCapacityLock`
@@ -1353,7 +1370,11 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // (`STALE_WAITING_PAYMENT`) on the anchor it already holds, the same
   // guarded `CANCELLED` + code -> `PENDING` update the late-capture re-queue
   // writes, without taking the lock again. The release still takes the lock,
-  // for the webhook, the confirm route and the reaper.
+  // for the webhook, the confirm route and the reaper. #5220: on that same
+  // held key the decision also queues the revived invoice's receipt where it
+  // goes out unpaid (the receipt's enqueue re-taking it) and stamps a refusal
+  // `STALE_WAITING_PAYMENT_CAPTURED` with the release's guarded claim; the
+  // officer's email follows the commit. Same site, no new key, same order.
   // #3403 (`INV-PAY-140`): the superseded-invoice move
   // (`superseded-ask-invoice-carry.ts`) calls the same helper on each change
   // whose waiting invoice it re-points at the request carrying its balance,
@@ -1495,6 +1516,11 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // writer and "Paid another way". See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Member-money applications and refund reservations" and the M4c paragraph.
   "src/lib/member-money/internal/application-read.ts": 1,
+  // #4525 (Ledger M13): the capture-receipt recorder takes the capture's PaymentTransaction
+  // row (`SELECT 1 … FOR NO KEY UPDATE`, by its unique intent) in a short transaction of its
+  // own holding nothing else, so two receipts of one capture plan in turn. No advisory key.
+  // See docs/CONCURRENCY_AND_LOCKING.md -> "Capture-receipt manifest".
+  "src/lib/member-money/internal/capture-receipt-manifest.ts": 1,
   // #4823: member merge re-points `Payment.manuallyMarkedPaidByMemberId` with one
   // sorted `SELECT 1 … ORDER BY "id" FOR NO KEY UPDATE NOWAIT` over every row
   // naming the duplicate, then the update. Merge takes no lock(1) and holds

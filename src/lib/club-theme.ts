@@ -8,6 +8,7 @@ import {
   logoImageIdFromUrl,
   normaliseThemeValues,
   resolveLogoFields,
+  type ClubThemeValues,
 } from "@/lib/club-theme-schema";
 import type { ClubThemeUpdateInput } from "@/lib/club-theme-update-schema";
 import { storableLogoDataUrl } from "@/lib/image-metadata";
@@ -48,10 +49,22 @@ export class MissingLogoImageError extends Error {
   }
 }
 
+/**
+ * The inline logo could not be confirmed free of hidden details (location,
+ * device, owner) and was not saved (#5244). `message` is the plain-English
+ * refusal the route shows the admin.
+ */
+export class UncleanLogoError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UncleanLogoError";
+  }
+}
+
 export async function saveClubTheme(input: ClubThemeUpdateInput) {
   const existing = await prisma.clubTheme.findUnique({
     where: { id: CLUB_THEME_ID },
-    select: { completedAt: true },
+    select: { completedAt: true, logoDataUrl: true },
   });
   const completedAt = input.completeSetup
     ? (existing?.completedAt ?? new Date())
@@ -72,17 +85,20 @@ export async function saveClubTheme(input: ClubThemeUpdateInput) {
   // New logos normally go through POST /api/admin/site-style/logo (re-encoded by
   // sharp, metadata-free by construction) — this column is the small hand-
   // crafted/legacy escape hatch, and a hand-crafted logo can still be a phone
-  // photo carrying GPS. Fail-open and log, matching the other admin image paths:
-  // a decorative logo must never fail a site-style save. Stripping only ever
-  // shrinks the value, so the route's 64KB write budget and the schema's 900KB
-  // read bound both still hold, and a byte-identical result is returned verbatim
-  // so an untouched logo does not churn on every colour change.
-  const storedLogoFields = {
-    ...logoFields,
-    logoDataUrl: storableLogoDataUrl(logoFields.logoDataUrl, {
-      source: "club theme inline logo",
-    }),
-  };
+  // photo carrying GPS. Fail-closed like every image path (#5244): a logo that
+  // cannot be confirmed clean is refused and the route shows the message.
+  // Stripping only ever shrinks the value, so the route's 64KB write budget and
+  // the schema's 900KB read bound both still hold. The logo already stored is
+  // not cleaned again: the wizard sends the whole theme back on every save, and
+  // stored images are left as they are (#5244), so a legacy logo neither churns
+  // nor blocks a colour change.
+  const logoUnchanged =
+    logoFields.logoDataUrl !== null && logoFields.logoDataUrl === existing?.logoDataUrl;
+  const cleanedLogo = logoUnchanged
+    ? { ok: true as const, value: logoFields.logoDataUrl }
+    : storableLogoDataUrl(logoFields.logoDataUrl);
+  if (!cleanedLogo.ok) throw new UncleanLogoError(cleanedLogo.message);
+  const storedLogoFields = { ...logoFields, logoDataUrl: cleanedLogo.value };
 
   const data = {
     brandGold: input.brandGold,
@@ -126,8 +142,15 @@ export async function saveClubTheme(input: ClubThemeUpdateInput) {
       await tx.$executeRaw`SELECT 1 FROM "ClubTheme" WHERE "id" = ${CLUB_THEME_ID} FOR UPDATE`;
       const locked = await tx.clubTheme.findUnique({
         where: { id: CLUB_THEME_ID },
-        select: { logoUrl: true },
+        select: { logoUrl: true, logoDataUrl: true },
       });
+      if (logoUnchanged && locked?.logoDataUrl !== logoFields.logoDataUrl) {
+        // Another save replaced the logo after it was read, so the value this
+        // save sends back is no longer what is stored: clean it like a new one.
+        const recleaned = storableLogoDataUrl(logoFields.logoDataUrl);
+        if (!recleaned.ok) throw new UncleanLogoError(recleaned.message);
+        data.logoDataUrl = recleaned.value;
+      }
       const previousLogoImageId = logoImageIdFromUrl(locked?.logoUrl ?? null);
       const nextLogoImageId = logoImageIdFromUrl(logoFields.logoUrl);
 
@@ -200,15 +223,92 @@ export async function getWebsiteThemeRenderState() {
   const readFailed = theme === READ_FAILED;
   const row = readFailed ? null : (theme as Exclude<typeof theme, symbol>);
   const values = normaliseThemeValues(row ?? DEFAULT_CLUB_THEME_VALUES);
+  // A failed read renders the default palette but is not memoised: it would
+  // evict the club's real stylesheets, which the next good read then rebuilds.
+  const { css, appCss } = readFailed
+    ? buildThemeStylesheets(values)
+    : themeStylesheets(values);
 
   return {
     values,
-    css: buildClubThemeCss(values),
-    appCss: buildClubThemeAppCss(values),
+    css,
+    appCss,
     logoUrl: values.logoUrl,
     logoDataUrl: values.logoDataUrl,
     isComplete: Boolean(row?.completedAt),
     /** True only when the read THREW — never when it returned "no row". */
     readFailed,
   };
+}
+
+/**
+ * The last theme's two stylesheets, reused while the values are unchanged
+ * (#5264). Generating them runs the palette generator twice, which costs
+ * hundreds of milliseconds of CPU, logo or not. The values change only when an
+ * administrator saves a new site style, but every 15-second cache refill of
+ * the theme rebuilt both. That work blocks the server's only thread, so every
+ * request arriving meanwhile waited for it. Both builders are pure functions of
+ * the values, so reusing the last output is exact.
+ */
+let lastThemeStylesheets: {
+  values: ClubThemeValues;
+  css: string;
+  appCss: string;
+} | null = null;
+
+function themeStylesheets(values: ClubThemeValues) {
+  if (
+    lastThemeStylesheets &&
+    sameThemeValues(lastThemeStylesheets.values, values)
+  ) {
+    return lastThemeStylesheets;
+  }
+
+  lastThemeStylesheets = buildThemeStylesheets(values);
+  return lastThemeStylesheets;
+}
+
+function buildThemeStylesheets(values: ClubThemeValues) {
+  return {
+    values,
+    css: buildClubThemeCss(values),
+    appCss: buildClubThemeAppCss(values),
+  };
+}
+
+// test seam
+export function resetThemeStylesheetCache() {
+  lastThemeStylesheets = null;
+}
+
+function sameThemeValues(a: ClubThemeValues, b: ClubThemeValues) {
+  const keys = Object.keys(a) as (keyof ClubThemeValues)[];
+  return (
+    keys.length === Object.keys(b).length &&
+    keys.every((key) => Object.is(a[key], b[key]))
+  );
+}
+
+/**
+ * Whether setup is complete, from `completedAt` alone (#5264). This is the
+ * proxy's setup gate's read on every refresh, and on a live club it is the only
+ * one: it never loads the logo or builds the theme CSS that
+ * `getWebsiteThemeRenderState()` does. `readFailed` keeps "the database did not
+ * answer" apart from "not complete", for the reason given above that function.
+ */
+export async function readSetupCompletion(): Promise<
+  { readFailed: true } | { readFailed: false; isComplete: boolean }
+> {
+  const row = await prisma.clubTheme
+    .findUnique({
+      where: { id: CLUB_THEME_ID },
+      select: { completedAt: true },
+    })
+    .catch(() => READ_FAILED);
+
+  if (typeof row === "symbol") {
+    return { readFailed: true };
+  }
+
+  return { readFailed: false, isComplete: Boolean(row?.completedAt) };
 }

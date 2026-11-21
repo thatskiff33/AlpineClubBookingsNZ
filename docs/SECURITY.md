@@ -206,10 +206,31 @@ if login is later enabled, a wrong password still spends a full compare until
 the screened setup/reset flow replaces it with a real password.
 
 Regression tests compare both constants' encoded cost with a newly generated
-hash; changing the cost requires regenerating both. Existing stored hashes keep
-their original cost until replaced, so older cost-12 accounts can still compare
-faster than unknown accounts. Standard bcrypt hashes remain readable by both
-old and new releases, with no migration or rehash.
+hash; changing the cost requires regenerating both.
+
+**Older stored hashes (#5261).** Passwords set before a cost rise stay at their
+original cost until the member proves them. After a successful password
+sign-in, or a password step-up, `src/lib/password-rehash.ts` hashes the same
+password at `PASSWORD_BCRYPT_COST` and saves it. The save changes only
+`passwordHash`, so no session ends and the member notices nothing, and it
+matches only while the stored hash is still the one just proved: a password
+changed or reset at the same moment is never overwritten. A failed save is
+logged and retried at the next sign-in; a refused sign-in never writes. The
+new hash is standard bcrypt, so an older release running beside this one
+during an upgrade still reads it. Raising the constant again upgrades the same
+way.
+
+A wrong password against an older hash would otherwise be answered faster
+than an unknown email. Before refusing, sign-in therefore hashes the attempt
+at each cost from the stored one up to one below `PASSWORD_BCRYPT_COST`,
+discarding the results, which brings the total work to one compare at the
+current cost.
+
+What remains: an account that never signs in with a password again, such as a
+passkey, Google or email-link user, keeps its older cost. Its sign-in timing
+already matches an unknown email; the only difference is that its hash is
+cheaper to attack if the database itself is stolen. No password can be
+re-hashed without the password, so there is no background migration.
 
 The pinned native dependency ships Linux glibc and Alpine musl binaries for
 amd64 and arm64 without an install script. Next.js externalises it by default.

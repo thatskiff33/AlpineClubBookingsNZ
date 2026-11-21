@@ -1,7 +1,7 @@
 vi.mock("@/lib/xero-webhook-health", () => ({ getXeroWebhookHealth: vi.fn().mockResolvedValue({ connected: false, silent: false, hours: 24, lastReceivedAt: null }) }));
 import { buildUnpaidFinishedStaysWhere } from "@/lib/unpaid-finished-stays";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { BookingRequestStatus } from "@prisma/client";
+import { BookingRequestStatus, ManualRefundTaskKind } from "@prisma/client";
 
 /*
   The three date-bounded queues below are bounded on the CLUB's day, from its
@@ -184,6 +184,24 @@ describe("getAdminPendingCounts", () => {
       unassignedHutLeaderDates: 2,
       stuckStatesAffected: 17,
       unavailable: [],
+    });
+  });
+
+  // #4344: the finance queue leaves a retired officer edit review out of its
+  // OPEN read, so the badge must too. Counting it would show a badge of one
+  // over an empty queue with no control to clear it. The `kind: null` arm keeps
+  // legacy hand-backs written before the column existed in the count.
+  it("counts manual refund tasks with the finance queue's own OPEN where, leaving retired edit reviews out", async () => {
+    await getAdminPendingCounts();
+    expect(mocks.manualRefundTaskCount).toHaveBeenCalledTimes(1);
+    expect(mocks.manualRefundTaskCount).toHaveBeenCalledWith({
+      where: {
+        status: "OPEN",
+        OR: [
+          { kind: null },
+          { kind: { not: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW } },
+        ],
+      },
     });
   });
 

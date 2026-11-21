@@ -8,7 +8,7 @@ import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { writeExportManifest, type ExportManifestRow } from "@/lib/member-money/internal/store";
 import { describeUniqueConstraintTarget } from "@/lib/prisma-errors";
-import { createMemberMoneyScratchDatabase, type MemberMoneyScratchDatabase } from "./support/member-money-fixtures";
+import { createMemberMoneyScratchDatabase, MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS, type MemberMoneyScratchDatabase } from "./support/member-money-fixtures";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -45,6 +45,22 @@ function row(bookingId: string, overrides: Partial<ExportManifestRow> = {}): Exp
   };
 }
 
+/** A capture receipt of `cents` of one capture, under its own Xero payment key. */
+function receipt(bookingId: string, key: string, cents: number): ExportManifestRow {
+  return {
+    documentRole: "CAPTURE_RECEIPT",
+    legacyKey: key,
+    bookingId,
+    outcome: "COVERED",
+    reason: null,
+    payloadHash: "c".repeat(64),
+    frozenMapping: { invoiceId: "INV-4525" },
+    lineTotalCents: cents,
+    providerInvoiceId: `PAY-${key}`,
+    coverage: [{ account: "STRIPE_CLEARING", chargeIdentity: `capture:pi_${bookingId}`, coveredCents: cents, taxCode: null, sliceKey: key }],
+  };
+}
+
 const write = (manifest: ExportManifestRow) => appPrisma.$transaction((tx) => writeExportManifest(tx, manifest));
 
 async function stored(bookingId: string) {
@@ -63,13 +79,13 @@ async function stored(bookingId: string) {
     appPrisma = new Prisma({ adapter: createPrismaPgAdapter(scratch.appUrl) });
     app = new Client({ connectionString: scratch.appUrl });
     await app.connect();
-  }, 30_000);
+  }, MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS);
 
   afterAll(async () => {
     await appPrisma?.$disconnect();
     await app?.end();
     await scratch?.drop();
-  });
+  }, MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS);
 
   it("writes a COVERED manifest with its coverage, and a same-hash repeat is a no-op", async () => {
     const id = await booking();
@@ -209,5 +225,18 @@ async function stored(bookingId: string) {
       await expect(write(update(id))).resolves.toBe("WRITTEN");
       await expect(write(update(id, { legacyKey: "update-2", outcome: "CONFLICT", reason: "PRIMARY_UNMATCHED", lineTotalCents: 1 }))).resolves.toBe("WRITTEN");
     });
+  });
+
+  it("lets several receipts cover one capture under their own keys, and refuses a key covering it twice", async () => {
+    const id = await booking();
+    await expect(write(receipt(id, `payment:${id}:a`, 5000))).resolves.toBe("WRITTEN");
+    await expect(write(receipt(id, `payment:${id}:b`, 3000))).resolves.toBe("WRITTEN");
+    await expect(write(receipt(id, `payment:${id}:a`, 5000))).resolves.toBe("SAME");
+    const { coverage } = await stored(id);
+    expect(coverage).toHaveLength(2);
+    expect(coverage).toEqual(expect.arrayContaining([{ chargeIdentity: `capture:pi_${id}`, coveredCents: 5000 }, { chargeIdentity: `capture:pi_${id}`, coveredCents: 3000 }]));
+    // One key naming the same capture twice, on a manifest of its own.
+    const twice = receipt(id, `payment:${id}:c`, 2000);
+    await expect(write({ ...twice, lineTotalCents: 4000, coverage: [twice.coverage[0]!, twice.coverage[0]!] })).rejects.toMatchObject({ code: "P2002" });
   });
 });

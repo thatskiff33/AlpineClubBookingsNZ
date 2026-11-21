@@ -1125,13 +1125,13 @@ const DATE_FNS_RESTRICTIONS = [...NO_DATE_FNS];
  * not moved. A RATCHET, like `ENVIRONMENT_ZONE_ADAPTERS`: it only shrinks, and
  * `club-time-boundary-guard.test.ts` refuses to let it grow.
  *
- * None of these is a new decision by CT-6. Two are the admin report
- * bucket/date-series residual #2870's ledger already names; the rest are
- * relative-duration hints and chart tick labels.
+ * None of these is a new decision by CT-6. `admin-reports.ts` is the admin
+ * report bucket/date-series residual #2870's ledger names (its chart labels
+ * moved onto the club-time kernel in #5258); the rest are relative-duration
+ * hints and the dataset-reset month windows.
  */
 const DATE_FNS_ADAPTER_FILES = [
   "src/app/(admin)/admin/membership/members/_components/xero-groups-refresh-hint.tsx",
-  "src/app/(admin)/admin/finance/reports/_components/report-charts.tsx",
   "src/components/admin/member-password-action-button.tsx",
   "src/lib/admin-dataset-reset-state.ts",
   "src/lib/admin-reports.ts",
@@ -1149,12 +1149,6 @@ export const DATE_FNS_ADAPTERS = [
     uses: "formatDistanceToNow",
     reason:
       "The same relative-duration hint on a password action, zone-independent for the same reason.",
-  },
-  {
-    file: "src/app/(admin)/admin/finance/reports/_components/report-charts.tsx",
-    uses: "format",
-    reason:
-      "Chart tick labels for the same surface and the same residual; they must agree with the series that feeds them, so the two move together or not at all.",
   },
   {
     file: "src/lib/admin-reports.ts",
@@ -1840,6 +1834,11 @@ export const COMMENT_STRIPPER_ALLOWLIST = [
     file: "src/app/api/bookings/__tests__/rooms-unscoped-mode-has-no-internal-caller.test.ts",
     reason:
       "It COLLECTS comments rather than removing them. `commentBlocks` groups the docblock lines above a call so the test can assert what the comment says; the canonical helper deletes exactly the text this assertion is about. The file imports `stripComments` as well, for the half of its work that is a strip — which is what makes the distinction visible rather than theoretical.",
+  },
+  {
+    file: "src/lib/image-metadata-svg.ts",
+    reason:
+      "CSS inside an uploaded SVG, and PRODUCTION code, not a source scanner. `cleanCss` removes `/* … */` from a drawing's `<style>` text and `style` attributes because an editor's comment can carry the author's name (#5244), and refuses the file when an opener is left unterminated. CSS has no line comments, and the canonical helper is a test-support module that production code cannot import.",
   },
 ];
 

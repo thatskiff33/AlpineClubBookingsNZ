@@ -97,14 +97,10 @@ export default function CommunicationsPage() {
     success: boolean;
     message: string;
   } | null>(null);
-  // The hourly limit and the send history, loaded on mount.
-  const {
-    history,
-    loadingHistory,
-    historyLoadError,
-    bulkSendLimit,
-    refreshHistory,
-  } = useCommunicationsData();
+  // The hourly limit, loaded on mount.
+  const { bulkSendLimit } = useCommunicationsData();
+  // Bumped after a send, so the history returns to its first page and shows it.
+  const [historyVersion, setHistoryVersion] = useState(0);
   // Where focus goes once a cancelled confirmation has settled (below).
   const returnFocusTo = useRef<HTMLElement | null>(null);
 
@@ -186,7 +182,7 @@ export default function CommunicationsPage() {
         setBody("");
         // The next message needs its own choice of kind (#4987).
         setCategory(null);
-        refreshHistory();
+        setHistoryVersion((version) => version + 1);
       } else {
         setResult({
           success: false,
@@ -348,12 +344,7 @@ export default function CommunicationsPage() {
       </Card>
 
       {/* History */}
-      <SendHistoryCard
-        history={history}
-        loading={loadingHistory}
-        loadError={historyLoadError}
-        onRetry={refreshHistory}
-      />
+      <SendHistoryCard refreshVersion={historyVersion} />
       </div>
     </div>
   );
