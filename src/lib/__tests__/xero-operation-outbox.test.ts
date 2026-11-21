@@ -396,6 +396,7 @@ import { REFUND_NOTE_AWAITING_RESOLVE_RECHECK_MS } from "@/lib/xero-refund-note-
 import { matchesWhere } from "./support/prisma-where";
 import { NOT_A_XERO_REPAIR_CLAIM } from "@/lib/xero-operation-outcome-guard";
 import { SUPPLEMENTARY_INVOICE_CREATE_WHERE } from "@/lib/xero-supplementary-invoice-statuses";
+import { NAMES_NO_QUEUE_TYPE } from "@/lib/xero-stuck-queued-request";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { TEST_XERO_CLAIMED_AT, xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
@@ -2566,15 +2567,18 @@ describe("processQueuedXeroOutboxOperations", () => {
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
       ],
+      // #5228: never a row whose request names no queue type.
+      NOT: NAMES_NO_QUEUE_TYPE,
     });
     // #4299, #4369 and #4431: the pinned types, the organiser extra, the reversal, and the admin grant note.
     expect(args.where.queueType.in).toHaveLength(21);
     expect(args.where.queueType.in).toContain("ORGANISER_EXTRA_ADJUSTMENT");
     expect(args.where.queueType.in).toContain("CARD_REFUND_REVERSAL_INVOICE");
     expect(args.where.queueType.in).toContain("ADMIN_GRANT_CREDIT_NOTE");
-    // The legacy `requestPayload->>'queueType'` OR predicate is gone.
+    // The legacy `requestPayload->>'queueType'` OR predicate is gone; the
+    // payload is read only to leave out the rows #5228's report owns.
     expect(args.where.OR).toBeUndefined();
-    expect(JSON.stringify(args.where)).not.toContain("requestPayload");
+    expect(JSON.stringify({ ...args.where, NOT: undefined })).not.toContain("requestPayload");
     // #4663: oldest first, `createdAt` ties broken by `id`.
     expect(args.orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
     expect(args.take).toBe(7);
@@ -2777,11 +2781,15 @@ describe("processQueuedXeroOutboxOperations", () => {
         status: "PENDING",
         direction: "OUTBOUND",
         queueType: "REFUND_CREDIT_NOTE",
+        requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 1_000 },
         lastErrorCode: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE,
         updatedAt: new Date(now - 1_000),
         createdAt: new Date(now - 86_400_000 + i),
       }));
-      const invoice = { id: "op_invoice", status: "PENDING", direction: "OUTBOUND", queueType: "BOOKING_INVOICE", lastErrorCode: null, updatedAt: new Date(now), createdAt: new Date(now) };
+      const invoice = {
+        id: "op_invoice", status: "PENDING", direction: "OUTBOUND", queueType: "BOOKING_INVOICE", requestPayload: { queueType: "BOOKING_INVOICE", bookingId: "booking_1" },
+        lastErrorCode: null, updatedAt: new Date(now), createdAt: new Date(now),
+      };
       const scanned: string[][] = [];
       mocks.findManyOperations.mockImplementation(async (args: { where: Record<string, unknown>; take: number }) => {
         const rows = [...fenced, invoice].filter((row) => matchesWhere(row, args.where)).slice(0, args.take);

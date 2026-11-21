@@ -1065,15 +1065,18 @@ note.
    writes nothing. `returnOutboxRowToPending` is the one guarded write: a
    stored request that is still a queued request stays (a handler's
    checkpoint, as the applied-credit and kept late-capture workers keep);
-   otherwise the queued request the dispatch claimed is written back in the
-   same compare-and-set on the stored request; with neither, it writes nothing.
+   otherwise the queued request the dispatch claimed is laid back over the
+   stored record in the same compare-and-set on the stored request - what the
+   handler recorded stays (the booking invoice's figures at link, which say
+   which card captures its payment already holds), but no stored key that
+   changes how the queued request reads; with neither, it writes nothing.
    The writers, each with the suite that proves it
    (`xero-pending-writer-census.test.ts` names every file):
 
    | Writer | What it leaves | Proven by |
    | --- | --- | --- |
    | Enqueue (`startXeroSyncOperation`, `status: PENDING`) | its queued request; the column is read from it | `xero-pending-request-transitions.realdb.test.ts` |
-   | Outbox cooldown give-back (breaker, daily limit, environment gate) | the stored request if still queued, else the claimed one; else the row fails | `xero-cooldown-giveback-queued-request.realdb.test.ts`, `xero-outbox-fail-fast.test.ts` |
+   | Outbox cooldown give-back (breaker, daily limit, environment gate) | the stored request if still queued, else the claimed one laid over it; else the row fails | `xero-cooldown-giveback-queued-request.realdb.test.ts`, `xero-outbox-fail-fast.test.ts` |
    | Outbox busy-wait give-back (applied credit, notes waiting their turn) | as the cooldown give-back | `xero-operation-outbox.test.ts` |
    | Officer Retry in place (`requeueOutboxRowForRetry`, applied-credit Retry) | a rebuilt queued request, or the stored one if queued; else 409, row left as it is | `xero-pending-request-transitions.realdb.test.ts`, `xero-operation-retry.test.ts` |
    | Officer REQUEUE row and its drain | the REQUEUE row has no queue type and the outbox never scans it; its drain is the Retry above | `xero-stuck-queued-request.realdb.test.ts` |
@@ -1085,7 +1088,9 @@ note.
    stuck PARTIAL repair to PARTIAL) with its request, response and Xero ids
    kept, and Retry finishes it (`xero-stale-request-recovery.realdb.test.ts`).
    Rows a give-back left stuck before #5228 are not sent from a guess: the
-   outbox skips and counts them (`unclaimableRequest`), and the owner's
+   scan leaves them out (`NAMES_NO_QUEUE_TYPE`), so they never fill a batch
+   ahead of the work behind them, the run counts them (`unclaimableRequest`,
+   an amber cron warning), and the owner's
    `pnpm run xero:stuck-queued-report` lists them and, with `--release`, fails
    exactly those for an officer's Retry, which bills only what is still
    uncovered (`xero-stuck-queued-request.realdb.test.ts`,

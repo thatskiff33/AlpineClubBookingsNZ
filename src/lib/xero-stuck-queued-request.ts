@@ -4,8 +4,9 @@
  * Before #5228 a pre-HTTP cooldown refusal returned a queued Xero row to
  * PENDING still holding the execution request its handler had saved over the
  * queued one. The outbox claims from the immutable `queueType` column now, but
- * a row holding no queued request is not sent from a guess: it stays PENDING,
- * is skipped and counted (`unclaimableRequest`), and is listed here.
+ * a row whose request names no queue type is not sent from a guess: the scan
+ * leaves it out, the run counts it (`unclaimableRequest`, a cron warning), and
+ * it is listed here.
  *
  * `findStuckQueuedRequestRows` only reads. `releaseStuckQueuedRequestRows`
  * moves exactly the rows a report listed from PENDING to FAILED, so an officer
@@ -27,22 +28,39 @@
  * counterpart writer is a status-guarded compare-and-set on the same row
  * (`docs/CONCURRENCY_AND_LOCKING.md`).
  */
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 import { XERO_STUCK_QUEUED_REQUEST_RELEASED_CODE } from "@/lib/xero-operation-error-codes";
 import { sameStoredRequest } from "@/lib/xero-outbox-pending-request";
-import { readQueuedOutboxPayload, readQueuedOutboxRequestFor, readQueueType, XERO_OUTBOX_QUEUE_TYPES } from "@/lib/xero-operation-outbox-payload";
+import { XERO_OUTBOX_QUEUE_TYPES } from "@/lib/xero-operation-outbox-payload";
 
 type OperationStore = Pick<Prisma.TransactionClient, "xeroSyncOperation">;
 
-/** Why the stored request is not one the outbox can send under the row's column. */
-export type StuckQueuedRequestReason =
-  /** An execution request (`invoices`, `creditNotes`, ...): what a pre-#5228 give-back left. */
-  | "no-queue-type"
-  /** Names the row's queue type, but too incomplete to read. */
-  | "unreadable"
-  /** Names another queue type than the row's column. */
-  | "other-queue-type";
+/** The PENDING rows the outbox scan reads (`processQueuedXeroOutboxOperations`), before its spacing filters. */
+const OUTBOX_PENDING_WHERE = {
+  direction: "OUTBOUND",
+  status: "PENDING",
+  queueType: { in: [...XERO_OUTBOX_QUEUE_TYPES] },
+} satisfies Prisma.XeroSyncOperationWhereInput;
+
+/**
+ * A stored request that names no queue type - no request, or no `queueType`
+ * key, or a null one: the execution request a give-back left before #5228.
+ * The ONE definition of a stuck row (`INV-SSOT`): the outbox scan excludes it
+ * (`NOT`, its exact complement, NULL-safe), so such rows never fill a batch
+ * ahead of the work behind them; the count, the report and the release select
+ * by it. A request naming a queue type is the scan's to claim, and one it
+ * cannot read there fails visibly.
+ */
+export const NAMES_NO_QUEUE_TYPE = {
+  requestPayload: { path: ["queueType"], equals: Prisma.AnyNull },
+} satisfies Prisma.XeroSyncOperationWhereInput;
+
+/** Stuck: left out of every scan and not resolved by an officer, whose resolve makes it done (`INV-INT-025`). */
+const STUCK_WHERE = { ...OUTBOX_PENDING_WHERE, manuallyResolvedAt: null, ...NAMES_NO_QUEUE_TYPE } satisfies Prisma.XeroSyncOperationWhereInput;
+
+/** Releasable: stuck, and never claimed. */
+const RELEASABLE_WHERE = { ...STUCK_WHERE, startedAt: null } satisfies Prisma.XeroSyncOperationWhereInput;
 
 export interface StuckQueuedRequestRow {
   id: string;
@@ -50,47 +68,29 @@ export interface StuckQueuedRequestRow {
   localModel: string | null;
   localId: string | null;
   createdAt: Date;
-  reason: StuckQueuedRequestReason;
 }
 
 export const STUCK_QUEUED_REQUEST_RELEASE_MESSAGE =
   "Released from the outbox queue: its stored request was not one the outbox could send, so it was never sent from the queue. Check Xero for the document before you retry it.";
 
-/** Null when the outbox can claim and send the request under `queueType`. */
-export function stuckQueuedRequestReason(queueType: string | null, requestPayload: unknown): StuckQueuedRequestReason | null {
-  if (readQueuedOutboxRequestFor(queueType, requestPayload)) return null;
-  const named = readQueueType(requestPayload);
-  if (named === null) return "no-queue-type";
-  return named === queueType && !readQueuedOutboxPayload(requestPayload) ? "unreadable" : "other-queue-type";
+/** How many rows the outbox passes over for ever: its `unclaimableRequest`, and the cron run's warning. */
+export function countStuckQueuedRequestRows(db: OperationStore): Promise<number> {
+  return db.xeroSyncOperation.count({ where: STUCK_WHERE });
 }
-
-/** The rows the outbox scans that no pass can send: outbound, PENDING, never claimed, unresolved. */
-const SCANNED_PENDING_WHERE = {
-  direction: "OUTBOUND",
-  status: "PENDING",
-  startedAt: null,
-  manuallyResolvedAt: null,
-  queueType: { in: [...XERO_OUTBOX_QUEUE_TYPES] },
-} satisfies Prisma.XeroSyncOperationWhereInput;
 
 /** Read-only: every stuck row, oldest first. */
 export async function findStuckQueuedRequestRows(db: OperationStore): Promise<StuckQueuedRequestRow[]> {
   const rows = await db.xeroSyncOperation.findMany({
-    where: SCANNED_PENDING_WHERE,
-    select: { id: true, queueType: true, localModel: true, localId: true, createdAt: true, requestPayload: true },
+    where: STUCK_WHERE,
+    select: { id: true, queueType: true, localModel: true, localId: true, createdAt: true },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
-  return rows.flatMap((row) => {
-    const reason = stuckQueuedRequestReason(row.queueType, row.requestPayload);
-    return reason && row.queueType
-      ? [{ id: row.id, queueType: row.queueType, localModel: row.localModel, localId: row.localId, createdAt: row.createdAt, reason }]
-      : [];
-  });
+  return rows.flatMap((row) => (row.queueType ? [{ ...row, queueType: row.queueType }] : []));
 }
 
 export interface StuckQueuedRequestRelease {
   released: string[];
-  /** Rows the report listed that changed since: left exactly as they are now. */
+  /** Rows the report listed that are not releasable now: left exactly as they are. */
   skipped: Array<{ id: string; why: string }>;
 }
 
@@ -102,25 +102,13 @@ export async function releaseStuckQueuedRequestRows(
 ): Promise<StuckQueuedRequestRelease> {
   const result: StuckQueuedRequestRelease = { released: [], skipped: [] };
   for (const { id, queueType } of reported) {
-    const row = await db.xeroSyncOperation.findFirst({
-      where: { ...SCANNED_PENDING_WHERE, id, queueType },
-      select: { requestPayload: true },
-    });
+    const row = await db.xeroSyncOperation.findFirst({ where: { ...RELEASABLE_WHERE, id, queueType }, select: { requestPayload: true } });
     if (!row) {
-      result.skipped.push({ id, why: "no longer an unclaimed, unresolved PENDING outbox row of this queue type" });
-      continue;
-    }
-    if (!stuckQueuedRequestReason(queueType, row.requestPayload)) {
-      result.skipped.push({ id, why: "its request is now one the outbox can send" });
+      result.skipped.push({ id, why: "no longer an unclaimed, unresolved PENDING outbox row of this queue type holding no queued request" });
       continue;
     }
     const written = await db.xeroSyncOperation.updateMany({
-      where: {
-        ...SCANNED_PENDING_WHERE,
-        id,
-        queueType,
-        requestPayload: sameStoredRequest(row.requestPayload),
-      },
+      where: { ...RELEASABLE_WHERE, id, queueType, AND: [{ requestPayload: sameStoredRequest(row.requestPayload) }] },
       data: {
         status: "FAILED",
         completedAt: now,
@@ -152,7 +140,7 @@ export async function runStuckQueuedRequestReportCli(
   const rows = await findStuckQueuedRequestRows(io.db);
   io.out(`${rows.length} PENDING Xero outbox row(s) hold no request the outbox can send.`);
   for (const row of rows) {
-    io.out(`${row.id}  ${row.queueType}  ${row.localModel ?? "-"}:${row.localId ?? "-"}  created ${row.createdAt.toISOString()}  ${row.reason}`);
+    io.out(`${row.id}  ${row.queueType}  ${row.localModel ?? "-"}:${row.localId ?? "-"}  created ${row.createdAt.toISOString()}`);
   }
   if (!argv.includes("--release")) {
     if (rows.length > 0) io.out("Nothing was changed. Run again with --release to move exactly these rows to FAILED for an officer's Retry.");

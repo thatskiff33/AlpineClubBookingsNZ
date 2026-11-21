@@ -83,6 +83,7 @@ import { scanSpacesRefundNotesAwaitingResolve } from "@/lib/xero-refund-note-in-
 import { XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE } from "@/lib/admin-grant-credit-note-payload";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { returnOutboxRowToPending } from "@/lib/xero-outbox-pending-request";
+import { countStuckQueuedRequestRows, NAMES_NO_QUEUE_TYPE } from "@/lib/xero-stuck-queued-request";
 import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
 import {
   voidXeroInvoiceForAbandonedGroupSettlement,
@@ -100,7 +101,6 @@ import {
 import {
   getQueuedOutboxExpectedOperation,
   readQueuedOutboxRequestFor,
-  readQueueType,
   subscriptionInvoiceChargeId,
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
@@ -2174,7 +2174,7 @@ export interface ProcessQueuedXeroOutboxOperationsResult {
   failed: number;
   skipped: number;
   cooldownDeferred?: number; // #4375: of `skipped`, refused before any call; set only when non-zero
-  unclaimableRequest?: number; // #5228: of `skipped`, stored request names no queue type (`pnpm run xero:stuck-queued-report`); set only when non-zero
+  unclaimableRequest?: number; // #5228: PENDING rows never scanned, their request naming no queue type (`pnpm run xero:stuck-queued-report`); set only when non-zero
 }
 
 export async function kickQueuedXeroOutboxOperationsIfConnected(options?: {
@@ -2203,6 +2203,9 @@ export async function processQueuedXeroOutboxOperations(options?: {
       },
       // Rows waiting their turn are looked at only every few minutes, not on every kick (#3954, #3953, #4692 `INV-INT-035`); an owed group invoice email every minute (#4919).
       AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date()), scanSpacesRefundNotesAwaitingResolve(new Date()), scanSpacesAdminGrantNotesAwaitingRetry(new Date()), scanSpacesGroupInvoiceEmailsDeferred(new Date())],
+      // #5228: never a row whose request names no queue type - it is not sent
+      // from a guess, and must not fill the batch ahead of the work behind it.
+      NOT: NAMES_NO_QUEUE_TYPE,
     },
     // Ties on `createdAt` (same ms; all rows under the frozen clock) fall to `id`:
     // deterministic, not insertion order (#4663; STATE_MACHINES.md).
@@ -2221,20 +2224,14 @@ export async function processQueuedXeroOutboxOperations(options?: {
     failed: 0,
     skipped: 0,
   };
+  // #5228: the rows that exclusion leaves for the owner's report, so the run says so.
+  const unclaimableRequest = await countStuckQueuedRequestRows(prisma);
+  if (unclaimableRequest > 0) result.unclaimableRequest = unclaimableRequest;
 
   for (const queuedOperation of queuedOperations) {
     // #5228: the claim is built from the row's own column, never from the stored
     // request - a handler may have replaced that with its execution request.
     const queueType = queuedOperation.queueType;
-    if (readQueueType(queuedOperation.requestPayload) === null) {
-      // An execution request on a PENDING row: a give-back before #5228 left it
-      // so. Not claimed, never sent from a guess; the owner's report lists it and
-      // its release fails it for an officer's Retry (`docs/MAINTENANCE.md`).
-      logger.warn({ queueOperationId: queuedOperation.id, queueType }, "Queued Xero outbox operation holds no queued request; left for `pnpm run xero:stuck-queued-report`");
-      result.skipped += 1;
-      result.unclaimableRequest = (result.unclaimableRequest ?? 0) + 1;
-      continue;
-    }
     const expectedOperation = getQueuedOutboxExpectedOperation(queueType);
     // #4373: the claim this dispatch's outcomes are written under (`INV-INT-029`).
     const claimed = await claimQueuedOutboxOperation(queuedOperation.id, expectedOperation);
@@ -2571,8 +2568,9 @@ export async function processQueuedXeroOutboxOperations(options?: {
         // request over it before the refused call; left so, the next pass could
         // not claim or send the row and skipped it for ever. The give-back keeps
         // a request that is still a queued one for the row's queue type (a
-        // handler's checkpoint), else puts back `claimedRequest` in the same
-        // guarded write; with neither, the row is not returned and fails below.
+        // handler's checkpoint), else lays `claimedRequest` back over what the
+        // handler recorded, in the same guarded write; with neither, the row
+        // is not returned and fails below.
         const returned = await returnOutboxRowToPending({
           operationId: queuedOperation.id,
           where: {

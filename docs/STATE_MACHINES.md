@@ -4310,8 +4310,8 @@ two callers on one row (the hand-off above) each record their own outcome of
 worker claims operation -> provider call -> success or retryable failure
   the claim is built from the row's immutable queueType column, and the stored
   request is read only as a queued request for it (#5228, INV-INT-041); a
-  PENDING row whose request names no queue type is not claimed: skipped,
-  counted unclaimableRequest, the cron run warns
+  PENDING row whose request names no queue type is left out of the scan
+  (never fills a batch), counted unclaimableRequest, the cron run warns
 pre-HTTP refusal (outage cooldown, daily limit, environment gate) -> the
   claim's RUNNING, or the handler's self-failed FAILED, row -> PENDING, its
   request the stored one if still a queued request, else the queued request

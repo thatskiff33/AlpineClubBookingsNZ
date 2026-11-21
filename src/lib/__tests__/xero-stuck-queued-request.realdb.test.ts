@@ -106,11 +106,11 @@ let sequence = 0;
       return { paymentId, invoiceRow, noteRow };
     }
 
-    it("the outbox neither claims nor sends a stuck row and counts it; the report lists it and nothing else, and changes nothing", async () => {
+    it("the outbox never scans a stuck row and counts it; the report lists it and nothing else, and changes nothing", async () => {
       const { paymentId, invoiceRow, noteRow } = await stuckRefundNote();
       const before = await readRow(noteRow);
 
-      expect(await runOutboxRow(prisma, noteRow, PREFIX)).toEqual({ found: 1, processed: 0, succeeded: 0, failed: 0, skipped: 1, unclaimableRequest: 1 });
+      expect(await runOutboxRow(prisma, noteRow, PREFIX)).toEqual({ found: 0, processed: 0, succeeded: 0, failed: 0, skipped: 0, unclaimableRequest: 1 });
       expect(sent).toEqual([]);
 
       // Not listed: the SUCCEEDED invoice row (its execution request is history), a
@@ -128,12 +128,28 @@ let sequence = 0;
         },
       });
       expect(await reported()).toEqual([
-        { id: noteRow, queueType: "REFUND_CREDIT_NOTE", localModel: "Payment", localId: paymentId, createdAt: expect.any(Date), reason: "no-queue-type" },
+        { id: noteRow, queueType: "REFUND_CREDIT_NOTE", localModel: "Payment", localId: paymentId, createdAt: expect.any(Date) },
       ]);
       expect((await reported()).map((row) => row.id)).not.toContain(invoiceRow);
       expect(await readRow(noteRow)).toEqual(before);
       expect(await readRow(resolved.id)).toMatchObject({ status: "PENDING" });
       expect(await readRow(running.id)).toMatchObject({ status: "RUNNING" });
+    });
+
+    it("MUTATION: stuck rows queued ahead never hold up the work behind them, even for a single-row kick", async () => {
+      const { paymentId, invoiceRow } = await paidCardBooking(prisma, names, `${PREFIX}b${++sequence}`, PRICE);
+      // Eleven rows a give-back left stuck, older than anything else queued: more than a default batch of ten.
+      const stuckRows = await Promise.all(Array.from({ length: 11 }, (_, index) => prisma.xeroSyncOperation.create({
+        data: {
+          direction: "OUTBOUND", entityType: "CREDIT_NOTE", operationType: "CREATE", localModel: "Payment", localId: paymentId, status: "PENDING",
+          queueType: "REFUND_CREDIT_NOTE", requestPayload: { creditNotes: [{ total: 1 }], allocation: { invoiceId: "inv-x", amount: 1 } },
+          createdAt: new Date(Date.UTC(2000, 0, 1, 0, 0, index)),
+        },
+      })));
+
+      expect(await runOutboxRow(prisma, invoiceRow, PREFIX)).toEqual({ found: 1, processed: 1, succeeded: 1, failed: 0, skipped: 0, unclaimableRequest: 11 });
+      expect(sent).toEqual([{ operation: "createInvoices", cents: PRICE }]);
+      expect(await prisma.xeroSyncOperation.count({ where: { id: { in: stuckRows.map((row) => row.id) }, status: "PENDING", startedAt: null } })).toBe(11);
     });
 
     it("release moves exactly the reported row to FAILED and keeps everything else on it; a second release changes nothing; an officer's Retry sends the note once", async () => {

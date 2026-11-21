@@ -2969,8 +2969,9 @@ pause, the daily limit, the environment gate) refused after its handler had
 saved its execution request went back to PENDING without its queued request.
 The outbox then skipped it on every pass: the refund note, invoice or credit
 note never reached Xero, and nothing failed or alerted. Fixed builds never
-leave a row so, and skip and count (`unclaimableRequest` in the outbox run's
-result) any that an older build left.
+leave a row so. Any an older build left are kept out of the outbox's scan, so
+they never hold up other work, and counted (`unclaimableRequest` in the outbox
+run's result, shown as an amber warning on the Xero cron run).
 
 **When to run it:** once, on the live deployment, after upgrading to a build
 with #5228; and whenever the outbox's `unclaimableRequest` count is not zero.

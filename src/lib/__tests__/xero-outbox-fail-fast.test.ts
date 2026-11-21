@@ -147,6 +147,7 @@ const mocks = vi.hoisted(() => {
     rows,
     selfFail,
     operationFindMany: vi.fn(),
+    operationCount: vi.fn(async () => 0),
     operationFindUnique,
     operationUpdateMany,
     failXeroSyncOperation,
@@ -161,6 +162,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     xeroSyncOperation: {
       findMany: mocks.operationFindMany,
+      count: mocks.operationCount,
       findUnique: mocks.operationFindUnique,
       updateMany: mocks.operationUpdateMany,
     },
@@ -521,12 +523,18 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
 
       await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toMatchObject({ skipped: 1, failed: 0, cooldownDeferred: 1 });
 
-      expect(mocks.rows.get("op_refund_1")).toMatchObject({ status: "PENDING", startedAt: null, completedAt: null, requestPayload: queuedRequest });
-      // And the next pass claims it and sends the queued amount.
+      // The queued request is laid back over what the handler recorded: its
+      // record stays, and nothing it resolved at execution (the card's
+      // `refundMethod`) changes how the queued request reads.
+      const given = mocks.rows.get("op_refund_1")!;
+      expect(given).toMatchObject({ status: "PENDING", startedAt: null, completedAt: null });
+      expect(given.requestPayload).toEqual({ ...queuedRequest, creditNotes: executionRequest.creditNotes, allocation: executionRequest.allocation });
+      // And the next pass claims it and sends the queued amount, as queued.
       mocks.createXeroCreditNote.mockReset().mockResolvedValue(undefined);
-      seedOperation({ ...mocks.rows.get("op_refund_1")! });
+      seedOperation({ ...given });
       await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toMatchObject({ processed: 1, succeeded: 1 });
       expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("pay_1", 3000, expect.objectContaining({ watermarkCents: 8000 }));
+      expect(mocks.createXeroCreditNote.mock.calls[0]![2]).not.toHaveProperty("refundMethod");
     });
 
     it("keeps a handler's checkpoint that is still a queued request for the row's queue type", async () => {
@@ -566,15 +574,17 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
       expect(mocks.rows.get("op_refund_1")).toMatchObject({ status: "FAILED", requestPayload: { ...executionRequest, rewritten: true } });
     });
 
-    it("MUTATION: a PENDING row whose stored request names no queue type is not claimed or sent, and is counted", async () => {
-      seedOperation({ id: "op_stuck", queueType: "REFUND_CREDIT_NOTE", requestPayload: executionRequest });
+    it("MUTATION: the scan leaves out rows whose request names no queue type, and the run counts them", async () => {
+      mocks.operationFindMany.mockResolvedValue([]);
+      mocks.operationCount.mockResolvedValueOnce(2);
 
       await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toEqual({
-        found: 1, processed: 0, succeeded: 0, failed: 0, skipped: 1, unclaimableRequest: 1,
+        found: 0, processed: 0, succeeded: 0, failed: 0, skipped: 0, unclaimableRequest: 2,
       });
 
-      expect(mocks.rows.get("op_stuck")).toMatchObject({ status: "PENDING", startedAt: null, requestPayload: executionRequest });
-      expect(mocks.createXeroCreditNote).not.toHaveBeenCalled();
+      const { NAMES_NO_QUEUE_TYPE } = await import("@/lib/xero-stuck-queued-request");
+      expect(mocks.operationFindMany.mock.calls[0]![0]).toMatchObject({ where: { status: "PENDING", NOT: NAMES_NO_QUEUE_TYPE } });
+      expect(mocks.operationCount).toHaveBeenCalledWith({ where: expect.objectContaining({ status: "PENDING", ...NAMES_NO_QUEUE_TYPE }) });
     });
 
     it("MUTATION: dispatch never routes on a stored request for another queue type than the row's column", async () => {

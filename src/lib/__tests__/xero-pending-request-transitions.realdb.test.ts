@@ -100,6 +100,22 @@ let sequence = 0;
         expect(await claimable(row.id)).toMatchObject({ requestPayload: QUEUED_NOTE, startedAt: null, completedAt: null });
       });
 
+      it("MUTATION: keeps what the handler recorded beside the queued request, never a key that changes how it reads", async () => {
+        // A booking invoice's figures at link (`persistPrimaryInvoiceLink`) beside the invoice it sent.
+        const atLink = { xeroInvoiceId: "inv-x", paymentIntentIdsRecordedAtLink: ["pi_x"] };
+        const queuedInvoice = { queueType: "BOOKING_INVOICE", bookingId: `${PREFIX}booking` };
+        const invoiceRow = await seed({ entityType: "INVOICE", queueType: "BOOKING_INVOICE", status: "FAILED", requestPayload: { invoices: [{ type: "ACCREC" }], primaryInvoiceBilledFee: atLink } });
+        await pending.returnOutboxRowToPending({ operationId: invoiceRow.id, where: GUARD, data: CLEARED, request: { keep: true, fallback: queuedInvoice } });
+        expect(await claimable(invoiceRow.id)).toMatchObject({ requestPayload: { ...queuedInvoice, primaryInvoiceBilledFee: atLink } });
+
+        // A refund note's execution-time method and wording would turn the queued card note into a cash one: neither is kept.
+        const noteRow = await seed({ queueType: "REFUND_CREDIT_NOTE", status: "FAILED", requestPayload: { ...EXECUTION_REQUEST, refundMethod: "internet-banking", noteWording: "cash" } });
+        await pending.returnOutboxRowToPending({ operationId: noteRow.id, where: GUARD, data: CLEARED, request: { keep: true, fallback: QUEUED_NOTE } });
+        const note = await claimable(noteRow.id);
+        expect(note.requestPayload).not.toHaveProperty("refundMethod");
+        expect(payloads.readQueuedOutboxPayload(note.requestPayload)).toEqual(payloads.readQueuedOutboxPayload(QUEUED_NOTE));
+      });
+
       it("keeps a handler's checkpoint that is still a queued request, whatever its key order", async () => {
         const checkpoint = { watermarkCents: 5_000, documentDate: "2026-06-30", refundAmountCents: 5_000, queueType: "REFUND_CREDIT_NOTE" };
         const row = await seed({ queueType: "REFUND_CREDIT_NOTE", status: "FAILED", requestPayload: checkpoint });

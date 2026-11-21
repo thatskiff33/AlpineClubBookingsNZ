@@ -20,7 +20,8 @@
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { readQueuedOutboxRequestFor } from "@/lib/xero-operation-outbox-payload";
+import { asRecord } from "@/lib/xero-json";
+import { readQueuedOutboxPayload, readQueuedOutboxRequestFor } from "@/lib/xero-operation-outbox-payload";
 
 type OperationStore = Pick<Prisma.TransactionClient, "xeroSyncOperation">;
 
@@ -35,10 +36,10 @@ export type OutboxPendingWrite =
 
 /**
  * The request the row is left holding:
- * - `{ replace }`: this queued request (a Retry's rebuilt one);
- * - `{ keep }`: the stored request when it is claimable, else `fallback` - the
- *   queued request the dispatch claimed - so a handler's valid checkpoint
- *   stands and only an execution request is put back.
+ * - `{ replace }`: this queued request (a Retry's rebuilt one), as it is;
+ * - `{ keep }`: the stored request when it is claimable, so a handler's valid
+ *   checkpoint stands; else `fallback` - the queued request the dispatch
+ *   claimed - laid over the stored record (`layeredOverStored`).
  */
 export type OutboxPendingRequest =
   | { replace: Prisma.InputJsonObject }
@@ -47,6 +48,30 @@ export type OutboxPendingRequest =
 /** A filter matching exactly the stored request read, database NULL included: the compare-and-set's half. */
 export function sameStoredRequest(stored: Prisma.JsonValue | null): Prisma.JsonNullableFilter<"XeroSyncOperation"> {
   return stored === null ? { equals: Prisma.DbNull } : { equals: stored as Prisma.InputJsonValue };
+}
+
+/**
+ * #5228 review: the queued request laid over the stored record. A handler can
+ * record what it did on the same request before a later call is refused - the
+ * booking invoice's figures at link (`persistPrimaryInvoiceLink`), which say
+ * which card captures its payment already holds. Those stay. A stored key is
+ * kept only where the queued request lacks it and it leaves the queued
+ * reading (`readQueuedOutboxPayload`) unchanged, so the next run is driven by
+ * exactly the request the dispatch claimed - never by an execution-time
+ * `refundMethod` or watermark; if the whole still reads differently, the
+ * queued request is written alone.
+ */
+function layeredOverStored(stored: Prisma.JsonValue | null, queued: Prisma.JsonValue): Prisma.JsonValue {
+  const storedRecord = asRecord(stored);
+  const queuedRecord = asRecord(queued);
+  if (!storedRecord || !queuedRecord) return queued;
+  const reading = JSON.stringify(readQueuedOutboxPayload(queuedRecord));
+  const readsAsQueued = (candidate: Record<string, unknown>) => JSON.stringify(readQueuedOutboxPayload(candidate)) === reading;
+  const layered: Record<string, unknown> = { ...queuedRecord };
+  for (const [key, value] of Object.entries(storedRecord)) {
+    if (!(key in queuedRecord) && readsAsQueued({ ...queuedRecord, [key]: value })) layered[key] = value;
+  }
+  return readsAsQueued(layered) ? (layered as Prisma.JsonObject) : queued;
 }
 
 export async function returnOutboxRowToPending(params: {
@@ -72,7 +97,7 @@ export async function returnOutboxRowToPending(params: {
   } else if (!readQueuedOutboxRequestFor(row.queueType, row.requestPayload)) {
     const fallback = params.request.fallback ?? null;
     if (fallback === null || !readQueuedOutboxRequestFor(row.queueType, fallback)) return { outcome: "unclaimable" };
-    written = fallback as Prisma.InputJsonValue;
+    written = layeredOverStored(row.requestPayload, fallback) as Prisma.InputJsonValue;
   }
 
   const returned = await store.xeroSyncOperation.updateMany({
