@@ -173,7 +173,7 @@ export async function readLateCaptureRefundsPaidAnotherWay(
 
 type ReceiptGateStore = Pick<
   Prisma.TransactionClient,
-  "manualRefundTask" | "paymentRecoveryOperation" | "xeroObjectLink" | "xeroSyncOperation"
+  "manualRefundTask" | "paymentRecoveryOperation" | "paymentTransaction" | "xeroObjectLink" | "xeroSyncOperation"
 >;
 
 /**

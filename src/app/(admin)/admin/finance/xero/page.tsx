@@ -19,6 +19,7 @@ import {
   MissingContactsPanel,
   OperationsPanel,
   SyncResultsPanel,
+  TaxCategoryMappingCard,
   UsagePanel,
   xeroLinkState,
 } from "./_components/panels"
@@ -127,6 +128,8 @@ export default function XeroPage() {
 
       {connected && (
         <>
+          {/* The club's tax categories mapped to this Xero organisation's rates (#5209); only meaningful once connected. */}
+          <TaxCategoryMappingCard />
           <HealthAndDiagnosticsPanels
             connected={connected}
             shortCode={orgShortCode}

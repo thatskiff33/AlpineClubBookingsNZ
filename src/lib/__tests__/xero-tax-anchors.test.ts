@@ -32,7 +32,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/club-time-zone-runtime", () => ({ readClubTimeZoneOutsideRequest: vi.fn(async () => "Pacific/Auckland") }));
 
-import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
+import { resolveAnchoredClubTax, resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 
 /** 23:30 NZ on 31 March 2027, and 00:30 NZ on 1 April 2027 (NZDT ends 4 April). */
 const BEFORE = new Date("2027-03-31T10:30:00.000Z");
@@ -77,6 +77,18 @@ describe("resolveXeroTaxRendering (#4632)", () => {
   it("a document with no charge row takes its outbox operation's creation", async () => {
     mocks.operation.mockResolvedValue({ createdAt: BEFORE });
     await expect(resolveXeroTaxRendering({ kind: "xero-operation", operationId: "op" })).resolves.toEqual(BASELINE_XERO_TAX_RENDERING);
+  });
+
+  it("hands the period and its treatment to a reader that needs the period too (#5066)", async () => {
+    mocks.booking.mockResolvedValueOnce({ createdAt: AFTER, parentBooking: { createdAt: BEFORE } });
+    const before = await resolveAnchoredClubTax({ kind: "booking", bookingId: "place" });
+    expect(before.period).toMatchObject({ gstRegistered: true, effectiveFrom: "2010-10-01" });
+    expect(before.treatment).toMatchObject({ registered: true, xeroTaxType: "OUTPUT2" });
+    const after = await resolveAnchoredClubTax({ kind: "instant", at: requireInstant(AFTER) });
+    expect(after).toEqual({
+      period: { gstRegistered: false, taxRateBasisPoints: 0, xeroTaxType: null, effectiveFrom: "2027-04-01" },
+      treatment: { registered: false },
+    });
   });
 
   it("refuses a missing anchor row rather than guess a treatment", async () => {

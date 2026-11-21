@@ -498,34 +498,37 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 
 ## INV-PAY-141
 
-**Related: `INV-PAY-103`** (the one card-refund writer) and **`INV-PAY-122`**
-(closing a dead card refund).
+**Related: `INV-PAY-103`** (the card-refund writer), **`INV-PAY-122`**,
+**`INV-PAY-129`** and **`INV-PAY-135`** (the records it counts).
 
 - **A card refund's reversal never takes a payment's refunded total below the
-  bank cash its "Paid another way" closes recorded** (#4280; owner, 22 and 26
-  Oct 2026). `INV-PAY-103`'s floor on a counted refund moving to failed or
-  cancelled is the captured amount, or less: card refunds still counted, plus
-  account credit, plus that cash (`expectedRefundedFloorCents`), less what the
-  payment's other charges hold. A late refund the cap kept out takes none of it.
-- **The cash** is each completed close record's `amountCents`
-  (`CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE`): for a part close, what was paid.
-  Its note's state changes nothing. One reader,
-  `readPaidAnotherWayCloseBankCashByPayment`, on the writer's client under the
-  Payment row it holds.
-- **Only those closes.** Card and capacity shortfalls are outside this bounded
-  repair (owner, 26 Oct 2026; #4162 never undoes them). Ordinary bank
-  hand-backs are excluded because #4162 can undo one while its task reads
-  completed.
-- The floor only bounds a subtraction: it never raises a total and writes no
+  bank cash its card refund's bank records hold** (#4280, #4488; owner, 22 and
+  26 Oct and 11 Nov 2026): a "Paid another way" close or a completed card
+  refund shortfall, a cancel's or a capacity race's.
+  The floor on a counted refund moving to failed or cancelled is the captured
+  amount, or less: counted card refunds, account credit and that cash
+  (`expectedRefundedFloorCents`), less what the payment's other charges hold. A late refund the cap kept out takes none of it.
+- **The cash** is each record's `amountCents`: for a part close, what was paid.
+  An open or dismissed shortfall moved no money. One definition
+  (`CARD_REFUND_BANK_RECORD_TASK_WHERE`), one reader
+  (`readCardRefundBankCashByPayment`), under the Payment row the writer holds,
+  which a close and a completion take before their record.
+- **Why it stands.** A completion puts its amount on the payment in one
+  transaction, and nothing undoes a record: #4162 never takes one
+  (`isCardRefundBankRecordTask`); only a dismissed task reopens.
+- **Ordinary bank hand-backs are excluded**: #4162 can undo one whose task
+  reads completed.
+- The floor only bounds a subtraction: it never raises a total or writes a
   row. No new lock (`INV-LOCK-001`).
-- **Limits.** A charge's floor nets the other charges' mirrors in full, so
-  shortfall or hand-back cash on another charge can still let it drop, unseen
-  by the audit (#4488): card A $200 closed, a $100 shortfall paid on B, A's
-  capped late refund failing takes A to $100. Overstated account credit (pre-#1636 restores) can hold
-  a total too high: the fail-safe direction.
-- **History is reported, never rewritten** by the refunded-total audit, in one
-  read-only snapshot. Rolling the code back restores the old subtraction.
+- **Limits.** A charge's floor nets the other charges' mirrors in full, so an
+  ordinary hand-back on another charge still lets it drop, unseen by the
+  audit: A $200 closed, a $100 hand-back on B, A's capped late refund failing
+  takes A to $100. Overstated account credit (pre-#1636 restores) can
+  hold a total too high: the fail-safe direction.
+- **History is reported, never rewritten** by the refunded-total audit.
 - Pinned by `card-refund-reversal-bank-cash-floor.realdb.test.ts`,
+  `card-refund-reversal-shortfall-floor.realdb.test.ts`,
+  `bank-refund-void-follow-up.realdb.test.ts`,
   `payment-transactions-refunds.test.ts` and
   `refunded-total-shortfall-audit.test.ts`.
 
@@ -974,10 +977,11 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   booking's invoice nor its clearing note.
 - **Refunds** are the ordinary refund note, owed only once the APP recorded
   the capture's receipt (`readLateCaptureXeroReceipt`), never because
-  `payment.xeroInvoiceId` exists. An approved refund closed as paid another
-  way also owes the receipt (`INV-PAY-122`). Noted per capture (`noteLateCaptureRefunds`),
-  naming its receipt, dated the refund's day. Refunds of a capture without one
-  are outside the note-eligible cash (`refund-note-eligible-cash.ts`), so the
+  `payment.xeroInvoiceId` exists, and capped at what it recorded. An
+  approved refund closed as paid another way also owes the receipt
+  (`INV-PAY-122`). Noted per capture (`noteLateCaptureRefunds`), naming its
+  receipt, dated the refund's day. Refunds without one, or above it, are
+  outside the note-eligible cash (`refund-note-eligible-cash.ts`), so the
   self-heal never raises them.
 - **The task row is the lock**: the enqueue and the worker's send-time check
   take it `FOR UPDATE`. A raised invoice's payment is retried whatever the
@@ -989,8 +993,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - **Resolved in Xero** (`INV-INT-025`): never re-sent; unless its invoice
   link stays active, the app notes no refund of it and
   `KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND` asks an officer to (#4039).
-- Pinned by `xero-kept-late-capture-ledger.test.ts` (the books, case by case,
-  and the self-heal a day on), `xero-kept-late-capture-invoice.test.ts` and
+- Pinned by `xero-kept-late-capture-ledger.test.ts` (the books and the
+  self-heal), `xero-kept-late-capture-invoice.test.ts` and
   `refund-note-eligible-cash.test.ts`.
 
 ## INV-PAY-019
@@ -1443,16 +1447,18 @@ one, check the other.
   - **Paid another way** queues a Stripe reversal for the cents a card note
     still covers, and a bank note for the whole close (`INV-PAY-151`).
   - **Inbound recount**: `INV-PAY-155`.
+  - **Neither reads a capped late capture's pre-#4383 over-note as cover**
+    (`readLateCapturePreCapOverNoteCents`).
   - **Officers hear once per refused slice or failed-later decision**, and
     again if retries run out.
   - **Deploy window**: an older release closes a refused row as paid and drops
     `refund.failed`; the read-back finds a dropped one pending.
   - **Every other door**: `INV-PAY-130` (#4103).
-  - Proven by `refused-card-refund-retry.test.ts`, `payment-recovery.test.ts`,
-    `own-card-refund-outcome`, `booking-cancel.test.ts`,
-    `admin-refund-request-review-route.test.ts`,
-    `refunds-and-credits-owed.test.ts`, `card-refund-failed-later.test.ts`,
-    `card-refund-paid-another-way-xero.test.ts` and both `.realdb` twins.
+  - Proven by `refused-card-refund-retry`, `payment-recovery`,
+    `own-card-refund-outcome`, `booking-cancel`,
+    `admin-refund-request-review-route`, `refunds-and-credits-owed`,
+    `card-refund-failed-later`, `card-refund-paid-another-way-xero` and both
+    `.realdb` twins.
 
 ## INV-PAY-129
 
@@ -4488,3 +4494,39 @@ edit's card refund debt).
   `guest-acceptance-reprice-settlement.test.ts`,
   `booking-modification-refund.test.ts` and
   `modification-refund-prepersist.realdb.test.ts`.
+
+## INV-PAY-161
+
+**Related: `INV-PAY-001`** (manual provenance), **`INV-PAY-038`** (one
+settlement body), **`INV-PAY-040`** (the manual capacity refusal),
+**`INV-CAP-040`** (the import's beds).
+
+- **An imported paid booking is settled outside the app, once, in the
+  transaction that creates it** (#5005). A future stay a club sold and was paid
+  for before it moved in is written by the booking import
+  (`src/lib/booking-import/`) at the amount the club received, which is also its
+  stored price, and settled through `settleImportedBookingInTransaction`: a
+  sibling entry point that runs the one settlement body
+  (`settleAndPostBookingReceipts`) inside the import's transaction, with the
+  imported total as the expected amount. The body still derives the amount
+  under its locks. No copy of the body exists.
+- **It is a cash settlement.** The payment carries source `INTERNET_BANKING`
+  and the manual provenance columns, with a note naming the batch and the
+  Booking Ref; the ledger posts `CASH_RECORDED` and the journal its receipt. No
+  new payment source, line kind or journal account.
+- **A free stay is not settled.** A booking whose amounts total $0.00 takes the
+  zero-price confirmation a $0 create takes: the shared
+  `createZeroPriceConfirmationPayment` row, PAID, then
+  `postStoredBookingConfirmationLedgerLines`. A blank amount is a missing
+  amount, never zero.
+- **The import produces no Xero document, Stripe object or email**, and writes
+  no recovery row. The hosting drain still runs after commit (`INV-HOST-039`).
+- **Afterwards the booking is a cash booking**: cancelling raises the by-hand
+  refund task of `INV-PAY-044`, and the invoice choke point refuses it on its
+  manual provenance.
+- Limit: part-paid rows are refused ("part-paid bookings cannot be imported
+  yet") until #5008; reversing a batch and the refund-as-credit choice are
+  #5005 children B and D.
+- Proven by `booking-import-parse.test.ts`, `booking-import-plan.test.ts`,
+  `booking-import-plan-decisions.test.ts`, `booking-import-write.test.ts`,
+  `zero-price-payment-call-sites.test.ts` and `booking-import.realdb.test.ts`.

@@ -40,6 +40,16 @@ const RELEASE_BUDGET = { maxWait: 5_000, timeout: 10_000 } as const;
 const RELEASE_ATTEMPTS = 2;
 const RELEASE_RETRY_DELAY_MS = 250;
 
+/**
+ * What a person is told when a release returned `{ ok: false }` (#5279): the
+ * booking is still CONFIRMED with its marker, and only the confirm-pending
+ * job's recovery hands it back — a run every three hours, for a marker older
+ * than `SAVED_CARD_CLAIM_RECOVERY_AGE_MS` — so "returned to pending" would be
+ * untrue, and so would "in a few minutes".
+ */
+export const SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE =
+  "The booking could not be returned to pending just now; it stays confirmed but unpaid until the next scheduled pending-booking run returns it to pending automatically, within a few hours — check it again then.";
+
 export const SAVED_CARD_CLAIM_RELEASE_FAILED_AUDIT_ACTION =
   "booking.saved_card_claim_release_failed";
 export const SAVED_CARD_CLAIM_RECOVERED_AUDIT_ACTION =

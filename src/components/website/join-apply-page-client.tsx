@@ -337,7 +337,7 @@ export function JoinApplyPageClient({
         <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
           <Card id="joinApplyForm" className="border-brand-ridge/20 bg-card shadow-[0_22px_46px_-34px_rgba(47,47,43,0.38)]">
             <CardHeader className="space-y-2">
-              <CardTitle className="font-heading text-3xl text-brand-charcoal">
+              <CardTitle headingLevel={2} className="font-heading text-3xl text-brand-charcoal">
                 Enter your details
               </CardTitle>
               <CardDescription className="text-base text-brand-deep/75">

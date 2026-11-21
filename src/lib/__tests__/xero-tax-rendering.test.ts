@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import { LineAmountTypes } from "xero-node";
 import { CLUB_TAX_SETTINGS_DEFAULTS, clubTaxTreatmentOn, type ClubTaxSchedule } from "@/lib/club-tax-settings";
 import { requireCalendarDate } from "@/lib/club-time";
+import { XeroTaxCategoryUnavailableError } from "@/lib/xero-tax-categories";
 import {
   BASELINE_XERO_TAX_RENDERING,
   DEFAULT_XERO_OUTPUT_TAX_TYPE,
+  xeroCategoryLineTax,
   xeroDocumentCarriesTax,
   xeroLineTax,
   xeroTaxRenderingOf,
@@ -51,6 +53,30 @@ describe("xeroLineTax (#4632)", () => {
   it("adds no taxType key at all for an unregistered club", () => {
     const line = { unitAmount: 50, ...xeroLineTax({ lineAmountTypes: LineAmountTypes.NoTax }) };
     expect(Object.keys(line)).toEqual(["unitAmount"]);
+  });
+});
+
+describe("xeroCategoryLineTax (#5209)", () => {
+  const noTax = { lineAmountTypes: LineAmountTypes.NoTax };
+
+  it("renders income exactly as xeroLineTax, ignoring any mapping", () => {
+    expect(xeroCategoryLineTax(BASELINE_XERO_TAX_RENDERING, "SALES_TAX_ON_INCOME", null)).toEqual({ taxType: "OUTPUT2" });
+    expect(xeroCategoryLineTax(BASELINE_XERO_TAX_RENDERING, "SALES_TAX_ON_INCOME", "OTHER")).toEqual({ taxType: "OUTPUT2" });
+  });
+
+  it.each(["SALES_TAX_ON_EXPENSES", "EXEMPT", "ZERO_RATED"] as const)("renders %s as its mapped code", (category) => {
+    expect(xeroCategoryLineTax(BASELINE_XERO_TAX_RENDERING, category, "MAPPED")).toEqual({ taxType: "MAPPED" });
+  });
+
+  it("refuses a registered line whose category is unmapped, with no fallback code", () => {
+    expect(() => xeroCategoryLineTax(BASELINE_XERO_TAX_RENDERING, "EXEMPT", null)).toThrow(XeroTaxCategoryUnavailableError);
+  });
+
+  it("adds no taxType key in any category for an unregistered club, mapped or not", () => {
+    for (const category of ["SALES_TAX_ON_INCOME", "SALES_TAX_ON_EXPENSES", "EXEMPT", "ZERO_RATED"] as const) {
+      expect(xeroCategoryLineTax(noTax, category, null)).toEqual({});
+      expect(xeroCategoryLineTax(noTax, category, "MAPPED")).toEqual({});
+    }
   });
 });
 

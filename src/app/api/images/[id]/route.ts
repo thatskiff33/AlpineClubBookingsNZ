@@ -6,9 +6,13 @@ import { prisma } from "@/lib/prisma";
  *
  * SVG hardening: SVGs are allowed (not excluded), so this route serves all
  * images with `Content-Disposition: inline`, a strict
- * `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'`,
+ * `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox`,
  * and `X-Content-Type-Options: nosniff`. This neutralises script execution
- * and MIME-confusion if an SVG response is opened directly as a document.
+ * and MIME-confusion if an SVG response is opened directly as a document:
+ * `default-src 'none'` blocks scripts and every outside fetch, and `sandbox`
+ * gives the document a unique opaque origin, so even markup that slipped past
+ * the upload-time SVG rebuild (`@/lib/image-metadata-svg`, #5244) can neither
+ * run nor reach this site's cookies or storage.
  *
  * The image id is immutable content (uploads create a new id; nothing
  * mutates an existing row's bytes), so a strong ETag derived from the id
@@ -43,7 +47,8 @@ export async function GET(
     ETag: etag,
     "Content-Disposition": "inline",
     "X-Content-Type-Options": "nosniff",
-    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+    "Content-Security-Policy":
+      "default-src 'none'; style-src 'unsafe-inline'; sandbox",
   };
 
   if (request.headers.get("if-none-match") === etag) {

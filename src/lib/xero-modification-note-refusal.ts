@@ -47,7 +47,9 @@ export class ModificationNoteMayAlreadyExistError extends Error {
 /**
  * True once the note handler has reached its create on this row: it writes the
  * built `creditNotes` into `requestPayload` immediately before calling Xero,
- * and the enqueued payload never carries them.
+ * and the enqueued payload never carries them. A cooldown give-back keeps them
+ * (#5228, `returnOutboxRowToPending`), since it cannot tell a refused create
+ * from a refused later call, so true means "may have been sent", never "was".
  */
 export function modificationNoteCreateWasSent(requestPayload: unknown): boolean {
   const creditNotes = asRecord(requestPayload)?.creditNotes;

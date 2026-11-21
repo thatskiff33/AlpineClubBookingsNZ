@@ -25,6 +25,7 @@ export function bookingInvoicePdfResponse(download: BookingInvoiceDownload, docu
         { status: 502 },
       );
     case "AUDIT_FAILED":
+    case "SETTINGS_UNAVAILABLE":
       return NextResponse.json({ error: `The ${documentName} could not be downloaded; please try again.` }, { status: 503 });
     case "PDF":
       return new NextResponse(new Uint8Array(download.body), {

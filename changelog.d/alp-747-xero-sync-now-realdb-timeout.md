@@ -1,0 +1,2 @@
+- **The real-database test for Xero "Sync now" no longer times out when run on its own (#5254).**
+  Its first test loads the Xero sync code itself, which on a freshly migrated database and a busy machine took longer than the test runner's 5-second default, so both tests failed with "Test timed out" although nothing was wrong. The suite now allows 60 seconds, as other real-database suites do. No behaviour changes for clubs.

@@ -222,6 +222,37 @@ The migration runs once. Two things can write the old text back afterwards:
 Re-export your configuration bundle after upgrading, and re-check `/privacy`
 after any bundle import.
 
+### Starter privacy policy names the AI apps members connect (#5305)
+
+`20270101020000_add_ai_apps_to_starter_privacy` is a **data-only
+correction**. It adds and removes no schema and is safe to run in the ordinary
+deploy window with the previous app colour still serving. It runs after
+#5007's correction above, so a club upgrading across both gets both, in order.
+
+**What changes.** The migration rewrites the privacy page's body only where it
+still holds, byte for byte, the starter text #5007's correction wrote. On such
+a page:
+
+- section 5 gains an **AI apps you connect** entry, for the `ai-apps` row of
+  the [recipient register](PRIVACY_RECIPIENTS.md), marked "Only if the club
+  turns it on". It says that information goes to the AI app a member chooses
+  only once the club has turned on AI app connections and the member has
+  approved an app, and that, if the club also lets officers connect, other
+  members' information an officer can see may go to that officer's app;
+- the header's "Last updated" date moves to 21 November 2026, unless the header
+  was edited, in which case it is kept.
+
+**An edited privacy page keeps every byte.** If your club uses or may turn on
+AI app connections, add an entry yourself
+([AI App Connections](guides/mcp-server.md#turn-the-module-on)).
+
+The migration runs once. As with #5007's correction, an admin who had
+**Privacy** open in the Page Content editor before the upgrade and presses Save
+afterwards writes the old text back. Importing a configuration bundle exported
+before this release skips a privacy body that exactly matches the replaced
+starter text and warns in the preview (#2511), but can set the "Last updated"
+date back; re-check `/privacy` after any import.
+
 ---
 
 ## v0.13.2 → v0.14.0

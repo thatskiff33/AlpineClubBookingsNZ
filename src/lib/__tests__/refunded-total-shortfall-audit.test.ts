@@ -9,7 +9,7 @@ import {
   type RefundedTotalShortfallRow,
 } from "@/lib/refunded-total-shortfall-audit";
 import { ACCOUNT_CREDIT_DISPOSITION_WHERE } from "@/lib/stripe-cash-refund-evidence";
-import { CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE } from "@/lib/manual-refund-task-settlement-rules";
+import { CARD_REFUND_BANK_RECORD_TASK_WHERE } from "@/lib/card-refund-bank-record";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function row(overrides: Partial<RefundedTotalShortfallRow> = {}): RefundedTotalShortfallRow {
@@ -21,6 +21,7 @@ function row(overrides: Partial<RefundedTotalShortfallRow> = {}): RefundedTotalS
     cardRefundCents: 5000,
     accountCreditCents: 10000,
     paidAnotherWayCents: 0,
+    shortfallPaybackCents: 0,
     ...overrides,
   };
 }
@@ -96,6 +97,38 @@ describe("deriveRefundedTotalShortfall (#3640)", () => {
     ).toMatchObject({ expectedFloorCents: 35000, shortfallCents: 25000, attributableCents: 5000, unattributedCents: 20000 });
   });
 
+  it("#4488: counts a completed card refund shortfall's bank cash beside a close's: $200 closed and $100 paid back, stored $200, is $100 short", () => {
+    // Worked example 1 after a late card refund's failure took charge A down before #4488.
+    expect(
+      deriveRefundedTotalShortfall(
+        row({ amountCents: 30000, refundedAmountCents: 20000, cardRefundCents: 0, accountCreditCents: 0, paidAnotherWayCents: 20000, shortfallPaybackCents: 10000 }),
+      ),
+    ).toMatchObject({ expectedFloorCents: 30000, shortfallCents: 10000, attributableCents: 0, unattributedCents: 10000 });
+    // Its total still holding both: nothing short.
+    expect(
+      deriveRefundedTotalShortfall(
+        row({ amountCents: 30000, refundedAmountCents: 30000, cardRefundCents: 0, accountCreditCents: 0, paidAnotherWayCents: 20000, shortfallPaybackCents: 10000 }),
+      ),
+    ).toBeNull();
+  });
+
+  it("#4488: the cap binds with shortfall cash in the sum: $150 card + $100 closed + $100 paid back on a $300 capture is a $300 floor", () => {
+    // Card refunds plus the close fall short of the capture ($250), so only a
+    // shortfall term kept inside min(captured, ...) holds the floor at $300.
+    expect(
+      deriveRefundedTotalShortfall(
+        row({ amountCents: 30000, refundedAmountCents: 20000, cardRefundCents: 15000, accountCreditCents: 0, paidAnotherWayCents: 10000, shortfallPaybackCents: 10000 }),
+      ),
+    ).toMatchObject({ expectedFloorCents: 30000, shortfallCents: 10000 });
+  });
+
+  it("#4488: what only a shortfall's bank cash explains is never attributed to the old arithmetic", () => {
+    // As #4280's close above: $50 card + $100 credit stored as $300 with a $200 shortfall paid back.
+    expect(
+      deriveRefundedTotalShortfall(row({ refundedAmountCents: 30000, cardRefundCents: 5000, accountCreditCents: 10000, shortfallPaybackCents: 20000 })),
+    ).toMatchObject({ expectedFloorCents: 35000, shortfallCents: 5000, attributableCents: 0, unattributedCents: 5000 });
+  });
+
   it("#4280: caps the floor at what was captured when a counted card refund and a close's cash exceed it", () => {
     // $200 captured, closed for $200, and a $50 card refund that succeeded too (paid twice): $250 > $200.
     expect(
@@ -133,6 +166,8 @@ describe("auditRefundedTotalShortfalls (#3640) - read only", () => {
           // #4280: a close's $200 taken out by a late card refund's failure, and one whose total still holds it.
           { id: "pay_paw_short", bookingId: "booking_paw_short", amountCents: 20000, refundedAmountCents: 0 },
           { id: "pay_paw_ok", bookingId: "booking_paw_ok", amountCents: 20000, refundedAmountCents: 20000 },
+          // #4488: worked example 1 - a $200 close and a $100 shortfall paid back, left at $200 by a failed late card refund.
+          { id: "pay_shortfall_short", bookingId: "booking_shortfall_short", amountCents: 30000, refundedAmountCents: 20000 },
         ]),
       },
       paymentRefund: {
@@ -151,11 +186,13 @@ describe("auditRefundedTotalShortfalls (#3640) - read only", () => {
           { sourceBookingId: "booking_ib", _sum: { amountCents: 30000 } },
         ]),
       },
-      // #4280: the closes' bank cash, through the one reader.
+      // #4280, #4488: the card refunds' bank records, through the one reader.
       manualRefundTask: {
-        groupBy: vi.fn(async () => [
-          { paymentId: "pay_paw_short", _sum: { amountCents: 20000 } },
-          { paymentId: "pay_paw_ok", _sum: { amountCents: 20000 } },
+        findMany: vi.fn(async () => [
+          { paymentId: "pay_paw_short", kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "card-refund-paid-another-way:op-1", amountCents: 20000 },
+          { paymentId: "pay_paw_ok", kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "card-refund-paid-another-way:op-2", amountCents: 20000 },
+          { paymentId: "pay_shortfall_short", kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "card-refund-paid-another-way:op-3", amountCents: 20000 },
+          { paymentId: "pay_shortfall_short", kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "cancel-card-shortfall:booking_shortfall_short", amountCents: 10000 },
         ]),
       },
     };
@@ -171,7 +208,7 @@ describe("auditRefundedTotalShortfalls (#3640) - read only", () => {
 
     const result = await auditRefundedTotalShortfalls({ db: db as never });
 
-    expect(result.scannedPayments).toBe(6);
+    expect(result.scannedPayments).toBe(7);
     expect(result.findings).toEqual([
       expect.objectContaining({
         paymentId: "pay_short",
@@ -193,9 +230,18 @@ describe("auditRefundedTotalShortfalls (#3640) - read only", () => {
         attributableCents: 0,
         unattributedCents: 20000,
       }),
+      expect.objectContaining({
+        paymentId: "pay_shortfall_short",
+        paidAnotherWayCents: 20000,
+        shortfallPaybackCents: 10000,
+        expectedFloorCents: 30000,
+        shortfallCents: 10000,
+        attributableCents: 0,
+        unattributedCents: 10000,
+      }),
     ]);
     expect(result.totalAttributableCents).toBe(5000);
-    expect(result.totalUnattributedCents).toBe(50000);
+    expect(result.totalUnattributedCents).toBe(60000);
   });
 
   it("counts account credit with the one definition the cash-evidence module reads", async () => {
@@ -210,7 +256,7 @@ describe("auditRefundedTotalShortfalls (#3640) - read only", () => {
     );
   });
 
-  it("#4280: reads every source in ONE read-only snapshot, and the closes' cash through the one reader", async () => {
+  it("#4280: reads every source in ONE read-only snapshot, and the card refunds' bank cash through the one reader", async () => {
     const db = fakeDb();
 
     await auditRefundedTotalShortfalls({ db: db as never });
@@ -219,8 +265,8 @@ describe("auditRefundedTotalShortfalls (#3640) - read only", () => {
     expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ isolationLevel: "RepeatableRead" }));
     expect(db.$executeRaw).toHaveBeenCalledTimes(1);
     expect(String((db.$executeRaw.mock.calls[0] as unknown[] | undefined)?.[0])).toContain("SET TRANSACTION READ ONLY");
-    expect(db.manualRefundTask.groupBy).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining(CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE) }),
+    expect(db.manualRefundTask.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { ...CARD_REFUND_BANK_RECORD_TASK_WHERE, paymentId: { not: null } } }),
     );
   });
 
@@ -239,9 +285,19 @@ describe("auditRefundedTotalShortfalls (#3640) - read only", () => {
     expect(attributed).not.toContain("pay_ib_after_cancel");
     expect(other).toContain("pay_ib_after_cancel");
     // #4280 review (money F2, F3): the causes the figures cannot tell apart, said as such.
-    expect(other).toContain("a #3640 loss that a later close's cash masked");
+    expect(other).toContain("a #3640 loss that a later close's or shortfall's cash masked");
     expect(other).toContain("Stuck States' \"paid twice\" list");
     expect(other).toContain("still pending is transient");
     expect(other).toContain("paid another way $200.00");
+    // #4488: the shortfall's bank cash is named on its line, and as a cause.
+    expect(other).toContain("pay_shortfall_short  booking booking_shortfall_short  short $100.00");
+    expect(other).toContain("card refund shortfall paid back $100.00");
+    expect(other).toContain("after a card refund shortfall was paid back by bank");
+  });
+
+  it("#4488: the --json output carries the shortfall's bank cash on its finding", async () => {
+    const result = await auditRefundedTotalShortfalls({ db: fakeDb() as never });
+    const parsed = JSON.parse(JSON.stringify(result)) as { findings: Array<Record<string, unknown>> };
+    expect(parsed.findings.find((finding) => finding.paymentId === "pay_shortfall_short")).toMatchObject({ shortfallPaybackCents: 10000, paidAnotherWayCents: 20000 });
   });
 });
