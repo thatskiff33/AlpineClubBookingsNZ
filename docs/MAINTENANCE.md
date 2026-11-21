@@ -1559,7 +1559,11 @@ with live Xero, Stripe, SES, Sentry, or production database credentials during
 exploratory work; use a staging database and Xero demo tenant where possible.
 `XERO_AMOUNT_MISMATCH` findings are manual-review only: the tool reports stored
 Xero operation/link amount evidence that disagrees with local cents, but it
-does not auto-adjust financial amounts. Since #1427,
+does not auto-adjust financial amounts. Since #4328, a bank-transfer payment
+with more than one live refund note is judged by all its notes together (the
+finding's `coveredCents` and `otherRefundNotes` details): check every note in
+Xero before changing any, because resizing the first note to the whole refund
+credits the member twice. Since #1427,
 `MISSING_MODIFICATION_CREDIT_NOTE` and `MISSING_CREDIT_NOTE_ALLOCATION` are
 also manual-review (not auto-queued) when the payment captured money and no
 stored evidence records the policy-limited settlement — the report tells you
