@@ -138,7 +138,7 @@ export async function readWorkPartyBookingFacts(
       ...shared,
       checkIn: booking.checkIn,
       hasWorkParty: current !== null,
-      hasOtherPromoCode: redemptions.some((row) => row.promoCode && !row.promoCode.workPartyEvent),
+      otherPromoCodes: redemptions.flatMap((row) => (row.promoCode && !row.promoCode.workPartyEvent ? [row.promoCode.code] : [])),
       memberOwned: Boolean(bookingOwner(booking).memberId),
     },
     remove: {

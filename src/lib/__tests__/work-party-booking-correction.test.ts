@@ -20,7 +20,7 @@ import {
   workPartyAskOffset,
   workPartySettlementOptions,
 } from "@/lib/work-party-settlement-options";
-import { PROMO_WORK_PARTY_EXCLUSION_MESSAGE } from "@/lib/promo-code-list-rules";
+import { PROMO_WORK_PARTY_EXCLUSION_OFFICER_MESSAGE } from "@/lib/promo-code-list-rules";
 import { editTotalMoneyBackCents, workPartyAskAbsorbedSentence, workPartyAskPartlyAbsorbedSentence } from "@/lib/edit-money-back";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
@@ -38,7 +38,7 @@ const booking: WorkPartyEligibilityBooking = {
   checkIn: d("2026-08-01"),
   checkOut: d("2026-08-04"),
   hasWorkParty: false,
-  hasOtherPromoCode: false,
+  otherPromoCodes: [],
   quotePriced: false,
   memberOwned: true,
   actorIsOwnerOrFamily: false,
@@ -237,16 +237,17 @@ describe("workPartyBookingEligibility", () => {
     ).toMatchObject(refusal(/already has a work party/));
   });
 
-  it("refuses another promo code while the club allows one discount, with the booking-create wording", () => {
+  it("refuses another promo code while the club allows one discount: the shared list rule, in an officer's words", () => {
     expect(
-      workPartyBookingEligibility({ ...booking, hasOtherPromoCode: true }, context, event),
-    ).toEqual(refusal(PROMO_WORK_PARTY_EXCLUSION_MESSAGE));
+      workPartyBookingEligibility({ ...booking, otherPromoCodes: ["SUMMER10"] }, context, event),
+    ).toEqual(refusal(PROMO_WORK_PARTY_EXCLUSION_OFFICER_MESSAGE));
+    expect(PROMO_WORK_PARTY_EXCLUSION_OFFICER_MESSAGE).not.toMatch(/Please remove/);
   });
 
   it("accepts another promo code when the club combines codes", () => {
     expect(
       workPartyBookingEligibility(
-        { ...booking, hasOtherPromoCode: true },
+        { ...booking, otherPromoCodes: ["SUMMER10"] },
         { ...context, multiPromoCodes: true },
         event,
       ),

@@ -34,21 +34,34 @@ export const PROMO_WORK_PARTY_EXCLUSION_MESSAGE =
   "A promo code cannot be combined with a working bee discount. Please remove one of them and try again.";
 
 /**
+ * The same refusal, said to an officer adding the booking to a work party
+ * (#5149): the booking's own code is already on it, so there is nothing for
+ * the officer to remove and try again.
+ */
+export const PROMO_WORK_PARTY_EXCLUSION_OFFICER_MESSAGE =
+  "This booking already has a promo code, which can't be combined with a work party discount.";
+
+/** Who a refusal is said to: the booker (the default), or an officer correcting the booking. */
+export type PromoCodeListAudience = "booker" | "officer";
+
+/**
  * The refusal a code list earns, or null. `typedCodes` are the booker's codes,
  * already normalised (`normalizePromoCodeInput`); `workPartyApplied` says a
- * working-bee discount is on the booking beside them.
+ * working-bee discount is on the booking beside them. `audience` words the
+ * refusal for who will read it; the rule is the same for both.
  */
 export function promoCodeListRefusal(input: {
   typedCodes: readonly string[];
   workPartyApplied: boolean;
   multiPromoCodes: boolean;
+  audience?: PromoCodeListAudience;
 }): string | null {
   if (new Set(input.typedCodes).size !== input.typedCodes.length) {
     return DUPLICATE_PROMO_CODE_MESSAGE;
   }
   if (input.multiPromoCodes) return null;
   if (input.workPartyApplied && input.typedCodes.length > 0) {
-    return PROMO_WORK_PARTY_EXCLUSION_MESSAGE;
+    return input.audience === "officer" ? PROMO_WORK_PARTY_EXCLUSION_OFFICER_MESSAGE : PROMO_WORK_PARTY_EXCLUSION_MESSAGE;
   }
   if (input.typedCodes.length > 1) return ONE_PROMO_CODE_PER_BOOKING_MESSAGE;
   return null;

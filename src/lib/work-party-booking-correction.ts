@@ -63,7 +63,7 @@ import {
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify";
 import { EditPriceChangedError } from "@/lib/edit-quoted-figures";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
-import { PROMO_WORK_PARTY_EXCLUSION_MESSAGE } from "@/lib/promo-code-list-rules";
+import { promoCodeListRefusal } from "@/lib/promo-code-list-rules";
 import {
   WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE,
   WORK_PARTY_FIGURES_CHANGED_CODE,
@@ -95,8 +95,8 @@ export interface WorkPartyEligibilityBooking {
   checkOut: Date;
   /** A work party's internal promo is already on the booking. */
   hasWorkParty: boolean;
-  /** Another (non-work-party) promo code is on the booking. */
-  hasOtherPromoCode: boolean;
+  /** The booking's other (non-work-party) promo codes, as stored. */
+  otherPromoCodes: readonly string[];
   /** A quote-priced booking (school, request quote), priced by its quote. */
   quotePriced: boolean;
   /** A member owns it (`bookingOwner`); an organisation's booking holds no credit. */
@@ -189,9 +189,14 @@ export function workPartyBookingEligibility(
   if (booking.hasWorkParty) {
     return { ok: false, reason: "This booking already has a work party." };
   }
-  if (booking.hasOtherPromoCode && !context.multiPromoCodes) {
-    return { ok: false, reason: PROMO_WORK_PARTY_EXCLUSION_MESSAGE };
-  }
+  // The one list rule the edit itself asks (`promoCodeListRefusal`), in an officer's words.
+  const listRefusal = promoCodeListRefusal({
+    typedCodes: booking.otherPromoCodes,
+    workPartyApplied: true,
+    multiPromoCodes: context.multiPromoCodes,
+    audience: "officer",
+  });
+  if (listRefusal) return { ok: false, reason: listRefusal };
   switch (
     workPartyEventRefusal(event, booking.checkIn, booking.checkOut, context.bookingLodgeId)
   ) {
