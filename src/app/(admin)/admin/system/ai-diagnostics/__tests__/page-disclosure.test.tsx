@@ -74,7 +74,10 @@ describe("AI Diagnostics page — where your data goes", () => {
     expect(text).toContain("outside New Zealand");
     // What kinds of data go.
     expect(text).toContain("the question, and the admin screen it was asked from");
-    expect(text).toContain("excerpts of this application's code");
+    expect(text).toContain("earlier questions and answers in the same conversation");
+    expect(text).toContain(
+      "excerpts of this application's code, its built-in guides, and any private notes this deployment adds",
+    );
     expect(text).toContain("records looked up to answer it");
     expect(text).toContain("members' personal details only when the administrator ticks");
     // Retention is the club's arrangement, not a setting here.

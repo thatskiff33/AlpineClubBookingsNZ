@@ -36,7 +36,8 @@ export const AI_DIAGNOSTICS_DISCLOSURE = {
   dataSentIntro: "Each question can send:",
   dataSent: [
     "the question, and the admin screen it was asked from, including that screen's filters and search",
-    "excerpts of this application's code and its built-in guides",
+    "earlier questions and answers in the same conversation",
+    "excerpts of this application's code, its built-in guides, and any private notes this deployment adds",
     "records looked up to answer it, such as bookings, payments, settings and job runs",
     "members' personal details only when the administrator ticks the personal-details box for that question, and a search for people only when the search box is ticked",
   ],
