@@ -87,6 +87,14 @@ describe("reading the linked-move offer (#3232)", () => {
     expect(prompt?.linkedBookings[0]?.proposedCheckIn).toBe("2026-08-20");
   });
 
+  it("#5303: reads where the one choice's refund goes, the card when an older server omits it", () => {
+    expect(readHostingCoverageLinkedMovePrompt(body({ refundRoute: "BANK_TRANSFER" }))?.refundRoute).toBe("BANK_TRANSFER");
+    expect(readHostingCoverageLinkedMovePrompt(body({ refundRoute: "CARD_AND_BANK_TRANSFER" }))?.refundRoute).toBe("CARD_AND_BANK_TRANSFER");
+    expect(readHostingCoverageLinkedMovePrompt(body())?.refundRoute).toBe("CARD");
+    // A value the panel cannot word is not an offer it can render honestly.
+    expect(readHostingCoverageLinkedMovePrompt(body({ refundRoute: "CHEQUE" }))).toBeNull();
+  });
+
   it("reads the not-enough-beds form, which is an offer with one arm", () => {
     // The owner's "cannot" arm still has to render: the member is told plainly and
     // offered the warn-and-continue path. Refusing to read it would show them the
