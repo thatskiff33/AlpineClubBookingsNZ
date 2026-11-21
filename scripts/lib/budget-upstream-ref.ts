@@ -73,8 +73,7 @@ function firstLine(error: unknown): string {
 
 /**
  * U, the upstream commit this checkout contains, without reference to the
- * fork's base. Shared by the CLI, which prints the ignored line once, and by
- * `resolveUpstreamTrust`.
+ * fork's base: the first step of `resolveUpstreamTrust`.
  */
 export function resolveUpstreamCommit(
   root: string,

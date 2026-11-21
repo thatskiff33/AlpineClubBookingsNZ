@@ -89,7 +89,6 @@ import {
 import { DEFAULT_BASE_REF } from "../lib/budget-base-ref.mjs";
 import {
   UPSTREAM_IGNORED_LINE,
-  resolveUpstreamCommit,
   upstreamTrustFor,
   type UpstreamTrust,
 } from "../lib/budget-upstream-ref";
@@ -329,14 +328,11 @@ export function run(root: string, argv: readonly string[]): number {
     return 1;
   }
   const baseRef = baseRefFrom(argv);
+  const upstream = upstreamTrustFor(root, baseRef, upstreamRef.ref);
   // Said once, before both phases, which then run exactly as without trust.
-  if (
-    upstreamRef.ref !== null &&
-    resolveUpstreamCommit(root, upstreamRef.ref).kind === "ignored-head"
-  ) {
+  if (upstream?.kind === "ignored-head") {
     process.stdout.write(`${UPSTREAM_IGNORED_LINE}\n`);
   }
-  const upstream = upstreamTrustFor(root, baseRef, upstreamRef.ref);
   const fileSize = runFileSizeRatchet(root, baseRef, upstream);
   // Run even when the file-size phase failed, so one push shows both answers.
   // A base that cannot be resolved is reported by both phases, which is noisy
