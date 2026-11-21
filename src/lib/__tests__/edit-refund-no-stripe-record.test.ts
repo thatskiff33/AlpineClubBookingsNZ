@@ -31,7 +31,7 @@ vi.mock("@/lib/cancellation", async (importOriginal) => ({
 }));
 
 const { applyPaymentAdjustments } = await import("@/lib/booking-modify-settlement");
-const { calculateModificationSettlementOptions, editRefundHasCardToReturnTo } = await import("@/lib/booking-modify-settlement-options");
+const { calculateFullReductionSettlementOptions, calculateModificationSettlementOptions, editRefundHasCardToReturnTo, fullReductionLockedReads } = await import("@/lib/booking-modify-settlement-options");
 const { noReductionAgainstUnpaidAsk } = await import("@/lib/additional-ask-reduction");
 const { editRefundBankTransferPayee, editRefundGoesBackByHand } = await import("@/lib/edit-refund-hand-back");
 const { paymentHasRefundableCardIntent, readRefundableCardIntentId } = await import("@/lib/refundable-card-intent");
@@ -205,6 +205,21 @@ describe("what the edit quote names as the money-back route", () => {
     const booking = cardPaidBooking({ stripePaymentIntentId: "pi_payment" });
     expect(await quoteOptions(booking)).toMatchObject({ requiresSettlementMethod: true, refundByBankTransfer: false });
     expect(editRefundGoesBackByHand(await adjust(booking, -5_000))).toBe(false);
+  });
+
+  it.each([
+    ["a card payment Stripe holds no record of", cardPaidBooking(), true],
+    ["an Internet Banking payment", cardPaidBooking({ source: PaymentSource.INTERNET_BANKING, stripePaymentIntentId: "pi_stale" }), true],
+    ["control: a card payment naming its intent", cardPaidBooking({ stripePaymentIntentId: "pi_payment" }), false],
+  ] as const)("the full-reduction options (batch edit, guest acceptance) answer the same for %s", async (_case, booking, bankTransfer) => {
+    const options = calculateFullReductionSettlementOptions({
+      booking,
+      netChargeCents: -5_000,
+      refundableCashCents: 20_000,
+      todayAtClub: TODAY,
+      ...(await fullReductionLockedReads(tx as never, booking)),
+    });
+    expect(options).toMatchObject({ requiresSettlementMethod: true, refundByBankTransfer: bankTransfer });
   });
 });
 
