@@ -17,7 +17,7 @@ import {
   loadCancellationPolicy,
   type CancellationPolicyDb,
 } from "@/lib/cancellation";
-import { hasCapturedPayment, hasSettledCardPayment, isSettledBookingStatus } from "@/lib/booking-payment-state";
+import { hasCapturedPayment, isSettledBookingStatus, type BookingPaymentState } from "@/lib/booking-payment-state";
 import {
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
@@ -111,6 +111,13 @@ export async function editRefundHasCardToReturnTo(
 ): Promise<boolean> {
   if (!booking.payment) return false;
   return paidByOrganiserCard(booking) || paymentHasRefundableCardIntent(db, booking.payment);
+}
+
+/** Paid by card: a settled booking holding captured Stripe money. `applyPaymentAdjustments` reads it for an
+ * increase; a reduction also needs a card to return to (`editReductionRefundsToCard`). */
+export function hasSettledCardPayment(booking: { status: string; payment: (BookingPaymentState & { source: string }) | null | undefined }): boolean {
+  const { status, payment } = booking;
+  return isSettledBookingStatus(status) && hasCapturedPayment(payment) && payment?.source === PaymentSource.STRIPE;
 }
 
 /**

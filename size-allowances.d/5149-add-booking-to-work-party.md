@@ -40,14 +40,6 @@ reason: the argument's one-line declaration (its explanation lives on the
   engine. Each sits in a step of the one edit; splitting `modifyBookingBatch`
   is a refactor of its own.
 
-function: src/components/admin/admin-booking-tools-card.tsx#AdminBookingToolsCard
-lines: 328
-reason: the `BookingWorkPartyControls` mount beside the other money controls on
-  the card, gated on the work-parties module, and a one-line note on the links'
-  WCAG 2.5.8 spacing, and (fork #130) the booking's current work party, so
-  Remove replaces Add on a booking already on one. Everything the control decides lives in its own
-  component; moving the card's sections out is a refactor of its own.
-
 function: src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts#buildBookingDetailEditorData
 lines: 311
 reason: fork #130: the booking page reads which work party the booking is on,

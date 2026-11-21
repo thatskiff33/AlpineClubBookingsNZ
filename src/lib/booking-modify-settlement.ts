@@ -44,7 +44,6 @@ import {
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
   feeOwedAfterEditCents,
-  hasSettledCardPayment,
   isSettledBookingStatus,
 } from "@/lib/booking-payment-state";
 import { type BookingModificationSettlementMethod, type LoadedBookingForLifecycle, type LoadedBookingForModify } from "@/lib/booking-modify-validation";
@@ -161,6 +160,7 @@ export {
 import {
   editReductionDisputeHold,
   editReductionRefundsToCard,
+  hasSettledCardPayment,
   modificationCardRefundTier,
   refundableCashForModification,
   resolveSelectedSettlementAmount,
