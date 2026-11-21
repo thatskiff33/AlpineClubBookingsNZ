@@ -16,6 +16,36 @@ export const subscriptionCategorySelect = {
   _count: { select: { assignments: true, fees: true } },
 } satisfies Prisma.SubscriptionCategorySelect;
 
+/**
+ * The slim category shape embedded wherever a member's assignment is read: the
+ * seasonal-membership preview and save, and the members list. `isBuiltIn` is
+ * selected so a caller can refuse the built-in Individual row; the serialised
+ * summary leaves it out.
+ */
+export const subscriptionCategorySummarySelect = {
+  id: true,
+  key: true,
+  name: true,
+  isActive: true,
+  isBuiltIn: true,
+} satisfies Prisma.SubscriptionCategorySelect;
+
+export type SubscriptionCategorySummary = {
+  id: string;
+  key: string;
+  name: string;
+  isActive: boolean;
+};
+
+export function serializeSubscriptionCategorySummary(category: SubscriptionCategorySummary) {
+  return {
+    id: category.id,
+    key: category.key,
+    name: category.name,
+    isActive: category.isActive,
+  };
+}
+
 /** The fields a PATCH actually changed, for the audit row. */
 export function subscriptionCategoryChangedFields(
   before: Record<string, unknown>,

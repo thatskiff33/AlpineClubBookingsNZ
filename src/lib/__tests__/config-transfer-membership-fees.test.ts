@@ -85,6 +85,8 @@ function makeStore(seed?: {
     // returns none — age-tiers.csv is simply not emitted and the fee assertions
     // are unaffected.
     ageTierSetting: { findMany: async () => [] },
+    // #5248: subscription categories ride the same category; none here.
+    subscriptionCategory: { findMany: async () => [] },
     membershipType: { findMany: async () => types.map((t) => ({ ...t })) },
     joiningFee: {
       findMany: async () => joiningFees.map(withType),

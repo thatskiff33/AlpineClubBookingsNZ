@@ -23,6 +23,7 @@ import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { useXeroOrgShortCode } from "@/hooks/use-xero-org-short-code"
 import { useMembershipTypeOptions } from "@/hooks/use-membership-type-options"
+import { useSubscriptionCategoryOptions } from "@/hooks/use-subscription-category-options"
 import {
   getXeroPartialSuccessGuidance,
   isXeroPartialSuccessRecovery,
@@ -43,6 +44,7 @@ import { isAppliedMemberAgeTier } from "./_age-tier-filter-values"
 import { MemberBulkActionBar } from "./_components/member-bulk-action-bar"
 import { MemberBulkDialog } from "./_components/member-bulk-dialog"
 import { MemberBulkMembershipDialog } from "./_components/member-bulk-membership-dialog"
+import { MemberBulkSubscriptionCategoryDialog } from "./_components/member-bulk-subscription-category-dialog"
 import { MemberEditorDialog } from "./_components/member-editor-dialog"
 import { MemberExportControl } from "./_components/member-export-control"
 import { MemberFilterToolbar } from "./_components/member-filter-toolbar"
@@ -105,6 +107,7 @@ export default function MembersPage() {
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false)
   const [bulkAction, setBulkAction] = useState<BulkAction>("")
   const [membershipDialogOpen, setMembershipDialogOpen] = useState(false)
+  const [subscriptionCategoryDialogOpen, setSubscriptionCategoryDialogOpen] = useState(false)
   const [passwordActionDialogOpen, setPasswordActionDialogOpen] = useState(false)
   const [passwordActionTarget, setPasswordActionTarget] =
     useState<PasswordActionTarget | null>(null)
@@ -271,6 +274,7 @@ export default function MembersPage() {
   // category's fallback type the way this club names it. Each calling the hook
   // for itself would fetch the same admin endpoint twice on every page load.
   const membershipTypes = useMembershipTypeOptions()
+  const subscriptionCategories = useSubscriptionCategoryOptions()
 
   const membersListPath = buildMembersListPath()
   const exportUrl = buildExportUrl()
@@ -358,12 +362,17 @@ export default function MembersPage() {
       setMembershipDialogOpen(true)
       return
     }
+    if (action === "set-subscription-category") {
+      setSubscriptionCategoryDialogOpen(true)
+      return
+    }
     setBulkAction(action)
     setBulkDialogOpen(true)
   }
 
-  const handleMembershipChanged = (changed: number) => {
-    showSuccess(`Changed membership type for ${changed} member(s)`)
+  // After a bulk membership-type or subscription-category run.
+  const handleBulkAssignmentChanged = (what: string) => (changed: number) => {
+    showSuccess(`Changed ${what} for ${changed} member(s)`)
     setSelectedIds(new Set())
     void fetchMembers()
   }
@@ -511,6 +520,7 @@ export default function MembersPage() {
         xeroFeatures={xeroFeatures}
         xeroContactGroupsList={xeroContactGroupsList}
         membershipTypes={membershipTypes}
+        subscriptionCategories={subscriptionCategories}
         onSearchChange={setSearch}
         onSetFilter={setFilter}
         resetDisabled={isDatasetDefault}
@@ -585,7 +595,16 @@ export default function MembersPage() {
         selectedIds={selectedIds}
         memberNames={memberNames}
         onOpenChange={setMembershipDialogOpen}
-        onComplete={handleMembershipChanged}
+        onComplete={handleBulkAssignmentChanged("membership type")}
+        onError={setError}
+      />
+      <MemberBulkSubscriptionCategoryDialog
+        open={subscriptionCategoryDialogOpen}
+        selectedIds={selectedIds}
+        memberNames={memberNames}
+        subscriptionCategories={subscriptionCategories}
+        onOpenChange={setSubscriptionCategoryDialogOpen}
+        onComplete={handleBulkAssignmentChanged("subscription category")}
         onError={setError}
       />
       <MemberPasswordActionDialog

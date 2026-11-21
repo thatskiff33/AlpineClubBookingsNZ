@@ -28,6 +28,7 @@ import {
   folderLodgeSlug,
   lodgeFolderSegments,
 } from "./categories/lodge-config";
+import { lockAffectedSubscriptionCategoryFeeSchedules } from "./categories/subscription-categories";
 import type { ClubFormat } from "@/lib/club-format";
 
 // Apply orchestrator. Order (ADR-002): parse once → pre-apply database backup →
@@ -278,6 +279,18 @@ export async function applyConfigImport(
         // Permanent order: config-transfer singleton -> policy-set locks (when
         // selected) -> affected lodge ids in lexical order -> in-lock re-plan.
         await lockAffectedLodgeConfigLodges(tx, parsed.files);
+      }
+
+      // #5248: the subscription-category fee schedules this bundle touches, in
+      // id order, so the re-plan's window and component checks and the writes
+      // see one serialised schedule. The fee-configuration route takes only
+      // this key, never the config-import one, so the order cannot invert.
+      if (
+        parsed.manifest.includedCategories.includes("membership-fees") &&
+        (!params.selectedCategories ||
+          params.selectedCategories.includes("membership-fees"))
+      ) {
+        await lockAffectedSubscriptionCategoryFeeSchedules(tx, parsed.files);
       }
 
       // ADR-003 bootstrap only: re-run the emptiness probe INSIDE the lock,

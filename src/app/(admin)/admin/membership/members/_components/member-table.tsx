@@ -127,6 +127,21 @@ function InfoChip({
   )
 }
 
+/** #5248: the member's billing category under Type – Tier, when not Individual. */
+function MemberSubscriptionCategoryLabel({
+  category,
+}: {
+  category: Member["currentSubscriptionCategory"]
+}) {
+  if (!category) return null
+  return (
+    <span className="block text-xs text-muted-foreground whitespace-nowrap">
+      {category.name}
+      {category.isActive ? "" : " (archived)"}
+    </span>
+  )
+}
+
 export function MemberTable({
   members,
   loading,
@@ -325,6 +340,7 @@ export function MemberTable({
                     membershipTypes,
                   )}
                 </span>
+                <MemberSubscriptionCategoryLabel category={member.currentSubscriptionCategory} />
               </TableCell>
               <TableCell>
                 <StatusChip kind="lifecycle" value={lifecycleConfig.label} />

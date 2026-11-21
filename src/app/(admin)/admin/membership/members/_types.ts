@@ -63,6 +63,13 @@ export interface Member {
     // ALLOWED (N/A hand-pickable), or DISALLOWED (no N/A).
     ageExemption: MembershipTypeAgeExemption;
   } | null;
+  // The current season's subscription category; null means Individual.
+  currentSubscriptionCategory: {
+    id: string;
+    key: string;
+    name: string;
+    isActive: boolean;
+  } | null;
   createdAt: string;
   joinedDate: string | null;
   forcePasswordChange: boolean;
@@ -132,6 +139,8 @@ export interface Filters {
   financeAccess: string;
   lifecycleStatus: string;
   membershipType: string;
+  /** A SubscriptionCategory id, or the no-category sentinel. */
+  subscriptionCategory: string;
   ageTier: string;
   familyGroup: string;
   inviteStatus: string;
@@ -192,4 +201,5 @@ export type BulkAction =
   | "deactivate"
   | "reactivate"
   | "set-role"
-  | "set-membership-type";
+  | "set-membership-type"
+  | "set-subscription-category";

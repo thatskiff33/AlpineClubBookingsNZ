@@ -52,6 +52,7 @@ export async function GET(req: NextRequest) {
     ageTier: sp.get("ageTier") ?? undefined,
     ageTierIn: sp.get("ageTierIn") ?? undefined,
     membershipType: sp.get("membershipType") ?? undefined,
+    subscriptionCategory: sp.get("subscriptionCategory") ?? undefined,
     xeroLinked: sp.get("xeroLinked") ?? undefined,
     inviteStatus: sp.get("inviteStatus") ?? undefined,
     subscription: sp.get("subscription") ?? undefined,

@@ -439,7 +439,7 @@ Screen: `/admin/members`.
 
 Shows: A searchable member list and individual membership records.
 
-Journey: Search or filter members, open a profile, and use its permitted membership actions. A Full Admin answers an access request from a profile's Lifecycle & Deletion section: download that member's subject access report, or find someone else by email or a non-member guest by name. Merge preview and execution failures take focus and scroll into view.
+Journey: Search or filter members (including by subscription category, or Individual for none), open a profile, and use its permitted membership actions; or tick members and use the bulk bar, where **Set Membership Type** and **Set Subscription Category** preview who changes before a reasoned confirm (#5248). A Full Admin answers an access request from a profile's Lifecycle & Deletion section: download that member's subject access report, or find someone else by email or a non-member guest by name. Merge preview and execution failures take focus and scroll into view.
 
 [Guide](guides/members.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
