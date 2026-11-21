@@ -88,12 +88,11 @@ afterEach(() => {
 });
 
 describe("who gets past the neutral state", () => {
-  it("collapses no-row, non-member row, family row, deleted booking and stranger to ONE indistinguishable state", async () => {
+  it("collapses no-row, non-member row, family row and stranger to ONE indistinguishable state", async () => {
     const cases = [
       makeDb(null),
       makeDb(guestRow({ memberId: null })),
       makeDb(guestRow({ consentStatus: null })),
-      makeDb(guestRow({ booking: { deletedAt: new Date() } })),
     ];
     for (const db of cases) {
       const state = await resolveDelegateConsentPageState({
@@ -156,6 +155,68 @@ describe("who gets past the neutral state", () => {
     expect(rule.canRespondForTarget).toHaveBeenCalledWith(
       expect.objectContaining({ actorMemberId: DELEGATE, targetMemberId: TARGET }),
     );
+  });
+});
+
+describe("a removed booking (#5266, INV-ADDPAY-034)", () => {
+  const REMOVED_AT = new Date("2026-07-20T00:00:00.000Z");
+
+  it("tells the target it was removed, instead of sending them to the booking page", async () => {
+    const rule = resolver(false);
+    const state = await resolveDelegateConsentPageState({
+      guestId: GUEST_ID,
+      viewerMemberId: TARGET,
+      db: makeDb(guestRow({ booking: { deletedAt: REMOVED_AT } })),
+      delegateResolver: rule,
+      moduleEnabled: moduleOn,
+    });
+    expect(state).toEqual({ kind: "BOOKING_REMOVED" });
+    expect(rule.canRespondForTarget).not.toHaveBeenCalled();
+  });
+
+  it("tells an accepted family adult it was removed, even with the module switched off", async () => {
+    const state = await resolveDelegateConsentPageState({
+      guestId: GUEST_ID,
+      viewerMemberId: DELEGATE,
+      db: makeDb(guestRow({ booking: { deletedAt: REMOVED_AT } })),
+      delegateResolver: resolver(true),
+      moduleEnabled: async () => false,
+    });
+    expect(state).toEqual({ kind: "BOOKING_REMOVED" });
+  });
+
+  it("gives a stranger the same NOT_FOUND, by the same reads, as on a live booking", async () => {
+    async function strangerOn(row: unknown) {
+      const db = makeDb(row) as unknown as {
+        bookingGuest: { findUnique: ReturnType<typeof vi.fn> };
+        member: { findUnique: ReturnType<typeof vi.fn> };
+        bookingRequest: { findFirst: ReturnType<typeof vi.fn> };
+      };
+      const rule = resolver(false);
+      const moduleProbe = vi.fn(async () => true);
+      const state = await resolveDelegateConsentPageState({
+        guestId: GUEST_ID,
+        viewerMemberId: STRANGER,
+        db: db as never,
+        delegateResolver: rule,
+        moduleEnabled: moduleProbe,
+      });
+      return {
+        state,
+        guestReads: db.bookingGuest.findUnique.mock.calls,
+        memberReads: db.member.findUnique.mock.calls.length,
+        requestReads: db.bookingRequest.findFirst.mock.calls.length,
+        delegateAsks: (rule.canRespondForTarget as ReturnType<typeof vi.fn>).mock.calls.map(
+          ([args]) => ({ actorMemberId: args.actorMemberId, targetMemberId: args.targetMemberId }),
+        ),
+        moduleReads: moduleProbe.mock.calls.length,
+      };
+    }
+
+    const removed = await strangerOn(guestRow({ booking: { deletedAt: REMOVED_AT } }));
+    const live = await strangerOn(guestRow());
+    expect(removed.state).toEqual({ kind: "NOT_FOUND" });
+    expect(removed).toEqual(live);
   });
 });
 
