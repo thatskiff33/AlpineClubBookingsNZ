@@ -27,6 +27,13 @@ const CENSUS_TIMEOUT_MS = 90_000;
 
 const HTTP_METHODS: ReadonlySet<string> = new Set(STEP_UP_HTTP_METHODS);
 
+/**
+ * The only `POST`s that may run as a `read` (`preview: true`): each changes
+ * nothing, which a reviewer checked against the route. A view-only connection
+ * runs them and no audit row is written, so adding one here is a decision.
+ */
+const PREVIEW_ROUTE_KEYS: readonly string[] = [];
+
 /** The HTTP methods a route file exports, however it spells the export. */
 function exportedMethods(file: string): string[] {
   const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
@@ -96,6 +103,15 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     }
   });
 
+  it("leaves no route waiting on ALP-718, which decided its member routes", () => {
+    expect(Object.values(MCP_NOT_YET_TASKS)).not.toContain("ALP-718");
+    const waiting = routeMethods.filter((route) => {
+      const result = classifyMcpRoute(route.file, route.method);
+      return result.kind === "excluded" && result.reason === "not-yet:ALP-718";
+    });
+    expect(waiting).toEqual([]);
+  });
+
   it("points every catalogue entry at a route method that exists", () => {
     const stale = MCP_ACTIONS.filter(
       (action) => !routeKeys.has(stepUpRouteKey(mcpActionRouteFile(action), action.method)),
@@ -162,13 +178,37 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
       for (const fixed of Object.keys(action.fixedBody ?? {})) {
         expect(keys, action.id).not.toContain(fixed);
       }
-      // A GET carries no body, and only a GET is ever a read.
+      // A GET carries no body, and only a GET or a pinned preview is ever a read.
       if (action.method === "GET") {
         expect(action.body, action.id).toBeUndefined();
         expect(action.fixedBody, action.id).toBeUndefined();
+        expect(action.preview, action.id).toBeUndefined();
+      } else if (action.preview) {
+        expect(action.kind, action.id).toBe("read");
       } else {
         expect(action.kind, action.id).not.toBe("read");
       }
     }
+  });
+
+  it("runs as a read only the POSTs pinned as side-effect free", () => {
+    const previews = MCP_ACTIONS.filter((action) => action.preview)
+      .map((action) => stepUpRouteKey(mcpActionRouteFile(action), action.method))
+      .sort();
+    expect(previews).toEqual([...PREVIEW_ROUTE_KEYS].sort());
+  });
+
+  it("says what every action answers with", () => {
+    for (const action of MCP_ACTIONS) {
+      expect(Object.keys(action.returns).length, action.id).toBeGreaterThan(0);
+    }
+  });
+
+  it("lists each permanently excluded member route by its exact method", () => {
+    // The reason covers the method named, not a neighbour added beside it.
+    expect(mcpPermanentExclusion("src/app/api/notices/[id]/acknowledge/route.ts", "POST")).toBe("declaration");
+    expect(mcpPermanentExclusion("src/app/api/notices/[id]/acknowledge/route.ts", "DELETE")).toBeNull();
+    expect(mcpPermanentExclusion("src/app/api/contact/route.ts", "POST")).toBe("public-visitor");
+    expect(mcpPermanentExclusion("src/app/api/contact/extra/route.ts", "POST")).toBeNull();
   });
 });

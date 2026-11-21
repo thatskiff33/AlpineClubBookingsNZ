@@ -29,11 +29,12 @@ export const metadata = {
  * its own — adding either here would be a second copy of a rule whose whole
  * point is that it has one home.
  *
- * It is a SERVER component end to end, with no client island and no API route
- * of its own. That is a privacy decision rather than a performance one: there
- * is no endpoint to call directly, no props object crossing into the browser
- * carrying more than is drawn, and nothing a client component could be handed
- * and forget to render.
+ * It is a SERVER component end to end, with no client island. That is a
+ * privacy decision rather than a performance one: no props object crosses
+ * into the browser carrying more than is drawn, and nothing a client
+ * component could be handed and forget to render. Its one endpoint,
+ * `GET /api/lodge-roster` (the AI app read, ALP-718), calls the same loader
+ * and sends the same names and nights, so the rule still has one home.
  *
  * The module flag is re-checked here even though `FEATURE_ROUTE_RULES` already
  * gates the path in middleware. A module gate that lived only in middleware

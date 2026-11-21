@@ -1,0 +1,63 @@
+import { NextResponse } from "next/server";
+
+import { MEMBER_NOTICE_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { projectForConnection } from "@/lib/connection-projection";
+import { htmlToPlainText } from "@/lib/email-text";
+import { mcpModuleOffResponse } from "@/lib/mcp/http";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { getNoticeForMember } from "@/lib/notices";
+import { noticeIdParamsSchema } from "@/lib/notices-shared";
+import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { requireActiveSession } from "@/lib/session-guards";
+
+/**
+ * GET /api/notices/[id]
+ *
+ * One notice the signed-in member can see, through the notice page's own
+ * loader, so the audience rule is the page's: a notice outside it, or one
+ * that does not exist, answers 404 alike. Reading marks nothing as read; that
+ * is `POST /api/notices/[id]/read`.
+ *
+ * The body is sent as plain text, and only the fields the `get_notice` action
+ * promises are sent at all.
+ *
+ * Added for AI app connections (ALP-718), so it is absent while that module is
+ * off (`INV-MCP-001`), as well as while notices are.
+ */
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const off = await mcpModuleOffResponse();
+  if (off) return off;
+
+  const limited = await applyRateLimit(rateLimiters.api, request);
+  if (limited) return limited;
+
+  const guard = await requireActiveSession();
+  if (!guard.ok) {
+    return guard.response;
+  }
+  // The proxy gates this path on the module too; a gate that lived only there
+  // has shipped bypassed before (#2780).
+  const modules = await loadEffectiveModuleFlags();
+  if (!modules.memberNotices) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const parsed = noticeIdParamsSchema.safeParse(await params);
+  const notice = parsed.success
+    ? await getNoticeForMember(guard.session.user.id, parsed.data.id)
+    : null;
+  if (!notice) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const { bodyHtml, ...rest } = notice;
+  return NextResponse.json(
+    projectForConnection(
+      { notice: { ...rest, body: htmlToPlainText(bodyHtml) } },
+      MEMBER_NOTICE_CONNECTION_SHAPE,
+    ),
+  );
+}

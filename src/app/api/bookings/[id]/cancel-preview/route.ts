@@ -28,7 +28,7 @@ import {
   organiserChildCancelBasis,
 } from "@/lib/organiser-child-refund";
 import { clubFormatValues } from "@/lib/club-format-server";
-import { arrivesAsMcpConnection } from "@/lib/mcp-connection-request";
+import { memberOnlySessionUser } from "@/lib/mcp-connection-request";
 import {
   PART_PAYMENT_MANUAL_MEMBER_REFUSAL,
   readPartPaymentAtCancel,
@@ -77,8 +77,8 @@ export async function GET(
     // the cancel action, gated on the same bookings:edit predicate so a
     // read-only admin (bookings:view) still cannot preview a cancellation.
     // ALP-653 (INV-MCP-006): an AI app connection never carries officer reach.
-    const officerReach = !arrivesAsMcpConnection(request) &&
-      (hasAdminAccess(session.user) || hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" }));
+    const actor = memberOnlySessionUser(request, session.user);
+    const officerReach = hasAdminAccess(actor) || hasAdminAreaAccess(actor, { area: "bookings", level: "edit" });
     if (bookingOwner(booking).memberId !== session.user.id && !officerReach) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }

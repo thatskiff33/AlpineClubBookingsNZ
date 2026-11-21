@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
@@ -24,7 +23,6 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
-import { nameField } from "@/lib/zod-helpers";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import {
   hasAccessRole,
@@ -36,50 +34,15 @@ import {
   resolveEnforcedAgeTier,
 } from "@/lib/age-tier-enforcement";
 import { reconcileEmailInheritanceForMemberChange } from "@/lib/member-email-inheritance";
-import { dietaryRequirementsInputSchema } from "@/lib/member-dietary-field";
 import {
   buildDietaryRequirementsPatch,
   dietaryRequirementsChanged,
   grantSelfDietaryAccess,
   readMemberDietaryRequirements,
 } from "@/lib/member-dietary";
-import { dateOfBirthStringSchema } from "@/lib/date-only-schema";
-
-const maxStr = (len: number) => z.string().max(len).optional().nullable();
-
-const profileSchema = z.object({
-  firstName: nameField({ required: "First name is required" }),
-  lastName: nameField({ required: "Last name is required" }),
-  phoneCountryCode: z.string().max(5).optional().nullable(),
-  phoneAreaCode: z.string().max(5).optional().nullable(),
-  phoneNumber: z.string().max(15).optional().nullable(),
-  dateOfBirth: dateOfBirthStringSchema
-    .optional()
-    .nullable()
-    .or(z.literal("")),
-  // Physical address
-  streetAddressLine1: maxStr(200),
-  streetAddressLine2: maxStr(200),
-  streetCity: maxStr(200),
-  streetRegion: maxStr(200),
-  streetPostalCode: maxStr(20),
-  streetCountry: maxStr(100),
-  // Postal address
-  postalAddressLine1: maxStr(200),
-  postalAddressLine2: maxStr(200),
-  postalCity: maxStr(200),
-  postalRegion: maxStr(200),
-  postalPostalCode: maxStr(20),
-  postalCountry: maxStr(100),
-  occupation: z.string().max(100).optional().nullable().or(z.literal("")),
-  // #2941: any age tier, only while the club has the field ON; blank clears.
-  dietaryRequirements: dietaryRequirementsInputSchema,
-  // #126 / #37: member opt-in to show their phone on the PUBLIC lobby display
-  // (the serialiser also requires lodge config on + adult). The kiosk staff
-  // check-in view is exempt from this toggle.
-  lodgeScreenPhoneOptIn: z.boolean().optional(),
-  postalSameAsPhysical: z.boolean().optional(),
-});
+import { memberProfileUpdateSchema } from "@/lib/member-profile-update-schema";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { MEMBER_PROFILE_UPDATE_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 const PHONE_FIELDS = [
   "phoneCountryCode",
@@ -196,7 +159,7 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const parsed = profileSchema.safeParse(body);
+  const parsed = memberProfileUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       {
@@ -317,12 +280,13 @@ export async function PUT(req: NextRequest) {
 
   // Occupation: adult-only and gated behind the admin showOccupation flag.
   // Use the freshly computed ageTier when DOB was supplied, otherwise the
-  // member's existing ageTier. If not adult or the flag is off, leave the
-  // stored occupation untouched.
+  // member's existing ageTier. If not adult, the flag is off, or the field was
+  // not sent, leave the stored occupation untouched: the profile form always
+  // sends it, and an AI app saving other fields must not clear it (ALP-718).
   const flags = await loadMemberFieldsFlags();
   const effectiveAgeTier =
     (updateData.ageTier as string | undefined) ?? existing.ageTier;
-  if (flags.showOccupation && effectiveAgeTier === "ADULT") {
+  if (flags.showOccupation && effectiveAgeTier === "ADULT" && data.occupation !== undefined) {
     updateData.occupation = data.occupation?.trim() || null;
   }
 
@@ -352,32 +316,30 @@ export async function PUT(req: NextRequest) {
   }
 
   if (existing.canLogin && hasAccessRole(existing, "USER")) {
+    // Judged on the record as it will be saved: what was sent over what is
+    // stored. The profile form sends every field, so for it this is what was
+    // sent; an AI app (ALP-718) may leave out a field it cannot read, such as
+    // the date of birth, and that field is kept rather than read as missing.
+    const saved = { ...existing, ...updateData };
     const profileCompleteness = evaluateSelfServiceProfilePayload({
-      firstName: updateData.firstName as string | null | undefined,
-      lastName: updateData.lastName as string | null | undefined,
-      phoneCountryCode: updateData.phoneCountryCode as
-        string | null | undefined,
-      phoneAreaCode: updateData.phoneAreaCode as string | null | undefined,
-      phoneNumber: updateData.phoneNumber as string | null | undefined,
-      dateOfBirth: updateData.dateOfBirth as Date | null | undefined,
-      streetAddressLine1: updateData.streetAddressLine1 as
-        string | null | undefined,
-      streetAddressLine2: updateData.streetAddressLine2 as
-        string | null | undefined,
-      streetCity: updateData.streetCity as string | null | undefined,
-      streetRegion: updateData.streetRegion as string | null | undefined,
-      streetPostalCode: updateData.streetPostalCode as
-        string | null | undefined,
-      streetCountry: updateData.streetCountry as string | null | undefined,
-      postalAddressLine1: updateData.postalAddressLine1 as
-        string | null | undefined,
-      postalAddressLine2: updateData.postalAddressLine2 as
-        string | null | undefined,
-      postalCity: updateData.postalCity as string | null | undefined,
-      postalRegion: updateData.postalRegion as string | null | undefined,
-      postalPostalCode: updateData.postalPostalCode as
-        string | null | undefined,
-      postalCountry: updateData.postalCountry as string | null | undefined,
+      firstName: saved.firstName as string | null | undefined,
+      lastName: saved.lastName as string | null | undefined,
+      phoneCountryCode: saved.phoneCountryCode as string | null | undefined,
+      phoneAreaCode: saved.phoneAreaCode as string | null | undefined,
+      phoneNumber: saved.phoneNumber as string | null | undefined,
+      dateOfBirth: saved.dateOfBirth as Date | null | undefined,
+      streetAddressLine1: saved.streetAddressLine1 as string | null | undefined,
+      streetAddressLine2: saved.streetAddressLine2 as string | null | undefined,
+      streetCity: saved.streetCity as string | null | undefined,
+      streetRegion: saved.streetRegion as string | null | undefined,
+      streetPostalCode: saved.streetPostalCode as string | null | undefined,
+      streetCountry: saved.streetCountry as string | null | undefined,
+      postalAddressLine1: saved.postalAddressLine1 as string | null | undefined,
+      postalAddressLine2: saved.postalAddressLine2 as string | null | undefined,
+      postalCity: saved.postalCity as string | null | undefined,
+      postalRegion: saved.postalRegion as string | null | undefined,
+      postalPostalCode: saved.postalPostalCode as string | null | undefined,
+      postalCountry: saved.postalCountry as string | null | undefined,
       postalSameAsPhysical: data.postalSameAsPhysical,
     });
 
@@ -519,7 +481,9 @@ export async function PUT(req: NextRequest) {
       }
     }
 
-    return NextResponse.json(updated);
+    // ALP-718: an AI app connection is sent the `get_my_profile` fields only,
+    // never the sign-in, role or Xero columns read above.
+    return connectionJson(req, updated, MEMBER_PROFILE_UPDATE_CONNECTION_SHAPE);
   } catch {
     return NextResponse.json(
       { error: "Failed to update profile" },

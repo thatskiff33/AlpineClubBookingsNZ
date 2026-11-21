@@ -139,7 +139,7 @@ import {
 } from "@/lib/access-roles";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { refuseOnBehalfUnlessBookingOfficer } from "@/lib/on-behalf-booking";
-import { arrivesAsMcpConnection } from "@/lib/mcp-connection-request";
+import { arrivesAsMcpConnection, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 import { getMemberDraftSummary } from "@/lib/member-draft-summary";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
@@ -265,8 +265,10 @@ export async function POST(request: NextRequest) {
   const isMember = hasAccessRole(session.user, "USER");
   // bookings:edit holders may create on-behalf bookings (#1313; the one check is
   // `refuseOnBehalfUnlessBookingOfficer` below). An AI app connection never carries
-  // that reach (ALP-653, INV-MCP-006): it books and sees night clashes as a member.
-  const actorRole = arrivesAsMcpConnection(request) ? "USER" : bookingManagementAuthorizationRole(session.user);
+  // that reach (ALP-653, INV-MCP-006): it books and sees night clashes as a member,
+  // and its `forMemberId` is refused (ALP-718).
+  const memberAuthority = memberOnlySessionUser(request, session.user);
+  const actorRole = bookingManagementAuthorizationRole(memberAuthority);
 
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
@@ -360,7 +362,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (parsed.data.forMemberId) {
-    const onBehalfRefusal = refuseOnBehalfUnlessBookingOfficer(session.user, parsed.data.forMemberId);
+    const onBehalfRefusal = refuseOnBehalfUnlessBookingOfficer(memberAuthority, parsed.data.forMemberId);
     if (onBehalfRefusal) return onBehalfRefusal;
     // Separation of duties: no on-behalf actor may target themselves — their
     // own bookings go through the member flow and normal payment paths.

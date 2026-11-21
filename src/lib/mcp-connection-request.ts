@@ -13,8 +13,12 @@
  */
 import "server-only";
 
+import type { Session } from "next-auth";
 import { headers } from "next/headers";
+import { NextResponse } from "next/server";
 
+import { emptyAdminPermissionMatrix } from "@/lib/admin-permissions";
+import { projectForConnection, type ConnectionShape } from "@/lib/connection-projection";
 import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
 
 /** For a handler that has the request. */
@@ -29,4 +33,39 @@ export async function servingMcpConnection(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * The session user a route decides with (ALP-718, `INV-MCP-006`). A browser
+ * gets the user unchanged. A connection always acts as the member and never
+ * as an officer, whatever roles the person holds: its role is `USER`, it keeps
+ * only the `USER` access role (whether the account is a member), and its
+ * admin permission matrix is empty, so every officer branch reads as refused.
+ *
+ * Call it once, before any officer branch, and decide with what it returns.
+ */
+export function memberOnlySessionUser<U extends Session["user"]>(request: Request, user: U): U {
+  if (!arrivesAsMcpConnection(request)) return user;
+  return {
+    ...user,
+    role: "USER",
+    accessRoles: user.accessRoles.filter((role) => role === "USER"),
+    adminPermissionMatrix: emptyAdminPermissionMatrix(),
+  };
+}
+
+/**
+ * The route's JSON answer. A connection's successful answer is projected
+ * onto `shape`, the fields its catalogue action promises (`McpAction.returns`);
+ * a refusal, and every answer to a browser, is sent unchanged.
+ */
+export function connectionJson(
+  request: Request,
+  body: unknown,
+  shape: ConnectionShape,
+  init?: ResponseInit,
+): NextResponse {
+  const status = init?.status ?? 200;
+  const projected = status >= 200 && status < 300 && arrivesAsMcpConnection(request);
+  return NextResponse.json(projected ? projectForConnection(body, shape) : body, init);
 }
