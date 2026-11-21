@@ -29,6 +29,8 @@ vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
 vi.mock("@/lib/refund-note-eligible-cash", () => ({
   resolveRefundNoteEligibleCash: async (...args: unknown[]) => ({ eligibleCashCents: await mocks.eligibleCashCents(...args) }),
 }));
+// #4383 review M1: no capped capture carries a note raised before #4383 here; the realdb proof covers one.
+vi.mock("@/lib/late-capture-card-notes-in-xero", () => ({ readLateCapturePreCapOverNoteCents: async () => 0 }));
 vi.mock("@/lib/late-capture-paid-another-way", () => ({
   lateCaptureIntentOfCardRefundOperation: (...args: unknown[]) => mocks.lateCaptureIntent(...args),
 }));

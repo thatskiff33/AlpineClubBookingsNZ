@@ -1827,7 +1827,26 @@ invoice resolved before the app sent it, and a close whose note row exists.
 Record those by hand in Xero, except a card note sent with no reply, which it
 names apart for you to check in Xero first (round 14), as the kept invoice's
 finding does. Each capture is named by one record-by-hand finding at most, and
-by none when the app raises its card note. Each record-by-hand finding keeps
+by none when the app raises its card note. One exception (#4383): where the
+app recorded only part of a late card payment in Xero (its invoice had less
+room than the payment, and the receipt's alert told you about the rest), its
+refund note stops at that part, and the same finding names the refund above it
+with its own sentence. Record that amount by hand only if you recorded the rest
+of the payment by hand; otherwise record nothing. A note raised before this
+change for the whole refund is left as it is: the finding does not name what it
+already credits, and the Xero reconciliation report may now list the payment as
+refund coverage above the refunded total. If you recorded the rest of the
+payment by hand, Xero is right and that line can be ignored; if not, reduce the
+note in Xero by the part above what the receipt recorded. One case is not
+right even when you recorded the rest by hand: the over-noted refund itself
+later failed in Stripe. A "Paid another way" close of it reverses only up to
+what the receipt recorded, so reverse the part above that by hand in Xero,
+unless a close made before this change already reversed the whole refund (its
+reversal invoice is for the whole amount). The app never reads
+that part as a card refund that failed later: closing a failed refund on the
+payment as "Paid another way" queues no Stripe reversal for it, and the inbound
+credit-note recount takes nothing off for it, so your correction in Xero is the
+only one. Each record-by-hand finding keeps
 appearing after the refund is recorded by hand, and that is expected: recording
 a refund by hand in Xero writes no row the app can read, and the tool has no
 way to acknowledge a finding.

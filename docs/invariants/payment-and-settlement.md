@@ -977,10 +977,11 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   booking's invoice nor its clearing note.
 - **Refunds** are the ordinary refund note, owed only once the APP recorded
   the capture's receipt (`readLateCaptureXeroReceipt`), never because
-  `payment.xeroInvoiceId` exists. An approved refund closed as paid another
-  way also owes the receipt (`INV-PAY-122`). Noted per capture (`noteLateCaptureRefunds`),
-  naming its receipt, dated the refund's day. Refunds of a capture without one
-  are outside the note-eligible cash (`refund-note-eligible-cash.ts`), so the
+  `payment.xeroInvoiceId` exists, and capped at what it recorded. An
+  approved refund closed as paid another way also owes the receipt
+  (`INV-PAY-122`). Noted per capture (`noteLateCaptureRefunds`), naming its
+  receipt, dated the refund's day. Refunds without one, or above it, are
+  outside the note-eligible cash (`refund-note-eligible-cash.ts`), so the
   self-heal never raises them.
 - **The task row is the lock**: the enqueue and the worker's send-time check
   take it `FOR UPDATE`. A raised invoice's payment is retried whatever the
@@ -992,8 +993,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - **Resolved in Xero** (`INV-INT-025`): never re-sent; unless its invoice
   link stays active, the app notes no refund of it and
   `KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND` asks an officer to (#4039).
-- Pinned by `xero-kept-late-capture-ledger.test.ts` (the books, case by case,
-  and the self-heal a day on), `xero-kept-late-capture-invoice.test.ts` and
+- Pinned by `xero-kept-late-capture-ledger.test.ts` (the books and the
+  self-heal), `xero-kept-late-capture-invoice.test.ts` and
   `refund-note-eligible-cash.test.ts`.
 
 ## INV-PAY-019
@@ -1446,16 +1447,18 @@ one, check the other.
   - **Paid another way** queues a Stripe reversal for the cents a card note
     still covers, and a bank note for the whole close (`INV-PAY-151`).
   - **Inbound recount**: `INV-PAY-155`.
+  - **Neither reads a capped late capture's pre-#4383 over-note as cover**
+    (`readLateCapturePreCapOverNoteCents`).
   - **Officers hear once per refused slice or failed-later decision**, and
     again if retries run out.
   - **Deploy window**: an older release closes a refused row as paid and drops
     `refund.failed`; the read-back finds a dropped one pending.
   - **Every other door**: `INV-PAY-130` (#4103).
-  - Proven by `refused-card-refund-retry.test.ts`, `payment-recovery.test.ts`,
-    `own-card-refund-outcome`, `booking-cancel.test.ts`,
-    `admin-refund-request-review-route.test.ts`,
-    `refunds-and-credits-owed.test.ts`, `card-refund-failed-later.test.ts`,
-    `card-refund-paid-another-way-xero.test.ts` and both `.realdb` twins.
+  - Proven by `refused-card-refund-retry`, `payment-recovery`,
+    `own-card-refund-outcome`, `booking-cancel`,
+    `admin-refund-request-review-route`, `refunds-and-credits-owed`,
+    `card-refund-failed-later`, `card-refund-paid-another-way-xero` and both
+    `.realdb` twins.
 
 ## INV-PAY-129
 
