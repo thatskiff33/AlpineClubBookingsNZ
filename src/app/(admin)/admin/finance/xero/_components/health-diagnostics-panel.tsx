@@ -39,6 +39,11 @@ import type {
   XeroHealthSnapshot,
 } from "./types"
 import { adminHref } from "@/lib/admin-hubs";
+import {
+  describeContactGroupMismatchCounts,
+  REVIEW_BY_HAND_REASON,
+  reviewByHandFix,
+} from "@/lib/xero-contact-group-mismatch-summary";
 
 type Props = {
   connected: boolean
@@ -349,7 +354,7 @@ export function HealthAndDiagnosticsPanels({
               <HealthStatCard
                 label="Group mismatches"
                 value={health.contactGroupMismatches.count}
-                subtitle={health.contactGroupMismatches.cacheReady ? "Linked members whose managed Xero group does not match their current age tier." : "Refresh Xero contact groups before mismatch checks can run."}
+                subtitle={!health.contactGroupMismatches.cacheReady ? "Refresh Xero contact groups before mismatch checks can run." : health.contactGroupMismatches.count > 0 ? `${describeContactGroupMismatchCounts(health.contactGroupMismatches)}. Linked members whose Xero contact groups disagree with the grouping rules.` : "Linked members whose Xero contact groups disagree with the grouping rules."}
                 badge={!health.contactGroupMismatches.cacheReady ? <ToneChip tone="neutral" icon={Circle}>Cache needed</ToneChip> : health.contactGroupMismatches.count > 0 ? <ToneChip tone="warning" icon={AlertTriangle}>Review</ToneChip> : <ToneChip tone="success" icon={CheckCircle2}>Clear</ToneChip>}
                 onClick={() => scrollToSection("contactGroupMismatches")}
               />
@@ -512,6 +517,81 @@ function MissingInvoicesList({
   )
 }
 
+// Mismatches a grouping rule matches; the panel's Refresh re-syncs them.
+function ResyncList({
+  data,
+  shortCode,
+  currentXeroPath,
+}: {
+  data: ContactGroupMismatchResponse
+  shortCode: string | null
+  currentXeroPath: string
+}) {
+  return (
+    <div className="space-y-3">
+      <h4 className="text-sm font-semibold">To re-sync</h4>
+      <p className="text-sm text-muted-foreground">Showing {data.mismatches.length} of {data.mismatchCount} mismatch{data.mismatchCount === 1 ? "" : "es"}.</p>
+      {data.mismatches.map((mismatch) => (
+        <div key={mismatch.memberId} className="rounded-md border p-3">
+          <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <a href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: mismatch.memberId })}`, currentXeroPath)} className="text-sm font-medium text-primary hover:underline">{mismatch.memberName}</a>
+                <Badge variant="outline">{formatAgeTierName(mismatch.ageTier)}</Badge>
+                {mismatch.addGroupId ? <ToneChip tone="warning" icon={AlertTriangle}>Add {mismatch.managedGroup?.name ?? mismatch.addGroupId}</ToneChip> : null}
+                {mismatch.removeGroupIds.length > 0 ? <ToneChip tone="warning" icon={AlertTriangle}>{mismatch.removeGroupIds.length} to remove</ToneChip> : null}
+              </div>
+              <p className="text-sm text-muted-foreground">{mismatch.memberEmail}</p>
+              <p className="text-xs text-muted-foreground">Would add: {mismatch.addGroupId ? (mismatch.managedGroup?.name ?? mismatch.addGroupId) : "nothing"}</p>
+              <p className="text-xs text-muted-foreground">Would remove: {mismatch.removeGroupIds.length > 0 ? mismatch.removeGroupIds.join(", ") : "nothing"}</p>
+            </div>
+            <a href={buildXeroContactUrl(mismatch.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline">Open in Xero</a>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// #5234: members no grouping rule matches whose contacts still sit in a
+// managed group. Counted on the health tile and in Stuck States, so each is
+// named here with the group it sits in and what a person does about it.
+function ReviewByHandList({
+  data,
+  shortCode,
+  currentXeroPath,
+}: {
+  data: ContactGroupMismatchResponse
+  shortCode: string | null
+  currentXeroPath: string
+}) {
+  return (
+    <div className="space-y-3">
+      <h4 className="text-sm font-semibold">To review by hand</h4>
+      <p className="text-sm text-muted-foreground">{REVIEW_BY_HAND_REASON} Showing {data.informational.length} of {data.informationalCount}.</p>
+      {data.informational.map((entry) => {
+        const groupNames = entry.unexpectedManagedGroups.map((group) => group.name ?? group.id)
+        return (
+          <div key={entry.memberId} className="rounded-md border border-dashed p-3">
+            <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <a href={buildHrefWithReturnTo(adminHref("member-detail", { id: entry.memberId }), currentXeroPath)} className="text-sm font-medium text-primary hover:underline">{entry.memberName}</a>
+                  <Badge variant="outline">{formatAgeTierName(entry.ageTier)}</Badge>
+                  <ToneChip tone="neutral" icon={Circle}>In {groupNames.join(", ")}</ToneChip>
+                </div>
+                <p className="text-sm text-muted-foreground">{entry.memberEmail}</p>
+                <p className="text-xs text-muted-foreground">{reviewByHandFix(groupNames)}</p>
+              </div>
+              <a href={buildXeroContactUrl(entry.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline">Open in Xero</a>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function ContactGroupMismatchPanel({
   open,
   shortCode,
@@ -553,10 +633,10 @@ function ContactGroupMismatchPanel({
                 <Badge variant="outline">{formatGroupingMode(data.mode)}</Badge>
                 {!data.cacheReady ? (
                   <ToneChip tone="neutral" icon={Circle}>Cache needed</ToneChip>
-                ) : data.mismatchCount > 0 ? (
-                  <ToneChip tone="warning" icon={AlertTriangle}>{data.mismatchCount} mismatch{data.mismatchCount === 1 ? "" : "es"}</ToneChip>
+                ) : data.mismatchCount + data.informationalCount > 0 ? (
+                  <ToneChip tone="warning" icon={AlertTriangle}>{describeContactGroupMismatchCounts({ resyncCount: data.mismatchCount, reviewByHandCount: data.informationalCount })}</ToneChip>
                 ) : (
-                  <ToneChip tone="success" icon={CheckCircle2}>{data.mismatchCount} mismatch{data.mismatchCount === 1 ? "" : "es"}</ToneChip>
+                  <ToneChip tone="success" icon={CheckCircle2}>No mismatches</ToneChip>
                 )}
               </div>
               <p className="text-sm text-muted-foreground">
@@ -566,9 +646,6 @@ function ContactGroupMismatchPanel({
               </p>
               {data.skippedNoContact.length > 0 ? (
                 <p className="text-xs text-muted-foreground">{data.skippedNoContact.length} member{data.skippedNoContact.length === 1 ? "" : "s"} without a Xero contact skipped.</p>
-              ) : null}
-              {data.informationalCount > 0 ? (
-                <p className="text-xs text-muted-foreground">{data.informationalCount} member{data.informationalCount === 1 ? "" : "s"} match no rule but sit in managed group{data.informationalCount === 1 ? "" : "s"} — information only, never re-synced automatically.</p>
               ) : null}
               <p className="text-xs text-muted-foreground">
                 {data.cacheReady && data.lastRefreshedAt ? `Cache last refreshed ${clubTime.instantDateTime(requireInstant(data.lastRefreshedAt))}.` : "The shared Xero contact-group cache has not been refreshed yet."}
@@ -585,29 +662,16 @@ function ContactGroupMismatchPanel({
           </div>
           {!data.cacheReady ? (
             <p className="text-sm text-muted-foreground">Refresh Xero contact groups before relying on this audit.</p>
-          ) : data.mismatches.length === 0 ? (
+          ) : data.mismatchCount + data.informationalCount === 0 ? (
             <p className="text-sm text-success">No linked members are currently mismatched against the active grouping rules.</p>
           ) : (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">Showing {data.mismatches.length} of {data.mismatchCount} mismatches.</p>
-              {data.mismatches.map((mismatch) => (
-                <div key={mismatch.memberId} className="rounded-md border p-3">
-                  <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-                    <div className="space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <a href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: mismatch.memberId })}`, currentXeroPath)} className="text-sm font-medium text-primary hover:underline">{mismatch.memberName}</a>
-                        <Badge variant="outline">{formatAgeTierName(mismatch.ageTier)}</Badge>
-                        {mismatch.addGroupId ? <ToneChip tone="warning" icon={AlertTriangle}>Add {mismatch.managedGroup?.name ?? mismatch.addGroupId}</ToneChip> : null}
-                        {mismatch.removeGroupIds.length > 0 ? <ToneChip tone="warning" icon={AlertTriangle}>{mismatch.removeGroupIds.length} to remove</ToneChip> : null}
-                      </div>
-                      <p className="text-sm text-muted-foreground">{mismatch.memberEmail}</p>
-                      <p className="text-xs text-muted-foreground">Would add: {mismatch.addGroupId ? (mismatch.managedGroup?.name ?? mismatch.addGroupId) : "nothing"}</p>
-                      <p className="text-xs text-muted-foreground">Would remove: {mismatch.removeGroupIds.length > 0 ? mismatch.removeGroupIds.join(", ") : "nothing"}</p>
-                    </div>
-                    <a href={buildXeroContactUrl(mismatch.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline">Open in Xero</a>
-                  </div>
-                </div>
-              ))}
+            <div className="space-y-6">
+              {data.mismatches.length > 0 ? (
+                <ResyncList data={data} shortCode={shortCode} currentXeroPath={currentXeroPath} />
+              ) : null}
+              {data.informational.length > 0 ? (
+                <ReviewByHandList data={data} shortCode={shortCode} currentXeroPath={currentXeroPath} />
+              ) : null}
             </div>
           )}
         </div>

@@ -29,6 +29,11 @@ export function describeContactGroupMismatchCounts({
   return parts.length > 0 ? parts.join(", ") : "none";
 }
 
-/** What to do about an information-only entry. */
-export const REVIEW_BY_HAND_GUIDANCE =
-  "No grouping rule matches these members, so the re-sync never changes them. Remove each contact from the managed group in Xero, or add a grouping rule that covers the member.";
+/** Why an information-only entry is left to a person. */
+export const REVIEW_BY_HAND_REASON =
+  "Members to review by hand match no grouping rule, so the re-sync never changes them.";
+
+/** What a person does about one information-only entry. */
+export function reviewByHandFix(groupNames: readonly string[]): string {
+  return `Remove the contact from ${groupNames.join(", ")} in Xero, or add a grouping rule that covers this member.`;
+}

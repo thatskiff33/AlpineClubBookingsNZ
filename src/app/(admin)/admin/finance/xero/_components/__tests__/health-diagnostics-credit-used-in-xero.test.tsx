@@ -19,7 +19,7 @@ const health = {
   failedOperations: { count: 0, legacyCount: 0 },
   pendingOperations: { count: 0 },
   lastMembershipRefresh: { at: null, lastCronStatus: null },
-  contactGroupMismatches: { count: 0, cacheReady: true },
+  contactGroupMismatches: { count: 0, resyncCount: 0, reviewByHandCount: 0, cacheReady: true },
   contactLinkMismatches: { count: 0, cacheReady: true },
   apiBudget: { usagePercent: 0, totalCalls: 0, failedCalls: 0, status: "healthy" },
   missingInvoices: { count: 0 },

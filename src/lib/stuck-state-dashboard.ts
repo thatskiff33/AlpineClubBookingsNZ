@@ -60,6 +60,7 @@ import {
 import { adminHref, adminAnchorHref } from "@/lib/admin-hubs";
 import {
   describeContactGroupMismatchCounts,
+  REVIEW_BY_HAND_REASON,
   type ContactGroupMismatchCounts,
 } from "@/lib/xero-contact-group-mismatch-summary";
 const BED_ALLOCATION_LOOKAHEAD_DAYS = 7;
@@ -235,9 +236,7 @@ function plural(count: number, singular: string, pluralForm = `${singular}s`) {
 function contactGroupMismatchSummary(counts: ContactGroupMismatchCounts) {
   const breakdown = describeContactGroupMismatchCounts(counts);
   const byHand =
-    counts.reviewByHandCount > 0
-      ? " Members to review by hand match no grouping rule, so the re-sync never changes them."
-      : "";
+    counts.reviewByHandCount > 0 ? ` ${REVIEW_BY_HAND_REASON}` : "";
   return `Linked members' Xero contact groups disagree with the grouping rules: ${breakdown}.${byHand}`;
 }
 
