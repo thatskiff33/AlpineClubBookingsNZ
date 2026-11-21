@@ -77,7 +77,7 @@ vi.mock("@/lib/google-oauth", () => ({
 vi.mock("@/lib/google-config", () => ({ getGoogleOAuthConfig: vi.fn(), recordGoogleVerified: vi.fn() }));
 
 import { authConfig } from "@/lib/auth";
-import { DUMMY_PASSWORD_HASH } from "@/lib/password-hashing";
+import { DUMMY_PASSWORD_HASH, UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "@/lib/__tests__/helpers/clock";
 
 type Authorize = (credentials: Record<string, string>, request?: Request) => Promise<unknown>;
@@ -151,6 +151,27 @@ describe("stored password cost upgrade at sign-in (#5261)", () => {
   it("tops a wrong password against an older hash up to the current cost, and writes nothing", async () => {
     await expect(signIn("wrong")).resolves.toBeNull();
     expect(mockTopUp).toHaveBeenCalledExactlyOnceWith("wrong", OLDER_HASH);
+    expectNoPasswordWrite();
+  });
+
+  it("refuses a wrong password on a current-cost hash after one compare, and writes nothing", async () => {
+    mockPrisma.member.findFirst.mockResolvedValue(member({ passwordHash: CURRENT_HASH }));
+    await expect(signIn("wrong")).resolves.toBeNull();
+    expect(mockCompare).toHaveBeenCalledExactlyOnceWith("wrong", CURRENT_HASH);
+    // The real top-up spends nothing at the current cost: password-cost-top-up.test.ts.
+    expect(mockTopUp).toHaveBeenCalledExactlyOnceWith("wrong", CURRENT_HASH);
+    expectNoPasswordWrite();
+  });
+
+  it("refuses an account with no password set after one current-cost compare, and writes nothing", async () => {
+    mockPrisma.member.findFirst.mockResolvedValue(
+      member({ passwordHash: UNUSABLE_PLACEHOLDER_PASSWORD_HASH }),
+    );
+    await expect(signIn("right")).resolves.toBeNull();
+    expect(mockCompare).toHaveBeenCalledExactlyOnceWith("right", UNUSABLE_PLACEHOLDER_PASSWORD_HASH);
+    // The placeholder is at the current cost, so the real top-up spends nothing:
+    // password-cost-top-up.test.ts.
+    expect(mockTopUp).toHaveBeenCalledExactlyOnceWith("right", UNUSABLE_PLACEHOLDER_PASSWORD_HASH);
     expectNoPasswordWrite();
   });
 
