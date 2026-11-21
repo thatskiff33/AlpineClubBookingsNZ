@@ -2626,6 +2626,22 @@ describe("membership subscription billing", () => {
       expect(preview.exceptions[0].membershipTypeId).toBeNull();
     });
 
+    // #5248: an imported schedule can leave a category whose only fee window
+    // has already ended. The lookup is asked about the decision date, finds no
+    // window containing it, and the run must still say so rather than bill.
+    it("raises MISSING_CATEGORY_FEE_SCHEDULE when the category's only fee window has ended", async () => {
+      const ended = categoryFee({ effectiveFrom: new Date("2025-04-01T00:00:00.000Z"), effectiveTo: new Date("2026-03-31T00:00:00.000Z") });
+      mocks.effectiveCategoryFee.mockImplementation(async (_params: unknown, asOf: Date) =>
+        ended.effectiveFrom <= asOf && (ended.effectiveTo === null || ended.effectiveTo >= asOf) ? ended : null);
+      mocks.members.findMany.mockResolvedValue([categoryMember("ended-fee")]);
+      const decisionDate = new Date("2026-07-13T00:00:00.000Z");
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate });
+      expect(mocks.effectiveCategoryFee).toHaveBeenCalledWith({ subscriptionCategoryId: "cat-1" }, decisionDate, expect.anything());
+      expect(preview.entries).toHaveLength(0);
+      expect(preview.exceptions.map((r) => r.code)).toEqual(["MISSING_CATEGORY_FEE_SCHEDULE"]);
+      expect(preview.exceptions[0]).toMatchObject({ memberId: "ended-fee", subscriptionCategoryId: "cat-1" });
+    });
+
     // Review finding, corrected: the fingerprint must NOT widen for every
     // exception (that moved every pre-existing type-only exception's
     // fingerprint and falsely "resolved" all of them on the next reconcile).
