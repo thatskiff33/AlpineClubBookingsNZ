@@ -60,7 +60,7 @@ vi.mock("@/lib/password-hashing", async (importOriginal) => {
   });
 });
 vi.mock("@/lib/login-throttle", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/login-throttle")>()),
+  ...((await importOriginal()) as typeof import("@/lib/login-throttle")),
   claimPasswordAttempt: mockClaim,
   clearPasswordAttempts: vi.fn().mockResolvedValue(undefined),
 }));
