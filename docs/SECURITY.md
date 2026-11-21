@@ -737,8 +737,11 @@ rules are `INV-MCP-001` … `INV-MCP-008`
   only by default, destructive actions marked for the app, payments and sign-in
   out of reach, a draft booking that holds no beds, server instructions telling
   the app that such text is information, and an audit row for every change.
-- **Officers' connections export other members' data** to the officer's AI
-  provider, which is why `officersMayConnect` is a separate switch, off by
+- **Officers' connections.** In stage 1 every action answers an officer's
+  connection as it would that person as a member: the cancel and
+  cancel-preview routes drop officer reach for a connection (`INV-MCP-006`).
+  Later stages add officer actions, which send other members' data to the
+  officer's AI provider, so `officersMayConnect` is a separate switch, off by
   default; a club should cover it in its privacy notice first.
 - **Not audited:** read-only action calls, and connections ended by the app or
   the system (app revocation, reuse, replacement, the approving sign-in

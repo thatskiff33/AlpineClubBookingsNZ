@@ -8,7 +8,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createMcpGrantStore, mcpGrant, type McpGrantStore } from "./support/mcp-grant-store";
+import { createMcpGrantStore, liveRefreshToken, mcpGrant, type McpGrantStore } from "./support/mcp-grant-store";
 
 const { db, modules, requireAdmin, requireRecentAuth, audit } = vi.hoisted(() => ({
   db: {} as Record<string, unknown>,
@@ -221,6 +221,10 @@ describe("PUT /api/admin/mcp/settings", () => {
   });
 });
 
+function mcpGrantTokenSpent(grantId: string) {
+  return { ...liveRefreshToken(`r-${grantId}`, grantId), usedAt: new Date("2026-06-01T00:00:00.000Z") };
+}
+
 function seedClub() {
   store.state.grants.push(
     mcpGrant({ id: "ana", memberId: "member-1", member: { firstName: "Ana", lastName: "Reid" } }),
@@ -230,8 +234,12 @@ function seedClub() {
   );
   store.state.tokens.push(
     { id: "t-ana", grantId: "ana", kind: "ACCESS" },
-    { id: "t-ben", grantId: "ben", kind: "REFRESH" },
+    liveRefreshToken("r-ana", "ana"),
+    liveRefreshToken("r-ben", "ben"),
+    // An app that stopped renewing: only a spent refresh token is left.
+    mcpGrantTokenSpent("stale"),
   );
+  store.state.grants.push(mcpGrant({ id: "stale", memberId: "member-4" }));
 }
 
 function grantsRequest(headers: Record<string, string> = {}) {
@@ -250,7 +258,7 @@ describe("GET /api/admin/mcp/grants", () => {
     for (let index = 0; index < 501; index++) {
       const id = `grant-${index}`;
       store.state.grants.push(mcpGrant({ id }));
-      store.state.tokens.push({ id: `token-${index}`, grantId: id, kind: "ACCESS" });
+      store.state.tokens.push(liveRefreshToken(`token-${index}`, id));
     }
     const response = await listGrants(new Request(
       "https://club.example.test/api/admin/mcp/grants?page=21&pageSize=25",
@@ -308,7 +316,7 @@ describe("DELETE /api/admin/mcp/grants/[id]", () => {
       status: "REVOKED",
       endedReason: "admin-revoked",
     });
-    expect(store.state.tokens.map((token) => token.id)).toEqual(["t-ana"]);
+    expect(store.state.tokens.map((token) => token.id)).toEqual(["t-ana", "r-ana", "r-stale"]);
     expect(requireAdmin).toHaveBeenCalledWith({ permission: { area: "support", level: "edit" } });
     expect(audit).toHaveBeenCalledWith(
       expect.objectContaining({

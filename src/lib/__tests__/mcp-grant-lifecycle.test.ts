@@ -42,7 +42,11 @@ vi.mock("@/lib/audit", () => ({ getAuditRequestContext: () => ({}) }));
 
 import { DELETE as adminDelete } from "@/app/api/admin/mcp/grants/[id]/route";
 import { DELETE as memberDelete } from "@/app/api/member/mcp-grants/[id]/route";
-import { MCP_CONNECTION_REFUSAL_MESSAGES, resolveMcpGrantUse } from "@/lib/mcp/connection-gate";
+import {
+  MCP_APP_NOT_APPROVED_MESSAGE,
+  MCP_CONNECTION_REFUSAL_MESSAGES,
+  resolveMcpGrantUse,
+} from "@/lib/mcp/connection-gate";
 import type { McpGrantForSession } from "@/lib/mcp/grant-session";
 import { endMcpGrant, endMcpGrants, MCP_GRANT_END_REASONS } from "@/lib/mcp/grants";
 import { DEFAULT_MCP_SETTINGS, type McpSettingsValues } from "@/lib/mcp/settings";
@@ -90,7 +94,7 @@ function seed() {
     { id: "t-c", grantId: "c", kind: "ACCESS" },
   );
   store.state.codes.push(
-    { id: "code-a", grantId: "a", expiresAt: NOW },
+    { id: "code-a", grantId: "a", expiresAt: NOW, redirectUri: "https://claude.ai/callback" },
     { id: "code-c", grantId: "c", expiresAt: NOW },
   );
 }
@@ -297,6 +301,34 @@ describe("resolveMcpGrantUse", () => {
     });
     expect(grantById("a")?.status).toBe("ACTIVE");
     expect(store.state.tokens.some((token) => token.grantId === "a")).toBe(true);
+  });
+
+  it("refuses a connection whose approved host the club removed, keeps it, and lets it act if the host returns", async () => {
+    clubSettings = { ...clubSettings, allowedRedirectHosts: ["chatgpt.com"] };
+    await expect(resolveMcpGrantUse(grantForSession())).resolves.toEqual({
+      ok: false,
+      message: MCP_APP_NOT_APPROVED_MESSAGE,
+    });
+    // Refused, not ended, exactly like a switched-off group (INV-MCP-003).
+    expect(grantById("a")?.status).toBe("ACTIVE");
+    expect(store.state.tokens.some((token) => token.grantId === "a")).toBe(true);
+
+    clubSettings = { ...clubSettings, allowedRedirectHosts: ["chatgpt.com", "claude.ai"] };
+    await expect(resolveMcpGrantUse(grantForSession())).resolves.toMatchObject({ ok: true });
+  });
+
+  it("keeps a loopback connection working whatever the approved list holds", async () => {
+    store.state.codes.find((code) => code.id === "code-a")!.redirectUri = "http://127.0.0.1:43123/callback";
+    clubSettings = { ...clubSettings, allowedRedirectHosts: [] };
+    await expect(resolveMcpGrantUse(grantForSession())).resolves.toMatchObject({ ok: true });
+  });
+
+  it("refuses a connection with no approval address to check", async () => {
+    store.state.codes = store.state.codes.filter((code) => code.grantId !== "a");
+    await expect(resolveMcpGrantUse(grantForSession())).resolves.toEqual({
+      ok: false,
+      message: MCP_APP_NOT_APPROVED_MESSAGE,
+    });
   });
 
   it("lets an officer's connection act once the club lets officers connect again", async () => {

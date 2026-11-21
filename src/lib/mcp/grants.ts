@@ -102,14 +102,20 @@ const MCP_GRANT_LIST_SELECT = {
 } as const;
 
 /**
- * A connection is listed once the app has collected its approval: until then
- * there is nothing an app could use, and a member who closed the window would
- * otherwise see an app "connected" that never was.
+ * A connection is listed while the app holds a refresh token it can still
+ * use: unspent and unexpired. Before the app collects its approval there is
+ * nothing it could use, and a member who closed the window would otherwise
+ * see an app "connected" that never was. After an app stops renewing, its
+ * last refresh token lapses (30 days) and the connection leaves the lists,
+ * though nothing marks its row ended: it can never be used again, and the row
+ * stays as the member's connection history (docs/PRIVACY_RETENTION.md).
  */
-const CONNECTED_WHERE = {
-  status: "ACTIVE",
-  tokens: { some: {} },
-} as const satisfies Prisma.McpGrantWhereInput;
+function connectedWhere(now: Date) {
+  return {
+    status: "ACTIVE",
+    tokens: { some: { kind: "REFRESH", usedAt: null, expiresAt: { gt: now } } },
+  } as const satisfies Prisma.McpGrantWhereInput;
+}
 
 export interface McpConnectionListItem {
   readonly id: string;
@@ -152,7 +158,7 @@ export async function listMcpConnectionsForMember(
   memberId: string,
 ): Promise<McpConnectionListItem[]> {
   const grants = await prisma.mcpGrant.findMany({
-    where: { ...CONNECTED_WHERE, memberId },
+    where: { ...connectedWhere(new Date()), memberId },
     select: MCP_GRANT_LIST_SELECT,
     orderBy: { createdAt: "desc" },
   });
@@ -169,9 +175,10 @@ export async function listMcpConnectionsForAdmin({ page, pageSize }: {
   page: number;
   pageSize: number;
 }): Promise<{ connections: McpAdminConnectionListItem[]; total: number }> {
-  const total = await prisma.mcpGrant.count({ where: CONNECTED_WHERE });
+  const connected = connectedWhere(new Date());
+  const total = await prisma.mcpGrant.count({ where: connected });
   const grants = await prisma.mcpGrant.findMany({
-    where: CONNECTED_WHERE,
+    where: connected,
     select: {
       ...MCP_GRANT_LIST_SELECT,
       memberId: true,

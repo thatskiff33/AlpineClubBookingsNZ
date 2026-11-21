@@ -139,3 +139,31 @@ describe("route limiters on an AI app loopback call", () => {
     }
   });
 });
+
+/**
+ * Every route an action calls limits through the keyed helpers or by member,
+ * never by a bare address. A limiter keyed on `getClientIp` directly would
+ * count every member behind one AI provider together again. The address is
+ * still read for audit rows (`cancelBooking`'s ip argument); only a limiter's
+ * key is checked here.
+ */
+describe("the routes AI app actions call", () => {
+  it("never key a limiter on the bare client address", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { MCP_ACTIONS, mcpActionRouteFile } = await import("../mcp/catalogue");
+    const files = [...new Set(MCP_ACTIONS.map(mcpActionRouteFile))];
+    expect(files.length).toBeGreaterThan(5);
+    const limitedByHelper: string[] = [];
+    for (const file of files) {
+      const source = readFileSync(file, "utf8");
+      // A `checkRateLimit(config, key)` call whose key reads the address.
+      expect(source, file).not.toMatch(/checkRateLimit\([^;]*getClientIp/s);
+      expect(source, file).not.toMatch(/checkRateLimitInMemory\(/);
+      if (/applyRateLimit\(|applyMemberScopedRateLimit\(/.test(source)) limitedByHelper.push(file);
+    }
+    // The two the review named (#5286): bookingCreate and bookingQuery.
+    expect(limitedByHelper).toEqual(
+      expect.arrayContaining(["src/app/api/availability/route.ts", "src/app/api/bookings/route.ts"]),
+    );
+  });
+});

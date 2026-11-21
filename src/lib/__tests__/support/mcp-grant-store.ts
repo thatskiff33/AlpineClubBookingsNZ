@@ -29,6 +29,13 @@ export interface StoredMcpToken {
   id: string;
   grantId: string;
   kind: "ACCESS" | "REFRESH";
+  usedAt?: Date | null;
+  expiresAt?: Date;
+}
+
+/** A refresh token the app can still use: unspent, expiring after the frozen clock's today. */
+export function liveRefreshToken(id: string, grantId: string): StoredMcpToken {
+  return { id, grantId, kind: "REFRESH", usedAt: null, expiresAt: new Date("2026-07-31T00:00:00.000Z") };
 }
 
 export interface StoredMcpAuthCode {
@@ -126,6 +133,10 @@ export function createMcpGrantStore(seed: {
       })),
     },
     mcpAuthCode: {
+      findFirst: vi.fn(async ({ where }: { where: WhereInput }) => {
+        const code = state.codes.find((candidate) => matchesWhere(candidate, where, { label: "mcp grant store (code)" }));
+        return code ? { ...code } : null;
+      }),
       deleteMany: vi.fn(async ({ where }: { where: WhereInput }) => ({
         count: removeWhere(state.codes, where, "mcp grant store (code)"),
       })),

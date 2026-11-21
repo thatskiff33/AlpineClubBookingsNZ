@@ -28,6 +28,7 @@ import {
   organiserChildCancelBasis,
 } from "@/lib/organiser-child-refund";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { arrivesAsMcpConnection } from "@/lib/mcp-connection-request";
 import {
   PART_PAYMENT_MANUAL_MEMBER_REFUSAL,
   readPartPaymentAtCancel,
@@ -41,7 +42,7 @@ import { paymentDisputedCaptureCents } from "@/lib/stripe-dispute-hold";
  * Used by CancelBookingButton to show amounts before the user confirms.
  */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -75,11 +76,15 @@ export async function GET(
     // (bookings:edit) may see the refund breakdown — the read-only companion to
     // the cancel action, gated on the same bookings:edit predicate so a
     // read-only admin (bookings:view) still cannot preview a cancellation.
-    if (
-      bookingOwner(booking).memberId !== session.user.id &&
-      !hasAdminAccess(session.user) &&
-      !hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" })
-    ) {
+    // ALP-653 (INV-MCP-006): an AI app connection previews only the member's
+    // own booking, as `cancel_my_booking` cancels only that; it never carries
+    // the officer reach below. Officer booking actions are a later stage.
+    const viaConnection = arrivesAsMcpConnection(request);
+    const officerReach =
+      !viaConnection &&
+      (hasAdminAccess(session.user) ||
+        hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" }));
+    if (bookingOwner(booking).memberId !== session.user.id && !officerReach) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -99,9 +104,7 @@ export async function GET(
     // provider call is safe here. It is bounded twice (D8): a per-user limit on
     // the existing booking-query limiter, and a one-minute cache per booking,
     // so reopening the dialog does not spend the tenant's Xero allowance.
-    const isOfficer =
-      hasAdminAccess(session.user) ||
-      hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" });
+    const isOfficer = officerReach;
     let partPaymentRead = null as Awaited<ReturnType<typeof readPartPaymentAtCancel>>;
     if (booking.status !== "PENDING") {
       const limited = await checkRateLimit(

@@ -87,8 +87,11 @@ only the rules.
 - **The approval is delivered only to an approved host or to loopback.**
   `checkMcpRedirectUri` accepts `https` on a host in `allowedRedirectHosts`,
   matched exactly, or `http` on `127.0.0.1`, `localhost` or `[::1]`. It runs at
-  registration and again at approval against the list as it is then. The
-  requested address must be one the app registered, a loopback port excepted.
+  registration, at approval and on every use and renewal against the list as
+  it is then (`resolveMcpGrantUse` reads the approval code's address, kept
+  until the connection ends). A removed host refuses its connections without
+  ending them. The requested address must be one the app registered, a
+  loopback port excepted.
 - **A code lasts five minutes and is single use.** Presenting a used code, or
   losing the claim on it, ends the connection (`code-reuse`).
 - **Codes and tokens are stored only as SHA-256 hashes**
@@ -164,6 +167,10 @@ only the rules.
 - **The catalogue adds no behaviour and no permission.** An action's request
   schemas are the route's own, imported from the module the route imports
   (`INV-SSOT-001`).
+- **Stage 1 acts as a member, never as an officer.** The cancel and
+  cancel-preview routes drop officer reach for a request carrying the
+  principal header (`arrivesAsMcpConnection`), so a connection previews and
+  cancels only its own member's booking. Officer actions come with ALP-719.
 
 ## INV-MCP-007
 

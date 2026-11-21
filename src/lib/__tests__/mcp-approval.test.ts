@@ -11,9 +11,10 @@ import { createHash } from "node:crypto";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createMcpGrantStore, mcpGrant, type McpGrantStore } from "./support/mcp-grant-store";
+import { createMcpGrantStore, liveRefreshToken, mcpGrant, type McpGrantStore } from "./support/mcp-grant-store";
 
-const { db, modules, buildSession, requireActiveSession, checkLimit, audit } = vi.hoisted(() => ({
+const { db, modules, buildSession, requireActiveSession, checkLimit, audit, authMock } = vi.hoisted(() => ({
+  authMock: vi.fn(),
   db: {} as Record<string, unknown>,
   modules: vi.fn(),
   buildSession: vi.fn(),
@@ -29,6 +30,8 @@ vi.mock("@/lib/mcp/grant-session", () => ({
   buildMcpGrantSession: buildSession,
   MCP_GRANT_SESSION_SELECT: {},
 }));
+// Only the forced-password-change case below reaches the real guard, which reads the session here.
+vi.mock("@/lib/auth", () => ({ auth: authMock }));
 vi.mock("@/lib/session-guards", () => ({
   requireActiveSession,
   requireActiveSessionUser: vi.fn(),
@@ -450,6 +453,30 @@ describe("POST /api/member/mcp-grants", () => {
     expect(checkLimit).not.toHaveBeenCalled();
   });
 
+  it("refuses, through the real session guard, a member who must change their password", async () => {
+    // The route's own guard, unmocked: it must be called without
+    // allowForcePasswordChange, so the member's forced change refuses the
+    // approval before the body is read or anything is written.
+    const actual = (await vi.importActual("@/lib/session-guards")) as typeof import("@/lib/session-guards");
+    requireActiveSession.mockImplementation(actual.requireActiveSession);
+    authMock.mockResolvedValue({ user: { ...memberUser, forcePasswordChange: true } });
+    (db.member as { findUnique: ReturnType<typeof vi.fn> }).findUnique = vi.fn(async () => ({
+      active: true,
+      canLogin: true,
+      forcePasswordChange: true,
+      twoFactorEnabled: false,
+    }));
+    const request = decisionRequest(approve());
+    const response = await POST(request);
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "Password change required" });
+    expect(request.bodyUsed).toBe(false);
+    expect(store.state.grants).toEqual([]);
+    expect(store.state.codes).toEqual([]);
+    expect(checkLimit).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+  });
+
   it("limits approvals per member and records nothing over the limit", async () => {
     checkLimit.mockResolvedValue({ success: false });
     const response = await POST(decisionRequest(approve()));
@@ -488,7 +515,9 @@ function seedConnections() {
   );
   store.state.tokens.push(
     { id: "t-mine", grantId: "mine", kind: "ACCESS" },
+    liveRefreshToken("r-mine", "mine"),
     { id: "t-theirs", grantId: "theirs", kind: "ACCESS" },
+    liveRefreshToken("r-theirs", "theirs"),
   );
 }
 
@@ -514,6 +543,20 @@ describe("GET /api/member/mcp-grants", () => {
     const { connections } = (await response.json()) as { connections: { id: string }[] };
     expect(connections.map((row) => row.id)).toEqual(["mine"]);
     expect(connections[0]).toMatchObject({ appName: "Example Assistant", appHost: "claude.ai" });
+  });
+
+  it("stops listing a connection once its app can no longer renew it", async () => {
+    seedConnections();
+    // The app stopped renewing: its last refresh token is spent or lapsed.
+    const refresh = store.state.tokens.find((token) => token.id === "r-mine")!;
+    refresh.expiresAt = new Date("2026-06-30T00:00:00.000Z");
+    let response = await GET(getRequest());
+    expect(await response.json()).toMatchObject({ connections: [] });
+
+    refresh.expiresAt = new Date("2026-07-31T00:00:00.000Z");
+    refresh.usedAt = new Date("2026-06-30T00:00:00.000Z");
+    response = await GET(getRequest());
+    expect(await response.json()).toMatchObject({ connections: [] });
   });
 
   it("shows the approved destination rather than the first registered alternative", async () => {
@@ -551,7 +594,7 @@ describe("DELETE /api/member/mcp-grants/[id]", () => {
       endedReason: "member-revoked",
       endedAt: new Date("2026-07-01T00:00:00.000Z"),
     });
-    expect(store.state.tokens.map((token) => token.id)).toEqual(["t-theirs"]);
+    expect(store.state.tokens.map((token) => token.id)).toEqual(["t-theirs", "r-theirs"]);
     expect(audit).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "MCP_CONNECTION_REVOKED",

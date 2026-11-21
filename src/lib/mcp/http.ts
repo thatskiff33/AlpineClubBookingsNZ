@@ -14,7 +14,7 @@ import { readBoundedWebhookText } from "@/lib/webhook-body";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 
 import type { McpOAuthFailure } from "./oauth";
-import { MCP_PRINCIPAL_HEADER } from "./principal";
+import { arrivesAsMcpConnection } from "@/lib/mcp-connection-request";
 
 /** Registration permits five redirect URIs; 64 KiB also allows JSON escaping. */
 export const MCP_OAUTH_BODY_MAX_BYTES = 64 * 1024;
@@ -56,7 +56,7 @@ export async function readOAuthForm(request: Request): Promise<URLSearchParams |
  * approve another, or widen what connections may do (`INV-MCP-002`).
  */
 export function mcpConnectionMayNotManage(request: Request): NextResponse | null {
-  if (!request.headers.has(MCP_PRINCIPAL_HEADER)) return null;
+  if (!arrivesAsMcpConnection(request)) return null;
   return NextResponse.json(
     { error: "AI app connections are managed on the club website." },
     { status: 403 },

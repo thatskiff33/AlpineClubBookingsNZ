@@ -206,6 +206,14 @@ describe("MCP refresh and revocation", () => {
     });
   });
 
+  it("does not rotate or spend a refresh token while the connection gate refuses, such as a removed host", async () => {
+    resolveUse.mockResolvedValue({ ok: false, message: "This app is no longer on the club's list of approved AI apps." });
+    expect(await refreshMcpTokens(params)).toMatchObject({ ok: false, error: "invalid_grant" });
+    expect(db.mcpToken.updateMany).not.toHaveBeenCalled();
+    expect(db.mcpToken.createMany).not.toHaveBeenCalled();
+    expect(endGrant).not.toHaveBeenCalled();
+  });
+
   it.each(["already-used", "lost-claim"])("revokes the grant on refresh reuse (%s)", async (scenario) => {
     if (scenario === "already-used") {
       db.mcpToken.findUnique.mockResolvedValue(refreshRecord({ usedAt: new Date("2026-06-30T23:59:00Z") }));

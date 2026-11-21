@@ -10,6 +10,8 @@ import {
 } from "@/lib/membership-type-policy";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
 import { formatUnpaidSubscriptionRateReason } from "@/lib/policies/subscription-lockout-pricing";
+import { servingMcpConnection } from "@/lib/mcp-connection-request";
+import { SUBSCRIPTION_FIELDS_WITHHELD_FROM_CONNECTIONS } from "@/lib/member-self-read";
 
 export async function GET() {
   const session = await auth();
@@ -89,7 +91,7 @@ export async function GET() {
         ? "MEMBERSHIP_TYPE_AGE_TIER_NOT_REQUIRED"
         : "LOCKOUT_DISABLED_OR_AGE_TIER_NOT_REQUIRED";
 
-  return NextResponse.json({
+  const body: Record<string, unknown> = {
     status: effectiveStatus,
     rawStatus: status,
     subscriptionRequired,
@@ -112,5 +114,11 @@ export async function GET() {
      * and the client has no other way to tell them apart.
      */
     subscriptionLockoutMode,
-  });
+  };
+  // ALP-653: an AI app connection is not sent the invoice links; the website's
+  // answer is unchanged.
+  if (await servingMcpConnection()) {
+    for (const field of SUBSCRIPTION_FIELDS_WITHHELD_FROM_CONNECTIONS) delete body[field];
+  }
+  return NextResponse.json(body);
 }

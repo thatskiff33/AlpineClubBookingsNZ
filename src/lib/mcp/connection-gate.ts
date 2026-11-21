@@ -13,10 +13,12 @@ import "server-only";
 import type { McpGrantScope } from "@prisma/client";
 import type { Session } from "next-auth";
 
+import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 
 import { buildMcpGrantSession, type McpGrantForSession } from "./grant-session";
 import { endMcpGrant, MCP_GRANT_END_REASONS } from "./grants";
+import { checkMcpRedirectUri } from "./redirect-uris";
 import {
   effectiveMcpScope,
   loadMcpSettings,
@@ -31,6 +33,9 @@ export const MCP_CONNECTION_REFUSAL_MESSAGES: Record<McpConnectionRefusal, strin
   "email-unverified": "Verify your email address before connecting an AI app.",
   "not-permitted": "This club does not allow your account to connect an AI app.",
 };
+
+export const MCP_APP_NOT_APPROVED_MESSAGE =
+  "This app is no longer on the club's list of approved AI apps.";
 
 /**
  * The reason this person may not hold a connection, or null when they may.
@@ -91,6 +96,20 @@ export async function resolveMcpGrantUse(grant: McpGrantForSession): Promise<Mcp
   });
   if (refusal) {
     return { ok: false, message: MCP_CONNECTION_REFUSAL_MESSAGES[refusal] };
+  }
+
+  // The host the approval was delivered to must still be on the club's list
+  // (`INV-MCP-003`). Each approval writes one code and it is kept until the
+  // connection ends, so its address is the approved one. Like a switched-off
+  // group, a removed host refuses without ending: adding it back lets the
+  // connection work again within its life. No code means no checkable
+  // destination, so it is refused too. A loopback address is always allowed.
+  const approval = await prisma.mcpAuthCode.findFirst({
+    where: { grantId: grant.id },
+    select: { redirectUri: true },
+  });
+  if (!approval || !checkMcpRedirectUri(approval.redirectUri, settings.allowedRedirectHosts).ok) {
+    return { ok: false, message: MCP_APP_NOT_APPROVED_MESSAGE };
   }
 
   return {
