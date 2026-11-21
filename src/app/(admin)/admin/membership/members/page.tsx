@@ -23,6 +23,7 @@ import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { useXeroOrgShortCode } from "@/hooks/use-xero-org-short-code"
 import { useMembershipTypeOptions } from "@/hooks/use-membership-type-options"
+import { useSubscriptionCategoryOptions } from "@/hooks/use-subscription-category-options"
 import {
   getXeroPartialSuccessGuidance,
   isXeroPartialSuccessRecovery,
@@ -271,6 +272,7 @@ export default function MembersPage() {
   // category's fallback type the way this club names it. Each calling the hook
   // for itself would fetch the same admin endpoint twice on every page load.
   const membershipTypes = useMembershipTypeOptions()
+  const subscriptionCategories = useSubscriptionCategoryOptions()
 
   const membersListPath = buildMembersListPath()
   const exportUrl = buildExportUrl()
@@ -511,6 +513,7 @@ export default function MembersPage() {
         xeroFeatures={xeroFeatures}
         xeroContactGroupsList={xeroContactGroupsList}
         membershipTypes={membershipTypes}
+        subscriptionCategories={subscriptionCategories}
         onSearchChange={setSearch}
         onSetFilter={setFilter}
         resetDisabled={isDatasetDefault}

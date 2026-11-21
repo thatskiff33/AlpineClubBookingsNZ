@@ -39,16 +39,20 @@ vi.mock("@/hooks/use-access-role-options", async () => {
   return { useAccessRoleOptions: () => options };
 });
 
-function renderToolbar() {
+function renderToolbar(filters = emptyFilters) {
   return render(
     <MemberFilterToolbar
       search=""
-      filters={emptyFilters}
+      filters={filters}
       // Non-empty on purpose: the picker then renders its club types beside the
       // label, which is the arrangement that shipped broken.
       membershipTypes={[
         { id: "mt-full", key: "FULL", name: "Full", isActive: true },
         { id: "mt-nonmember", key: "NON_MEMBER", name: "Non-Member", isActive: true },
+      ]}
+      subscriptionCategories={[
+        { id: "cat-couple", key: "couple", name: "Couple", isActive: true },
+        { id: "cat-old", key: "old", name: "Old Family", isActive: false },
       ]}
       xeroFeatures={{ liveMemberGroupLookups: false, autoLoadContactGroups: false }}
       xeroContactGroupsList={[]}
@@ -75,6 +79,23 @@ describe("members filter toolbar against the real select primitives (#2978)", ()
     expect(
       screen.getByRole("combobox", { name: /membership type/i }),
     ).toBeInTheDocument();
+  });
+
+  it("renders the Subscription Category picker and names an archived category's chip (#5248)", () => {
+    renderToolbar({ ...emptyFilters, subscriptionCategory: "cat-old" });
+
+    expect(
+      screen.getByRole("combobox", { name: /subscription category/i }),
+    ).toBeInTheDocument();
+    // The chip names the category, marked archived, never its raw id.
+    expect(screen.getAllByText(/Old Family \(archived\)/).length).toBeGreaterThan(0);
+    expect(screen.queryByText("cat-old")).not.toBeInTheDocument();
+  });
+
+  it("names the no-category filter value in its chip (#5248)", () => {
+    renderToolbar({ ...emptyFilters, subscriptionCategory: "NONE" });
+
+    expect(screen.getAllByText(/Individual \(no category\)/).length).toBeGreaterThan(0);
   });
 });
 

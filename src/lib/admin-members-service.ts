@@ -24,6 +24,11 @@ import {
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
+import { subscriptionCategoryFilterWhere } from "@/lib/subscription-category-filter";
+import {
+  serializeSubscriptionCategorySummary,
+  subscriptionCategorySummarySelect,
+} from "@/lib/subscription-categories";
 import {
   effectiveSubscriptionBehavior,
   isSubscriptionNotRequiredForMembershipType,
@@ -245,6 +250,7 @@ export const adminMembersQuerySchema = z
     ageTier: optionalSearchParam,
     ageTierIn: optionalSearchParam,
     membershipType: optionalSearchParam,
+    subscriptionCategory: optionalSearchParam,
     xeroLinked: optionalSearchParam,
     contactability: optionalSearchParam,
     inviteStatus: optionalSearchParam,
@@ -314,6 +320,7 @@ export async function listAdminMembers(
     ageTier: ageTierFilter,
     ageTierIn: ageTierInFilter,
     membershipType: membershipTypeFilter,
+    subscriptionCategory: subscriptionCategoryFilter,
     xeroLinked: xeroLinkedFilter,
     contactability: contactabilityFilter,
     inviteStatus: inviteStatusFilter,
@@ -670,6 +677,16 @@ export async function listAdminMembers(
     });
   }
 
+  // Filter: subscription category, judged on the same current-season
+  // assignment as the membership-type filter above.
+  const subscriptionCategoryCondition = subscriptionCategoryFilterWhere(
+    subscriptionCategoryFilter,
+    currentSeasonYear,
+  );
+  if (subscriptionCategoryCondition) {
+    andConditions.push(subscriptionCategoryCondition);
+  }
+
   // Filter: xeroLinked
   if (xeroLinkedFilter === "true") {
     andConditions.push({ xeroContactId: { not: null } });
@@ -897,6 +914,7 @@ export async function listAdminMembers(
             allowedAgeTiers: { select: { ageTier: true } },
           },
         },
+        subscriptionCategory: { select: subscriptionCategorySummarySelect },
       },
       take: 1,
     },
@@ -1230,6 +1248,10 @@ export async function listAdminMembers(
               ),
             ),
           }
+        : null,
+      // The current season's billing category; null means Individual.
+      currentSubscriptionCategory: currentSeasonAssignment?.subscriptionCategory
+        ? serializeSubscriptionCategorySummary(currentSeasonAssignment.subscriptionCategory)
         : null,
       familyGroups: m.familyGroupMemberships.map((fg) => ({
         id: fg.familyGroup.id,

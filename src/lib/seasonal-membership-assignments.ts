@@ -50,6 +50,14 @@ import {
   triggerMemberXeroContactGroupSync,
 } from "@/lib/xero-contact-groups";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+// Subscription-category decoupling: the independent billing axis, resolved
+// alongside membershipType but never affecting it (booking rights/rate stay
+// governed by membershipType alone).
+import {
+  serializeSubscriptionCategorySummary,
+  subscriptionCategorySummarySelect,
+  type SubscriptionCategorySummary,
+} from "@/lib/subscription-categories";
 
 // test seam
 export const SEASONAL_MEMBERSHIP_ASSIGNMENT_CHANGED_ACTION =
@@ -92,20 +100,9 @@ const membershipTypeSelect = {
   sortOrder: true,
 } satisfies Prisma.MembershipTypeSelect;
 
-// Subscription-category decoupling: the independent billing axis, resolved
-// alongside membershipType but never affecting it (booking rights/rate stay
-// governed by membershipType alone).
-const subscriptionCategorySelect = {
-  id: true,
-  key: true,
-  name: true,
-  isActive: true,
-  isBuiltIn: true,
-} satisfies Prisma.SubscriptionCategorySelect;
-
 const assignmentInclude = {
   membershipType: { select: membershipTypeSelect },
-  subscriptionCategory: { select: subscriptionCategorySelect },
+  subscriptionCategory: { select: subscriptionCategorySummarySelect },
 } satisfies Prisma.SeasonalMembershipAssignmentInclude;
 
 const assignmentWithMemberInclude = {
@@ -149,13 +146,6 @@ type MembershipTypeSummary = {
   bookingBehavior: MembershipTypeBookingBehavior;
   subscriptionBehavior: MembershipTypeSubscriptionBehavior;
   sortOrder: number;
-};
-
-type SubscriptionCategorySummary = {
-  id: string;
-  key: string;
-  name: string;
-  isActive: boolean;
 };
 
 type SeasonalAssignmentWithType = {
@@ -299,15 +289,6 @@ function serializeMembershipTypeSummary(type: MembershipTypeSummary) {
     bookingBehavior: type.bookingBehavior,
     subscriptionBehavior: type.subscriptionBehavior,
     sortOrder: type.sortOrder,
-  };
-}
-
-function serializeSubscriptionCategorySummary(category: SubscriptionCategorySummary) {
-  return {
-    id: category.id,
-    key: category.key,
-    name: category.name,
-    isActive: category.isActive,
   };
 }
 
@@ -512,7 +493,7 @@ async function resolveSubscriptionCategoryChange(input: {
   const newSubscriptionCategory = newSubscriptionCategoryId
     ? await db.subscriptionCategory.findUnique({
         where: { id: newSubscriptionCategoryId },
-        select: subscriptionCategorySelect,
+        select: subscriptionCategorySummarySelect,
       })
     : null;
 

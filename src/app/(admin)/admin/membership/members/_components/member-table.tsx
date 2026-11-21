@@ -325,6 +325,13 @@ export function MemberTable({
                     membershipTypes,
                   )}
                 </span>
+                {/* The billing category, when not Individual. */}
+                {member.currentSubscriptionCategory ? (
+                  <span className="block text-xs text-muted-foreground whitespace-nowrap">
+                    {member.currentSubscriptionCategory.name}
+                    {member.currentSubscriptionCategory.isActive ? "" : " (archived)"}
+                  </span>
+                ) : null}
               </TableCell>
               <TableCell>
                 <StatusChip kind="lifecycle" value={lifecycleConfig.label} />

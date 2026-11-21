@@ -19,6 +19,7 @@ import {
   isSubscriptionNotRequiredForMembershipType,
 } from "@/lib/membership-types";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
+import { subscriptionCategoryFilterWhere } from "@/lib/subscription-category-filter";
 import { fixedClubClock } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { clubDownloadFilename } from "@/lib/club-download-filename";
@@ -200,6 +201,15 @@ export async function GET(req: NextRequest) {
         },
       },
     });
+  }
+
+  // Subscription category filter — the same helper as the list endpoint.
+  const subscriptionCategoryCondition = subscriptionCategoryFilterWhere(
+    sp.get("subscriptionCategory"),
+    currentSeasonYear,
+  );
+  if (subscriptionCategoryCondition) {
+    andConditions.push(subscriptionCategoryCondition);
   }
 
   const xeroLinkedFilter = sp.get("xeroLinked");
