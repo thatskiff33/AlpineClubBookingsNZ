@@ -26,16 +26,16 @@ reason: the club's active type names passed into the preview, so a misspelt
   to this dialog's preview and result steps.
 
 file: src/app/(admin)/admin/finance/refund-requests/page.tsx
-lines: 988
+lines: 1021
 reason: renders the new Opening credits card with the page's existing
   finance-edit flag; the card is its own component.
 
 file: src/app/(admin)/admin/membership/members/page.tsx
-lines: 606
+lines: 607
 reason: passes the already-loaded membership types to the import dialog.
 
 file: src/lib/admin-permissions.ts
-lines: 953
+lines: 949
 reason: `/api/admin/opening-credits` in the finance area's prefix list.
   `ROUTE_AREA_PREFIXES` is the single table the drift guard compares the
   route tree against.
