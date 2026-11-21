@@ -821,7 +821,7 @@ check the others.
   rate and lockout stay with `MembershipType`.
 - **Exemption** (#4554 option A, owner, 11 Nov 2026: the type exemption
   wins): both axes ask the one liability rule, billing side
-  (`resolveMemberSubscriptionLiability`, `INV-CONFIG-008`), the rule booking
+  (`resolveMemberSubscriptionLiability`, `INV-CONFIG-009`), the rule booking
   access also reads. While the club is `NOT_CHOSEN` that is the pre-#5190
   billing rule: a `REQUIRED` type always owes, a `BASED_ON_AGE_TIER` type owes
   by its season-start tier, and a saved `NOT_REQUIRED` row is ignored. Once the
@@ -844,7 +844,7 @@ check the others.
   exemption (#2149).** Whether a member owes a subscription is decided ONLY by
   their effective membership type (`subscriptionBehavior`, plus the per-age-tier
   flag where the type is `BASED_ON_AGE_TIER`, or where the club's chosen rule
-  lets an exempt tier exempt a `REQUIRED` type — `INV-CONFIG-008`). Access **role is a pure permission
+  lets an exempt tier exempt a `REQUIRED` type — `INV-CONFIG-009`). Access **role is a pure permission
   concept** and grants no exemption of its own — the retired
   `roleNeverRequiresSubscription` short-circuit is gone from every derivation
   (booking gate, profile, subscriptions list, admin members list + its SQL
@@ -874,7 +874,7 @@ check the others.
 ## INV-MONEY-017
 
 - **Paid-up semantics (one meaning).** A member counts as paid-up (not owing an
-  unpaid subscription) when the one liability rule (`INV-CONFIG-008`, access
+  unpaid subscription) when the one liability rule (`INV-CONFIG-009`, access
   side) says they owe none, or their current-season `MemberSubscription.status`
   is `PAID`, or an active coverage claim on a `NO_INVOICE` charge covers them
   (#5190: such a fee sends no invoice, so its member could never reach `PAID`).
