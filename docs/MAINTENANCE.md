@@ -1851,6 +1851,19 @@ appearing after the refund is recorded by hand, and that is expected: recording
 a refund by hand in Xero writes no row the app can read, and the tool has no
 way to acknowledge a finding.
 
+**A capped late-capture refund note and the journal's export manifest**
+(#4383, #5343). A refund note capped at what the receipt recorded is for less
+than the refund's debt in the member-money journal. Where the note names that
+debt (a card refund's own note, `cardRefundId`), its `REFUND_NOTE` export
+manifest is recorded as a `CENTS` conflict (`coverRefundExportComponent` in
+`refund-note-plan.ts`), and the app logs "A refund document does not match the
+journal; its manifest records a conflict and the document still sent". The
+note is still sent, and the conflict is accurate: Xero holds less than the
+debt. Nothing needs doing for it. Expect it until M13 (#4525). A capped note
+that names no one debt records `COMPONENT_UNUSABLE` instead, as every note
+sized on the payment's refunded watermark does, capped or not
+([`member-money-ledger.md`](design/member-money-ledger.md), section 7).
+
 **Credit-paid card bookings invoiced before #3836.** A card booking paid
 entirely with account credit was invoiced at its full price, but the credit was
 never allocated against the invoice, so Xero shows the whole booking owing and
