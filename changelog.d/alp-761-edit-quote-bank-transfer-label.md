@@ -1,0 +1,2 @@
+- **The edit screen no longer offers a bank-transfer refund as "Refund to original card" (#5303).**
+  When a change lowers the price of a booking paid by Internet Banking, or of a card booking Stripe holds no record of, the club's treasurer refunds the difference by bank transfer. The price summary now labels that choice "Refund by bank transfer" instead of promising the card. Card bookings Stripe can refund still read "Refund to original card", and the account-credit choice is unchanged.
