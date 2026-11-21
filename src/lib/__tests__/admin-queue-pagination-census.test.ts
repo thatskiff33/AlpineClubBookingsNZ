@@ -27,6 +27,7 @@ const SRC = path.join(ROOT, "src");
  * response: the route itself or the lib function it hands the read to.
  */
 const CAPPED_QUEUE_ROUTES: Record<string, readonly string[]> = {
+  "/api/admin/mcp/grants": ["src/app/api/admin/mcp/grants/route.ts"],
   "/api/admin/member-applications": ["src/app/api/admin/member-applications/route.ts"],
   "/api/admin/refund-requests": ["src/app/api/admin/refund-requests/route.ts"],
   "/api/admin/booking-reviews": ["src/app/api/admin/booking-reviews/route.ts"],
@@ -139,6 +140,7 @@ describe("row-capped officer queues page through every row (INV-OPS-020)", () =>
       "src/app/(admin)/admin/membership/member-applications/page.tsx",
       "src/app/(admin)/admin/membership/membership-cancellations/page.tsx",
       "src/app/(admin)/admin/messages/communications/_components/send-history-card.tsx",
+      "src/app/(admin)/admin/system/ai-connections/ai-connections-client.tsx",
       "src/components/admin/booking-requests/booking-approvals-panel.tsx",
       "src/components/admin/booking-requests/booking-change-requests-panel.tsx",
       "src/components/admin/booking-requests/policy-exception-requests-panel.tsx",

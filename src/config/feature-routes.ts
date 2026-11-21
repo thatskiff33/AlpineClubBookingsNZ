@@ -284,6 +284,24 @@ const HAND_WRITTEN_FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     ],
   },
   {
+    // AI app connections (ALP-653). The module is the only switch: with it off
+    // the MCP endpoint, its OAuth endpoints and discovery documents, the
+    // approval screen and both connection-list APIs all 404, and every route
+    // handler re-checks the flag itself so the gate does not live only here.
+    //
+    // The admin page, /admin/system/ai-connections, is gated through its hub
+    // registry entry's `mcpServer` flag (#4799), like every admin page.
+    flag: "mcpServer",
+    prefixes: [
+      "/connect",
+      "/api/mcp",
+      "/api/member/mcp-grants",
+      "/api/admin/mcp",
+      "/.well-known/oauth-protected-resource",
+      "/.well-known/oauth-authorization-server",
+    ],
+  },
+  {
     // Member lodge roster (#2942). The module is the only switch, and the
     // page re-checks the flag itself as well so the gate does not live only in
     // middleware — a module gate that lived only there shipped bypassed once

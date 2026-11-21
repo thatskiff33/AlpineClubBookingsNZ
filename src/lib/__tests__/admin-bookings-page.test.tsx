@@ -127,6 +127,7 @@ const effectiveModulesOn = {
   maintenanceReports: true,
   alpineCentralServer: false,
   commsPortal: false,
+  mcpServer: false,
   memberLodgeRoster: false,
   foodOrders: false,
   multiPromoCodes: false,

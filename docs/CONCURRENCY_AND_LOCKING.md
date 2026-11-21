@@ -50,6 +50,8 @@ Guarded row claims and leases:
 [data-key re-encrypt (#4456)](#the-data-key-re-encrypt-joins-the-row-claims-and-takes-no-advisory-key-4456) ·
 [password cost upgrade (#5261)](#stored-password-cost-upgrade-5261).
 
+[AI app connections and settings (ALP-653)](#ai-app-connection-writers-alp-653).
+
 **Writer classes.**
 
 | Writer class | Read |
@@ -120,6 +122,25 @@ the legacy `hashtext(<memberId>)` contact-link key's in
 [Migration lock timeout (#3377)](#the-migration-lock-timeout-3377) ·
 [reauthentication challenge (#4616)](#reauthentication-challenge-4616) ·
 [rules of thumb](#rules-of-thumb-when-working-here).
+
+## AI app connection writers (ALP-653)
+
+`approveMcpConnection` takes the existing member lifecycle key through
+`acquireMemberLifecycleLocks` before reading or replacing grants, so two
+approvals cannot leave two active connections to the same app. Under that
+lock it re-reads the member (`deletedAt`, `canLogin`) and writes nothing if
+an erasure, merge or disabled login committed while it waited. It takes no
+booking, lodge or money key: member lifecycle precedes grant rows and the
+new grant's member foreign-key reference, matching merge and deletion's
+member-before-grant order (`INV-LOCK-001`, `INV-LOCK-002`). Token issuance
+claims the ACTIVE grant row before inserting tokens; revocation claims that
+same row before deleting credentials. None calls a provider under a lock.
+
+The MCP settings writer claims its singleton with an upsert that updates its
+id to itself, then reads the returned previous values and writes the new
+settings and audit row in that transaction. Even concurrent first saves are
+ordered before the previous-value snapshot. These sites are covered by
+`mcp-approval.test.ts` and `mcp-admin-routes.test.ts` (`INV-LOCK-003`).
 
 ## The two-tier protocol (#1881)
 

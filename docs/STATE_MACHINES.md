@@ -5564,6 +5564,70 @@ refreshes (`auth-session-max-age.test.ts`, #4611);
 and that every refusal renders a visible friendly message via the
 `/login?error=…` wiring.
 
+## AI app connection lifecycle
+
+A member's approval of one AI app (`McpGrant`, ALP-653, `INV-MCP-004`). Module
+`mcpServer`, default off. The connection carries the approving browser
+sign-in's `sessionIssuedAt` and two-factor result, and is used only while it is
+ACTIVE and still allowed (`INV-MCP-002`, `INV-MCP-005`). Statuses: `ACTIVE`,
+`REVOKED`, `EXPIRED`; both end states are final, and reconnecting creates a new
+connection.
+
+```text
+member presses Allow on /connect/authorize -> ACTIVE + one single-use code (5 minutes)
+  same transaction: the member's earlier ACTIVE connection to the same app -> REVOKED (replaced)
+  same transaction: the member's ACTIVE connections with no token and no unexpired code -> EXPIRED (never-completed)
+app exchanges the code (PKCE verifier) -> ACTIVE, listed: one access token (1 hour) + one refresh token
+app renews with a refresh token -> ACTIVE: that refresh token used, a new pair issued
+ACTIVE -> REVOKED (member-revoked): member disconnects on Profile -> Connected AI apps
+ACTIVE -> REVOKED (admin-revoked): officer disconnects on Admin -> Help & system -> AI app connections
+ACTIVE -> REVOKED (app-revoked): app presents either token to /api/mcp/oauth/revoke
+ACTIVE -> REVOKED (code-reuse): a used code is presented again, or the code's usedAt claim is lost
+ACTIVE -> REVOKED (refresh-reuse): a used refresh token is presented again, or its usedAt claim is lost
+ACTIVE -> EXPIRED (session-ended): on use or token issue, the session refresh ends the approving sign-in
+  (password changed, login disabled, maximum session age passed, member gone)
+member deleted or merged away -> the member's connections are deleted with the row (no status written)
+module off -> no transition: requests answer 404 and the connection stays ACTIVE
+club policy refuses the holder (officers off, members off, unverified, kiosk) -> no transition: each use is refused until it allows them again
+```
+
+Every end goes through `endMcpGrants` in `src/lib/mcp/grants.ts`: it reads the
+ACTIVE rows its filter selects, then claims them with a status-guarded
+`updateMany` on `status: "ACTIVE"` that writes the end status, `endedReason`
+and `endedAt`, and deletes the connections' tokens and codes whoever won. The
+reason alone decides the status (`MCP_GRANT_END_REASONS` →
+`END_STATUS_BY_REASON`):
+
+| Reason | Status | Written by |
+| --- | --- | --- |
+| `member-revoked` | REVOKED | `DELETE /api/member/mcp-grants/[id]` |
+| `admin-revoked` | REVOKED | `DELETE /api/admin/mcp/grants/[id]` |
+| `app-revoked` | REVOKED | `POST /api/mcp/oauth/revoke` |
+| `replaced` | REVOKED | approval of the same app by the same member |
+| `refresh-reuse` | REVOKED | `POST /api/mcp/oauth/token`, `refresh_token` grant |
+| `code-reuse` | REVOKED | `POST /api/mcp/oauth/token`, `authorization_code` grant |
+| `session-ended` | EXPIRED | `resolveMcpGrantUse`, on `/api/mcp` or a token issue |
+| `never-completed` | EXPIRED | the member's next approval, for one whose code was never collected |
+
+**A lost claim changes nothing.** `endMcpGrants` returns how many rows it
+ended; zero means each was already over. The member and officer disconnect
+routes answer that as 404 and write no audit row, so two disconnects leave one
+row. Ends the system or the app causes write no audit row in any case
+(`INV-MCP-008`); `endedReason` is the record. The code and refresh-token claims
+are separate status-guarded `updateMany`s on `usedAt: null`; losing one is
+treated as reuse and ends the connection.
+
+A connection the app never collected stays ACTIVE but is not listed (the
+lists show ACTIVE connections with at least one token) until the member's next
+approval ends it `never-completed`; its code is unusable after five minutes.
+
+To verify: the `mcp-*.test.ts` suites in `src/lib/__tests__/` —
+`mcp-oauth.test.ts` (a lost code claim ends the connection, a refused use does
+not spend the code, refresh rotation and reuse, revocation ends the whole
+connection), `mcp-principal.test.ts` (a missing connection or an ended sign-in
+reads as signed out), `mcp-endpoint.test.ts` (a connection that may no longer
+be used answers 401) and `mcp-module-off.test.ts` (module off answers 404).
+
 ## Analytics Consent Lifecycle
 
 Client-side state machine for GA4 consent (issue #975, reshaped by #2573). The

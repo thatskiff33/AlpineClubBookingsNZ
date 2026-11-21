@@ -340,6 +340,10 @@ says how.
 | `MemberMoneySourcePosting` | Exact financial source and journal-line coverage | Kept for financial records | Keep |
 | `MemberMoneyExportManifest` | Booking, sent Xero invoice id and what its lines cover | Kept for financial records | Keep |
 | `MemberMoneyExportCoverage` | Journal components a sent invoice bills | Kept for financial records | Keep |
+| `McpGrant` | A member's connection to an AI app: which app, what it may do, when it was approved and last used | While the connection is in use, and after it ends as the member's connection history; deleted with the member. A connection whose app stopped renewing leaves the connected lists once its last refresh token lapses (30 days), and its row is kept as history. No scheduled sweep | Delete on member erasure or merge |
+| `McpAuthCode` | Single-use sign-in code for an AI app connection, stored as a hash, with its PKCE challenge and return address | Usable for five minutes; kept for the life of the connection, marked used once the app collects it, because it records the approved return address that every use is checked against and the connection lists show; deleted when the connection ends or with the member. No scheduled sweep | Delete with the connection |
+| `McpToken` | Access and refresh tokens for an AI app connection, stored as hashes | An access token lasts one hour and a refresh token a fixed 30 days; a refresh token is marked used when it is renewed. Expired tokens are deleted at the connection's next token issue, and every token when the connection ends or with the member. No scheduled sweep | Delete with the connection |
+| `McpSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `StripeBalanceTransactionEvidence` | Stripe balance-transaction figures and the payment intent, refund and payout they belong to | Kept for financial records | Keep |
 
 ## Maintaining coverage
