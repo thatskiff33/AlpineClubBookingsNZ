@@ -109,7 +109,7 @@ export function OpeningCreditBatchesCard({
     <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
         <div className="space-y-1.5">
-          <CardTitle>Opening credits</CardTitle>
+          <CardTitle headingLevel={2}>Opening credits</CardTitle>
           <CardDescription>
             Bring members&apos; credit balances across from your previous system in one CSV. Nothing is posted until
             you confirm the previewed total, and no email, Xero document or card payment is made.
