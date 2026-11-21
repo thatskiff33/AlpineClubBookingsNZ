@@ -6,9 +6,8 @@
   conversation, excerpts of the application's code, its built-in guides and any
   private notes this deployment adds, records looked up to answer it, and
   members' personal details only when the administrator ticks consent for that
-  question. Save stays disabled until
-  the administrator ticks the statement, and the acknowledgement is recorded in
-  the audit log. Clubs that already have Diagnostics on are not asked again; the
+  question. Save stays disabled until the administrator ticks the statement, and
+  the acknowledgement is recorded in the audit log. Clubs that already have Diagnostics on are not asked again; the
   same statement now also shows on the AI Diagnostics page. There is no
   zero-retention setting: the application sends Anthropic no retention
   instruction, and a club that needs zero retention arranges it with Anthropic on
