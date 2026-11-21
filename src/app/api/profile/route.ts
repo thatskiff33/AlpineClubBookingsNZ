@@ -481,8 +481,7 @@ export async function PUT(req: NextRequest) {
       }
     }
 
-    // ALP-718: an AI app connection is sent the `get_my_profile` fields only,
-    // never the sign-in, role or Xero columns read above.
+    // ALP-718: a connection gets the `get_my_profile` fields, not the columns above.
     return connectionJson(req, updated, MEMBER_PROFILE_UPDATE_CONNECTION_SHAPE);
   } catch {
     return NextResponse.json(

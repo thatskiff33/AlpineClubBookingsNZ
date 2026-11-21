@@ -263,10 +263,8 @@ export async function POST(request: NextRequest) {
   // Dual-hat detection: a USER token alongside admin roles means this account
   // books for itself through the member flow under full member rules (#1442).
   const isMember = hasAccessRole(session.user, "USER");
-  // bookings:edit holders may create on-behalf bookings (#1313; the one check is
-  // `refuseOnBehalfUnlessBookingOfficer` below). An AI app connection never carries
-  // that reach (ALP-653, INV-MCP-006): it books and sees night clashes as a member,
-  // and its `forMemberId` is refused (ALP-718).
+  // bookings:edit holders may book on behalf (#1313, `refuseOnBehalfUnlessBookingOfficer`
+  // below); an AI app connection never may, and sees clashes as a member (INV-MCP-006).
   const memberAuthority = memberOnlySessionUser(request, session.user);
   const actorRole = bookingManagementAuthorizationRole(memberAuthority);
 

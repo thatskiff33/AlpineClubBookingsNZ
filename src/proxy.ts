@@ -1147,10 +1147,8 @@ export const config = {
     // pages 404. Same failure the calendar entry above was added to prevent.
     "/api/lodge-maintenance/:path*",
     "/api/maintenance-reports/:path*",
-    // The memberLodgeRoster gate on "/api/lodge-roster" (ALP-718), same reason.
-    "/api/lodge-roster/:path*",
-    // AI app connections (ALP-653): the mcpServer rule gates "/api/mcp" and
-    // "/api/member/mcp-grants", which the first entry above excludes.
+    "/api/lodge-roster/:path*", // memberLodgeRoster (ALP-718), same reason
+    // AI app connections (ALP-653): the mcpServer rule's "/api/mcp" and "/api/member/mcp-grants".
     "/api/mcp/:path*",
     "/api/member/mcp-grants/:path*",
     "/api/notices/:path*",
