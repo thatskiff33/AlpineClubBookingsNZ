@@ -617,6 +617,71 @@ describe("a modification note's allocations are summed per note, each allocation
     expect(refundedWrites()).toEqual([10_000]);
   });
 
+  // #4444 (`INV-PAY-126`): a card payment's earlier edit notes are found by its
+  // invoice too, as a bank transfer's are; only the floors differ by source.
+  // Against a real database: card-recount-earlier-edit-note.realdb.test.ts.
+  describe("a card payment's earlier edit note found by its invoice (#4444)", () => {
+    const CARD_PAYMENT = (refundedAmountCents: number) =>
+      payment({ amountCents: 40_000, xeroInvoiceId: "inv-1", refundedAmountCents, status: PaymentStatus.PARTIALLY_REFUNDED });
+    // A later edit's $30 note being synced, allocated to the same invoice.
+    const recountWithLaterNote = () =>
+      repairRefundedPaymentBusinessState({
+        creditNoteId: "cn-current",
+        creditNote: { status: "AUTHORISED", total: 30 } as never,
+        directPaymentIds: [],
+        modificationRefundAmountsByPaymentId: new Map([["pay-1", 3000]]),
+      });
+
+    beforeEach(() => {
+      mocks.notifyXeroSyncError.mockResolvedValue(undefined);
+      mocks.xeroSyncOperationFindMany.mockResolvedValue([{ xeroObjectId: "cn-refund", requestPayload: { refundMethod: "card" } }]);
+      // The earlier edit's $50 note, on the edit.
+      invoiceLinks = [onEdit(allocation("alloc-50", "inv-1", 5000))];
+    });
+
+    it("MUTATION: Stripe holds $80 - the recount reads $50 + $30, writes nothing and raises no divergence alert", async () => {
+      mocks.paymentFindMany.mockResolvedValue([CARD_PAYMENT(8000)]);
+
+      await recountWithLaterNote();
+      expect(refundedWrites()).toEqual([]);
+      expect(mocks.notifyXeroSyncError).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: Stripe has recorded only the $50 - the recount raises the total to $80", async () => {
+      mocks.paymentFindMany.mockResolvedValue([CARD_PAYMENT(5000)]);
+
+      await recountWithLaterNote();
+      expect(refundedWrites()).toEqual([8000]);
+      expect(mocks.notifyXeroSyncError).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: an earlier note the payment also links as its refund note counts once, by that link", async () => {
+      mocks.paymentFindMany.mockResolvedValue([CARD_PAYMENT(5000)]);
+      const findLinks = mocks.xeroObjectLinkFindMany.getMockImplementation()!;
+      mocks.xeroObjectLinkFindMany.mockImplementation(async (args: { where: { role?: { in: string[] } } }) =>
+        args.where.role && typeof args.where.role === "object" && args.where.role.in?.includes("REFUND_CREDIT_NOTE")
+          ? [{ localId: "pay-1", xeroObjectId: "cn-refund", metadata: { amountCents: 5000, status: "AUTHORISED", total: 50 } }]
+          : findLinks(args),
+      );
+
+      await recountWithLaterNote();
+      expect(refundedWrites()).toEqual([8000]);
+    });
+
+    it("MUTATION: a card note being synced that the payment links as its refund note counts once, never again by its allocation", async () => {
+      mocks.paymentFindMany.mockResolvedValue([payment({ amountCents: 40_000, xeroInvoiceId: "inv-1" })]);
+      invoiceLinks = [];
+
+      await repairRefundedPaymentBusinessState({
+        creditNoteId: "cn-current",
+        creditNote: { status: "AUTHORISED", total: 50 } as never,
+        directPaymentIds: ["pay-1"],
+        modificationRefundAmountsByPaymentId: new Map([["pay-1", 5000]]),
+      });
+      expect(refundedWrites()).toEqual([5000]);
+    });
+  });
+
   // #4786: an older repair could link a note's allocation role-less
   // (`CREDIT_NOTE_ALLOCATION`) on the note's own anchor, which the recount
   // finds by the payment's invoice. Each allocation counts once, by whichever
