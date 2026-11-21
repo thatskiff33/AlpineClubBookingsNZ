@@ -162,21 +162,29 @@ be stored sideways. The stored copy no longer has the setting, so uploading
 that copy again leaves it sideways; uploading the original file keeps the
 setting, and the photo shows upright.
 
-**Uploading an image again changes the copy the app stores, and nothing
-else.** Two kinds of older copy stay as they were:
+**Uploading an image again does not reach older copies.** A library image
+uploaded again is stored as a new image: the older one stays in the app, still
+served at its old link, until it is deleted from the picker. An Image Manager
+image, the club logo and a member photo are replaced. Older copies of these
+kinds stay as they were either way:
 
 - **Copies in browsers.** A browser that has already downloaded an image can go
   on showing its own copy. Library images and the club logo are served to be
   kept for up to a year under their link; uploading one again gives it a new
   link, so a page pointed at the new copy fetches the cleaned file. Image
-  Manager images and publicly shown member photos keep their link, and are
-  served to be checked again after five minutes. A member photo that is not
-  shown publicly is served with an instruction not to keep it.
+  Manager images keep their link, and are served to be checked again after five
+  minutes. Publicly shown member photos are served the same way; the committee
+  page's link to a photo changes when the photo is replaced, so the page fetches
+  the new one. A member photo that is not shown publicly is served with an
+  instruction not to keep it.
 - **Copies in backups.** A [database backup](guides/backups.md) holds library
   images, club logos and member photos as they were when it was taken, until it
   is pruned or deleted. Image Manager images are files on the server's disk,
   not in the database, so the database backup never holds them; any copy the
   host keeps of that folder is outside the app.
+- **Copies in configuration exports.** A configuration export made earlier
+  holds the library images and club logo it carried, as they were when it was
+  made. A restore cleans them as it loads them.
 
 ## Model schedule
 
