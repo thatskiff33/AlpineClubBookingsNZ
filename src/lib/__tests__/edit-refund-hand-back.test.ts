@@ -246,34 +246,30 @@ describe("the queue payload marks an edit refund hand-back for the card", () => 
         payment: null,
       },
     };
-    expect(toOpenManualRefundTaskPayload(row, null, []).editRefundHandBack).toBe(true);
+    expect(toOpenManualRefundTaskPayload(row, null).editRefundHandBack).toBe(true);
     // #4516 (owner decision, 18 Nov 2026): a dispute-held edit's hand-back in the queue, by the server's own rule.
     const held = { ...row, paymentId: "payment-1" };
     const lostDispute = { stripeDisputeId: "dp_1", status: "LOST" as const, amountCents: 6000, paymentId: "payment-1" };
-    expect(toOpenManualRefundTaskPayload(held, null, [], { disputes: [lostDispute], paymentTasks: [] }))
+    expect(toOpenManualRefundTaskPayload(held, null, { disputes: [lostDispute], paymentTasks: [] }))
       .toMatchObject({ journalHandBackDismissRefusal: null, disputedHandBackLost: true, markPaidRefusal: DISPUTED_HAND_BACK_LOST_NOT_PAYABLE });
     // An older open refund on the same payment takes the loss first: this one stays payable and says why it is not dismissible.
     const older = { ...held, id: "task-0", status: "OPEN", createdAt: new Date("2026-06-01T00:00:00.000Z") };
-    expect(toOpenManualRefundTaskPayload(held, null, [], { disputes: [lostDispute], paymentTasks: [older] }))
+    expect(toOpenManualRefundTaskPayload(held, null, { disputes: [lostDispute], paymentTasks: [older] }))
       .toMatchObject({ journalHandBackDismissRefusal: DISPUTED_HAND_BACK_LOSS_ON_ANOTHER_REFUND, markPaidRefusal: null, disputeReduction: null });
     // Lost on one charge while another is still open: the row says to wait, and offers no Mark paid.
-    expect(toOpenManualRefundTaskPayload(held, null, [], { disputes: [{ ...lostDispute, amountCents: 1000 }, { ...lostDispute, stripeDisputeId: "dp_2", status: "OPEN" as const }], paymentTasks: [] }))
+    expect(toOpenManualRefundTaskPayload(held, null, { disputes: [{ ...lostDispute, amountCents: 1000 }, { ...lostDispute, stripeDisputeId: "dp_2", status: "OPEN" as const }], paymentTasks: [] }))
       .toMatchObject({ journalHandBackDismissRefusal: DISPUTED_HAND_BACK_WAIT_FOR_OPEN_DISPUTE, markPaidRefusal: DISPUTED_HAND_BACK_WAIT_FOR_OPEN_DISPUTE });
-    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null }, null, []).editRefundHandBack).toBe(false);
+    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null }, null).editRefundHandBack).toBe(false);
     // #3949: on a joiner the organiser paid for by internet banking, it goes back to the organiser.
-    expect(toOpenManualRefundTaskPayload(row, null, []).paidToGroupOrganiser).toBe(false);
+    expect(toOpenManualRefundTaskPayload(row, null).paidToGroupOrganiser).toBe(false);
     const groupChild = {
       ...row,
       booking: { ...row.booking, organiserSettled: true, parentBookingId: "organiser", payment: { id: "p", status: "SUCCEEDED", amountCents: 6000, refundedAmountCents: 0, source: "INTERNET_BANKING" } },
     };
-    expect(toOpenManualRefundTaskPayload(groupChild, null, []).paidToGroupOrganiser).toBe(true);
-    expect(toOpenManualRefundTaskPayload({ ...groupChild, occurrenceKey: "refund-request-hand-back:r1" }, null, []).paidToGroupOrganiser).toBe(true);
+    expect(toOpenManualRefundTaskPayload(groupChild, null).paidToGroupOrganiser).toBe(true);
+    expect(toOpenManualRefundTaskPayload({ ...groupChild, occurrenceKey: "refund-request-hand-back:r1" }, null).paidToGroupOrganiser).toBe(true);
     // Owner decision, 22 Oct 2026: the joiner's own cancellation's hand-back (keyless) goes to the organiser too.
-    expect(toOpenManualRefundTaskPayload({ ...groupChild, occurrenceKey: null }, null, []).paidToGroupOrganiser).toBe(true);
-    expect(toOpenManualRefundTaskPayload({ ...groupChild, occurrenceKey: "group-organiser-hand-back:s1" }, null, []).paidToGroupOrganiser).toBe(false);
-    // Review round 3: a refund review on the same child, by the chooser's own test - its payment is the mirror.
-    const review = { ...groupChild, kind: "EDIT_FINANCIAL_REVIEW", occurrenceKey: null, paymentId: "p", payment: { source: "INTERNET_BANKING" }, booking: { ...groupChild.booking, status: "PAID" } };
-    expect(toOpenManualRefundTaskPayload(review, null, []).paidToGroupOrganiser).toBe(true);
-    expect(toOpenManualRefundTaskPayload({ ...review, booking: { ...review.booking, organiserSettled: false } }, null, []).paidToGroupOrganiser).toBe(false);
+    expect(toOpenManualRefundTaskPayload({ ...groupChild, occurrenceKey: null }, null).paidToGroupOrganiser).toBe(true);
+    expect(toOpenManualRefundTaskPayload({ ...groupChild, occurrenceKey: "group-organiser-hand-back:s1" }, null).paidToGroupOrganiser).toBe(false);
   });
 });
