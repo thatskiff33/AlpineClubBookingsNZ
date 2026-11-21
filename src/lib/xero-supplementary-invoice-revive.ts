@@ -33,14 +33,11 @@ export type RetiredInvoiceRevival =
 /**
  * THE RETIRED-ROW STEP, one body for both callers (`INV-SSOT`). The caller
  * holds `lockSupplementaryInvoiceAnchor` on `anchorId` for the whole call.
- * No email and no provider call: the release sends the officer alert after
- * this returns `refused`.
- *
- * `stampRefusal` is false for the keep. A refusal (the capture does not cover
- * the invoice, the change is already linked, or another invoice is queued)
- * then writes nothing, so the after-commit release still stamps
- * `STALE_WAITING_PAYMENT_CAPTURED` and emails the officer together. A covering
- * invoice, and a revival with its older rows stamped covered, do commit.
+ * No email and no provider call: a caller that gets `refused` won the
+ * `STALE_WAITING_PAYMENT_CAPTURED` claim, and it alone sends the officer
+ * alert, after its transaction commits (#5220: the keep stamps inside its own
+ * transaction too, so the stamp commits with the decision and the email
+ * follows it).
  */
 export async function reviveRetiredSupplementaryInvoice(
   tx: Prisma.TransactionClient,
@@ -51,7 +48,6 @@ export async function reviveRetiredSupplementaryInvoice(
     paymentIntentId,
     transaction,
     bookingId,
-    stampRefusal,
   }: {
     operation: {
       id: string;
@@ -65,7 +61,6 @@ export async function reviveRetiredSupplementaryInvoice(
     transaction: CapturedTransaction;
     /** The capture's booking, for its receipt check (#3953); null with no capture. */
     bookingId: string | null;
-    stampRefusal: boolean;
   },
 ): Promise<RetiredInvoiceRevival> {
   const retiredIds = [operation.id, ...supersededIds];
@@ -141,10 +136,6 @@ export async function reviveRetiredSupplementaryInvoice(
       if (outstanding) refusal = "another-invoice-queued";
     }
   }
-
-  // The keep leaves a refusal for the after-commit release, stamp and alert
-  // together. Nothing is written, including the older rows' covered stamps.
-  if (refusal && !stampRefusal) return { outcome: "refused", reason: refusal };
 
   await stampCovered(
     supersededIds,
