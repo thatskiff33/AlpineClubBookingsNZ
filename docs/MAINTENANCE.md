@@ -2255,8 +2255,11 @@ M4d (#5185, [`INV-MONEY-049`](invariants/money.md#inv-money-049)) report v3
 adds `JOURNAL_REFUND_PAYABLE` for every booking whose confirmation is in the
 journal: its open refund payable against what the legacy records still owe back
 on the debts the journal holds (each hand-back task whose debt posted, at what
-it still owes; each open card refund row whose debt posted, at its slices not
-yet made). A card refund that went back without paying its debt (listed by the
+it still owes; each open card refund row whose debt is still live, at its
+slices not yet made, so a row left on a debt since reversed, such as a kept
+late capture's, counts nothing; each late capture held open for the treasurer
+whose capture-return debt posted and no such row pays, at its task's amount).
+A card refund that went back without paying its debt (listed by the
 refund reservations command as `UNAPPLIED_CARD_REFUND` or
 `RESERVATION_SKIPPED_NO_RECEIPT`) disagrees here until the milestone that
 answers unapplied refunds; acknowledge it to the cent. So, for a while, does a

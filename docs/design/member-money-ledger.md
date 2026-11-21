@@ -1103,7 +1103,9 @@ behind it) and `KEEP_WITHOUT_EVENT` (a kept late capture with no keep). Report
 v3, identity `JOURNAL_REFUND_PAYABLE`, compares each booking's open refund
 payable with what the legacy records still owe back on the debts the journal
 holds: each hand-back task whose R05 posted, at what it still owes, and each
-open card refund row whose R05 posted, at its slices not yet made. A refund
+open card refund row whose debt is still live (the live end of its chain), at
+its slices not yet made, and each late capture held open for the treasurer
+whose capture-return R05 posted with no such row, at its task's amount. A refund
 that went back without paying its debt (an unapplied R12) disagrees until the
 milestone that answers unapplied refunds. A source census classifies every
 `ManualRefundTask` creation, so a new raise site cannot skip its R05

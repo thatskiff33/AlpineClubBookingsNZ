@@ -81,6 +81,21 @@ export function manualRefundTaskCreationSites(file: string, text: string): TaskC
   return sites;
 }
 
+/** The function or method named `name` in a source file, as `enclosingFunction` names one; null when there is none. */
+export function namedFunction(file: string, text: string, name: string): ts.Node | null {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  let found: ts.Node | null = null;
+  const visit = (node: ts.Node) => {
+    if (found) return;
+    if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.name?.getText(source) === name) found = node;
+    else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name && node.initializer
+      && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))) found = node.initializer;
+    else ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
 /** Whether the function calls `callee` by name, anywhere in its body. */
 export function functionCalls(fn: ts.Node, callee: string): boolean {
   let found = false;

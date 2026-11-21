@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { functionCalls, manualRefundTaskCreationSites } from "./support/manual-refund-task-creation-scan";
+import { functionCalls, manualRefundTaskCreationSites, namedFunction } from "./support/manual-refund-task-creation-scan";
 import { productionSourceFiles } from "./support/prisma-delegate-read-scan";
 
 /**
@@ -12,8 +12,9 @@ import { productionSourceFiles } from "./support/prisma-delegate-read-scan";
  * - `posts R05`: a bank or cash hand-back (`isJournalHandBackTask`). Its own enclosing function must call
  *   `postHandBackObligation`, the R05 beside the task, under the same locks; the hand-back census lists a task
  *   raised without it (`HAND_BACK_WITHOUT_EVENT`).
- * - `recorded by another step`: the journal records the money when that step runs, named here (and, where it is
- *   the same function, called by it).
+ * - `recorded by another step`: the journal records the money when that step runs, named here and checked: a
+ *   step in the same function is called by it (`calls`), and a step elsewhere is a named function that makes the
+ *   journal call (`steps`). Every such entry names at least one.
  * - `not a debt`: the task records no member-money refund debt, or one a later milestone owns.
  *
  * Re-counted on main after #4998 merged (#5185): sixteen sites under `src/`, as #4516's plan counted, though one
@@ -21,7 +22,7 @@ import { productionSourceFiles } from "./support/prisma-delegate-read-scan";
  */
 type Entry =
   | { class: "posts R05"; reason: string }
-  | { class: "recorded by another step"; reason: string; calls?: string }
+  | { class: "recorded by another step"; reason: string; calls?: string; steps?: ReadonlyArray<{ file: string; fn: string; calls: string }> }
   | { class: "not a debt"; reason: string };
 
 const SITES: Record<string, Entry> = {
@@ -36,7 +37,12 @@ const SITES: Record<string, Entry> = {
   },
   "src/lib/late-capture-refund-hold.ts|holdLateCaptureForTreasurerIfRequired|create|1": {
     class: "recorded by another step",
-    reason: "a late capture held for the treasurer: approving it posts the capture-return R05, keeping it posts the keep (kept-capture)",
+    steps: [
+      { file: "src/lib/late-capture-refund-approval.ts", fn: "persistLateCaptureApprovalRefundDebt", calls: "postRefundObligation" },
+      { file: "src/lib/late-capture-refund-approval.ts", fn: "prepareLateCaptureDecision", calls: "closeKeptCaptureReturn" },
+      { file: "src/lib/late-capture-refund-approval.ts", fn: "prepareLateCaptureDecision", calls: "postKeptCapture" },
+    ],
+    reason: "a late capture held for the treasurer: approving it posts the capture-return R05, keeping it closes that R05 and posts the keep (kept-capture)",
   },
   "src/lib/card-refund-group-paid-another-way.ts|closePerJoiner|create|1": { class: "not a debt", reason: "an organiser child's card refund closed by bank: organiser shares are M6's, so no R14" },
   "src/lib/edit-financial-review.ts|raiseEditFinancialReviewTask|create|1": { class: "not a debt", reason: "an edit financial review: its closure posts R21, or R05 scope review when closed by hand" },
@@ -82,6 +88,18 @@ describe("#5185 task-creation-site census: every ManualRefundTask raise is class
     }
   }, 15_000);
 
+  it("a site recorded by another step names that step, and each step it names elsewhere makes its journal call", () => {
+    for (const [key, entry] of Object.entries(SITES)) {
+      if (entry.class !== "recorded by another step") continue;
+      expect(Boolean(entry.calls) || (entry.steps?.length ?? 0) > 0, `${key} names no step`).toBe(true);
+      for (const step of entry.steps ?? []) {
+        const fn = namedFunction(step.file, readFileSync(step.file, "utf8"), step.fn);
+        expect(fn, `${step.file} has no function ${step.fn}`).toBeTruthy();
+        expect(functionCalls(fn!, step.calls), `${step.file}|${step.fn} must call ${step.calls}`).toBe(true);
+      }
+    }
+  });
+
   it("finds a direct, bracket, constant-keyed, aliased, destructured, nested and raw creation, and no read", () => {
     for (const write of [
       "tx.manualRefundTask.create({ data })",
@@ -104,5 +122,9 @@ describe("#5185 task-creation-site census: every ManualRefundTask raise is class
     const [skipped] = manualRefundTaskCreationSites("new.ts", "const raiseIt = async (tx) => { await tx.manualRefundTask.create({ data }); };");
     expect(skipped!.key).toBe("new.ts|raiseIt|create");
     expect(functionCalls(skipped!.enclosing!, "postHandBackObligation")).toBe(false);
+    const text = "export async function stepOne(tx) { await postKeptCapture(tx); }\nconst stepTwo = async (tx) => { await other(tx); };";
+    expect(functionCalls(namedFunction("new.ts", text, "stepOne")!, "postKeptCapture")).toBe(true);
+    expect(functionCalls(namedFunction("new.ts", text, "stepTwo")!, "postKeptCapture")).toBe(false);
+    expect(namedFunction("new.ts", text, "missing")).toBeNull();
   });
 });
