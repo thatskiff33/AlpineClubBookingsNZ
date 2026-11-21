@@ -254,7 +254,7 @@ payment has no card charge on record for the refund to be recorded against.
 
 **Warning: an open task of this kind may already have been paid.** Because it
 cannot be closed, it still looks unpaid after someone has paid the member, and
-a second officer paying it "and marking it paid back" as above would pay the
+a second officer following "pay it and mark it paid back" above would pay the
 member twice. Before paying one, check Xero and the club's bank account for a
 refund already sent for that booking. After paying, record the refund in Xero
 against the change's credit note, tell the other finance officers (the
