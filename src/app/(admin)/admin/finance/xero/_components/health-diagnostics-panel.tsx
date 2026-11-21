@@ -31,6 +31,7 @@ import {
   type ToggleSection,
 } from "./shared"
 import { xeroSectionId } from "./types"
+import { useAutoLoadOncePerOpening } from "./use-auto-load-once-per-opening"
 import type {
   ContactGroupMismatchResponse,
   ContactLinkMismatchResponse,
@@ -174,17 +175,27 @@ export function HealthAndDiagnosticsPanels({
     }
   }, [])
 
-  useEffect(() => {
-    if (connected && healthOpen && !health && !loadingHealth) void fetchHealth()
-  }, [connected, fetchHealth, health, healthOpen, loadingHealth])
-
-  useEffect(() => {
-    if (connected && contactGroupMismatchesOpen && !groupMismatches && !loadingGroupMismatches) void fetchGroupMismatches()
-  }, [connected, contactGroupMismatchesOpen, fetchGroupMismatches, groupMismatches, loadingGroupMismatches])
-
-  useEffect(() => {
-    if (connected && contactLinkMismatchesOpen && !linkMismatches && !loadingLinkMismatches) void fetchLinkMismatches()
-  }, [connected, contactLinkMismatchesOpen, fetchLinkMismatches, linkMismatches, loadingLinkMismatches])
+  // Each list auto-loads once per opening: a failed read stays shown until the
+  // admin presses its refresh, instead of re-firing each time its load settles
+  // (#5276).
+  useAutoLoadOncePerOpening({
+    active: connected && healthOpen,
+    needed: !health,
+    busy: loadingHealth,
+    load: fetchHealth,
+  })
+  useAutoLoadOncePerOpening({
+    active: connected && contactGroupMismatchesOpen,
+    needed: !groupMismatches,
+    busy: loadingGroupMismatches || resyncingGroupMismatches,
+    load: fetchGroupMismatches,
+  })
+  useAutoLoadOncePerOpening({
+    active: connected && contactLinkMismatchesOpen,
+    needed: !linkMismatches,
+    busy: loadingLinkMismatches || resyncingLinkMismatches,
+    load: fetchLinkMismatches,
+  })
 
   useEffect(() => {
     if (!connected || refreshToken === 0) return
