@@ -949,7 +949,10 @@ zero-net receivable pair on the survivor sized as the paragraph below says. Post
 debtors remain immutable. Receipt writers take only the Payment row and read
 the owner once per call without locking Booking; the next receipt posting moves
 any merged-debtor residue explicitly, keyed to its source event, one merge hop
-at a time. No Payment lock is added to merge.
+at a time. No Payment lock is added to merge. A refund debt's whole reversal (an
+appeal's `release_claim`, a kept late capture, a part to check's dismissal) moves
+its merged-debtor residue the same way, to the owner read under the booking row
+(#5191).
 
 A successor is only ever posted for the current owner, from the chain's one
 live tip, with the face the chain still has to collect: the live charge less
