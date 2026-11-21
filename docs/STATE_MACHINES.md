@@ -1958,9 +1958,8 @@ not reconciled. Before #4285 any success arriving on a COMPLETED booking threw
 "not payable" (or was refused as a stale amount), a 500 Stripe retried for
 three days. With no record and nothing else holding money, a lone capture keeps
 silently only as a replay of one the app had already recorded (its row was
-`SUCCEEDED` before this delivery, and not written by the caller itself, as a
-saved-card pre-record or the webhook's adoption of a lost-response attempt
-is); one never recorded before is new money, kept whatever its amount as
+`SUCCEEDED` before this delivery, with no "not yet settled" flag standing for
+it, below); one never recorded before is new money, kept whatever its amount as
 `duplicate_capture_kept` with the `new-capture` alert. That alert is owed from
 the settle's transaction (an `AlertCooldown` marker) until it is delivered: the
 capture's next arrival re-alerts while it stands, and the payments cron's
@@ -1993,9 +1992,23 @@ amount less the card refunds recorded against it (`sumRecordedRefundsForCapture`
 since a refund as account credit is placed on the capture's ledger row while
 the money stays on the card. Any delivered alert for the capture clears the marker. A
 send whose daily cooldown was claimed before a crash waits out that day, so the
-worst case is about 24 hours. A saved-card capture whose caller crashed or
-threw between its pre-record and the settle reads as a replay on its next
-arrival (a stated limit). Every other status the
+worst case is about 24 hours.
+
+Every saved-card path writes its capture `SUCCEEDED` on the attempt row before
+it settles the booking, and that write records a "not yet settled" flag
+(`unsettled-capture-marker.ts`, an `AlertCooldown` row keyed by the intent,
+#5240). The settle consumes it under `lock(1)`; a consumed flag makes the
+capture new money whatever its row's status, so a capture whose caller stopped
+or threw before the settle is still kept and alerted on its next arrival on a
+booking paid another way. A flag nothing consumes is checked by the same cron
+task an hour on: cleared for a capture gone, holding no money, or recorded as
+the settler; on a PAID or COMPLETED booking it becomes an owed `new-capture`
+alert, sent in that run; on any other booking it waits, unstamped, for the
+webhook, and at seven days it is cleared with an error logged for a person to
+check. A duplicate-capture refund the retry finishes records the settler then
+recorded on the payment in its history entry, as the inline refund does.
+
+Every other status the
 settle cannot pay from (CANCELLED, BUMPED, WAITLISTED, WAITLIST_OFFERED,
 AWAITING_REVIEW) still throws, and the webhook's stale-amount check (#1161)
 still guards an unpaid booking; it skips a PAID or COMPLETED one, whose capture
