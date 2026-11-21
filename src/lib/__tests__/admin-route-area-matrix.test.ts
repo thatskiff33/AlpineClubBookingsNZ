@@ -553,6 +553,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/xero/sync-contacts": "finance",
   "/api/admin/xero/sync-memberships": "finance",
   "/api/admin/xero/sync-now": "finance",
+  "/api/admin/xero/tax-categories": "finance",
   "/api/admin/xero/usage": "finance",
   "/api/admin/xero/webhook-health": "finance",
   // #2081: webhook intent-to-receive verify status / amber-badge source. Read is
