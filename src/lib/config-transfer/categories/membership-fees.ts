@@ -790,9 +790,9 @@ function validatePostMergeComponentInvariant(
   }
 }
 
-/** Inclusive, open-ended (effectiveTo null = no upper bound) window overlap —
- * the same semantics as authoritative-fees' scheduleOverlapWhere. */
-function windowsOverlap(
+/** Inclusive, open-ended (effectiveTo null = no upper bound) window overlap, as
+ * authoritative-fees' scheduleOverlapWhere; the category-fee importer shares it. */
+export function windowsOverlap(
   a: { effectiveFrom: Date; effectiveTo: Date | null },
   b: { effectiveFrom: Date; effectiveTo: Date | null },
 ): boolean {
@@ -801,7 +801,7 @@ function windowsOverlap(
   return aStartsBeforeBEnds && bStartsBeforeAEnds;
 }
 
-function describeWindow(f: { effectiveFrom: Date; effectiveTo: Date | null }): string {
+export function describeWindow(f: { effectiveFrom: Date; effectiveTo: Date | null }): string {
   return `${toDateStr(f.effectiveFrom)}..${f.effectiveTo ? toDateStr(f.effectiveTo) : "open"}`;
 }
 

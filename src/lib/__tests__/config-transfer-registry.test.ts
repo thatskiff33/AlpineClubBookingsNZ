@@ -23,6 +23,7 @@ import "@/lib/config-transfer/categories/committee";
 import "@/lib/config-transfer/categories/induction";
 import "@/lib/config-transfer/categories/membership-fees";
 import "@/lib/config-transfer/categories/age-tier";
+import "@/lib/config-transfer/categories/subscription-categories";
 import "@/lib/config-transfer/categories/xero-config";
 
 function descriptor(overrides: Partial<EntityDescriptor> = {}): EntityDescriptor {
@@ -186,6 +187,9 @@ describe("config-transfer registry — registered descriptors", () => {
         "joining-fee",
         "annual-fee",
         "annual-fee-component",
+        "subscription-category",
+        "subscription-category-fee",
+        "subscription-category-fee-component",
         "xero-account-mapping",
         "xero-item-code-mapping",
       ]),
