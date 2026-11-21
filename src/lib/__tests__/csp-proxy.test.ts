@@ -40,6 +40,7 @@ import type { FeatureFlags } from "@/config/schema";
 // configured, live site, so the gate's single input is pinned complete. The
 // gate's own behaviour in BOTH setup states is covered by setup-gate.test.ts.
 vi.mock("@/lib/club-theme", () => ({
+  readSetupCompletion: async () => ({ readFailed: false, isComplete: true }),
   getWebsiteThemeRenderState: async () => ({ isComplete: true, css: "" }),
 }));
 

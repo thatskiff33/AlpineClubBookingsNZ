@@ -2314,15 +2314,23 @@ address — real page, typo, and bot probe alike — which is the configuration 
   incomplete, the fully rendered document — is memoised for 15 seconds behind a
   single-flight promise, matching the TTL of the tagged cache the layout reads
   the same `ClubTheme` row through. Once setup is complete the cached answer is a
-  bare boolean and the club identity and contact address are never read at all.
+  bare boolean, each refresh reads `completedAt` alone (`readSetupCompletion`),
+  and the theme, club identity and contact address are never read at all. An
+  expired answer is served while one background refresh runs, so no visitor
+  waits for the read (#5264: the refresh used to load the whole theme and build
+  its CSS, stalling a page every 15 seconds); only a cold start waits.
   The proxy is bundled separately from route handlers, so the `revalidateTag`
   the site-style save issues cannot reach this memo; the TTL is the propagation
-  bound, and it is why the site opens within 15 seconds of the save rather than
-  instantly.
-- **Fails CLOSED.** A failed `ClubTheme` read leaves `isComplete` false, so a
-  database outage is answered with the holding screen and a 503 — which is what
-  503 literally means. Failing open would restore the 200-for-every-address
-  defect under exactly the conditions that make it hardest to notice. Note the
+  bound, and it is why the site opens on the second request after the 15
+  seconds rather than instantly.
+- **Fails CLOSED.** A cold start whose `ClubTheme` read fails or throws answers
+  with the holding screen and a 503 — which is what 503 literally means.
+  Failing open would restore the 200-for-every-address defect under exactly the
+  conditions that make it hardest to notice. **One deliberate exception
+  (#5264):** once the gate has seen setup complete, a refresh whose read fails
+  or throws keeps "complete" rather than closing a live club's website for a
+  database blip — the same launch-state reasoning as finding F4. A refresh that
+  reads a POSITIVE "not complete" still closes the site. Note the
   deliberate asymmetry with the render-time fallback in
   `src/components/website/website-chrome.tsx` — `(website)/layout.tsx` until the D1
   narrowing extracted it, and now the one copy shared by both public route groups —

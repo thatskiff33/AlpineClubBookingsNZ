@@ -1,7 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { clubConfig } from "@/config/club";
 import { getClubIdentity } from "@/lib/club-identity-settings";
-import { getWebsiteThemeRenderState } from "@/lib/club-theme";
+import {
+  getWebsiteThemeRenderState,
+  readSetupCompletion,
+} from "@/lib/club-theme";
 import { loadEmailMessageSettings } from "@/lib/email-message-settings";
 import { isPublicWebsitePath } from "@/lib/public-website-paths";
 import {
@@ -71,20 +74,22 @@ type SetupGateState =
 
 /**
  * How long the resolved setup state (and, while incomplete, the rendered
- * holding-screen document) is reused for.
+ * holding-screen document) is treated as fresh.
  *
  * The point of caching is the constraint that this gate must not add a database
- * read to every request that the shared public chrome is about to make anyway. The
- * chrome reads `ClubTheme` through a 15-second tagged cache
- * (`getCachedWebsiteThemeRenderState`); matching that TTL here means the gate
- * costs at most one extra single-row read per 15 seconds per process, not one
- * per request. Once setup IS complete the cached answer is a bare boolean and
- * nothing else is read at all.
+ * read to every request. Matching the shared public chrome's 15-second theme
+ * cache (`getCachedWebsiteThemeRenderState`) means the gate costs at most one
+ * extra single-column read per 15 seconds per process, not one per request.
+ * Once setup IS complete, that read is `completedAt` alone
+ * (`readSetupCompletion`); the theme and the holding screen are only loaded
+ * while setup is incomplete.
  *
  * The proxy is bundled separately from the app's route handlers, so the
  * `revalidateTag` the site-style save already issues cannot reach this memo —
- * the TTL is the propagation bound. An operator who finishes setup sees the site
- * open within 15 seconds.
+ * the TTL is the propagation bound. An expired answer is still served while one
+ * background refresh runs (see `getSetupGateState`), so an operator who
+ * finishes setup sees the site open on the second request after the 15 seconds
+ * are up: the first starts the refresh, a later one gets its answer.
  */
 export const SETUP_STATE_TTL_MS = 15_000;
 
@@ -109,11 +114,26 @@ function fallbackSetupGateState(): SetupGateState {
   };
 }
 
-async function loadSetupGateState(): Promise<SetupGateState> {
+/**
+ * One read of the setup state. `readFailed` is true only when the database did
+ * not answer: the state is then the holding screen, which is right for a cold
+ * start but must not replace a known "complete" (see `refreshSetupGateState`).
+ */
+async function loadSetupGateState(): Promise<{
+  state: SetupGateState;
+  readFailed: boolean;
+}> {
+  const completion = await readSetupCompletion();
+
+  if (!completion.readFailed && completion.isComplete) {
+    return { state: { isComplete: true }, readFailed: false };
+  }
+
   const theme = await getWebsiteThemeRenderState();
 
+  // Setup finished between the two reads.
   if (theme.isComplete) {
-    return { isComplete: true };
+    return { state: { isComplete: true }, readFailed: false };
   }
 
   // Only read once the site is known to be unconfigured, and read from exactly
@@ -128,38 +148,34 @@ async function loadSetupGateState(): Promise<SetupGateState> {
   ]);
 
   return {
-    isComplete: false,
-    document: buildSetupInProgressDocument({
-      clubName: identity.name,
-      contactEmail: emailSettings.contactEmail,
-      themeCss: theme.css,
-    }),
+    state: {
+      isComplete: false,
+      document: buildSetupInProgressDocument({
+        clubName: identity.name,
+        contactEmail: emailSettings.contactEmail,
+        themeCss: theme.css,
+      }),
+    },
+    readFailed: completion.readFailed || theme.readFailed,
   };
 }
 
 /**
- * The current setup state, memoised for {@link SETUP_STATE_TTL_MS}.
- *
- * Single-flight: concurrent requests arriving on a cold or expired memo share
- * one read rather than each opening their own.
- *
- * Fails CLOSED. `getWebsiteThemeRenderState()` already reports `isComplete:
- * false` when the `ClubTheme` read fails, so a database outage is answered with
- * the holding screen — which is both what the layout does today and what 503
- * literally means. An unexpected throw further down falls back to the
- * config-derived screen rather than propagating a 500. Failing open in either
- * case would put the site back to answering 200 for every address, which is the
- * defect this gate exists to fix.
+ * Reads the state and memoises it, keeping the previous answer when the read
+ * fails. A thrown load keeps whatever was there, or falls back to the
+ * config-derived screen on a cold start. A database that did not answer keeps a
+ * known "complete": closing a live club's website because of a blip would be
+ * the same launch-state lie `getWebsiteThemeRenderState()`'s `readFailed`
+ * exists to prevent. Either way the result is stamped fresh, so a failing
+ * database is retried once per TTL rather than on every request.
  */
-export async function getSetupGateState(): Promise<SetupGateState> {
-  const now = Date.now();
-
-  if (cachedState && cachedState.expiresAt > now) {
-    return cachedState.state;
-  }
-
+function refreshSetupGateState(): Promise<SetupGateState> {
   inFlight ??= loadSetupGateState()
-    .catch(() => fallbackSetupGateState())
+    .then(
+      ({ state, readFailed }) =>
+        readFailed && cachedState?.state.isComplete ? cachedState.state : state,
+      () => cachedState?.state ?? fallbackSetupGateState(),
+    )
     .then((state) => {
       cachedState = { expiresAt: Date.now() + SETUP_STATE_TTL_MS, state };
       return state;
@@ -169,6 +185,35 @@ export async function getSetupGateState(): Promise<SetupGateState> {
     });
 
   return inFlight;
+}
+
+/**
+ * The current setup state, memoised for {@link SETUP_STATE_TTL_MS}.
+ *
+ * Stale while refreshing: once any answer exists it is returned at once, and an
+ * expired one starts a single background refresh. Only a cold start waits for
+ * the read. Before #5264 every expiry made the request that found it wait for
+ * the whole theme to load and its CSS to build, which stalled a public page
+ * every 15 seconds.
+ *
+ * Single-flight: concurrent requests share one read rather than each opening
+ * their own.
+ *
+ * Fails CLOSED. A cold start whose read fails, or throws, answers with the
+ * holding screen, which is both what the layout does and what 503 literally
+ * means. Failing open would put the site back to answering 200 for every
+ * address, which is the defect this gate exists to fix.
+ */
+export async function getSetupGateState(): Promise<SetupGateState> {
+  if (!cachedState) {
+    return refreshSetupGateState();
+  }
+
+  if (cachedState.expiresAt <= Date.now()) {
+    void refreshSetupGateState();
+  }
+
+  return cachedState.state;
 }
 
 // test seam
