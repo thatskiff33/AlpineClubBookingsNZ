@@ -6,6 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EditBookingPanel } from "@/components/edit-booking-panel";
+import { BookingInvoiceControl } from "@/components/download-invoice-button";
+import { BookingInvoiceAccountCard } from "@/components/booking-invoice-account-card";
+import type { BookingInvoiceAccount, BookingInvoiceOffer } from "@/lib/booking-invoice-access";
 import { bookingOwner } from "@/lib/booking-owner";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
@@ -184,6 +187,14 @@ export interface BookingEditorData {
    * the RSC wire.
    */
   otherLodgeRateEligibleGuestIds?: string[];
+  /**
+   * #5066: the page's `resolveBookingInvoiceOffer` answer — the route's own
+   * rule. Absent (a conditional spread) when nothing is offered, so a club with
+   * Xero off ships the payload it did before.
+   */
+  invoiceOffer?: BookingInvoiceOffer;
+  /** #5066: the invoice's account lines, present only beside a `XERO_INVOICE` offer. */
+  invoiceAccount?: BookingInvoiceAccount;
 }
 
 
@@ -318,6 +329,7 @@ export function BookingEditor({
                   Edit Booking
                 </Button>
               )}
+              <BookingInvoiceControl bookingId={booking.id} offer={booking.invoiceOffer ?? { kind: "NONE" }} />
             </div>
             <Badge variant="secondary" className={bookingStatusClass(booking.status)}>
               {bookingStatusLabel(booking.status)}
@@ -461,6 +473,10 @@ export function BookingEditor({
           </div>
         </CardContent>
       </Card>
+
+      {booking.invoiceOffer?.kind === "XERO_INVOICE" && booking.invoiceAccount && (
+        <BookingInvoiceAccountCard bookingId={booking.id} offer={booking.invoiceOffer} account={booking.invoiceAccount} />
+      )}
     </div>
   );
 }

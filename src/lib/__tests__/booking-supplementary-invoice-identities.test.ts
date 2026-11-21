@@ -8,7 +8,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {
   xeroSyncOperation: { findMany: vi.fn(async () => data.operations) },
 } }));
 import { prisma } from "@/lib/prisma";
-import { readBookingSupplementaryInvoiceIdentities } from "@/lib/booking-supplementary-invoice-identities";
+import { bookingHasAnySupplementaryInvoiceEvidence, readBookingSupplementaryInvoiceIdentities } from "@/lib/booking-supplementary-invoice-identities";
 import { observationReviewContext } from "./support/booking-observation-fixtures";
 import { buildXeroSupplementaryInvoiceKey } from "@/lib/xero-supplementary-invoice-key";
 import { buildXeroBookingInvoiceCorrelationKey } from "@/lib/xero-booking-invoice-key";
@@ -83,5 +83,38 @@ describe("complete supplementary display identity discovery", () => {
     expect((await readBookingSupplementaryInvoiceIdentities("booking")).revision).toBe(first.revision);
     data.operations = [operation("Booking", "booking", "one", { status: "PARTIAL" }), operation("BookingModification", "mod", "two")];
     expect((await readBookingSupplementaryInvoiceIdentities("booking")).revision).not.toBe(first.revision);
+  });
+});
+// #5066: the booking page's invoice download must not hand over the primary
+// invoice alone while ANY supplementary invoice exists — card receipts too.
+describe("bookingHasAnySupplementaryInvoiceEvidence", () => {
+  const receipt = (extra: Record<string, unknown> = {}) => {
+    // The fee-gap path (`recordPayment: true`) raises this on the Booking anchor with no ADDITIONAL row.
+    const op = operation("Booking", "booking", "receipt", extra);
+    return { ...op, requestPayload: { ...op.requestPayload, recordPayment: true } };
+  };
+  it("is false with no supplementary rows, and ignores the primary and group invoices on the Booking anchor", async () => {
+    expect(await bookingHasAnySupplementaryInvoiceEvidence("booking")).toBe(false);
+    data.operations = [operation("Booking", "booking", "primary", { queueType: "BOOKING_INVOICE" }), operation("Booking", "booking", "group", { queueType: "GROUP_SETTLEMENT_INVOICE" }),
+      operation("Booking", "booking", "legacy-primary", { queueType: null, requestPayload: { invoices: [] }, correlationKey: buildXeroBookingInvoiceCorrelationKey("booking") })];
+    expect(await bookingHasAnySupplementaryInvoiceEvidence("booking")).toBe(false);
+  });
+  it("is true for a receipt-only supplementary invoice that the identity reader leaves out", async () => {
+    data.operations = [receipt()];
+    data.links = [link("Booking", "booking", "receipt")];
+    expect(await readBookingSupplementaryInvoiceIdentities("booking")).toMatchObject({ invoiceIds: [], incomplete: false });
+    expect(await bookingHasAnySupplementaryInvoiceEvidence("booking")).toBe(true);
+  });
+  it("is true for a receipt not yet sent, a bank demand, an inactive link and an unclassifiable second ask", async () => {
+    data.operations = [receipt({ status: "PENDING", xeroObjectId: null })];
+    expect(await bookingHasAnySupplementaryInvoiceEvidence("booking")).toBe(true);
+    data.operations = [operation("BookingModification", "mod", "bank")];
+    expect(await bookingHasAnySupplementaryInvoiceEvidence("booking")).toBe(true);
+    data.operations = [];
+    data.links = [link("BookingModification", "mod", "old", false)];
+    expect(await bookingHasAnySupplementaryInvoiceEvidence("booking")).toBe(true);
+    data.links = [];
+    data.tasks = [{ id: "task", reviewContext: null }];
+    expect(await bookingHasAnySupplementaryInvoiceEvidence("booking")).toBe(true);
   });
 });

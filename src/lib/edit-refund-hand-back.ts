@@ -48,10 +48,12 @@ import { paymentDisputedCaptureCents, type HoldingDispute } from "@/lib/stripe-d
 
 /**
  * Does this edit's refund go back by hand? True exactly when the edit returns
- * money (`refundAmountCents`, never the account-credit arm) and that money was
- * not captured through Stripe (`hasSucceededPayment`, the same test that
- * decides whether a Stripe refund runs), or (#5061 follow-up, `INV-PAY-154`)
- * it was, but a Stripe dispute holds it (`refundHeldForDispute`), so the
+ * money (`refundAmountCents`, never the account-credit arm) and that money is
+ * not the card's to return (`hasSucceededPayment`, the same test that decides
+ * whether a Stripe refund runs): it was not captured through Stripe, or
+ * (#5212, `INV-PAY-160`) it was a card payment Stripe holds no intent for
+ * (`editRefundHasCardToReturnTo`). Or (#5061 follow-up, `INV-PAY-154`) it is
+ * the card's, but a Stripe dispute holds it (`refundHeldForDispute`), so the
  * treasurer settles it. The one spelling for every door.
  */
 export function editRefundGoesBackByHand(adjusted: {

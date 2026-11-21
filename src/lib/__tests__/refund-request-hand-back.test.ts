@@ -210,12 +210,12 @@ describe("the queue payload marks an appeal's hand-back for the card", () => {
         payment: null,
       },
     };
-    const appealPayload = toOpenManualRefundTaskPayload(row, null, []);
+    const appealPayload = toOpenManualRefundTaskPayload(row, null);
     expect(appealPayload.refundRequestHandBack).toBe(true);
     expect(appealPayload.editRefundHandBack).toBe(false);
-    const editPayload = toOpenManualRefundTaskPayload({ ...row, occurrenceKey: "edit-refund-hand-back:m" }, null, []);
+    const editPayload = toOpenManualRefundTaskPayload({ ...row, occurrenceKey: "edit-refund-hand-back:m" }, null);
     expect(editPayload.refundRequestHandBack).toBe(false);
-    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null }, null, []).refundRequestHandBack).toBe(false);
+    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null }, null).refundRequestHandBack).toBe(false);
   });
 });
 

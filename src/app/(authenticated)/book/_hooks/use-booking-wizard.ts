@@ -33,6 +33,8 @@ import { useWorkingBeeDiscount } from "./use-working-bee-discount";
 import { useSelectionCancellationSchedule } from "./use-selection-cancellation-schedule";
 import { useWizardWorkPersistence } from "./use-wizard-work-persistence";
 import type { SavedWizardWork } from "@/lib/booking-wizard-work";
+import { readWorkPartyJoinId, useWorkPartyPrefill } from "./use-work-party-prefill";
+import { fetchStayWorkParties, reconcileWorkPartySelection } from "./stay-work-parties";
 import {
   getBookingErrorPaymentTargets,
   type BookingErrorPaymentTarget,
@@ -274,6 +276,8 @@ export function useBookingWizard() {
    */
   const replaceExceptionRequestId =
     searchParams?.get("replaceRequest")?.trim() || null;
+  // #5148: a "Join Work Party" link's work party: a fresh entry (see useWizardWorkPersistence).
+  const workPartyJoinId = readWorkPartyJoinId(searchParams);
   const { lodgeCapacity } = useClubIdentity();
   const [step, setStep] = useState<BookingWizardStep>("dates");
   // Lodge being booked (multi-lodge phase 8). /api/lodges only returns
@@ -918,6 +922,7 @@ export function useBookingWizard() {
   }
   const workPersistence = useWizardWorkPersistence({
     enabled: replaceExceptionRequestId === null,
+    freshEntry: workPartyJoinId !== null,
     memberId: session?.user?.id ?? null,
     lodges,
     lodgesLoading,
@@ -1751,56 +1756,35 @@ export function useBookingWizard() {
           .then((codes) => setAvailablePromoCodes(codes))
           .catch(() => {});
 
-        // Fetch active working bee events that overlap these dates; events
-        // bound to another lodge are filtered out server-side.
-        const workPartySequence = ++workPartySequenceRef.current;
-        workPartyAbortRef.current?.abort();
-        const workPartyController = new AbortController();
-        workPartyAbortRef.current = workPartyController;
-        const ownsWorkPartyRequest = () =>
-          workPartySequence === workPartySequenceRef.current &&
-          activeScopedLodgeIdRef.current === requestedLodgeId;
-        fetch(
-          `/api/work-parties/active?checkIn=${checkInStr}&checkOut=${checkOutStr}${
-            `&lodgeId=${encodeURIComponent(requestedLodgeId)}`
-          }`,
-          { signal: workPartyController.signal },
-        )
-          .then((r) => r.ok ? r.json() : { events: [] })
-          .then((data) => {
-            const events: WorkPartyEvent[] = data.events || [];
-            if (!ownsWorkPartyRequest()) return;
+        // Fetch active working bee events that overlap these dates.
+        fetchStayWorkParties({
+          checkIn: checkInStr,
+          checkOut: checkOutStr,
+          lodgeId: requestedLodgeId,
+          sequenceRef: workPartySequenceRef,
+          abortRef: workPartyAbortRef,
+          stillCurrent: () => activeScopedLodgeIdRef.current === requestedLodgeId,
+          onFailure: () => setActiveWorkPartyEvents([]),
+          onEvents: (events) => {
             setActiveWorkPartyEvents(events);
-            if (
-              selectedWorkPartyEventId &&
-              !events.some((e) => e.id === selectedWorkPartyEventId)
-            ) {
-              const previous = activeWorkPartyEvents.find(
-                (e) => e.id === selectedWorkPartyEventId
-              );
-              setSelectedWorkPartyEventId(null);
-              setAttendingWorkParty(false);
-              if (previous) {
-                setWorkPartyClearedNotice(previous.name);
-              }
-              // Combined, the codes stay and the working-bee effect re-prices
-              // them without it; alone, the discount just goes.
-              setAppliedPromos((current) =>
-                current.some((promo) => promo.workPartyEvent) && !combineWorkPartyWithCodesRef.current
-                  ? []
-                  : current
-              );
-            }
-          })
-          .catch((requestError) => {
-            if (requestError instanceof DOMException && requestError.name === "AbortError") return;
-            if (ownsWorkPartyRequest()) setActiveWorkPartyEvents([]);
-          })
-          .finally(() => {
-            if (workPartyAbortRef.current === workPartyController) {
-              workPartyAbortRef.current = null;
-            }
-          });
+            reconcileWorkPartySelection(
+              events,
+              {
+                selectedId: selectedWorkPartyEventId,
+                previousEvents: activeWorkPartyEvents,
+                // #5148: the hook declared below is initialised by now.
+                joinedId: workPartyPrefill.takePendingWorkPartySelection(events),
+              },
+              {
+                select: setSelectedWorkPartyEventId,
+                setAttending: setAttendingWorkParty,
+                noticeCleared: setWorkPartyClearedNotice,
+                setAppliedPromos,
+                combineWithCodesRef: combineWorkPartyWithCodesRef,
+              },
+            );
+          },
+        });
       } else {
         handleBookingApiError((await readJsonOrNull(res)) ?? {}, "Failed to calculate price");
       }
@@ -2514,6 +2498,20 @@ export function useBookingWizard() {
     setWorkPartyError,
   });
 
+  // #5148: the Join prefill, after every existing effect so their order is unchanged.
+  const workPartyPrefill = useWorkPartyPrefill({
+    workPartyId: workPartyJoinId,
+    lodgeIds: lodges.map((lodge) => lodge.id),
+    lodgesSettled: !lodgesLoading && !lodgesFailed && !lodgesForbidden,
+    lodgeId,
+    scopedLodgeId,
+    onDatesStep: step === "dates",
+    memberStarted: checkIn !== null || step !== "dates",
+    bookingBlocked: subscriptionLoading ? null : bookingBlockedBySubscription,
+    selectLodge: handleLodgeChange,
+    selectDates: (ci, co) => void handleDateSelect(ci, co),
+  });
+
   const wizardSteps: Array<{ id: BookingWizardStep; label: string }> = [
     { id: "dates", label: "Select Dates" },
     { id: "guests", label: "Add Guests" },
@@ -2624,6 +2622,7 @@ export function useBookingWizard() {
     // #2562 — the member-facing exception-request surface.
     exceptionOffer,
     replaceExceptionRequestId,
+    workPartyPrefillNotice: workPartyPrefill.workPartyPrefillNotice,
     submitExceptionRequest,
     getGuestProfileBlockMessage,
     getGuestProfileActionLabel,
