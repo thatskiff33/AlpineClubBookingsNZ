@@ -84,7 +84,7 @@ the row, not open work. Open findings now live in labelled GitHub issues
 
 | Route or surface | Auth mechanism | Actor | Data touched | External calls | Rate, signature, or boundary controls | Logging and audit | Residual risk or follow-up |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `src/proxy.ts` global proxy, pre-setup gate, and module gates | No session auth. Applies CSP/security headers to page requests and selected API matcher paths; returns 404 for disabled module routes; returns 503 + the "Site setup in progress" screen for every public-website path until `ClubTheme.completedAt` is set (#2420, "The Pre-Setup Gate" below). | Anonymous and authenticated browser traffic. | Module settings via `loadEffectiveModuleFlags()`; setup state, club name and contact address via `setup-gate.ts` (memoised 15s, read only while setup is incomplete). | None. | CSP nonce, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, module route blocking, pre-setup 503 gate (fails closed, `no-store`, `Retry-After`). | No per-request audit. | API matcher is selective, not global for every API path. Keep route-level auth as the enforcement boundary. The setup gate never covers `/api/*`, the admin area, or the login flows — an operator must be able to finish setup. Since #2404 the matcher RUNS on asset-shaped URLs (`/foo.png`, `/favicon.ico`, `/wp-content/uploads/x.jpg`), so those carry a policy and meet the gate like any other address; only `/api`, `/_next/static/` and `/_next/image` stay excluded. A miss under `_next/static` is terminated without a document by the `afterFiles` rewrites, whose own `default-src 'none'` is then the policy that ships; a miss under `/api` is answered as JSON by `api/[[...unmatched]]`, and no rewrite rule may touch `/api` at all (module-state parity — see "Static-Asset URLs And The Nonce-Only CSP"). #2404 also removed the prefetch exemption outright, so no request header — `Purpose: prefetch`, `Next-Router-Prefetch`, `RSC`, in any combination — takes a URL outside the proxy. The gate still declines to CLAIM asset-shaped paths (a 503 holding screen is a document), so a URL of that shape which reaches a render is ungated by design; the shared public chrome (`src/components/website/website-chrome.tsx`, composed by both public route groups) and the public metadata guard cover it. |
+| `src/proxy.ts` global proxy, pre-setup gate, and module gates | No session auth. Applies CSP/security headers to page requests and selected API matcher paths; returns 404 for disabled module routes; returns 503 + the "Site setup in progress" screen for every public-website path until `ClubTheme.completedAt` is set (#2420, "The Pre-Setup Gate" below). | Anonymous and authenticated browser traffic. | Module settings via `loadEffectiveModuleFlags()`; setup state, club name and contact address via `setup-gate.ts` (memoised 15s; each refresh reads `ClubTheme.completedAt`, and the club name and contact address only while setup is incomplete). | None. | CSP nonce, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, module route blocking, pre-setup 503 gate (fails closed, `no-store`, `Retry-After`). | No per-request audit. | API matcher is selective, not global for every API path. Keep route-level auth as the enforcement boundary. The setup gate never covers `/api/*`, the admin area, or the login flows — an operator must be able to finish setup. Since #2404 the matcher RUNS on asset-shaped URLs (`/foo.png`, `/favicon.ico`, `/wp-content/uploads/x.jpg`), so those carry a policy and meet the gate like any other address; only `/api`, `/_next/static/` and `/_next/image` stay excluded. A miss under `_next/static` is terminated without a document by the `afterFiles` rewrites, whose own `default-src 'none'` is then the policy that ships; a miss under `/api` is answered as JSON by `api/[[...unmatched]]`, and no rewrite rule may touch `/api` at all (module-state parity — see "Static-Asset URLs And The Nonce-Only CSP"). #2404 also removed the prefetch exemption outright, so no request header — `Purpose: prefetch`, `Next-Router-Prefetch`, `RSC`, in any combination — takes a URL outside the proxy. The gate still declines to CLAIM asset-shaped paths (a 503 holding screen is a document), so a URL of that shape which reaches a render is ungated by design; the shared public chrome (`src/components/website/website-chrome.tsx`, composed by both public route groups) and the public metadata guard cover it. |
 | `/api/health`, `/api/health/ready` | Public. | Load balancers, operators, anonymous callers. | DB reachability, runtime version/uptime, config readiness. Public responses omit provider error detail. | DB query only. | No rate limit. No secrets in response. | Logger debug/error only. | Anonymous callers can observe availability. #615 can decide whether to add light rate limiting or cache headers. |
 | `/api/age-tier-settings`, `/api/committee` | Public read endpoints. | Anonymous website users. | Public age-tier/rate settings and published committee assignment presentation fields; and, **only when `PublicContentSettings.committeePhotoDisplay != NONE`**, per-published-member photo metadata (member id + `photoUpdatedAt` version) so the roster can build the scoped `/api/members/[id]/photo` URL. | None. | No rate limit. Committee query selects active, published assignment fields only; member email is not selected or returned, phone is returned only when show-phone is enabled, and contact keys are returned only for contactable assignments. Photo metadata (incl. member id) is emitted **only** when the club has opted the roster into photos — with `committeePhotoDisplay = NONE` (the default), no member id or photo pointer is returned. | None beyond DB errors if thrown. | Public committee names and optional phone numbers are intentional once an admin publishes the assignment; email remains server-only. Committee-photo bytes are served (and gated) by the scoped `/api/members/[id]/photo` endpoint, which applies the SAME `committeePhotoDisplay != NONE` condition to its anonymous branch (#2242) — so "Don't show photos" takes the bytes off the public internet, not just the roster metadata. |
 | `/api/address-autocomplete/search`, `/api/address-autocomplete/details/[id]` | Public server-side proxy to Addy, gated by the `addressAutocomplete` Admin Module. | Anonymous website users. | Search terms, address suggestion ids, Addy result payloads. | Addy API via `src/lib/addy-api.ts`. | Module-route/proxy gate returns 404 while disabled, Zod query validation, `rateLimiters.addressAutocomplete` at 90/min/IP. Secrets stay server-side. | Minimal error responses, no audit. | Upstream-cost and enumeration surface remains public only when the module is enabled; manual address entry remains the fallback. |
@@ -2063,9 +2063,12 @@ Fixed at the root: that function now reports `readFailed` separately, and the
 shared public chrome (`src/components/website/website-chrome.tsx`, which held this
 branch as `(website)/layout.tsx` until the D1 narrowing extracted it) paints the
 holding screen only on a POSITIVE answer. The
-asymmetry with the proxy gate, which still fails closed on the same input, is
-deliberate and is the general rule worth keeping — **503 is a true statement
+asymmetry with the proxy gate, which fails closed on the same input on a cold
+start, is deliberate and is the general rule worth keeping — **503 is a true statement
 about an unreadable database; a 200 that describes the club is not.**
+Since #5264 the gate fails closed only until it has seen setup complete: after
+that, a database read that fails, throws or times out keeps serving the stale
+"complete" answer, by design, so a blip cannot close a live club's website.
 
 ## Prerendered Pages And The Nonce-Only CSP - 2026-07-31
 
@@ -2403,15 +2406,24 @@ address — real page, typo, and bot probe alike — which is the configuration 
   incomplete, the fully rendered document — is memoised for 15 seconds behind a
   single-flight promise, matching the TTL of the tagged cache the layout reads
   the same `ClubTheme` row through. Once setup is complete the cached answer is a
-  bare boolean and the club identity and contact address are never read at all.
+  bare boolean, each refresh reads `completedAt` alone (`readSetupCompletion`),
+  and the theme, club identity and contact address are never read at all. An
+  expired answer is served while one background refresh runs, so no visitor
+  waits for the read (#5264: the refresh used to load the whole theme and build
+  its CSS, stalling a page every 15 seconds); only a cold start waits.
   The proxy is bundled separately from route handlers, so the `revalidateTag`
   the site-style save issues cannot reach this memo; the TTL is the propagation
-  bound, and it is why the site opens within 15 seconds of the save rather than
-  instantly.
-- **Fails CLOSED.** A failed `ClubTheme` read leaves `isComplete` false, so a
-  database outage is answered with the holding screen and a 503 — which is what
-  503 literally means. Failing open would restore the 200-for-every-address
-  defect under exactly the conditions that make it hardest to notice. Note the
+  bound, and it is why the site opens on the second request after the 15
+  seconds rather than instantly.
+- **Fails CLOSED.** A cold start whose `ClubTheme` read fails or throws answers
+  with the holding screen and a 503 — which is what 503 literally means.
+  Failing open would restore the 200-for-every-address defect under exactly the
+  conditions that make it hardest to notice. **One deliberate exception
+  (#5264):** once the gate has seen setup complete, a refresh whose read fails,
+  throws or times out (5 seconds, `SETUP_STATE_READ_TIMEOUT_MS`) keeps serving
+  the stale "complete" answer, by design, rather than closing a live club's
+  website for a database blip — the same launch-state reasoning as finding F4. A refresh that
+  reads a POSITIVE "not complete" still closes the site. Note the
   deliberate asymmetry with the render-time fallback in
   `src/components/website/website-chrome.tsx` — `(website)/layout.tsx` until the D1
   narrowing extracted it, and now the one copy shared by both public route groups —

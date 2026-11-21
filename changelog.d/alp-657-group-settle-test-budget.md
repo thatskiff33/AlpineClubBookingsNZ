@@ -1,0 +1,2 @@
+- **A real-database test no longer fails on a slow CI runner (#5213).**
+  The test that settles a 40-child group booking used to fail if it took more than 30 seconds by the clock, which a busy runner could exceed with nothing wrong. It now checks that the settle commits within the same transaction time limit the real settle runs under, so only a genuine slowdown fails it. No behaviour changes for clubs.

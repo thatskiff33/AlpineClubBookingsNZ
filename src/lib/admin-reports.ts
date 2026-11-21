@@ -6,7 +6,7 @@ import {
   differenceInCalendarDays,
   endOfMonth,
   endOfWeek,
-  format,
+  format as formatDateFns,
   isAfter,
   startOfMonth,
   startOfWeek,
@@ -24,6 +24,17 @@ import {
   type GuestStayRange,
 } from "@/lib/booking-guest-stay-ranges";
 import { formatDateOnly } from "@/lib/date-only";
+import {
+  formatClubDayMonth,
+  formatClubLongWeekdayDate,
+  formatClubMonthYear,
+  formatClubShortMonthYear,
+  formatClubWeekdayDayMonth,
+  formatStayDate,
+  requireCalendarDate,
+  type CalendarDate,
+  type ClubDateFormat,
+} from "@/lib/club-time";
 
 export type RevenueGranularity = "daily" | "weekly" | "monthly";
 
@@ -140,13 +151,21 @@ export function getBookingRevenueByNight(
   }));
 }
 
+/**
+ * The revenue chart's buckets, with their axis and tooltip text written in the
+ * club's date format (#5258). Bucketing and keys never depend on `format`.
+ */
 export function buildRevenueSeries(
   bookings: RevenueBookingLike[],
   rangeStart: Date,
   rangeEnd: Date,
+  format: ClubDateFormat,
 ): { granularity: RevenueGranularity; data: RevenueDataPoint[] } {
   const granularity = getRevenueGranularity(rangeStart, rangeEnd);
-  const buckets = initializeBuckets(rangeStart, rangeEnd, granularity);
+  const buckets = new Map<string, RevenueDataPoint>();
+  for (const [key, period] of initializePeriods(rangeStart, rangeEnd, granularity)) {
+    buckets.set(key, createBucket(period, granularity, format));
+  }
   const bookingIdsByBucket = new Map<string, Set<string>>();
 
   for (const booking of bookings) {
@@ -175,7 +194,7 @@ export function buildBookingTrendSeries(
   rangeStart: Date,
   rangeEnd: Date,
 ): BookingTrendDataPoint[] {
-  const weeklyBuckets = initializeBuckets(rangeStart, rangeEnd, "weekly");
+  const weeklyBuckets = initializePeriods(rangeStart, rangeEnd, "weekly");
   const rows = new Map<string, BookingTrendDataPoint>();
   const bookingIdsByBucket = new Map<string, Set<string>>();
 
@@ -262,12 +281,24 @@ export function summarizeOverlappingGuests(
 }
 
 
-function initializeBuckets(
+interface BucketPeriod {
+  periodStart: CalendarDate;
+  periodEnd: CalendarDate;
+}
+
+function bucketPeriod(periodStart: Date, periodEnd: Date): BucketPeriod {
+  return {
+    periodStart: requireCalendarDate(toDateKey(periodStart)),
+    periodEnd: requireCalendarDate(toDateKey(periodEnd)),
+  };
+}
+
+function initializePeriods(
   rangeStart: Date,
   rangeEnd: Date,
   granularity: RevenueGranularity,
-): Map<string, RevenueDataPoint> {
-  const buckets = new Map<string, RevenueDataPoint>();
+): Map<string, BucketPeriod> {
+  const buckets = new Map<string, BucketPeriod>();
   const endKey = toDateKey(rangeEnd);
 
   if (granularity === "daily") {
@@ -276,7 +307,7 @@ function initializeBuckets(
       toDateKey(cursor) <= endKey;
       cursor = addDays(cursor, 1)
     ) {
-      buckets.set(toDateKey(cursor), createBucket(cursor, cursor, granularity));
+      buckets.set(toDateKey(cursor), bucketPeriod(cursor, cursor));
     }
     return buckets;
   }
@@ -288,7 +319,7 @@ function initializeBuckets(
       cursor = addWeeks(cursor, 1)
     ) {
       const periodEnd = clampToRangeEnd(endOfWeek(cursor, MONDAY_WEEK), rangeEnd);
-      buckets.set(toDateKey(cursor), createBucket(cursor, periodEnd, granularity));
+      buckets.set(toDateKey(cursor), bucketPeriod(cursor, periodEnd));
     }
     return buckets;
   }
@@ -299,43 +330,48 @@ function initializeBuckets(
     cursor = addMonths(cursor, 1)
   ) {
     const periodEnd = clampToRangeEnd(endOfMonth(cursor), rangeEnd);
-    buckets.set(toDateKey(cursor), createBucket(cursor, periodEnd, granularity));
+    buckets.set(toDateKey(cursor), bucketPeriod(cursor, periodEnd));
   }
 
   return buckets;
 }
 
 function createBucket(
-  periodStart: Date,
-  periodEnd: Date,
+  { periodStart, periodEnd }: BucketPeriod,
   granularity: RevenueGranularity,
+  format: ClubDateFormat,
 ): RevenueDataPoint {
   return {
-    periodStart: toDateKey(periodStart),
-    periodEnd: toDateKey(periodEnd),
-    label: formatBucketLabel(periodStart, granularity),
-    tooltipLabel: formatBucketTooltip(periodStart, periodEnd, granularity),
+    periodStart,
+    periodEnd,
+    label: formatBucketLabel(periodStart, granularity, format),
+    tooltipLabel: formatBucketTooltip(periodStart, periodEnd, granularity, format),
     revenueCents: 0,
     bookingCount: 0,
   };
 }
 
-function formatBucketLabel(periodStart: Date, granularity: RevenueGranularity): string {
-  if (granularity === "daily") return format(periodStart, "EEE d MMM");
-  if (granularity === "weekly") return `Week of ${format(periodStart, "d MMM")}`;
-  return format(periodStart, "MMM yyyy");
+function formatBucketLabel(
+  periodStart: CalendarDate,
+  granularity: RevenueGranularity,
+  format: ClubDateFormat,
+): string {
+  if (granularity === "daily") return formatClubWeekdayDayMonth(periodStart, format);
+  if (granularity === "weekly") return `Week of ${formatClubDayMonth(periodStart, format)}`;
+  return formatClubShortMonthYear(periodStart, format);
 }
 
 function formatBucketTooltip(
-  periodStart: Date,
-  periodEnd: Date,
+  periodStart: CalendarDate,
+  periodEnd: CalendarDate,
   granularity: RevenueGranularity,
+  format: ClubDateFormat,
 ): string {
-  if (granularity === "daily") return format(periodStart, "EEEE d MMMM yyyy");
+  if (granularity === "daily") return formatClubLongWeekdayDate(periodStart, format);
   if (granularity === "weekly") {
-    return `Week of ${format(periodStart, "d MMM yyyy")} to ${format(periodEnd, "d MMM yyyy")}`;
+    return `Week of ${formatStayDate(periodStart, format)} to ${formatStayDate(periodEnd, format)}`;
   }
-  return format(periodStart, "MMMM yyyy");
+  return formatClubMonthYear(periodStart, format);
 }
 
 function getBucketKey(date: Date, granularity: RevenueGranularity): string {
@@ -349,7 +385,7 @@ function clampToRangeEnd(periodEnd: Date, rangeEnd: Date): Date {
 }
 
 function toDateKey(value: Date): string {
-  return format(value, "yyyy-MM-dd");
+  return formatDateFns(value, "yyyy-MM-dd");
 }
 
 function toUtcDateOnly(value: Date): Date {

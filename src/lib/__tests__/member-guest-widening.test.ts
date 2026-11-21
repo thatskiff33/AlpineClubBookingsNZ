@@ -976,6 +976,10 @@ describe("consent columns have exactly one writer", () => {
       "the create route states each planned row's consent for the adult-supervision pre-flight",
     "src/lib/booking-create-guests.ts":
       "the create services' review gate states each planned row's consent for the adult-supervision rule",
+    // #5005: a READER of nothing stored. The import planner states every
+    // imported row consent-free (null) for the adult-supervision rule.
+    "src/lib/booking-import/plan.ts":
+      "the paid-booking import planner states each imported row consent-free for the adult-supervision rule; writes nothing",
     // The edit PREVIEW. A READER: it maps the rows already on the booking to
     // their stored `consentStatus` so the preview refuses exactly what the save
     // refuses. It persists nothing at all — it is a quote.

@@ -4,68 +4,176 @@ import "@testing-library/jest-dom/vitest";
 import type { ReactNode } from "react";
 import { render, screen } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
+import { ClubFormatProvider } from "@/components/club-format-provider";
+import { formatClubDayMonth, requireCalendarDate } from "@/lib/club-time";
 
-let activeChartData: Array<{
-  label: string;
-  revenueCents: number;
-  tooltipLabel?: string;
-}> = [];
+type ChartPoint = Record<string, unknown>;
 
-vi.mock("recharts", () => ({
-  BarChart: ({
-    data,
-    children,
-  }: {
-    data: typeof activeChartData;
-    children: ReactNode;
-  }) => {
+/**
+ * A stand-in recharts: each chart records the `data` it was handed, the
+ * x-axis renders its `tickFormatter` over every point's `dataKey`, and the
+ * tooltip renders its `labelFormatter` for the first point — the same value
+ * recharts hands it (the x-axis key, plus the point as payload).
+ */
+let activeChartData: ChartPoint[] = [];
+let activeXKey = "";
+
+vi.mock("recharts", () => {
+  const chart = ({ data, children }: { data: ChartPoint[]; children: ReactNode }) => {
     activeChartData = data;
     return <div>{children}</div>;
-  },
-  ResponsiveContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  Tooltip: ({
-    formatter,
-    labelFormatter,
-  }: {
-    formatter: (value: number) => ReactNode[];
-    labelFormatter: (
-      value: string,
-      payload: Array<{ payload: (typeof activeChartData)[number] }>,
-    ) => ReactNode;
-  }) => {
-    const point = activeChartData[0];
-    return (
-      <div data-testid="revenue-tooltip">
-        <span>{labelFormatter(point.label, [{ payload: point }])}</span>
-        {formatter(point.revenueCents).map((value, index) => (
-          <span key={index}>{value}</span>
-        ))}
+  };
+  return {
+    BarChart: chart,
+    AreaChart: chart,
+    LineChart: chart,
+    ResponsiveContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+    Tooltip: ({
+      formatter,
+      labelFormatter,
+    }: {
+      formatter?: (value: unknown) => ReactNode[];
+      labelFormatter?: (value: unknown, payload: Array<{ payload: ChartPoint }>) => ReactNode;
+    }) => {
+      const point = activeChartData[0];
+      return (
+        <div data-testid="tooltip">
+          <span data-testid="tooltip-label">
+            {labelFormatter?.(point[activeXKey], [{ payload: point }])}
+          </span>
+          {formatter?.(point.revenueCents ?? point.occupancyRate).map((value, index) => (
+            <span key={index}>{value}</span>
+          ))}
+        </div>
+      );
+    },
+    XAxis: ({
+      dataKey,
+      tickFormatter,
+    }: {
+      dataKey: string;
+      tickFormatter?: (value: unknown) => string;
+    }) => {
+      activeXKey = dataKey;
+      return (
+        <div data-testid="x-axis">
+          {activeChartData.map((point, index) => (
+            <span key={index} data-testid="x-tick">
+              {tickFormatter ? tickFormatter(point[dataKey]) : String(point[dataKey])}
+            </span>
+          ))}
+        </div>
+      );
+    },
+    YAxis: ({ tickFormatter }: { tickFormatter?: (value: number) => string }) => (
+      <div data-testid="y-axis">
+        {tickFormatter
+          ? activeChartData.map((point, index) => (
+              <span key={index}>{tickFormatter(Number(point.revenueCents))}</span>
+            ))
+          : null}
       </div>
-    );
-  },
-  Bar: () => null,
-  CartesianGrid: () => null,
-  XAxis: () => null,
-  YAxis: ({ tickFormatter }: { tickFormatter?: (value: number) => string }) => (
-    <div data-testid="revenue-axis">
-      {tickFormatter
-        ? activeChartData.map((point) => (
-            <span key={point.label}>{tickFormatter(point.revenueCents)}</span>
-          ))
-        : null}
-    </div>
-  ),
-  LineChart: () => null,
-  Line: () => null,
-  AreaChart: () => null,
-  Area: () => null,
-  PieChart: () => null,
-  Pie: () => null,
-  Cell: () => null,
-  Legend: () => null,
-}));
+    ),
+    Bar: () => null,
+    CartesianGrid: () => null,
+    Line: () => null,
+    Area: () => null,
+    PieChart: () => null,
+    Pie: () => null,
+    Cell: () => null,
+    Legend: () => null,
+  };
+});
 
-import { RevenueBarChart } from "@/app/(admin)/admin/finance/reports/_components/report-charts";
+import {
+  OccupancyAreaChart,
+  RevenueBarChart,
+  TrendsLineChart,
+} from "@/app/(admin)/admin/finance/reports/_components/report-charts";
+
+function GermanSwiss({ children }: { children: ReactNode }) {
+  return (
+    <ClubFormatProvider currencyCode="CHF" locale="de-CH">
+      {children}
+    </ClubFormatProvider>
+  );
+}
+
+function ticks(): string[] {
+  return screen.getAllByTestId("x-tick").map((tick) => tick.textContent ?? "");
+}
+
+function tooltipLabel(): string {
+  return screen.getByTestId("tooltip-label").textContent ?? "";
+}
+
+const OCCUPANCY = [
+  { date: "2026-04-16", occupancyRate: 40 },
+  { date: "2026-04-17", occupancyRate: 55 },
+];
+
+const TREND_ROW = {
+  total: 3,
+  pending: 0,
+  paymentPending: 0,
+  confirmed: 1,
+  paid: 2,
+  awaitingReview: 0,
+  completed: 0,
+};
+
+const TRENDS = [
+  { week: "2026-04-13", ...TREND_ROW },
+  { week: "2026-04-20", ...TREND_ROW },
+];
+
+describe("OccupancyAreaChart date labels (#5258)", () => {
+  it("writes the axis and tooltip in the club's en-NZ format", () => {
+    render(<OccupancyAreaChart data={OCCUPANCY} />);
+    expect(ticks()).toEqual(["16 Apr", "17 Apr"]);
+    expect(tooltipLabel()).toBe("Thu, 16 Apr 2026");
+    expect(screen.getByTestId("tooltip")).toHaveTextContent("40%Occupancy");
+  });
+
+  it("writes the axis and tooltip in the club's de-CH format", () => {
+    render(<OccupancyAreaChart data={OCCUPANCY} />, { wrapper: GermanSwiss });
+    expect(ticks()).toEqual(["16. Apr.", "17. Apr."]);
+    expect(tooltipLabel()).toBe("Do., 16. Apr. 2026");
+  });
+
+  it("reads a daily label the same way as the page's own en-NZ dates", () => {
+    render(<OccupancyAreaChart data={OCCUPANCY} />);
+    expect(ticks()[0]).toBe(
+      formatClubDayMonth(requireCalendarDate("2026-04-16"), { locale: "en-NZ" }),
+    );
+  });
+
+  it("charts exactly the data it was given, and renders a malformed key as itself", () => {
+    const data = [...OCCUPANCY, { date: "not-a-day", occupancyRate: 0 }];
+    render(<OccupancyAreaChart data={data} />);
+    expect(activeChartData).toBe(data);
+    expect(ticks()).toEqual(["16 Apr", "17 Apr", "not-a-day"]);
+  });
+});
+
+describe("TrendsLineChart date labels (#5258)", () => {
+  it("writes the axis and tooltip in the club's en-NZ format", () => {
+    render(<TrendsLineChart data={TRENDS} />);
+    expect(ticks()).toEqual(["13 Apr", "20 Apr"]);
+    expect(tooltipLabel()).toBe("Week of 13 Apr 2026");
+  });
+
+  it("writes the axis and tooltip in the club's de-CH format", () => {
+    render(<TrendsLineChart data={TRENDS} />, { wrapper: GermanSwiss });
+    expect(ticks()).toEqual(["13. Apr.", "20. Apr."]);
+    expect(tooltipLabel()).toBe("Week of 13.04.2026");
+  });
+
+  it("charts exactly the data it was given", () => {
+    render(<TrendsLineChart data={TRENDS} />);
+    expect(activeChartData).toBe(TRENDS);
+  });
+});
 
 describe("RevenueBarChart", () => {
   it("renders exact integer cents on the revenue axis and tooltip", () => {
@@ -92,12 +200,14 @@ describe("RevenueBarChart", () => {
       />,
     );
 
-    const tooltip = screen.getByTestId("revenue-tooltip");
+    const tooltip = screen.getByTestId("tooltip");
     expect(tooltip).toHaveTextContent("Monday 1 June 2026");
     expect(tooltip).toHaveTextContent("$0.33");
     expect(tooltip).toHaveTextContent("Booked revenue");
-    expect(screen.getByTestId("revenue-axis")).toHaveTextContent(
+    expect(screen.getByTestId("y-axis")).toHaveTextContent(
       "$0.33$0.34$135.00",
     );
+    // The revenue axis shows the server-written label verbatim.
+    expect(ticks()).toEqual(["First night", "Second night", "Whole stay"]);
   });
 });
