@@ -327,6 +327,12 @@ export async function readRefundCreditNoteGap(payment: {
   resolvedInXeroCents: number;
   uncoveredCents: number;
   paidAnotherWayUncoveredCents: number;
+  /**
+   * #4328 review: hand-resolved refund-note rows whose amount cannot be read,
+   * so `coveredCents` leaves them out. A caller that judges coverage must
+   * refuse on any (`sumRefundCreditNoteCoverageCents`' contract).
+   */
+  unreadableResolvedOperationIds: string[];
 }> {
   // #2902: cash evidence first — an account-credit-only cancellation resolves
   // to zero cash and is excluded before any coverage query runs. #3635 round-3
@@ -340,6 +346,7 @@ export async function readRefundCreditNoteGap(payment: {
       resolvedInXeroCents: 0,
       uncoveredCents: 0,
       paidAnotherWayUncoveredCents: 0,
+      unreadableResolvedOperationIds: [],
     };
   }
   const resolved = await readResolvedRefundCreditNoteCoverage(payment.id);
@@ -352,6 +359,7 @@ export async function readRefundCreditNoteGap(payment: {
     uncoveredCents,
     paidAnotherWayUncoveredCents:
       uncoveredCents > 0 ? Math.min(uncoveredCents, await readPaidAnotherWayUncoveredCents(prisma, payment.id)) : 0,
+    unreadableResolvedOperationIds: resolved.unreadableOperationIds,
   };
 }
 

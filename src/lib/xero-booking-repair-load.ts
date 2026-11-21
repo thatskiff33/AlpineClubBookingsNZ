@@ -536,7 +536,7 @@ export async function loadAuditData(
         )
       : [];
 
-  const { refundNoteUncoveredCentsByPaymentId, refundNoteCoveredCentsByPaymentId } = await readRefundNoteGaps(
+  const { refundNoteUncoveredCentsByPaymentId, refundNoteCoverageByPaymentId } = await readRefundNoteGaps(
     bookings,
     deps,
     (paymentId) => linksByLocalKey.get(makeLocalKey("Payment", paymentId)) ?? [],
@@ -649,7 +649,7 @@ export async function loadAuditData(
     refundNoteUncoveredCents: booking.payment
       ? refundNoteUncoveredCentsByPaymentId.get(booking.payment.id) ?? null
       : null,
-    refundNoteCoveredCents: booking.payment ? refundNoteCoveredCentsByPaymentId.get(booking.payment.id) ?? null : null,
+    refundNoteCoverage: booking.payment ? refundNoteCoverageByPaymentId.get(booking.payment.id) ?? null : null,
     closedPartPaymentReviewPaymentIds:
       closedPartPaymentReviewIdsByBookingId.get(booking.id) ?? new Set<string>(),
     openPartPaymentReviewPaymentIds:

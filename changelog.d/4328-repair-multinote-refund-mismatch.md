@@ -6,6 +6,8 @@
   officer who "corrected" that note credited the member twice.
 
   The tool now adds up every live refund note on such a payment and reports a
-  mismatch only when together they differ from the cash refunded, listing each
-  note for an officer to check in Xero. It never changes a note itself, and
+  mismatch only when together they differ from the cash a note may answer (a
+  refund of a late card payment Xero never received is left out), listing each
+  note for an officer to check in Xero. A note resolved by hand whose amount
+  cannot be read is reported as notes that could not be totalled. It never changes a note itself, and
   `--apply` queues nothing for this finding.

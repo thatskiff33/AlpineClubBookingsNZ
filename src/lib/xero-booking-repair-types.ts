@@ -604,14 +604,16 @@ export interface BookingClassificationContext {
    */
   refundNoteUncoveredCents: number | null;
   /**
-   * #4328: the cents the payment's live refund notes cover together
-   * (`readRefundCreditNoteGap`'s `coveredCents`), from the same read as
-   * `refundNoteUncoveredCents`, plus one read for a bank payment with a live
-   * per-refund note that is not cancelled. `"unreadable"` when the read threw
-   * or read no coverage; null when not read. The refund-note amount check of a
-   * bank payment with several live notes compares the cash refund with this.
+   * #4328: from the same `readRefundCreditNoteGap` read as
+   * `refundNoteUncoveredCents` (plus one read for a bank payment with a live
+   * per-refund note that is not cancelled), the cents the payment's live refund
+   * notes cover together (`coveredCents`) and the cash a note may answer
+   * (`cashRefundCents`, the figure every note-sizing cap reads). `"unreadable"`
+   * when the read threw, read no note-eligible cash, or met a hand-resolved
+   * note with no readable amount; null when not read. The refund-note amount
+   * check of a bank payment with several live notes compares the two.
    */
-  refundNoteCoveredCents: number | "unreadable" | null;
+  refundNoteCoverage: { coveredCents: number; cashRefundCents: number } | "unreadable" | null;
   /**
    * #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): the payments on this
    * booking whose part-payment review task a treasurer has closed. A review

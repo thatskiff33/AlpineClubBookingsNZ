@@ -1540,8 +1540,8 @@ _Legacy: settles tasks raised before #4317._
 - **Never for a historical refund.** Only the completion asks; an absorbed
   older refund stays on the #4230 deploy note's list.
 - **The repair tool sums every live note** (#4328): the canonical one is never
-  judged alone; coverage unequal to the cash refund, or unreadable, is manual
-  review.
+  judged alone; coverage unequal to note-eligible cash (`INV-PAY-110`), or
+  unreadable, is manual review.
 - **A card refund is noted on its own record** (`INV-ADDPAY-047`).
   Pinned by `xero-bt-per-refund-notes`, `xero-bt-repair-amount-mismatch` (realdb),
   `bank-hand-back-refund-note`, `card-refund-paid-another-way-cash`,

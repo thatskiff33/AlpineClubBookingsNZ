@@ -57,7 +57,7 @@ export async function readRefundNoteGaps(
   cancelledRefundNoteIds: ReadonlySet<string>,
 ) {
   const refundNoteUncoveredCentsByPaymentId = new Map<string, number>();
-  const refundNoteCoveredCentsByPaymentId = new Map<string, number | "unreadable">();
+  const refundNoteCoverageByPaymentId = new Map<string, { coveredCents: number; cashRefundCents: number } | "unreadable">();
   for (const booking of bookings) {
     const payment = booking.payment;
     if (!payment || payment.refundedAmountCents <= 0) continue;
@@ -71,14 +71,19 @@ export async function readRefundNoteGaps(
       });
       // #3924 round 8: a CARD note's ask, so a close's own bank cash is left out.
       if (cancelled) refundNoteUncoveredCentsByPaymentId.set(payment.id, gap.uncoveredCents - gap.paidAnotherWayUncoveredCents);
-      // No note-eligible cash means the reader summed no coverage.
-      refundNoteCoveredCentsByPaymentId.set(payment.id, gap.cashRefundCents > 0 ? gap.coveredCents : "unreadable");
+      // No note-eligible cash means the reader summed no coverage; a
+      // hand-resolved note with no readable amount means the sum left it out.
+      const readable = gap.cashRefundCents > 0 && gap.unreadableResolvedOperationIds.length === 0;
+      refundNoteCoverageByPaymentId.set(
+        payment.id,
+        readable ? { coveredCents: gap.coveredCents, cashRefundCents: gap.cashRefundCents } : "unreadable",
+      );
     } catch (err) {
-      refundNoteCoveredCentsByPaymentId.set(payment.id, "unreadable");
+      refundNoteCoverageByPaymentId.set(payment.id, "unreadable");
       logger.warn({ err, paymentId: payment.id }, "Could not read a payment's refund-note gap; sizing from the refunded total");
     }
   }
-  return { refundNoteUncoveredCentsByPaymentId, refundNoteCoveredCentsByPaymentId };
+  return { refundNoteUncoveredCentsByPaymentId, refundNoteCoverageByPaymentId };
 }
 
 const NOTES_DISAGREE_SUMMARY =
@@ -89,10 +94,11 @@ const COVERAGE_UNREADABLE_SUMMARY =
 /**
  * Compares the local cash refund (`getCashCancellationRefundCandidateCents`)
  * with the payment's refund notes. A bank payment with a canonical note and at
- * least one other live note is judged by the notes' combined coverage
- * (`refundNoteCoveredCents`, the gap reader's sum); any disagreement, or a
- * coverage that could not be read, is one manual-review finding and never a
- * resize of one note. Every other payment keeps the canonical note's check.
+ * least one other live note, and a cash candidate to judge, is judged by the
+ * notes' combined coverage against the cash a note may answer (both from the
+ * gap reader, `refundNoteCoverage`); any disagreement, or a coverage that
+ * could not be read, is one manual-review finding and never a resize of one
+ * note. Every other payment keeps the canonical note's check.
  */
 export function addRefundCreditNoteAmountFindings(params: {
   findings: MutableFinding[];
@@ -128,10 +134,13 @@ export function addRefundCreditNoteAmountFindings(params: {
     return;
   }
 
-  const coveredCents = typeof context.refundNoteCoveredCents === "number" ? context.refundNoteCoveredCents : null;
-  if (coveredCents === refundAmountCents) return;
+  // #4328 review (INV-SSOT): the notes are judged against the cash a note may
+  // answer - the figure every note-sizing cap reads - so a refund of a late
+  // capture Xero never received, which no note answers, is not a shortfall.
+  const coverage = typeof context.refundNoteCoverage === "object" ? context.refundNoteCoverage : null;
+  if (coverage && coverage.coveredCents === coverage.cashRefundCents) return;
 
-  const summary = coveredCents === null ? COVERAGE_UNREADABLE_SUMMARY : NOTES_DISAGREE_SUMMARY;
+  const summary = coverage === null ? COVERAGE_UNREADABLE_SUMMARY : NOTES_DISAGREE_SUMMARY;
   const action = addAction(actionMap, buildManualReviewAction(booking.id, summary));
   addFinding(findings, {
     code: "XERO_AMOUNT_MISMATCH",
@@ -140,8 +149,9 @@ export function addRefundCreditNoteAmountFindings(params: {
     safeToAutoApply: false,
     details: {
       paymentId: payment.id,
-      expectedAmountCents: refundAmountCents,
-      coveredCents,
+      expectedAmountCents: coverage?.cashRefundCents ?? null,
+      coveredCents: coverage?.coveredCents ?? null,
+      cashRefundCandidateCents: refundAmountCents,
       paymentRefundedAmountCents: payment.refundedAmountCents,
       canonicalCreditNoteId: refundCreditNote.objectId,
       otherRefundNotes: otherLiveNotes.map((link) => ({
