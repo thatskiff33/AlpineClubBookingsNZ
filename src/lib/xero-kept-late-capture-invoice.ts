@@ -344,22 +344,18 @@ export async function settleKeptLateCaptureRecordOnApproval(params: {
       },
     });
   } else {
-    await db.xeroSyncOperation.updateMany({
-      // Never a row resolved in Xero: resolved is done, and never re-run.
-      where: {
-        ...KEPT_INVOICE_CREATE,
-        localId: params.manualRefundTaskId,
-        status: "PARTIAL",
-        manuallyResolvedAt: null,
-      },
-      data: {
-        status: "PENDING",
-        startedAt: null,
-        completedAt: null,
-        lastErrorCode: null,
-        lastErrorMessage: null,
-      },
-    });
+    // Never a row resolved in Xero: resolved is done, and never re-run.
+    const partial = { ...KEPT_INVOICE_CREATE, localId: params.manualRefundTaskId, status: "PARTIAL", manuallyResolvedAt: null } as const;
+    for (const row of await db.xeroSyncOperation.findMany({ where: partial, select: { id: true } })) {
+      // #5228: with the queued request its worker keeps; one the outbox could not send stays PARTIAL, for Retry.
+      await returnOutboxRowToPending({
+        operationId: row.id,
+        store: db,
+        where: partial,
+        data: { startedAt: null, completedAt: null, lastErrorCode: null, lastErrorMessage: null },
+        request: { keep: true },
+      });
+    }
   }
   await db.xeroSyncOperation.updateMany({
     where: {

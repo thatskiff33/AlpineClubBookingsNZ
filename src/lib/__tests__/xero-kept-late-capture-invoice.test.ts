@@ -482,14 +482,19 @@ describe("settleKeptLateCaptureRecordOnApproval", () => {
 
   it("with the invoice in Xero, withdraws nothing of it and sends a PARTIAL row back for its payment", async () => {
     mocks.linkCount.mockResolvedValue(1);
+    // #5228: each PARTIAL row is read, then sent back with the queued request its worker keeps.
+    mocks.operationFindMany.mockImplementation(async (args: { where: { status?: unknown } }) =>
+      args.where.status === "PARTIAL" ? [{ id: "op_partial" }] : []);
+    mocks.operationFindUnique.mockResolvedValue({ queueType: "KEPT_LATE_CAPTURE_INVOICE", requestPayload: { ...QUEUED } });
     await settle();
     const [own] = calls();
-    expect(own.where).toMatchObject({
+    expect(own.where.AND[0]).toMatchObject({
       localId: "task_kept",
       status: "PARTIAL",
       // Never a row resolved in Xero: resolved is done, and never re-run.
       manuallyResolvedAt: null,
     });
+    expect(own.where.AND[1]).toEqual({ id: "op_partial", requestPayload: { equals: QUEUED } });
     expect(own.data).toMatchObject({ status: "PENDING" });
     expect(
       calls().some(
