@@ -463,15 +463,29 @@ async function requeueRetiredSupplementaryInvoiceOperation(args: {
 }): Promise<RetiredInvoiceRevival> {
   return prisma.$transaction(async (tx) => {
     await lockSupplementaryInvoiceAnchor(tx, args.anchorId);
-    return reviveRetiredSupplementaryInvoice(tx, { ...args, stampRefusal: true });
+    return reviveRetiredSupplementaryInvoice(tx, args);
   });
 }
 
 /**
+ * What the keep's in-transaction revival did (#4382, #5220). `requeued` names
+ * the row now PENDING, so the keep can queue its receipt on the same
+ * transaction; `refused` carries the alert the keep sends after it commits,
+ * the stamp having won its claim here. `none` is no revivable row on the
+ * anchor, or one already stamped captured (alerted before).
+ */
+export type KeptCaptureRevival =
+  | { outcome: "none" }
+  | { outcome: "already" }
+  | { outcome: "requeued"; operationId: string }
+  | { outcome: "refused"; alert: InvoiceNotIssuedAlert };
+
+/**
  * #4382: a keep revives the retired change invoice on the anchor it already
  * holds, inside the dismissal's transaction. The same row and the same
- * guarded write as the late-success release. A row on any other anchor is
- * left for the after-commit release. A refusal writes nothing.
+ * guarded writes as the late-success release, the refusal's
+ * `STALE_WAITING_PAYMENT_CAPTURED` stamp included (#5220). A row on any other
+ * anchor is left for the after-commit release. No email here.
  */
 export async function reviveRetiredChangeInvoiceForKeptCapture(params: {
   store: Prisma.TransactionClient;
@@ -479,21 +493,33 @@ export async function reviveRetiredChangeInvoiceForKeptCapture(params: {
   anchorId: string;
   bookingId: string;
   transaction: { status: PaymentStatus; amountCents: number };
-}): Promise<void> {
+}): Promise<KeptCaptureRevival> {
   const picked = pickRetiredInvoiceToRevive(
     await loadRetiredInvoiceCandidates(params.store, params.paymentIntentId, params.anchorId),
   );
-  if (picked.kind !== "revive") return;
+  if (picked.kind !== "revive") return { outcome: "none" };
   const { newest } = picked;
-  await reviveRetiredSupplementaryInvoice(params.store, {
+  const verdict = await reviveRetiredSupplementaryInvoice(params.store, {
     operation: { id: newest.id, localModel: newest.localModel as string, requestPayload: newest.requestPayload },
     anchorId: params.anchorId,
     supersededIds: picked.supersededIds,
     paymentIntentId: params.paymentIntentId,
     transaction: params.transaction,
     bookingId: params.bookingId,
-    stampRefusal: false,
   });
+  if (verdict.outcome === "requeued") return { outcome: "requeued", operationId: newest.id };
+  if (verdict.outcome === "already") return verdict;
+  return {
+    outcome: "refused",
+    alert: {
+      operationId: newest.id,
+      localModel: newest.localModel,
+      localId: newest.localId,
+      paymentIntentId: params.paymentIntentId,
+      reason: verdict.reason,
+      wasRetired: true,
+    },
+  };
 }
 
 /**
@@ -536,15 +562,22 @@ export async function attachRecoveredIntentToWaitingSupplementaryInvoice(params:
   }
 }
 
-/** Best-effort; never throws. The operation's own stamp is the durable record. */
-async function alertInvoiceNotIssuedOnCapture(params: {
+/** The officer alert for an invoice a capture did not issue; JSON-safe, so a keep's plan can carry it past its commit. */
+export type InvoiceNotIssuedAlert = {
   operationId: string;
   localModel: string | null;
   localId: string | null;
   paymentIntentId: string;
   reason: IssueRefusal;
   wasRetired: boolean;
-}): Promise<void> {
+};
+
+/**
+ * Best-effort; never throws. The operation's own stamp is the durable record.
+ * Sent only by the caller whose `STALE_WAITING_PAYMENT_CAPTURED` claim won,
+ * after that claim committed; never inside a transaction.
+ */
+export async function alertInvoiceNotIssuedOnCapture(params: InvoiceNotIssuedAlert): Promise<void> {
   const when = params.wasRetired
     ? "after its waiting Xero supplementary invoice had been retired, and the invoice was not re-issued automatically"
     : "and its waiting Xero supplementary invoice was not issued automatically";

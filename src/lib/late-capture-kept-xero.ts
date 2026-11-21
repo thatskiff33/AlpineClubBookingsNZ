@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { PaymentStatus, Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
 import type { ClubTimeZone } from "@/lib/club-time";
 import { asRecord } from "@/lib/xero-json";
@@ -6,8 +6,10 @@ import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-
 import { lockSupplementaryInvoiceAnchor } from "@/lib/xero-supplementary-invoice-enqueue";
 import { RETIRED_CODES_ANSWERING_CAPTURE } from "@/lib/xero-supplementary-invoice-capture-rules";
 import {
+  alertInvoiceNotIssuedOnCapture,
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
   reviveRetiredChangeInvoiceForKeptCapture,
+  type InvoiceNotIssuedAlert,
 } from "@/lib/xero-supplementary-invoice-late-capture";
 import {
   enqueueXeroKeptLateCaptureInvoiceOperation,
@@ -73,7 +75,14 @@ import {
 /** What the post-commit half of a keep must do. */
 export type KeptLateCaptureXeroPlan =
   | { kind: "none" }
-  | { kind: "change-payment"; paymentIntentId: string }
+  | {
+      kind: "change-payment";
+      paymentIntentId: string;
+      /** #5220: the unpaid revived invoice's receipt, queued with the keep. */
+      receiptQueueOperationId?: string;
+      /** #5220: the revival this keep refused and stamped; its officer email follows the commit. */
+      refusalAlert?: InvoiceNotIssuedAlert;
+    }
   | { kind: "kept-invoice-queued"; queueOperationId: string | null }
   | { kind: "receipt-queued"; queueOperationId: string };
 
@@ -235,7 +244,9 @@ export async function readKeptCaptureRecordedElsewhere(
  * row, its kept-capture invoice) and returned, never a second; then the
  * evidence is read and the route decided, once (`INV-PAY-139`). A retired
  * change invoice on that anchor is re-queued before the return, without
- * taking the lock again (#4382). No new key, and no provider call.
+ * taking the lock again (#4382), and on this same transaction (#5220) its
+ * capture's receipt is queued where it goes out unpaid, or its refusal is
+ * stamped. No new key, no provider call and no email.
  */
 export async function planKeptLateCaptureXeroRecord(params: {
   manualRefundTaskId: string;
@@ -322,17 +333,10 @@ export async function planKeptLateCaptureXeroRecord(params: {
   });
   const route = keptChangeCaptureRoute(evidence);
   if (route === "change-invoice") {
-    // #4382: a reaper-retired row on this anchor is re-queued here, the same
-    // guarded write as the late-success release. The lock is already held.
-    // A refusal writes nothing, so finish still stamps and alerts together.
-    await reviveRetiredChangeInvoiceForKeptCapture({
-      store,
-      paymentIntentId: params.paymentIntentId,
+    return reviveKeptCaptureChangeInvoice(params, {
       anchorId,
-      bookingId: params.bookingId,
       transaction: { status: transaction.status, amountCents: transaction.amountCents },
     });
-    return { kind: "change-payment", paymentIntentId: params.paymentIntentId };
   }
   const logged = { paymentIntentId: params.paymentIntentId, manualRefundTaskId: params.manualRefundTaskId };
   if (route === "kept-invoice" || route === "change-unknown") {
@@ -368,6 +372,46 @@ export async function planKeptLateCaptureXeroRecord(params: {
     return { kind: "none" };
   }
   return { kind: "receipt-queued", queueOperationId: receipt.queueOperationId };
+}
+
+/**
+ * #4382, #5220: the change-invoice route's writes, all on the keep's
+ * transaction under the anchor it holds. A reaper-retired row on this anchor
+ * is re-queued, the same guarded write as the late-success release; where it
+ * goes out unpaid, the capture's receipt is queued beside it
+ * (`requireUnpaidChangeInvoice`: the recorder refuses where the invoice
+ * records the payment). A refusal is stamped here, and only the claim's
+ * winner carries the officer's email to finish.
+ */
+async function reviveKeptCaptureChangeInvoice(
+  params: { manualRefundTaskId: string; bookingId: string; paymentIntentId: string; actingMemberId?: string | null; store: Prisma.TransactionClient },
+  input: { anchorId: string; transaction: { status: PaymentStatus; amountCents: number } },
+): Promise<KeptLateCaptureXeroPlan> {
+  const plan = { kind: "change-payment" as const, paymentIntentId: params.paymentIntentId };
+  const revival = await reviveRetiredChangeInvoiceForKeptCapture({
+    store: params.store,
+    paymentIntentId: params.paymentIntentId,
+    anchorId: input.anchorId,
+    bookingId: params.bookingId,
+    transaction: input.transaction,
+  });
+  if (revival.outcome === "refused") return { ...plan, refusalAlert: revival.alert };
+  if (revival.outcome !== "requeued") return plan;
+  const receipt = await enqueueAdditionalCaptureReceiptOperation(params.paymentIntentId, {
+    store: params.store,
+    keptLateCapture: true,
+    requireUnpaidChangeInvoice: true,
+    createdByMemberId: params.actingMemberId ?? null,
+  });
+  if (receipt.outcome === "not-eligible") {
+    // The revived invoice records the payment itself, or another document does: no receipt, and the keep stands.
+    logger.info(
+      { paymentIntentId: params.paymentIntentId, manualRefundTaskId: params.manualRefundTaskId, reason: receipt.reason },
+      "A kept late card payment's revived change invoice needs no receipt beside it",
+    );
+    return plan;
+  }
+  return { ...plan, receiptQueueOperationId: receipt.queueOperationId };
 }
 
 /**
@@ -424,15 +468,19 @@ export async function keptCaptureBilledCents(store: Prisma.TransactionClient, in
 
 /**
  * THE POST-COMMIT HALF. Never throws: the decision has committed. A retired
- * change invoice was re-queued inside the keep, so the outbox sends it even
- * when this step fails. This step still releases a waiting change invoice,
- * credits a refund taken before the keep, and kicks the outbox. Where the
- * capture does not cover a retired invoice, or another invoice is linked or
- * queued, the release stamps that refusal and emails an officer, together.
+ * change invoice was re-queued inside the keep, with its receipt where it goes
+ * out unpaid, or stamped where the capture does not cover it, so the outbox
+ * and the Xero record stand even when this step fails (#5220). This step
+ * emails the officer for that stamp - best-effort, once, by the keep whose
+ * claim won (#4382's decision: no email inside a transaction) - then
+ * releases a waiting change invoice, credits a refund taken before the keep,
+ * and kicks the outbox.
  */
 export async function finishKeptLateCaptureXeroRecord(
   plan: KeptLateCaptureXeroPlan,
 ): Promise<void> {
+  // Its own boundary: a failed release below cannot suppress it.
+  await alertKeptCaptureRefusal(plan);
   try {
     if (plan.kind === "change-payment") {
       const result = await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
@@ -446,7 +494,7 @@ export async function finishKeptLateCaptureXeroRecord(
         : null;
       // A dashboard refund taken before the keep found no receipt then.
       await creditBackLateCaptureRefunds(plan.paymentIntentId);
-      if (result.queueOperationIds.length > 0 || receipt?.outcome === "queued") {
+      if (result.queueOperationIds.length > 0 || receipt?.outcome === "queued" || plan.receiptQueueOperationId) {
         await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
       }
       return;
@@ -457,7 +505,22 @@ export async function finishKeptLateCaptureXeroRecord(
   } catch (err) {
     logger.error(
       { err, plan },
-      "Failed to finish recording a kept late capture in Xero; a retired change invoice re-queued with the keep stays queued for the outbox, and a waiting one is released by the reaper",
+      "Failed to finish recording a kept late capture in Xero; a retired change invoice re-queued with the keep stays queued for the outbox with its receipt, and a waiting one is released by the reaper",
     );
+  }
+}
+
+/**
+ * #5220: the officer's email for a retired change invoice the keep refused
+ * and stamped `STALE_WAITING_PAYMENT_CAPTURED`. After the commit, by the keep
+ * and by the repair tool's run of the same decision; never throws. A crash
+ * before it leaves the stamp without the email (#4382's stated limit).
+ */
+export async function alertKeptCaptureRefusal(plan: KeptLateCaptureXeroPlan): Promise<void> {
+  if (plan.kind !== "change-payment" || !plan.refusalAlert) return;
+  try {
+    await alertInvoiceNotIssuedOnCapture(plan.refusalAlert);
+  } catch (err) {
+    logger.error({ err, plan }, "Failed to alert an officer to a kept late card payment's retired change invoice");
   }
 }
