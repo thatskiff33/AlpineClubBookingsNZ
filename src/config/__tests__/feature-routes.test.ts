@@ -64,6 +64,14 @@ describe("feature route map", () => {
     expect(getRequiredFeaturesForPath("/admin/work-parties")).toEqual([
       "workParties",
     ]);
+    // #5148: the member page sits under /dashboard; the top-level
+    // /work-parties address belongs to the website, so no module gates it.
+    expect(
+      getRequiredFeaturesForPath("/dashboard/work-parties/wp-1"),
+    ).toEqual(["workParties"]);
+    expect(getRequiredFeaturesForPath("/work-parties")).toEqual([]);
+    expect(getRequiredFeaturesForPath("/work-parties/spring")).toEqual([]);
+    expect(getRequiredFeaturesForPath("/dashboard")).toEqual([]);
     expect(getRequiredFeaturesForPath("/admin/promo-codes")).toEqual([
       "promoCodes",
     ]);

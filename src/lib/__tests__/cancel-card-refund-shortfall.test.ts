@@ -183,13 +183,13 @@ describe("the shortfall task is a cancellation's own hand-back (#4097)", () => {
         payment: null,
       },
     };
-    const payload = toOpenManualRefundTaskPayload(row as never, null, []);
+    const payload = toOpenManualRefundTaskPayload(row as never, null);
     expect(payload.cardShortfallHandBack).toBe(true);
     expect(payload.refundRequestHandBack).toBe(false);
     expect(payload.editRefundHandBack).toBe(false);
     expect(payload.cardShortfallCheck).toBe(false);
-    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null } as never, null, []).cardShortfallHandBack).toBe(false);
-    const check = toOpenManualRefundTaskPayload({ ...row, occurrenceKey: CHECK_KEY } as never, null, []);
+    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null } as never, null).cardShortfallHandBack).toBe(false);
+    const check = toOpenManualRefundTaskPayload({ ...row, occurrenceKey: CHECK_KEY } as never, null);
     expect([check.cardShortfallHandBack, check.cardShortfallCheck]).toEqual([false, true]);
   });
 });
