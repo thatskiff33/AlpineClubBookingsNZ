@@ -37,7 +37,7 @@ import correctStarterPrivacySubjectAccess from "./20261220010000_correct_starter
 import addSkifieldWhakapapaModule from "./20261221010000_add_skifield_whakapapa_module";
 import rewriteStarterPrivacyRecipients from "./20261222030000_rewrite_starter_privacy_recipients";
 import clubTaxSchedule from "./20261223020000_club_tax_schedule";
-import memberMoneyExportCoverageRelease from "./20261230010100_member_money_export_coverage_release";
+import memberMoneyExportCoverageRelease from "./20270102010100_member_money_export_coverage_release";
 import type { DataMigrationVerification } from "./types";
 
 /**
