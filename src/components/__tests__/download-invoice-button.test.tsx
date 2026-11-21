@@ -63,7 +63,7 @@ describe("BookingInvoiceControl", () => {
     expect(screen.queryByText(/GST|tax/i)).toBeNull();
     rerender(<BookingInvoiceControl bookingId="bk-1" offer={{ kind: "ASK_CLUB", staffViewer: true, reason: "REGISTERED_TAX_PERIOD" }} />);
     expect(screen.getByText(/period the club recorded as GST-registered/)).toBeInTheDocument();
-    expect(screen.getByText(/Check the club's accounts\./)).toBeInTheDocument();
+    expect(screen.getByText(/Provide one from the club's own records\./)).toBeInTheDocument();
     expect(screen.queryByText(/more than one invoice/)).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
   });
