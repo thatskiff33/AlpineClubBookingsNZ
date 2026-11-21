@@ -4,7 +4,7 @@ import { openHandBackOwedCents } from "../../manual-refund-task-settlement-rules
 import { isOwedCardRefundOperation, OPEN_CARD_REFUND_OPERATION_WHERE } from "../../open-card-refund-owed";
 import { exactPrefix } from "../../prisma-exact-prefix";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
-import { memberMoneyChainTip, refundObligationChain, refundPayableOpenCents } from "./refund-family";
+import { memberMoneyChainTip, refundPayableOpenCents } from "./refund-family";
 import { refundDoorOfObligationKey, resolveCardRefundObligation } from "./refund-obligation-map";
 import type { HandBackCensusClass } from "./refund-census";
 
@@ -112,7 +112,7 @@ async function journalCardRefunds(db: Db, bookingIds: readonly string[]): Promis
   const result = new Map<string, { keys: Set<string>; captureReturns: Set<string> }>();
   for (const operation of operations.filter(isOwedCardRefundOperation)) {
     const ref = await resolveCardRefundObligation(db, operation);
-    if (!ref || !(await refundObligationChain(db, ref.scope, ref.id)).live) continue;
+    if (!ref || !(await liveEvent(db, memberMoneyEventKeys.refundObligation(ref.scope, ref.id)))) continue;
     const own = result.get(operation.bookingId) ?? { keys: new Set<string>(), captureReturns: new Set<string>() };
     own.keys.add(operation.idempotencyKey);
     if (ref.scope === "capture-return") own.captureReturns.add(ref.id);
