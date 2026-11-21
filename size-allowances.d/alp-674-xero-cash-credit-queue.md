@@ -14,7 +14,7 @@ reason: the same one cron-health entry as above, in the file that holds the
   list.
 
 file: src/components/admin-sidebar.tsx
-lines: 1034
+lines: 1041
 reason: the Finance menu gains its Xero Unallocated Payments link and that
   link's icon import; the menu is one declarative list, and splitting the
   sidebar to absorb two lines would invent a seam for this change alone.
