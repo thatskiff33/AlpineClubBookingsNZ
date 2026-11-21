@@ -947,8 +947,9 @@ or alerts.
 - **One guarded write.** Every give-back, Retry requeue and kept-capture
   requeue writes PENDING through `returnOutboxRowToPending`. A still-queued
   request stays (a handler's checkpoint); over an execution request the queued
-  request the dispatch claimed is laid back, keeping only stored keys that do
-  not change how it reads, in one compare-and-set on the stored request; with
+  request the dispatch claimed is laid back, keeping only stored keys that
+  leave its reading unchanged, replacing a claimed value only with an
+  execution record, in one compare-and-set on the stored request; with
   neither, nothing is written, and the row fails or Retry answers 409. WAITING_PAYMENT releases flip only never-dispatched rows.
   `xero-pending-writer-census.test.ts` names every writer.
 - **Stuck rows are not sent from a guess.** The scan leaves out a PENDING row

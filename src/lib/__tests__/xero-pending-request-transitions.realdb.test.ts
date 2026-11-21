@@ -131,6 +131,18 @@ let sequence = 0;
         expect(payloads.readQueuedOutboxPayload(second.requestPayload)).toEqual(payloads.readQueuedOutboxPayload(QUEUED_NOTE));
       });
 
+      it("MUTATION: never lets a stored key dispatch reads outside the queued reading override the claimed request's value", async () => {
+        // `refundRequestId` (link role, idempotency-key scope) and `reviewTaskId` (`queuedReviewTaskId`) leave
+        // `readQueuedOutboxPayload` unchanged, so only the execution-record allow-list keeps a stored one out.
+        const claimed = { ...QUEUED_NOTE, refundRequestId: "rr-claimed", reviewTaskId: "task-claimed" };
+        const row = await seed({ queueType: "REFUND_CREDIT_NOTE", status: "FAILED", requestPayload: { ...EXECUTION_REQUEST, refundRequestId: "rr-stored", reviewTaskId: "task-stored" } });
+        await expect(pending.returnOutboxRowToPending({ operationId: row.id, where: GUARD, data: CLEARED, request: { keep: true, fallback: claimed } }))
+          .resolves.toEqual({ outcome: "pending", requestWritten: true });
+        const written = (await claimable(row.id)).requestPayload;
+        expect(written).toMatchObject({ refundRequestId: "rr-claimed", reviewTaskId: "task-claimed" });
+        expect(written).toMatchObject({ creditNotes: EXECUTION_REQUEST.creditNotes, allocation: EXECUTION_REQUEST.allocation });
+      });
+
       it("keeps a handler's checkpoint that is still a queued request, whatever its key order", async () => {
         const checkpoint = { watermarkCents: 5_000, documentDate: "2026-06-30", refundAmountCents: 5_000, queueType: "REFUND_CREDIT_NOTE" };
         const row = await seed({ queueType: "REFUND_CREDIT_NOTE", status: "FAILED", requestPayload: checkpoint });

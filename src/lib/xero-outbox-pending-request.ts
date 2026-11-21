@@ -21,6 +21,7 @@ import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { asRecord } from "@/lib/xero-json";
+import { PRIMARY_INVOICE_FEE_AT_LINK_KEY } from "@/lib/xero-primary-invoice-fee-at-link";
 import { readQueuedOutboxPayload, readQueuedOutboxRequestFor } from "@/lib/xero-operation-outbox-payload";
 
 type OperationStore = Pick<Prisma.TransactionClient, "xeroSyncOperation">;
@@ -58,21 +59,46 @@ export function sameStoredRequest(stored: Prisma.JsonValue | null): Prisma.JsonN
 }
 
 /**
+ * #5228 review: the execution-record keys a handler writes for one attempt -
+ * the document it built, its allocation and the figures it recorded at link.
+ * Only these may override the claimed request's own value, so on a second
+ * refusal the newer attempt's record wins over an earlier give-back's. An
+ * allow-list: a key dispatch reads straight from the stored request
+ * (`refundRequestId`, `reviewTaskId`) is never one of them.
+ */
+const EXECUTION_RECORD_KEYS: ReadonlySet<string> = new Set([
+  "creditNotes", // xero-credit-notes.ts, xero-modification-credit-notes.ts
+  "allocation", // xero-credit-notes.ts (refund note)
+  "allocations", // xero-modification-credit-notes.ts (booking note)
+  "invoices", // booking, group settlement and entrance-fee invoices
+  "priceLines", // itemised credit notes
+  "promoLines", // booking and group settlement invoices
+  "moneyBuildUp", // xero-booking-invoices.ts
+  "moneyReconciliation", // xero-booking-invoices.ts
+  "moneyReconciliationOnReplay", // xero-booking-invoices.ts
+  PRIMARY_INVOICE_FEE_AT_LINK_KEY, // persistPrimaryInvoiceLink
+]);
+
+/**
  * #5228 review: the queued request laid over the stored record. A handler can
  * record what it did on the same request before a later call is refused - the
  * booking invoice's figures at link (`persistPrimaryInvoiceLink`), which say
  * which card captures its payment already holds. Those stay. A stored key is
- * kept, over the claimed request's own value too, whenever it leaves the
- * queued reading (`readQueuedOutboxPayload`) unchanged, so the next run is
- * driven by exactly the request the dispatch claimed - never by an
- * execution-time `refundMethod` or watermark; if the whole still reads
- * differently, the queued request is written alone. Over the claimed value
- * because the claimed request can itself be an earlier give-back's layering:
- * on a second refusal the newer attempt's `creditNotes`, `allocation`,
- * `invoices` or figures at link win, never the first attempt's. The handler's "create reached" markers
- * (`creditNotes`, `invoices`) stay too: a pre-HTTP refusal may have hit a call
- * after a create that landed, and the give-back cannot tell which, so their
- * readers keep answering "may be in Xero" rather than risk a second document.
+ * taken only when it leaves the queued reading (`readQueuedOutboxPayload`)
+ * unchanged, so the next run is driven by exactly the request the dispatch
+ * claimed - never by an execution-time `refundMethod` or watermark - and only
+ * where the claimed request lacks the key, or the key is an execution record
+ * (`EXECUTION_RECORD_KEYS`). Any other value the claimed request holds stands,
+ * so `refundRequestId` and `reviewTaskId`, which dispatch reads outside the
+ * queued reading, always come from the claimed request. If the whole still
+ * reads differently, the queued request is written alone. Execution records
+ * override because the claimed request can itself be an earlier give-back's
+ * layering: on a second refusal the newer attempt's `creditNotes`,
+ * `allocation`, `invoices` or figures at link win. The handler's "create
+ * reached" markers (`creditNotes`, `invoices`) stay too: a pre-HTTP refusal
+ * may have hit a call after a create that landed, and the give-back cannot
+ * tell which, so their readers keep answering "may be in Xero" rather than
+ * risk a second document.
  */
 function layeredOverStored(stored: Prisma.JsonValue | null, queued: Prisma.JsonValue): Prisma.JsonValue {
   const storedRecord = asRecord(stored);
@@ -82,6 +108,7 @@ function layeredOverStored(stored: Prisma.JsonValue | null, queued: Prisma.JsonV
   const readsAsQueued = (candidate: Record<string, unknown>) => JSON.stringify(readQueuedOutboxPayload(candidate)) === reading;
   const layered: Record<string, unknown> = { ...queuedRecord };
   for (const [key, value] of Object.entries(storedRecord)) {
+    if (Object.hasOwn(queuedRecord, key) && !EXECUTION_RECORD_KEYS.has(key)) continue;
     if (readsAsQueued({ ...layered, [key]: value })) layered[key] = value;
   }
   return readsAsQueued(layered) ? (layered as Prisma.JsonObject) : queued;
