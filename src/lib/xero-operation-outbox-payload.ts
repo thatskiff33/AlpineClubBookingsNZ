@@ -1,4 +1,5 @@
 import type { EntranceFeeCategory } from "@prisma/client";
+import type { EntranceFeeContext } from "@/lib/xero-mappings";
 import { readAdminGrantCreditNotePayload, XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE, type AdminGrantCreditNotePayload } from "@/lib/admin-grant-credit-note-payload";
 import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, type OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
@@ -651,4 +652,31 @@ export function getQueuedOutboxExpectedOperation(
             : queueType === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE ? ["Payment"] // #4369
             : ["Member"],
   };
+}
+
+/** The entrance-fee context a queued invoice carries, so the worker need not re-read the fee. */
+export function buildPrecomputedEntranceFeeContext(
+  payload: QueuedOutboxPayload
+): EntranceFeeContext | null {
+  if (
+    payload.queueType !== XERO_OUTBOX_ENTRANCE_FEE_TYPE ||
+    !payload.category ||
+    payload.feeAmountCents === null ||
+    payload.feeAmountCents === undefined
+  ) {
+    return null;
+  }
+
+  const entranceFeeContext: EntranceFeeContext = {
+    category: payload.category,
+    feeMapping: {
+      itemCode: payload.itemCode ?? null,
+      amountCents: payload.feeAmountCents,
+    },
+  };
+  if (payload.description) {
+    entranceFeeContext.description = payload.description;
+  }
+
+  return entranceFeeContext;
 }

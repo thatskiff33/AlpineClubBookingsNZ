@@ -55,7 +55,6 @@ import {
   buildEntranceFeeInvoiceIdempotencyKey,
   ENTRANCE_FEE_EXEMPT_MESSAGE,
   getEntranceFeeContext,
-  type EntranceFeeContext,
 } from "@/lib/xero-mappings";
 import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
 import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-allocation";
@@ -99,6 +98,7 @@ import {
   type XeroInvoiceEmailInstruction,
 } from "@/lib/xero-invoice-email-instruction";
 import {
+  buildPrecomputedEntranceFeeContext,
   getQueuedOutboxExpectedOperation,
   readQueuedOutboxPayload,
   readQueueType,
@@ -123,7 +123,6 @@ import {
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
   XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
   type QueuedOutboxExpectedOperation,
-  type QueuedOutboxPayload,
 } from "@/lib/xero-operation-outbox-payload";
 import { linkReviewTaskId, queuedReviewTaskId, reviewTaskKeyParts } from "@/lib/xero-review-task-key";
 import { supplementaryInvoicePayload } from "@/lib/xero-supplementary-invoice-enqueue";
@@ -209,32 +208,6 @@ async function claimQueuedOutboxOperation(
       in: [...expectedOperation.localModels],
     },
   });
-}
-
-function buildPrecomputedEntranceFeeContext(
-  payload: QueuedOutboxPayload
-): EntranceFeeContext | null {
-  if (
-    payload.queueType !== XERO_OUTBOX_ENTRANCE_FEE_TYPE ||
-    !payload.category ||
-    payload.feeAmountCents === null ||
-    payload.feeAmountCents === undefined
-  ) {
-    return null;
-  }
-
-  const entranceFeeContext: EntranceFeeContext = {
-    category: payload.category,
-    feeMapping: {
-      itemCode: payload.itemCode ?? null,
-      amountCents: payload.feeAmountCents,
-    },
-  };
-  if (payload.description) {
-    entranceFeeContext.description = payload.description;
-  }
-
-  return entranceFeeContext;
 }
 
 export async function enqueueXeroEntranceFeeInvoiceOperation(
@@ -2401,8 +2374,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
         );
       } else if (payload?.queueType === XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE) {
         await createAdminGrantCreditNote({ syncOperation: claimed, payload });
-      } else if (payload?.queueType === XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE && contactDetailsOrganisationId) {
-        // #5245: a school's corrected email and phone, read fresh at send time.
+      } else if (payload?.queueType === XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE && contactDetailsOrganisationId) { // #5245: read fresh at send time
         await syncOrganisationContactDetails({ organisationId: contactDetailsOrganisationId, syncOperation: claimed, createdByMemberId: queuedOperation.createdByMemberId ?? undefined });
       } else if (
         payload?.queueType === XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE

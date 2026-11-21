@@ -689,15 +689,7 @@ export default async function AdminBookingsPage({
                             {owner.firstName} {owner.lastName}
                           </span>
                           <span className="block text-xs text-muted-foreground">{owner.email}</span>
-                          {/* #5245: the school's own record, corrected in place. */}
-                          {canEditBookings && booking.organisationId ? (
-                            <span className="mt-1 block">
-                              <SchoolContactEditor
-                                organisationId={booking.organisationId}
-                                schoolName={owner.firstName}
-                              />
-                            </span>
-                          ) : null}
+                          {/* #5245 */}{canEditBookings && booking.organisationId ? <span className="mt-1 block"><SchoolContactEditor organisationId={booking.organisationId} schoolName={owner.firstName} /></span> : null}
                         </span>
                       )}
                       {/* #3369: a phone number is a MEMBER's contact detail. A

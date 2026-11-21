@@ -30,7 +30,7 @@ import {
   type RetryableOperation,
 } from "@/lib/xero-operation-retry-requeue-payloads";
 import { XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE } from "@/lib/admin-grant-credit-note-payload";
-import { XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE } from "@/lib/organisation-contact-details-payload";
+import { organisationContactDetailsRetryLabel } from "@/lib/organisation-contact-details-payload";
 import { getModificationNetAmountCents } from "@/lib/xero-booking-repair-analysis";
 import type { Prisma, XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -1138,8 +1138,7 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     // A school's contact-person refresh and its organisation-shape correction
     // are both CONTACT UPDATEs on an Organisation. Re-resolving the school's
     // contact re-runs whichever of the two has not yet been recorded as done,
-    // so one replay covers both without a second handler. #5245's contact
-    // details row is the third, and its retry hands it back to the outbox.
+    // so one replay covers both without a second handler.
     if (operation.localModel === "Organisation" && operation.localId) {
       return { supported: true, reason: null };
     }
@@ -1377,14 +1376,11 @@ export async function retryXeroSyncOperation(
     };
   }
 
-  if (isAdminGrantCreditNoteRetry(operation)) {
-    await requeueOutboxRowForRetry(operation, null, ["FAILED", "PARTIAL"], "admin grant credit note");
-    return { message: "Queued admin grant credit note retry." };
-  }
-  // #5245: a school's contact details go back to the outbox, which reads them fresh.
-  if (operation.queueType === XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE) {
-    await requeueOutboxRowForRetry(operation, null, ["FAILED"], "school contact details");
-    return { message: "Queued the school's contact details for Xero again." };
+  // #5245: a school's contact details row goes back to the outbox too, which reads the details fresh.
+  const storedPayloadRequeue = organisationContactDetailsRetryLabel(operation) ?? (isAdminGrantCreditNoteRetry(operation) ? "admin grant credit note" : null);
+  if (storedPayloadRequeue) {
+    await requeueOutboxRowForRetry(operation, null, ["FAILED", "PARTIAL"], storedPayloadRequeue);
+    return { message: `Queued ${storedPayloadRequeue} retry.` };
   }
 
   // #3635: the kept late capture's invoice and #3642's group invoice rows go

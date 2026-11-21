@@ -42,3 +42,12 @@ export function organisationContactDetailsOrganisationId(op: {
 }): string | null {
   return op.localModel === ORGANISATION_LOCAL_MODEL ? op.localId : null;
 }
+
+/**
+ * The retry's label for a contact-details row, or null for any other row. Its
+ * retry hands the row back to the outbox with its stored payload, which holds
+ * no details: they are read fresh when it runs again.
+ */
+export function organisationContactDetailsRetryLabel(op: { queueType?: string | null }): string | null {
+  return op.queueType === XERO_OUTBOX_ORGANISATION_CONTACT_DETAILS_TYPE ? "school contact details" : null;
+}
