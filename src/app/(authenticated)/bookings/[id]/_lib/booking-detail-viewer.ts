@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import type { auth } from "@/lib/auth";
 import { hasAdminAccess } from "@/lib/access-roles";
@@ -113,3 +114,29 @@ export function resolveBookingDetailViewer({
 }
 
 export type BookingDetailViewer = ReturnType<typeof resolveBookingDetailViewer>;
+
+/**
+ * A REMOVED booking this member would be let onto as its owner or as a guest on
+ * it — the query form of `isBookingOwner || viewerGuestRow !== null` above, kept
+ * beside it so the two answers cannot drift (owner decision 20 Nov 2026, #5266;
+ * `INV-ADDPAY-034`).
+ *
+ * Role grants nothing here: a Booking Officer or read-only admin who is neither
+ * the owner nor a guest is not entitled to be told what became of a removed
+ * booking, and gets the same "not found" as a stranger. `memberId` is the owning
+ * member, so an organisation-owned booking matches no member through this arm,
+ * exactly as `bookingOwner(booking).memberId` never equals a member's id there.
+ */
+export function removedBookingEntitledViewerWhere(
+  bookingId: string,
+  viewerMemberId: string,
+): Prisma.BookingWhereInput {
+  return {
+    id: bookingId,
+    deletedAt: { not: null },
+    OR: [
+      { memberId: viewerMemberId },
+      { guests: { some: { memberId: viewerMemberId } } },
+    ],
+  };
+}

@@ -20,7 +20,8 @@ import { BookingConsentCards } from "./_components/booking-consent-cards";
 import { BookingStatusSection } from "./_components/booking-status-section";
 import { BookingAdminToolsSection } from "./_components/booking-admin-tools-section";
 import { BookingGuestDietaryCard } from "./_components/booking-guest-dietary-card";
-import { loadBookingDetail } from "./_lib/load-booking-detail";
+import { RemovedBookingNotice } from "@/components/removed-booking-notice";
+import { resolveBookingDetailEntry } from "./_lib/booking-detail-entry";
 import { resolveBookingDetailViewer } from "./_lib/booking-detail-viewer";
 import { resolveBookingDetailConsent } from "./_lib/booking-detail-consent";
 import { loadBookingDetailHistory } from "./_lib/booking-detail-history";
@@ -126,9 +127,25 @@ export default async function BookingDetailPage({
   // offered a member a self-removal control the very next check refused.
   const clubTodayDateOnly = dateOnlyInstantOf(club.today());
 
-  const booking = await loadBookingDetail(id);
-
-  if (!booking) notFound();
+  // #5266 (`INV-ADDPAY-034`): a removed booking is explained to its owner or a
+  // guest on it, and is the same plain "not found" as a never-valid id for
+  // everybody else. A Full Admin still gets the record (the guard below).
+  const entry = await resolveBookingDetailEntry({ id, session });
+  if (entry.kind === "REMOVED_FOR_VIEWER") {
+    return (
+      <div className="mx-auto max-w-2xl space-y-6">
+        <h1 className="text-3xl font-bold">Booking Details</h1>
+        <RemovedBookingNotice
+          links={[
+            { href: "/bookings", label: "My bookings" },
+            { href: "/dashboard", label: "Back to the dashboard" },
+          ]}
+        />
+      </div>
+    );
+  }
+  if (entry.kind === "NOT_FOUND") notFound();
+  const { booking } = entry;
   const viewer = resolveBookingDetailViewer({ session, booking });
   const {
     isAdmin,
