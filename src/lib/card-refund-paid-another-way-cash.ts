@@ -138,7 +138,7 @@ export interface PaidAnotherWayCash {
 
 type CashStore = Pick<
   Prisma.TransactionClient,
-  "manualRefundTask" | "paymentRecoveryOperation" | "xeroObjectLink" | "xeroSyncOperation"
+  "manualRefundTask" | "paymentRecoveryOperation" | "paymentTransaction" | "xeroObjectLink" | "xeroSyncOperation"
 >;
 
 /** One close on the payment, and how its bank cash counts (see the module comment). */

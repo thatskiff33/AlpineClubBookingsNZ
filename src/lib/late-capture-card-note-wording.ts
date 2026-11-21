@@ -13,3 +13,15 @@
 export function cardNoteMayBeInXeroSentence(amountLabel: string): string {
   return `A refund credit note for ${amountLabel} refunded to the card may be in Xero: the app tried to send it and cannot tell whether Xero took it. Check Xero for that credit note first, and record that ${amountLabel} by hand only if Xero does not hold it.`;
 }
+
+/**
+ * #4383 (`INV-PAY-110`): WHAT AN OFFICER IS TOLD of a late capture's card
+ * refunds above what its capped receipt recorded
+ * (`readUnnotedLateCaptureCardRefunds`, `aboveRecordedCents`). The app's note
+ * stops at what Xero received; the rest of the refund matches the part the
+ * receipt's alert asked the officer to record by hand, so it is recorded by
+ * hand only if that part was. Pure: the one home of the sentence (`INV-SSOT`).
+ */
+export function cardRefundAboveRecordedSentence(amountLabel: string): string {
+  return `Xero's receipt for this card payment recorded only part of it, so the app's refund credit note stops at that part. If an officer recorded the rest of the payment in Xero by hand, as the receipt's alert asked, record the ${amountLabel} of the refund above it by hand too; if not, record nothing.`;
+}
