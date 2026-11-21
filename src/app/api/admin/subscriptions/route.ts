@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
+import {
+  Prisma,
+  type AgeTier,
+  type MembershipTypeSubscriptionBehavior,
+  type SubscriptionStatus,
+} from "@prisma/client";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
@@ -11,10 +16,10 @@ import {
   getXeroContactGroupMemberships,
   getXeroContactIdsForGroup,
 } from "@/lib/xero-contact-groups";
-import {
-  NON_MEMBER_ROLE_VALUES,
-  OPERATIONAL_ROLE_VALUES,
-} from "@/lib/member-roles";
+import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
+import type { SubscriptionLiabilitySettings } from "@/lib/policies/subscription";
+import type { AgeTierSettingData } from "@/lib/age-tier";
+import { subscriptionNotRequiredMemberConditions } from "@/lib/subscription-liability-where";
 import {
   effectiveSubscriptionBehavior,
   isSubscriptionNotRequiredForMembershipType,
@@ -85,26 +90,31 @@ type SubscriptionCandidate = {
 function isNotRequiredMember(
   member: {
     role: string;
-    ageTier: string;
+    ageTier: AgeTier;
+    dateOfBirth: Date | null;
     seasonalMembershipAssignments?: Array<{
-      membershipType: { subscriptionBehavior: string };
+      membershipType: { subscriptionBehavior: MembershipTypeSubscriptionBehavior };
     }>;
   },
-  notRequiredAgeTiers: Set<string>,
-  seasonSubscriptionStatus?: string
+  rule: {
+    seasonYear: number;
+    ageTierSettings: AgeTierSettingData[];
+    liabilitySettings: SubscriptionLiabilitySettings;
+  },
+  seasonSubscriptionStatus?: SubscriptionStatus
 ) {
-  // #2149: membership type is the sole authority (role carries no exemption).
-  // Uses the shared derivation so this admin list agrees with the members list,
-  // export, profile, and the booking gate.
+  // #2149/#5190: membership type is the sole authority (role carries no
+  // exemption), through the shared liability rule, so this admin list agrees
+  // with the members list, export, profile, and the booking gate.
   return isSubscriptionNotRequiredForMembershipType({
     subscriptionBehavior: effectiveSubscriptionBehavior(
       member.seasonalMembershipAssignments?.[0]?.membershipType
-        .subscriptionBehavior as never,
+        .subscriptionBehavior,
       member.role
     ),
-    ageTier: member.ageTier,
-    notRequiredAgeTiers,
-    hasNotRequiredSeasonRow: seasonSubscriptionStatus === "NOT_REQUIRED",
+    member,
+    seasonRowStatus: seasonSubscriptionStatus,
+    ...rule,
   });
 }
 
@@ -189,12 +199,11 @@ export async function GET(request: NextRequest) {
     parsed.data.seasonYear ?? clubSeasonYear(await clubTimeZone());
 
   try {
-    const ageTierSettings = await getAgeTierSettings();
-    const notRequiredAgeTiers = new Set(
-      ageTierSettings
-        .filter((setting) => setting.subscriptionRequiredForBooking === false)
-        .map((setting) => setting.tier)
-    );
+    const [ageTierSettings, lockoutSettings] = await Promise.all([
+      getAgeTierSettings(),
+      loadMembershipLockoutSettings(),
+    ]);
+    const liabilityRule = { seasonYear, ageTierSettings, liabilitySettings: lockoutSettings };
     const memberWhere: Prisma.MemberWhereInput = { archivedAt: null };
 
     if (ageTier !== "all") {
@@ -211,35 +220,15 @@ export async function GET(request: NextRequest) {
       summaryWhere.member = memberWhere;
     }
 
-    // #2149: membership type is the authority — exempt when the assigned season
-    // type is NOT_REQUIRED, or (no assignment) the role's default built-in type
-    // is NOT_REQUIRED. Guarding the role clause on "no assignment" keeps a
-    // fee-paying admin (REQUIRED assignment) out of this not-required set.
+    // #2149/#5190: the members the shared liability rule exempts, built from the
+    // same settings as the per-row flag. A saved row is judged per row below,
+    // so the row clause is left out here.
     const notRequiredWhere: Prisma.MemberWhereInput = {
       ...memberWhere,
-      OR: [
-        {
-          AND: [
-            { seasonalMembershipAssignments: { none: { seasonYear } } },
-            {
-              role: {
-                in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES],
-              },
-            },
-          ],
-        },
-        {
-          seasonalMembershipAssignments: {
-            some: {
-              seasonYear,
-              membershipType: { subscriptionBehavior: "NOT_REQUIRED" },
-            },
-          },
-        },
-        ...(notRequiredAgeTiers.size > 0
-          ? [{ ageTier: { in: Array.from(notRequiredAgeTiers) } }]
-          : []),
-      ],
+      OR: subscriptionNotRequiredMemberConditions({
+        ...liabilityRule,
+        includeSeasonRowExemption: false,
+      }),
     };
 
     const [subscriptions, notRequiredMembers] = await Promise.all([
@@ -252,6 +241,8 @@ export async function GET(request: NextRequest) {
               lastName: true,
               email: true,
               ageTier: true,
+              // #5190: read by the liability rule only; never serialised.
+              dateOfBirth: true,
               role: true,
               canLogin: true,
               passwordChangedAt: true,
@@ -310,7 +301,7 @@ export async function GET(request: NextRequest) {
     for (const subscription of subscriptions) {
       const displayStatus = isNotRequiredMember(
         subscription.member,
-        notRequiredAgeTiers,
+        liabilityRule,
         subscription.status
       )
         ? "NOT_REQUIRED"

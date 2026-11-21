@@ -81,12 +81,9 @@ import { ensureMemberAccessRoles } from "@/lib/member-access-role-writes";
 import { issueActionToken } from "@/lib/action-tokens";
 import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
 import { nameField } from "@/lib/zod-helpers";
-import {
-  NON_MEMBER_ROLE_VALUES,
-  OPERATIONAL_ROLE_VALUES,
-  ROLE_VALUES,
-  isRole,
-} from "@/lib/member-roles";
+import { ROLE_VALUES, isRole } from "@/lib/member-roles";
+import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
+import { subscriptionNotRequiredMemberConditions } from "@/lib/subscription-liability-where";
 import {
   accessRoleChangeRequiresFullAdmin,
   accessRolesFromCompatibilityFields,
@@ -358,64 +355,18 @@ export async function listAdminMembers(
     await readClubTimeZoneOutsideRequest(),
     fixedClubClock(now),
   );
-  const ageTierSettings = await getAgeTierSettings();
-  const notRequiredAgeTiers = new Set(
-    ageTierSettings
-      .filter((setting) => setting.subscriptionRequiredForBooking === false)
-      .map((setting) => setting.tier),
-  );
-  // #2149: the SQL exempt-filter must derive from the SAME source as the
-  // displayed flag, so it cannot key off role alone. Membership type is the
-  // authority: a member is exempt when their assigned season type is NOT_REQUIRED,
-  // OR — with no season assignment — their role's DEFAULT built-in type is
-  // NOT_REQUIRED (the role→default-type fallback the resolver applies). Roles
-  // whose default type is NOT_REQUIRED are exactly OPERATIONAL + NON_MEMBER
-  // (ADMIN/LODGE/NON_MEMBER/SCHOOL); USER defaults to FULL (REQUIRED). Guarding
-  // the role clause on "no assignment" is what stops a fee-paying admin (role
-  // ADMIN with a REQUIRED assignment) from being wrongly filtered as exempt.
-  const notRequiredSubscriptionConditions = [
-    {
-      AND: [
-        {
-          seasonalMembershipAssignments: {
-            none: { seasonYear: currentSeasonYear },
-          },
-        },
-        { role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] }, },
-      ],
-    },
-    {
-      seasonalMembershipAssignments: {
-        some: {
-          seasonYear: currentSeasonYear,
-          membershipType: { subscriptionBehavior: "NOT_REQUIRED" },
-        },
-      },
-    },
-    // #2041/#2149: mirror the displayed flag's row-dominance branch. A
-    // BASED_ON_AGE_TIER assignment paired with a NOT_REQUIRED current-season
-    // subscription row is exempt even when the member's age tier is
-    // subscription-liable (the mid-season tier-promotion shape). This clause
-    // matches `isSubscriptionNotRequiredForMembershipType`'s
-    // `subscriptionBehavior === "BASED_ON_AGE_TIER" && hasNotRequiredSeasonRow`
-    // branch exactly — the assignment gate is required because a bare NOT_REQUIRED
-    // row does NOT exempt a REQUIRED type, and effective behavior is only
-    // BASED_ON_AGE_TIER when a season assignment carries it (no role default does).
-    {
-      seasonalMembershipAssignments: {
-        some: {
-          seasonYear: currentSeasonYear,
-          membershipType: { subscriptionBehavior: "BASED_ON_AGE_TIER" },
-        },
-      },
-      subscriptions: {
-        some: { seasonYear: currentSeasonYear, status: "NOT_REQUIRED" },
-      },
-    },
-    ...(notRequiredAgeTiers.size > 0
-      ? [{ ageTier: { in: Array.from(notRequiredAgeTiers) } }]
-      : []),
-  ];
+  const [ageTierSettings, lockoutSettings] = await Promise.all([
+    getAgeTierSettings(),
+    loadMembershipLockoutSettings(),
+  ]);
+  // #2149/#5190: the SQL exempt-filter derives from the SAME rule and settings as
+  // the displayed flag (`isSubscriptionNotRequiredForMembershipType`): the access
+  // side of the shared liability rule. See `subscriptionNotRequiredMemberConditions`.
+  const notRequiredSubscriptionConditions = subscriptionNotRequiredMemberConditions({
+    seasonYear: currentSeasonYear,
+    ageTierSettings,
+    liabilitySettings: lockoutSettings,
+  });
 
   // Build where clause
   const where: Record<string, unknown> = {};
@@ -1194,9 +1145,11 @@ export async function listAdminMembers(
         currentMembershipType?.subscriptionBehavior,
         m.role,
       ),
-      ageTier: m.ageTier,
-      notRequiredAgeTiers,
-      hasNotRequiredSeasonRow: m.subscriptions?.[0]?.status === "NOT_REQUIRED",
+      member: m,
+      seasonRowStatus: m.subscriptions?.[0]?.status,
+      seasonYear: currentSeasonYear,
+      ageTierSettings,
+      liabilitySettings: lockoutSettings,
     });
 
     return {
