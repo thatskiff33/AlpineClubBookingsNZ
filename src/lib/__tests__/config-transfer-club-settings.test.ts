@@ -756,6 +756,9 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
       // #2178: the fee-schedule paid-detection toggle now travels too.
       useFeeScheduleItemCodes:
         DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS.useFeeScheduleItemCodes,
+      // #5190: the subscription-liability pair, NOT_CHOSEN until a club opts in.
+      requiredTypeAgeRule: "NOT_CHOSEN",
+      liabilityAgeSource: "NOT_CHOSEN",
     });
 
     // Default COPY travels too, so the target reads the same words.
@@ -1047,6 +1050,74 @@ describe("membership-lockout useFeeScheduleItemCodes round-trips (#2178)", () =>
     // No write at all: the only bundle fields equal the target, and the omitted
     // useFeeScheduleItemCodes is never touched.
     expect(delegates.membershipLockoutSettings.upsert).not.toHaveBeenCalled();
+  });
+});
+
+// #5190 — the subscription-liability pair travels whole and chosen, or not at
+// all: a bundle can opt a target in, but its NOT_CHOSEN (or a half pair) never
+// overwrites a target's choice, and CURRENT_AGE is refused until it opens.
+describe("membership-lockout subscription-liability pair (#5190)", () => {
+  const lockoutBundle = (body: Record<string, unknown>) =>
+    buildBundle({
+      entries: [
+        {
+          path: "club-settings/membership-lockout-settings.json",
+          category: "club-settings",
+          rowCount: 1,
+          bytes: strToU8(JSON.stringify({ ...DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS, ...body })),
+        },
+      ],
+      appVersion: "0.20.0",
+      prismaMigration: null,
+      includedCategories: ["club-settings"],
+      doorCodesIncluded: false,
+      generatedAt: "2026-07-08T00:00:00.000Z",
+    });
+  const chosenTarget = {
+    ...DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS,
+    requiredTypeAgeRule: "AGE_TIER_EXEMPTS",
+    liabilityAgeSource: "SEASON_END",
+  };
+
+  it("opts a NOT_CHOSEN target in with a chosen pair", async () => {
+    const zip = lockoutBundle({ requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_START" });
+    const target = { ...DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS };
+    const plan = await buildImportPlan(stubDb({ membershipLockoutSettings: target }), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
+    const item = plan.categories[0].items.find((i) => i.entity === "membership-lockout-settings");
+    expect(item?.changedFields).toEqual(["requiredTypeAgeRule", "liabilityAgeSource"]);
+
+    const { files } = readBundle(zip);
+    const { tx, delegates } = stubTx({ membershipLockoutSettings: target });
+    await clubSettingsImporter.apply(applyCtx(tx, files, "merge"));
+    expect(delegates.membershipLockoutSettings.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_START" }),
+      }),
+    );
+  });
+
+  it.each([
+    ["a NOT_CHOSEN pair", { requiredTypeAgeRule: "NOT_CHOSEN", liabilityAgeSource: "NOT_CHOSEN" }],
+    ["a half pair", { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "NOT_CHOSEN" }],
+  ])("never overwrites a chosen target with %s, even in overwrite mode", async (_label, pair) => {
+    const zip = lockoutBundle(pair);
+    const plan = await buildImportPlan(stubDb({ membershipLockoutSettings: chosenTarget }), zip, { format: CLUB_FORMAT_TEST, mode: "overwrite" });
+    const item = plan.categories[0].items.find((i) => i.entity === "membership-lockout-settings");
+    expect(item?.action).toBe("unchanged");
+    expect(plan.categories[0].errors).toEqual([]);
+
+    const { files } = readBundle(zip);
+    const { tx, delegates } = stubTx({ membershipLockoutSettings: chosenTarget });
+    await clubSettingsImporter.apply(applyCtx(tx, files, "overwrite"));
+    expect(delegates.membershipLockoutSettings.upsert).not.toHaveBeenCalled();
+  });
+
+  it("fails the dry-run on CURRENT_AGE, which needs part-season invoices", async () => {
+    const zip = lockoutBundle({ requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "CURRENT_AGE" });
+    const plan = await buildImportPlan(stubDb({ membershipLockoutSettings: chosenTarget }), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
+    expect(plan.categories[0].errors).toEqual([
+      expect.stringContaining("liabilityAgeSource - CURRENT_AGE cannot be chosen yet"),
+    ]);
   });
 });
 
