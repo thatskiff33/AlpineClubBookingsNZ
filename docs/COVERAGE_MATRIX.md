@@ -188,6 +188,10 @@ flagging for #2050 scoping:
   `school-attendee-confirmations` cron (`ARCHITECTURE.md`), not a
   `/admin/school-bookings` page. Cover it as a cross-cutting topic within the
   bookings-cluster guide rather than expecting a standalone page.
+  The same holds for correcting a school's own email and phone (#5245): an
+  **Edit school details** dialog reached from `bookings` and `booking-requests`,
+  not a school directory page. Its API, `/api/admin/organisations`, is in the
+  bookings permission area.
 - **"membership-types/setup" is two adjacent routes**, `membership-types` and
   `membership-setup` (plus `member-fields`). Decide in #2050 whether they are
   one guide or three; they share the Membership permission area.

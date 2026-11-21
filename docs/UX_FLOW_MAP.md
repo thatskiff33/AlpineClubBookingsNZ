@@ -247,7 +247,7 @@ Screen: `/admin/booking-requests`.
 
 Shows: Four request queue tabs, each with its pending count across every page, and request details with their current status and actions. Each queue pages 25 rows with a "Showing 1–25 of 40" total line; pending filters list the oldest first (INV-OPS-020). A deep link to one booking or request pins it above the page when it is elsewhere.
 
-Journey: Open on the first tab with pending work (Approvals when none), open a request, inspect the proposed stay, and use its available actions.
+Journey: Open on the first tab with pending work (Approvals when none), open a request, inspect the proposed stay, and use its available actions. On a school request, **Correct this request** names the school on record and offers **Edit school details** for its own email and phone (#5245).
 
 [Guide](guides/booking-requests.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -255,7 +255,7 @@ Journey: Open on the first tab with pending work (Approvals when none), open a r
 
 Screen: `/admin/bookings`.
 
-Shows: A filterable booking list and calendar with status pills; booking detail holds the stay, party, status and next actions.
+Shows: A filterable booking list and calendar with status pills; booking detail holds the stay, party, status and next actions. A school's row offers **Edit school details** to an officer who can edit bookings (#5245).
 
 Journey: Filter the list, open a booking, and inspect its dates, guests and status before acting.
 
