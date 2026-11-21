@@ -17,14 +17,14 @@
  * (#4219, `isClosedByCreditSpentOutsideApp`) had nothing made by hand: its alert
  * says the credit ledger and Xero may now disagree instead.
  *
- * The send is once-ever and best-effort. If it throws before reaching anyone,
- * its claim write throws (#4696), or nobody can receive it,
- * `sendAdminAlertOnceEver` gives the claim back or defers it, but nothing calls
- * again unless another success lands on the row: the warning in the log is
- * then the only trace (a stated limit, `INV-INT-029`).
+ * The send is once-ever. Nothing calls again unless another success lands on
+ * the row, so the alert is stored for the payments cron's sweep
+ * (`sendReplayableAdminAlertOnceEver`, #5255, `INV-INT-041`): a send that
+ * throws, reaches nobody, or whose claim write throws is re-sent from the
+ * stored alert until it is out, for up to 7 days.
  */
 import type { XeroSyncOperation } from "@prisma/client";
-import { sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
+import { sendReplayableAdminAlertOnceEver } from "@/lib/admin-alert-once-replayable";
 import logger from "@/lib/logger";
 import {
   isClosedByCreditSpentOutsideApp,
@@ -65,7 +65,7 @@ function alertMessage(operation: XeroSyncOperation): string {
  * changes the mark, so the mark read is the one the success landed on.
  *
  * The answer is a thunk to run after that transaction commits, outside it - it
- * sends an email. It never throws (`sendAdminAlertOnceEver`), and a repeat
+ * sends an email. It never throws (`sendReplayableAdminAlertOnceEver`), and a repeat
  * logs again but sends nothing.
  */
 export function successAfterResolutionAlert(
@@ -187,18 +187,16 @@ function alertOnce(
   const context = { operationId: operation.id, localModel: operation.localModel, localId: operation.localId, ...objects };
   return async () => {
     logger.warn(context, warning);
-    await sendAdminAlertOnceEver({
+    await sendReplayableAdminAlertOnceEver({
       key,
       label: "Xero success-after-resolution alert",
       context,
-      send: async () => {
-        const { sendAdminXeroSyncErrorAlert } = await import("./email");
-        return sendAdminXeroSyncErrorAlert({
-          errorType: "XERO_SUCCESS_AFTER_RESOLUTION",
-          operation: `${operation.operationType} ${operation.entityType} for ${operation.localModel ?? "record"} ${operation.localId ?? "unknown"} (outbox operation ${operation.id})`,
-          errorMessage,
-          timestamp: new Date(),
-        });
+      alert: {
+        kind: "xero-sync-error",
+        errorType: "XERO_SUCCESS_AFTER_RESOLUTION",
+        operation: `${operation.operationType} ${operation.entityType} for ${operation.localModel ?? "record"} ${operation.localId ?? "unknown"} (outbox operation ${operation.id})`,
+        errorMessage,
+        timestamp: new Date().toISOString(),
       },
     });
   };

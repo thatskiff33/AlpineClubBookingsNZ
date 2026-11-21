@@ -10,11 +10,12 @@
  * backs that sentence: the officers are told, once ever per booking, how much
  * was not refunded automatically and that it is theirs to check and settle.
  *
- * Once ever through the one rule (`sendAdminAlertOnceEver`): a send that
- * reached an admin keeps its claim, so a redelivered webhook never repeats it.
- * A send that threw gives the claim back, but nothing re-runs this - the
- * capacity race happens once - so that loss is logged, and the booking page
- * still says the club will be in touch.
+ * Once ever through the one rule, stored for the sweep
+ * (`sendReplayableAdminAlertOnceEver`, #5255): a send that reached an admin
+ * keeps its claim, so a redelivered webhook never repeats it. Nothing re-runs
+ * this - the capacity race happens once - so a send that threw, reached
+ * nobody, or whose claim was lost is re-sent by the payments cron's sweep from
+ * the stored alert, for up to 7 days (`INV-INT-041`).
  *
  * #4154 (`INV-PAY-135`): the rest is also recorded, as #4097's card refund
  * shortfall part to CHECK (a `CANCELLED_BOOKING_HAND_BACK` keyed
@@ -35,13 +36,12 @@
  */
 import type { Prisma } from "@prisma/client";
 
-import { sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
+import { sendReplayableAdminAlertOnceEver } from "@/lib/admin-alert-once-replayable";
 import { raiseCardShortfallPart } from "@/lib/cancel-card-refund-shortfall";
 import { capacityRaceShortfallOccurrenceKey } from "@/lib/capacity-race-shortfall-task-key";
 import type { ClubFormat } from "@/lib/club-format";
 import logger from "@/lib/logger";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
-import { alertPaymentRecoveryOfficers, NOBODY_ALERTED } from "@/lib/payment-recovery-alert";
 import { formatCents } from "@/lib/utils";
 import type { BookingJournalContext } from "@/lib/member-money/doors";
 
@@ -125,19 +125,17 @@ export async function alertCapacityRaceRefundShortfall(
   if (remainderCents <= 0) return false;
   const context = { bookingId: input.bookingId, paymentIntentId: input.paymentIntentId, chargedCents: input.chargedCents, plannedRefundCents: input.plannedRefundCents };
   logger.error(context, "Capacity-race refund plan covers less than the captured amount; refunding what the payment ledger shows refundable");
-  return sendAdminAlertOnceEver({
+  return sendReplayableAdminAlertOnceEver({
     key: capacityRaceRefundShortfallAlertKey(input.bookingId),
     label: "capacity-race refund shortfall alert",
     context,
-    send: async () =>
-      (await alertPaymentRecoveryOfficers(
-        {
-          bookingId: input.bookingId,
-          amountCents: remainderCents,
-          paymentIntentId: input.paymentIntentId,
-          errorMessage: capacityRaceRefundShortfallMessage(input, format, input.taskRaised),
-        },
-        format,
-      )) ?? NOBODY_ALERTED,
+    alert: {
+      kind: "payment-recovery",
+      bookingId: input.bookingId,
+      amountCents: remainderCents,
+      paymentIntentId: input.paymentIntentId,
+      errorMessage: capacityRaceRefundShortfallMessage(input, format, input.taskRaised),
+    },
+    format,
   });
 }

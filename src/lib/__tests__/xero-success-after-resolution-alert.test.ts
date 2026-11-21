@@ -27,17 +27,20 @@ import { TEST_XERO_CLAIMED_AT, xeroClaim } from "./helpers/xero-claim";
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn(),
   upsert: vi.fn(), claim: vi.fn(), send: vi.fn(), warn: vi.fn(), repeatedFailure: vi.fn(),
+  markOwed: vi.fn(async () => undefined), settleOwed: vi.fn(async () => undefined),
 }));
 const store = {
   xeroSyncOperation: { updateMany: mocks.updateMany, findUnique: mocks.findUnique, findUniqueOrThrow: mocks.findUniqueOrThrow },
   xeroObjectLink: { upsert: mocks.upsert },
 };
-vi.mock("@/lib/prisma", () => ({ prisma: { $transaction: mocks.transaction } }));
+vi.mock("@/lib/prisma", () => ({ prisma: { $transaction: mocks.transaction, alertCooldown: { findUnique: vi.fn(async () => null) } } }));
 vi.mock("@/lib/alert-cooldown", () => ({
   ALERT_ONCE_EVER_WINDOW_MS: 1_000_000,
   ALERT_NOBODY_ELIGIBLE_RETRY_MS: 1000,
   claimAlertCooldown: mocks.claim,
   deferAlertCooldown: vi.fn(async () => undefined), releaseAlertCooldown: vi.fn(async () => undefined),
+  // #5255: the alert is stored for the sweep and settled once sent.
+  markAlertOwed: mocks.markOwed, settleOwedAlert: mocks.settleOwed, confirmAlertCooldownSend: vi.fn(async () => true),
 }));
 vi.mock("@/lib/email", () => ({ sendAdminXeroSyncErrorAlert: mocks.send }));
 vi.mock("@/lib/logger", () => ({ default: { warn: mocks.warn, error: vi.fn(), info: vi.fn() } }));
@@ -110,6 +113,12 @@ describe("#4374: a success landing after an officer resolved the operation in Xe
       expect(mocks.claim).toHaveBeenCalledTimes(2);
       expect(mocks.claim).toHaveBeenCalledWith(expect.objectContaining({ key: xeroSuccessAfterResolutionAlertKey(OPERATION_ID) }));
       expect(mocks.send).toHaveBeenCalledTimes(1);
+      // #5255: nothing raises it again, so the alert is stored for the sweep, and settled once sent.
+      expect(mocks.markOwed).toHaveBeenCalledWith(expect.objectContaining({
+        key: `once-ever-owed:${xeroSuccessAfterResolutionAlertKey(OPERATION_ID)}`,
+        replayAlert: expect.objectContaining({ alert: expect.objectContaining({ kind: "xero-sync-error", errorType: "XERO_SUCCESS_AFTER_RESOLUTION" }) }),
+      }));
+      expect(mocks.settleOwed).toHaveBeenCalledTimes(1);
       expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({
         errorType: "XERO_SUCCESS_AFTER_RESOLUTION",
         operation: "CREATE PAYMENT for Payment payment-late (outbox operation op-late)",

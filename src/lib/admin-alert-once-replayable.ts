@@ -116,12 +116,13 @@ export async function sendStoredAlertOnceEver({
     context,
     send: () => sendReplayableAlert(stored.alert, format),
   });
-  if (kept) {
-    await settleOwedAlert({ key: onceEverOwedKey(key) }).catch((err) =>
-      logger.error({ ...context, err }, `Failed to settle the sent ${stored.label}; the sweep settles it`),
-    );
+  if (!kept) return false;
+  try {
+    await settleOwedAlert({ key: onceEverOwedKey(key) });
+  } catch (err) {
+    logger.error({ ...context, err }, `Failed to settle the sent ${stored.label}; the sweep settles it`);
   }
-  return kept;
+  return true;
 }
 
 /** Loaded on use: the payment ledger reaches some callers, and these senders reach back to it. */

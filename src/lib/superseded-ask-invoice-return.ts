@@ -42,9 +42,8 @@
  */
 import type { Prisma } from "@prisma/client";
 
-import { sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
+import { sendReplayableAdminAlertOnceEver } from "@/lib/admin-alert-once-replayable";
 import { anchorCaptureHasReceipt } from "@/lib/additional-capture-receipt-link";
-import { sendAdminXeroSyncErrorAlert } from "@/lib/email";
 import { prisma } from "@/lib/prisma";
 import {
   SUPPLEMENTARY_INVOICE_MOVED_UNPAID_KEY,
@@ -113,8 +112,11 @@ export async function returnMovedInvoicesToCapturedIntent(paymentIntentId: strin
 /**
  * Review 2 (F3): a kept capture of a request that an invoice was taken back
  * from paid that change a second time; nothing bills that part of it. One
- * officer alert per invoice, ever (`sendAdminAlertOnceEver`): the webhook, the
- * confirm route, the reaper and a treasurer's keep may all release this capture.
+ * officer alert per invoice, ever: the webhook, the confirm route, the reaper
+ * and a treasurer's keep may all release this capture, but none is sure to
+ * come again, so the alert is stored for the payments cron's sweep, which
+ * re-sends it until it is out (`sendReplayableAdminAlertOnceEver`, #5255,
+ * `INV-INT-041`).
  */
 export async function alertTakenBackInvoicesPaidAgain(paymentIntentId: string): Promise<number> {
   const takenBack = await prisma.xeroSyncOperation.findMany({
@@ -127,17 +129,17 @@ export async function alertTakenBackInvoicesPaidAgain(paymentIntentId: string): 
   });
   for (const operation of takenBack) {
     const payload = asRecord(operation.requestPayload) ?? {};
-    await sendAdminAlertOnceEver({
+    await sendReplayableAdminAlertOnceEver({
       key: `supplementary-invoice-paid-twice:${readString(payload.bookingId) ?? "booking"}:${operation.id}`,
       label: "change-paid-twice alert",
       context: { operationId: operation.id, paymentIntentId },
-      send: () =>
-        sendAdminXeroSyncErrorAlert({
-          errorType: "SUPPLEMENTARY_INVOICE_CHANGE_PAID_TWICE",
-          operation: `Supplementary invoice for booking change ${operation.localId ?? "unknown"}`,
-          errorMessage: `Booking change ${operation.localId ?? "unknown"} was paid twice by card: by its own payment request ${readString(payload.paymentIntentId) ?? "unknown"}, and again inside the later request ${paymentIntentId}, which carried its unpaid balance. Both payments were kept. The change's Xero supplementary invoice (outbox operation ${operation.id}) records the first; nothing in Xero bills that part of the second. Refund or credit the member the change's amount, or record it in Xero by hand.`,
-          timestamp: new Date(),
-        }),
+      alert: {
+        kind: "xero-sync-error",
+        errorType: "SUPPLEMENTARY_INVOICE_CHANGE_PAID_TWICE",
+        operation: `Supplementary invoice for booking change ${operation.localId ?? "unknown"}`,
+        errorMessage: `Booking change ${operation.localId ?? "unknown"} was paid twice by card: by its own payment request ${readString(payload.paymentIntentId) ?? "unknown"}, and again inside the later request ${paymentIntentId}, which carried its unpaid balance. Both payments were kept. The change's Xero supplementary invoice (outbox operation ${operation.id}) records the first; nothing in Xero bills that part of the second. Refund or credit the member the change's amount, or record it in Xero by hand.`,
+        timestamp: new Date().toISOString(),
+      },
     });
   }
   return takenBack.length;

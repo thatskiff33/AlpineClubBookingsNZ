@@ -27,13 +27,15 @@
  * already closed, or held or re-planned by another writer, is logged and left
  * to the runner; a row still untouched that would not close is an anomaly -
  * logged and alerted to the officers once for the row, naming the refund.
+ * Nothing raises that alert again, so it is stored for the payments cron's
+ * sweep, which re-sends it until it is out (`sendReplayableAdminAlertOnceEver`,
+ * #5255, `INV-INT-041`).
  */
 import { PaymentRecoveryOperationStatus, type Prisma } from "@prisma/client";
 
-import { sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
+import { sendReplayableAdminAlertOnceEver } from "@/lib/admin-alert-once-replayable";
 import type { ClubFormat } from "@/lib/club-format";
 import logger from "@/lib/logger";
-import { NOBODY_ALERTED, alertPaymentRecoveryOfficers } from "@/lib/payment-recovery-alert";
 import { isUntouchedPrePersistedRow } from "@/lib/payment-recovery-constants";
 import type { RefundAllocationSlice } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
@@ -167,21 +169,19 @@ export async function reportLostPrePersistedClose(lost: LostCloseContext): Promi
       logger.warn({ ...context, operationId: row.id }, `The lost close alert for ${name} was not sent: the booking no longer exists (#4144)`);
       return;
     }
-    await sendAdminAlertOnceEver({
+    await sendReplayableAdminAlertOnceEver({
       key: `${lost.door}-close-lost:${row.id}`,
       label: `lost ${lost.door} close alert`,
       context: { ...context, operationId: row.id },
-      send: async () =>
-        (await alertPaymentRecoveryOfficers(
-          {
-            bookingId: lost.bookingId,
-            operationId: row.id,
-            amountCents: lost.amountCents,
-            paymentIntentId: lost.paymentIntentId,
-            errorMessage: `${refundLabel} was made at Stripe (${lost.refundId ?? "refund id unknown"}), but its recovery operation could not be closed. Check the operation before it is retried.`,
-          },
-          lost.format,
-        )) ?? NOBODY_ALERTED,
+      alert: {
+        kind: "payment-recovery",
+        bookingId: lost.bookingId,
+        operationId: row.id,
+        amountCents: lost.amountCents,
+        paymentIntentId: lost.paymentIntentId,
+        errorMessage: `${refundLabel} was made at Stripe (${lost.refundId ?? "refund id unknown"}), but its recovery operation could not be closed. Check the operation before it is retried.`,
+      },
+      format: lost.format,
     });
   } catch (err) {
     logger.error({ ...context, err }, `Failed to check a lost close for ${name} (#4144)`);
