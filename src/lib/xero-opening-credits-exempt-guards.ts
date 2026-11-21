@@ -71,7 +71,7 @@ function listInWords(items: readonly string[]): string {
  * The message names roles, never the account code: the mapping screen reads a
  * bare "403" in a refusal as "not permitted", and an account can carry that code.
  */
-export function openingCreditsSharedAccountProblem(rows: readonly MappingCodeRow[]): string | null {
+function openingCreditsSharedAccountProblem(rows: readonly MappingCodeRow[]): string | null {
   const conflicts = openingCreditsAccountConflicts({
     openingCreditsCode: rows.find((row) => row.key === OPENING_CREDITS_MAPPING_KEY)?.code,
     mappings: rows,
@@ -167,34 +167,51 @@ export async function openingCreditsMappingSaveRefusal({
 const OPENING_CREDITS_NEEDS_EXEMPT = "Opening Credits needs the Exempt tax category.";
 
 /**
- * The config import's warning (`config-transfer/categories/xero-config.ts`), or
- * null: the bundle sets or changes the Opening Credits account, the club is, or
- * is scheduled to be, GST-registered, and no Exempt mapping exists in the
- * connected Xero organisation. A warning, not a refusal: the import still
- * applies, and the health check and the outbox hold cover the state.
+ * WHAT THE CONFIG IMPORT'S PLAN SAYS ABOUT OPENING CREDITS
+ * (`config-transfer/categories/xero-config.ts`). An imported bundle writes the
+ * same `XeroAccountMapping` rows the account mapping screen saves, so it is
+ * held to the same rules, judged over every account code as it would read once
+ * the bundle is applied (`after`, keyed by mapping key):
+ *
+ * - `error`, which blocks the apply: Opening Credits would share its Xero
+ *   account with another mapped role. The owner's decision of 21 Nov 2026
+ *   (refuse the save), read as covering every writer of these rows, in the
+ *   screen's own sentence.
+ * - `warning`, which does not: the bundle sets or changes the Opening Credits
+ *   account, the club is, or is scheduled to be, GST-registered, and no Exempt
+ *   mapping exists in the connected Xero organisation. The import still
+ *   applies; the health check and the outbox hold cover the state.
  *
  * The plan runs a second time inside the apply's transaction, so every read
  * goes through the caller's client (`INV-LOCK-004`) and Xero is not asked. A
  * mapped rate that Xero has since changed is therefore not judged here; the
- * health check reports that.
+ * health check reports that. Nothing is read unless the bundle sets or changes
+ * the account.
  */
-export async function openingCreditsImportExemptWarning({
-  db,
-  stored,
-  after,
-  today,
-}: {
-  db: Pick<Prisma.TransactionClient, "clubTaxSettings" | "xeroConnection" | "xeroTaxCategoryMapping">;
-  stored: readonly MappingCodeRow[];
-  after: readonly MappingCodeRow[];
-  today: CalendarDate;
-}): Promise<string | null> {
-  if (!setsOrChangesOpeningCredits(stored, after)) return null;
-  const [schedule, mappings] = await Promise.all([loadClubTaxSchedule(db), loadXeroTaxCategoryMappings(db)]);
-  if (mappedTaxTypeFor(mappings, "EXEMPT") !== null) return null;
-  const problem = exemptPrerequisiteProblem({ schedule, today, exemptTaxType: null, rates: null });
-  if (problem === null) return null;
-  return `${OPENING_CREDITS_NEEDS_EXEMPT} ${problem} The import still sets the account; until Exempt is mapped, spent opening credits wait in the Xero queue.`;
+export async function openingCreditsImportFindings(
+  db: Pick<Prisma.TransactionClient, "clubTaxSettings" | "xeroConnection" | "xeroTaxCategoryMapping">,
+  storedRows: Iterable<MappingCodeRow>,
+  after: ReadonlyMap<string, string | null>,
+): Promise<{ error: string | null; warning: string | null }> {
+  const stored = [...storedRows].map(({ key, code }) => ({ key, code }));
+  const afterRows = [...after].map(([key, code]) => ({ key, code }));
+  const error = openingCreditsSharedAccountProblem(afterRows);
+  if (error || !setsOrChangesOpeningCredits(stored, afterRows)) return { error, warning: null };
+
+  const [schedule, mappings, zone] = await Promise.all([
+    loadClubTaxSchedule(db),
+    loadXeroTaxCategoryMappings(db),
+    readClubTimeZoneOutsideRequest(),
+  ]);
+  if (mappedTaxTypeFor(mappings, "EXEMPT") !== null) return { error: null, warning: null };
+  const problem = exemptPrerequisiteProblem({ schedule, today: clubToday(zone), exemptTaxType: null, rates: null });
+  return {
+    error: null,
+    warning:
+      problem === null
+        ? null
+        : `${OPENING_CREDITS_NEEDS_EXEMPT} ${problem} The import still sets the account; until Exempt is mapped, spent opening credits wait in the Xero queue.`,
+  };
 }
 
 /** Whether the club chose an Opening Credits account: the one read the checks below share. */
