@@ -19,7 +19,10 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/email/core", () => ({
-  sendEmail: vi.fn(async ({ to }: { to: string }) => {
+  // #5255: the real mailer writes the row before the provider is called, and
+  // that row confirms the once-ever claim the alert was sent under.
+  sendEmail: vi.fn(async ({ to, onceEverClaim }: { to: string; onceEverClaim?: { rowWritten: boolean } }) => {
+    if (onceEverClaim) onceEverClaim.rowWritten = true;
     if (!h.smtpUp) {
       h.emailLog.push({ to, status: "FAILED" });
       throw new Error("SMTP down");
