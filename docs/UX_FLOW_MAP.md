@@ -60,7 +60,7 @@ Journey: Fill in personal details and nominators, submit the application, and fo
 
 Screen: `/dashboard`.
 
-Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay. Next Stay, draft and Recent Bookings rows name a booking's lodge once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). The Lodge Kiosk card offers Open Kiosk and, while the roster module is on, Who's at the lodge. Members see a Work Parties card listing upcoming work parties, when there is at least one; each opens its work party page.
+Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay. Next Stay, draft and Recent Bookings rows name a booking's lodge once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). The Lodge Kiosk card offers Open Kiosk and, while the roster module is on, Who's at the lodge. Members see a Work Parties card listing upcoming work parties, when there is at least one; each opens its work party page. The Events card shows a work party once, and only to members.
 
 [Guide](user-guide/README.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -503,7 +503,7 @@ Screen: `/admin/calendar`.
 
 Shows: Club events and the controls for managing them.
 
-Journey: Choose a date range, inspect events, and open an event to manage it. A work party's entries open read-only, with a link to Work Parties, where they are changed.
+Journey: Choose a date range, inspect events, and open an event to manage it. A work party's entries show to members only and open read-only, with a link to Work Parties, where they are changed.
 
 [Guide](guides/calendar.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

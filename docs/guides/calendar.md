@@ -113,19 +113,21 @@ window, stored as a daily series so the nights move together. It shows as one
 event, not a repeating one: no repeat marker and no "Daily" line. See
 [Work Parties](work-parties.md#the-events-calendar).
 
+- Only **members** see them, as with the Work Parties card and page (owner
+  decision, 20 Nov 2026). Non-member logins, kiosk and admin-only accounts see
+  the rest of the calendar without them, on the calendar and the dashboard
+  **Events** card alike; organisation accounts see no calendar at all.
 - They open **read-only** for everyone, admins included. While the Work parties
   module is on, **Open the work party** takes admins (on the admin calendar) to
-  **Admin → Work Parties** and members to the work party page; other accounts
-  see the note without a link.
+  **Admin → Work Parties** and members to the work party page.
   Change or delete the work party there and its entries follow.
 - The calendar API refuses to edit or delete them (**409**), so they cannot drift
   from the work party.
 - While a work party is **inactive**, or the **Work parties** module is off,
   its entries are hidden from the calendar and the dashboard **Events** card;
   activating it, or turning the module back on, shows them again unchanged.
-- They are part of the club calendar, so everyone who can see the calendar
-  sees them (including non-member logins), even though only members see the
-  Work Parties card and page.
+- The dashboard **Events** card shows a work party as one line, on its first
+  night in the next two weeks, rather than one line per night.
 - A work party can run for at most 366 nights, the calendar's series limit;
   new dates longer than that are refused when the work party is saved. One
   saved longer before the limit shows its first 366 nights.

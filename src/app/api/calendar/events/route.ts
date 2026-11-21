@@ -58,8 +58,8 @@ export async function GET(req: NextRequest) {
     to = new Date(from.getTime() + MAX_RANGE_MS);
   }
 
-  // #5148: a work party's entries show only while the Work parties module is
-  // on and that work party is open (`whereVisibleCalendarEvent`).
+  // #5148: a work party's entries show only to a member, while the Work
+  // parties module is on and that work party is open (`whereVisibleCalendarEvent`).
   const modules = await loadEffectiveModuleFlags();
   const [events, canManage] = await Promise.all([
     prisma.calendarEvent.findMany({
@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
           startsAt: { lte: to },
           OR: [{ endsAt: null }, { endsAt: { gte: from } }],
         },
-        modules,
+        { modules, viewer: guard.session.user },
       ),
       orderBy: { startsAt: "asc" },
       include: { series: true },

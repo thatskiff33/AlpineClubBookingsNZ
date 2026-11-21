@@ -55,7 +55,7 @@ import {
 } from "@/lib/promo";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { canViewCalendarEvents } from "@/lib/calendar-access";
-import { whereVisibleCalendarEvent } from "@/lib/calendar-events";
+import { listDashboardCalendarEvents } from "@/lib/dashboard-calendar-events";
 import { canViewWorkParties } from "@/lib/work-party-access";
 import { listUpcomingMemberWorkParties } from "@/lib/work-party-member";
 import {
@@ -498,20 +498,11 @@ export default async function DashboardPage() {
   // the process's own zone (INV-DATE-019).
   const twoWeeksOut = club.startOfDay(addCalendarDays(todayDate, 14));
   const upcomingEvents = showEventsCard
-    ? await prisma.calendarEvent.findMany({
-        where: whereVisibleCalendarEvent(
-          { startsAt: { gte: startOfTodayNZ, lte: twoWeeksOut } },
-          modules,
-        ),
-        orderBy: { startsAt: "asc" },
-        take: 6,
-        select: {
-          id: true,
-          title: true,
-          startsAt: true,
-          allDay: true,
-          isMeeting: true,
-        },
+    ? await listDashboardCalendarEvents({
+        from: startOfTodayNZ,
+        to: twoWeeksOut,
+        modules,
+        viewer: session.user,
       })
     : [];
 

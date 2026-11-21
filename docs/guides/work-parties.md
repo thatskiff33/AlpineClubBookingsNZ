@@ -75,6 +75,9 @@ calendar shows an **On calendar** badge.
   name or description with its dates as they are, and its calendar shows its
   first 366 nights. Changing its dates means bringing it within the limit.
 - The entries are read-only on the calendar. Change the work party instead.
+- Only **members** see the entries, on the calendar and the dashboard
+  **Events** card, where a work party takes one line. Non-member logins, kiosk
+  and admin-only accounts see the rest of the calendar without them.
 - **Add to calendar** appears, while the Events calendar module is on, on an
   active work party with nights still to come and no entries — one made
   before this feature, or while the calendar was off. Nothing is added to the
@@ -126,7 +129,7 @@ cannot book, Book a Stay opens empty with a short notice saying so.
 | Discount % | Percent off nights in the window | 100 | Whole number 1–100 |
 | Start date | First night in the discount window | — | NZ date-only |
 | End date (last discounted night) | Last night in the discount window | — | NZ date-only; inclusive |
-| Description | A note shown on the card | — | Optional; up to 1000 characters |
+| Description | A note shown to members on the work party page and the calendar | — | Optional; up to 1000 characters |
 | Lodge | Which lodge the working bee is at | All lodges (club-wide) | Only shown with more than one active lodge |
 | Active | Whether members can select the event when booking | on | Inactive events cannot be selected |
 
@@ -141,6 +144,7 @@ cannot book, Book a Stay opens empty with a short notice saying so.
 | Everything is read-only ("… can view work parties but cannot change them") | Your admin role has lodge view but not edit | Ask a full admin for **lodge edit** access |
 | There's no Delete button on an event | It already has attending bookings | Deactivate it instead — delete is blocked to keep the discount history |
 | A work party is not on the Events Calendar | It was made before this feature or while the calendar was off, or the calendar module is off | Turn the **Events calendar** module on, then click **Add to calendar** on its card |
+| A work party is missing from someone's calendar | The account is not a member (a non-member login, a kiosk or an admin-only account), the work party is inactive, or the **Work parties** module is off | Entries are shown to members only; check the account's user type, that the work party is **Active**, and the module |
 | A member can't see the Work Parties card at all | The **Work parties** module is off, the account is not a member (an organisation, a non-member login, or an admin-only account), or no work party is upcoming | Check the module under **Admin → Setup → Modules** and the account's user type |
 | A member sees no Work Parties card although the module is on | No work party is upcoming: every one is inactive, has finished (its last night has passed), or has had its internal promo code switched off or archived | Check the work party is **Active** with nights still to come |
 | A member says the discount didn't apply | The event is inactive, their nights fall outside the window, or they didn't tick the working-bee option | Check the event is Active, its dates cover their nights, and that they selected it when booking |

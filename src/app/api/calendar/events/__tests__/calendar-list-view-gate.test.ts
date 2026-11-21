@@ -50,17 +50,22 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.calendarEventFindMany.mockResolvedValue([]);
   mocks.committeeAssignmentFindFirst.mockResolvedValue(null);
-  mocks.sessionUser = { id: "member-1", role: "USER", accessRoles: ["USER"] };
+  mocks.sessionUser = {
+    id: "member-1",
+    role: "USER",
+    accessRoles: ["USER"],
+    canLogin: true,
+  };
   mocks.modules.workParties = true;
 });
 
 describe("GET /api/calendar/events view gate", () => {
-  it("hides an inactive work party's entries (#5148)", async () => {
+  it("shows a member an open work party's entries and hides an inactive one's (#5148)", async () => {
     const res = await GET(listReq());
     expect(res.status).toBe(200);
     const where = mocks.calendarEventFindMany.mock.calls[0][0].where;
     // The visibility rule is its own AND clause beside the date window's OR,
-    // so neither overwrites the other (review nit on the spread).
+    // so neither overwrites the other.
     expect(where.OR).toEqual([
       { endsAt: null },
       { endsAt: { gte: expect.any(Date) } },
@@ -79,8 +84,21 @@ describe("GET /api/calendar/events view gate", () => {
     });
   });
 
-  it("hides every work party's entries while the Work parties module is off (#5148, review question 4)", async () => {
+  it("hides every work party's entries while the Work parties module is off (#5148)", async () => {
     mocks.modules.workParties = false;
+    const res = await GET(listReq());
+    expect(res.status).toBe(200);
+    const where = mocks.calendarEventFindMany.mock.calls[0][0].where;
+    expect(where.AND).toEqual([{ workPartyEventId: null }]);
+  });
+
+  // Owner decision of 20 Nov 2026: work party entries are shown to members only.
+  it.each([
+    ["a non-member login", { id: "nm-1", role: "NON_MEMBER", accessRoles: [], canLogin: true }],
+    ["a lodge kiosk", { id: "kiosk-1", role: "LODGE", accessRoles: ["LODGE"], canLogin: true }],
+    ["an admin-only account", { id: "admin-1", role: "ADMIN", accessRoles: ["ADMIN"], canLogin: true }],
+  ])("serves %s ordinary events only (#5148)", async (_label, user) => {
+    mocks.sessionUser = user;
     const res = await GET(listReq());
     expect(res.status).toBe(200);
     const where = mocks.calendarEventFindMany.mock.calls[0][0].where;

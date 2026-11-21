@@ -1,5 +1,5 @@
 /**
- * Real-PostgreSQL proof for #5148 (review finding F5): a work party's Events
+ * Real-PostgreSQL proof for #5148: a work party's Events
  * Calendar entries, written by the REAL writer against a real database. The
  * unit suites (`work-party-calendar.test.ts`, `work-party-calendar-service.test.ts`)
  * prove the calls with recording fakes; these claims need PostgreSQL itself:
@@ -13,7 +13,9 @@
  *  3. The calendar's visibility rule (`whereVisibleCalendarEvent`) as a real
  *     relation filter: an inactive work party's entries are hidden and come
  *     back on reactivation; every work party's entries are hidden while the
- *     Work parties module is off; an ordinary event always shows.
+ *     Work parties module is off, and from every viewer who is not a member;
+ *     an ordinary event always shows. The dashboard's Events card shows a
+ *     multi-night work party as one line, on its first night.
  *  4. Deleting the work party removes its entries and their series inside the
  *     delete's transaction, and the foreign key's ON DELETE CASCADE removes the
  *     entries even on a path that forgot to (the series is then left empty,
@@ -66,6 +68,7 @@ let workPartyCalendar: typeof import("@/lib/work-party-calendar");
 let entries: typeof import("@/lib/calendar-work-party-entries");
 let calendarEvents: typeof import("@/lib/calendar-events");
 let calendarService: typeof import("@/lib/calendar-service");
+let dashboardEvents: typeof import("@/lib/dashboard-calendar-events");
 const createdWorkParties: { id: string; promoCodeId: string }[] = [];
 
 function input(
@@ -106,11 +109,16 @@ async function linkedEntries(workPartyEventId: string) {
   });
 }
 
-async function visibleIds(modules: { workParties: boolean }) {
+const MEMBER = { accessRoles: ["USER"], role: "USER", canLogin: true };
+
+async function visibleIds(
+  modules: { workParties: boolean },
+  viewer: import("@/lib/calendar-events").CalendarViewer = MEMBER,
+) {
   const rows = await prisma.calendarEvent.findMany({
     where: calendarEvents.whereVisibleCalendarEvent(
       { OR: [{ id: ORDINARY_EVENT_ID }, { title: { startsWith: TITLE_PREFIX } }] },
-      modules,
+      { modules, viewer },
     ),
     select: { id: true, workPartyEventId: true },
   });
@@ -231,6 +239,7 @@ async function clean(): Promise<void> {
       entries = await import("@/lib/calendar-work-party-entries");
       calendarEvents = await import("@/lib/calendar-events");
       calendarService = await import("@/lib/calendar-service");
+      dashboardEvents = await import("@/lib/dashboard-calendar-events");
       await clean();
     });
 
@@ -339,6 +348,55 @@ async function clean(): Promise<void> {
       );
       const back = await visibleIds({ workParties: true });
       expect(back.filter((row) => row.workPartyEventId === event.id)).toHaveLength(3);
+    });
+
+    it("3b. a non-member, a kiosk, an admin-only and an organisation account see no work party entry (owner decision, 20 Nov 2026)", async () => {
+      const event = await createWorkParty("Race 5148 members only");
+      await workPartyCalendar.addWorkPartyToCalendar(event.id, ACTOR_ID);
+
+      expect(
+        (await visibleIds({ workParties: true })).filter(
+          (row) => row.workPartyEventId === event.id,
+        ),
+      ).toHaveLength(3);
+      for (const viewer of [
+        { accessRoles: [], role: "NON_MEMBER", canLogin: true },
+        { accessRoles: ["LODGE"], role: "LODGE", canLogin: true },
+        { accessRoles: ["ADMIN"], role: "ADMIN", canLogin: true },
+        { accessRoles: ["ORG"], role: "USER", canLogin: true },
+      ]) {
+        const rows = await visibleIds({ workParties: true }, viewer);
+        expect(rows.filter((row) => row.workPartyEventId !== null)).toEqual([]);
+        expect(rows.some((row) => row.id === ORDINARY_EVENT_ID)).toBe(true);
+      }
+    });
+
+    it("3c. the dashboard Events card shows a multi-night work party once, on its first night, beside an ordinary event", async () => {
+      const event = await createWorkParty("Race 5148 dashboard");
+      await workPartyCalendar.addWorkPartyToCalendar(event.id, ACTOR_ID);
+      const read = (viewer: import("@/lib/calendar-events").CalendarViewer) =>
+        dashboardEvents.listDashboardCalendarEvents({
+          from: day("2026-07-01"),
+          to: day("2026-07-15"),
+          modules: { workParties: true },
+          viewer,
+          limit: 50,
+        });
+
+      const lines = (await read(MEMBER)).filter(
+        (line) => line.id === ORDINARY_EVENT_ID || line.workPartyEventId === event.id,
+      );
+      // Work party nights 10-12 July (three rows), the ordinary event on 11 July.
+      const nights = await linkedEntries(event.id);
+      expect(nights).toHaveLength(3);
+      expect(lines.map((line) => [line.workPartyEventId, line.startsAt.toISOString()])).toEqual([
+        [event.id, nights[0].startsAt.toISOString()],
+        [null, day("2026-07-11").toISOString()],
+      ]);
+
+      const nonMember = await read({ accessRoles: [], role: "NON_MEMBER", canLogin: true });
+      expect(nonMember.some((line) => line.workPartyEventId !== null)).toBe(false);
+      expect(nonMember.some((line) => line.id === ORDINARY_EVENT_ID)).toBe(true);
     });
 
     it("4. the delete removes the entries and their series; the foreign key cascades the entries regardless", async () => {

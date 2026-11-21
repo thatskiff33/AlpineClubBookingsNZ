@@ -3,8 +3,10 @@
   each of its nights, titled "Work party: {name}", with the lodge as location.
   Editing it moves the entries with it in the same save, deactivating hides
   them and activating shows them again, and deleting it removes them. While the
-  Work parties module is off, its entries are hidden from the calendar too. The
-  entries are read-only on the calendar, with a link to the work party. Work
+  Work parties module is off, its entries are hidden from the calendar too. Only
+  members see the entries, and the dashboard Events card shows each work party
+  once, on its first night. The entries are read-only on the calendar, with a
+  link to the work party. Work
   parties made before this have an **Add to calendar** button, so a club that
   typed one in by hand does not get it twice. New work-party dates can now
   span at most 366 nights, the calendar's limit. An existing longer work party

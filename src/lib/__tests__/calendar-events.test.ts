@@ -153,25 +153,46 @@ describe("serializeCalendarEvent", () => {
 
 describe("whereVisibleCalendarEvent (#5148)", () => {
   const open = { active: true, promoCode: { active: true, archivedAt: null } };
+  const onlyOrdinary = { AND: [{ workPartyEventId: null }] };
+  const member = { accessRoles: ["USER"], role: "USER", canLogin: true };
+  const on = { workParties: true };
 
-  it("shows ordinary events, and a work party's only while it is open", () => {
-    expect(whereVisibleCalendarEvent({ startsAt: { lte: new Date(0) } }, { workParties: true })).toEqual({
+  it("shows a member ordinary events, and a work party's only while it is open", () => {
+    expect(
+      whereVisibleCalendarEvent(
+        { startsAt: { lte: new Date(0) } },
+        { modules: on, viewer: member },
+      ),
+    ).toEqual({
       startsAt: { lte: new Date(0) },
       AND: [{ OR: [{ workPartyEventId: null }, { workPartyEvent: open }] }],
     });
   });
 
-  it("hides every work party's entries while the Work parties module is off (review question 4)", () => {
-    expect(whereVisibleCalendarEvent({}, { workParties: false })).toEqual({
-      AND: [{ workPartyEventId: null }],
-    });
+  // Owner decision of 20 Nov 2026: work party entries are shown to members only.
+  const nonMembers: Array<[string, Parameters<typeof whereVisibleCalendarEvent>[1]["viewer"]]> = [
+    ["a non-member login", { accessRoles: [], role: "NON_MEMBER", canLogin: true }],
+    ["a lodge kiosk", { accessRoles: ["LODGE"], role: "LODGE", canLogin: true }],
+    ["an admin-only account", { accessRoles: ["ADMIN"], role: "ADMIN", canLogin: true }],
+    ["an organisation account", { accessRoles: ["ORG"], role: "USER", canLogin: true }],
+    ["a school login that also holds USER", { accessRoles: ["USER"], role: "SCHOOL", canLogin: true }],
+    ["a member whose login is disabled", { ...member, canLogin: false }],
+  ];
+  it.each(nonMembers)("shows %s ordinary events only", (_label, viewer) => {
+    expect(whereVisibleCalendarEvent({}, { modules: on, viewer })).toEqual(onlyOrdinary);
+  });
+
+  it("hides every work party's entries from a member while the Work parties module is off", () => {
+    expect(
+      whereVisibleCalendarEvent({}, { modules: { workParties: false }, viewer: member }),
+    ).toEqual(onlyOrdinary);
   });
 
   it("keeps a caller's own OR and AND intact rather than overwriting them", () => {
     const callerOr = [{ endsAt: null }, { endsAt: { gte: new Date(0) } }];
     const where = whereVisibleCalendarEvent(
       { OR: callerOr, AND: { title: "x" } },
-      { workParties: true },
+      { modules: on, viewer: member },
     );
     expect(where.OR).toEqual(callerOr);
     expect(where.AND).toEqual([

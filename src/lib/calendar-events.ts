@@ -10,6 +10,7 @@ import {
   type RecurrenceEndMode,
 } from "@/lib/calendar-recurrence";
 import { OPEN_WORK_PARTY_EVENT_WHERE } from "@/lib/work-party-rules";
+import { canViewWorkParties } from "@/lib/work-party-access";
 
 /**
  * Request body for creating / updating a calendar event. Dates arrive as ISO
@@ -130,26 +131,63 @@ export type CalendarEventDTO = {
 };
 
 /**
+ * Who is reading the calendar: the session user, as the members-only rule
+ * (`canViewWorkParties`) reads it.
+ */
+export type CalendarViewer = Parameters<typeof canViewWorkParties>[0];
+
+/** What the calendar visibility rule needs to know about the read. */
+export type CalendarVisibilityContext = {
+  modules: { workParties: boolean };
+  viewer: CalendarViewer;
+};
+
+/**
+ * Whether this read may show ANY work party's entries: the viewer is a member
+ * and the Work parties module is on. The first two conditions of
+ * {@link whereVisibleCalendarEvent}, which applies them; a reader uses this
+ * only to skip a work-party read the rule would empty anyway.
+ */
+export function showsWorkPartyCalendarEntries(
+  context: CalendarVisibilityContext,
+): boolean {
+  return context.modules.workParties && canViewWorkParties(context.viewer);
+}
+
+/**
  * Which calendar rows a reader shows (#5148): every ordinary event, and a work
- * party's entries only while the Work parties module is on AND that work party
- * is open (active, with its internal promo active — `OPEN_WORK_PARTY_EVENT_WHERE`).
+ * party's entries only when ALL of these hold:
+ *
+ * - the viewer is a member (`canViewWorkParties`, owner decision of 20 Nov
+ *   2026: members only, like the dashboard card, the work-party page and
+ *   Join), so a non-member login, a lodge kiosk, an admin-only account and an
+ *   organisation account never see a work party's name, lodge or description;
+ * - the Work parties module is on. With it off nobody can manage the entries
+ *   (the work-party routes answer 404 and the calendar refuses linked
+ *   entries), so they must not show;
+ * - that work party is open (active, with its internal promo active —
+ *   `OPEN_WORK_PARTY_EVENT_WHERE`).
+ *
  * Deactivating a work party, or switching the module off, hides its entries
  * rather than deleting them, so turning either back on brings them back
- * unchanged. With the module off nobody can manage them (the work-party routes
- * answer 404 and the calendar refuses linked entries), so they must not show.
+ * unchanged.
+ *
+ * The viewer is a required argument, so a reader cannot apply the rule without
+ * saying who is reading. Every calendar read that shows events — the list API
+ * and the dashboard's Events card — goes through this.
  *
  * The rule joins the caller's filter as one more `AND` clause (after any the
  * caller already has), never spread into it: the visibility rule is an `OR`,
  * and a spread would be silently overwritten by an `OR` in the caller's query
- * (or overwrite it). The caller's own fields stay where it put them. Every
- * calendar read — the list API and the dashboard's Events card — goes through
- * this.
+ * (or overwrite it). The caller's own fields stay where it put them.
  */
 export function whereVisibleCalendarEvent(
   where: Prisma.CalendarEventWhereInput,
-  modules: { workParties: boolean },
+  context: CalendarVisibilityContext,
 ): Prisma.CalendarEventWhereInput {
-  const visible: Prisma.CalendarEventWhereInput = modules.workParties
+  const visible: Prisma.CalendarEventWhereInput = showsWorkPartyCalendarEntries(
+    context,
+  )
     ? {
         OR: [
           { workPartyEventId: null },
