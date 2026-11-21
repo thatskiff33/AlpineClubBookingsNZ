@@ -564,6 +564,22 @@ scheduled; before a change saves it counts the bookings still in progress on
 the chosen date that will keep the old treatment (bookings, not documents —
 each booking's documents all follow its one anchor).
 
+**Tax categories** (#5209, `INV-CONFIG-008`). A line that is not sales income
+names its category instead of a code: `xeroCategoryLineTax` in the same
+renderer, resolved for an anchor by `resolveXeroCategoryLineTax`
+([`xero-tax-category-mappings.ts`](../../src/lib/xero-tax-category-mappings.ts)).
+Sales tax on income is the schedule's own code; Sales tax on expenses, Exempt
+and Zero rated are `XeroTaxCategoryMapping` rows stamped with the Xero tenant
+they were chosen in. An unregistered period renders no tax type in any
+category. A registered line whose category is unmapped, from another tenant,
+or mapped to a rate Xero no longer has active throws
+`XeroTaxCategoryUnavailableError` before any provider write, so its operation
+waits rather than sending a guessed code. The one writer,
+[`xero-tax-category-write.ts`](../../src/lib/xero-tax-category-write.ts)
+(Full Admin, `PUT`/`DELETE /api/admin/xero/tax-categories`), reads Xero's rates
+fresh before a Serializable single-table transaction with its audit row and no
+advisory lock; `readXeroTaxHealth` reports a mapping that stops passing.
+
 ## Bird's-eye dataflow
 
 ```mermaid
