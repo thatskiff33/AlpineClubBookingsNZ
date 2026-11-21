@@ -202,7 +202,7 @@ type Money = {
    * (#3232 fix round). Defaults to false.
    */
   requiresSettlementMethod?: boolean;
-  /** #5303: the write's own answer that this booking's refund is a bank transfer, not the card. Defaults to false. */
+  /** #5303: the write says this booking's refund is a bank transfer (`reductionRefundsToCard` false). Defaults to false. */
   refundByBankTransfer?: boolean;
   /** What the cancellation policy kept of this booking's reduction. */
   policyRetainedAmountCents?: number;
@@ -255,7 +255,7 @@ function batchResult(
     appliedCreditGivenBackCents: 0,
     refundedExcessCreditCents: money.refundedExcessCreditCents ?? 0,
     requiresSettlementMethod: money.requiresSettlementMethod === true,
-    refundByBankTransfer: money.refundByBankTransfer === true,
+    reductionRefundsToCard: money.refundByBankTransfer !== true,
     settlementMethod: null,
     additionalPaymentClientSecret: null,
     stripeRefundId: null,
@@ -1243,7 +1243,7 @@ describe("a dependent that needs a refund-or-credit choice (#3232)", () => {
 
   /**
    * #5303: the one Return-method choice names where its refund really goes. Each
-   * booking's route is its write's own `refundByBankTransfer` (the settlement's
+   * booking's route is its write's own `reductionRefundsToCard` (the settlement's
    * `editReductionRefundsToCard`), so an Internet Banking dependent, or a card one
    * Stripe holds no record of, is never offered as a refund to the card.
    */

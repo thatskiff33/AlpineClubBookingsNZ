@@ -218,13 +218,6 @@ export type BatchModificationResponse = BatchModificationSettlementFacts & {
    * (`INV-SSOT-001`).
    */
   requiresSettlementMethod: boolean;
-  /**
-   * #5303: the member's own refund is a bank transfer the treasurer sends, not
-   * a card refund - the settlement options' `refundByBankTransfer`, read under
-   * this edit's locks (`editReductionRefundsToCard`). Carried so the linked
-   * move's one return-method choice is labelled by the route the save takes.
-   */
-  refundByBankTransfer: boolean;
   additionalPaymentClientSecret: string | null;
   stripeRefundId: string | null;
   promoRemoved: boolean;
@@ -1995,8 +1988,6 @@ export async function modifyBookingBatch({
       // with the refusal it will hit.
       requiresSettlementMethod:
         settlementOptions?.requiresSettlementMethod === true,
-      // #5303: the route that choice's refund takes, from the same options.
-      refundByBankTransfer: settlementOptions?.refundByBankTransfer === true,
       refundAmountCents: payments.refundAmountCents,
       accountCreditAmountCents: payments.accountCreditAmountCents,
       additionalAmountCents: payments.additionalAmountCents,
@@ -2255,7 +2246,6 @@ export async function modifyBookingBatch({
       billedToOrganiserCents: result.billedToOrganiserCents,
       settlementMethod: result.settlementMethod,
       requiresSettlementMethod: result.requiresSettlementMethod,
-      refundByBankTransfer: result.refundByBankTransfer,
       additionalPaymentClientSecret: additionalMint.additionalPaymentClientSecret ?? null,
       stripeRefundId: refund.stripeRefundId ?? null,
       promoRemoved: result.promoRemoved,
@@ -2303,7 +2293,6 @@ export async function modifyBookingBatch({
       billedToOrganiserCents: result.billedToOrganiserCents,
       settlementMethod: result.settlementMethod,
       requiresSettlementMethod: result.requiresSettlementMethod,
-      refundByBankTransfer: result.refundByBankTransfer,
       additionalPaymentClientSecret: null,
       stripeRefundId: null,
       promoRemoved: result.promoRemoved,

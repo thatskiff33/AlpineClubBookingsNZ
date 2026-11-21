@@ -143,6 +143,30 @@ export interface LinkedMoveMoneyFacts {
   linkedCount: number;
 }
 
+/** The combined money every linked-move offer carries: the facts above bar the count. */
+type LinkedMoveCombinedMoney = Omit<LinkedMoveMoneyFacts, "linkedCount">;
+
+/**
+ * Those facts picked off a quote, the 409 body or the prompt, in ONE place, so
+ * the offer's sentence, the body the client parses and the prompt it draws
+ * cannot drift apart over which facts they carry (`INV-SSOT-001`).
+ */
+export function linkedMoveCombinedMoney(source: LinkedMoveCombinedMoney): LinkedMoveCombinedMoney {
+  return {
+    combinedAmountDueCents: source.combinedAmountDueCents,
+    combinedRefundCents: source.combinedRefundCents,
+    combinedFreedCreditCents: source.combinedFreedCreditCents,
+    combinedChangeFeeCents: source.combinedChangeFeeCents,
+    combinedPolicyRetainedCents: source.combinedPolicyRetainedCents,
+    combinedOrganiserRefundCents: source.combinedOrganiserRefundCents,
+    combinedOrganiserBankTransferRefundCents: source.combinedOrganiserBankTransferRefundCents,
+    settlementMethodRequired: source.settlementMethodRequired,
+    refundRoute: source.refundRoute,
+    settlementMethodChosen: source.settlementMethodChosen,
+    bothChangeFeesCharged: source.bothChangeFeesCharged,
+  };
+}
+
 /** "both bookings" / "all 3 bookings" — the primary plus its dependents. */
 export function linkedMoveAllBookingsPhrase(linkedCount: number): string {
   return linkedCount === 1 ? "both bookings" : `all ${linkedCount + 1} bookings`;
