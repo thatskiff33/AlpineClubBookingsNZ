@@ -124,6 +124,9 @@ const HAND_WRITTEN_FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   {
     flag: "workParties",
     prefixes: [
+      // #5148: the member work party page, under `/dashboard` so the app
+      // reserves no top-level `/work-parties` (owner decision, 15 Nov 2026).
+      "/dashboard/work-parties",
       "/api/admin/work-parties",
       "/api/work-parties",
     ],

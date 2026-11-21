@@ -24,6 +24,7 @@ const oneOff: CalendarEventDTO = {
   seriesId: null,
   detachedFromSeries: false,
   recurrence: null,
+  workPartyEventId: null,
 };
 
 // An occurrence of a weekly series, used to exercise the series-delete chooser

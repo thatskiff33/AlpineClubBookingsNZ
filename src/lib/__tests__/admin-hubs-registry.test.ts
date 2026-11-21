@@ -2391,6 +2391,9 @@ describe("the registry is inert", () => {
     "src/components/admin/environment-xero-containment.tsx": "C9: the member link is adminHref",
     "src/components/admin/induction-register-table.tsx": "C9: the print link is adminHref",
     "src/components/audit-timeline.tsx": "C9: the member link is adminHref",
+    "src/components/calendar/event-details-view.tsx": "C9: the work-party admin link is adminHref",
+    "src/components/calendar/__tests__/event-dialog-work-party-link.test.tsx":
+      "C9: pins the work-party admin link to adminHref",
     "src/lib/email-templates/admin-membership.ts": "C9: the family-groups button is adminHref",
     "src/lib/email/admin-alerts-membership.ts": "C9: the review URLs are adminHref",
     "src/lib/xero-admin-health.ts": "C9: the unlinked-members link is adminHref",

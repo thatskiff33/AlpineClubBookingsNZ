@@ -349,6 +349,7 @@ vi.mock("@/lib/xero-supplementary-invoice-late-capture", () => ({
       row.lastErrorCode = null;
       row.lastErrorMessage = null;
     }
+    return retired[0] ? { outcome: "requeued", operationId: retired[0].id } : { outcome: "none" };
   },
   // MODEL of the change's supplementary invoice (case e2): see the docblock.
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: async (paymentIntentId: string) => {
@@ -1099,7 +1100,7 @@ describe("#4324: a kept change capture on an invoiced, paid-cancelled booking is
       status: "planned" as const,
       resultMessage: null,
     });
-    const deps = { prisma: h.db, planKeptLateCaptureXeroRecord };
+    const deps = { prisma: h.db, planKeptLateCaptureXeroRecord, alertKeptCaptureRefusal: async () => undefined };
     for (let run = 0; run < 2; run += 1) {
       const planned = action();
       await applyActionsForPass([{ bookingId: BOOKING, actions: [planned] } as never], deps as never, false, CLUB_FORMAT_TEST, new Set());
