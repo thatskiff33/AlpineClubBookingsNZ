@@ -1,6 +1,7 @@
 import { adminHref } from "@/lib/admin-hubs";
 import Link from "next/link";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import { SchoolContactEditor } from "@/components/admin/school-contact-editor";
 import { bookingOwner } from "@/lib/booking-owner";
 import { clubFormat } from "@/lib/club-format-server";
 import { BookingFilters } from "@/components/admin/booking-filters";
@@ -688,6 +689,15 @@ export default async function AdminBookingsPage({
                             {owner.firstName} {owner.lastName}
                           </span>
                           <span className="block text-xs text-muted-foreground">{owner.email}</span>
+                          {/* #5245: the school's own record, corrected in place. */}
+                          {canEditBookings && booking.organisationId ? (
+                            <span className="mt-1 block">
+                              <SchoolContactEditor
+                                organisationId={booking.organisationId}
+                                schoolName={owner.firstName}
+                              />
+                            </span>
+                          ) : null}
                         </span>
                       )}
                       {/* #3369: a phone number is a MEMBER's contact detail. A
