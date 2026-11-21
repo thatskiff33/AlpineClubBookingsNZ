@@ -742,7 +742,7 @@ describe("an expired 'not complete' stays closed when its refresh does not answe
       await expectClosed();
       await settle();
       await expectClosed();
-      // The refresh ran and was stamped fresh: one retry per TTL, not per request.
+      // The refresh ran and was stamped fresh: no second refresh before it expires.
       expect(mocks.completion).toHaveBeenCalledTimes(2);
     });
   });

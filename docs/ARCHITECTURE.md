@@ -1877,13 +1877,13 @@ input rather than clamping it, so the client value always matches storage. The
 same shortcut against a normalising route would silently diverge. Each card
 keeps its own `save` callback — the
 GET-fresh-then-merge step above, multi-endpoint writes, and per-endpoint failure
-copy all stay local — and throws the hook's `ForbiddenSaveError` for a 403 so it
-maps to the shared `ADMIN_FORBIDDEN_SAVE_REASON` copy. The hook's
-`saveRefusalFromResponse` reads a refused save into that error, or into the
+copy all stay local — and throws what the hook's `saveRefusalFromResponse` returns for a refused save.
+That helper returns a `ForbiddenSaveError`, which maps to the shared
+`ADMIN_FORBIDDEN_SAVE_REASON` copy, or the
 route's own worded 403 ("Two-factor verification required") when it carries
 one: only the bare word "Forbidden" or an unreadable body, such as a proxy's
 HTML page, becomes the shared copy (`wordedForbiddenRefusal`).
-A new card uses that helper and nothing else for a refused save: its callback
+A new card uses `saveRefusalFromResponse` and nothing else for a refused save: its callback
 throws what `saveRefusalFromResponse` returns for every non-2xx reply. It does
 not test for a 403 and throw `ForbiddenSaveError` itself, which shows the shared
 copy even when the server sent a more useful sentence; a card that still does
