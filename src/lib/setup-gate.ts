@@ -156,7 +156,9 @@ async function loadSetupGateState(): Promise<{
         themeCss: theme.css,
       }),
     },
-    readFailed: completion.readFailed || theme.readFailed,
+    // Failed only if neither read answered: a positive "not complete" from
+    // either is a real answer, even if the other read did not get through.
+    readFailed: completion.readFailed && theme.readFailed,
   };
 }
 

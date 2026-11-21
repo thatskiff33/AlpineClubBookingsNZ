@@ -609,6 +609,24 @@ describe("an expired answer is served while it refreshes (#5264)", () => {
     });
   });
 
+  it("closes the site on a positive 'not complete' even if the theme read then fails", async () => {
+    await getSetupGateState();
+    mocks.completion.mockResolvedValue({ readFailed: false, isComplete: false });
+    mocks.themeState.mockResolvedValue({
+      isComplete: false,
+      readFailed: true,
+      css: "",
+    });
+
+    await afterTtl(async () => {
+      await getSetupGateState();
+      await settle();
+      await expect(getSetupGateState()).resolves.toMatchObject({
+        isComplete: false,
+      });
+    });
+  });
+
   it("does close the site when the database positively says setup is incomplete", async () => {
     // The counterpart: only a FAILED read is ignored. A real answer — an
     // operator resetting setup, say — still takes effect.
