@@ -27,13 +27,14 @@
  *    edit raised no document of its own, so an invoice anchored on one is the
  *    gap's and nothing else's.
  *
- * A leaf module (only `ApiError` and the transient race refusal) so the edit
+ * A leaf module (logger and the transient race refusal) so the edit
  * doors, the guests route, the other price writers that claim (the review
  * re-base, the school pending-adult naming) and the gap check share one
  * marker and one write ({@link writeEditOnPayment}) without pulling each
  * other's graphs in (`INV-SSOT-001`).
  */
 import type { Prisma } from "@prisma/client";
+import logger from "@/lib/logger";
 
 import { AdditionalAskChangedDuringReductionError } from "@/lib/additional-ask-reduction-error";
 
@@ -151,7 +152,7 @@ export async function claimPrimaryInvoiceStillUnlinked(
  * primary invoice, which the door writes to its history row. With no row
  * there is nothing to write. A finished-stay correction that must record a
  * fee on a booking with no row opens one afterwards (`recordFeeOnNewPayment`),
- * so this leaf stays import-free. An ordinary edit of an unpaid booking
+ * so a missing row must not abort the transaction. An ordinary edit of an unpaid booking
  * records no fee and opens no row (owner decision, 10 Nov 2026).
  */
 export async function writeEditOnPayment(
@@ -159,13 +160,23 @@ export async function writeEditOnPayment(
   input: {
     payment: { id: string; xeroInvoiceId: string | null } | null | undefined;
     changeFeeCents: number;
+    /** Named in the error log when a fee has no payment row to land on. */
+    bookingId?: string;
     refusalMessage?: string;
     /** Organiser-paid children have a combined invoice, never a primary of their own. */
     settledAgainstCombinedInvoice?: boolean;
   },
 ): Promise<boolean> {
   const settled = !input.settledAgainstCombinedInvoice && settlesAgainstPrimaryInvoice(input.payment);
-  if (!input.payment) return settled;
+  if (!input.payment) {
+    if (input.changeFeeCents > 0) {
+      logger.error(
+        { bookingId: input.bookingId, changeFeeCents: input.changeFeeCents },
+        "Cannot record edit change fee: payment row is missing",
+      );
+    }
+    return settled;
+  }
   if (settled) {
     await claimPrimaryInvoiceStillUnlinked(tx, {
       paymentId: input.payment.id,

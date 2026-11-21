@@ -86,6 +86,8 @@ const REVIEWED_WRITERS = [
   "src/lib/privacy-retention-anonymise.ts|bookingGuest|opaquePayload||1",
   "src/lib/promo.ts|promoRedemption|create,delete,update|discountCents,priceAdjustmentCents|3",
   "src/lib/promo.ts|promoRedemptionAllocation|deleteMany,opaquePayload||4",
+  // #4344: the rate-derived backfill's compare-and-set, moved out of the retiring review store.
+  "src/lib/rate-derived-night-price-store.ts|bookingGuestNight|updateMany|priceCents,priceSource|1",
   "src/lib/school-attendee-confirmation.ts|bookingGuest|opaquePayload||1",
   "src/lib/school-booking-request.ts|booking|create,update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|3",
   "src/lib/school-booking-request.ts|bookingGuest|create||2",
@@ -94,7 +96,7 @@ const REVIEWED_WRITERS = [
   "src/lib/school-pending-adult-resolution.ts|bookingGuest|create,update|priceCents|2",
   "src/lib/school-pending-adult-resolution.ts|bookingGuestNight|updateMany|priceCents,priceSource|1",
   "src/lib/stored-night-price-repair-store.ts|bookingGuest|updateMany|priceCents|1",
-  "src/lib/stored-night-price-repair-store.ts|bookingGuestNight|create,updateMany|priceCents,priceSource|3",
+  "src/lib/stored-night-price-repair-store.ts|bookingGuestNight|create,updateMany|priceCents,priceSource|2",
   "src/lib/waitlist.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|1",
   "src/lib/waitlist.ts|bookingGuest|update|priceCents|1",
   "src/lib/waitlist.ts|bookingGuestNight|deleteMany,opaquePayload||2",

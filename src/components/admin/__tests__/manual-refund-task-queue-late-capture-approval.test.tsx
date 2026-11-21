@@ -50,8 +50,6 @@ const HELD_TASK = {
     "A payment for a change to the booking (pi_1) was captured after the booking was cancelled (#3639).",
   createdAt: "2026-06-21T00:00:00Z",
   memberName: "Grace Hopper",
-  reviewEvidence: null,
-  reviewEvidenceUnreadable: false,
   ...STAY,
 };
 

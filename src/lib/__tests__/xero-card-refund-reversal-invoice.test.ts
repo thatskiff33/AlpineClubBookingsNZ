@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   createPayment: vi.fn(),
   lockDates: vi.fn(),
   start: vi.fn(),
+  recordManifest: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -41,9 +42,14 @@ vi.mock("@/lib/xero-sync", () => ({
 }));
 vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/logger", () => ({ default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
+// #4525 (M13): the recorder never throws (its own suite proves it); here, only what the sender hands it.
+vi.mock("@/lib/member-money/doors", () => ({
+  recordFailedLaterRefundReversalManifest: (...args: unknown[]) => mocks.recordManifest(...args),
+}));
 
 import { LineAmountTypes } from "xero-node";
 import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
+import { BASELINE_XERO_TAX_RENDERING } from "@/lib/xero-tax-rendering";
 import {
   cardRefundReversalDocumentDate,
   cardRefundReversalReference,
@@ -98,6 +104,7 @@ beforeEach(() => {
   mocks.complete.mockResolvedValue(undefined);
   mocks.fail.mockResolvedValue(undefined);
   mocks.start.mockResolvedValue({ id: "op-new" });
+  mocks.recordManifest.mockResolvedValue(undefined);
 });
 
 describe("the failed-card-refund reversal invoice (#4369)", () => {
@@ -222,6 +229,47 @@ describe("the failed-card-refund reversal invoice (#4369)", () => {
       }),
     );
     expect(mocks.fail).not.toHaveBeenCalled();
+  });
+
+  it("records the reversal's export manifest after completing: the sent line on a send, the stored request on a replay, nothing when voided", async () => {
+    await expect(createXeroCardRefundReversalInvoice({ syncOperation: xeroClaim("op-1") }, providers() as never)).resolves.toBe("inv-1");
+    expect(mocks.recordManifest).toHaveBeenCalledTimes(1);
+    expect(mocks.complete.mock.invocationCallOrder[0]!).toBeLessThan(mocks.recordManifest.mock.invocationCallOrder[0]!);
+    const sentLine = (invoiceFrom(mocks.createInvoices.mock.calls[0]!).lineItems as unknown[])[0];
+    expect(mocks.recordManifest).toHaveBeenCalledWith({
+      paymentId: "pay-1",
+      bookingId: PAYLOAD.bookingId,
+      closeTaskId: "close-1",
+      invoiceId: "inv-1",
+      legacyKey: "payment:pay-1:card-refund-reversal:close-1",
+      source: { kind: "BUILT", lines: [sentLine], taxRendering: BASELINE_XERO_TAX_RENDERING },
+    });
+
+    mocks.recordManifest.mockClear();
+    mocks.linkFindFirst.mockImplementation(async (query: { where: { role: string } }) =>
+      query.where.role === "CARD_REFUND_REVERSAL_INVOICE"
+        ? { xeroObjectId: "inv-1", xeroObjectNumber: "INV-1", active: true, metadata: { documentDate: CLOSED_ON } }
+        : null);
+    await expect(createXeroCardRefundReversalInvoice({ syncOperation: xeroClaim("op-2") }, providers() as never)).resolves.toBe("inv-1");
+    expect(mocks.recordManifest).toHaveBeenCalledWith(expect.objectContaining({ invoiceId: "inv-1", source: { kind: "REPLAY", operationId: "op-2" } }));
+
+    mocks.recordManifest.mockClear();
+    mocks.linkFindFirst.mockResolvedValue({ xeroObjectId: "inv-void", active: false, metadata: {} });
+    await expect(createXeroCardRefundReversalInvoice({ syncOperation: xeroClaim("op-3") }, providers() as never)).resolves.toBeNull();
+    expect(mocks.recordManifest).not.toHaveBeenCalled();
+  });
+
+  it("#4632: hands the recorder the very rendering it sent the invoice with, resolved once, not a second resolve or the baseline", async () => {
+    const rendering = { lineAmountTypes: LineAmountTypes.Inclusive, taxType: "OUTPUT3" };
+    vi.mocked(resolveXeroTaxRendering).mockResolvedValueOnce(rendering);
+    await expect(createXeroCardRefundReversalInvoice({ syncOperation: xeroClaim("op-1") }, providers() as never)).resolves.toBe("inv-1");
+    expect(resolveXeroTaxRendering).toHaveBeenCalledTimes(1);
+    const invoice = invoiceFrom(mocks.createInvoices.mock.calls[0]!);
+    expect((invoice.lineItems as Array<Record<string, unknown>>)[0]).toMatchObject({ taxType: "OUTPUT3" });
+    const source = (mocks.recordManifest.mock.calls[0]![0] as { source: { kind: string; lines: unknown[]; taxRendering: unknown } }).source;
+    expect(source.kind).toBe("BUILT");
+    expect(source.taxRendering).toBe(rendering);
+    expect(source.lines).toEqual(invoice.lineItems);
   });
 
   it("queues one row per close, and will not queue another after the invoice was voided", async () => {
