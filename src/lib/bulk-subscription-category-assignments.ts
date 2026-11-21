@@ -3,7 +3,7 @@ import {
   buildStructuredAuditLogCreateArgs,
   type StructuredAuditEvent,
 } from "@/lib/audit";
-import { formatDateOnly } from "@/lib/date-only";
+import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import logger from "@/lib/logger";
@@ -190,7 +190,7 @@ async function loadMemberSeasonStates(
         kind: "ok",
         name,
         membershipTypeId: assignment.membershipTypeId,
-        applyFrom: assignment.applyFrom ? formatDateOnly(assignment.applyFrom) : null,
+        applyFrom: assignment.applyFrom ? calendarDateOfDateOnlyInstant(assignment.applyFrom) : null,
       });
     }
   }

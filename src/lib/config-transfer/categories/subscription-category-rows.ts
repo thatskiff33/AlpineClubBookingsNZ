@@ -3,7 +3,7 @@ import {
   validateSubscriptionCategoryFeeComponents,
 } from "@/lib/authoritative-fees";
 import type { ClubFormat } from "@/lib/club-format";
-import { formatDateOnly } from "@/lib/date-only";
+import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { rawHasValue, type ImportMode, type ReadDb } from "../import-types";
 import { RowValidator, nz, readCsvRows } from "../values";
 import { describeWindow, windowsOverlap } from "./membership-fees";
@@ -54,7 +54,7 @@ const MAX_SORT_ORDER = 100000;
 const DEFAULT_PRORATION_RULE = "NONE";
 
 export function toDateStr(value: Date | null): string {
-  return value ? formatDateOnly(value) : "";
+  return value ? calendarDateOfDateOnlyInstant(value) : "";
 }
 
 function feeKey(categoryKey: string, effectiveFrom: Date): string {
