@@ -27,12 +27,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   peekSubscriptionLockoutMode: vi.fn(),
-  requiresPaidSubscriptionForBooking: vi.fn(async () => true),
 }));
 
 vi.mock("@/lib/member-subscription-eligibility", () => ({
   peekSubscriptionLockoutMode: mocks.peekSubscriptionLockoutMode,
-  requiresPaidSubscriptionForBooking: mocks.requiresPaidSubscriptionForBooking,
 }));
 
 vi.mock("@/lib/age-tier", () => ({
@@ -192,7 +190,6 @@ const NIGHTS = 2;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.requiresPaidSubscriptionForBooking.mockResolvedValue(true);
 });
 
 describe("resolveGuestRateMembershipTypes — the #2543 reprice", () => {

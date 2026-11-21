@@ -453,3 +453,37 @@ home for that explanation and is not repeated here.
   `club-tax-settings-one-writer-census.test.ts` holds every other path to reads.
 - **It is instance-local:** a legal fact about this club, excluded from config
   transfer.
+
+## INV-CONFIG-009
+
+- **Who owes a subscription is one rule the club chooses, read by billing and
+  booking access alike** (#5190; owner decisions 18, 20 and 22 Nov 2026).
+  `MembershipLockoutSettings` holds two answers:
+  `requiredTypeAgeRule` (does an exempt age tier exempt a member on a
+  `REQUIRED` type: `ALWAYS_OWES` or `AGE_TIER_EXEMPTS`) and
+  `liabilityAgeSource` (which age decides the tier: `SEASON_START` or
+  `SEASON_END`; a member with no date of birth keeps their stored tier).
+  `resolveMemberSubscriptionLiability` in
+  [`policies/subscription.ts`](../../src/lib/policies/subscription.ts) is the
+  rule; only `liabilityRuleFor(side, settings)` picks a side.
+- **`NOT_CHOSEN` changes nobody.** Both columns default to it, reproducing the
+  pre-#5190 rules: billing charges
+  any `REQUIRED`-type member from the season-start tier and ignores the season
+  row; access lets an exempt stored tier exempt any type and honours a
+  `BASED_ON_AGE_TIER` member's saved `NOT_REQUIRED` row. Only then may the sides
+  differ. Once chosen, both read the club's pair and a saved
+  row exempts nobody (age wins).
+- **The admin lists follow billing** (Q2): the members list, its export, the
+  subscriptions list and their SQL filter read `ADMIN_LIST_LIABILITY_SIDE`, so
+  while `NOT_CHOSEN` an organisation account on a `REQUIRED` type shows owing.
+- **The pair is chosen whole and never returns to `NOT_CHOSEN`.** The settings
+  `PUT` and config import refuse a half pair, a move back and `CURRENT_AGE`
+  (age today waits for part-season invoices); an omitted pair is never written.
+  A save or import leaving the club chosen runs `clearStaleNotRequiredRows`
+  under the billing season key and audits who moved; read the impact list
+  (`GET /api/admin/membership-lockout-settings/liability-impact`) first.
+- **A no-invoice fee settles its member for booking** (all clubs, not gated by
+  the choice): an active coverage claim on a `NO_INVOICE` charge counts as paid
+  whatever the row status (no invoice is sent).
+- **It travels with config transfer**; a bundle's `NOT_CHOSEN` never
+  overwrites a chosen target.

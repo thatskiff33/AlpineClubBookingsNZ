@@ -257,6 +257,40 @@ to work around at all.
    [Age Groups](age-tier-settings.md) page).
 2. Click **Save settings**.
 
+### Choose who owes a subscription (#5190)
+
+Billing (who gets an invoice) and booking (who must pay before they can book)
+used to answer "does this member owe a subscription?" slightly differently. A
+club now chooses one rule both follow. Until it does, nothing changes: every club
+starts, and stays after upgrading, on **Not chosen**, which keeps the old
+answers exactly.
+
+The rule is two answers, always chosen together:
+
+- **Does an exempt age tier exempt a member on an always-required membership
+  type?** *Always owes* (a child on a Full type is invoiced and must pay to book)
+  or *Age tier exempts them* (that child is neither invoiced nor blocked).
+- **Which age decides the tier?** The age on the first day of the season, or on
+  the last day. A member with no date of birth keeps their stored tier.
+
+Worked example: Sam is 11 on a Full (always-required) type, and Child is an
+exempt tier. Today Sam is invoiced but may book without paying. Under *Always
+owes*, Sam is invoiced and must pay to book; under *Age tier exempts them*, Sam
+is neither invoiced nor blocked.
+
+Once chosen, a saved "Not required" season record no longer exempts anyone on its
+own; age decides. Choosing also updates any untouched "Not required" record whose
+member now owes. Before choosing, ask for the impact list, which names every
+member the choice would newly charge or stop charging:
+`GET /api/admin/membership-lockout-settings/liability-impact?requiredTypeAgeRule=ALWAYS_OWES&liabilityAgeSource=SEASON_START`
+(membership view). The screen for this choice arrives in a later release; until
+then it is made through the settings API or a configuration import. A chosen
+rule cannot be set back to *Not chosen*, and *age today* is not available yet.
+
+A member covered by a no-invoice fee (for example a Life fee set up with no
+invoice) is now treated as paid for booking, whatever their record says. They
+were never sent an invoice, so they could never have paid one.
+
 ## Settings reference
 
 | Setting | Area | What it controls | Default | Notes / constraints |
@@ -268,6 +302,8 @@ to work around at all.
 | Subscription item code (optional) | Finance | A Xero item that also counts (the *fallback* code when look-through is on) | none | Requires Xero connected |
 | Item code matching | Membership | Single item code, or look-through to every fee-schedule item code | Single item code | Look-through resolves codes from [fee configuration](fees.md); overlap with other fee codes is warned |
 | Age-tier requirement | Bookings | Which age tiers must have a paid subscription | (read-only here) | Edit on [Age Groups](age-tier-settings.md) |
+| Required-type age rule | Membership | Whether an exempt age tier exempts a member on an always-required type | Not chosen | Chosen with the age source; cannot return to Not chosen (#5190) |
+| Liability age source | Membership | Which age decides a member's tier for liability | Not chosen | Season start or season end; age today not yet available (#5190) |
 
 ## Troubleshooting
 

@@ -49,7 +49,7 @@ import {
 import { ensureMemberAccessRolesFromCompatibilityFields } from "@/lib/member-access-role-writes";
 import {
   isSubscriptionEnforcementActive,
-  requiresPaidSubscriptionForBooking,
+  resolveSubscriptionLockoutPolicy,
 } from "@/lib/member-subscription-eligibility";
 import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions";
 
@@ -344,11 +344,34 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
       chargeCoverage: Array<{ id: string }>;
     } | null,
     updateCount = 1,
+    liability: {
+      settings?: { requiredTypeAgeRule: string; liabilityAgeSource: string } | null;
+      member?: { ageTier: string; dateOfBirth: Date | null };
+    } = {},
   ) {
     return {
+      // #5190: the billing season key, taken before the liability rule is read.
+      $executeRaw: vi.fn().mockResolvedValue(1),
       memberSubscription: {
         findUnique: vi.fn().mockResolvedValue(existing),
         updateMany: vi.fn().mockResolvedValue({ count: updateCount }),
+      },
+      // #5190: the club's liability rule; a missing row is NOT_CHOSEN.
+      membershipLockoutSettings: {
+        findUnique: vi.fn().mockResolvedValue(liability.settings ?? null),
+      },
+      member: {
+        findUnique: vi.fn().mockResolvedValue(
+          liability.member ?? { ageTier: "ADULT", dateOfBirth: null },
+        ),
+      },
+      // CHILD is age-exempt; YOUTH and ADULT owe a subscription.
+      ageTierSetting: {
+        findMany: vi.fn().mockResolvedValue([
+          { tier: "CHILD", minAge: 5, maxAge: 12, label: "Child", sortOrder: 1, subscriptionRequiredForBooking: false, familyGroupRequestCreateMemberAllowed: false },
+          { tier: "YOUTH", minAge: 13, maxAge: 17, label: "Youth", sortOrder: 2, subscriptionRequiredForBooking: true, familyGroupRequestCreateMemberAllowed: false },
+          { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult", sortOrder: 3, subscriptionRequiredForBooking: true, familyGroupRequestCreateMemberAllowed: false },
+        ]),
       },
     };
   }
@@ -369,6 +392,15 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
     });
 
     expect(result).toEqual({ reconciled: true });
+    // #5190: the season key is taken before the liability rule is read, so an
+    // assignment cannot interleave with an opt-in's clear-up.
+    expect(db.$executeRaw).toHaveBeenCalledTimes(1);
+    const lockSql = (db.$executeRaw.mock.calls[0][0] as TemplateStringsArray).join("?");
+    expect(lockSql).toContain("pg_advisory_xact_lock(hashtext(");
+    expect(db.$executeRaw.mock.calls[0][1]).toBe("membership-subscription-billing:2026");
+    expect(db.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      db.membershipLockoutSettings.findUnique.mock.invocationCallOrder[0],
+    );
     // #2179: the coverage read must count ACTIVE claims only (a released claim
     // means the member is re-billable and must not block the reconcile).
     expect(db.memberSubscription.findUnique).toHaveBeenCalledWith({
@@ -400,7 +432,37 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
     });
   });
 
-  it("leaves BASED_ON_AGE_TIER rows untouched (#2041 dominance)", async () => {
+  it("once the club has chosen, flips a BASED_ON_AGE_TIER member's row when the rule says they owe (#5190 Edge 2)", async () => {
+    const db = makeReconcileDb(untouchedSeedRow, 1, {
+      settings: { requiredTypeAgeRule: "AGE_TIER_EXEMPTS", liabilityAgeSource: "SEASON_START" },
+      member: { ageTier: "YOUTH", dateOfBirth: null },
+    });
+    const result = await reconcileSeasonSubscriptionForAssignment(db as never, {
+      memberId: "m1",
+      seasonYear: 2026,
+      subscriptionBehavior: "BASED_ON_AGE_TIER",
+    });
+
+    expect(result).toEqual({ reconciled: true });
+    expect(db.memberSubscription.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("once the club has chosen AGE_TIER_EXEMPTS, leaves a REQUIRED-type child's row alone (they owe nothing)", async () => {
+    const db = makeReconcileDb(untouchedSeedRow, 1, {
+      settings: { requiredTypeAgeRule: "AGE_TIER_EXEMPTS", liabilityAgeSource: "SEASON_START" },
+      member: { ageTier: "CHILD", dateOfBirth: null },
+    });
+    const result = await reconcileSeasonSubscriptionForAssignment(db as never, {
+      memberId: "m1",
+      seasonYear: 2026,
+      subscriptionBehavior: "REQUIRED",
+    });
+
+    expect(result).toEqual({ reconciled: false });
+    expect(db.memberSubscription.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("while NOT_CHOSEN, leaves BASED_ON_AGE_TIER rows untouched (#2041 dominance)", async () => {
     const db = makeReconcileDb(untouchedSeedRow);
     const result = await reconcileSeasonSubscriptionForAssignment(db as never, {
       memberId: "m1",
@@ -548,18 +610,17 @@ describe("isSubscriptionEnforcementActive", () => {
   });
 });
 
-describe("requiresPaidSubscriptionForBooking", () => {
-  it("enforces the age-tier rule while the Xero module is on", async () => {
-    mockLoadEffectiveModuleFlags.mockResolvedValue(moduleFlags(true));
-
-    await expect(requiresPaidSubscriptionForBooking("ADULT")).resolves.toBe(true);
-    await expect(requiresPaidSubscriptionForBooking("CHILD")).resolves.toBe(false);
-  });
-
-  it("never requires a paid subscription while the Xero module is off", async () => {
+describe("resolveSubscriptionLockoutPolicy", () => {
+  it("answers NO_BLOCK with the not-chosen liability rule while the Xero module is off", async () => {
     mockLoadEffectiveModuleFlags.mockResolvedValue(moduleFlags(false));
 
-    await expect(requiresPaidSubscriptionForBooking("ADULT")).resolves.toBe(false);
+    await expect(resolveSubscriptionLockoutPolicy()).resolves.toEqual({
+      mode: "NO_BLOCK",
+      liabilitySettings: {
+        requiredTypeAgeRule: "NOT_CHOSEN",
+        liabilityAgeSource: "NOT_CHOSEN",
+      },
+    });
     // Short-circuits before consulting age-tier settings.
     expect(mockGetAgeTierSettings).not.toHaveBeenCalled();
   });
@@ -571,7 +632,7 @@ describe("findUnpaidMemberGuests Xero-off bypass", () => {
       memberSubscription: { findMany: vi.fn().mockResolvedValue([]) },
       member: {
         findMany: vi.fn().mockResolvedValue([
-          { id: "g1", firstName: "Guest", lastName: "One", ageTier: "ADULT" },
+          { id: "g1", firstName: "Guest", lastName: "One", ageTier: "ADULT", dateOfBirth: null },
         ]),
       },
     };

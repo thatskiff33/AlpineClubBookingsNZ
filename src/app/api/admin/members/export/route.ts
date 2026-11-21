@@ -9,11 +9,9 @@ import { getAgeTierSettings } from "@/lib/age-tier";
 import { formatGenderLabel, formatTitleLabel } from "@/lib/member-enums";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import { createAuditLog } from "@/lib/audit";
-import {
-  NON_MEMBER_ROLE_VALUES,
-  OPERATIONAL_ROLE_VALUES,
-  isRole,
-} from "@/lib/member-roles";
+import { isRole } from "@/lib/member-roles";
+import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
+import { subscriptionNotRequiredMemberConditions } from "@/lib/subscription-liability-where";
 import {
   effectiveSubscriptionBehavior,
   isSubscriptionNotRequiredForMembershipType,
@@ -74,55 +72,18 @@ export async function GET(req: NextRequest) {
   // container's month (CT-4, #2870). `now` is pinned so the whole export is one
   // moment's answer.
   const currentSeasonYear = clubSeasonYear(club.zone, fixedClubClock(now));
-  const ageTierSettings = await getAgeTierSettings();
-  const notRequiredAgeTiers = new Set(
-    ageTierSettings
-      .filter((setting) => setting.subscriptionRequiredForBooking === false)
-      .map((setting) => setting.tier),
-  );
-  // #2149: mirror the members-list filter exactly — membership type is the
-  // authority. Exempt when the assigned season type is NOT_REQUIRED, or (no
-  // assignment) the role's default built-in type is NOT_REQUIRED. See
-  // admin-members-service for the full rationale.
-  const notRequiredSubscriptionConditions = [
-    {
-      AND: [
-        {
-          seasonalMembershipAssignments: {
-            none: { seasonYear: currentSeasonYear },
-          },
-        },
-        { role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] } },
-      ],
-    },
-    {
-      seasonalMembershipAssignments: {
-        some: {
-          seasonYear: currentSeasonYear,
-          membershipType: { subscriptionBehavior: "NOT_REQUIRED" },
-        },
-      },
-    },
-    // #2041/#2149: mirror the members-list filter and the displayed flag's
-    // row-dominance branch. A BASED_ON_AGE_TIER assignment with a NOT_REQUIRED
-    // current-season row is exempt even when the age tier is liable
-    // (mid-season tier promotion). See admin-members-service for the full
-    // rationale on why the assignment gate is required.
-    {
-      seasonalMembershipAssignments: {
-        some: {
-          seasonYear: currentSeasonYear,
-          membershipType: { subscriptionBehavior: "BASED_ON_AGE_TIER" },
-        },
-      },
-      subscriptions: {
-        some: { seasonYear: currentSeasonYear, status: "NOT_REQUIRED" },
-      },
-    },
-    ...(notRequiredAgeTiers.size > 0
-      ? [{ ageTier: { in: Array.from(notRequiredAgeTiers) } }]
-      : []),
-  ];
+  const [ageTierSettings, lockoutSettings] = await Promise.all([
+    getAgeTierSettings(),
+    loadMembershipLockoutSettings(),
+  ]);
+  // #2149/#5190: mirror the members-list filter exactly — the shared liability
+  // rule on the billing side until the club chooses (Q2), from the same settings
+  // as the per-row column below.
+  const notRequiredSubscriptionConditions = subscriptionNotRequiredMemberConditions({
+    seasonYear: currentSeasonYear,
+    ageTierSettings,
+    liabilitySettings: lockoutSettings,
+  });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const where: Record<string, any> = {};
@@ -480,10 +441,11 @@ export async function GET(req: NextRequest) {
                   .subscriptionBehavior,
                 m.role,
               ),
-              ageTier: m.ageTier,
-              notRequiredAgeTiers,
-              hasNotRequiredSeasonRow:
-                m.subscriptions[0]?.status === "NOT_REQUIRED",
+              member: m,
+              seasonRowStatus: m.subscriptions[0]?.status,
+              seasonYear: currentSeasonYear,
+              ageTierSettings,
+              liabilitySettings: lockoutSettings,
             })
               ? "NOT_REQUIRED"
               : m.subscriptions[0]?.status || "NONE",

@@ -55,7 +55,6 @@ export async function GET() {
   const subscriptionRequired = await requiresPaidSubscriptionForMemberForBooking(prisma, {
     memberId: session.user.id,
     seasonYear,
-    ageTier: member?.ageTier,
   });
   const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
   const status = sub?.status ?? "NOT_INVOICED";

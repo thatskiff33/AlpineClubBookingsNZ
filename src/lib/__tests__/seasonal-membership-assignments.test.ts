@@ -233,6 +233,8 @@ function makePreviewDb() {
       findUnique: vi.fn().mockResolvedValue(null),
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    // #5190: the club's liability rule; a missing row is NOT_CHOSEN.
+    membershipLockoutSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     auditLog: {
       create: vi.fn().mockResolvedValue({}),
     },
@@ -324,6 +326,8 @@ function makeRollForwardDb() {
       findUnique: vi.fn().mockResolvedValue(null),
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    // #5190: the club's liability rule; a missing row is NOT_CHOSEN.
+    membershipLockoutSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     auditLog: {
       create: vi.fn().mockResolvedValue({}),
     },
@@ -1249,6 +1253,8 @@ describe("seasonal membership assignment roll-forward", () => {
         findUnique: vi.fn().mockResolvedValue(null),
         updateMany: vi.fn().mockResolvedValue({ count: 0 }),
       },
+      // #5190: the club's liability rule; a missing row is NOT_CHOSEN.
+      membershipLockoutSettings: { findUnique: vi.fn().mockResolvedValue(null) },
       auditLog: { create: vi.fn().mockResolvedValue({}) },
       $executeRaw: vi.fn().mockResolvedValue(1),
       $transaction: vi.fn(async (callback: any) => callback(db)),
@@ -1364,6 +1370,8 @@ describe("seasonal membership assignment roll-forward", () => {
           return {};
         }),
       },
+      // #5190: the club's liability rule; a missing row is NOT_CHOSEN.
+      membershipLockoutSettings: { findUnique: vi.fn().mockResolvedValue(null) },
       auditLog: { create: vi.fn().mockResolvedValue({}) },
       $executeRaw: vi.fn().mockResolvedValue(1),
       $transaction: vi.fn(async (callback: any) => callback(db)),

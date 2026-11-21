@@ -32,6 +32,10 @@ import {
 import type { BundleEntry } from "../bundle";
 import { registerEntity } from "../registry";
 import { prismaEnumValues } from "../values";
+import {
+  reconcileMembershipLockoutBundle,
+  validateLiabilityAgeSource,
+} from "./membership-lockout-bundle";
 import type { CategoryExporter, ExportContext } from "../export-types";
 import {
   changedFields,
@@ -712,10 +716,10 @@ export const SINGLETONS: SingletonSpec[] = [
     // added here per the #2178 audit (should-travel).
     // #2543/#2561: `mode` replaced the legacy `enabled` boolean, and that COLUMN is
     // gone — so `enabled` is not a field here. It is still a BUNDLE KEY, though, and
-    // that distinction is the whole of the hook below.
+    // that distinction is the whole of the hook below (as is #5190's liability pair).
     fields: [
       "mode", "financialYearEndMonthOverride", "textFallbackEnabled",
-      "useFeeScheduleItemCodes",
+      "useFeeScheduleItemCodes", "requiredTypeAgeRule", "liabilityAgeSource",
     ],
     // financialYearEndMonthOverride is nullable (Int?) — null (= follow Xero's
     // accounting year) is a legitimate value, so it carries no `required`; its
@@ -742,6 +746,8 @@ export const SINGLETONS: SingletonSpec[] = [
       mode: { required: true },
       textFallbackEnabled: { required: true },
       useFeeScheduleItemCodes: { required: true },
+      requiredTypeAgeRule: { required: true },
+      liabilityAgeSource: { required: true, validate: validateLiabilityAgeSource }, // no CURRENT_AGE yet
     },
     defaults: () => DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS,
     // BUNDLE-FORMAT compatibility, which outlives the column (#2543/#2561).
@@ -772,23 +778,16 @@ export const SINGLETONS: SingletonSpec[] = [
     // That is also why the test is written out here rather than deferred to
     // `isSubscriptionLockoutMode`: the two answers differ on exactly the strings
     // this branch must not touch.
-    reconcile: (incoming) => {
-      const stated = "mode" in incoming && incoming.mode !== null;
-      if (stated) {
-        return incoming;
-      }
-      if (typeof incoming.enabled === "boolean") {
-        return {
-          ...incoming,
-          mode: incoming.enabled ? "HARD_BLOCK" : "NO_BLOCK",
-        };
-      }
-      // `mode` is absent or null with nothing to derive from. Absent means "this
-      // bundle says nothing about the policy", which merge mode honours by leaving
-      // the target's own mode alone; a present null is a broken file, and
-      // `constraints.mode.required` above fails the dry-run on it.
-      return incoming;
-    },
+    //
+    // #5190: the subscription-liability pair is the second job of this hook. A
+    // club opts in by choosing BOTH answers together and can never go back to
+    // NOT_CHOSEN (`INV-CONFIG-009`), so a bundle carries the pair only when it
+    // states both and neither is NOT_CHOSEN. Otherwise both keys are dropped: an
+    // older bundle, a never-chosen source or a hand-trimmed half pair says nothing
+    // about the rule, and the target keeps its own in either import mode — a
+    // bundle's NOT_CHOSEN never overwrites a chosen target. A present null or an
+    // unknown string is left in place for the validation loop to refuse.
+    reconcile: reconcileMembershipLockoutBundle,
   },
   {
     entity: "membership-cancellation-setting",

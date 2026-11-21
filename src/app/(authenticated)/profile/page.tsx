@@ -249,7 +249,6 @@ export default async function ProfilePage({
     await requiresPaidSubscriptionForMemberForBooking(prisma, {
       memberId: member.id,
       seasonYear: currentSeasonYear,
-      ageTier: member.ageTier,
     });
   const subscriptionStatus = subscriptionRequired
     ? (currentSub?.status ?? null)

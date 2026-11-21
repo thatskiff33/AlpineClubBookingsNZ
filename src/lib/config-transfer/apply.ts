@@ -11,6 +11,12 @@ import { acquireLodgeCapacityLock } from "@/lib/lodge-capacity-lock";
 import { lockMinimumStayPolicySet } from "@/lib/minimum-stay-policy-set";
 import { lockAdultMemberHostingPolicySet } from "@/lib/adult-member-hosting-policy-set";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { clubSeasonYear } from "@/lib/financial-year";
+import {
+  clearStaleNotRequiredRows,
+  clearedRowsAuditMetadata,
+} from "@/lib/member-subscription-defaults";
 import { readBundle, sha256Hex } from "./bundle";
 import { buildImportPlanFromParsed, CATEGORY_IMPORTERS } from "./import";
 import { mediaApplies, recreateBundleMedia } from "./media";
@@ -450,6 +456,12 @@ export async function applyConfigImport(
     await settleHostingCoverageAfterCommit({ limit: 5 }, prisma);
   }
 
+  // #5190: an import that changed the lockout settings may have opted the club
+  // in to a liability rule; clear the season's stale rows once it has committed.
+  if (appliedEntities.includes("membership-lockout-settings")) {
+    await clearStaleRowsAfterImport(prisma, { actorMemberId, bundleSha256 });
+  }
+
   return {
     perCategory,
     totals,
@@ -460,4 +472,36 @@ export async function applyConfigImport(
     doorCodesWritten: notes.doorCodesWritten,
     appliedEntities,
   };
+}
+
+/**
+ * #5190: an import that changed the lockout settings may have opted the club in
+ * to a liability rule, so the season's stale NOT_REQUIRED rows are cleared in
+ * their own transaction once the import has committed — the import lock and the
+ * billing season key never nest. Idempotent, and a no-op while the club has not
+ * chosen, so it is safe to run on any lockout-settings change. The import's own
+ * audit row is already written, so the members this clear-up moved get a row of
+ * their own (bounded ids plus the total).
+ */
+async function clearStaleRowsAfterImport(
+  prisma: PrismaClient,
+  input: { actorMemberId: string; bundleSha256: string },
+): Promise<void> {
+  const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
+  const clearUp = await prisma.$transaction((tx) =>
+    clearStaleNotRequiredRows(tx, seasonYear),
+  );
+  if (clearUp.clearedCount === 0) return;
+  await createAuditLog({
+    action: "configuration.imported.liability_clear_up",
+    memberId: input.actorMemberId,
+    category: "admin",
+    severity: "important",
+    outcome: "success",
+    summary: `Cleared ${clearUp.clearedCount} stale "not required" subscription row(s) after a configuration import`,
+    metadata: {
+      bundleSha256: input.bundleSha256,
+      clearedStaleNotRequiredRows: clearedRowsAuditMetadata(clearUp, seasonYear),
+    },
+  });
 }

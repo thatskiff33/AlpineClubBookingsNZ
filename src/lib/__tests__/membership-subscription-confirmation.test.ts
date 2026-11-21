@@ -36,6 +36,8 @@ vi.mock("@/lib/prisma", () => {
     $executeRaw: vi.fn(),
     $transaction: mocks.transaction,
     membershipSubscriptionBillingSettings: { findUnique: mocks.settingsFind },
+    // #5190: no row is the NOT_CHOSEN liability rule, the pre-#5190 billing rule.
+    membershipLockoutSettings: { findUnique: async () => null },
     membershipSubscriptionChargeCoverage: { findMany: mocks.coverageFindMany, findUnique: mocks.coverageFindUnique, findFirst: mocks.coverageFindFirst },
     membershipSubscriptionCharge: { findMany: mocks.chargeFindMany, upsert: mocks.chargeUpsert },
     familyGroupMember: { findMany: mocks.familyGroupMemberFindMany, groupBy: mocks.familyGroupMemberGroupBy },

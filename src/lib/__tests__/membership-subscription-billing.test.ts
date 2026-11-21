@@ -37,6 +37,8 @@ const mocks = vi.hoisted(() => ({
   effectiveCategoryFee: vi.fn(),
   familyMode: vi.fn(),
   mapping: vi.fn(),
+  // #5190: the club's subscription-liability rule. Null (no row) is NOT_CHOSEN.
+  lockoutSettings: { findUnique: vi.fn() },
 }));
 
 vi.mock("@/lib/xero-invoicing-guard", () =>
@@ -72,6 +74,7 @@ vi.mock("@/lib/prisma", () => ({
     xeroAccountMapping: mocks.accountMapping,
     clubTimeSettings: mocks.clubTimeSettings,
     membershipBillingException: mocks.billingExceptions,
+    membershipLockoutSettings: mocks.lockoutSettings,
     $transaction: (
       run: (tx: unknown) => unknown,
     ) => run(billingTransactionClient()),
@@ -101,6 +104,7 @@ function billingTransactionClient() {
     familyGroupSeasonInvoiceMarker: mocks.familyMarkers,
     membershipAnnualFeeComponent: mocks.feeComponents,
     membershipSubscriptionBillingSettings: mocks.settings,
+    membershipLockoutSettings: mocks.lockoutSettings,
     xeroAccountMapping: mocks.accountMapping,
   };
 }
@@ -222,6 +226,7 @@ describe("membership subscription billing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.settings.findUnique.mockResolvedValue({ invoiceDueDays: 30 });
+    mocks.lockoutSettings.findUnique.mockResolvedValue(null);
     mocks.coverage.findMany.mockResolvedValue([]);
     mocks.subscriptions.findMany.mockResolvedValue([]);
     mocks.members.findMany.mockResolvedValue([]);
@@ -3172,7 +3177,7 @@ describe("membership subscription billing", () => {
     // STORED tier. The type axis's own billing gate only ever applies that
     // gate for BASED_ON_AGE_TIER, off the season-start tier. A REQUIRED-type
     // member must never be tier-exempted on either axis.
-    it("never tier-exempts a REQUIRED-type category member, even when their stored ageTier would read as non-liable", async () => {
+    it("never tier-exempts a REQUIRED-type category member while the club has not chosen its liability rule, even when their stored ageTier would read as non-liable", async () => {
       mocks.members.findMany.mockResolvedValue([
         categoryMember("required-child", {}, {
           ageTier: "CHILD", // the built-in default tier settings treat CHILD as not subscription-liable
@@ -3188,5 +3193,148 @@ describe("membership subscription billing", () => {
       expect(preview.entries[0]!.subscriptionCategoryId).toBe("cat-1");
       expect(preview.exceptions).toEqual([]);
     });
+  });
+});
+
+// #5190: billing and booking access share one liability rule. These pin the two
+// edges on the BILLING side, under the NOT_CHOSEN default (today's rule) and
+// once a club has chosen; the access side is pinned in
+// subscription-lockout-enforcement.test.ts.
+describe("subscription liability rule on billing (#5190)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.settings.findUnique.mockResolvedValue({ invoiceDueDays: 30 });
+    mocks.lockoutSettings.findUnique.mockResolvedValue(null);
+    mocks.coverage.findMany.mockResolvedValue([]);
+    mocks.subscriptions.findMany.mockResolvedValue([]);
+    mocks.members.findMany.mockResolvedValue([]);
+    mocks.membershipTypes.findMany.mockResolvedValue([]);
+    mocks.charges.findMany.mockResolvedValue([]);
+    mocks.familyGroupMembers.findMany.mockResolvedValue([]);
+    mocks.familyGroupMembers.groupBy.mockResolvedValue([]);
+    mocks.familyMarkers.findMany.mockResolvedValue([]);
+    mocks.feeComponents.findMany.mockResolvedValue([]);
+    mocks.effectiveFee.mockResolvedValue(fee());
+    mocks.effectiveCategoryFee.mockResolvedValue(null);
+    mocks.familyMode.mockResolvedValue("BILL_FAMILY_VIA_BILLING_MEMBER");
+    mocks.mapping.mockResolvedValue({ code: "203", itemCode: "SUB", codeExplicitlyConfigured: true });
+    mocks.clubTimeSettings.findUnique.mockResolvedValue(null);
+    __setFinancialYearEndMonthForTesting(DEFAULT_FINANCIAL_YEAR_END_MONTH);
+  });
+
+  const chosen = (requiredTypeAgeRule: string, liabilityAgeSource: string) =>
+    mocks.lockoutSettings.findUnique.mockResolvedValue({
+      id: "default", mode: "HARD_BLOCK", financialYearEndMonthOverride: null,
+      textFallbackEnabled: true, useFeeScheduleItemCodes: false,
+      requiredTypeAgeRule, liabilityAgeSource,
+    });
+  const preview = () =>
+    buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+  const billedIds = (built: Awaited<ReturnType<typeof preview>>) =>
+    built.entries.flatMap((entry) => entry.coveredMembers.map((covered) => covered.id));
+  const typed = (id: string, subscriptionBehavior: string, dateOfBirth: string | null, ageTier = "ADULT") =>
+    member(id, {
+      dateOfBirth: dateOfBirth ? storedDateOfBirth(dateOfBirth) : null,
+      ageTier,
+      seasonalMembershipAssignments: [{
+        membershipType: { id: `type-${subscriptionBehavior}`, key: subscriptionBehavior, name: subscriptionBehavior, subscriptionBehavior, annualFees: [fee()] },
+      }],
+    });
+
+  describe("Edge 1: a REQUIRED-type member whose age tier is exempt", () => {
+    // Sam, 7 all season, on an always-required type.
+    const sam = () => typed("sam", "REQUIRED", "2019-06-01", "CHILD");
+
+    it("is billed while the club has not chosen (today's billing rule)", async () => {
+      mocks.members.findMany.mockResolvedValue([sam()]);
+      const built = await preview();
+      expect(billedIds(built)).toEqual(["sam"]);
+      expect(built.exemptMemberIds).toEqual([]);
+    });
+
+    it("is billed when the club chooses ALWAYS_OWES", async () => {
+      chosen("ALWAYS_OWES", "SEASON_START");
+      mocks.members.findMany.mockResolvedValue([sam()]);
+      expect(billedIds(await preview())).toEqual(["sam"]);
+    });
+
+    it("is exempt, and listed as exempt by age tier, when the club chooses AGE_TIER_EXEMPTS", async () => {
+      chosen("AGE_TIER_EXEMPTS", "SEASON_START");
+      mocks.members.findMany.mockResolvedValue([sam()]);
+      const built = await preview();
+      expect(billedIds(built)).toEqual([]);
+      expect(built.exemptMemberIds).toEqual(["sam"]);
+      expect(built.exemptMembers).toEqual([
+        expect.objectContaining({ memberId: "sam", exemptBy: "AGE_TIER", ageTier: "CHILD" }),
+      ]);
+    });
+
+    it("is exempt on the category axis too when the club chooses AGE_TIER_EXEMPTS", async () => {
+      chosen("AGE_TIER_EXEMPTS", "SEASON_END");
+      mocks.effectiveCategoryFee.mockResolvedValue({ id: "cat-fee", amountCents: 20_000, prorationRule: "NONE", components: [] });
+      mocks.members.findMany.mockResolvedValue([
+        member("sam", {
+          dateOfBirth: storedDateOfBirth("2019-06-01"),
+          ageTier: "CHILD",
+          seasonalMembershipAssignments: [{
+            membershipType: { id: "type-1", key: "FULL", name: "Full", subscriptionBehavior: "REQUIRED", annualFees: [fee()] },
+            subscriptionCategory: { id: "cat-1", key: "couple", name: "Couple", isActive: true },
+          }],
+        }),
+      ]);
+      const built = await preview();
+      expect(billedIds(built)).toEqual([]);
+      expect(built.exemptMemberIds).toEqual(["sam"]);
+    });
+  });
+
+  describe("Edge 2: an age-based-type member liable by age with a saved NOT_REQUIRED row", () => {
+    // Mia, 30, on an age-based type. Her NOT_REQUIRED row is not PAID and has no
+    // invoice, so the preview's PAID/invoiced read never returns it: billing has
+    // never honoured the row, and still does not once the club chooses.
+    const mia = () => typed("mia", "BASED_ON_AGE_TIER", "1996-06-01");
+
+    it("is billed while the club has not chosen", async () => {
+      mocks.members.findMany.mockResolvedValue([mia()]);
+      expect(billedIds(await preview())).toEqual(["mia"]);
+    });
+
+    it("is billed once the club chooses (age wins)", async () => {
+      chosen("AGE_TIER_EXEMPTS", "SEASON_START");
+      mocks.members.findMany.mockResolvedValue([mia()]);
+      expect(billedIds(await preview())).toEqual(["mia"]);
+    });
+  });
+
+  it("prices and gates an age-based member by the age at season END when the club chooses it", async () => {
+    // Turns 10 on 31 Mar 2027, the last day of season 2026: a Child at season
+    // start, a Youth at season end.
+    const turnsTenOnLastDay = () => typed("turns-ten", "BASED_ON_AGE_TIER", "2017-03-31", "CHILD");
+    mocks.members.findMany.mockResolvedValue([turnsTenOnLastDay()]);
+    const notChosen = await preview();
+    expect(notChosen.exemptMemberIds).toEqual(["turns-ten"]);
+
+    chosen("ALWAYS_OWES", "SEASON_END");
+    mocks.members.findMany.mockResolvedValue([turnsTenOnLastDay()]);
+    const built = await preview();
+    expect(billedIds(built)).toEqual(["turns-ten"]);
+    expect(mocks.effectiveFee).toHaveBeenLastCalledWith(expect.objectContaining({ ageTier: "YOUTH" }), expect.anything(), expect.anything());
+  });
+
+  it("never invoices a member already covered by a no-invoice fee", async () => {
+    // A NO_INVOICE confirm leaves the member's row NOT_REQUIRED and an ACTIVE
+    // coverage claim; that claim is what keeps billing off them, under any rule.
+    chosen("ALWAYS_OWES", "SEASON_START");
+    mocks.coverage.findMany.mockResolvedValue([{ memberId: "no-invoice" }]);
+    mocks.members.findMany.mockResolvedValue([typed("no-invoice", "REQUIRED", "1990-01-01")]);
+    const built = await preview();
+    expect(built.entries).toEqual([]);
+    expect(built.alreadyCoveredMemberIds).toEqual(["no-invoice"]);
+  });
+
+  it("refuses to preview when the liability rule cannot be read, rather than billing by the default", async () => {
+    mocks.lockoutSettings.findUnique.mockRejectedValue(new Error("connection lost"));
+    mocks.members.findMany.mockResolvedValue([typed("sam", "REQUIRED", "2019-06-01", "CHILD")]);
+    await expect(preview()).rejects.toThrow("connection lost");
   });
 });
