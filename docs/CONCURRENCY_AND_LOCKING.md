@@ -46,7 +46,8 @@ Guarded row claims and leases:
 [two callers on one Xero row (#4356)](#two-callers-on-one-xero-operation-row-guarded-outcomes-4356) ·
 [Xero token refresh (#3454)](#the-xero-token-refresh-uses-a-row-lease-3454-3806) ·
 [data-key re-encrypt (#4456)](#the-data-key-re-encrypt-joins-the-row-claims-and-takes-no-advisory-key-4456) ·
-[password cost upgrade (#5261)](#stored-password-cost-upgrade-5261).
+[password cost upgrade (#5261)](#stored-password-cost-upgrade-5261) ·
+[once-ever alert sweep (#5255)](#once-ever-alert-sweep-against-the-alerts-email-row-5255).
 
 **Writer classes.**
 
@@ -2576,6 +2577,30 @@ mispricing a booking.
   upgrade commits first, the other writer replaces the upgraded hash as it
   would have replaced the old one. Proved on PostgreSQL by
   `password-rehash.realdb.test.ts` (a forced interleaving behind a held row).
+
+#### Once-ever alert sweep against the alert's email row (#5255)
+
+- **Once-ever alert claim** — `src/lib/admin-alert-once-sweep.ts`
+  (`sweepOnceEverAlerts`, #5255, `INV-INT-041`) and
+  `src/lib/email/attempt-log.ts` (`recordEmailAttempt` with `onceEverClaim`):
+  a once-ever claim is written with `awaitingSendSince` set. The alert's email
+  row is written in one short transaction after `confirmAlertCooldownSend`, an
+  `updateMany` on the claim's `AlertCooldown` row by key and exact stamp that
+  clears the mark. The sweep's `releaseUnsentAlertCooldown` is one `deleteMany`
+  by key, exact stamp and mark still set, run 15 minutes on. Both statements
+  take the one row's lock, so whichever commits first decides: PostgreSQL
+  re-checks the loser's guard against the committed row, so a delete after the
+  confirm matches nothing (the claim is kept) and a confirm after the delete
+  matches nothing (`recordEmailAttempt` throws, no row is written and nothing
+  is sent). No advisory key, tier or order (INV-LOCK-001, INV-LOCK-002); this
+  entry is the site's registration (INV-LOCK-003). The provider call stays
+  after the commit, outside the transaction.
+
+  Reconciled with #4709's give-back of an uncertain claim and the takeover
+  callers (`admin-alert-once-takeover.ts`): both delete only a row under their
+  own exact stamp, as before; a sweep delete and either one can at worst both
+  match the same unsent claim, and only one deletes it. Proved on PostgreSQL by
+  `admin-alert-once-sweep.realdb.test.ts` (each order, behind a held row).
 
 #### Member photo writer (epic #171)
 

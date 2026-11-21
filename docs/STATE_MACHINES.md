@@ -4736,6 +4736,25 @@ additional lock is involved. As before,
 a crash after a send but before its sent stamp can repeat that alert when the
 ten-minute cooldown expires; the retry is at least once.
 
+### Once-ever admin alert claim (#5255)
+
+```text
+no claim -> claimed, awaiting send (awaitingSendSince = the claim's stamp)
+awaiting send -> first email row written -> kept, for good (mark cleared in the row's transaction)
+awaiting send -> send reached nobody -> deferred a day -> no claim
+awaiting send -> send threw, or recorded no email -> given back -> no claim
+awaiting send, 15 minutes on -> once-ever-alert-sweep gives it back -> no claim
+no claim -> the caller's next run claims and sends
+raised-once alert -> stored owed row -> sweep re-sends while no claim holds it
+  -> settled once kept; dropped with an error after 7 days
+```
+
+The give-back and the first email row race on the `AlertCooldown` row's lock:
+whichever commits first wins, and the loser changes nothing, so the sweep never
+makes a second send (`INV-INT-041`). A claim taken before #5255 has no mark and
+is never swept. Known limits, not owner-accepted: an alert raised while every
+database write fails (#5297), and an email row a crash left `QUEUED` (#5298).
+
 ### Shared Xero inbound run authority (#4432)
 
 The scheduled inbound cycle, HTTP cron's inbound/mirror tasks and whole-club

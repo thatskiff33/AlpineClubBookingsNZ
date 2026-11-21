@@ -972,6 +972,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-038` | An abandoned inbound reconcile row is taken over, never shared |
 | `INV-INT-039` | A dead webhook attempt is taken over past the lease |
 | `INV-INT-040` | No subscription or joining-fee invoice work while Xero is off |
+| `INV-INT-041` | A once-ever alert claim with no email is given back |
 
 ## Operations
 
