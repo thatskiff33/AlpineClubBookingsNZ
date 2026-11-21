@@ -152,6 +152,14 @@ ratchet against `origin/main` whatever `--base` it is given (#4831), so a
 `main`-side allowance for a file the epic left longer cannot refuse a sync.
 Only an allowance the epic itself introduced is judged there.
 
+A deployment fork syncing down from upstream has the same problem across
+many upstream pull requests at once. Run with `--upstream-ref` (CI does when
+the fork sets `QUALITY_BUDGET_UPSTREAM_REPO`), and a fragment whose bytes equal
+the trusted upstream commit's copy is upstream's, spent there, so it is not
+live: it neither applies, nor fails as unused, nor collides with a fragment the
+fork adds for the same path. A fragment the fork wrote or edited is judged as
+usual. See [`docs/MAINTENANCE.md`](../docs/MAINTENANCE.md#syncing-a-fork-from-upstream).
+
 **"After merge" means merged into the ratchet's BASE REF, which is always
 `origin/main` — never merely into an epic branch.** A child of an epic measures
 its file sizes against `origin/main`, so an allowance that has landed on the
