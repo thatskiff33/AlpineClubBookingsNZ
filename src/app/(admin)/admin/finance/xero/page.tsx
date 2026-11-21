@@ -20,6 +20,7 @@ import {
   OperationsPanel,
   SyncResultsPanel,
   UsagePanel,
+  XeroTaxOverridePauseCard,
   xeroLinkState,
 } from "./_components/panels"
 import { FocusedActionError } from "@/components/focused-action-error"
@@ -124,6 +125,8 @@ export default function XeroPage() {
 
       {/* Shown connected or not: the club's tax treatment is read without Xero, and a change checks its code against Xero (#4632). */}
       <ClubTaxCard />
+      {/* #5208: read from local state, so shown connected or not, beside the treatment it carries. */}
+      <XeroTaxOverridePauseCard />
 
       {connected && (
         <>

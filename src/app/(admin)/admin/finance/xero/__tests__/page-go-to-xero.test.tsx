@@ -34,6 +34,7 @@ vi.mock("../_components/panels", async () => {
     GoToXeroButton: actual.GoToXeroButton,
     xeroLinkState: actual.xeroLinkState,
     ClubTaxCard: stub,
+    XeroTaxOverridePauseCard: stub,
     ConnectionStatusPanel: stub,
     ContactSyncPanel: stub,
     ErasedMemberContactsPanel: stub,
