@@ -21,6 +21,7 @@ vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 import { lineTaxMismatches } from "@/lib/xero-line-tax-mismatches";
 import {
   clearXeroTaxOverridePause,
+  listOpenXeroTaxOverrideMismatches,
   readXeroTaxOverridePause,
   recordXeroTaxOverrideMismatch,
 } from "@/lib/xero-tax-override-safeguard";
@@ -57,6 +58,18 @@ describe("the pause", () => {
     await expect(readXeroTaxOverridePause()).resolves.toBe("PAUSED");
     expect(mocks.prisma.xeroTaxOverrideMismatch.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { clearedAt: null } }));
     expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("lists each flagged invoice's stored lines, dropping any entry that is not a line mismatch", async () => {
+    const row = { id: "m1", createdAt: new Date("2026-07-01T00:00:00.000Z"), bookingId: "b1", providerInvoiceId: "inv-1", invoiceNumber: "INV-1", documentKind: "CREATE" };
+    mocks.prisma.xeroTaxOverrideMismatch.findMany.mockResolvedValueOnce([
+      { ...row, lines: [{ index: 0, sentCents: 1044, xeroCents: 1043 }, { index: 1, sentCents: 10.5, xeroCents: 1 }, "junk", { index: 2, sentCents: 522, xeroCents: null }] },
+      { ...row, id: "m2", lines: { index: 0 } },
+    ]);
+    await expect(listOpenXeroTaxOverrideMismatches()).resolves.toEqual([
+      { ...row, lines: [{ index: 0, sentCents: 1044, xeroCents: 1043 }, { index: 2, sentCents: 522, xeroCents: null }] },
+      { ...row, id: "m2", lines: [] },
+    ]);
   });
 });
 

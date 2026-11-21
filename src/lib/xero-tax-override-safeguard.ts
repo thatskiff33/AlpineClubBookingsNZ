@@ -4,7 +4,7 @@ import { buildStructuredAuditLogCreateArgs } from "@/lib/audit";
 import logger from "@/lib/logger";
 import type { XeroTaxOverrides } from "@/lib/member-money";
 import { prisma } from "@/lib/prisma";
-import { lineTaxAmountsMatch, lineTaxMismatches, type XeroLineTaxMismatch } from "@/lib/xero-line-tax-mismatches";
+import { lineTaxAmountsMatch, lineTaxMismatches, parseStoredLineTaxMismatches, type XeroLineTaxMismatch } from "@/lib/xero-line-tax-mismatches";
 import { invoiceLineItemsTotalCents } from "@/lib/xero-modification-line-items";
 
 /**
@@ -71,7 +71,7 @@ export async function listOpenXeroTaxOverrideMismatches(): Promise<XeroTaxOverri
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     select: { id: true, createdAt: true, bookingId: true, providerInvoiceId: true, invoiceNumber: true, documentKind: true, lines: true },
   });
-  return rows.map((row) => ({ ...row, lines: Array.isArray(row.lines) ? (row.lines as XeroTaxOverrideMismatchView["lines"]) : [] }));
+  return rows.map((row) => ({ ...row, lines: parseStoredLineTaxMismatches(row.lines) }));
 }
 
 /**
