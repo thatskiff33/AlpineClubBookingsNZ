@@ -90,7 +90,7 @@ export const PRIVACY_RECIPIENTS = {
     name: "Anthropic (AI help and AI Diagnostics)",
     dataSent: "AI help receives questions, conversation and permitted page context. AI Diagnostics receives operator questions and tool results; a question can cause personal information to be returned to the model.",
     enablement: "Each feature needs its own module and dedicated saved API key; both are off unless configured. Switching its module off stops new calls; removing one key does not disable the other feature.",
-    processing: "See the club's Anthropic account terms and Anthropic's privacy notice; the application does not fix a processing country.",
+    processing: "Processed outside New Zealand; see the club's Anthropic account terms and Anthropic's privacy notice — the application does not fix which country.",
     memberFacing: true,
     availability: "club-turns-on",
     hosts: [],
