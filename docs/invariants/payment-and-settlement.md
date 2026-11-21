@@ -4470,9 +4470,10 @@ settlement body), **`INV-PAY-040`** (the manual capacity refusal),
   Booking Ref; the ledger posts `CASH_RECORDED` and the journal its receipt. No
   new payment source, line kind or journal account.
 - **A free stay is not settled.** A booking whose amounts total $0.00 takes the
-  existing zero-price confirmation (a $0 `SUCCEEDED` payment and
-  `postStoredBookingConfirmationLedgerLines`), as force-confirm does. A blank
-  amount is a missing amount, never zero.
+  zero-price confirmation a $0 create takes: the shared
+  `createZeroPriceConfirmationPayment` row, PAID, then
+  `postStoredBookingConfirmationLedgerLines`. A blank amount is a missing
+  amount, never zero.
 - **The import produces no Xero document, Stripe object or email**, and writes
   no recovery row. The hosting drain still runs after commit (`INV-HOST-039`).
 - **Afterwards the booking is a cash booking**: cancelling raises the by-hand
@@ -4481,5 +4482,5 @@ settlement body), **`INV-PAY-040`** (the manual capacity refusal),
 - Limit: part-paid rows are refused ("part-paid bookings cannot be imported
   yet") until #5008; reversing a batch and the refund-as-credit choice are
   #5005 children B and D.
-- Proven by `booking-import-parse.test.ts`, `booking-import-plan.test.ts` and
-  `booking-import.realdb.test.ts`.
+- Proven by `booking-import-parse.test.ts`, `booking-import-plan.test.ts`,
+  `zero-price-payment-call-sites.test.ts` and `booking-import.realdb.test.ts`.

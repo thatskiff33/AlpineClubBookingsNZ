@@ -22,7 +22,6 @@ import {
   BookingImportBatchStatus,
   BookingImportRowStatus,
   BookingStatus,
-  PaymentStatus,
   Prisma,
 } from "@prisma/client";
 
@@ -45,6 +44,7 @@ import {
 import { loadBookingImportLodge, loadBookingImportMembers, resolveImportBooking } from "@/lib/booking-import/resolve";
 import type { ParsedImportBooking } from "@/lib/booking-import/parse";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
+import { createZeroPriceConfirmationPayment } from "@/lib/booking-zero-price-payment";
 import { buildApprovalGuestNights, toPipelineGuestCreateData } from "@/lib/booking-request-shared";
 import { computeMemberGuestBoundary } from "@/lib/booking-guests";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
@@ -381,16 +381,10 @@ async function writeOneBooking(
     );
   } else {
     // A free stay: the manual settle refuses nothing owing, so it takes the
-    // zero-price confirmation path `createConfirmedBooking` uses (#4660): a $0
-    // payment, PAID, the confirmation lines, and bed placement.
-    await tx.payment.create({
-      data: {
-        bookingId: created.id,
-        amountCents: 0,
-        creditAppliedCents: 0,
-        status: PaymentStatus.SUCCEEDED,
-      },
-    });
+    // zero-price confirmation path `createConfirmedBooking` uses (#4660): the
+    // shared $0 payment row, PAID, the confirmation lines, and bed placement.
+    // An import applies no member credit.
+    await createZeroPriceConfirmationPayment(tx, { bookingId: created.id, creditAppliedCents: 0 });
     const confirmed = await tx.booking.updateMany({
       where: { id: created.id, status: BookingStatus.PAYMENT_PENDING },
       data: { status: BookingStatus.PAID },
