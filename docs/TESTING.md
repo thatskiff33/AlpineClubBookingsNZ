@@ -288,7 +288,7 @@ knip, the production build and its proofs without a `needs:` edge or job-level
 condition, then `scripts/ci/require-test-shards.mjs` checks that all four shard
 jobs from the **same Actions run attempt** completed successfully. Missing,
 duplicate, skipped, cancelled, failed or timed-out shards, API errors and a
-bounded wait all fail `verify`; a job that never reported cannot silently pass.
+bounded wait ([how long](../CONTRIBUTING.md#branch-protection)) all fail `verify`; a job that never reported cannot silently pass.
 Re-run the whole workflow rather than only a failed job if a partial re-run
 leaves successful shards absent from the new attempt. This does not add a
 branch-protection context. The required shards do not collect coverage: the
