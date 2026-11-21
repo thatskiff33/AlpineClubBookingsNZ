@@ -372,12 +372,46 @@ never change; only how much of each price is GST does.
    are both in the audit log.
 
 The Xero health check warns if the tax code in force is missing or inactive in
-Xero, its rate differs, or Xero's GST registration disagrees with the card. How
+Xero, its rate differs, Xero's GST registration disagrees with the card, or a
+mapped tax category's rate has gone. How
 it works: [Tax treatment](../xero/ARCHITECTURE.md#tax-treatment).
 It checks only today's treatment. Bookings made under an earlier treatment
 still use that treatment's tax code on their later edits, credit notes and
 refunds, so keep an earlier code active in Xero while such bookings remain:
 archiving it makes those documents fail in Xero.
+
+### Map the club's tax categories (Xero Setup)
+
+Once Xero is connected, the **Tax categories** card sits under the account
+mappings on **Xero Setup**'s **Account mapping** step, and on **Finance →
+Xero**. It maps each of the club's four tax categories to a tax rate your own
+Xero organisation provides, so the app never assumes a Xero tax code:
+
+| Category | Where its Xero tax rate comes from | Used by |
+| --- | --- | --- |
+| Sales tax on income | The **GST / tax treatment** card above, read-only here | Bookings, subscriptions, fees and their credit notes |
+| Sales tax on expenses | This card | Nothing yet |
+| Exempt | This card | A spent opening credit coded to the Opening Credits liability account |
+| Zero rated | This card | Nothing yet |
+
+1. A Full Admin chooses **Map** on a category, picks a rate and saves. Other
+   finance admins see the card read-only. Each picker offers only rates that
+   are active in Xero and suit the category: Exempt and Zero rated must be 0%,
+   and Sales tax on expenses must be usable on expenses.
+2. **Clear** removes a mapping. Saving and clearing are both in the audit log.
+3. A mapping belongs to the Xero organisation it was chosen in. If you connect
+   a different organisation, the card and the health check say so; map the
+   category again.
+
+While the club is not GST-registered, Xero documents carry no tax and no
+category is used. While it is, a line in a category that is not mapped — or
+whose rate Xero has removed, made inactive or changed so it no longer suits the
+category (an Exempt rate edited to a non-zero percentage, say) — is held back
+with an error, not sent with a guessed code. **If your club is GST-registered and is moving in
+with opening credits, map Exempt before you map the Opening Credits account.**
+Nothing changes on upgrade: until you map a category, every document is sent
+exactly as before. How it works:
+[`INV-CONFIG-008`](../invariants/product-configuration.md#inv-config-008).
 
 ## Settings reference
 
@@ -390,6 +424,7 @@ archiving it makes those documents fail in Xero.
 | Inbound Events | Filter and page stored webhooks; replay an event | Dataset Reset keeps the section and Operations state; Replay needs finance edit |
 | Xero Setup → Mappings | Account/item code mappings and hut/joining fee item codes | Finance edit; joining-fee amounts live in [Fees](fees.md) |
 | GST / tax treatment | Schedule a change to GST registration, rate or Xero tax code from a future date | Full Admin only; checked against Xero; bookings already made keep their treatment |
+| Tax categories | Map Sales tax on expenses, Exempt and Zero rated to Xero tax rates; shows Sales tax on income | Full Admin only; shown once Xero is connected; checked against Xero |
 | Member grouping | Grouping mode + rules, dry-run, bulk re-sync | Finance edit; never auto-re-groups; runbook-driven cutover |
 | Members with no Xero contact | Dry run over unlinked members, then create or link in small batches | Finance edit to create; needs a Contact Sync first; schools and ambiguous rows are never acted on; the batch size is shown on the button |
 | API budget / Usage | Daily call volume, rate limits, recent failures | Read-only meter |

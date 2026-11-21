@@ -2347,6 +2347,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/finance/xero/_components/missing-contacts-panel.tsx":
       "C9: the member link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/shared.tsx": "C9: the sync-report member links are adminHref",
+    "src/app/(admin)/admin/finance/xero/_components/tax-category-mapping-card.tsx":
+      "#5209: the read-only income row links to the GST / tax treatment card by adminHref",
     "src/app/(admin)/admin/membership/deletion-requests/deletion-requests-client.tsx":
       "C9: the return-to is adminHref",
     "src/app/(admin)/admin/membership/family-groups/page.tsx":

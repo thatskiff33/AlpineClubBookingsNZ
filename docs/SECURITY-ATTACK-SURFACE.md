@@ -445,6 +445,9 @@ Admin route subfamilies are:
   `finance:view`, native to the route map's default area; `PUT`/`DELETE` are
   Full Admin only, stricter than the map (`REVIEWED_PERMISSION_DIVERGENCES`,
   same shape as `club-format`'s write side)
+- The club's tax category mapping to Xero tax rates:
+  `admin/xero/tax-categories` (#5209) — `GET` is `finance:view`; `PUT`/`DELETE`
+  are Full Admin only, stricter than the map, the `club-tax` shape
 
 ### Finance Routes
 
