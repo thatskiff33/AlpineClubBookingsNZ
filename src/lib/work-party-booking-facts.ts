@@ -21,6 +21,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { getAllowedGuestMemberIds, type BookingGuestLookupDb } from "@/lib/booking-guests";
 import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { isQuotePricedBooking } from "@/lib/booking-modify-quote-priced";
+import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import type {
   WorkPartyEligibilityBooking,
   WorkPartyRemovalEligibilityBooking,
@@ -94,16 +95,19 @@ export async function workPartyActorIsOwnerOrFamily(
 
 /**
  * PAID with no money taken: no money on the payment (`amountCents` 0) and no
- * ledger row that took any, whatever account credit paid. Owner decision,
+ * ledger row that captured any (`CAPTURED_TRANSACTION_STATUS_LIST`: a capture
+ * later refunded was still taken), whatever account credit paid. Owner decision,
  * 18 Nov 2026 (maintainers' second comment): nothing at all, the shape the
  * ordinary $0 auto-pay writes when an Add brings an unpaid booking to nothing.
  * Owner decision, 20 Nov 2026
  * (https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-7035299228):
  * account credit alone too, the shape the auto-pay writes when an Add brings
  * the price down to the credit applied. A booking paid in full by credit
- * before any work party is caught as well; the owner accepted that. An
- * organiser-paid joiner never is: the group settlement records the joiner's
- * share on its payment (`amountCents`).
+ * before any work party is caught as well; the owner accepted that. A joiner
+ * whose share the organiser paid is not: the group settlement records that
+ * share on the joiner's payment (`amountCents`). A joiner worth $0 when the
+ * group settled has nothing recorded there, and is caught like any booking
+ * paid with nothing.
  */
 export async function workPartyPaidWithNoMoneyTaken(
   db: Pick<Prisma.TransactionClient, "paymentTransaction">,
@@ -113,7 +117,7 @@ export async function workPartyPaidWithNoMoneyTaken(
   if (booking.status !== BookingStatus.PAID || !payment) return false;
   if (payment.amountCents > 0) return false;
   const taken = await db.paymentTransaction.count({
-    where: { paymentId: payment.id, amountCents: { gt: 0 }, status: { in: ["SUCCEEDED", "PARTIALLY_REFUNDED"] } },
+    where: { paymentId: payment.id, amountCents: { gt: 0 }, status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] } },
   });
   return taken === 0;
 }

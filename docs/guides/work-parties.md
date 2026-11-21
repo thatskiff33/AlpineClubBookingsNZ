@@ -206,8 +206,10 @@ What happens:
   an unpaid $200 booking with $100 of credit applied, which a 50% work party
   brought down to the credit, so it was marked paid. For the same reason,
   **cancel the booking, or ask the treasurer**. A booking paid in full by
-  credit before any work party is refused too. A joiner's booking the group organiser paid is not: the
-  organiser's payment counts as money taken.
+  credit before any work party is refused too. A joiner's booking whose share
+  the group organiser paid is not refused for this reason, since the
+  organiser's payment counts as money taken; the joiner rules above still
+  apply.
 
 ## Settings reference
 

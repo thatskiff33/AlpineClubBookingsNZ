@@ -44,8 +44,8 @@
  *     refused up front; a Remove after a 100% Add (PAID, nothing taken) is
  *     refused, and (owner decision, 20 Nov 2026) so is one on a booking PAID
  *     with account credit alone, whether a 50% Add brought it to the credit or
- *     credit paid it in full before any work party, while an organiser-paid
- *     joiner is not caught; a card payment Stripe holds no record of is
+ *     credit paid it in full before any work party, while a joiner whose
+ *     share the organiser paid is not caught; a card payment Stripe holds no record of is
  *     refunded by bank transfer (`INV-PAY-160`); Add, Remove, Add moves no money and offers no method when the
  *     unpaid ask takes the reduction; two Removes at once apply once; started
  *     stays of every payment shape, a held night sold above the season rate,
@@ -1993,7 +1993,7 @@ async function batchRefusal(params: {
     expect(await workPartyRedemptions()).toHaveLength(1);
   }, 90_000);
 
-  it("#5149 owner decision 20 Nov: an organiser-paid joiner is never paid by credit alone, as the group settlement records its share", async () => {
+  it("#5149 owner decision 20 Nov: a joiner whose share the organiser paid is not paid by credit alone, as the group settlement records that share", async () => {
     await seed("organiser-paid");
     stripeRefundsFail();
     const added = await apply(await quote());

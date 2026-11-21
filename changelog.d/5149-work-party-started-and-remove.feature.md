@@ -10,4 +10,5 @@
   Credit already given and refunds already paid are left alone. A booking marked
   paid with no money taken, nothing or account credit alone (a 100% work
   party's, or one a work party brought down to its credit), can't be removed:
-  cancel it, or ask the treasurer. Both go through the normal booking change, with no change fee.
+  cancel it, or ask the treasurer. That includes a booking paid in full by
+  credit before any work party was added. Both go through the normal booking change, with no change fee.

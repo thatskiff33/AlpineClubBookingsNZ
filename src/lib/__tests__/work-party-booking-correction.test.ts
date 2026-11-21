@@ -13,7 +13,7 @@ import {
   type WorkPartyEligibilityContext,
   type WorkPartyEligibilityEvent,
 } from "@/lib/work-party-booking-correction";
-import { actorIsMemberOrFamily } from "@/lib/work-party-booking-facts";
+import { actorIsMemberOrFamily, workPartyPaidWithNoMoneyTaken } from "@/lib/work-party-booking-facts";
 import {
   resolveWorkPartySettlementMethod,
   WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE,
@@ -524,5 +524,44 @@ describe("the officer-only internal-code admission (census)", () => {
     );
     // A Remove admits nothing.
     expect(rules).toContain('return correction?.direction === "add" ? correction.promoCodeId : null;');
+  });
+});
+
+describe("workPartyPaidWithNoMoneyTaken (owner decisions of 18 and 20 Nov 2026)", () => {
+  // The ledger rows of one payment, filtered as Prisma would by the fact's own `where`.
+  type Row = { paymentId: string; amountCents: number; status: string };
+  const ledger = (rows: Row[]) => ({
+    paymentTransaction: {
+      count: async ({ where }: { where: { paymentId: string; amountCents: { gt: number }; status: { in: string[] } } }) =>
+        rows.filter(
+          (row) => row.paymentId === where.paymentId && row.amountCents > where.amountCents.gt && where.status.in.includes(row.status),
+        ).length,
+    },
+  }) as unknown as Parameters<typeof workPartyPaidWithNoMoneyTaken>[0];
+  const paid = (payment: Record<string, unknown>) =>
+    ({ status: BookingStatus.PAID, payment: { id: "pay-1", amountCents: 0, creditAppliedCents: 0, ...payment } }) as unknown as Parameters<
+      typeof workPartyPaidWithNoMoneyTaken
+    >[1];
+
+  it("is true for nothing taken, and for account credit alone", async () => {
+    expect(await workPartyPaidWithNoMoneyTaken(ledger([]), paid({}))).toBe(true);
+    expect(await workPartyPaidWithNoMoneyTaken(ledger([]), paid({ creditAppliedCents: 10_000 }))).toBe(true);
+  });
+
+  it("is false where money is on the payment, as an organiser-paid joiner's share is", async () => {
+    expect(await workPartyPaidWithNoMoneyTaken(ledger([]), paid({ amountCents: 5_000, creditAppliedCents: 10_000 }))).toBe(false);
+  });
+
+  it.each(["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"])(
+    "counts a %s capture as money taken: a refunded capture was still taken (CAPTURED_TRANSACTION_STATUS_LIST)",
+    async (status) => {
+      const rows = [{ paymentId: "pay-1", amountCents: 20_000, status }];
+      expect(await workPartyPaidWithNoMoneyTaken(ledger(rows), paid({ creditAppliedCents: 10_000 }))).toBe(false);
+    },
+  );
+
+  it("does not count an intent never captured (failed, or still pending)", async () => {
+    const rows = [{ paymentId: "pay-1", amountCents: 20_000, status: "FAILED" }, { paymentId: "pay-1", amountCents: 20_000, status: "PENDING" }];
+    expect(await workPartyPaidWithNoMoneyTaken(ledger(rows), paid({}))).toBe(true);
   });
 });
