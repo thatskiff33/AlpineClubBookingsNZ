@@ -221,6 +221,10 @@ function scan(): {
  * conflicted here. This key moves only when the site's own line changes, or
  * an identical line is added or removed above it.
  *
+ * The limit that buys: the key names the code, not where it sits, so deleting
+ * a reviewed site and pasting the identical line elsewhere in the same file
+ * still passes — a line pin would have caught that move; a reviewer now must.
+ *
  * The text is the RAW line, not the comment-and-string-stripped one the rules
  * scan: a key has to read as the code it names. The stripper keeps every
  * newline, so the same index addresses both.
@@ -406,10 +410,19 @@ const MEMBER_KEYED_HELPER =
 const OPTIONAL_OWNER_READ =
   /bookingOwner\([^()]*(?:\([^()]*\))?[^()]*\)\s*\?\.|bookingOwner\([^()]*(?:\([^()]*\))?[^()]*\)\.(?:member|memberId)\s*\?\./;
 
-function sitesMatching(pattern: RegExp): string[] {
+/**
+ * Every key whose stripped line matches `pattern`. `code` and `lines` default
+ * to the real tree; the fixture proofs below hand in a small one instead, so
+ * the census's own failure modes stay proven rather than probed once (#5232).
+ */
+function sitesMatching(
+  pattern: RegExp,
+  code: ReadonlyMap<string, string> = scanned.code,
+  rawLines: ReadonlyMap<string, readonly string[]> = scanned.lines,
+): string[] {
   const out: string[] = [];
-  for (const [file, source] of scanned.code) {
-    const lines = scanned.lines.get(file)!;
+  for (const [file, source] of code) {
+    const lines = rawLines.get(file)!;
     source.split("\n").forEach((text, index) => {
       if (pattern.test(text)) out.push(siteKey(file, lines, index));
     });
@@ -443,6 +456,104 @@ describe("#5232: a reviewed site's key survives edits around it", () => {
     const lines = [line, "other();", `    ${line}`];
     expect(siteKey("f.ts", lines, 0)).toBe(`f.ts::${line}#0`);
     expect(siteKey("f.ts", lines, 2)).toBe(`f.ts::${line}#1`);
+  });
+
+  // A one-file tree, stripped exactly as `scan()` strips the real one.
+  const tree = (raw: string) => ({
+    code: new Map([["f.ts", stripCommentsAndStrings(raw)]]),
+    lines: new Map([["f.ts", raw.split("\n")]]),
+  });
+  const census = (raw: string) => {
+    const { code, lines } = tree(raw);
+    return sitesMatching(COMPARISON, code, lines);
+  };
+  const reviewedFile = [
+    "export function a(booking, session) {",
+    "  if (bookingOwner(booking).memberId !== session.user.id) return;",
+    "}",
+    "export function b(booking, session) {",
+    "  return bookingOwner(booking).memberId === session.user.id;",
+    "}",
+  ];
+  const reviewed = census(reviewedFile.join("\n"));
+
+  it("reviews the fixture's two comparisons (fixture baseline)", () => {
+    expect(reviewed).toEqual([
+      "f.ts::if (bookingOwner(booking).memberId !== session.user.id) return;#0",
+      "f.ts::return bookingOwner(booking).memberId === session.user.id;#0",
+    ]);
+  });
+
+  it("does NOT move when lines are added or removed around a reviewed site (fixture proof)", () => {
+    const shifted = [
+      "import { bookingOwner } from './booking-owner';",
+      "",
+      "// a new comment",
+      ...reviewedFile.slice(0, 3),
+      "const unrelated = 1;",
+      ...reviewedFile.slice(3),
+    ];
+    expect(census(shifted.join("\n"))).toEqual(reviewed);
+  });
+
+  it("FAILS by name when a new site appears (fixture proof)", () => {
+    const added = [
+      ...reviewedFile,
+      "export const c = (booking, actor) => bookingOwner(booking).memberId != actor.id;",
+    ];
+    const sites = census(added.join("\n"));
+    expect(sites).not.toEqual(reviewed);
+    expect(sites.filter((site) => !reviewed.includes(site))).toEqual([
+      "f.ts::export const c = (booking, actor) => bookingOwner(booking).memberId != actor.id;#0",
+    ]);
+  });
+
+  it("FAILS by name when a reviewed site is removed (fixture proof)", () => {
+    const removed = reviewedFile.filter((_, index) => index !== 4);
+    const sites = census(removed.join("\n"));
+    expect(sites).not.toEqual(reviewed);
+    expect(reviewed.filter((site) => !sites.includes(site))).toEqual([
+      "f.ts::return bookingOwner(booking).memberId === session.user.id;#0",
+    ]);
+  });
+
+  it("FAILS by name when a reviewed site's own line is edited (fixture proof)", () => {
+    const edited = reviewedFile.map((line, index) =>
+      index === 1
+        ? "  if (bookingOwner(booking).memberId !== session.user.memberId) return;"
+        : line,
+    );
+    const sites = census(edited.join("\n"));
+    expect(sites).not.toEqual(reviewed);
+    expect(reviewed.filter((site) => !sites.includes(site))).toEqual([
+      "f.ts::if (bookingOwner(booking).memberId !== session.user.id) return;#0",
+    ]);
+  });
+
+  it("does NOT see a reviewed line deleted and pasted identically elsewhere (the key's stated limit)", () => {
+    // Pinned so the docblock on `siteKey` stays true: the key names the code,
+    // not its position, so moving an unchanged line within its file is
+    // invisible here. A reviewer sees the move in the diff; this census
+    // cannot.
+    const moved = [
+      ...reviewedFile.slice(0, 1),
+      ...reviewedFile.slice(2),
+      "export function moved(booking, session) {",
+      reviewedFile[1],
+      "}",
+    ];
+    expect(census(moved.join("\n"))).toEqual(reviewed);
+  });
+
+  it("FAILS by name when a new unrooted selection appears (fixture proof)", () => {
+    const before = "export const OWNER = { member: true } as const;";
+    const after = `${before}\nexport const ORG = { organisation: { select: { name: true } } } as const;`;
+    const unrooted = (raw: string) =>
+      selectionsIn("f.ts", raw).filter((s) => !s.rooted).map((s) => s.site);
+    expect(unrooted(before)).toEqual([]);
+    expect(unrooted(after)).toEqual([
+      "f.ts::export const ORG = { organisation: { select: { name: true } } } as const;#0",
+    ]);
   });
 
   it("keys a selection by its raw line, not the string-blanked one", () => {
