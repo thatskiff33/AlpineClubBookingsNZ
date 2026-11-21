@@ -115,6 +115,7 @@ const MEMBER_NOT_YET_PREFIXES: readonly string[] = [
   "/api/club-posts",
   "/api/committee",
   "/api/contact",
+  "/api/food-orders",
   "/api/group-bookings",
   "/api/help",
   "/api/inductions",

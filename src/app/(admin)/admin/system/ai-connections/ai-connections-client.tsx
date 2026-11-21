@@ -168,7 +168,7 @@ function SettingsSection({
       <Card {...section.sectionRegionProps}>
         <CardHeader className="flex flex-row items-start justify-between gap-3">
           <div>
-            <CardTitle {...section.titleProps} className="text-base">
+            <CardTitle {...section.titleProps} headingLevel={2} className="text-base">
               Who may connect, and what an app may do
             </CardTitle>
             <CardDescription>
@@ -366,7 +366,7 @@ function ConnectionsSection({ canEdit }: { canEdit: boolean | undefined }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Connections</CardTitle>
+        <CardTitle headingLevel={2} className="text-base">Connections</CardTitle>
         <CardDescription>
           Every AI app a member has connected and not yet disconnected, newest
           first. Disconnecting stops the app at once; the member can connect it
