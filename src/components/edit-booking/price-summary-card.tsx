@@ -66,7 +66,7 @@ export function PriceSummaryCard({
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle>Price Summary</CardTitle>
+          <CardTitle headingLevel={2}>Price Summary</CardTitle>
           {quoteLoading && quote && (
             <span className="text-sm font-normal text-muted-foreground">Updating…</span>
           )}
