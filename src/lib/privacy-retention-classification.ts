@@ -250,4 +250,11 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   // #4520: a balance transaction names a member's payment intent or refund; a payout is the club's own.
   StripeBalanceTransactionEvidence: "personal",
   StripePayout: "non-personal",
+  // ALP-653: an AI app's own registration names no person; a connection, its
+  // codes and tokens are one member's; the settings carry who last saved them.
+  McpClient: "non-personal",
+  McpGrant: "personal",
+  McpAuthCode: "personal",
+  McpToken: "personal",
+  McpSettings: "personal",
 } as const;

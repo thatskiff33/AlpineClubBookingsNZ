@@ -78,6 +78,7 @@ For what an officer sees and does on each screen, use the
 | `access-roles` | support | `ARCHITECTURE.md` (access roles / definitions) | [guide](guides/access-roles.md) | 4 |
 | `age-tier-settings` | bookings | `ARCHITECTURE.md`, `AUTHORITATIVE_FEES.md` | [guide](guides/age-tier-settings.md) | 1 |
 | `ai-assistant` | support | [`guides/ai-help.md`](guides/ai-help.md) (usage panel and spend cap; the page is hidden while the module is off) | [guide](guides/ai-help.md) | — (AI help module #2211, off by default; postdates #2050) |
+| `ai-connections` | support | [`guides/mcp-server.md`](guides/mcp-server.md), [`invariants/mcp-connections.md`](invariants/mcp-connections.md) (`INV-MCP`), [`STATE_MACHINES.md`](STATE_MACHINES.md#ai-app-connection-lifecycle); served at `/admin/system/ai-connections`, hidden while the module is off | [guide](guides/mcp-server.md) | — (AI app connections module, ALP-653, off by default; postdates #2050) |
 | `ai-diagnostics` | overview (page); support (API) | [architecture](ai-diagnostics/architecture.md), [deployment](ai-diagnostics/deployment.md), [ux](ai-diagnostics/ux.md), [e2e-matrix](ai-diagnostics/e2e-matrix.md), [hub](ai-diagnostics/README.md) | [deployment/operator guide](ai-diagnostics/deployment.md) | — (AID module, off by default; outside #2050) |
 | `alpine-server` | finance | [`guides/integrations.md`](guides/integrations.md), `DEPLOYMENT.md` (cron endpoint), `SECURITY-ATTACK-SURFACE.md` (provider list), `STATE_MACHINES.md` (version pause, #49; the `version` read route is finance view) | [guide](guides/integrations.md) | — (Alpine Central Server module, off by default) |
 | `appearance` | content | — | [guide](guides/appearance.md) (incl. `appearance/identity`) | 4 |
@@ -163,7 +164,7 @@ For what an officer sees and does on each screen, use the
 
 ## Summary
 
-- **85** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`, `membership`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
+- **86** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`, `membership`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
 - **2** areas are already served by a **feature hub** (`display` → lobby-display,
   `lodges` → multi-lodge). #2050 should extend, not duplicate, those hubs.
 - **13** areas have **no reference coverage** beyond their operator guide
