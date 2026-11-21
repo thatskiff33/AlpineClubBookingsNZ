@@ -30,8 +30,16 @@ const COLUMNS: Record<string, readonly string[]> = {
   memberMoneyRefundReservation: ["id", "attemptKey", "obligationId", "stripePaymentIntentId", "paymentTransactionId", "amountCents", "fundingJournalId", "createdAt"],
   memberMoneyRefundReservationRelease: ["id", "reservationId", "reason", "stripeRefundId", "applicationId", "createdAt"],
   paymentRefund: ["id", "paymentId", "paymentTransactionId", "stripeRefundId", "stripePaymentIntentId", "amountCents", "status", "stripeCreatedAt", "createdAt", "updatedAt"],
-  paymentRecoveryOperation: ["id", "type", "idempotencyKey", "bookingId", "paymentId", "paymentIntentId", "amountCents", "stripeKeyPrefix", "allocationPlan"],
-  manualRefundTask: ["id", "occurrenceKey", "kind", "status", "amountCents", "raisedAmountCents"],
+  paymentRecoveryOperation: ["id", "type", "status", "idempotencyKey", "bookingId", "paymentId", "paymentIntentId", "amountCents", "stripeKeyPrefix", "allocationPlan"],
+  // #5185: and the columns the hand-back census reads of a booking's tasks.
+  manualRefundTask: ["id", "bookingId", "paymentId", "occurrenceKey", "kind", "status", "amountCents", "raisedAmountCents", "partPaymentReviewPaymentId", "reason",
+    "lateCaptureApprovalIntentId", "createdAt", "completedAt"],
+};
+
+/** Column defaults the schema declares (`@default`), which a seed that omits the column gets, as an insert would. */
+const DEFAULTS: Record<string, Row> = {
+  paymentRecoveryOperation: { status: "PENDING" },
+  manualRefundTask: { status: "OPEN" },
 };
 
 const one = (model: string, local: string, foreign = "id"): Relation => ({ model, many: false, local, foreign });
@@ -95,7 +103,7 @@ export class MemberMoneyMemoryDb {
 
   /** Insert fixture rows, every unnamed column null. */
   seed(model: string, ...rows: Row[]): Row[] {
-    const full = rows.map((row) => ({ ...Object.fromEntries(COLUMNS[model]!.map((c) => [c, null])), ...row }));
+    const full = rows.map((row) => ({ ...Object.fromEntries(COLUMNS[model]!.map((c) => [c, null])), ...DEFAULTS[model], ...row }));
     this.tables[model]!.push(...full);
     return full;
   }
