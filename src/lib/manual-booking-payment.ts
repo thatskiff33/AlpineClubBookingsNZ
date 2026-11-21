@@ -12,8 +12,8 @@ import {
 import {
   markBookingPaymentManuallySettled,
   reverseManualBookingPayment,
-  type ManualAdditionalCoverage,
 } from "@/lib/payment-reconciliation";
+import type { ManualAdditionalCoverage } from "@/lib/payment-reconciliation-sources";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import { prisma } from "@/lib/prisma";
 import { clubFormatValues } from "@/lib/club-format-server";

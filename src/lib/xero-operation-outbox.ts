@@ -52,11 +52,11 @@ import {
   type RefundNoteWording,
 } from "@/lib/xero-refund-method";
 import { createXeroEntranceFeeInvoice } from "@/lib/xero-entrance-fee-invoices";
+import { buildPrecomputedEntranceFeeContext } from "@/lib/xero-outbox-entrance-fee-context";
 import {
   buildEntranceFeeInvoiceIdempotencyKey,
   ENTRANCE_FEE_EXEMPT_MESSAGE,
   getEntranceFeeContext,
-  type EntranceFeeContext,
 } from "@/lib/xero-mappings";
 import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
 import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-allocation";
@@ -208,32 +208,6 @@ async function claimQueuedOutboxOperation(
       in: [...expectedOperation.localModels],
     },
   });
-}
-
-function buildPrecomputedEntranceFeeContext(
-  payload: QueuedOutboxPayload
-): EntranceFeeContext | null {
-  if (
-    payload.queueType !== XERO_OUTBOX_ENTRANCE_FEE_TYPE ||
-    !payload.category ||
-    payload.feeAmountCents === null ||
-    payload.feeAmountCents === undefined
-  ) {
-    return null;
-  }
-
-  const entranceFeeContext: EntranceFeeContext = {
-    category: payload.category,
-    feeMapping: {
-      itemCode: payload.itemCode ?? null,
-      amountCents: payload.feeAmountCents,
-    },
-  };
-  if (payload.description) {
-    entranceFeeContext.description = payload.description;
-  }
-
-  return entranceFeeContext;
 }
 
 export async function enqueueXeroEntranceFeeInvoiceOperation(
