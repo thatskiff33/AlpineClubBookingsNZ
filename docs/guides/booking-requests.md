@@ -685,8 +685,15 @@ Two things worth knowing:
   one.
 - **An approved new booking emails the member** what was approved and what is
   left to pay, because they are not standing in the payment screen the way an
-  ordinary booker is. An approved change is announced by the usual "your booking
-  was changed" email.
+  ordinary booker is. The amount comes from the money the club has actually
+  received for the booking, not from its status (#4069): what it costs, less
+  account credit applied, less money already held. The email also says whether
+  the beds are held while it waits. A booking that is already covered gets no
+  payment line; a stay a group organiser pays for says so; and where the
+  records cannot prove a figure the email names no amount and sends the member
+  to the booking or the club — see
+  [the five payment lines](email-messages.md#there-is-no-only-if--write-lines-that-always-read-correctly). An
+  approved change is announced by the usual "your booking was changed" email.
 - **A refusal emails the member too**, carrying your member-facing explanation
   verbatim, the nights it was about, and the fact that nothing was booked and any
   beds the request held have been released. That is the whole reason the

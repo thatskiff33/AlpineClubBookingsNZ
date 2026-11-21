@@ -240,6 +240,7 @@ vi.mock("@/lib/booking-payment-state", async (importOriginal) => {
   bookingWorthCents: real.bookingWorthCents,
   bookingAmountOwedCents: real.bookingAmountOwedCents,
   recordedChangeFeeCents: real.recordedChangeFeeCents,
+  feeOwedAfterEditCents: real.feeOwedAfterEditCents,
   };
 });
 vi.mock("@/lib/policies/booking-route-decisions", () => ({
