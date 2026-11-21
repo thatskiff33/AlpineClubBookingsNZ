@@ -329,9 +329,9 @@ async function existingBooking(ref: string, guests: Line[]) {
   }, 120_000);
 
   it("sends nothing with Xero connected and the integration enabled", async () => {
-    const moduleBefore = await prisma.clubModuleSettings.findUnique({ where: { id: "default" } });
+    const moduleBefore = await prisma.clubModuleSettings.findUnique({ where: { id: "default" }, select: { xeroIntegration: true } });
     const connectionBefore = await prisma.xeroConnection.findUnique({ where: { id: "default" } });
-    await prisma.clubModuleSettings.upsert({ where: { id: "default" }, create: { id: "default", xeroIntegration: true }, update: { xeroIntegration: true } });
+    await prisma.clubModuleSettings.upsert({ where: { id: "default" }, create: { id: "default", xeroIntegration: true }, update: { xeroIntegration: true }, select: { xeroIntegration: true } });
     await prisma.xeroConnection.upsert({ where: { id: "default" }, create: { id: "default", tenantId: "race-5005-fake-tenant", expiresAt: new Date("2027-01-01T00:00:00.000Z") }, update: { tenantId: "race-5005-fake-tenant", expiresAt: new Date("2027-01-01T00:00:00.000Z") } });
     try {
       const bookingId = importedId((await importFile([line({ ref: "XERO", member: PEOPLE.owner, amount: "80" })])).result, "XERO");
@@ -355,8 +355,8 @@ async function existingBooking(ref: string, guests: Line[]) {
       expect(missing).not.toContain(bookingId);
       await expectCensusClean(bookingId);
     } finally {
-      if (moduleBefore) await prisma.clubModuleSettings.update({ where: { id: "default" }, data: { xeroIntegration: moduleBefore.xeroIntegration } });
-      else await prisma.clubModuleSettings.delete({ where: { id: "default" } });
+      if (moduleBefore) await prisma.clubModuleSettings.update({ where: { id: "default" }, data: { xeroIntegration: moduleBefore.xeroIntegration }, select: { xeroIntegration: true } });
+      else await prisma.clubModuleSettings.delete({ where: { id: "default" }, select: { id: true } });
       if (connectionBefore) await prisma.xeroConnection.update({ where: { id: "default" }, data: connectionBefore });
       else await prisma.xeroConnection.delete({ where: { id: "default" } });
     }

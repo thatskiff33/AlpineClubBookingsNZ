@@ -25,7 +25,8 @@ import {
 import type { ParsedImportBooking } from "@/lib/booking-import/parse";
 import { checkCapacityForGuestRanges, getLodgeCapacity } from "@/lib/capacity";
 import { formatStayDate, type ClubDateFormat } from "@/lib/club-time";
-import { addDaysDateOnly, eachDateOnlyInRange, formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import { expandStayEnvelopeToNightKeys } from "@/lib/booking-guest-stay-ranges";
+import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { loadBookingImportLodge, loadBookingImportMembers, resolveImportBooking } from "@/lib/booking-import/resolve";
 import { stableDigest } from "@/lib/stable-digest";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
@@ -113,8 +114,10 @@ export function emptyBookingImportFileState(): BookingImportFileState {
   return { guests: [], bookingRefsByNight: new Map(), memberNights: new Map() };
 }
 
+// An imported guest is contiguous by construction (one arrival, one departure, no
+// night set), so the canonical envelope expansion is exact (`INV-DATE-020`).
 function guestNightKeys(guest: Pick<ResolvedImportGuest, "stayStart" | "stayEnd">): string[] {
-  return eachDateOnlyInRange(guest.stayStart, guest.stayEnd).map(formatDateOnly);
+  return expandStayEnvelopeToNightKeys(guest.stayStart, guest.stayEnd);
 }
 
 function nightList(keys: readonly string[], format: ClubDateFormat): string {

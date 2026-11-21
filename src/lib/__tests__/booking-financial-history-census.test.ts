@@ -63,6 +63,8 @@ const OPERATIONAL_BOOKING_RELATIONS: Readonly<Record<string, { onDelete: string;
   "HostingCoverageIncident.bookingId": { onDelete: "Cascade", reason: "hosting review work item" },
   "EditReviewChargeRaiseClaim.bookingModificationId": { onDelete: "Cascade", reason: "idempotency claim for a review task" },
   "BookingChangeRequest.linkedModificationId": { onDelete: "SetNull", reason: "request pointer to the change it made" },
+  // #5005: never a draft; the imported booking's Payment is its financial history.
+  "BookingImportRow.bookingId": { onDelete: "Restrict", reason: "the import's record of where a booking came from; an imported booking is settled, never a draft" },
 };
 
 /**
