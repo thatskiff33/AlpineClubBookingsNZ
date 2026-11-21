@@ -74,14 +74,62 @@ export const STRIPE_DISPUTE_NEXT_STEP: Record<StripeDisputeStatus, string> = {
 export type StripeDisputeAlertStage = "opened" | "closed" | "won-after-loss";
 
 /**
- * The next step of the won-after-loss alert: the lost alert told the treasurer
- * to record the loss in Xero, so this one says to reverse it, and that a
- * hand-back raised while the dispute held is still theirs to settle.
+ * #5197: what a late win did about the hand-back tasks on the disputed payment, for the won-after-loss alert. A task
+ * dismissed while the dispute read lost is reopened by the app (`reopened`), was already back on the queue
+ * (`alreadyOpen`), or could not be reopened (`notReopened`, with the reason); a reduction made for the loss is owed
+ * again but changes nothing in the app (`reduced`). `cents` is what the late win makes owed again.
  */
-export const STRIPE_DISPUTE_WON_AFTER_LOSS_NEXT_STEP =
+export type LateWinHandBackReport =
+  | { kind: "no-payment" }
+  | { kind: "read-failed" }
+  | {
+      kind: "read";
+      reopened: readonly { taskId: string; cents: number; taskCents: number }[];
+      alreadyOpen: readonly { taskId: string }[];
+      notReopened: readonly { taskId: string; cents: number; reason: string }[];
+      reduced: readonly { taskId: string; cents: number }[];
+    };
+
+const WON_AFTER_LOSS_XERO =
   "This dispute was reported lost, and Stripe now reports it won: the disputed amount has come back to the club's balance. " +
-  "If you recorded the loss and dispute fee in Xero, reverse that entry the same way, as the deployment guide's lost-dispute procedure describes. " +
-  "Any hand-back task the app raised for this payment while the dispute held stays open: settle or dismiss it as usual.";
+  "If you recorded the loss and dispute fee in Xero, reverse that entry the same way, as the deployment guide's lost-dispute procedure describes.";
+
+/**
+ * The next step of the won-after-loss alert (#5061 follow-up, #5197): the lost alert told the treasurer to record the
+ * loss in Xero, so this one says to reverse it, then names every hand-back task the loss dismissed or reduced and what
+ * the app did about each. `money` formats cents as the alert's amounts are.
+ */
+export function stripeDisputeWonAfterLossNextStep(report: LateWinHandBackReport, money: (cents: number) => string): string {
+  if (report.kind === "no-payment") {
+    return `${WON_AFTER_LOSS_XERO} The app holds no booking payment for this charge, so no refund task was dismissed or reduced for it.`;
+  }
+  if (report.kind === "read-failed") {
+    return `${WON_AFTER_LOSS_XERO} The app could not read this payment's refund tasks. Check the booking on the payments board: ` +
+      "a refund task dismissed while the dispute read lost must be reopened and paid, and any reduction made for the loss is owed to the member again.";
+  }
+  const parts = [WON_AFTER_LOSS_XERO];
+  const task = (item: { taskId: string; cents: number }) => `task ${item.taskId} (${money(item.cents)})`;
+  if (report.reopened.length > 0) {
+    const named = report.reopened.map((item) => item.cents < item.taskCents
+      ? `task ${item.taskId} (${money(item.taskCents)}, of which ${money(item.cents)} is owed again; another lost dispute still covers the rest, so reduce it on the payments board before paying)`
+      : task(item));
+    parts.push(`The app reopened the refund tasks dismissed while the dispute read lost, and the club owes the member again: ${named.join("; ")}. Pay them back as usual.`);
+  }
+  if (report.alreadyOpen.length > 0) {
+    parts.push(`Already back on the queue: ${report.alreadyOpen.map((item) => `task ${item.taskId}`).join("; ")}.`);
+  }
+  if (report.notReopened.length > 0) {
+    const named = report.notReopened.map((item) => `${task(item)}: ${item.reason}`);
+    parts.push(`These refund tasks were dismissed while the dispute read lost, and the app could not reopen them: ${named.join(" ")} ` +
+      "Reopen them under Finance → Payments, or take them to the treasurer.");
+  }
+  if (report.reduced.length > 0) {
+    parts.push(`These refund tasks were reduced while the dispute read lost, and the amount taken off is owed to the member again: ${report.reduced.map(task).join("; ")}. ` +
+      "The app leaves a reduced task as it is: pay the member that amount by bank transfer, with the rest of the task, and take it to the treasurer to record.");
+  }
+  if (parts.length === 1) parts.push("No refund task on this payment was dismissed or reduced for the loss, so nothing more is owed to the member because of it.");
+  return parts.join(" ");
+}
 
 /**
  * The subject phrase (`{{disputeSubjectLabel}}`): which of the dispute's
