@@ -16,3 +16,10 @@
   schedules in the Membership fees category. Importing the same bundle twice
   changes nothing; which member is in which category is not carried. Grouping
   Xero contacts by subscription category is coming in a later release.
+
+  Both bulk actions, **Set Subscription Category** and **Set Membership
+  Type**, now handle each member the same way. If one member's change fails
+  unexpectedly, the others still go through. The failed member shows a plain
+  message, and the details go to the server log. A run in which nothing
+  changed and at least one member failed is recorded in the audit log as a
+  failure.

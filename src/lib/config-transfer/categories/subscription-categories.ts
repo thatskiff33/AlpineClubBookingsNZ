@@ -71,6 +71,7 @@ import {
 // config transfer bypasses the admin API, the planner re-checks what that API
 // enforces, against the EFFECTIVE POST-MERGE state (bundle rows plus target
 // rows the bundle leaves in place): no row may target the built-in category; a
+// NEW category key must have the admin page's shape (`isCatalogueKey`); a
 // category name may not repeat (case-insensitive) under a different key; every
 // fee carries components summing exactly to its amount; and a category's fee
 // windows may not overlap — the database has no constraint for the last one.
