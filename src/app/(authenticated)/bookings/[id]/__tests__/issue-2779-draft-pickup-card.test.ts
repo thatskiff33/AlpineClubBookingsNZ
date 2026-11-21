@@ -99,6 +99,18 @@ describe("#2779 draft pick-up-and-pay card (INV-LOCKOUT-069/070)", () => {
     );
   });
 
+  it("the page file holds exactly one level-1 heading (#5372)", () => {
+    // The outline tests (`booking-detail-card-headings.test.tsx` and the
+    // edit-booking `heading-outline.test.tsx`) draw the real cards under a
+    // stand-in <h1>, so they cannot see a second one added to the page itself.
+    // This counts the page file's own level-1 headings in either spelling: a
+    // native tag, or a `CardTitle` raised to level 1. It reads this one file
+    // only; the cards the page renders are covered by those outline tests.
+    const page = stripComments(readPageSource());
+    expect(page.match(/<h1\b/g) ?? []).toHaveLength(1);
+    expect(page).not.toMatch(/headingLevel=\{\s*1\s*\}/);
+  });
+
   it("states the deletion deadline on the page that takes the money", () => {
     expect(source).toContain('data-testid="draft-expiry-notice"');
     expect(source).toContain("booking.draftExpiresAt ? (");
