@@ -39,6 +39,7 @@ import {
   getXeroAdminHealthSnapshot,
   type XeroAdminHealthSnapshot,
 } from "@/lib/xero-admin-health";
+import { xeroTaxOverridePauseProblem } from "@/lib/xero-tax-override-safeguard";
 
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import {
@@ -393,6 +394,13 @@ function buildPaymentItems(
 }
 
 function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot) {
+  // #5208: the one sentence every surface shows while the pause holds.
+  const taxOverridePause = xeroTaxOverridePauseProblem(snapshot.taxOverridePause.count);
+  addItem(items, {
+    id: "xero-tax-overrides-paused", domain: "xero", title: "GST overrides paused",
+    severity: "critical", owner: "Finance", count: snapshot.taxOverridePause.count,
+    href: adminHref("xero"), summary: taxOverridePause ?? "",
+  });
   addItem(items, {
     id: "xero-silent-webhook", domain: "xero", title: "Silent Xero webhook",
     severity: "warning", owner: "Finance", count: snapshot.webhookHealth?.silent ? 1 : 0,

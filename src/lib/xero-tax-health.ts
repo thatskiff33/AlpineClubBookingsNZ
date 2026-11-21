@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getXeroConnectedOrganisation } from "@/lib/xero-organisation";
 import { xeroTaxCodeProblem } from "@/lib/xero-tax-rate-options";
 import { readXeroTaxRatesOrNull } from "@/lib/xero-tax-rates";
+import { countOpenXeroTaxOverrideMismatches, xeroTaxOverridePauseProblem } from "@/lib/xero-tax-override-safeguard";
 
 /**
  * DOES XERO STILL AGREE WITH THE CLUB'S TAX TREATMENT? (#4632). The writer
@@ -16,6 +17,9 @@ import { readXeroTaxRatesOrNull } from "@/lib/xero-tax-rates";
  * - its rate in Xero differs from the period's rate;
  * - the organisation's `PaysTax` disagrees with the registered flag.
  *
+ * And one the app found itself (#5208): Xero changed the GST sent on an invoice,
+ * so the journal's GST overrides are paused until finance resumes them.
+ *
  * Read outside any transaction. `checked` is false when Xero could not be read
  * at all, so a screen says "not checked" rather than "fine".
  */
@@ -25,11 +29,12 @@ export interface XeroTaxHealth {
 }
 
 export async function readXeroTaxHealth(): Promise<XeroTaxHealth> {
-  const [schedule, zone, rates, organisation] = await Promise.all([
+  const [schedule, zone, rates, organisation, pausedInvoices] = await Promise.all([
     loadClubTaxSchedule(prisma),
     readClubTimeZoneOutsideRequest(),
     readXeroTaxRatesOrNull(),
     getXeroConnectedOrganisation(),
+    countOpenXeroTaxOverrideMismatches(),
   ]);
   const period = clubTaxPeriodOn(schedule, clubToday(zone));
   const problems: string[] = [];
@@ -44,5 +49,7 @@ export async function readXeroTaxHealth(): Promise<XeroTaxHealth> {
         : "The club's tax setting says it is not GST-registered, but Xero says the organisation pays tax.",
     );
   }
+  const pause = xeroTaxOverridePauseProblem(pausedInvoices);
+  if (pause) problems.push(pause);
   return { checked: rates !== null || paysTax !== null, problems };
 }

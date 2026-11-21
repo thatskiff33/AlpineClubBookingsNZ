@@ -60,6 +60,8 @@ vi.mock("@/lib/prisma", () => ({
     xeroSyncCursor: { findFirst: mocks.cursorFindFirst },
     cronJobRun: { findFirst: mocks.cronFindFirst },
     payment: { findMany: mocks.paymentFindMany },
+    // #5208: no flagged invoice holds the GST-override pause.
+    xeroTaxOverrideMismatch: { count: async () => 0 },
   },
 }));
 

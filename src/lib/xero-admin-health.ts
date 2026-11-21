@@ -11,6 +11,7 @@ import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoic
 import { getXeroContactLinkMismatchSnapshot } from "@/lib/xero-contact-link-mismatches";
 import { findCreditNotesSpentOutsideApp } from "@/lib/xero-credit-note-spent-outside-flag";
 import { readXeroTaxHealth, type XeroTaxHealth } from "@/lib/xero-tax-health";
+import { countOpenXeroTaxOverrideMismatches } from "@/lib/xero-tax-override-safeguard";
 import { readActiveRefundNoteMetadataCentsByPayment } from "@/lib/xero-sync";
 import {
   findResolvedBookingInvoiceCreate,
@@ -128,6 +129,8 @@ export interface XeroAdminHealthSnapshot {
   creditNotesSpentOutsideApp: { count: number };
   /** #4632: whether Xero still carries the club's tax treatment in force today; not checked when Xero cannot be read. */
   taxTreatment: XeroTaxHealth;
+  /** #5208: flagged invoices holding the GST-override pause; zero when the journal's GST is sent. */
+  taxOverridePause: { count: number };
   apiBudget: {
     status: "healthy" | "warning" | "critical" | "exhausted" | "unknown";
     usagePercent: number | null;
@@ -458,6 +461,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     contactLinkMismatches,
     creditNotesSpentOutside,
     taxTreatment,
+    taxOverridePauseCount,
     usageSummaryResult,
   ] = await Promise.all([
     prisma.member.count({
@@ -498,6 +502,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     getXeroContactLinkMismatchSnapshot({ limit: 1 }),
     findCreditNotesSpentOutsideApp(prisma),
     readXeroTaxHealth().catch(() => ({ checked: false, problems: [] })),
+    countOpenXeroTaxOverrideMismatches(),
     getTodaysXeroUsageSummary()
       .then((summary) => ({
         status: summary.today.budgetStatus,
@@ -561,6 +566,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     },
     creditNotesSpentOutsideApp: { count: creditNotesSpentOutside.length },
     taxTreatment,
+    taxOverridePause: { count: taxOverridePauseCount },
     apiBudget: usageSummaryResult,
   };
 }

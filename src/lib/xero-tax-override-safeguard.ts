@@ -48,6 +48,22 @@ export async function readXeroTaxOverridePause(): Promise<XeroTaxOverrides> {
   return open ? "PAUSED" : "ON";
 }
 
+/** How many flagged invoices hold the pause; zero when the overrides are on. */
+export async function countOpenXeroTaxOverrideMismatches(): Promise<number> {
+  return prisma.xeroTaxOverrideMismatch.count({ where: { clearedAt: null } });
+}
+
+/**
+ * The one sentence every surface shows while the pause holds (the Finance
+ * dashboard, the Xero health page and the Xero finance page), or null.
+ */
+export function xeroTaxOverridePauseProblem(openCount: number): string | null {
+  if (openCount <= 0) return null;
+  const invoices = openCount === 1 ? "1 invoice" : `${openCount} invoices`;
+  return `Xero changed the GST on ${invoices} after the app sent it. Until someone in finance checks them and resumes, `
+    + "new invoices go to Xero without the club's own GST figures and Xero works the GST out itself.";
+}
+
 /** The uncleared mismatches, oldest first: what the pause is made of. */
 export async function listOpenXeroTaxOverrideMismatches(): Promise<XeroTaxOverrideMismatchView[]> {
   const rows = await prisma.xeroTaxOverrideMismatch.findMany({

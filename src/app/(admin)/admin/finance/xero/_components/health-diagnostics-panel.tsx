@@ -361,6 +361,16 @@ export function HealthAndDiagnosticsPanels({
                 onClick={() => scrollToSection("contactLinkMismatches")}
               />
               <CreditUsedInXeroCard count={health.creditNotesSpentOutsideApp?.count ?? null} />
+              {health.taxOverridePause ? (
+                <HealthStatCard
+                  label="GST overrides"
+                  value={health.taxOverridePause.count > 0 ? "Paused" : "On"}
+                  subtitle={health.taxOverridePause.count > 0
+                    ? `Xero changed the GST on ${health.taxOverridePause.count} invoice${health.taxOverridePause.count === 1 ? "" : "s"}. Check them on the GST overrides card and resume.`
+                    : "New invoices carry the club's own GST figure on each line."}
+                  badge={health.taxOverridePause.count > 0 ? <ToneChip tone="danger" icon={AlertTriangle}>Needs attention</ToneChip> : <ToneChip tone="success" icon={CheckCircle2}>Clear</ToneChip>}
+                />
+              ) : null}
               <HealthStatCard
                 label="API budget"
                 value={health.apiBudget.usagePercent != null ? `${Math.round(health.apiBudget.usagePercent * 100)}%` : "Unknown"}
