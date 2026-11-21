@@ -81,11 +81,18 @@ export function ledgerStatusForPaymentIntent(
 /**
  * Plain English for an operator when an answered intent did not capture — the
  * admin route's and charge-saved-method's response bodies and alerts share it,
- * so the two cannot describe one Stripe status two ways.
+ * so the two cannot describe one Stripe status two ways. `claimReleased: false`
+ * is the rare answer whose claim release did not land (#5279): every status
+ * sentence below says the booking stays pending or can be retried now, and
+ * neither is true while it is still CONFIRMED awaiting the job's recovery.
  */
 export function describeUnsettledPaymentIntent(
-  status: Stripe.PaymentIntent.Status
+  status: Stripe.PaymentIntent.Status,
+  { claimReleased = true }: { claimReleased?: boolean } = {}
 ): string {
+  if (!claimReleased) {
+    return `The charge did not complete (Stripe reports the payment as "${status}"). ${SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE}`;
+  }
   switch (status) {
     case "requires_action":
       return "The saved card needs the cardholder to complete authentication (3D Secure), which cannot be done automatically; the booking stays pending until they do, or until the member saves a different card.";
@@ -98,17 +105,6 @@ export function describeUnsettledPaymentIntent(
     default:
       return `The charge did not complete (Stripe reports the payment as "${status}"); the booking stays pending.`;
   }
-}
-
-/**
- * `describeUnsettledPaymentIntent` for the rare answer whose claim release did
- * not land (#5279): every variant there says the booking stays pending or can
- * be retried now, and neither is true while it is still CONFIRMED.
- */
-export function describeUnsettledPaymentIntentWithClaimKept(
-  status: Stripe.PaymentIntent.Status
-): string {
-  return `The charge did not complete (Stripe reports the payment as "${status}"). ${SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE}`;
 }
 
 export interface SettledSavedCardChargeAttempt {
