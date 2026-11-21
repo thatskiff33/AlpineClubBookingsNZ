@@ -45,7 +45,8 @@ Guarded row claims and leases:
 [Xero retry (#2262)](#a-xero-retry-claims-the-original-row-it-writes-2262-h3-3462-4256-4259) ·
 [two callers on one Xero row (#4356)](#two-callers-on-one-xero-operation-row-guarded-outcomes-4356) ·
 [Xero token refresh (#3454)](#the-xero-token-refresh-uses-a-row-lease-3454-3806) ·
-[data-key re-encrypt (#4456)](#the-data-key-re-encrypt-joins-the-row-claims-and-takes-no-advisory-key-4456).
+[data-key re-encrypt (#4456)](#the-data-key-re-encrypt-joins-the-row-claims-and-takes-no-advisory-key-4456) ·
+[password cost upgrade (#5261)](#stored-password-cost-upgrade-5261).
 
 **Writer classes.**
 
@@ -230,6 +231,30 @@ mostly succeed instead of failing - and `connection_limit` is unchanged. If load
 shows the pool starving, the remedies are shrinking the lock(1) hold (moving
 read-only preflight before the lock) or reserving pool headroom for lock(1)
 writers, not shortening the budget back below the longest holder.
+
+### Paid future-booking import (#5005, child A)
+
+The engine imports one booking at a time; it never holds the global key for a
+whole file. `writeOneBooking` takes `lock(1)`, then the selected lodge's
+`acquireLodgeCapacityLock`, then sorted member-night keys. Its manual settlement
+re-enters the first two locks and takes the owner's credit key through the
+existing settlement body (`INV-LOCK-001`, `INV-LOCK-002`). The registered site
+is `writeOneBooking#1` (`INV-LOCK-003`). Each booking's transaction runs on
+`LOCK1_HOLDER_TRANSACTION_BUDGET` (`INV-LOCK-006`).
+
+The lodge id and parsed file are immutable inputs. Under the locks the writer
+re-reads the lodge, members and imported reference, repeats the planner's
+person-night, hosting, supervision and capacity checks, and claims a PENDING
+row with `updateMany`. A lost claim creates no booking. The partial unique
+index additionally excludes a second live reference per lodge. The booking,
+settlement, ledger, journal, events and row result commit together. Refusals
+roll back that transaction and are recorded with another PENDING-guarded update;
+a concurrent successful import cannot be overwritten by the refusal.
+
+Journal tax context and dietary settings resolve before the transaction
+(`INV-LOCK-004`); no provider call runs inside it. The hosting drain and audit
+run after commit. See the [engine contract](design/booking-import.md) for the
+read-only preview, digest and resumable batch.
 
 ### A writer that does BOTH takes BOTH — global first
 
@@ -2530,6 +2555,27 @@ mispricing a booking.
   `officer-two-factor.realdb.test.ts` (one grace stamp; a reset closes a
   required officer's grace and leaves an ordinary member's first grace owed;
   reset racing an enrolment).
+
+#### Stored password cost upgrade (#5261)
+
+- **Password cost upgrade** — `src/lib/password-rehash.ts`
+  (`upgradePasswordHashAfterProof`, #5261, `INV-AUTH-013`): after a password
+  is proved at sign-in or step-up, one `member.updateMany` writes the
+  current-cost hash `WHERE id = … AND passwordHash = <the proved hash>`, and
+  only that column. It is a compare-and-swap: no transaction, no row lock taken
+  up front, no advisory key, and the bcrypt hash is computed before the
+  statement, so INV-LOCK-001 and INV-LOCK-002 ordering is not engaged and there
+  is no new lock site or key (`INV-LOCK-003`).
+
+  Racing writers of `Member.passwordHash`: change-password, reset-password,
+  the kiosk password `PUT` in `src/app/api/admin/lodge/route.ts`, account
+  erasure and former-member anonymisation. If one commits first, the upgrade's
+  guard matches nothing (count 0) and it does nothing more. If one holds the row
+  uncommitted, the upgrade's `UPDATE` waits on the row and PostgreSQL re-checks
+  the guard against the committed row, so it again matches nothing. If the
+  upgrade commits first, the other writer replaces the upgraded hash as it
+  would have replaced the old one. Proved on PostgreSQL by
+  `password-rehash.realdb.test.ts` (a forced interleaving behind a held row).
 
 #### Member photo writer (epic #171)
 
@@ -5493,11 +5539,17 @@ per call through `withStoreTransaction`: the `Payment` row locked first
 `PaymentRefund` rows inserted with `ON CONFLICT DO NOTHING` in refund-id order,
 then the transaction row's compare-and-set, then the `Payment` aggregate and its
 booking-ledger lines. No provider call runs inside it. A failed refund's floor
-(#4280, `INV-PAY-141`) reads the payment's "Paid another way" close records on
-that same client, under the `Payment` row: the close takes `lock(1)`, then that
-row, before it writes its record, so the writer sees a close whole or waits for
-it. No key is added. Proved in both orders by
-`card-refund-reversal-bank-cash-floor.realdb.test.ts`.
+(#4280, #4488, `INV-PAY-141`) reads the payment's card refund bank records - its
+"Paid another way" closes and completed card refund shortfalls
+(`readCardRefundBankCashByPayment`) - on that same client, under the `Payment`
+row. The close takes `lock(1)`, then that row, before it writes its record. A
+shortfall's completion takes `lock(1)`, then the booking row, then that row
+while it chooses its route (`cardShortfallSettlement`; a capacity race's again
+in `capacityRaceChargeForHandBack`), all before its claim; it takes no member
+key, since a shortfall gives nothing back as credit. So the writer sees either
+whole or waits for it. No key, order or registry entry is added. Proved in both
+orders by `card-refund-reversal-bank-cash-floor.realdb.test.ts` (closes) and,
+for a cancel's bank part, `card-refund-reversal-shortfall-floor.realdb.test.ts`.
 
 **One order for the refunded total: `Payment` row, then refund rows, then
 transaction rows** — and, in a transaction that also takes the per-member
@@ -6628,6 +6680,50 @@ claimed. Two approvals serialise on `lock(1)`; the second re-reads the request a
 finished) claims on `status: REQUESTED` and now bumps `version`, so it and an
 execution cannot both win. Proved against PostgreSQL in
 `booking-change-request-execution.realdb.test.ts`.
+
+### Adding an existing booking to a work party (fork #119)
+
+An officer's "Add to work party" (`addBookingToWorkParty`,
+`src/lib/work-party-booking-correction.ts`) composes only existing keys and adds
+one registered global site, `correctWorkParty#1` (`INV-LOCK-002`,
+`INV-LOCK-003`). It is the #3750 execution's shape without a request row.
+Fork #130's "Remove from work party" (`removeBookingFromWorkParty`) is the same
+writer in the other direction: it adds no key, site or participant, and the
+steps below are its steps too (its eligibility rule is
+`workPartyRemovalEligibility`). Order, in one transaction:
+
+1. Pre-read only the booking's immutable `lodgeId`; take global `lock(1)`, then
+   `acquireLodgeCapacityLock`, then the booking row
+   (`lockBookingRowForOwnerRead`, #4845), before the officer is re-read.
+2. Reauthorise the officer from fresh roles (`reauthorizeBookingOfficerFromDb`).
+3. Re-read the booking and the work party under the locks and apply the shared
+   eligibility rule (`workPartyBookingEligibility`), including "already has a
+   work party". The list's facts (`readWorkPartyBookingFacts`) are re-read on
+   this `tx`: the family rows of the owner and, for an organiser-pays joiner,
+   the organiser (owner decision 3 of 18 Nov 2026 on #5149), and a $0 settle,
+   so each refusal is made before the edit runs. A dispute hold is refused on
+   the edit's own `refundHeldForDispute`, before the commit.
+4. Run `modifyBookingBatch` on the same `tx` with `officerWorkPartyCorrection`
+   and a `preTransaction` resolved before the transaction (`INV-LOCK-004`). The
+   service re-enters all three keys and takes the member keys after them. Any
+   refusal throws and rolls everything back.
+5. A preview throws a sentinel after the edit and so rolls it back; an apply
+   hands the edit the preview's figures for its own check (`INV-MOD-062`) and
+   refuses if any money figure differs from the preview's, then commits and runs
+   the service's `deferredPostCommit` (Stripe, Xero, email, audit) outside every
+   lock.
+
+**Counterparts and idempotency.** There is no claim row: a cancel, capture or
+refund of the same booking holds `lock(1)`, and two concurrent applies serialise
+on it — the second re-reads a booking that already carries the work party (or,
+for a removal, no longer does) and is refused, so the discount and its credit,
+refund or amount owed apply once. A refund the
+officer chose (fork #129) is the edit's own: its ledger lines (and, for an
+organiser-paid joiner, the organiser-child refund debt; for Internet Banking,
+the edit's bank-transfer hand-back task, `raiseEditRefundHandBackIfOwed`) are
+written in this transaction; a card refund's Stripe call runs after commit, and
+a failed one is kept owed as a recovery row. Proved against PostgreSQL in
+`work-party-booking-correction.realdb.test.ts`.
 
 ### One-open-request slot for exception requests (#2524)
 

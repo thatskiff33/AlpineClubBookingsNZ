@@ -20,7 +20,7 @@ import {
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
-  ForbiddenSaveError,
+  saveRefusalFromResponse,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
 import {
@@ -33,7 +33,12 @@ import {
   SESSION_MAX_AGE_MAX_HOURS,
   SESSION_MAX_AGE_MIN_HOURS,
 } from "@/lib/session-max-age";
-import { apiErrorMessageFromBody, ApiRefusalError } from "@/lib/api-error-message";
+import {
+  apiErrorMessageFromBody,
+  ApiRefusalError,
+  apiRefusalFromResponse,
+  readApiObjectOrNull,
+} from "@/lib/api-error-message";
 
 const LOAD_FALLBACK = "Failed to load password policy";
 const SAVE_FALLBACK = "Failed to save password policy";
@@ -84,6 +89,15 @@ function toDraft(policy: SettingsResponse["policy"]): PolicyDraft {
   };
 }
 
+// The stored policy out of a 2xx reply. A body that is not the promised shape
+// (unreadable, or carrying an `{ error }` instead) shows that sentence or
+// `fallback`, never a parse error.
+async function policyFrom(response: Response, fallback: string): Promise<PolicyDraft> {
+  const body = (await readApiObjectOrNull(response)) as Partial<SettingsResponse> | null;
+  if (!body?.policy) throw new ApiRefusalError(apiErrorMessageFromBody(body, fallback));
+  return toDraft(body.policy);
+}
+
 function isMinLengthValid(value: number): boolean {
   return (
     Number.isInteger(value) &&
@@ -116,11 +130,8 @@ export function PasswordPolicyCard() {
         credentials: "same-origin",
         signal,
       });
-      const body = (await response.json()) as SettingsResponse | { error?: string };
-      if (!response.ok || !("policy" in body)) {
-        throw new ApiRefusalError(apiErrorMessageFromBody(body, LOAD_FALLBACK));
-      }
-      return toDraft(body.policy);
+      if (!response.ok) throw await apiRefusalFromResponse(response, LOAD_FALLBACK);
+      return policyFrom(response, LOAD_FALLBACK);
     },
     save: async (draft) => {
       const response = await fetchWithRecentAuth("/api/admin/security/password-policy", {
@@ -129,12 +140,8 @@ export function PasswordPolicyCard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(draft),
       });
-      const body = (await response.json()) as SettingsResponse | { error?: string };
-      if (!response.ok || !("policy" in body)) {
-        if (response.status === 403) throw new ForbiddenSaveError();
-        throw new ApiRefusalError(apiErrorMessageFromBody(body, SAVE_FALLBACK));
-      }
-      return toDraft(body.policy);
+      if (!response.ok) throw await saveRefusalFromResponse(response, SAVE_FALLBACK);
+      return policyFrom(response, SAVE_FALLBACK);
     },
     successMessage: "Password policy saved.",
     saveErrorFallback: SAVE_FALLBACK,

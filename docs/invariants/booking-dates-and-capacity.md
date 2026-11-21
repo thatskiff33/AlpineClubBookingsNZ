@@ -691,7 +691,7 @@ owner decisions on #3820):
   through the host's clock face — `getFullYear`/`getMonth`/`getDate` and their
   `set*` counterparts, plain and computed — and ban importing `date-fns`, which
   performs the identical read inside `node_modules`. The host-clock arm ships
-  with NO exemption; `date-fns` keeps a five-file ratchet, each entry naming
+  with NO exemption; `date-fns` keeps a four-file ratchet, each entry naming
   what it uses and what blocks it. `club-time-boundary-guard.test.ts` proves
   both arms twice — that they RESOLVE at every production path, and that they
   REPORT a violation there — with a clean control at each path so the ban is
@@ -1661,6 +1661,27 @@ capacity or double-booking violation.
   `custodian-hut-leaders-route.test.ts`,
   `lodge-admission-lock-contract.test.ts`. Narrative:
   `docs/CAPACITY_MODEL.md` "The custodian's bed sits outside the held pool".
+
+### INV-CAP-040
+
+- **An import claims beds like any other writer, with no overbook option**
+  (#5005). Each imported booking is written in its own transaction under global
+  `pg_advisory_xact_lock(1)`, then `acquireLodgeCapacityLock`, then the
+  person-night and member-credit keys (`INV-LOCK-002`). Under them it re-runs
+  every check the preview ran: the Booking Ref, the members, the club's day
+  (`INV-DATE-019`), the person-night guard (`INV-CAP-013`), the hosting and
+  supervision rules, and `checkCapacityForGuestRanges`, an exclusive hold
+  included (`INV-CAP-021`).
+- **A row that does not fit is refused and writes nothing** but its refusal.
+  The import never stamps `capacityOverriddenAt`; the settle body's own manual
+  refusal (`INV-PAY-040`) is a second wall behind it.
+- **The preview and the writer share one planner** (`planBookingImport`): the
+  same member match, date reader and capacity function, worked in file order
+  against the beds already held plus the earlier rows, so the preview never
+  promises a row the writer would refuse for a reason it could have seen.
+- **A Booking Ref imports once per lodge**, across every batch: checked under
+  the lodge lock and backed by the partial unique index on IMPORTED rows.
+- Proven by `booking-import-plan.test.ts` and `booking-import.realdb.test.ts`.
 
 ### INV-LIFE-062
 

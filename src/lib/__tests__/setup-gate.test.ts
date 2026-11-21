@@ -22,12 +22,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const mocks = vi.hoisted(() => ({
+  completion: vi.fn(),
   themeState: vi.fn(),
   clubIdentity: vi.fn(),
   emailSettings: vi.fn(),
 }));
 
 vi.mock("@/lib/club-theme", () => ({
+  readSetupCompletion: mocks.completion,
   getWebsiteThemeRenderState: mocks.themeState,
 }));
 vi.mock("@/lib/club-identity-settings", () => ({
@@ -38,10 +40,12 @@ vi.mock("@/lib/email-message-settings", () => ({
 }));
 
 import {
+  getSetupGateState,
   getSetupInProgressResponse,
   isPublicWebsitePath,
   NON_WEBSITE_ROOT_SEGMENTS,
   resetSetupGateCache,
+  SETUP_STATE_READ_TIMEOUT_MS,
   SETUP_STATE_TTL_MS,
 } from "@/lib/setup-gate";
 import {
@@ -57,6 +61,7 @@ const CLUB_NAME = "Example Alpine Club";
 const CONTACT_EMAIL = "office@example.org";
 
 function setupIncomplete() {
+  mocks.completion.mockResolvedValue({ readFailed: false, isComplete: false });
   mocks.themeState.mockResolvedValue({
     isComplete: false,
     css: ":root{--brand-gold:#c8a227}",
@@ -64,6 +69,7 @@ function setupIncomplete() {
 }
 
 function setupComplete() {
+  mocks.completion.mockResolvedValue({ readFailed: false, isComplete: true });
   mocks.themeState.mockResolvedValue({
     isComplete: true,
     css: ":root{--brand-gold:#c8a227}",
@@ -416,13 +422,38 @@ describe("with setup complete", () => {
   });
 });
 
+/** Moves the frozen clock past the memo's TTL for the duration of `run`. */
+async function afterTtl(run: () => Promise<void>) {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    vi.setSystemTime(Date.now() + SETUP_STATE_TTL_MS + 1);
+    await run();
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
+/** Lets a background refresh run to completion (only `Date` is faked). */
+function settle() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** A promise the test settles by hand, to hold a read in flight. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 describe("the gate does not add a database read per request", () => {
   it("reads the setup state once and reuses it inside the TTL", async () => {
     await getSetupInProgressResponse(request("/"));
     await getSetupInProgressResponse(request("/about"));
     await getSetupInProgressResponse(request("/contact"));
 
-    expect(mocks.themeState).toHaveBeenCalledTimes(1);
+    expect(mocks.completion).toHaveBeenCalledTimes(1);
   });
 
   it("shares one read between requests that arrive together on a cold cache", async () => {
@@ -432,44 +463,36 @@ describe("the gate does not add a database read per request", () => {
       getSetupInProgressResponse(request("/contact")),
     ]);
 
-    expect(mocks.themeState).toHaveBeenCalledTimes(1);
+    expect(mocks.completion).toHaveBeenCalledTimes(1);
   });
 
   it("re-reads once the TTL lapses, so completing setup opens the site", async () => {
     setupIncomplete();
     expect((await getSetupInProgressResponse(request("/")))?.status).toBe(503);
 
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(Date.now() + SETUP_STATE_TTL_MS + 1);
+    await afterTtl(async () => {
       setupComplete();
 
+      // The request that finds the memo expired is answered from it and starts
+      // the refresh; a later one gets the refreshed answer.
+      expect((await getSetupInProgressResponse(request("/")))?.status).toBe(
+        503,
+      );
+      await settle();
       await expect(
         getSetupInProgressResponse(request("/")),
       ).resolves.toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
+    });
 
-    expect(mocks.themeState).toHaveBeenCalledTimes(2);
+    expect(mocks.completion).toHaveBeenCalledTimes(2);
   });
 
   it("fails closed when the setup state cannot be read", async () => {
-    // getWebsiteThemeRenderState swallows its own database failure and reports
-    // isComplete: false, which is what the layout already does — and 503 is the
-    // literally correct answer for an unreachable database. Failing open would
-    // restore the 200-for-everything defect under exactly the conditions that
-    // make it hardest to notice.
-    mocks.themeState.mockResolvedValue({ isComplete: false, css: "" });
-
-    expect((await getSetupInProgressResponse(request("/")))?.status).toBe(503);
-  });
-
-  it("still fails closed when the theme read FAILED rather than reported", async () => {
-    // The counterpart of the layout's F4 fix. `(website)/layout.tsx` refuses to
-    // paint a 200 holding screen off an unreadable database, because that is a
-    // claim about the club. The gate has the opposite duty: 503 is a true
-    // statement about an unreadable database, so it keeps answering one.
+    // A database that does not answer on a cold start is answered with the
+    // holding screen — 503 is the literally correct answer for an unreachable
+    // database. Failing open would restore the 200-for-everything defect under
+    // exactly the conditions that make it hardest to notice.
+    mocks.completion.mockResolvedValue({ readFailed: true });
     mocks.themeState.mockResolvedValue({
       isComplete: false,
       readFailed: true,
@@ -486,7 +509,7 @@ describe("the gate does not add a database read per request", () => {
     // A Prisma client that never constructed, say — a realistic first-boot state
     // for exactly the install this screen exists for. An unhandled throw in the
     // proxy would be a 500; the config-derived fallback keeps it a 503.
-    mocks.themeState.mockRejectedValue(new Error("no database client"));
+    mocks.completion.mockRejectedValue(new Error("no database client"));
 
     const response = await getSetupInProgressResponse(request("/"));
 
@@ -494,6 +517,191 @@ describe("the gate does not add a database read per request", () => {
     await expect(response!.text()).resolves.toContain(
       SETUP_IN_PROGRESS_COPY.eyebrow,
     );
+  });
+});
+
+describe("a live club's refill is one completedAt read (#5264)", () => {
+  // The stall: every 15 seconds the request that found the memo expired waited
+  // while the whole theme loaded and its CSS was generated, hundreds of
+  // milliseconds of CPU. Pinned by call count, never by wall time.
+  it("never loads the theme, the identity or the contact address", async () => {
+    await getSetupInProgressResponse(request("/"));
+    await afterTtl(async () => {
+      await getSetupInProgressResponse(request("/"));
+      await getSetupInProgressResponse(request("/"));
+    });
+
+    expect(mocks.completion).toHaveBeenCalledTimes(2);
+    expect(mocks.themeState).not.toHaveBeenCalled();
+    expect(mocks.clubIdentity).not.toHaveBeenCalled();
+    expect(mocks.emailSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe("an expired answer is served while it refreshes (#5264)", () => {
+  it("answers at once from the expired memo, without waiting for the read", async () => {
+    setupIncomplete();
+    await getSetupGateState();
+
+    const read = deferred<{ readFailed: false; isComplete: boolean }>();
+    mocks.completion.mockReturnValue(read.promise);
+
+    await afterTtl(async () => {
+      // Resolves although the read is still pending.
+      await expect(getSetupGateState()).resolves.toMatchObject({
+        isComplete: false,
+      });
+
+      read.resolve({ readFailed: false, isComplete: true });
+      await settle();
+      await expect(getSetupGateState()).resolves.toEqual({
+        isComplete: true,
+      });
+    });
+  });
+
+  it("starts one refresh however many requests find the memo expired", async () => {
+    await getSetupGateState();
+    const read = deferred<{ readFailed: false; isComplete: boolean }>();
+    mocks.completion.mockReturnValue(read.promise);
+
+    await afterTtl(async () => {
+      await Promise.all([
+        getSetupGateState(),
+        getSetupGateState(),
+        getSetupGateState(),
+      ]);
+      read.resolve({ readFailed: false, isComplete: true });
+      await settle();
+    });
+
+    expect(mocks.completion).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a known 'complete' when the database does not answer", async () => {
+    // A blip must not close a live club's website for 15 seconds.
+    await getSetupGateState();
+    mocks.completion.mockResolvedValue({ readFailed: true });
+    mocks.themeState.mockResolvedValue({
+      isComplete: false,
+      readFailed: true,
+      css: "",
+    });
+
+    await afterTtl(async () => {
+      await getSetupGateState();
+      await settle();
+      await expect(getSetupGateState()).resolves.toEqual({ isComplete: true });
+      // Stamped fresh, so the database is retried once per TTL, not per request.
+      expect(mocks.completion).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("keeps the last answer when a refresh throws", async () => {
+    await getSetupGateState();
+    mocks.completion.mockRejectedValue(new Error("connection reset"));
+
+    await afterTtl(async () => {
+      await getSetupGateState();
+      await settle();
+      await expect(getSetupGateState()).resolves.toEqual({ isComplete: true });
+      // Stamped fresh, so the database is retried once per TTL, not per request.
+      expect(mocks.completion).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("closes the site on a positive 'not complete' even if the theme read then fails", async () => {
+    await getSetupGateState();
+    mocks.completion.mockResolvedValue({ readFailed: false, isComplete: false });
+    mocks.themeState.mockResolvedValue({
+      isComplete: false,
+      readFailed: true,
+      css: "",
+    });
+
+    await afterTtl(async () => {
+      await getSetupGateState();
+      await settle();
+      await expect(getSetupGateState()).resolves.toMatchObject({
+        isComplete: false,
+      });
+    });
+  });
+
+  it("closes the site on a positive 'not complete' even if building the screen throws", async () => {
+    // A positive answer must not fall into the refresh's failure arm, which
+    // keeps the stale "complete".
+    await getSetupGateState();
+    mocks.completion.mockResolvedValue({ readFailed: false, isComplete: false });
+    mocks.themeState.mockRejectedValue(new Error("palette generator failed"));
+
+    await afterTtl(async () => {
+      await getSetupGateState();
+      await settle();
+      const state = await getSetupGateState();
+      expect(state.isComplete).toBe(false);
+      expect(state).toMatchObject({
+        document: expect.stringContaining(SETUP_IN_PROGRESS_COPY.eyebrow),
+      });
+    });
+  });
+
+  it("abandons a hung read after the timeout, so the next expiry retries", async () => {
+    // Prisma has no query timeout: a query on a half-open connection can hang
+    // for ever, which would pin the single-flight promise and stop all retries.
+    await getSetupGateState();
+    mocks.completion.mockReturnValue(new Promise(() => {}));
+
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    try {
+      vi.setSystemTime(Date.now() + SETUP_STATE_TTL_MS + 1);
+      await expect(getSetupGateState()).resolves.toEqual({ isComplete: true });
+      expect(mocks.completion).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(SETUP_STATE_READ_TIMEOUT_MS);
+      // Timed out: kept "complete", stamped fresh, single-flight cleared.
+      await expect(getSetupGateState()).resolves.toEqual({ isComplete: true });
+      expect(mocks.completion).toHaveBeenCalledTimes(2);
+
+      setupIncomplete();
+      vi.setSystemTime(Date.now() + SETUP_STATE_TTL_MS + 1);
+      await getSetupGateState();
+      expect(mocks.completion).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(getSetupGateState()).resolves.toMatchObject({
+        isComplete: false,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails closed on a cold start whose read hangs", async () => {
+    mocks.completion.mockReturnValue(new Promise(() => {}));
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const pending = getSetupGateState();
+      await vi.advanceTimersByTimeAsync(SETUP_STATE_READ_TIMEOUT_MS);
+      await expect(pending).resolves.toMatchObject({ isComplete: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does close the site when the database positively says setup is incomplete", async () => {
+    // The counterpart: only a FAILED read is ignored. A real answer — an
+    // operator resetting setup, say — still takes effect.
+    await getSetupGateState();
+    setupIncomplete();
+
+    await afterTtl(async () => {
+      await getSetupGateState();
+      await settle();
+      await expect(getSetupGateState()).resolves.toMatchObject({
+        isComplete: false,
+      });
+    });
   });
 });
 
