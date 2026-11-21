@@ -133,8 +133,8 @@ const {
     bookingGuest: { findMany: vi.fn() },
     bookingChangeRequest: { findMany: vi.fn() },
     bedAllocation: { findMany: vi.fn() },
-    member: { findUnique: vi.fn(), count: vi.fn() },
-    memberSubscription: { findUnique: vi.fn() },
+    member: { findUnique: vi.fn(), findMany: vi.fn(), count: vi.fn() },
+    memberSubscription: { findUnique: vi.fn(), findMany: vi.fn() },
     memberInduction: { findFirst: vi.fn() },
     membershipLockoutSettings: { findUnique: vi.fn() },
     // #2870: the club's persisted timezone, read THROUGH THE TRANSACTION so the
@@ -259,6 +259,9 @@ interface Store {
   // #3369: the other half of a booking's owner.
   organisation: Row[];
   memberSubscription: Row[];
+  // #5190: active no-invoice coverage claims, as the settlement loader selects
+  // them (the double holds only claims that already match that filter).
+  subscriptionChargeCoverage: Row[];
   memberInduction: Row[];
 }
 
@@ -402,6 +405,9 @@ const MODELS: Record<ModelName, ModelSpec> = {
       "joinedDate",
       "firstName",
       "lastName",
+      // #5190: read ONLY by the settlement loader, which returns the verdict and
+      // nothing of the row; the eligibility read itself must never name it.
+      "dateOfBirth",
     ],
   },
   memberSubscription: {
@@ -412,6 +418,16 @@ const MODELS: Record<ModelName, ModelSpec> = {
       "paidAt",
       "manuallyMarkedPaidAt",
     ],
+    relations: {
+      chargeCoverage: (row, state) =>
+        state.subscriptionChargeCoverage.filter(
+          (claim) =>
+            claim.memberId === row.memberId && claim.seasonYear === row.seasonYear,
+        ),
+    },
+  },
+  subscriptionChargeCoverage: {
+    columns: ["id"],
   },
   memberInduction: {
     columns: ["id", "memberId", "status", "createdAt"],
@@ -432,6 +448,7 @@ function emptyStore(): Store {
     member: [],
     organisation: [],
     memberSubscription: [],
+    subscriptionChargeCoverage: [],
     memberInduction: [],
   };
 }
@@ -561,6 +578,9 @@ function relationModel(model: ModelName, relation: string): ModelName {
     return "bookingGuest";
   }
   if (model === "booking" && relation === "member") return "member";
+  if (model === "memberSubscription" && relation === "chargeCoverage") {
+    return "subscriptionChargeCoverage";
+  }
   if (model === "booking" && relation === "organisation") {
     return "organisation";
   }
@@ -656,6 +676,13 @@ function wirePrisma(): void {
   );
   prismaMock.memberSubscription.findUnique.mockImplementation(
     async (args: QueryArgs) => findUnique("memberSubscription", args),
+  );
+  // #5190: the settlement loader's batch reads.
+  prismaMock.memberSubscription.findMany.mockImplementation(
+    async (args: QueryArgs) => findMany("memberSubscription", args),
+  );
+  prismaMock.member.findMany.mockImplementation(async (args: QueryArgs) =>
+    findMany("member", args),
   );
   prismaMock.memberInduction.findFirst.mockImplementation(
     async (args: QueryArgs) => findFirst("memberInduction", args),
@@ -1900,6 +1927,22 @@ describe("booking block state: the club's HARD_BLOCK subscription refusal (#2376
     const row = await blockStateRow();
     expect(blockers(row)).toEqual([]);
     expect(row.blocker_count).toBe(0);
+  });
+
+  it("does not raise it for an owner a no-invoice fee covers, whatever their row says (#5190)", async () => {
+    seedBooking({
+      status: "DRAFT",
+      finalPriceCents: FREE_BOOKING_CENTS,
+      lockoutMode: "HARD_BLOCK",
+      ownerSubscriptionStatus: "NOT_INVOICED",
+    });
+    store.subscriptionChargeCoverage.push({
+      id: "coverage-1",
+      memberId: MEMBER_ID,
+      seasonYear: BOOKING_SEASON_YEAR,
+    });
+    const row = await blockStateRow();
+    expect(blockers(row)).toEqual([]);
   });
 
   it.each(["NO_BLOCK", "NON_MEMBER_PRICING"])(

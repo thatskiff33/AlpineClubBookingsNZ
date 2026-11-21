@@ -199,8 +199,6 @@ describe("built-in membership type seed helpers", () => {
   });
 
   describe("shared subscription-required derivation (#2149)", () => {
-    const noExemptTiers = new Set<string>();
-
     it("resolves the effective behaviour from the assignment, else the role default", () => {
       // Assignment wins.
       expect(effectiveSubscriptionBehavior("REQUIRED", "ADMIN")).toBe("REQUIRED");
@@ -213,13 +211,45 @@ describe("built-in membership type seed helpers", () => {
       expect(effectiveSubscriptionBehavior(null, "USER")).toBe("REQUIRED");
     });
 
+    // The access side of the shared liability rule (#5190), on a club that has
+    // not chosen its rule: the pre-#5190 display answer.
+    const tiers = (exempt: ReadonlyArray<string>) =>
+      (["INFANT", "CHILD", "YOUTH", "ADULT"] as const).map((tier, index) => ({
+        tier,
+        minAge: [0, 5, 13, 18][index]!,
+        maxAge: [4, 12, 17, null][index]!,
+        label: tier,
+        sortOrder: index,
+        subscriptionRequiredForBooking: !exempt.includes(tier),
+      }));
+    const judge = (input: {
+      subscriptionBehavior: Parameters<
+        typeof isSubscriptionNotRequiredForMembershipType
+      >[0]["subscriptionBehavior"];
+      ageTier: "CHILD" | "YOUTH" | "ADULT";
+      exemptTiers?: ReadonlyArray<string>;
+      seasonRowStatus?: "NOT_REQUIRED";
+      liabilitySettings?: Parameters<
+        typeof isSubscriptionNotRequiredForMembershipType
+      >[0]["liabilitySettings"];
+    }) =>
+      isSubscriptionNotRequiredForMembershipType({
+        subscriptionBehavior: input.subscriptionBehavior,
+        member: { ageTier: input.ageTier, dateOfBirth: null },
+        seasonRowStatus: input.seasonRowStatus ?? null,
+        seasonYear: 2026,
+        ageTierSettings: tiers(input.exemptTiers ?? []),
+        liabilitySettings: input.liabilitySettings ?? {
+          requiredTypeAgeRule: "NOT_CHOSEN",
+          liabilityAgeSource: "NOT_CHOSEN",
+        },
+      });
+
     it("treats a fee-paying admin (REQUIRED assignment) as owing", () => {
       expect(
-        isSubscriptionNotRequiredForMembershipType({
+        judge({
           subscriptionBehavior: effectiveSubscriptionBehavior("REQUIRED", "ADMIN"),
           ageTier: "ADULT",
-          notRequiredAgeTiers: noExemptTiers,
-          hasNotRequiredSeasonRow: false,
         }),
       ).toBe(false);
     });
@@ -227,42 +257,52 @@ describe("built-in membership type seed helpers", () => {
     it("treats a bare ADMIN/LODGE account (no assignment) as not required", () => {
       for (const role of ["ADMIN", "LODGE"] as const) {
         expect(
-          isSubscriptionNotRequiredForMembershipType({
+          judge({
             subscriptionBehavior: effectiveSubscriptionBehavior(null, role),
             ageTier: "ADULT",
-            notRequiredAgeTiers: noExemptTiers,
-            hasNotRequiredSeasonRow: false,
           }),
         ).toBe(true);
       }
     });
 
-    it("exempts an age-tier-exempt member regardless of type, and honours a BASED_ON_AGE_TIER NOT_REQUIRED row", () => {
+    it("while NOT_CHOSEN, exempts an age-tier-exempt member regardless of type, and honours a BASED_ON_AGE_TIER NOT_REQUIRED row", () => {
       // Age-tier exemption applies even to a REQUIRED type.
       expect(
-        isSubscriptionNotRequiredForMembershipType({
-          subscriptionBehavior: "REQUIRED",
-          ageTier: "CHILD",
-          notRequiredAgeTiers: new Set(["CHILD"]),
-          hasNotRequiredSeasonRow: false,
-        }),
+        judge({ subscriptionBehavior: "REQUIRED", ageTier: "CHILD", exemptTiers: ["CHILD"] }),
       ).toBe(true);
       // BASED_ON_AGE_TIER + NOT_REQUIRED row dominates a promoted stored tier.
       expect(
-        isSubscriptionNotRequiredForMembershipType({
+        judge({
           subscriptionBehavior: "BASED_ON_AGE_TIER",
           ageTier: "YOUTH",
-          notRequiredAgeTiers: noExemptTiers,
-          hasNotRequiredSeasonRow: true,
+          seasonRowStatus: "NOT_REQUIRED",
         }),
       ).toBe(true);
       // BASED_ON_AGE_TIER without a row defers to the tier (here liable).
       expect(
-        isSubscriptionNotRequiredForMembershipType({
+        judge({ subscriptionBehavior: "BASED_ON_AGE_TIER", ageTier: "YOUTH" }),
+      ).toBe(false);
+    });
+
+    it("once the club has chosen, shows the club's rule: the row exempts nobody, and ALWAYS_OWES keeps a REQUIRED child owing", () => {
+      const alwaysOwes = {
+        requiredTypeAgeRule: "ALWAYS_OWES",
+        liabilityAgeSource: "SEASON_START",
+      } as const;
+      expect(
+        judge({
+          subscriptionBehavior: "REQUIRED",
+          ageTier: "CHILD",
+          exemptTiers: ["CHILD"],
+          liabilitySettings: alwaysOwes,
+        }),
+      ).toBe(false);
+      expect(
+        judge({
           subscriptionBehavior: "BASED_ON_AGE_TIER",
           ageTier: "YOUTH",
-          notRequiredAgeTiers: noExemptTiers,
-          hasNotRequiredSeasonRow: false,
+          seasonRowStatus: "NOT_REQUIRED",
+          liabilitySettings: alwaysOwes,
         }),
       ).toBe(false);
     });

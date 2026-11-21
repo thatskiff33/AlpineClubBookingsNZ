@@ -498,7 +498,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/booking-linked-date-move-service.ts:245",
   "src/lib/booking-member-night-conflicts.ts:369",
   "src/lib/booking-modify-validation.ts:624",
-  "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
+  "src/lib/diagnostics/tools/packs/booking-evidence.ts:1407",
   "src/lib/group-booking.ts:276",
   "src/lib/kiosk-access.ts:230",
   "src/lib/manual-refund-task-queue-payload.ts:404",
@@ -516,12 +516,12 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // Ten were traced. One — `roster-eligibility.ts` — really had the missing
   // projection and is fixed. Four were the same question spelled by hand,
   // "is there an address to send to?", and now ask `bookingOwnerEmail()`,
-  // which is where that chain belongs. These five remain, each loading the
-  // organisation and each guarding the named-but-unreadable member: the owner's
-  // age tier as a predicate input, the booker's display NAME, two durable
+  // which is where that chain belongs. Four remain (the fifth, the owner's age
+  // tier as a predicate input, went with #5190's settlement loader), each
+  // loading the organisation and each guarding the named-but-unreadable member:
+  // the booker's display NAME, two durable
   // records that store the owner's member id (null for a school), and one
   // admin health snapshot that renders the address with its own `?? ""`.
-  "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
   "src/lib/member-guest-consent-service.ts:1356",
   "src/lib/payment-recovery.ts:2813",
   "src/lib/payment-recovery.ts:2865",
@@ -800,7 +800,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   "src/lib/booking-owner-name.ts:12",
   "src/lib/cron-additional-payment-reminders.ts:444",
   "src/lib/cron-confirm-pending.ts:193",
-  "src/lib/diagnostics/tools/packs/booking-evidence.ts:885",
+  "src/lib/diagnostics/tools/packs/booking-evidence.ts:876",
   // #3740: `resolveManualRefundTask`'s select, moved out of that module to keep
   // it in budget. Verified by hand: written through
   // `Prisma.validator<Prisma.ManualRefundTaskSelect>()`, and `organisation` sits

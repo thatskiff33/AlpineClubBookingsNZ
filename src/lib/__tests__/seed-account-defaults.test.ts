@@ -49,7 +49,7 @@ import {
 import { ensureMemberAccessRolesFromCompatibilityFields } from "@/lib/member-access-role-writes";
 import {
   isSubscriptionEnforcementActive,
-  requiresPaidSubscriptionForBooking,
+  resolveSubscriptionLockoutPolicy,
 } from "@/lib/member-subscription-eligibility";
 import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions";
 
@@ -548,18 +548,17 @@ describe("isSubscriptionEnforcementActive", () => {
   });
 });
 
-describe("requiresPaidSubscriptionForBooking", () => {
-  it("enforces the age-tier rule while the Xero module is on", async () => {
-    mockLoadEffectiveModuleFlags.mockResolvedValue(moduleFlags(true));
-
-    await expect(requiresPaidSubscriptionForBooking("ADULT")).resolves.toBe(true);
-    await expect(requiresPaidSubscriptionForBooking("CHILD")).resolves.toBe(false);
-  });
-
-  it("never requires a paid subscription while the Xero module is off", async () => {
+describe("resolveSubscriptionLockoutPolicy", () => {
+  it("answers NO_BLOCK with the not-chosen liability rule while the Xero module is off", async () => {
     mockLoadEffectiveModuleFlags.mockResolvedValue(moduleFlags(false));
 
-    await expect(requiresPaidSubscriptionForBooking("ADULT")).resolves.toBe(false);
+    await expect(resolveSubscriptionLockoutPolicy()).resolves.toEqual({
+      mode: "NO_BLOCK",
+      liabilitySettings: {
+        requiredTypeAgeRule: "NOT_CHOSEN",
+        liabilityAgeSource: "NOT_CHOSEN",
+      },
+    });
     // Short-circuits before consulting age-tier settings.
     expect(mockGetAgeTierSettings).not.toHaveBeenCalled();
   });
@@ -571,7 +570,7 @@ describe("findUnpaidMemberGuests Xero-off bypass", () => {
       memberSubscription: { findMany: vi.fn().mockResolvedValue([]) },
       member: {
         findMany: vi.fn().mockResolvedValue([
-          { id: "g1", firstName: "Guest", lastName: "One", ageTier: "ADULT" },
+          { id: "g1", firstName: "Guest", lastName: "One", ageTier: "ADULT", dateOfBirth: null },
         ]),
       },
     };

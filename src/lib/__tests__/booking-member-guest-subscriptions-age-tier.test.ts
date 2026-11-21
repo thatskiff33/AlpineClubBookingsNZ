@@ -41,14 +41,23 @@ import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions
 
 type SubRow = { memberId: string; status: SubscriptionStatus; xeroOnlineInvoiceUrl: string | null; xeroInvoiceNumber: string | null };
 
-function makeDb(members: Array<{ id: string; ageTier: AgeTier }>, subs: SubRow[]) {
+function makeDb(
+  members: Array<{ id: string; ageTier: AgeTier; dateOfBirth?: Date | null }>,
+  subs: SubRow[],
+) {
   return {
     memberSubscription: {
       findMany: vi.fn(async () => subs),
     },
     member: {
       findMany: vi.fn(async () =>
-        members.map((m) => ({ id: m.id, firstName: "Guest", lastName: m.id, ageTier: m.ageTier })),
+        members.map((m) => ({
+          id: m.id,
+          firstName: "Guest",
+          lastName: m.id,
+          ageTier: m.ageTier,
+          dateOfBirth: m.dateOfBirth ?? null,
+        })),
       ),
     },
   };
