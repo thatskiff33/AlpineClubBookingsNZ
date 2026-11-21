@@ -134,6 +134,8 @@ const NON_RENDERING_REFERENCES = [
   "src/app/api/booking-messages/route.ts",
   "src/app/api/admin/booking-messages/route.ts",
   "src/lib/api-route-security.ts",
+  // ALP-653: names the route prefix as "not yet an AI app action"; reads no body.
+  "src/lib/mcp/exclusions.ts",
   // #2958: the page shell loads the map once and hands it to
   // `_lib/booking-detail-messages.ts` (registered above), which is the surface
   // that renders; the shell itself indexes nothing.

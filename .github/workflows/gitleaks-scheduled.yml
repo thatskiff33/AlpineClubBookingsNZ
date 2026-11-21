@@ -44,7 +44,7 @@ concurrency:
 jobs:
   sweep:
     name: Full-history secret sweep (gitleaks)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # The gate's history scan of `main` alone measured ~140s on a runner with
     # `--diff-merges=first-parent`; every branch is a multiple of that, and this
     # job is not on anybody's time-to-merge.
