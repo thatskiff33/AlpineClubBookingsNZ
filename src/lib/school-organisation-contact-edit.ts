@@ -121,7 +121,14 @@ export async function updateSchoolOrganisationContact(input: {
         updatedAt: input.expectedUpdatedAt,
         archivedAt: null,
       },
-      data: { email, phone },
+      // The version always moves, by a millisecond at least. `@updatedAt` is
+      // the app's clock, so two saves inside one millisecond would otherwise
+      // leave the token unchanged and the second officer's save would pass.
+      data: {
+        email,
+        phone,
+        updatedAt: new Date(Math.max(Date.now(), current.updatedAt.getTime() + 1)),
+      },
     });
     if (claimed.count !== 1) {
       throw new SchoolContactEditError(SCHOOL_CONTACT_CONFLICT_MESSAGE, 409);
