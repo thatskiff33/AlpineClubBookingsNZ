@@ -25,6 +25,16 @@ WAITLISTED -> WAITLIST_OFFERED -> CONFIRMED/PAID or WAITLISTED/CANCELLED
 AWAITING_REVIEW -> PENDING or PAYMENT_PENDING (officer approval after quote acceptance, the only writer of this transition, #3415) or CONFIRMED/PAID or CANCELLED
 ```
 
+A status is the booking's lifecycle, never proof of payment (#4069,
+`INV-PAY-159`). `CONFIRMED` can owe a whole bank transfer: the bed-holding
+Internet Banking switch, a saved-card claim mid-charge, or an approved
+whole-lodge request with no `Payment` row. `PAID` with a `PARTIALLY_REFUNDED`
+payment can be fully covered at a lower price. Whether a booking is covered is
+read from its cash records by `readBookingCashCover`
+(`src/lib/booking-cash-evidence.ts`), which can also answer that the records
+cannot prove it. The decisions that still read status are listed in
+[`design/paid-from-cash.md`](design/paid-from-cash.md).
+
 `AWAITING_REVIEW -> CANCELLED` is an officer's or the system's arc (review
 reject, request decline, hold release), never a member self-cancel: the
 member-facing cancel doors read `MEMBER_CANCELLABLE_BOOKING_STATUSES`, which
@@ -3243,6 +3253,39 @@ published assignment appears on public committee surfaces
 contactable published assignment can receive server-routed contact form mail through the role email alias, or the linked member email when the role email is blank
 ```
 
+## Food Order Lifecycle
+
+Fork #121 (`src/lib/food-orders.ts`, guide [Food Orders](guides/food-orders.md)).
+
+```text
+member places an order -> OPEN, every item unreceived (order, items and audit
+  row in one transaction; the food officer email is queued only after it commits)
+items received (one or more, OPEN only), in ONE transaction:
+  1. take the order row: updateMany WHERE id AND status = 'OPEN' (touch
+     updatedAt); count 0 -> 409 "already received", nothing written. This row
+     lock serialises concurrent receipts on one order.
+  2. mark the chosen items still unreceived (receivedAt, receivedById); none
+     left to mark -> 409, rolled back
+  3. audit food_order.items_received (items marked, count remaining)
+  4. if no item remains unreceived: OPEN -> RECEIVED by updateMany WHERE
+     status = 'OPEN', receivedAt/receivedById = this moment and person, audit
+     food_order.received
+  partly received stays OPEN ("2 of 5 items received")
+item received and order RECEIVED are terminal: no unticking, no reopening
+price (either status): updateMany WHERE priceCents = the amount the caller's
+  screen showed; a mismatch answers 409 and writes nothing; each change audits
+  the old and new cents; the price moves no money
+```
+
+Who may make either transition is `canManageFoodOrder`: a hut leader whose
+access window covers today at that order's lodge, or Lodge Operations edit (a
+committee role alone does not; owner decision on PR #5143, 15 Nov 2026). No
+advisory lock is taken: the order shares no row or key with any booking,
+capacity or settlement writer. The receipt and price races are checked against
+real PostgreSQL by `food-order-races.realdb.test.ts`: two concurrent final
+ticks close the order once, and two price saves from one screen leave one
+winner and one conflict.
+
 ## Refund And Credit Lifecycle
 
 Known credit types: `CANCELLATION_REFUND`,
@@ -4349,7 +4392,10 @@ supplementary invoice WAITING_PAYMENT on a card ask's intent (INV-PAY-104;
   -> the pay door closed and nothing carries it -> CANCELLED,
      STALE_WAITING_PAYMENT (the reaper; a capture of that same intent
      revives it, and a treasurer's keep does that inside its claim for the
-     row on the anchor it holds; while a supersede's cancel of that intent is still in
+     row on the anchor it holds, queuing an unpaid row's receipt there, or,
+     where the capture does not cover it -> CANCELLED,
+     STALE_WAITING_PAYMENT_CAPTURED in that same claim, the officer told
+     after it commits, #5220; while a supersede's cancel of that intent is still in
      flight the reaper keeps it, and the cancel's last step moves it, #4665)
 inbound webhook/event recorded -> reconciliation worker processes event
   PROCESSING left by a dead worker past the webhook lease -> RECEIVED
@@ -5562,3 +5608,24 @@ admin edits the banner -> updatedAt changes -> dismissal invalidated, banner re-
 To verify: the admin page's current/upcoming/past split, the inclusive
 date-only comparison in NZ time, and dismissal invalidation keyed on
 `updatedAt`.
+
+## Paid-booking import batch lifecycle (#5005 child A)
+
+The [import engine](design/booking-import.md) records each booking separately,
+so a stopped batch resumes without creating a second booking. It has no route
+or screen yet.
+
+| Entity | From | To | Guard and effect |
+| --- | --- | --- | --- |
+| Batch | absent | OPEN | Fresh preview digest matches; unique lodge/content batch key, actor and reconciliation totals recorded. |
+| Row | absent | PENDING or REFUSED | Preview result recorded once per batch/reference. No uploaded file is stored. |
+| Row | PENDING | IMPORTED | Under global, lodge and member-night locks, repeat all checks; status-guarded claim; booking, cash settlement (or free confirmation), ledger, journal and events commit together. |
+| Row | PENDING | REFUSED | A failed under-lock check rolls back the booking; a PENDING-guarded write records the reason. |
+| Batch | OPEN | COMPLETED | No PENDING rows remain; guarded update records completion once. |
+
+IMPORTED and REFUSED rows are terminal for this engine. Repeated confirms find
+the same batch and skip decided rows. A new file may retry a refused reference;
+the partial unique index excludes only IMPORTED rows. REVERSED values and actor
+columns reserve the schema for child B; no reversal transition is implemented
+here. Confirm refuses an already REVERSED batch. Children C, D and E add access,
+refund-as-credit and part-paid support respectively.

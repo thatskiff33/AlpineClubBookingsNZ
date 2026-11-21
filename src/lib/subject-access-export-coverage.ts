@@ -93,6 +93,11 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   GroupBooking: SHARED,
   GroupBookingJoin: SHARED,
   GroupBookingSettlement: SHARED,
+  // #5005: a paid-booking import. The imported booking and its payment are in
+  // `bookings`; the batch spans every booking in a file, and a row is one
+  // booking's whole party with no subject-only filter.
+  BookingImportBatch: OPERATIONAL,
+  BookingImportRow: SHARED,
   BookingRequest: "bookingRequests",
   BookingRequestPendingAdultReservationNight: SHARED,
   BookingRequestQuote: SHARED,
@@ -235,6 +240,10 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   MemberMoneyExportCoverage: SHARED,
   // #4520: Stripe's own balance transaction, keyed by a payment intent rather than a member.
   StripeBalanceTransactionEvidence: OPERATIONAL,
+  // Food orders (PR #5143): the subject's own orders and their lines.
+  FoodOrderSettings: CLUB_CONFIG,
+  FoodOrder: "additionalRecords.FoodOrder",
+  FoodOrderItem: "additionalRecords.FoodOrderItem",
 } as const satisfies Record<PersonalModel, Placement>;
 
 /** The models that have their own list under `additionalRecords`. */

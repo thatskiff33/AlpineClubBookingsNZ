@@ -278,7 +278,7 @@ describe("the follow-up's copy (#4162)", () => {
 });
 
 describe("the refund list's payload marks a bank refund to re-confirm (#4162)", () => {
-  it("carries the voided note's number and date, and never reads its context as unreadable review evidence", async () => {
+  it("carries the voided note's number and date", async () => {
     const { toOpenManualRefundTaskPayload } = await import("@/lib/manual-refund-task-queue-payload");
     const row = {
       id: "follow-up-1", bookingId: "booking-1", amountCents: 20_000, raisedAmountCents: 20_000, kind: "CANCELLED_BOOKING_HAND_BACK" as const,
@@ -294,13 +294,11 @@ describe("the refund list's payload marks a bank refund to re-confirm (#4162)", 
         organisation: null, memberId: "sam", deletedAt: null, status: "CANCELLED" as const, payment: null,
       },
     };
-    expect(toOpenManualRefundTaskPayload(row as never, null, [])).toMatchObject({
+    expect(toOpenManualRefundTaskPayload(row as never, null)).toMatchObject({
       bankRefundVoidFollowUp: { voidedCreditNoteNumber: "CN-0456", voidedAt: "2026-06-30T00:00:00.000Z" },
-      reviewEvidence: null,
-      reviewEvidenceUnreadable: false,
       editRefundHandBack: false,
     });
-    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: "edit-refund-hand-back:m", reviewContext: null } as never, null, []).bankRefundVoidFollowUp).toBeNull();
+    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: "edit-refund-hand-back:m", reviewContext: null } as never, null).bankRefundVoidFollowUp).toBeNull();
   });
 });
 

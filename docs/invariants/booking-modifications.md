@@ -803,6 +803,33 @@ adds are charged normally, and the ordinary late-change fee does not apply.
 Member self-service on a finished stay stays refused. Officer-entered guests
 and promo codes (`INV-REQ-011`, `INV-REQ-013`) are applied the same way.
 
+## INV-MOD-063
+
+**Officer work-party correction on a started stay (fork #127, fork #130; owner
+decisions 1 and 2 of 18 Nov 2026, maintainers' comments on #5149:
+https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6951626920
+and https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6952444211).** An officer's "Add to work party" or "Remove from work party"
+on a stay in its in-progress window is the one promo change an in-progress
+stay admits. `modifyBookingBatch`'s `officerWorkPartyCorrection` service
+argument, which no request body can carry, asks `getBookingEditPolicy` for
+its "work-party-correction" mode: admin only, an active-lifecycle status,
+never a finished stay, and no date change (refused). The edit is then priced
+as a whole stay, not by the in-progress plan: every held night keeps its
+`INV-MOD-028` value, so no night is re-rated and history is not repriced,
+and the promotion re-runs over every night. The work party's discount
+therefore reaches every night inside its window, including nights already
+slept, and no night outside it. The booking's other codes are re-priced as on
+any edit (`INV-MONEY-039`) but judged on the earlier of today and the
+check-in day, so a code that lapsed during the stay is kept, never billed back.
+A correction moves no guest or night, so on a booking whose status already
+holds its beds the pricing pass skips the bed check (through
+`skipBookingLifecycleRules`, which there gates only capacity; a census pins
+that). A booking holding none yet takes the check, as a $0 settle makes it
+PAID. The money is fork #129's: no change fee, an Add's
+reduction returned in full and untiered, a Remove's increase owed on the
+booking, with credit already given and refunds already paid left alone. Every
+other in-progress edit still refuses a promo change (`INV-MOD-019`).
+
 ## INV-MOD-025
 
 **Amended by INV-MOD-028 (#3031, epic #2797; #4317).** Two of #2744's clauses
@@ -1288,8 +1315,9 @@ a payment already captured. An edit of a booking that has not been paid still
 reprices, and records no late-notice fee on the quote, the history, the
 payment, the amount owed, the invoice, or either ledger. #4661 and #4735, which
 added that fee to an unpaid booking, are withdrawn for every new edit. A fee
-already stored that way is left as it is. A finished stay's removal retention
-is not this fee (`INV-PAY-119`).
+already stored that way is left as it is. A paid edit's fee is recorded on the
+payment once, by `applyPaymentAdjustments`, whatever was captured (#5039). A
+finished stay's removal retention is not this fee (`INV-PAY-119`).
 
 **A promotion change asked for in the same request is applied.** A parked edit
 used to drop a `promoCode`, `promoCodes` or `removePromoCode` and say so in one
@@ -1348,7 +1376,7 @@ longer skips a booking whose strands it could not read.
 
 ## INV-MOD-045
 
-**Legacy: settles tasks raised before #4317; wave C removes both acts (D6).**
+**Retired: #4344 (wave C1) removed both acts' screens and routes, so no person can supply these amounts any more; the completion door's half goes with wave C3 (D6).**
 Until #4317 a blank was never repaired by a reprice, only by a person supplying
 the amount; an edit now re-writes it at its `INV-MOD-028` value.
 
@@ -1374,7 +1402,7 @@ and a strand whose rows are all readable but **do not add up**.
 
 ## INV-MOD-046
 
-**Legacy: wave C removes this act (D6).** **The second act cannot change what
+**Retired by #4344 (wave C1 of #4302, D6): the control and its route are gone.** **The second act cannot change what
 anybody owes, and that is arithmetic rather than policy.** With every held night asked for, nothing counts as already known
 and nothing is being settled, so the target is the stored total flat and the
 writer re-bases that total to the number already on file. What it CAN do is
@@ -1383,9 +1411,8 @@ for — which is the officer's judgement, is what a mismatch needs, and is why t
 audit entry carries the previous per-night values as well as both totals. The
 guarantee is about what anybody OWES and is deliberately no wider: two readers
 elsewhere count night rows or sum them inside a date window, so a member's
-nomination nights and which month income lands in can both move. Stated once, in
-`src/lib/stored-night-price-strand-reconcile.ts`'s module docblock, and analysed
-in [`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md).
+nomination nights and which month income lands in can both move. Analysed in
+[`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md).
 
 **Its fence is eligibility, not arithmetic.** A strand the exactness classifier
 calls `exact` is refused outright, so this is not a general re-pricer; so is a
@@ -1520,14 +1547,9 @@ drives the real route and asserts the guest is deleted at that credit with the
 remaining guest locked at its valued nights, and that a review raised before
 #4317 still refuses the removal.
 
-**Legacy, wave C (D6).** THE SECOND ACT is pinned by
-`stored-night-price-strand-reconcile.test.ts`, which proves the same property the
-same way — it takes a strand this rule's own classifier calls `unusable`, in all
-three of its shapes, runs the real plan and the real writer over a store that
-applies the same fences the database does, and asks the same classifier again.
-Its eligibility fence, its no-op total, its created night set (with a bed count
-measured through the real capacity predicate) and its re-derivation of the night
-list are each mutation-verified.
+**Retired, wave C1 (D6, #4344).** THE SECOND ACT and its test were deleted with
+the officer review; `retired-edit-review-screens-census.test.ts` keeps its route
+and screens from coming back.
 
 ## INV-MOD-054
 

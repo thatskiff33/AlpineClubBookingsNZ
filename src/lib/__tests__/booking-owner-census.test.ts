@@ -457,7 +457,7 @@ describe("#3368: the three families stage 4 (#3369) has to answer for", () => {
 
 /** Measured, not counted by hand. Re-measure by running this test. */
 const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
-  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts:236",
+  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts:240",
   "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-viewer.ts:38",
   "src/app/(authenticated)/bookings/[id]/page.tsx:210",
   "src/app/(authenticated)/bookings/page.tsx:201",
@@ -486,7 +486,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/create-setup-intent/route.ts:59",
   "src/app/api/payments/switch-to-internet-banking/route.ts:132",
   "src/lib/adult-member-hosting-review.ts:3256",
-  "src/lib/booking-batch-modification-service.ts:954",
+  "src/lib/booking-batch-modification-service.ts:864",
   "src/lib/booking-cancel.ts:2531",
   "src/lib/booking-cancel.ts:551",
   "src/lib/booking-date-modification-service.ts:316",
@@ -497,11 +497,11 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/booking-guest-removal-service.ts:656",
   "src/lib/booking-linked-date-move-service.ts:245",
   "src/lib/booking-member-night-conflicts.ts:369",
-  "src/lib/booking-modify-validation.ts:624",
+  "src/lib/booking-modify-validation.ts:631",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
   "src/lib/group-booking.ts:276",
   "src/lib/kiosk-access.ts:230",
-  "src/lib/manual-refund-task-queue-payload.ts:404",
+  "src/lib/manual-refund-task-queue-payload.ts:315",
   "src/lib/requested-room-write.ts:63",
   "src/lib/waitlist-cross-lodge.ts:346",
   "src/lib/waitlist-cross-lodge.ts:534",
@@ -523,9 +523,9 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
   "src/lib/member-guest-consent-service.ts:1356",
-  "src/lib/payment-recovery.ts:2813",
-  "src/lib/payment-recovery.ts:2865",
-  "src/lib/xero-admin-health.ts:426",
+  "src/lib/payment-recovery.ts:2797",
+  "src/lib/payment-recovery.ts:2849",
+  "src/lib/xero-admin-health.ts:428",
 ];
 
 /** Measured, not counted by hand. Re-measure by running this test. */

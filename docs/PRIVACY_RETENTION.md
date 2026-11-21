@@ -155,6 +155,8 @@ What the file contains, and what it leaves out:
 | `BookingGuest.dietaryRequirements` | Per-stay dietary/allergy note for the kitchen and hut leader during the stay | Default 30 days after the stay's departure date (`stayEnd`), configurable 1–365, while the switch is on (ships on) | Clear the value; the guest row is kept |
 | `BookingGuestNight` | Stay participants, guest details, stay history and financial evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `BookingGuestNightAdjustment` | Stay participants, guest details, stay history and financial evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `BookingImportBatch` | Which officer confirmed or reversed an import of paid bookings, as a plain member id; no names or emails | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `BookingImportRow` | Each imported or refused Booking Ref, its line number, refusal reason and booking; no names or emails (`INV-PRIV-011`) | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `GroupBooking` | Group organiser, joining contacts, guest snapshots and settlement | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `GroupBookingJoin` | Group organiser, joining contacts, guest snapshots and settlement | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `GroupBookingSettlement` | Group organiser, joining contacts, guest snapshots and settlement | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
@@ -275,6 +277,9 @@ What the file contains, and what it leaves out:
 | `MaintenanceReportSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `MaintenanceReport` | Reporter / contact, fault description, answers and supporting evidence | Photo / IP hash: stamped expiry from maintenance settings; report / answers retained for maintenance history | Anonymise expired photo / IP fields; keep report and answers |
 | `MaintenanceReportAnswer` | Reporter / contact, fault description, answers and supporting evidence | Photo / IP hash: stamped expiry from maintenance settings; report / answers retained for maintenance history | Anonymise expired photo / IP fields; keep report and answers |
+| `FoodOrderSettings` | Club configuration (food officer email) and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
+| `FoodOrder` | Ordering member, needed-by date, note, receiving and pricing officers, recorded price (fork #121) | Retained as the club's food-cost history; a deleted member's orders keep their cost with the member link cleared | Keep; member link set null when the member is deleted |
+| `FoodOrderItem` | The ordering member's item descriptions and quantities, and who received each item and when | Retained with its order | Keep with the order |
 | `LodgeMaintenanceReportToken` | Report access token and creating / rotating officer | While token / report intake administration requires it; rotation revokes old access | Keep |
 | `EnvironmentSafetySettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `XeroSandboxContactContainment` | Provider contact identity, membership and grouping / containment evidence | While provider contact / grouping administration requires it | Keep |

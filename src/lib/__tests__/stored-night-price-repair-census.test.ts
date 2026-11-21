@@ -27,7 +27,9 @@ import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments"
  *  1. **Who may fill an existing `BookingGuestNight` row's NULL price?** Only
  *     the repair writer, with the officer's figures (`INV-MOD-036`). That rule
  *     also admits #3794's bounded accepted SCHOOL naming reconciliation: proved,
- *     already-priced held-night IDs only, NULL refusal and exact-count rollback.
+ *     already-priced held-night IDs only, NULL refusal and exact-count rollback,
+ *     and the rate-derived backfill's compare-and-set (#3531 3b), which is
+ *     fenced on an integer price and so can never fill a NULL either.
  *     Every other production writer creates rows wholesale from a priced
  *     breakdown - `syncGuestNights` and its siblings, governed by
  *     `nightPriceCentsToWrite` and `required-price-cents.ts`. An unproved in-place
@@ -36,9 +38,7 @@ import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments"
  *     A division, a rounding, a split helper, an averaging pass. It should not:
  *     the officer's figures are added up and compared, never derived. A `?? 0` is
  *     included because a defaulted zero is the magic value this epic exists to
- *     remove. "This feature" means the three feature files AND the whole of the
- *     settle screen. #3399 retired its last division exemption, so the whole
- *     screen is now scanned with no excluded region.
+ *     remove.
  *  3. **Can anything outside this feature reach the figure a remainder fill
  *     needs?** `unpricedNightTargetCents` is the single definition of what the
  *     blanks must come to, and a module holding that number can subtract the
@@ -53,46 +53,17 @@ import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments"
  * cleanest. `stripCommentsAndStrings` is the tree's one stripper and this file
  * imports it (`INV-SSOT-004`).
  *
- * ## WHAT A SOURCE SCAN CANNOT SEE, AND WHERE THAT HALF LIVES
+ * ## WHAT A SOURCE SCAN CANNOT SEE
  *
  * A REMAINDER FILL MATCHES NONE OF THESE PATTERNS. `targetCents - enteredCents`
- * is a subtraction; `entries.push({ date: last, priceCents: targetCents - sum })`
- * is a subtraction and an assignment; `total >> 1` is neither. All three are
- * exactly the derivation `unpriced-night-price-fields.tsx` says must never
- * happen - "showing only the remainder would hand the officer the last night's
- * price" - and the server cannot catch any of them either, because a remainder
- * fill posts a COMPLETE, reconciling vector that `checkStoredNightPriceRepair`
- * is obliged to accept.
- *
- * A SUBTRACTION PATTERN WAS CONSIDERED AND REJECTED, on evidence rather than on
- * effort: this feature contains two legitimate subtractions already
- * (`unpricedNightTargetCents` is `stored + delta - known`, and
- * `settlementDeltaCents` negates a magnitude), so the rule would ship needing
- * exemptions on day one, and an exemption list for an operator is the shape
- * that rots fastest. It would also be trivially evaded - `>>`, a `reduce`, a
- * helper one module away - because the property is about the RESULT, not about
- * the spelling. (The last of those three is what question 3 above closes: the
- * helper can still be written, but it cannot get the target.)
- *
- * So that half is a BEHAVIOUR test and not a regex:
- * `manual-refund-task-queue-financial-review.test.tsx` -> "no control on this
- * screen fills a box in, and nothing it posts carries a night nobody typed".
- * WHAT THAT TEST COVERS, EXACTLY, because an earlier draft of this paragraph
- * overstated it and a review lens disproved it by building the thing and
- * watching it pass: it fills every night but one on the real settle dialog,
- * CLICKS EVERY OTHER BUTTON IN THE DIALOG and re-asserts the boxes, then asserts
- * the confirm control is still disabled and that nothing was posted. So it
- * catches a fill driven by a control whatever that control is CALLED - the
- * earlier version matched button names against a regex, and a button reading
- * "Use the balance" passed both instruments - and it catches a fill that never
- * touches a box at all, by refusing to let the screen settle a set it completed
- * for the officer.
- *
- * WHAT IT STILL DOES NOT COVER, stated rather than left to be found: a fill on a
- * path that is not this dialog. That is what the scans below are for, and why
- * neither instrument can be dropped - this file catches an UNPROVED WRITER
- * appearing anywhere in the tree, and a reference to the target figure from
- * outside this feature, neither of which any behaviour test can see.
+ * is a subtraction, and a subtraction pattern was rejected on evidence: this
+ * feature contains legitimate subtractions (`unpricedNightTargetCents` is
+ * `stored + delta - known`). Until #4344 the other half was a behaviour test on
+ * the settle dialog that typed into the boxes; that dialog, and the Admin tools
+ * card's strand reconcile, were retired with the officer review (wave C1 of
+ * #4302), so no screen builds night prices any more. What remains is the
+ * completion door, which `stored-night-price-repair.test.ts` drives directly,
+ * and question 3 below, which still stops the target figure leaving the feature.
  *
  * `vitest related` cannot reach this file - it reads the tree from disk and has
  * no import edge to what it scans - so it is selected by name.
@@ -106,6 +77,20 @@ const REPAIR_WRITER = "lib/stored-night-price-repair-store.ts";
 /** #3794 reconciles only proven priced held rows; it cannot fill a NULL. */
 const PRICED_SCHOOL_WRITER = "lib/school-pending-adult-resolution.ts";
 
+/**
+ * #3531 3b: the rate-derived backfill's compare-and-set. Its own module since
+ * #4344 moved it out of the retiring review store; it rewrites a PRICED row and
+ * is fenced on the integer it was planned from, so it cannot fill a NULL.
+ */
+const RATE_DERIVED_WRITER = "lib/rate-derived-night-price-store.ts";
+
+function isPricedRateDerivedNightWriter(code: string): boolean {
+  const writes = code.match(/bookingGuestNight\s*\.\s*(update|updateMany|upsert|create)\b/g) ?? [];
+  return writes.length === 1 &&
+    /bookingGuestNight\.updateMany\(\{\s*where:\s*\{\s*id:\s*night\.id,\s*bookingGuestId:\s*strand\.bookingGuestId,\s*priceCents:\s*night\.fromPriceCents,\s*priceSource:\s*night\.fromSource,?\s*\},/.test(code) &&
+    /if\s*\(written\.count\s*!==\s*1\)\s*\{\s*throw\s+new\s+RateDerivedBackfillRacedError\(/.test(code);
+}
+
 function isPricedSchoolNightWriter(code: string): boolean {
   const writes = code.match(/bookingGuestNight\s*\.\s*(update|updateMany|upsert|create)\b/g) ?? [];
   return writes.length === 1 &&
@@ -116,34 +101,13 @@ function isPricedSchoolNightWriter(code: string): boolean {
 /**
  * The whole of this feature, as files.
  *
- * #3214 ADDED THREE, and the reason each is here rather than merely nearby is
- * worth stating, because an entry nobody can justify is how this list turns into
- * habit:
- *
- *  - the strand-reconcile module is the second caller of the one writer and the
- *    home of the eligibility fence, so it is where a "work the rest out" helper
- *    would be most natural to write;
- *  - the booking-page controls MUST be here. They mirror the settle screen's
- *    unreadable-box branch, which names `unpricedNightTargetCents`, so without
- *    an entry that reference fails the last test in this file by name - and,
- *    more to the point, a "split it evenly" button would sit in this component;
- *  - the route is here by choice rather than by need. Nothing fails without it,
- *    because the route touches no `bookingGuestNight` model call and names no
- *    target figure. It costs one line and the route has to be arithmetic-free
- *    anyway, so the guarantee is extended rather than left to review.
- *
- * #3219 ADDED TWO, and one of them is why a path-hardcoded list is dangerous:
- *
- *  - the QUEUE module is the summary loader that #3219 SPLIT OUT of the repair
- *    store. Those lines were scanned before the split and would have stopped
- *    being scanned after it, with nothing recording the change - which is the
- *    whole failure mode of naming files by path. A move must bring its entry
- *    with it;
- *  - the RE-BASE module writes the booking's four money columns from the
- *    strands. It runs no derivation - all five patterns below were measured
- *    over it at zero hits, and it needs no exemption - and it is the most
- *    natural place in the feature for somebody to "work the rest out" from a
- *    total, so the guarantee is extended over it rather than left to review.
+ * #4344 RETIRED FIVE: the settle screen's unpriced-night fields, #3214's
+ * booking-page controls, its route and its strand-reconcile module, and the
+ * queue loader that fed the settle screen. They were deleted with the officer
+ * review (wave C1 of #4302); `retired-edit-review-screens-census.test.ts` keeps
+ * them gone. What is left is the rule, its plan and its writer - which the
+ * completion door still runs until wave C3 - and the re-base module, which is
+ * the most natural place to "work the rest out" from a total.
  */
 const FEATURE_FILES = [
   "lib/stored-night-price-repair.ts",
@@ -152,21 +116,8 @@ const FEATURE_FILES = [
   // covering the whole parked edit. It is where "which strands may be filled in"
   // now lives, so it is exactly where a "work the rest out" branch would go.
   "lib/stored-night-price-repair-plan.ts",
-  "lib/stored-night-price-repair-queue.ts",
-  "lib/stored-night-price-strand-reconcile.ts",
   "lib/booking-review-price-rebase.ts",
-  "components/admin/unpriced-night-price-fields.tsx",
-  "components/admin/booking-stored-night-price-controls.tsx",
-  "app/api/admin/bookings/[id]/stored-night-prices/route.ts",
 ];
-
-/**
- * The settle screen is scanned whole. #3399 replaced its one display-only
- * division with `formatCentsPlain`, so there is no longer a reason to cut a
- * region out of the `INV-MOD-028` derivation scan. A new division or rounding
- * anywhere in this component must now be reviewed in its own right.
- */
-const SCOPED_FILE = "components/admin/manual-refund-task-queue.tsx";
 
 function sourceFiles(): string[] {
   const found: string[] = [];
@@ -188,15 +139,15 @@ function sourceFiles(): string[] {
 }
 
 describe("only one module may fill in a blank night price", () => {
-  it("permits only the repair writer or the proven priced-only school update", () => {
+  it("permits only the repair writer or the proven priced-only school and rate-derived updates", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles()) {
       const code = stripCommentsAndStrings(readFileSync(file, "utf8"));
       // `bookingGuestNight.update`, `.updateMany` and `.upsert` - every way an
       // EXISTING row's price can be rewritten - and the SINGULAR `.create`,
-      // which #3214 made a first-class way to put a number on a night: the
-      // strand reconcile creates the row for a night the strand holds only
-      // through its stay envelope. Until that arm existed every create in the
+      // which #3214 made a first-class way to put a number on a night: its
+      // strand reconcile created the row for a night the strand held only
+      // through its stay envelope (retired by #4344; the writer keeps the arm). Until that arm existed every create in the
       // tree was a `createMany`, so excluding creates wholesale was sound. It is
       // not any more, and a scan that cannot see the new shape stays green while
       // the rule is broken - a new module could write
@@ -219,6 +170,7 @@ describe("only one module may fill in a blank night price", () => {
       const rel = relative(SRC, file).split("\\").join("/");
       if (rel === REPAIR_WRITER) continue;
       if (rel === PRICED_SCHOOL_WRITER && isPricedSchoolNightWriter(code)) continue;
+      if (rel === RATE_DERIVED_WRITER && isPricedRateDerivedNightWriter(code)) continue;
       offenders.push(rel);
     }
     expect(
@@ -236,13 +188,23 @@ describe("only one module may fill in a blank night price", () => {
     expect(isPricedSchoolNightWriter(`${code}\nawait tx.bookingGuestNight.update({});`)).toBe(false);
   });
 
+  it("mutation-proves the rate-derived exception requires the price fence and the race refusal", () => {
+    const code = stripCommentsAndStrings(readFileSync(join(SRC, RATE_DERIVED_WRITER), "utf8"));
+    expect(isPricedRateDerivedNightWriter(code)).toBe(true);
+    // A fence on `null` - or no price fence at all - would let it fill a blank.
+    expect(isPricedRateDerivedNightWriter(code.replace("priceCents: night.fromPriceCents", "priceCents: null"))).toBe(false);
+    expect(isPricedRateDerivedNightWriter(code.replace("priceCents: night.fromPriceCents,", ""))).toBe(false);
+    expect(isPricedRateDerivedNightWriter(code.replace("written.count !== 1", "false"))).toBe(false);
+    expect(isPricedRateDerivedNightWriter(`${code}\nawait store.bookingGuestNight.create({});`)).toBe(false);
+  });
+
   it("the repair writer really is one of the files on disk", () => {
     // THE CONTROL for the assertion above. An allowlist naming a file that has
     // been renamed away would make that census pass by having nothing to find.
     const all = sourceFiles().map((file) =>
       relative(SRC, file).split("\\").join("/"),
     );
-    for (const file of [...FEATURE_FILES, SCOPED_FILE]) {
+    for (const file of [...FEATURE_FILES, RATE_DERIVED_WRITER]) {
       expect(all).toContain(file);
     }
     const code = stripCommentsAndStrings(
@@ -288,36 +250,6 @@ describe("nothing in this feature can derive an amount", () => {
     });
   }
 
-  it(`the whole of ${SCOPED_FILE} contains none either`, () => {
-    const code = stripCommentsAndStrings(
-      readFileSync(join(SRC, SCOPED_FILE), "utf8"),
-    );
-    for (const { what, pattern } of DERIVATIONS) {
-      expect(
-        pattern.test(code),
-        `INV-MOD-028: ${SCOPED_FILE} appears to contain ${what}. This file builds the entries posted to the server out of the officer's boxes, so it is where a "split it evenly" control would go - and nothing in it may produce a per-night amount, however far from the night-price code it is written.`,
-      ).toBe(false);
-    }
-  });
-
-  it("scans the entire settle screen, including the former display exemption", () => {
-    const raw = readFileSync(join(SRC, SCOPED_FILE), "utf8");
-    const code = stripCommentsAndStrings(raw);
-    // #3498 renamed the per-night derivation as it moved to one column of boxes
-    // PER STRAND. Same code, same scan: `nightPriceStrands` is what
-    // `nightPriceEntries` became, and each strand's own entries are built inside
-    // it, so this anchor still lands on the arithmetic this census is aimed at.
-    expect(code).toContain("nightPriceStrands");
-    expect(code).toContain("nightPricesBlocked");
-    // Rendered six hundred lines below the night-price code, on the file's last
-    // element: if the scan stops early, this is what says so. An identifier
-    // rather than a `data-testid`, because the stripper blanks string contents.
-    expect(code).toContain("<AutomaticRefundNoticesCard notices={autoRefunded}");
-    expect(code).toContain("formatCentsPlain(task.amountCents)");
-    expect(raw).not.toContain("MONEY-DISPLAY EXEMPTION START");
-    expect(code).not.toMatch(/amountCents\s*\/\s*100/);
-  });
-
   it("lets only this feature reach the figure a remainder fill would need", () => {
     /*
       THE MODULE-BOUNDARY HALF, and the reason the file boundary is not the
@@ -332,7 +264,7 @@ describe("nothing in this feature can derive an amount", () => {
       target without naming this function, and naming it outside the feature files
       below fails here with its own file name.
     */
-    const allowed = new Set([...FEATURE_FILES, SCOPED_FILE]);
+    const allowed = new Set(FEATURE_FILES);
     const offenders: string[] = [];
     for (const file of sourceFiles()) {
       const code = stripCommentsAndStrings(readFileSync(file, "utf8"));
@@ -348,7 +280,9 @@ describe("nothing in this feature can derive an amount", () => {
     // THE CONTROL for the allowlist: the feature really does reference it, so a
     // rename that emptied the scan would fail here rather than pass quietly.
     expect(
-      stripCommentsAndStrings(readFileSync(join(SRC, SCOPED_FILE), "utf8")),
+      stripCommentsAndStrings(
+        readFileSync(join(SRC, "lib/stored-night-price-repair.ts"), "utf8"),
+      ),
     ).toMatch(/\bunpricedNightTargetCents\b/);
   });
 

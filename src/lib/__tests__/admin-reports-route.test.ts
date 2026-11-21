@@ -95,6 +95,14 @@ vi.mock("@/lib/capacity", async (importOriginal) => {
   };
 });
 
+// The club's format, resolved through this double so a case can set the club's
+// locale (#5258). Its default (beforeEach) is the house en-NZ fixture.
+const clubFormatMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/club-format-server", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/club-format-server")),
+  clubFormatValues: (...a: unknown[]) => clubFormatMock(...a),
+}));
+
 const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
 
 function reportBooking(overrides: Record<string, unknown> = {}) {
@@ -236,9 +244,30 @@ describe("admin reports route", () => {
       bookingLodgeWhere: lodgeId ? { lodgeId } : {},
     }));
     zeroMemberQueries();
+    clubFormatMock.mockResolvedValue({ currencyCode: "NZD", locale: "en-NZ" });
   });
 
   afterEach(() => vi.useRealTimers());
+
+  it("writes the revenue chart's labels in the club's date format (#5258)", async () => {
+    mockReportRows([reportBooking()]);
+    const { GET } = await import("@/app/api/admin/reports/route");
+    const url = "http://localhost/api/admin/reports?from=2026-04-08&to=2026-04-08";
+
+    const nz = await (await GET(new NextRequest(url))).json();
+    expect(nz.revenue[0]).toMatchObject({
+      label: "Wed, 8 Apr",
+      tooltipLabel: "Wednesday, 8 April 2026",
+    });
+
+    clubFormatMock.mockResolvedValue({ currencyCode: "CHF", locale: "de-CH" });
+    const ch = await (await GET(new NextRequest(url))).json();
+    expect(ch.revenue[0]).toMatchObject({
+      label: "Mi., 8. Apr.",
+      tooltipLabel: "Mittwoch, 8. April 2026",
+      revenueCents: nz.revenue[0].revenueCents,
+    });
+  });
 
   it("selects a created-elsewhere booking by overlapping stay nights and slices cents after full allocation", async () => {
     mockReportRows([reportBooking()]);

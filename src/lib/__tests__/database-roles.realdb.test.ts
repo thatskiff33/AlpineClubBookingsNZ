@@ -58,6 +58,10 @@ const INSUFFICIENT_PRIVILEGE = "42501";
 const RESTRICT_VIOLATION = "23001";
 const FOREIGN_KEY_VIOLATION = "23503";
 const CHECK_VIOLATION = "23514";
+// Set-up migrates and dumps whole databases; teardown force-drops them and their
+// roles one statement at a time, which a loaded runner can stretch past
+// vitest's 10-second hook default (#5283).
+const SCRATCH_HOOK_TIMEOUT_MS = 600_000;
 
 const PREFIX = `tac_test_4453_${randomBytes(3).toString("hex")}`;
 const ROLES = {
@@ -348,7 +352,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
       const { PrismaClient: Prisma } = await import("@prisma/client");
       const { createPrismaPgAdapter } = await import("@/lib/prisma-adapter");
       appPrisma = new Prisma({ adapter: createPrismaPgAdapter(urlFor(DATABASES.upgrade, "app")) });
-    }, 600_000);
+    }, SCRATCH_HOOK_TIMEOUT_MS);
 
     afterAll(async () => {
       await appPrisma?.$disconnect().catch(() => {});
@@ -363,7 +367,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
         });
       }
       await admin.end().catch(() => {});
-    });
+    }, SCRATCH_HOOK_TIMEOUT_MS);
 
     it("reports server role facts for the operator, application and superuser membership (INV-OPS-018)", async () => {
       const { PrismaClient: Prisma } = await import("@prisma/client");

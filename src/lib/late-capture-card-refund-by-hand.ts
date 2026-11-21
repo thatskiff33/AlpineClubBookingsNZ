@@ -26,10 +26,17 @@ import { findLateCapturePaymentIntents, readLateCaptureXeroReceipt } from "@/lib
  * `LATE_CAPTURE_CARD_REFUND_RECORD_BY_HAND`. Round 14: with, apart, what a
  * card note sent to Xero without a reply may already answer
  * (`mayBeInXeroCents`), which is never recorded before Xero is checked.
+ *
+ * #4383: also a capture whose receipt the app recorded for only part of it,
+ * where it was refunded above that part (`aboveRecordedCents`): no note
+ * answers those cents, and an officer records them by hand only if they
+ * recorded the receipt's unrecorded part by hand. Only that figure is read
+ * of such a capture: the rest is the note writer's.
  */
 export interface LateCaptureCardRefundsByHand {
   byHandCents: number;
   mayBeInXeroCents: number;
+  aboveRecordedCents: number;
 }
 
 export async function readLateCaptureCardRefundsByHand(
@@ -38,9 +45,14 @@ export async function readLateCaptureCardRefundsByHand(
 ): Promise<Map<string, LateCaptureCardRefundsByHand>> {
   const found = new Map<string, LateCaptureCardRefundsByHand>();
   for (const paymentIntentId of await findLateCapturePaymentIntents(paymentIntentIds)) {
-    if ((await readLateCaptureXeroReceipt(paymentIntentId)).kind !== "resolved-by-hand") continue;
-    const { byHandCents, mayBeInXeroCents } = await readUnnotedLateCaptureCardRefunds(paymentId, paymentIntentId);
-    if (byHandCents > 0 || mayBeInXeroCents > 0) found.set(paymentIntentId, { byHandCents, mayBeInXeroCents });
+    const { kind } = await readLateCaptureXeroReceipt(paymentIntentId);
+    if (kind === "none") continue;
+    const unnoted = await readUnnotedLateCaptureCardRefunds(paymentId, paymentIntentId);
+    const left =
+      kind === "resolved-by-hand"
+        ? { byHandCents: unnoted.byHandCents, mayBeInXeroCents: unnoted.mayBeInXeroCents, aboveRecordedCents: 0 }
+        : { byHandCents: 0, mayBeInXeroCents: 0, aboveRecordedCents: unnoted.aboveRecordedCents };
+    if (left.byHandCents > 0 || left.mayBeInXeroCents > 0 || left.aboveRecordedCents > 0) found.set(paymentIntentId, left);
   }
   return found;
 }

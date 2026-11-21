@@ -12,7 +12,9 @@ import {
   calendarEventInputSchema,
   resolveCalendarEventDates,
   serializeCalendarEvent,
+  whereVisibleCalendarEvent,
 } from "@/lib/calendar-events";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 
 // Widest window a single list request may span, guarding against an unbounded
 // scan if a client sends a silly range. A month view needs ~6 weeks; a year of
@@ -56,15 +58,21 @@ export async function GET(req: NextRequest) {
     to = new Date(from.getTime() + MAX_RANGE_MS);
   }
 
+  // #5148: a work party's entries show only to a member, while the Work
+  // parties module is on and that work party is open (`whereVisibleCalendarEvent`).
+  const modules = await loadEffectiveModuleFlags();
   const [events, canManage] = await Promise.all([
     prisma.calendarEvent.findMany({
       // An event overlaps the window when it starts before the window ends and
       // (for timed events) ends after the window starts. All-day / open-ended
       // events (endsAt null) are matched on their start alone.
-      where: {
-        startsAt: { lte: to },
-        OR: [{ endsAt: null }, { endsAt: { gte: from } }],
-      },
+      where: whereVisibleCalendarEvent(
+        {
+          startsAt: { lte: to },
+          OR: [{ endsAt: null }, { endsAt: { gte: from } }],
+        },
+        { modules, viewer: guard.session.user },
+      ),
       orderBy: { startsAt: "asc" },
       include: { series: true },
       // Belt-and-braces row cap alongside the 400-day window: even a dense

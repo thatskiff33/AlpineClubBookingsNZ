@@ -33,6 +33,7 @@ import {
   DUPLICATE_PROMO_CODE_MESSAGE,
   ONE_PROMO_CODE_PER_BOOKING_MESSAGE,
   PROMO_WORK_PARTY_EXCLUSION_MESSAGE,
+  PROMO_WORK_PARTY_EXCLUSION_OFFICER_MESSAGE,
   promoCodeListRefusal,
   SEVERAL_PROMO_CODES_ONE_CODE_EDIT_MESSAGE,
 } from "../promo-code-list-rules";
@@ -911,6 +912,11 @@ describe("one home for the code-list refusals (#3827)", () => {
     expect(promoCodeListRefusal({ typedCodes: ["A"], workPartyApplied: true, multiPromoCodes: false })).toBe(
       PROMO_WORK_PARTY_EXCLUSION_MESSAGE,
     );
+    // #5149: the same rule said to an officer correcting the booking; only the words change.
+    expect(promoCodeListRefusal({ typedCodes: ["A"], workPartyApplied: true, multiPromoCodes: false, audience: "officer" })).toBe(
+      PROMO_WORK_PARTY_EXCLUSION_OFFICER_MESSAGE,
+    );
+    expect(promoCodeListRefusal({ typedCodes: ["A"], workPartyApplied: true, multiPromoCodes: true, audience: "officer" })).toBeNull();
     expect(promoCodeListRefusal({ typedCodes: ["A"], workPartyApplied: false, multiPromoCodes: false })).toBeNull();
   });
   it("with the switch on: any number, beside a working bee too", () => {

@@ -22,6 +22,7 @@ sequencing):
 | `BookingWaitlistAlternateLodge` | direct `lodgeId` junction | ADR-004 cross-lodge waitlist opt-in: lodges a waitlisted member would also accept; rows only widen what the processor may offer |
 | `BookingGuest` / `BookingGuestNight` | via `Booking` | no direct FK |
 | `BookingRequestPendingAdultReservationNight` | direct `lodgeId` | unnamed SCHOOL adult capacity, one count per request/night; always matches the held booking's immutable lodge, released with that hold (#3413) |
+| `BookingImportBatch` / `BookingImportRow` | direct `lodgeId` | a paid-booking import is one lodge per batch (#5005); the row copies the batch's lodge so a Booking Ref imports once per lodge (`INV-CAP-040`), and each imported booking's own `lodgeId` matches it |
 | `GroupBooking` | via organiser `Booking` | one group = one lodge (ADR-001 open question 1) |
 | `ChoreTemplate` | direct `lodgeId` | roster generation filters by lodge |
 | `LodgeSettings` | per-lodge row | converted from singleton |
@@ -32,6 +33,8 @@ sequencing):
 | `MaintenanceReport` | direct `lodgeId` | a reported physical fault belongs to one building (#2780); `onDelete: Cascade` — a deleted lodge takes its fault history with it |
 | `LodgeMaintenanceReportToken` | direct `lodgeId` (`@unique`) | one live QR-sign bearer token per lodge (#2780); rotating overwrites in place, `onDelete: Cascade` |
 | `MaintenanceReportAnswer` | via `MaintenanceReport` | no direct FK; answers store the question label as asked, so they carry the report's lodge |
+| `FoodOrder` | direct `lodgeId` | a food order is for one building's supplies (fork #121); every list, total and both hut-leader rules (`foodOrderVisibility` and `canManageFoodOrder`: a hut leader sees and manages only orders at the lodges their access window covers today, owner decision on PR #5143) read it; ordering follows booking eligibility (`getEligibleLodgeIdsForMember`). `onDelete: Cascade`, like `MaintenanceReport` |
+| `FoodOrderItem` | via `FoodOrder` | no direct FK; an item line carries its order's lodge |
 | Model                                                              | Scoping                                                            | Notes                                                                                                                                                                                                                                                                                                                                                   |
 | ------------------------------------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `LodgeRoom`                                                        | direct `lodgeId`                                                   | `name` unique per lodge, not globally                                                                                                                                                                                                                                                                                                                   |
@@ -632,6 +635,11 @@ new ADR:
   question set at every lodge, and the photo/retention/anonymous-QR policy is a
   club decision (#2780). The reports and their per-lodge QR signs above are
   lodge-scoped; the questions asked and the policy governing them are not.
+- Food-order settings (`FoodOrderSettings` singleton, fork #121): one food
+  officer email and one officer label for the club. The orders above are
+  lodge-scoped; who buys the food and what the club calls them is a club
+  decision. A per-lodge officer would be a new setting, not a widening of this
+  row.
 - AI spend settings (`AiAssistantSettings`, `DiagnosticsSettings`, and the
   `AiSpendCurrencySettings` conversion-rate singleton added by #3354): each is
   one `id = "default"` row. The two AI modules are club-wide paid products with
@@ -711,6 +719,14 @@ record the outcome here when decided:
   pre-migration meaning). A lodge-bound event's internal promo resolves
   only for bookings at that lodge; the booking form filters events by the
   chosen lodge and labels lodge-bound ones.
+- **`CalendarEvent.workPartyEventId` (nullable, #5148) stays club-wide.**
+  It links a calendar entry to the work party that manages it; the calendar
+  itself is club-wide, so the entry carries no lodge of its own and shows the
+  work party's lodge name as its location. The work party's `lodgeId` stays
+  the one lodge fact. The member work party page and dashboard card list
+  lodge-bound and club-wide work parties alike, naming the lodge; "Join Work
+  Party" preselects the work party's lodge (or leaves the member's choice for
+  a club-wide one).
 - **`LodgeSettings` / `BedAllocationSettings` per-lodge rows.** A lodge's
   row is keyed by its lodge id (`id = lodgeId`); the legacy "default" row
   keeps serving the lodge it was soft-linked to in the phase-2 backfill
