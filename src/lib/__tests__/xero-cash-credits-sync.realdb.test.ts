@@ -31,6 +31,7 @@ let resetRateLimits: () => void;
   let otherContact: string;
   let failPage: { kind: string; page: number } | null;
   let beforePage: { kind: string; page: number; run: () => void } | null;
+  let notFoundId: string | null;
 
   function install() {
     const session = xeroTransport(fake);
@@ -38,6 +39,12 @@ let resetRateLimits: () => void;
       get(_t, name) {
         if (name === "then") return undefined;
         const real = Reflect.get(session.xero.accountingApi, name) as (...args: unknown[]) => unknown;
+        if (name === "getOverpayment") {
+          return (...args: unknown[]) => {
+            if (args[1] === notFoundId) session.failNext({ statusCode: 404, body: { Message: "not found" } });
+            return real(...args);
+          };
+        }
         if (name !== "getOverpayments" && name !== "getPrepayments") return real;
         return (...args: unknown[]) => {
           const kind = name === "getOverpayments" ? "OVERPAYMENT" : "PREPAYMENT";
@@ -78,6 +85,7 @@ let resetRateLimits: () => void;
     otherContact = fake.createContact("contact-b", "Organisation B").contactID;
     failPage = null;
     beforePage = null;
+    notFoundId = null;
     install();
     await db.member.create({ data: {
       id: MEMBER, email: "race-5204@example.invalid", passwordHash: "test-only", firstName: "Cash", lastName: "Credit",
@@ -156,6 +164,21 @@ let resetRateLimits: () => void;
     expect((await cash.listXeroCashCreditQueue(db)).rows.map((row) => row.xeroDocumentId)).toContain(bulk[cash.XERO_CASH_CREDIT_PAGE_SIZE]!.cashCreditID);
     beforePage = null;
     expect(await cash.refreshXeroCashCredits({ now: at("2026-07-01T02:00:00.000Z") })).toMatchObject({ open: cash.XERO_CASH_CREDIT_PAGE_SIZE, zeroed: 1 });
+  });
+
+  it("zeroes a stored open document Xero answers 404 for, rather than failing every multi-page refresh", async () => {
+    for (let i = 0; i < cash.XERO_CASH_CREDIT_PAGE_SIZE + 1; i++) fake.createCashCredit(`bulk-${i}`, "OVERPAYMENT", otherContact, 100 + i, "2026-06-02");
+    const gone = `${PREFIX}gone`;
+    await db.xeroCashCredit.create({ data: {
+      kind: "OVERPAYMENT", xeroDocumentId: gone, xeroContactId: contact, currencyCode: "NZD",
+      totalCents: 5_000, remainingCents: 5_000, syncedAt: new Date("2026-06-30T00:00:00.000Z"),
+    } });
+    notFoundId = gone;
+
+    const result = await cash.refreshXeroCashCredits({ now: at("2026-07-01T00:00:00.000Z") });
+
+    expect(result).toMatchObject({ open: cash.XERO_CASH_CREDIT_PAGE_SIZE + 1, zeroed: 1, current: true });
+    expect(await db.xeroCashCredit.findUnique({ where: { xeroDocumentId: gone }, select: { remainingCents: true } })).toEqual({ remainingCents: 0 });
   });
 
   it("replaying the same read writes nothing a second time", async () => {

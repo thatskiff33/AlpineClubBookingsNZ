@@ -4842,7 +4842,8 @@ amount) throws and changes nothing. A list read over several pages can skip a
 document, because one used up on an earlier page mid-read shifts the rest up a
 place; so when a kind took more than one page, every stored open document of
 that kind the list did not return is read again by id (`getOverpayment` /
-`getPrepayment`) before it may be zeroed. Only a
+`getPrepayment`) before it may be zeroed; Xero's 404 for one counts as spent,
+so a removed document cannot fail every later refresh. Only a
 complete read reaches the write transaction, which upserts each listed document
 and sets the remaining balance of every stored open document the read did not
 list to zero. A zero is what Xero says of a document fully allocated or voided; the

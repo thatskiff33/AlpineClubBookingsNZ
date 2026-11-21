@@ -36,6 +36,7 @@ import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { utcDateOnlyString } from "@/lib/club-time/intl";
 import { memberDisplayName } from "@/lib/member-serialization";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
+import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 import { xeroCalendarDateAsDateOnly } from "@/lib/xero-provider-dates";
 import { DEFAULT_XERO_SYNC_SCOPE as CURSOR_SCOPE } from "@/lib/xero-sync-cursors";
 
@@ -115,18 +116,26 @@ const liveReader: XeroCashCreditReader = {
   async readOne(kind, xeroDocumentId) {
     const { xero, tenantId } = await getAuthenticatedXeroClient();
     const options = callOptions(kind, xeroDocumentId);
-    if (kind === "OVERPAYMENT") {
+    try {
+      if (kind === "OVERPAYMENT") {
+        const response = await callXeroApi(
+          () => xero.accountingApi.getOverpayment(tenantId, xeroDocumentId),
+          { ...options, operation: "getOverpayment" },
+        );
+        return listOf(kind, response.body.overpayments)[0] ?? null;
+      }
       const response = await callXeroApi(
-        () => xero.accountingApi.getOverpayment(tenantId, xeroDocumentId),
-        { ...options, operation: "getOverpayment" },
+        () => xero.accountingApi.getPrepayment(tenantId, xeroDocumentId),
+        { ...options, operation: "getPrepayment" },
       );
-      return listOf(kind, response.body.overpayments)[0] ?? null;
+      return listOf(kind, response.body.prepayments)[0] ?? null;
+    } catch (error) {
+      // A 404 is Xero's definite "no such document" (removed, or a different
+      // organisation now connected): it is spent, not an unreadable refresh.
+      // Without this, one such row would fail every multi-page refresh.
+      if (getXeroErrorStatusCode(error) === 404) return null;
+      throw error;
     }
-    const response = await callXeroApi(
-      () => xero.accountingApi.getPrepayment(tenantId, xeroDocumentId),
-      { ...options, operation: "getPrepayment" },
-    );
-    return listOf(kind, response.body.prepayments)[0] ?? null;
   },
 };
 
