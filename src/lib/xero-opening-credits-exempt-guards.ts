@@ -61,7 +61,7 @@ function listInWords(items: readonly string[]): string {
  * The message names roles, never the account code: the mapping screen reads a
  * bare "403" in a refusal as "not permitted", and an account can carry that code.
  */
-export function openingCreditsSharedAccountProblem(rows: readonly MappingCodeRow[]): string | null {
+function openingCreditsSharedAccountProblem(rows: readonly MappingCodeRow[]): string | null {
   const openingCreditsCode = rows.find((row) => row.key === OPENING_CREDITS_KEY)?.code;
   const conflicts = openingCreditsAccountConflicts({
     openingCreditsCode,
