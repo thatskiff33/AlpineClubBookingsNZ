@@ -505,6 +505,13 @@ import "./xero-bt-per-refund-notes.realdb.test";
 // as a bank refund. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
 // cleans its own `race-4312-` fixtures.
 import "./xero-bt-card-refund-notes.realdb.test";
+// #4328 reuses it to prove the booking repair tool judges a bank-transfer
+// payment's refund by all its live refund notes - canonical, a later hand-back's
+// and a card refund's, raised through the real writers against a fake Xero - with
+// no mismatch when they cover the refund, and one manual-review finding, queuing
+// nothing, when one is short. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it
+// owns and cleans its own `race-4328-` fixtures.
+import "./xero-bt-repair-amount-mismatch.realdb.test";
 // #4098 reuses it to prove closing a subscription charge as already paid: two
 // closes at once close it once (one audit row, each voidGeneration bumped
 // once), and a manual reversal committing while the close waits for the
