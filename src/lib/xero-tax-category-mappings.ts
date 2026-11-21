@@ -37,13 +37,7 @@ export interface XeroTaxCategoryMappings {
 }
 
 export async function loadXeroTaxCategoryMappings(): Promise<XeroTaxCategoryMappings> {
-  const [connection, rows] = await Promise.all([
-    readXeroConnection(),
-    prisma.xeroTaxCategoryMapping.findMany({
-      select: { category: true, taxType: true, xeroTenantId: true },
-      orderBy: { category: "asc" },
-    }),
-  ]);
+  const [connection, rows] = await Promise.all([readXeroConnection(), readMappingRows()]);
   const tenantId = connection?.tenantId ?? null;
   return {
     tenantId,
@@ -53,6 +47,16 @@ export async function loadXeroTaxCategoryMappings(): Promise<XeroTaxCategoryMapp
       currentTenant: tenantId !== null && row.xeroTenantId === tenantId,
     })),
   };
+}
+
+// Its own async function so a read that fails at once still rejects, and
+// Promise.all handles it alongside the connection read: never an unhandled
+// rejection left behind by a sibling that was already running.
+async function readMappingRows() {
+  return prisma.xeroTaxCategoryMapping.findMany({
+    select: { category: true, taxType: true, xeroTenantId: true },
+    orderBy: { category: "asc" },
+  });
 }
 
 /** The tax type a category is mapped to in the connected organisation, or null when it is not. */
