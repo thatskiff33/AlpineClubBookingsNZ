@@ -31,6 +31,7 @@ export async function fakeXero(prefix: string, sent: SentDocument[], refuse: Map
   const invoicePayments = await import("@/lib/xero-invoice-payments");
   // An edit's credit note reads its invoice's amount due before creating anything (#3993).
   const invoices = new Map<string, Record<string, unknown>>();
+  const notes = new Map<string, Record<string, unknown>>();
   const handlers: Record<string, (...args: never[]) => unknown> = {
     createInvoices: async (_tenant: string, body: { invoices: Array<{ lineItems: Lines }> }) => {
       const cents = linesCents(body.invoices[0]!.lineItems);
@@ -53,10 +54,13 @@ export async function fakeXero(prefix: string, sent: SentDocument[], refuse: Map
       const cents = linesCents(body.creditNotes[0]!.lineItems);
       sent.push({ operation: "createCreditNotes", cents });
       const id = `${prefix}xero-note-${++documents}`;
-      return { body: { creditNotes: [{ creditNoteID: id, creditNoteNumber: `CN-${id}`, status: "AUTHORISED", total: cents / 100, remainingCredit: cents / 100, payments: [] }] } };
+      const note = { creditNoteID: id, creditNoteNumber: `CN-${id}`, status: "AUTHORISED", total: cents / 100, remainingCredit: cents / 100, payments: [] };
+      notes.set(id, note);
+      return { body: { creditNotes: [note] } };
     },
     createCreditNoteAllocation: async () => ({ body: { allocations: [{ amount: 0 }] } }),
-    getCreditNote: async () => ({ body: { creditNotes: [] } }),
+    // A note this fake raised is read back as it was raised (#5368: the retry leg that pays a note reads it first).
+    getCreditNote: async (_tenant: string, creditNoteId: string) => ({ body: { creditNotes: notes.has(creditNoteId) ? [notes.get(creditNoteId)] : [] } }),
   };
   const accountingApi = new Proxy(handlers, {
     get(target, name: string) {
@@ -133,7 +137,17 @@ export async function recordCardRefund(prisma: PrismaClient, paymentId: string, 
   await prisma.payment.update({ where: { id: paymentId }, data: { refundedAmountCents: { increment: cents }, status: "PARTIALLY_REFUNDED" } });
 }
 
-/** The refund's note, queued by the real enqueue as the refund webhook queues it. */
+/**
+ * The refund's note, queued by the real enqueue as the refund webhook queues it.
+ *
+ * #5368 item 5: each send of this note logs "A refund document does not match the journal" with
+ * COMPONENT_UNUSABLE. That is not a gap in these fixtures. On a card payment the note is sized on the payment's
+ * refunded watermark and names no door (no card refund, request, review or bank record), so
+ * `resolveRefundNoteObligation` answers "a note sized on the payment's watermark answers no one refund debt" before
+ * it reads any journal row: recording the refund's debt here would not change it
+ * (docs/design/member-money-ledger.md, section 7). The booking itself is journalled: its primary invoice and
+ * capture receipt manifests are COVERED.
+ */
 export async function queueRefundNote(paymentId: string, cents: number): Promise<string> {
   const { enqueueXeroRefundCreditNoteOperation } = await import("@/lib/xero-operation-outbox");
   const queued = await enqueueXeroRefundCreditNoteOperation(paymentId, cents);

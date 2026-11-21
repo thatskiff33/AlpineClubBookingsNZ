@@ -15,6 +15,12 @@
  * 560a74f389); the other three were added with the fix and run red against
  * `main`'s code in a throwaway checkout during review.
  *
+ * #5368 adds two cases of another kind, which are not among those five: the
+ * breaker refuses the settling payment AFTER the document's create landed.
+ * Such a row is not given back. Its handler completes it PARTIAL, naming the
+ * document, so no second pass can raise the document again; an officer's
+ * Retry then sends the payment.
+ *
  * What is driven through the app's own writers, and what is seeded:
  * - SEEDED: the booking and group histories (`booking-ledger-history`,
  *   `booking-ledger-group-history`), a card refund as the webhook records it.
@@ -36,6 +42,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import { cleanHistories, historyNames, postHistoryEdit, seedHistoryFixtures } from "./support/booking-ledger-history";
 import { createGroupHistory, GROUP_CHILD_CENTS, groupHistory } from "./support/booking-ledger-group-history";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
 import type { SuiteEnvironmentRoleDeclaration } from "./helpers/environment-role";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
@@ -154,6 +161,102 @@ let role: SuiteEnvironmentRoleDeclaration | undefined;
       expect(feeRow).toEqual(expect.any(String));
 
       await refusedThenSent(feeRow, "createInvoices", { queueType: "ENTRANCE_FEE_INVOICE", feeAmountCents: 7_500 }, 7_500);
+    });
+
+    // ------------------------------------- the breaker refuses a call AFTER a create that landed (#5368)
+    //
+    // Not a give-back. The handler keeps what Xero already holds: it catches the refused payment and completes the row
+    // PARTIAL, naming the document and the refusal, so the row never returns to PENDING and a second pass has nothing
+    // to send. The payment leg is then an officer's Retry, queued and drained as the button and the cron run it.
+
+    const fullRow = (operationId: string) =>
+      prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId }, select: { status: true, xeroObjectId: true, responsePayload: true } });
+    const links = (paymentId: string, role: string) =>
+      prisma.xeroObjectLink.findMany({ where: { localModel: "Payment", localId: paymentId, role }, select: { xeroObjectId: true, metadata: true } });
+    const NOTHING_TO_RUN = { found: 0, processed: 0, succeeded: 0, failed: 0, skipped: 0 };
+    const BREAKER_REFUSED = expect.objectContaining({ name: "XeroTransientOutageError", preHttp: true });
+
+    async function officerRetry(operationId: string) {
+      const { enqueueXeroSyncOperationRetry, processQueuedXeroOperationRetries } = await import("@/lib/xero-operation-queue");
+      await enqueueXeroSyncOperationRetry(operationId, { createdByMemberId: names.officerId });
+      return processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST);
+    }
+
+    /** No further retry drain or outbox pass sends anything. */
+    async function nothingMoreIsSent(operationId: string, documents: SentDocument[]) {
+      const { processQueuedXeroOperationRetries } = await import("@/lib/xero-operation-queue");
+      expect(await processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).toMatchObject({ found: 0, succeeded: 0 });
+      expect(await runOutboxRow(prisma, operationId, PREFIX)).toEqual(NOTHING_TO_RUN);
+      expect(sent).toEqual(documents);
+    }
+
+    it("a refund credit note whose payment the breaker refuses after the note's create landed is not given back: the row is PARTIAL holding the note, a second pass sends nothing, and an officer's Retry pays it and closes the row - one note", async () => {
+      const { bookingId, paymentId, invoiceRow } = await paidCardBooking(prisma, names, `${PREFIX}b${++sequence}`, PRICE);
+      expect(await runOutboxRow(prisma, invoiceRow, PREFIX)).toMatchObject({ succeeded: 1 });
+      sent.length = 0;
+      await recordCardRefund(prisma, paymentId, 5_000, "a");
+      const noteRow = await queueRefundNote(paymentId, 5_000);
+      // A card refund settles from the Stripe account, so this note has a payment to send: the real decision, not the fixture's "unsettled".
+      vi.mocked((await import("@/lib/xero-invoice-payments")).resolveRefundSettlement).mockRestore();
+      refuse.set("createPayments", await breakerRefusal());
+      const oneNote: SentDocument[] = [{ operation: "createCreditNotes", cents: 5_000 }];
+
+      // The create lands, then the payment is refused. The handler returned, so the pass counts no cooldown give-back.
+      const first = await runOutboxRow(prisma, noteRow, PREFIX);
+      expect(first).toEqual({ found: 1, processed: 1, succeeded: 1, failed: 0, skipped: 0 });
+      expect(refuse.size, "the payment call was never reached").toBe(0);
+      expect(sent).toEqual(oneNote);
+      const partial = await fullRow(noteRow);
+      expect(partial).toMatchObject({ status: "PARTIAL", xeroObjectId: expect.any(String), responsePayload: { refundPayment: null, refundPaymentError: BREAKER_REFUSED } });
+      const noteId = partial.xeroObjectId!;
+
+      // The second pass: the row is not PENDING, so nothing is claimed and no second note is raised.
+      expect(await runOutboxRow(prisma, noteRow, PREFIX)).toEqual(NOTHING_TO_RUN);
+      expect(sent).toEqual(oneNote);
+      expect(await fullRow(noteRow)).toEqual(partial);
+
+      // The officer's Retry pays the note Xero holds and closes the row.
+      expect(await officerRetry(noteRow)).toMatchObject({ succeeded: 1, failed: 0 });
+      expect(await fullRow(noteRow)).toMatchObject({ status: "SUCCEEDED", xeroObjectId: noteId, responsePayload: { refundPayment: { paymentID: expect.any(String) }, refundPaymentError: null } });
+      expect(sent).toEqual(oneNote);
+      expect(await links(paymentId, "REFUND_CREDIT_NOTE")).toEqual([expect.objectContaining({ xeroObjectId: noteId })]);
+      expect(await links(paymentId, "REFUND_PAYMENT")).toEqual([expect.objectContaining({ metadata: expect.objectContaining({ creditNoteId: noteId, amountCents: 5_000 }) })]);
+      await nothingMoreIsSent(noteRow, oneNote);
+
+      // What the journal's export manifest says of this note (#5368 item 5): one row for the one note, and a conflict by
+      // design. A card payment's refund note is sized on the payment's watermark and names no one refund debt, so it
+      // is COMPONENT_UNUSABLE whatever the journal holds (docs/design/member-money-ledger.md, section 7).
+      expect(await prisma.memberMoneyExportManifest.findMany({ where: { bookingId, documentRole: "REFUND_NOTE" }, select: { outcome: true, reason: true, lineTotalCents: true, providerInvoiceId: true } }))
+        .toEqual([{ outcome: "CONFLICT", reason: "COMPONENT_UNUSABLE", lineTotalCents: 5_000, providerInvoiceId: noteId }]);
+    });
+
+    it("a booking invoice whose payment the breaker refuses after the invoice's create landed is not given back: the row is PARTIAL holding the invoice, a second pass sends nothing, and an officer's Retry records the payment once - one invoice", async () => {
+      const { paymentId, invoiceRow } = await paidCardBooking(prisma, names, `${PREFIX}b${++sequence}`, PRICE);
+      refuse.set("createPayment", await breakerRefusal());
+      const oneInvoice: SentDocument[] = [{ operation: "createInvoices", cents: PRICE }];
+
+      const first = await runOutboxRow(prisma, invoiceRow, PREFIX);
+      expect(first).toEqual({ found: 1, processed: 1, succeeded: 1, failed: 0, skipped: 0 });
+      expect(refuse.size, "the payment call was never reached").toBe(0);
+      expect(sent).toEqual(oneInvoice);
+      const partial = await fullRow(invoiceRow);
+      expect(partial).toMatchObject({ status: "PARTIAL", xeroObjectId: expect.any(String), responsePayload: { payment: null, paymentError: BREAKER_REFUSED, paymentSkipped: false } });
+      const invoiceId = partial.xeroObjectId!;
+      expect(await links(paymentId, "INVOICE_PAYMENT")).toEqual([]);
+
+      expect(await runOutboxRow(prisma, invoiceRow, PREFIX)).toEqual(NOTHING_TO_RUN);
+      expect(sent).toEqual(oneInvoice);
+      expect(await fullRow(invoiceRow)).toEqual(partial);
+
+      // The officer's Retry records the card payment against the invoice Xero holds, once, and raises no second invoice.
+      expect(await officerRetry(invoiceRow)).toMatchObject({ succeeded: 1, failed: 0 });
+      expect(await fullRow(invoiceRow)).toMatchObject({ xeroObjectId: invoiceId, responsePayload: { payment: { paymentID: expect.any(String), amount: PRICE / 100 }, paymentError: null } });
+      expect(sent).toEqual(oneInvoice);
+      expect(await links(paymentId, "PRIMARY_INVOICE")).toEqual([expect.objectContaining({ xeroObjectId: invoiceId })]);
+      expect(await links(paymentId, "INVOICE_PAYMENT")).toEqual([expect.objectContaining({ metadata: expect.objectContaining({ invoiceId, amountCents: PRICE }) })]);
+      await nothingMoreIsSent(invoiceRow, oneInvoice);
+      // Deliberately not asserted: the row's status after the Retry. It is reported from this clean-up (#5376) and
+      // is not pinned here as correct.
     });
 
     it("a group settlement invoice refused by the breaker after its handler saved the invoice goes back PENDING with its queued request, and the next pass sends it once", async () => {
