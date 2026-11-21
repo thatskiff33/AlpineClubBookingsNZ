@@ -738,7 +738,9 @@ export async function assertLinkedBookingMembersCanBeBooked(
   }
 }
 
-async function getAllowedGuestMemberIds(
+/** The booker plus every co-member of all their family groups: the member-guest
+ * boundary, and the family "Add to work party" refuses (fork #129). */
+export async function getAllowedGuestMemberIds(
   db: BookingGuestLookupDb,
   bookingMemberId: string
 ): Promise<Set<string>> {

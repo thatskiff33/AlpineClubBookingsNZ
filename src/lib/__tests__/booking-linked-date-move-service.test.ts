@@ -204,6 +204,8 @@ type Money = {
   requiresSettlementMethod?: boolean;
   /** What the cancellation policy kept of this booking's reduction. */
   policyRetainedAmountCents?: number;
+  /** F20 (#1887): an unpaid booking's applied credit freed by the lower price. Defaults to 0. */
+  refundedExcessCreditCents?: number;
 };
 
 const PRIMARY_MONEY: Money = {
@@ -249,6 +251,7 @@ function batchResult(
     accountCreditAmountCents: money.accountCreditAmountCents,
     // #3809: none of these bookings was paid with account credit.
     appliedCreditGivenBackCents: 0,
+    refundedExcessCreditCents: money.refundedExcessCreditCents ?? 0,
     requiresSettlementMethod: money.requiresSettlementMethod === true,
     settlementMethod: null,
     additionalPaymentClientSecret: null,
@@ -795,6 +798,30 @@ describe("what the member is charged, once, for both (#3232 D2)", () => {
     const { quote } = await raiseOffer();
     expect(quote.combinedRefundCents).toBe(1_300);
     expect(quote.settlementMethodRequired).toBe(true);
+  });
+
+  it("counts an unpaid booking's freed applied credit in what comes back (fork #132)", async () => {
+    // The dependent is still pending with account credit applied, and its lower
+    // price frees $15.00 of that credit back to the member's balance. The owner
+    // decided the one "comes back" figure includes it, so the offer matches the
+    // balance change; no settlement arm runs for it, so no choice is asked.
+    h.modifyBookingBatch.mockImplementation(async (call: BatchArgs) => {
+      h.events.push(`edit:${call.bookingId}`);
+      const money =
+        call.bookingId === PRIMARY
+          ? { ...PRIMARY_MONEY, additionalAmountCents: 0, refundAmountCents: 900 }
+          : {
+              ...DEPENDENT_MONEY,
+              refundAmountCents: 0,
+              accountCreditAmountCents: 0,
+              refundedExcessCreditCents: 1_500,
+            };
+      return batchResult(call.bookingId, money, MOVED, call.waiveChangeFee === true);
+    });
+
+    const { quote, message } = await raiseOffer();
+    expect(quote.combinedRefundCents).toBe(2_400);
+    expect(message).toContain("$24.00 would come back to you");
   });
 
   it("charges both change fees by default, including when the club has never chosen", async () => {
