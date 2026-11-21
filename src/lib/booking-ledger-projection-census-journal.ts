@@ -183,8 +183,7 @@ export function journalRefundPayableComparison(row: BookingLedgerCensusRow): {
   return {
     identity: { identity: "JOURNAL_REFUND_PAYABLE", status: columnCents === ledgerCents ? "AGREE" : "DISAGREE", columnCents, ledgerCents,
       deltaCents: columnCents - ledgerCents, explainedBy: [] },
-    integrity: classifyHandBacks(row.booking.id, facts).map((finding) => ({ bookingId: finding.bookingId, lineId: finding.identity, kind: finding.kind,
-      detail: `${finding.detail} (${finding.cents} cents)` })),
+    integrity: classifyHandBacks(row.booking.id, facts).map((finding) => ({ bookingId: finding.bookingId, lineId: finding.identity, kind: finding.kind, detail: finding.detail })),
   };
 }
 
