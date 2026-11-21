@@ -1253,7 +1253,7 @@ note.
    the claim wins (#4279): the completion takes the Payment row first, then
    the claim, re-checks under that row that the note is neither per-refund nor
    recorded VOIDED or DELETED, writes the pointer, then the links
-   (`completeAdoptingCanonicalRefundNote`, the create's record order). A repair
+   (`completeUnderPaymentRows`, the create's record order). A repair
    whose claim a stale reset took writes no pointer and no link, so a void that
    landed meanwhile is never undone by it; before #4279 its own earlier
    pointer write could leave the payment naming the voided note. A completion

@@ -1016,7 +1016,6 @@ export async function completeXeroSyncOperation(
   let lostClaim = null as { laterClaimHolds: boolean } | null; // #4686: a part-success refused for a lost claim (`INV-INT-029`).
   let linksRecorded = false; // #5289 B: whether this transaction wrote the completion's links.
   const completeWithClient = async (tx: Prisma.TransactionClient) => {
-    linksRecorded = false;
     const status = completion.status ?? "SUCCEEDED";
     const data = {
       status,
@@ -1055,8 +1054,7 @@ export async function completeXeroSyncOperation(
 
     return operation;
   };
-  // #4279, #5289 B: a pointer adoption or a note's own allocation takes its Payment rows before the claim.
-  const allocation = noteAllocationIntentOf(completion.extraLinks);
+  const allocation = noteAllocationIntentOf(completion.extraLinks); // #4279, #5289 B: these take Payment rows before the claim.
   const operation = completion.canonicalRefundNote || allocation
     ? await completeUnderPaymentRows(prisma, { adoption: completion.canonicalRefundNote, allocation }, options, completeWithClient, () => linksRecorded)
     : options?.store ? await completeWithClient(options.store) : await prisma.$transaction(completeWithClient);

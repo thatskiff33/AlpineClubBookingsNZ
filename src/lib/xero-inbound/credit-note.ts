@@ -350,10 +350,8 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   // #4449: the writes' and removals' floor alerts are held, then sent for the payments the recount does not decide.
   const { refundedPaymentRepair, voidedMirrorAuditLinks } = await withHeldFloorAlerts(async (held) => {
     await writeCurrentCreditNoteAllocations(allocationLinks, { isModificationNote, heldFloorAlerts: held.alerts });
-    // #4447: the invoices this reading no longer lists, in the same pass as the
-    // writes above and before the recount. A stored snapshot that refuses the
-    // reading turns nothing off. #5289 A: a cancelled reading of a modification
-    // note lists nothing, so all its allocations go off, each payment decided.
+    // #4447: the invoices this reading no longer lists, in the same pass as the writes above and before
+    // the recount (#5289 A: all of them for a cancelled modification note). A refusing snapshot turns nothing off.
     const removal = await retireUnlistedCreditNoteAllocations({
       creditNoteId: creditNote.creditNoteID!,
       isModificationNote,
@@ -390,10 +388,8 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
         role: "REFUND_CREDIT_NOTE",
       }));
 
-    // #5289 A: a cancelled reading lists no invoice, so the payments its removal decided are found
-    // nowhere else; the recount decides them again after those commits, and alerts each once.
-    const cancelledRemovalPaymentIds = isIncludedRefundCreditNoteStatus(creditNote.status) ? [] : removal.decidedPaymentIds;
-    const directPaymentIds = [...new Set([...paymentCandidates, ...accountCreditPayments].map((payment) => payment.id).concat(voidedMirrorPaymentIds, cancelledRemovalPaymentIds))];
+    // #5289 A: a cancelled reading's removed payments are found nowhere else; the recount decides them again.
+    const directPaymentIds = [...new Set([...paymentCandidates, ...accountCreditPayments].map((payment) => payment.id).concat(voidedMirrorPaymentIds, isIncludedRefundCreditNoteStatus(creditNote.status) ? [] : removal.decidedPaymentIds))];
     held.recountedPaymentIds = new Set([...directPaymentIds, ...modificationRefundAmountsByPaymentId.keys()]);
     const refundedPaymentRepair = await repairRefundedPaymentBusinessState({
       creditNoteId: creditNote.creditNoteID!,

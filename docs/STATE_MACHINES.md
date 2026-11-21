@@ -2254,8 +2254,25 @@ cash != bookingAmountOwedCents (INV-PAY-119), beyond what supplementary
 ```
 
 The marker is an admin-only `SETTLEMENT_MARKERS` event written in the settle's
-transaction; the alert follows the commit and is recorded on it once sent. The
-cancel arms (a cancelled booking's late cash, the late capacity cancel) size
+transaction; the alert follows the commit and is recorded on it once sent.
+
+A keep that moves the payment's refunded total and holds it at the
+bank-transfer floor (`INV-ADDPAY-021`) writes a second marker in the same
+transaction (#5289, `ib_kept_settle_floor_alert`), whose floor alert is owed
+until sent:
+
+```text
+written (alertClaimedAt null, alertSentAt null)
+  -> claimed by one sender (one conditional write on the marker as read:
+     unsent, unclaimed or claimed over 10 minutes ago)
+     -> sent -> alertSentAt set (terminal)
+     -> send failed -> claim given back (alertClaimedAt null)
+  -> a sender losing the claim sends nothing
+senders: the settle after its commit, a replay of the invoice event, and the
+  inbound cron for markers written over 10 minutes ago
+```
+
+The cancel arms (a cancelled booking's late cash, the late capacity cancel) size
 their credit from the receipt's figure, measure a mixed invoice against its
 total less the member's own applied credit, and alert on their own.
 

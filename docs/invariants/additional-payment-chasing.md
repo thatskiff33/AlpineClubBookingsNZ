@@ -653,17 +653,17 @@ Operator repair: `scripts/xero-refund-note-link-repair.ts`
 
 ### INV-ADDPAY-021
 
-For `source: STRIPE` payments the local refund ledger is Stripe-truth:
-inbound Xero reconciliation may raise it, never lower it (#1353). Below it the
-credit-note repair keeps `refundedAmountCents`, logs and raises the deduped
-Xero sync alert, never flipping a REFUNDED/PARTIALLY_REFUNDED Stripe payment
-back to SUCCEEDED from Xero-derived data: a void in Xero cannot un-refund
-Stripe's money, nor a missing note silently lower the ledger the missing-note
-detector reads. Internet Banking payments (#4162): the repair follows Xero both
-ways, but never takes the total below the payment's own transaction detail (the
-recorded hand-backs). Below that it keeps the detail, logs and raises the same
-alert; only the nightly follow-up moves the detail, line and total together
-(`INV-ADDPAY-042`).
+For `source: STRIPE` payments the local refund ledger is Stripe-truth: a
+Xero writer may raise it, never lower it (#1353), clamping only Xero's figure.
+Below it the writer keeps `refundedAmountCents`, logs and raises the deduped
+alert, never flipping a REFUNDED/PARTIALLY_REFUNDED Stripe
+payment back to SUCCEEDED: a void in Xero cannot un-refund Stripe's money, nor
+a missing note hide from the missing-note detector.
+Internet Banking payments (#4162): Xero is followed both ways, never below
+their own transaction detail plus the corrections their links count, capped
+at the stored total (#5289). Below, it keeps the floor, logs and alerts (not
+while its refund note is queued); only the nightly follow-up moves the
+detail, line and total together (`INV-ADDPAY-042`).
 
 - **A refund request's paid-back cash is not Xero's to drop** (#4215,
   `INV-PAY-118`). Its own note is outside the notes the repair sums, so the
