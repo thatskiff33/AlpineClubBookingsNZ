@@ -26,8 +26,14 @@ vi.mock("@/lib/bed-allocation-lifecycle", () => ({
 vi.mock("@/lib/email", () => ({
   sendAdminPartnerShareSweptAlert: vi.fn().mockResolvedValue(undefined),
 }));
+const mockLoggerError = vi.fn();
 vi.mock("@/lib/logger", () => ({
-  default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+  default: {
+    error: (...args: unknown[]) => mockLoggerError(...args),
+    info: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
+  },
 }));
 vi.mock("@/lib/age-tier", () => ({
   computeAgeTier: vi.fn().mockResolvedValue("ADULT"),
@@ -40,6 +46,7 @@ import {
   SUBSCRIPTION_CATEGORY_BULK_CHANGE_ACTION,
 } from "@/lib/bulk-subscription-category-assignments";
 import { SEASONAL_MEMBERSHIP_ASSIGNMENT_CHANGED_ACTION } from "@/lib/seasonal-membership-assignments";
+import { BULK_SEASONAL_SAVE_THREW_MESSAGE } from "@/lib/bulk-seasonal-save";
 
 // The frozen clock is 1 July 2026: season 2026 on the default 31-March year-end.
 const SEASON = 2026;
@@ -82,6 +89,8 @@ interface MemberConfig {
   ageTier?: string;
   archived?: boolean;
   subscriptionStatus?: string;
+  /** The assignment upsert rejects, as a deadlock would. */
+  throwOnSave?: boolean;
 }
 
 function makeDb(members: Record<string, MemberConfig>) {
@@ -160,6 +169,9 @@ function makeDb(members: Record<string, MemberConfig>) {
         withRelations(assignments.get(where.memberId_seasonYear.memberId)),
       ),
       upsert: vi.fn(async ({ where, update }: any) => {
+        if (members[where.memberId_seasonYear.memberId]?.throwOnSave) {
+          throw new Error(`DB deadlock saving ${where.memberId_seasonYear.memberId}`);
+        }
         const memberId = where.memberId_seasonYear.memberId;
         const next = { ...assignments.get(memberId), ...update };
         assignments.set(memberId, next);
@@ -347,6 +359,66 @@ describe("bulk subscription category (#5248)", () => {
       ["m-stale", "stale"],
     ]);
     expect(assignments.get("m-stale").subscriptionCategoryId).toBeNull();
+  });
+
+  it("isolates a member whose save throws: the rest still save, the admin sees a generic message", async () => {
+    const { db, assignments } = makeDb({
+      "m-throw": { typeId: "full", throwOnSave: true },
+      "m-after": { typeId: "full" },
+    });
+    const tokens = await tokensFor(db, ["m-throw", "m-after"], "cat-couple");
+
+    const body = (await save(db, ["m-throw", "m-after"], "cat-couple", tokens)).body as any;
+
+    expect(body.results.map((r: any) => [r.memberId, r.outcome])).toEqual([
+      ["m-throw", "error"],
+      ["m-after", "changed"],
+    ]);
+    expect(body.results[0].error).toBe(BULK_SEASONAL_SAVE_THREW_MESSAGE);
+    expect(body.results[0].error).not.toMatch(/deadlock/i);
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      expect.objectContaining({ memberId: "m-throw", err: expect.any(Error) }),
+      expect.any(String),
+    );
+    expect(assignments.get("m-after").subscriptionCategoryId).toBe("cat-couple");
+    expect(body.changedMemberIds).toEqual(["m-after"]);
+    const summary = db.auditLog.create.mock.calls
+      .map((call: any[]) => call[0].data)
+      .find((data: any) => data.action === SUBSCRIPTION_CATEGORY_BULK_CHANGE_ACTION);
+    expect(summary).toMatchObject({
+      outcome: "success",
+      metadata: { outcomeCounts: { changed: 1, error: 1 } },
+    });
+  });
+
+  it("records the summary audit as a failure when nothing changed and a member failed", async () => {
+    const { db } = makeDb({
+      "m-stale": { typeId: "full" },
+      "m-same": { typeId: "full", categoryId: "cat-couple" },
+    });
+    const sameTokens = await tokensFor(db, ["m-same"], "cat-couple");
+
+    await save(db, ["m-stale", "m-same"], "cat-couple", sameTokens);
+
+    const summary = db.auditLog.create.mock.calls
+      .map((call: any[]) => call[0].data)
+      .find((data: any) => data.action === SUBSCRIPTION_CATEGORY_BULK_CHANGE_ACTION);
+    expect(summary).toMatchObject({
+      outcome: "failure",
+      metadata: { outcomeCounts: { changed: 0, unchanged: 1, stale: 1 } },
+    });
+  });
+
+  it("records the summary audit as a success when nothing changed and nothing failed", async () => {
+    const { db } = makeDb({ "m-same": { typeId: "full", categoryId: "cat-couple" } });
+    const tokens = await tokensFor(db, ["m-same"], "cat-couple");
+
+    await save(db, ["m-same"], "cat-couple", tokens);
+
+    const summary = db.auditLog.create.mock.calls
+      .map((call: any[]) => call[0].data)
+      .find((data: any) => data.action === SUBSCRIPTION_CATEGORY_BULK_CHANGE_ACTION);
+    expect(summary.outcome).toBe("success");
   });
 
   it("treats a member with no token as stale", async () => {

@@ -6,12 +6,18 @@ import {
 import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import logger from "@/lib/logger";
+import {
+  BULK_LINKED_GUEST_LABEL_LIMIT,
+  bulkSummaryAuditOutcome,
+  countBulkOutcomes,
+  runBulkSeasonalSave,
+  type BulkSeasonalMembershipOutcome,
+} from "@/lib/bulk-seasonal-save";
+import { memberDisplayName } from "@/lib/member-serialization";
 import { prisma } from "@/lib/prisma";
 import {
   getSeasonalMembershipChangePreview,
   saveSeasonalMembershipAssignment,
-  type BulkSeasonalMembershipOutcome,
   type BulkSeasonalMembershipXeroReconcile,
 } from "@/lib/seasonal-membership-assignments";
 import {
@@ -38,7 +44,6 @@ export const SUBSCRIPTION_CATEGORY_BULK_CHANGE_ACTION =
 
 // The routes cap ids at 100, so this never truncates a valid request.
 const BULK_MEMBER_ID_SAMPLE_LIMIT = 100;
-const LINKED_GUEST_LABEL_LIMIT = 3;
 
 /**
  * Why a selected member is left out of the batch.
@@ -92,10 +97,6 @@ type SeasonalPreviewSlice = {
   };
   previewToken: string;
 };
-
-function memberDisplayName(member: { firstName: string; lastName: string; email: string }) {
-  return `${member.firstName} ${member.lastName}`.trim() || member.email;
-}
 
 /**
  * The target category must be assignable for the WHOLE request: an archived or
@@ -292,9 +293,9 @@ export async function previewBulkSubscriptionCategory(params: {
         count: preview.linkedGuestBookings.count,
         truncatedCount: Math.max(
           0,
-          preview.linkedGuestBookings.count - LINKED_GUEST_LABEL_LIMIT,
+          preview.linkedGuestBookings.count - BULK_LINKED_GUEST_LABEL_LIMIT,
         ),
-        list: preview.linkedGuestBookings.list.slice(0, LINKED_GUEST_LABEL_LIMIT),
+        list: preview.linkedGuestBookings.list.slice(0, BULK_LINKED_GUEST_LABEL_LIMIT),
       },
       currentSeasonSubscription: preview.currentSeasonSubscription,
     });
@@ -396,86 +397,49 @@ export async function bulkSaveSubscriptionCategory(params: {
       continue;
     }
 
-    let saveResult: JsonRouteResult;
-    try {
-      saveResult = await saveSeasonalMembershipAssignment({
-        memberId,
-        seasonYear: params.seasonYear,
-        membershipTypeId: state.membershipTypeId,
-        applyFrom: state.applyFrom,
-        subscriptionCategoryId: params.subscriptionCategoryId,
-        adminMemberId: params.adminMemberId,
-        reason,
-        previewToken,
-        request: params.request,
-        db,
-        skipXeroContactGroupSync: true,
-      });
-    } catch (err) {
-      logger.error(
-        {
-          err,
+    const classified = await runBulkSeasonalSave<LinkedGuestBookings>(
+      () =>
+        saveSeasonalMembershipAssignment({
           memberId,
           seasonYear: params.seasonYear,
+          membershipTypeId: state.membershipTypeId,
+          applyFrom: state.applyFrom,
           subscriptionCategoryId: params.subscriptionCategoryId,
-        },
-        "Bulk subscription category save threw for a member (isolated, continuing)",
-      );
-      results.push({
-        memberId,
-        name: state.name,
-        outcome: "error",
-        error:
-          err instanceof Error
-            ? err.message
-            : "The category change failed unexpectedly for this member.",
-      });
-      continue;
-    }
-
-    const status = saveResult.init?.status;
-    const body = saveResult.body as {
-      changed?: boolean;
-      error?: string;
-      linkedGuestBookings?: LinkedGuestBookings;
-      preview?: { ageTierChanged?: boolean };
-    };
-    if (status && status >= 400) {
-      if (status === 409 && body.linkedGuestBookings) {
-        results.push({
-          memberId,
-          name: state.name,
-          outcome: "blocked_linked_guests",
-          status,
-          error: body.error,
-          linkedGuestBookings: body.linkedGuestBookings,
-        });
-      } else if (status === 409) {
-        // The single save's 409s here are a stale token or something that
-        // changed since the preview; either way the fix is to preview again.
-        results.push({ memberId, name: state.name, outcome: "stale", status, error: body.error });
-      } else {
-        results.push({ memberId, name: state.name, outcome: "error", status, error: body.error });
-      }
-      continue;
-    }
-
-    if (body.changed) {
-      results.push({ memberId, name: state.name, outcome: "changed", status });
+          adminMemberId: params.adminMemberId,
+          reason,
+          previewToken,
+          request: params.request,
+          db,
+          skipXeroContactGroupSync: true,
+        }),
+      { memberId, seasonYear: params.seasonYear, subscriptionCategoryId: params.subscriptionCategoryId },
+      "Bulk subscription category save threw for a member (isolated, continuing)",
+    );
+    results.push({
+      memberId,
+      name: state.name,
+      outcome: classified.outcome,
+      status: classified.status,
+      ...(classified.error !== undefined ? { error: classified.error } : {}),
+      ...(classified.linkedGuestBookings
+        ? { linkedGuestBookings: classified.linkedGuestBookings }
+        : {}),
+    });
+    if (classified.outcome === "changed") {
       changedMemberIds.push(memberId);
-      if (body.preview?.ageTierChanged) ageTierRepairedMemberIds.push(memberId);
-    } else {
-      results.push({ memberId, name: state.name, outcome: "unchanged", status });
+      if (classified.ageTierChanged) ageTierRepairedMemberIds.push(memberId);
     }
   }
 
-  const outcomeCounts = results.reduce<Record<BulkSubscriptionCategoryOutcome, number>>(
-    (counts, entry) => {
-      counts[entry.outcome] += 1;
-      return counts;
-    },
-    { changed: 0, unchanged: 0, stale: 0, blocked_linked_guests: 0, error: 0, skipped: 0 },
-  );
+  const outcomeCounts = countBulkOutcomes<BulkSubscriptionCategoryOutcome>(results, [
+    "changed",
+    "unchanged",
+    "stale",
+    "blocked_linked_guests",
+    "error",
+    "skipped",
+  ]);
+
 
   await db.auditLog.create(
     buildStructuredAuditLogCreateArgs({
@@ -487,7 +451,7 @@ export async function bulkSaveSubscriptionCategory(params: {
       },
       category: "admin",
       severity: "important",
-      outcome: "success",
+      outcome: bulkSummaryAuditOutcome(outcomeCounts),
       summary: "Subscription category changed in bulk",
       metadata: {
         seasonYear: params.seasonYear,
