@@ -8,6 +8,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
@@ -130,9 +131,9 @@ export function XeroTaxOverridePauseCard() {
           {loadFailed ? (
             <p className="text-sm text-danger">
               Could not load the GST override status.{" "}
-              <button type="button" className="underline" onClick={load}>
+              <Button variant="link" size="sm" className="h-auto p-0" onClick={load}>
                 Try again
-              </button>
+              </Button>
             </p>
           ) : !view ? (
             <p className="text-sm text-muted-foreground">Loading…</p>

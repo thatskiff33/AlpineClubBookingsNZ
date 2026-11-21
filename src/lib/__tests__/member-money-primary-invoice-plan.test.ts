@@ -282,7 +282,7 @@ describe("the journal's GST on each line (#5208, Option A)", () => {
     // Without the overrides Xero's own per-line sum is off the journal's, which is why the decision was needed.
     expect(xeroOwnTax(buildPrimaryInvoiceLines(i).stayLines)).not.toBe(stayTax);
     // Amounts and codes are the builders'; only the tax is added.
-    expect(plan.lines.map(({ taxAmount: _tax, ...line }) => line)).toEqual(buildPrimaryInvoiceLines(i).lines);
+    expect(plan.lines.map((line) => ({ ...line, taxAmount: undefined }))).toEqual(buildPrimaryInvoiceLines(i).lines.map((line) => ({ ...line, taxAmount: undefined })));
     expect(plan.payloadHash).toBe(stableDigest(sanitizeForJson(plan.lines)));
     expect(plan.frozenMapping.taxAllocation).toEqual({ method: "JOURNAL_LARGEST_REMAINDER", lineTaxCents: lineTax(plan.lines) });
   });
