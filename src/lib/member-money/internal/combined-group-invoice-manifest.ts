@@ -5,6 +5,7 @@ import logger from "../../logger";
 import { storedInvoiceRequestLines } from "../../xero-json";
 import {
   committedGroupChildrenWhere,
+  storedGroupInvoiceChildBookingIds,
   type GroupSettlementInvoiceLines,
 } from "../../xero-group-settlement-invoice-lines";
 import {
@@ -72,7 +73,11 @@ async function readChildren(db: Db, bookingIds: readonly string[]) {
   return { children, liveCoverage };
 }
 
-/** The CREATE row that raised `invoiceId`, else the caller's row: its stored lines, basis and attempt. */
+/**
+ * The CREATE row that raised `invoiceId`, else the caller's row: its stored
+ * lines, basis, attempt and the children it billed (null on a request written
+ * before those were recorded).
+ */
 async function readStoredCombinedInvoice(settlementId: string, invoiceId: string, operationId: string | null) {
   const where = {
     entityType: "INVOICE", operationType: "CREATE", localModel: "GroupBookingSettlement", localId: settlementId,
@@ -87,7 +92,9 @@ async function readStoredCombinedInvoice(settlementId: string, invoiceId: string
   for (const row of rows) {
     const { storedLines, storedLineAmountTypes } = storedInvoiceRequestLines(row.requestPayload);
     const attempt = parseGroupSettlementInvoiceAttempt(settlementId, row.correlationKey);
-    if (storedLines && storedLines.length > 0 && attempt !== null) return { storedLines, storedLineAmountTypes, attempt };
+    if (storedLines && storedLines.length > 0 && attempt !== null) {
+      return { storedLines, storedLineAmountTypes, attempt, childBookingIds: storedGroupInvoiceChildBookingIds(row.requestPayload) };
+    }
   }
   return null;
 }
@@ -106,10 +113,14 @@ export async function recordCombinedGroupInvoiceManifest(
   try {
     const stored = source.kind === "REPLAY" ? await readStoredCombinedInvoice(settlementId, providerInvoiceId, source.operationId) : null;
     if (source.kind === "REPLAY" && !stored) return;
+    // A replay matches the children the stored request billed. A request
+    // written before those were recorded falls back to the children committed
+    // now, matched on totals (ledger §7 states that limit).
     const childIds = source.kind === "BUILT"
       ? source.lines.byChild.map((child) => child.bookingId)
-      : (await prisma.booking.findMany({ where: committedGroupChildrenWhere(organiserBookingId), orderBy: { id: "asc" }, select: { id: true } }))
-        .map((child) => child.id);
+      : stored!.childBookingIds
+        ?? (await prisma.booking.findMany({ where: committedGroupChildrenWhere(organiserBookingId), orderBy: { id: "asc" }, select: { id: true } }))
+          .map((child) => child.id);
     const recorded = await prisma.$transaction(async (tx) => {
       const { children, liveCoverage } = await readChildren(tx, childIds);
       // An earlier invoice of this same settlement (an abandoned attempt whose

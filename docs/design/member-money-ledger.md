@@ -703,7 +703,11 @@ the attempt's key (`groupSettlementInvoiceCreateKey`); a replacement invoice is
 the next attempt, never a second render revision. Only a kept invoice is
 recorded, after its bind; an already-bound return replays it from the CREATE
 row's stored lines, matched across the children together because those lines
-do not say which child each bills. A primary invoice and a combined invoice
+do not say which child each bills. The replay reads its children from the
+stored request's `childBookingIds`. A request written before that key existed
+falls back to the children committed now, matched on totals only, so there a
+child swapped for another with the same charges would be covered in its place:
+a stated limit of those older rows. A primary invoice and a combined invoice
 never both live-cover one component (a partial unique index). Coverage ends
 only by an insert-only `MemberMoneyExportCoverageRelease` row, written when
 Xero holds the invoice void or holds no such invoice, never when it carries

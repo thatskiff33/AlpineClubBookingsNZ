@@ -175,6 +175,31 @@ describe("recordCombinedGroupInvoiceManifest (#4525, ALP-437)", () => {
     });
   });
 
+  it("replays against the children the stored request billed, not a same-priced child committed since", async () => {
+    // child-b left the group; child-c joined at the same charge. The invoice billed child-b.
+    legsOf["child-c"] = [stayLeg("child-c", 8000)];
+    mocks.booking.findMany.mockResolvedValue([{ id: "child-a" }, { id: "child-c" }]);
+    mocks.xeroSyncOperation.findMany.mockResolvedValue([
+      { correlationKey: "group-settlement:settle-1:invoice:attempt-2:v1", xeroObjectId: "inv-1",
+        requestPayload: { invoices: [{ lineItems: sanitizeForJson([stayLine(9000), stayLine(8000)]) }], childBookingIds: ["child-a", "child-b"] } },
+    ]);
+    await recordCombinedGroupInvoiceManifest({ kind: "REPLAY", operationId: null }, target);
+    expect(mocks.booking.findMany).not.toHaveBeenCalled();
+    expect(coverageRows().map((row: { chargeIdentity: string }) => row.chargeIdentity))
+      .toEqual(["booking:child-a:charge", "booking:child-b:charge"]);
+    delete legsOf["child-c"];
+  });
+
+  it("falls back to the children committed now for a request written before the children were recorded", async () => {
+    mocks.xeroSyncOperation.findMany.mockResolvedValue([
+      { correlationKey: "group-settlement:settle-1:invoice:attempt-2:v1", xeroObjectId: "inv-1",
+        requestPayload: { invoices: [{ lineItems: sanitizeForJson([stayLine(9000), stayLine(8000)]) }] } },
+    ]);
+    await recordCombinedGroupInvoiceManifest({ kind: "REPLAY", operationId: null }, target);
+    expect(mocks.booking.findMany).toHaveBeenCalledOnce();
+    expect(manifestRow()).toMatchObject({ outcome: "COVERED" });
+  });
+
   it("records nothing on a replay that finds no stored lines", async () => {
     await recordCombinedGroupInvoiceManifest({ kind: "REPLAY", operationId: "op-1" }, target);
     expect(mocks.$transaction).not.toHaveBeenCalled();

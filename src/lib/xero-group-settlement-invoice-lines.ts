@@ -73,10 +73,28 @@ export interface GroupSettlementInvoiceLines {
   /**
    * #3828: what the CREATE operation records beside the invoice — how each
    * child carrying several codes was split into promotion lines (or why it fell
-   * back to one aggregate line). `{}` when no child carries more than one code,
-   * so a one-code group's payload is exactly what it always was.
+   * back to one aggregate line), present only when a child carries more than
+   * one code. #4525 (ALP-437): `childBookingIds` names the children billed, in
+   * line order, so the export manifest's replay matches the invoice against
+   * the children it was raised for, not whoever is committed later. Local
+   * only: Xero is sent `invoices` alone.
    */
-  operationRecord: { promoLines?: Array<{ bookingId: string } & PromoAdjustmentLineRecord> };
+  operationRecord: {
+    childBookingIds: string[];
+    promoLines?: Array<{ bookingId: string } & PromoAdjustmentLineRecord>;
+  };
+}
+
+/**
+ * The children a stored combined-invoice CREATE request billed
+ * (`operationRecord.childBookingIds`), or null for a request written before
+ * #4525 recorded them. The one reader of that key (`INV-SSOT`).
+ */
+export function storedGroupInvoiceChildBookingIds(requestPayload: unknown): string[] | null {
+  if (requestPayload === null || typeof requestPayload !== "object" || Array.isArray(requestPayload)) return null;
+  const ids = (requestPayload as Record<string, unknown>).childBookingIds;
+  if (!Array.isArray(ids) || ids.length === 0 || !ids.every((id) => typeof id === "string" && id.length > 0)) return null;
+  return ids as string[];
 }
 
 /**
@@ -173,7 +191,7 @@ export async function buildGroupSettlementInvoiceLines(
       children.map((child) => ({ finalPriceCents: child.finalPriceCents ?? 0, payment: child.payment }))
     ),
     lineCents: invoiceLineItemsTotalCents(lineItems),
-    operationRecord: promoLines.length > 0 ? { promoLines } : {},
+    operationRecord: { childBookingIds: byChild.map((child) => child.bookingId), ...(promoLines.length > 0 ? { promoLines } : {}) },
   };
 }
 
