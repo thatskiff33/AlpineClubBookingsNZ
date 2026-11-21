@@ -103,6 +103,9 @@ function exemptAgeTierWhere(
       { AND: [{ dateOfBirth: null }, storedTierExempt] },
       ...exemptSettings.map((setting) => ({
         dateOfBirth: {
+          // Explicit: under a caller's `NOT: { OR }` a NULL comparison is
+          // unknown and would drop a no-DOB member from both sides.
+          not: null,
           // Born before this day: at least `minAge` on the reference day.
           lt: dateOfBirthPrefilterBoundForMinAge(reference, setting.minAge),
           // Born on or after this day: not yet `maxAge + 1`.

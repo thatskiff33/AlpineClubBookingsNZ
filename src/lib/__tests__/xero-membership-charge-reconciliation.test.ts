@@ -47,6 +47,8 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: mocks.coverageUpdateMany,
     },
     membershipSubscriptionCharge: { updateMany: mocks.chargeUpdateMany },
+    // #5190: the sync reads the liability rule strictly; no row is NOT_CHOSEN.
+    membershipLockoutSettings: { findUnique: vi.fn(async () => null) },
     $transaction: mocks.transaction,
   },
 }));

@@ -26,7 +26,9 @@ import { memberDisplayName } from "@/lib/member-serialization";
  *    already hold (an officer may want to void it);
  *  - `staleRecords`: their season row says "Not required" and nothing has
  *    billed, paid, covered or marked it, but the proposed rule says they owe —
- *    the rows the clear-up (`clearStaleNotRequiredRows`) would flip.
+ *    the current members' rows the clear-up (`clearStaleNotRequiredRows`)
+ *    would flip. The clear-up also flips archived and cancelled members'
+ *    rows, which this list leaves out: it covers current members only.
  *
  * Every answer comes from the shared rule (`resolveMemberSubscriptionLiability`)
  * with the same inputs billing and the booking gates read; nothing here is a

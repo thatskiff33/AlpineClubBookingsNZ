@@ -52,6 +52,7 @@ vi.mock("@/lib/age-tier", async (importOriginal) => ({
 vi.mock("@/lib/membership-lockout-settings", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/membership-lockout-settings")),
   loadMembershipLockoutSettings: mocks.lockoutSettings,
+  loadMembershipLockoutSettingsStrict: mocks.lockoutSettings,
 }));
 const NOT_CHOSEN = { requiredTypeAgeRule: "NOT_CHOSEN", liabilityAgeSource: "NOT_CHOSEN" };
 

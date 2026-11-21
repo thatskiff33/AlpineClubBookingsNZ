@@ -1697,7 +1697,9 @@ export async function buildSubscriptionBillingPreview(input: {
       // exemptMemberIds (drives the confirm NOT_REQUIRED write — constraint 2),
       // and the display list for the collapsed "Exempt" section.
       exemptMemberIds.add(member.id);
-      exemptMembers.push({ memberId: member.id, memberName, ageTier: feeTier, exemptBy: "AGE_TIER" });
+      // The tier that decided the exemption (for a REQUIRED type under a
+      // chosen AGE_TIER_EXEMPTS rule it can differ from the stored fee tier).
+      exemptMembers.push({ memberId: member.id, memberName, ageTier: liability.ageTier ?? feeTier, exemptBy: "AGE_TIER" });
       continue;
     }
     if (!fee) {

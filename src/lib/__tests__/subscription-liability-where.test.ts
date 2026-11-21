@@ -148,4 +148,28 @@ describe("subscriptionNotRequiredMemberConditions matches the shared liability r
       }
     },
   );
+
+  // The members list and CSV export ask for owing members with `NOT: { OR }`.
+  // A NULL comparison inside that negation is unknown in PostgreSQL and drops
+  // the row from BOTH filters, so a member with no date of birth must meet
+  // only two-valued clauses (the evaluator throws on an unknown under NOT).
+  it.each(SETTINGS)(
+    "negated, still places every member (no date of birth included) under %o",
+    (liabilitySettings) => {
+      const where = {
+        NOT: {
+          OR: subscriptionNotRequiredMemberConditions({
+            seasonYear: SEASON,
+            ageTierSettings: AGE_TIER_SETTINGS,
+            liabilitySettings,
+          }),
+        },
+      };
+      for (const member of members()) {
+        expect(matchesWhere(asRow(member), where), JSON.stringify(member)).toBe(
+          !ruleSaysNotRequired(member, liabilitySettings, member.rowStatus),
+        );
+      }
+    },
+  );
 });

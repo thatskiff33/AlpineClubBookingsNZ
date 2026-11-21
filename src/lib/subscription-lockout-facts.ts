@@ -6,7 +6,8 @@ import type {
 
 import { getAgeTierSettings, type AgeTierSettingData } from "@/lib/age-tier";
 import {
-  loadMembershipLockoutSettings,
+  MEMBERSHIP_LOCKOUT_SETTINGS_ID,
+  loadMembershipLockoutSettingsStrict,
   normalizeMembershipLockoutSettings,
 } from "@/lib/membership-lockout-settings";
 import {
@@ -125,7 +126,7 @@ export async function readSubscriptionLiabilitySettings(
 ): Promise<SubscriptionLiabilitySettings> {
   if (!db.membershipLockoutSettings) return NOT_CHOSEN_LIABILITY_SETTINGS;
   const row = await db.membershipLockoutSettings.findUnique({
-    where: { id: "default" },
+    where: { id: MEMBERSHIP_LOCKOUT_SETTINGS_ID },
     select: { requiredTypeAgeRule: true, liabilityAgeSource: true },
   });
   const { requiredTypeAgeRule, liabilityAgeSource } =
@@ -141,7 +142,9 @@ export async function readSubscriptionLiabilitySettings(
  * rule exactly — a `BASED_ON_AGE_TIER` member whose season row is already
  * `NOT_REQUIRED` stays not required (#2041 dominance, so a mid-season tier
  * promotion cannot re-mint an invoice), and otherwise the stored tier decides.
- * Once chosen, the club's pair decides and the row exempts nobody.
+ * Once chosen, the club's pair decides and the row exempts nobody. The
+ * settings read is strict: a failed read rejects rather than falling back to
+ * NOT_CHOSEN, because the sync persists its answer as the season row.
  */
 export async function owesSubscriptionForAccess(
   input: Omit<
@@ -150,7 +153,7 @@ export async function owesSubscriptionForAccess(
   >,
 ): Promise<boolean> {
   const [lockoutSettings, ageTierSettings] = await Promise.all([
-    loadMembershipLockoutSettings(),
+    loadMembershipLockoutSettingsStrict(),
     getAgeTierSettings(),
   ]);
   return resolveMemberSubscriptionLiability({
