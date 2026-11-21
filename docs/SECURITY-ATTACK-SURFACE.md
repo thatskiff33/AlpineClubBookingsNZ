@@ -371,6 +371,38 @@ These family rules are enforced by automated tests (issue #1132):
 ### Admin Routes
 
 - `src/app/api/admin/**/route.ts`
+  - `admin/bookings/[id]/work-party` (fork #119): bookings view to list the
+    work parties a booking could join, bookings edit to preview or apply
+    adding it to one. The only door to a work party's internal promo code on
+    an existing booking: the code is admitted by a service argument
+    (`officerWorkPartyCorrection`) that no request body can carry, and a census
+    pins its one caller (and the service refuses it without an officer, a
+    caller transaction and a promo-only change). It moves money only through
+    the canonical booking edit's own settlement (fork #129): account credit by
+    default, a refund only when the officer chooses it where the edit itself
+    offers one — to the card, or the edit's bank-transfer hand-back for
+    Internet Banking (any other method is refused, 409) — and an organiser-paid
+    joiner's money back to the organiser by the pipeline's organiser
+    disposition. It adds no refund path, calls no provider itself, and refuses
+    any refund the offered options did not mean. It never changes the acting
+    officer's own or family's booking (the member-guest family boundary, over
+    the owner and, for an organiser-pays joiner, the organiser, settled or not; owner
+    decision 3 of 18 Nov 2026 on #5149), whatever the money does: the list
+    greys it out for the signed-in officer, and the service refuses it again
+    under its locks, on Add and Remove alike. It applies only the figures the
+    officer was shown, settlement method included, and answers 404 while the
+    Work Parties module is off. Its POST is on the step-up list
+    (`INV-AUTH-010`): the canonical edit it calls reaches the refund
+    operations, so it asks for a fresh proof before reading the body.
+    Fork #130: `action: "remove"` takes the
+    booking off the work party it carries through the same service argument
+    and edit; the price rises and the difference is owed on the booking. A
+    removal carries no settlement method (400 if sent) and refuses, 409, any
+    money it would hand back. Its checked figures include an increase invoiced
+    to the group organiser, so a stale preview cannot save it. Fork #127: on a started stay the argument also
+    asks the edit policy to price the whole stay (an officer-only mode no body
+    can reach), so the promotion re-runs over nights already slept; every
+    other in-progress edit still refuses a promo change.
 
 Admin route subfamilies are:
 

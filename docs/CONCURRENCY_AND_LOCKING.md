@@ -231,6 +231,30 @@ shows the pool starving, the remedies are shrinking the lock(1) hold (moving
 read-only preflight before the lock) or reserving pool headroom for lock(1)
 writers, not shortening the budget back below the longest holder.
 
+### Paid future-booking import (#5005, child A)
+
+The engine imports one booking at a time; it never holds the global key for a
+whole file. `writeOneBooking` takes `lock(1)`, then the selected lodge's
+`acquireLodgeCapacityLock`, then sorted member-night keys. Its manual settlement
+re-enters the first two locks and takes the owner's credit key through the
+existing settlement body (`INV-LOCK-001`, `INV-LOCK-002`). The registered site
+is `writeOneBooking#1` (`INV-LOCK-003`). Each booking's transaction runs on
+`LOCK1_HOLDER_TRANSACTION_BUDGET` (`INV-LOCK-006`).
+
+The lodge id and parsed file are immutable inputs. Under the locks the writer
+re-reads the lodge, members and imported reference, repeats the planner's
+person-night, hosting, supervision and capacity checks, and claims a PENDING
+row with `updateMany`. A lost claim creates no booking. The partial unique
+index additionally excludes a second live reference per lodge. The booking,
+settlement, ledger, journal, events and row result commit together. Refusals
+roll back that transaction and are recorded with another PENDING-guarded update;
+a concurrent successful import cannot be overwritten by the refusal.
+
+Journal tax context and dietary settings resolve before the transaction
+(`INV-LOCK-004`); no provider call runs inside it. The hosting drain and audit
+run after commit. See the [engine contract](design/booking-import.md) for the
+read-only preview, digest and resumable batch.
+
 ### A writer that does BOTH takes BOTH — global first
 
 Many writers do both tiers at once: a Stripe capture claims capacity **and**
@@ -6628,6 +6652,50 @@ claimed. Two approvals serialise on `lock(1)`; the second re-reads the request a
 finished) claims on `status: REQUESTED` and now bumps `version`, so it and an
 execution cannot both win. Proved against PostgreSQL in
 `booking-change-request-execution.realdb.test.ts`.
+
+### Adding an existing booking to a work party (fork #119)
+
+An officer's "Add to work party" (`addBookingToWorkParty`,
+`src/lib/work-party-booking-correction.ts`) composes only existing keys and adds
+one registered global site, `correctWorkParty#1` (`INV-LOCK-002`,
+`INV-LOCK-003`). It is the #3750 execution's shape without a request row.
+Fork #130's "Remove from work party" (`removeBookingFromWorkParty`) is the same
+writer in the other direction: it adds no key, site or participant, and the
+steps below are its steps too (its eligibility rule is
+`workPartyRemovalEligibility`). Order, in one transaction:
+
+1. Pre-read only the booking's immutable `lodgeId`; take global `lock(1)`, then
+   `acquireLodgeCapacityLock`, then the booking row
+   (`lockBookingRowForOwnerRead`, #4845), before the officer is re-read.
+2. Reauthorise the officer from fresh roles (`reauthorizeBookingOfficerFromDb`).
+3. Re-read the booking and the work party under the locks and apply the shared
+   eligibility rule (`workPartyBookingEligibility`), including "already has a
+   work party". The list's facts (`readWorkPartyBookingFacts`) are re-read on
+   this `tx`: the family rows of the owner and, for an organiser-pays joiner,
+   the organiser (owner decision 3 of 18 Nov 2026 on #5149), and a $0 settle,
+   so each refusal is made before the edit runs. A dispute hold is refused on
+   the edit's own `refundHeldForDispute`, before the commit.
+4. Run `modifyBookingBatch` on the same `tx` with `officerWorkPartyCorrection`
+   and a `preTransaction` resolved before the transaction (`INV-LOCK-004`). The
+   service re-enters all three keys and takes the member keys after them. Any
+   refusal throws and rolls everything back.
+5. A preview throws a sentinel after the edit and so rolls it back; an apply
+   hands the edit the preview's figures for its own check (`INV-MOD-062`) and
+   refuses if any money figure differs from the preview's, then commits and runs
+   the service's `deferredPostCommit` (Stripe, Xero, email, audit) outside every
+   lock.
+
+**Counterparts and idempotency.** There is no claim row: a cancel, capture or
+refund of the same booking holds `lock(1)`, and two concurrent applies serialise
+on it — the second re-reads a booking that already carries the work party (or,
+for a removal, no longer does) and is refused, so the discount and its credit,
+refund or amount owed apply once. A refund the
+officer chose (fork #129) is the edit's own: its ledger lines (and, for an
+organiser-paid joiner, the organiser-child refund debt; for Internet Banking,
+the edit's bank-transfer hand-back task, `raiseEditRefundHandBackIfOwed`) are
+written in this transaction; a card refund's Stripe call runs after commit, and
+a failed one is kept owed as a recovery row. Proved against PostgreSQL in
+`work-party-booking-correction.realdb.test.ts`.
 
 ### One-open-request slot for exception requests (#2524)
 

@@ -500,6 +500,10 @@ describe("review finding source/schema contracts", () => {
         "public/school booking requests: admin-facing, no member reads the answer",
       ],
       [
+        "src/lib/booking-import/plan.ts",
+        "#5005 paid-booking import: officer-only (finance edit and bookings edit), calls the guard as ADMIN, and its refusal names a file line number and nights, never a member's name",
+      ],
+      [
         "src/lib/booking-member-night-conflicts.ts",
         "the guard itself",
       ],

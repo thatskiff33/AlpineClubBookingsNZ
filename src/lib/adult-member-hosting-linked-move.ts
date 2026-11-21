@@ -7,6 +7,7 @@ import {
   type StrandedCoverageBooking,
 } from "@/lib/adult-member-hosting-same-owner";
 import { ApiError } from "@/lib/api-error";
+import { editTotalMoneyBackCents } from "@/lib/edit-money-back";
 import { formatBookingReference } from "@/lib/booking-reference";
 import { bookingsOverlap } from "@/lib/booking-night-overlap";
 import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "@/lib/date-only";
@@ -126,8 +127,8 @@ export interface LinkedMoveQuote {
   combinedChangeFeeCents: number;
   /** What the member pays now, across both bookings. */
   combinedAmountDueCents: number;
-  /** What comes back to the member, across both bookings. */
-  combinedRefundCents: number;
+  /** Every cent that comes back to the member, across both bookings, freed applied credit included (fork #132). */
+  combinedRefundCents: number; combinedFreedCreditCents: number; // fork #132: the freed applied credit inside it, for the wording only
   /**
    * What the club's cancellation policy KEEPS of the reductions, across every
    * booking that moves — the difference between what a booking's price fell by and
@@ -359,7 +360,7 @@ export function formatLinkedMoveOfferMessage(quote: LinkedMoveQuote, format: Clu
   // wordings, and had already drifted on the waiver clause.
   const moneySentence = formatLinkedMoveMoneySentence({
     combinedAmountDueCents: quote.combinedAmountDueCents,
-    combinedRefundCents: quote.combinedRefundCents,
+    combinedRefundCents: quote.combinedRefundCents, combinedFreedCreditCents: quote.combinedFreedCreditCents,
     combinedChangeFeeCents: quote.combinedChangeFeeCents,
     combinedPolicyRetainedCents: quote.combinedPolicyRetainedCents,
     combinedOrganiserRefundCents: quote.combinedOrganiserRefundCents, combinedOrganiserBankTransferRefundCents: quote.combinedOrganiserBankTransferRefundCents,
@@ -394,6 +395,7 @@ export interface LinkedMoveSettledBooking {
   accountCreditAmountCents: number;
   /** #3809: applied credit the reduction gave back - money coming back as well. */
   appliedCreditGivenBackCents: number;
+  refundedExcessCreditCents: number; // F20 (#1887): an UNPAID booking's applied credit the lower price freed (fork #132)
   /** The WRITE's own answer, never inferred from the amounts — see `combineLinkedMoveQuote`. */
   requiresSettlementMethod: boolean;
   /** What the cancellation policy KEPT of this booking's reduction, in cents. */
@@ -596,13 +598,11 @@ export function combineLinkedMoveQuote(input: {
     combinedChangeFeeCents: sum((r) => r.changeFeeCents),
     combinedAmountDueCents: sum((r) => r.additionalAmountCents),
     // A reduction can come back as a card refund OR as account credit, and the
-    // member chose once for both. Summing the two is right rather than
-    // double-counting: exactly one of them is non-zero per booking, because
-    // `calculateModificationSettlementOptions` routes a given reduction down one
-    // path or the other, never both; credit given back (#3809) adds to either.
-    combinedRefundCents: sum(
-      (r) => r.refundAmountCents + r.accountCreditAmountCents + r.appliedCreditGivenBackCents,
-    ),
+    // member chose once for both; credit given back (#3809) adds to either, and so
+    // does an unpaid booking's applied credit freed by the lower price (owner
+    // decision on fork #132: one total, so it matches the balance change). The one
+    // sum is `editTotalMoneyBackCents` (why it never double-counts is there).
+    combinedRefundCents: sum(editTotalMoneyBackCents), combinedFreedCreditCents: sum((r) => r.refundedExcessCreditCents),
     combinedPolicyRetainedCents: sum((r) => r.policyRetainedAmountCents),
     combinedOrganiserRefundCents: input.organiserRefunds.totalCents, combinedOrganiserBankTransferRefundCents: input.organiserRefunds.bankTransferCents,
     // THE WRITE'S OWN TEST, never a reading of the resolved amounts. The refusal is
@@ -690,7 +690,7 @@ export function buildSameOwnerCoverageLinkedMoveBody(
     combinedPriceDiffCents: quote.combinedPriceDiffCents,
     combinedChangeFeeCents: quote.combinedChangeFeeCents,
     combinedAmountDueCents: quote.combinedAmountDueCents,
-    combinedRefundCents: quote.combinedRefundCents,
+    combinedRefundCents: quote.combinedRefundCents, combinedFreedCreditCents: quote.combinedFreedCreditCents,
     combinedPolicyRetainedCents: quote.combinedPolicyRetainedCents,
     combinedOrganiserRefundCents: quote.combinedOrganiserRefundCents, combinedOrganiserBankTransferRefundCents: quote.combinedOrganiserBankTransferRefundCents,
     settlementMethodRequired: quote.settlementMethodRequired,
