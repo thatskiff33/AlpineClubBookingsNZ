@@ -29,6 +29,7 @@ import {
 } from "@/lib/booking-exception-offer";
 import { countNightsDateOnly, parseDateOnly } from "@/lib/date-only";
 import { promoChangeNotAppliedHeading } from "@/lib/promo-change-not-applied";
+import { editRefundChoiceLabel } from "@/lib/edit-refund-route";
 import { type PromoResult } from "@/components/promo-code-input";
 import { promoCodeListEntries } from "@/components/promo-code-list-client";
 import {
@@ -1928,7 +1929,8 @@ export function EditBookingPanel({
                   disabled={saving}
                   onChange={() => setLinkedMoveSettlementMethod("card")}
                 />
-                <span>Refund to the original card</span>
+                {/* #5303: the route each booking's refund really takes, never the card by default. */}
+                <span>{editRefundChoiceLabel(activeLinkedMoveState?.prompt.refundRoute ?? "CARD")}</span>
               </label>
               <label className="flex cursor-pointer items-start gap-2">
                 <input

@@ -8,6 +8,7 @@ import {
 } from "@/lib/adult-member-hosting-same-owner";
 import { ApiError } from "@/lib/api-error";
 import { editTotalMoneyBackCents } from "@/lib/edit-money-back";
+import { editRefundRouteOf, type EditRefundRoute } from "@/lib/edit-refund-route";
 import { formatBookingReference } from "@/lib/booking-reference";
 import { bookingsOverlap } from "@/lib/booking-night-overlap";
 import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "@/lib/date-only";
@@ -142,6 +143,12 @@ export interface LinkedMoveQuote {
    * every booking the member paid for - see `formatLinkedMoveOfferMessage`.
    */
   settlementMethodRequired: boolean;
+  /**
+   * #5303: where that choice's refund goes, over the bookings it covers - each
+   * one's own `refundByBankTransfer`, so a bank-transfer refund is never
+   * offered as the card.
+   */
+  refundRoute: EditRefundRoute;
   /** True when the request that produced this quote already carried that choice. */
   settlementMethodChosen: boolean;
   /**
@@ -365,6 +372,7 @@ export function formatLinkedMoveOfferMessage(quote: LinkedMoveQuote, format: Clu
     combinedPolicyRetainedCents: quote.combinedPolicyRetainedCents,
     combinedOrganiserRefundCents: quote.combinedOrganiserRefundCents, combinedOrganiserBankTransferRefundCents: quote.combinedOrganiserBankTransferRefundCents,
     settlementMethodRequired: quote.settlementMethodRequired,
+    refundRoute: quote.refundRoute,
     settlementMethodChosen: quote.settlementMethodChosen,
     bothChangeFeesCharged: quote.bothChangeFeesCharged,
     linkedCount: count,
@@ -398,6 +406,8 @@ export interface LinkedMoveSettledBooking {
   refundedExcessCreditCents: number; // F20 (#1887): an UNPAID booking's applied credit the lower price freed (fork #132)
   /** The WRITE's own answer, never inferred from the amounts — see `combineLinkedMoveQuote`. */
   requiresSettlementMethod: boolean;
+  /** #5303: the settlement's own answer that this booking's refund is a bank transfer, not the card. */
+  refundByBankTransfer: boolean;
   /** What the cancellation policy KEPT of this booking's reduction, in cents. */
   policyRetainedAmountCents: number;
 }
@@ -612,6 +622,8 @@ export function combineLinkedMoveQuote(input: {
     // asked for no choice over a write that demanded one — and the re-quote was
     // byte-identical, so NEITHER booking could ever move (`INV-SSOT-001`).
     settlementMethodRequired: all.some((r) => r.requiresSettlementMethod),
+    // #5303: over the bookings that choice covers, each by the settlement's own route.
+    refundRoute: editRefundRouteOf(all.filter((r) => r.requiresSettlementMethod).map((r) => r.refundByBankTransfer)),
     settlementMethodChosen: input.settlementMethodChosen,
     // TRUE TO THE MONEY ABOVE, not a separate claim about it: when the club has
     // waived it, the dependent's `modifyBookingBatch` call was given
@@ -694,6 +706,7 @@ export function buildSameOwnerCoverageLinkedMoveBody(
     combinedPolicyRetainedCents: quote.combinedPolicyRetainedCents,
     combinedOrganiserRefundCents: quote.combinedOrganiserRefundCents, combinedOrganiserBankTransferRefundCents: quote.combinedOrganiserBankTransferRefundCents,
     settlementMethodRequired: quote.settlementMethodRequired,
+    refundRoute: quote.refundRoute,
     settlementMethodChosen: quote.settlementMethodChosen,
     bothChangeFeesCharged: quote.bothChangeFeesCharged,
   };

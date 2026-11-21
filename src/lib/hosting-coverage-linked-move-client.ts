@@ -23,6 +23,7 @@
  */
 
 import { formatCents } from "@/lib/utils";
+import { EDIT_REFUND_ROUTES, editRefundDestinationPhrase, type EditRefundRoute } from "@/lib/edit-refund-route";
 import { HOSTING_COVERAGE_STATE_KEY_PATTERN } from "@/lib/hosting-coverage-override-client";
 import { isCalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
@@ -84,6 +85,8 @@ export interface HostingCoverageLinkedMovePromptData {
   combinedOrganiserRefundCents: number;
   combinedOrganiserBankTransferRefundCents: number;
   settlementMethodRequired: boolean;
+  /** #5303: where the one choice's refund goes; an older server omits it, read as the card. */
+  refundRoute: EditRefundRoute;
   settlementMethodChosen: boolean;
   bothChangeFeesCharged: boolean;
 }
@@ -128,6 +131,8 @@ export interface LinkedMoveMoneyFacts {
   combinedOrganiserRefundCents: number;
   combinedOrganiserBankTransferRefundCents: number;
   settlementMethodRequired: boolean;
+  /** #5303: where that choice's refund goes (`LinkedMoveQuote.refundRoute`). */
+  refundRoute: EditRefundRoute;
   /**
    * True when the request that produced this quote ALREADY carried a card-or-credit
    * choice, so nobody is going to be asked anything.
@@ -293,7 +298,7 @@ export function formatLinkedMoveMoneySentence(
     const settledShare = facts.combinedFreedCreditCents > 0 ? "the rest" : "that";
     parts.push(
       settlementShareCents > 0
-        ? `You will be asked once whether ${settledShare} comes back to your card or as ` +
+        ? `You will be asked once whether ${settledShare} comes back ${editRefundDestinationPhrase(facts.refundRoute)} or as ` +
             `account credit; the one choice covers ` +
             // #3949: never a booking the group organiser paid for, whose refund is the organiser's.
             `${facts.combinedOrganiserRefundCents > 0 ? "every booking you paid for" : all}.`
@@ -416,6 +421,7 @@ export function readHostingCoverageLinkedMovePrompt(
     !isCents(record.combinedPolicyRetainedCents) ||
     !isCents(record.combinedOrganiserRefundCents ?? 0) ||
     !isCents(record.combinedOrganiserBankTransferRefundCents ?? 0) ||
+    !(record.refundRoute === undefined || EDIT_REFUND_ROUTES.includes(record.refundRoute as EditRefundRoute)) ||
     !Array.isArray(record.linkedBookings) ||
     record.linkedBookings.length === 0
   ) {
@@ -444,6 +450,8 @@ export function readHostingCoverageLinkedMovePrompt(
     combinedOrganiserRefundCents: (record.combinedOrganiserRefundCents as number | undefined) ?? 0,
     combinedOrganiserBankTransferRefundCents: (record.combinedOrganiserBankTransferRefundCents as number | undefined) ?? 0,
     settlementMethodRequired: record.settlementMethodRequired,
+    // #5303: a blue-green cutover's older server omits it; the card, as before.
+    refundRoute: (record.refundRoute as EditRefundRoute | undefined) ?? "CARD",
     settlementMethodChosen: record.settlementMethodChosen,
     bothChangeFeesCharged: record.bothChangeFeesCharged,
   };

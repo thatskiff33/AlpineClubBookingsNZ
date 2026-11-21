@@ -147,6 +147,7 @@ export function HostingCoverageLinkedMovePrompt({
                       combinedOrganiserRefundCents: prompt.combinedOrganiserRefundCents,
                       combinedOrganiserBankTransferRefundCents: prompt.combinedOrganiserBankTransferRefundCents,
                       settlementMethodRequired: prompt.settlementMethodRequired,
+                      refundRoute: prompt.refundRoute,
                       settlementMethodChosen: prompt.settlementMethodChosen,
                       bothChangeFeesCharged: prompt.bothChangeFeesCharged,
                       linkedCount: prompt.linkedBookings.length,

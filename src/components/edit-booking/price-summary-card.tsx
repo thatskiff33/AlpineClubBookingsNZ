@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { promoChangeNotAppliedHeading } from "@/lib/promo-change-not-applied";
 import { formatCents } from "@/lib/utils";
+import { editRefundChoiceLabel } from "@/lib/edit-refund-route";
 import { disputedRefundSentence, organiserBilledSentence } from "@/lib/booking-modified-email-copy";
 import { heldForDisputeSettlementCents } from "@/lib/edit-dispute-held-settlement";
 import type { PromoAction } from "@/components/edit-booking/hooks/use-promo-selection";
@@ -437,7 +438,7 @@ export function PriceSummaryCard({
                         className="mt-1"
                       />
                       <span>
-                        {quote.settlementOptions.refundByBankTransfer ? "Refund by bank transfer" : "Refund to original card"}:{" "}
+                        {editRefundChoiceLabel(quote.settlementOptions.refundByBankTransfer ? "BANK_TRANSFER" : "CARD")}:{" "}
                         <span className="font-medium">
                           {formatCents(quote.settlementOptions.cardRefundAmountCents, format)}
                         </span>{" "}
