@@ -77,45 +77,55 @@ function notReopenedReason(err: unknown): string {
 /**
  * Reopen what a late win owes and report it, after the dispute's move to WON has committed and while its alert is
  * still unsent. Never throws: a failed read is reported as such (never as "no tasks"), and each task's refusal or lock
- * timeout is reported as not reopened. Tasks an earlier delivery reopened are found by their (dispute, task) marker,
- * since the allocation no longer counts them. A dispute with no payment (a group organiser's settlement) has no tasks.
+ * timeout is reported as not reopened. A task this late win reopened, in this delivery or an earlier or concurrent
+ * one, is known by its (dispute, task) marker, read after the reopens, since the allocation no longer counts it once
+ * it is open. A dispute with no payment (a group organiser's settlement) has no tasks.
  */
 export async function settleLateWinHandBacks(row: Pick<StripeDispute, "stripeDisputeId" | "paymentId" | "bookingId">): Promise<LateWinHandBackReport> {
   const { paymentId, bookingId, stripeDisputeId: disputeId } = row;
   if (paymentId === null || bookingId === null) return { kind: "no-payment" };
   let tasks: PaymentHandBackTask[];
   let owedAgain: LateWinOwedAgain;
-  let marked: Set<string>;
   try {
     tasks = await readPaymentHandBackTasks(prisma, [paymentId]);
     const disputes = (await readDisputesByBookingId(prisma, [bookingId])).get(bookingId) ?? [];
     owedAgain = lateWinOwedAgain(paymentId, tasks, disputes);
-    const keys = tasks.map((task) => stripeDisputeLateWinReopenKey(disputeId, task.id));
-    const held = await prisma.alertCooldown.findMany({ where: { key: { in: keys } }, select: { key: true } });
-    marked = new Set(held.map((cooldown) => cooldown.key));
   } catch (err) {
     logger.error({ disputeId, paymentId, err }, "A late-won Stripe dispute's hand-back tasks could not be read; the alert says so (#5197)");
     return { kind: "read-failed" };
   }
 
   const reopened: { taskId: string; cents: number; taskCents: number }[] = [];
-  const alreadyOpen: { taskId: string }[] = [];
+  const open: { taskId: string; cents: number; taskCents: number }[] = [];
   const notReopened: { taskId: string; cents: number; reason: string }[] = [];
   for (const item of owedAgain.reopen) {
     try {
       const outcome = await reopenHandBackAfterLateWin({ taskId: item.taskId, disputeId });
-      if (outcome === "reopened") reopened.push(item);
-      else alreadyOpen.push({ taskId: item.taskId });
+      (outcome === "reopened" ? reopened : open).push(item);
     } catch (err) {
       logger.warn({ disputeId, taskId: item.taskId, err }, "A late-won Stripe dispute's dismissed hand-back was not reopened; the alert names it (#5197)");
       notReopened.push({ taskId: item.taskId, cents: item.cents, reason: notReopenedReason(err) });
     }
   }
+  const marked = await reopenedByThisLateWin(disputeId, tasks);
   for (const task of tasks) {
-    const already = reopened.some((item) => item.taskId === task.id) || alreadyOpen.some((item) => item.taskId === task.id);
-    if (already || !marked.has(stripeDisputeLateWinReopenKey(disputeId, task.id))) continue;
-    // Reopened by an earlier delivery whose alert did not go out: its whole amount was owed again then.
-    reopened.push({ taskId: task.id, cents: task.amountCents ?? 0, taskCents: task.amountCents ?? 0 });
+    if (!marked.has(task.id) || reopened.some((item) => item.taskId === task.id)) continue;
+    // Reopened by another delivery of this late win: its whole amount (the walk's part is not kept).
+    const cents = open.find((item) => item.taskId === task.id)?.cents ?? task.amountCents ?? 0;
+    reopened.push({ taskId: task.id, cents, taskCents: task.amountCents ?? 0 });
   }
+  const alreadyOpen = open.filter((item) => !marked.has(item.taskId)).map((item) => ({ taskId: item.taskId }));
   return { kind: "read", reopened, alreadyOpen, notReopened, reduced: owedAgain.reduced };
+}
+
+/** The tasks whose (dispute, task) marker a reopen of this late win committed; none when the read fails (logged). */
+async function reopenedByThisLateWin(disputeId: string, tasks: readonly PaymentHandBackTask[]): Promise<Set<string>> {
+  const byKey = new Map(tasks.map((task) => [stripeDisputeLateWinReopenKey(disputeId, task.id), task.id]));
+  try {
+    const held = await prisma.alertCooldown.findMany({ where: { key: { in: [...byKey.keys()] } }, select: { key: true } });
+    return new Set(held.map((cooldown) => byKey.get(cooldown.key)!));
+  } catch (err) {
+    logger.error({ disputeId, err }, "A late-won Stripe dispute's reopen markers could not be read; the alert names this delivery's reopens only (#5197)");
+    return new Set();
+  }
 }
