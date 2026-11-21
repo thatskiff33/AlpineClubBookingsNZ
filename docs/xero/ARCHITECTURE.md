@@ -793,7 +793,7 @@ module every provider call goes through (`INV-OPS-013`). Shared JSON-guard micro
 | Table | Role |
 | --- | --- |
 | `XeroConnection` | Single row (id `default`): the connected tenant, the access token's expiry and the only refresh lease. No secret. |
-| `XeroSyncOperation` | The ledger. `direction` INBOUND/OUTBOUND, `entityType`, `operationType`, optional `localModel`/`localId`, `idempotencyKey`, `correlationKey`, `replayable`, error fields, redacted request/response payloads, resulting Xero object identity, manual-resolution override fields, and `queueType` (a denormalized, indexed copy of `requestPayload.queueType` set at enqueue — canonical value still lives in the payload; #1271). **Status machine:** `PENDING → RUNNING → SUCCEEDED | FAILED`, plus `WAITING_PAYMENT → PENDING` for supplementary invoices held until their Stripe payment settles. Claims are optimistic `updateMany` transitions, so concurrent workers cannot double-run a row. |
+| `XeroSyncOperation` | The ledger. `direction` INBOUND/OUTBOUND, `entityType`, `operationType`, optional `localModel`/`localId`, `idempotencyKey`, `correlationKey`, `replayable`, error fields, redacted request/response payloads, resulting Xero object identity, manual-resolution override fields, and `queueType` (the indexed outbox discriminator, set at enqueue from `requestPayload.queueType` and never updated; the outbox claims from it, #1271, #5228). **Status machine:** `PENDING → RUNNING → SUCCEEDED | FAILED`, plus `WAITING_PAYMENT → PENDING` for supplementary invoices held until their Stripe payment settles. Claims are optimistic `updateMany` transitions, so concurrent workers cannot double-run a row. |
 | `XeroObjectLink` | Local record ⇄ Xero object links with a `role` (e.g. `PRIMARY_INVOICE`, `REFUND_CREDIT_NOTE`, `CONTACT`, `ENTRANCE_FEE_INVOICE`) and `active` flag; unique on (local, xero, role). Canonical single-active scopes are enforced on upsert. |
 | `XeroInboundEvent` | Stored webhook/admin events. **Status machine:** `RECEIVED → PROCESSING → PROCESSED | FAILED` (FAILED retried after a backoff; PROCESSING past the webhook lease is taken over automatically, `INV-INT-039`). Unique `correlationKey` makes webhook delivery idempotent. |
 | `ProcessedWebhookEvent` | Provider-scoped processing dedupe (`source`+`eventId` unique); the inbound worker claims a row before reconciling and releases it on failure. |
@@ -1040,8 +1040,10 @@ note.
    member↔contact link once and retries the write. Before the retry it
    replaces the row's stored request with the caller's `buildRequestPayload`.
    On a queued row that payload must keep every field the outbox and Retry
-   read, `queueType` first: a row given back to PENDING without it is never
-   claimed again (#5221, `INV-INT-037`).
+   read, `queueType` first (#5221, `INV-INT-037`). The outbox's own give-back
+   puts back the queued request it claimed when the stored one is not a queued
+   request any more, but an officer's Retry that keeps the stored request
+   requeues only one that is, and refuses otherwise (#5228, `INV-INT-041`).
 3. **Operation replay** — a FAILED ledger row is never auto-retried by the
    outbox loop (it only claims PENDING). Admins either replay immediately
    (`retryXeroSyncOperation`) or queue a background REQUEUE wrapper
@@ -1052,7 +1054,43 @@ note.
    un-claim the applied-credit busy collision uses, so the next cron re-drives
    work that never reached Xero. Otherwise the first failing operation of a
    batch armed the breaker and condemned operations 2..N of that same batch,
-   un-attempted, to wait for an admin's Requeue.
+   un-attempted, to wait for an admin's Requeue. The give-back also restores
+   the queued request the handler saved its execution request over (#5228);
+   with no queued request to leave, the row is failed instead.
+
+   **What a PENDING outbox row holds (#5228, `INV-INT-041`).** The outbox
+   claims a PENDING row from its `queueType` column and sends what
+   `readQueuedOutboxRequestFor` reads from the stored request: a queued request
+   for that column, or nothing. So every writer of PENDING leaves one, or
+   writes nothing. `returnOutboxRowToPending` is the one guarded write: a
+   stored request that is still a queued request stays (a handler's
+   checkpoint, as the applied-credit and kept late-capture workers keep);
+   otherwise the queued request the dispatch claimed is written back in the
+   same compare-and-set on the stored request; with neither, it writes nothing.
+   The writers, each with the suite that proves it
+   (`xero-pending-writer-census.test.ts` names every file):
+
+   | Writer | What it leaves | Proven by |
+   | --- | --- | --- |
+   | Enqueue (`startXeroSyncOperation`, `status: PENDING`) | its queued request; the column is read from it | `xero-pending-request-transitions.realdb.test.ts` |
+   | Outbox cooldown give-back (breaker, daily limit, environment gate) | the stored request if still queued, else the claimed one; else the row fails | `xero-cooldown-giveback-queued-request.realdb.test.ts`, `xero-outbox-fail-fast.test.ts` |
+   | Outbox busy-wait give-back (applied credit, notes waiting their turn) | as the cooldown give-back | `xero-operation-outbox.test.ts` |
+   | Officer Retry in place (`requeueOutboxRowForRetry`, applied-credit Retry) | a rebuilt queued request, or the stored one if queued; else 409, row left as it is | `xero-pending-request-transitions.realdb.test.ts`, `xero-operation-retry.test.ts` |
+   | Officer REQUEUE row and its drain | the REQUEUE row has no queue type and the outbox never scans it; its drain is the Retry above | `xero-stuck-queued-request.realdb.test.ts` |
+   | Kept late-capture requeues (paid another way, approval) | the stored queued request; else held for an officer or left PARTIAL | `xero-kept-late-capture-invoice.test.ts` |
+   | Supplementary-invoice revival (CANCELLED → PENDING) | the stored queued request, matched on the column; unreadable is refused | `xero-operation-outbox.test.ts`, `late-capture-kept-xero.test.ts` |
+   | WAITING_PAYMENT releases (supplementary, organiser refund notes) | the enqueue's queued request: these rows were never dispatched | `xero-pending-request-transitions.realdb.test.ts` |
+
+   A stale reset never writes PENDING: a dead worker's row goes to FAILED (a
+   stuck PARTIAL repair to PARTIAL) with its request, response and Xero ids
+   kept, and Retry finishes it (`xero-stale-request-recovery.realdb.test.ts`).
+   Rows a give-back left stuck before #5228 are not sent from a guess: the
+   outbox skips and counts them (`unclaimableRequest`), and the owner's
+   `pnpm run xero:stuck-queued-report` lists them and, with `--release`, fails
+   exactly those for an officer's Retry, which bills only what is still
+   uncovered (`xero-stuck-queued-request.realdb.test.ts`,
+   `xero-released-refund-current-cap.realdb.test.ts`; runbook in
+   [`MAINTENANCE.md`](../MAINTENANCE.md#release-xero-outbox-rows-stuck-without-a-queued-request-5228)).
 
    **A retry that claims the original must give it back (#3462).** A retry
    branch that has to stay visible to the settle-time fences while it runs
@@ -4237,16 +4275,17 @@ These are candidates for future issues, not commitments.
    captured once at enqueue in `startXeroSyncOperation` (and backfilled from
    `requestPayload->>'queueType'`) and never updated afterward. The payload field
    stays canonical — the PENDING-scan `OR` and the parsing switch still read it.
-   **Why the column mirrors the payload only pre-dispatch:** the column mirrors
-   the payload only for rows still awaiting dispatch (`PENDING`/`WAITING_PAYMENT`);
-   once a row is dispatched some handlers (e.g. the booking-invoice create/update)
-   overwrite `requestPayload` wholesale and drop `queueType`, so the column and
-   payload diverge post-dispatch. That is safe because the only consumer is the
-   PENDING outbox scan (switched to the column in #1272 part 1), whose set is
-   exactly the pre-dispatch set where column and payload still agree; the
-   dispatcher and the parsing switch still read `queueType` from the payload.
-   Making the column the sole discriminator everywhere is the remaining #1272
-   consolidation (see item 4).
+   **Why the column, not the payload, is the discriminator:** once a row is
+   dispatched some handlers (the booking invoice, the refund and change credit
+   notes, the joining fee and group invoices) overwrite `requestPayload` with
+   their execution request and drop `queueType`, so the column and payload
+   diverge post-dispatch. That divergence IS observed on PENDING: a pre-HTTP
+   cooldown give-back (#2423) or an officer's Retry puts a dispatched row back.
+   Until #5228 the outbox built its claim from the payload, so such a row was
+   claimed as an invoice for a member, never matched, and skipped on every pass
+   with nothing sent or alerted. The outbox now claims from the column and
+   reads the payload only as a queued request for that column, and every
+   PENDING writer leaves one (see "What a PENDING outbox row holds", below).
 4. **Unify the operation-replay stack.** `xero-operation-outbox`,
    `xero-operation-outbox-payload`, `xero-operation-queue`, and
    `xero-operation-retry` describe one lifecycle (enqueue → scan/dispatch →

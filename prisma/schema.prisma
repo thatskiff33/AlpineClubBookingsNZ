@@ -4714,18 +4714,18 @@ model XeroSyncOperation {
   lastErrorCode          String?
   lastErrorMessage       String?
   requestPayload         Json?
-  // Denormalized copy of the outbox discriminator, captured once at enqueue in
+  // The outbox discriminator, captured once at enqueue in
   // `startXeroSyncOperation` and never updated afterward (#1271, item 3 of
-  // #1208). Dispatch reads queueType from `requestPayload` (not this column),
-  // BEFORE handlers may overwrite `requestPayload` -- so after dispatch this
-  // column can diverge from the payload (some handlers, e.g. the booking-invoice
-  // create/update, rewrite requestPayload wholesale and drop queueType). That is
-  // expected and safe: the pending-outbox scan (processQueuedXeroOutboxOperations,
-  // #1272) filters on this column only for rows still awaiting dispatch (PENDING /
-  // WAITING_PAYMENT), where it faithfully mirrors the enqueue-time queueType, so
-  // post-dispatch divergence is never observed. Because that scan depends on it,
-  // the column MUST remain immutable after enqueue. Null for REQUEUE, BACKFILL,
-  // inbound, and any other row enqueued with no queueType.
+  // #1208). Handlers may overwrite `requestPayload` with their execution request
+  // (e.g. the booking invoice and refund note rewrite it wholesale and drop
+  // queueType), so after dispatch the payload can lose it while this column
+  // keeps it. A row CAN come back to PENDING after that: a pre-HTTP cooldown
+  // give-back or an officer's Retry (#2423). So the pending-outbox scan
+  // (processQueuedXeroOutboxOperations, #1272) selects AND claims on this
+  // column, and every PENDING writer leaves a queued request for it
+  // (`returnOutboxRowToPending`, #5228; docs/xero/ARCHITECTURE.md). Because both
+  // depend on it, the column MUST remain immutable after enqueue. Null for
+  // REQUEUE, BACKFILL, inbound, and any other row enqueued with no queueType.
   queueType              String?
   // The creation-time Xero-invoice-email delivery instruction (#2929, MAD epic
   // #2725), captured once at enqueue and, like `queueType` above, NEVER updated

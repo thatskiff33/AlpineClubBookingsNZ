@@ -129,14 +129,19 @@ function cronStatusForResult(result: unknown): CronJobRunStatus {
 // #4375: the outbox and replay tasks are SUCCESS once they work their batch,
 // so what an officer must still see rides on the #3663 `warning`: rows Xero
 // refused before any call (outage cooldown, daily limit, environment check;
-// they stay queued) and rows that failed (they wait for a retry or an officer).
-function withQueueRunWarning<T extends { failed: number; cooldownDeferred?: number }>(
+// they stay queued), rows that failed (they wait for a retry or an officer) and
+// (#5228) rows the outbox cannot send, which no pass will ever take.
+function withQueueRunWarning<T extends { failed: number; cooldownDeferred?: number; unclaimableRequest?: number }>(
   result: T
 ): T & { warning?: string } {
   const deferred = result.cooldownDeferred ?? 0;
+  const unclaimable = result.unclaimableRequest ?? 0;
   const reasons = [
     deferred > 0
       ? `Xero refused ${deferred} operation(s) before any call (outage cooldown, daily limit or environment check); they stay queued and run once it clears.`
+      : null,
+    unclaimable > 0
+      ? `${unclaimable} queued operation(s) hold no request the outbox can send and will not run; the owner lists and releases them with pnpm run xero:stuck-queued-report.`
       : null,
     result.failed > 0
       ? `${result.failed} operation(s) failed; see Xero Operations.`
