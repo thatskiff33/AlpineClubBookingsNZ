@@ -49,7 +49,7 @@ function lineInput(nightCents: number, changeFeeCents: number, taxRendering: Xer
 }
 
 /** A child as the sender builds it (`buildGroupSettlementInvoiceLines`), with its legs. */
-function child(bookingId: string, lodgeId: string, nightCents: number, changeFeeCents: number, postedLegs: PostedRevenueLeg[],
+function child(bookingId: string, lodgeId: string, nightCents: number, changeFeeCents: number, postedLegs: readonly PostedRevenueLeg[],
   taxRendering: XeroTaxRendering = BASELINE_XERO_TAX_RENDERING): CombinedGroupInvoiceChild {
   const { stayLines, feeLines } = buildPrimaryInvoiceLines(lineInput(nightCents, changeFeeCents, taxRendering));
   return { bookingId, lodgeId, seasonType: "WINTER", stayLines, feeLines, postedLegs };
@@ -64,7 +64,8 @@ function directLines(nightCents: number, changeFeeCents: number, taxRendering: X
 }
 
 /** Two children: A stays for 9000, B for 8000 plus a 2500 change fee. */
-function twoChildren(overrides: { aLegs?: PostedRevenueLeg[]; bLegs?: PostedRevenueLeg[] } = {}) {
+type LegOverrides = { aLegs?: readonly PostedRevenueLeg[]; bLegs?: readonly PostedRevenueLeg[] };
+function twoChildren(overrides: LegOverrides = {}) {
   return [
     child("child-a", "lodge-1", 4500, 0, overrides.aLegs ?? [leg("child-a", "BOOKING_REVENUE", stay("child-a"), 9000)]),
     child("child-b", "lodge-2", 4000, 2500, overrides.bLegs ?? [
@@ -129,7 +130,7 @@ describe("planCombinedGroupInvoice (#4525, ALP-437)", () => {
     ["one child has no stay charge in the journal", { aLegs: [] }, "COMPONENT_UNUSABLE"],
     ["one child's component names another booking", { aLegs: [leg("child-z", "BOOKING_REVENUE", stay("child-a"), 9000)] }, "COMPONENT_UNUSABLE"],
   ] as const)("is a conflict covering nothing when %s", (_case, legs, reason) => {
-    const result = plan(twoChildren(legs as { aLegs?: PostedRevenueLeg[]; bLegs?: PostedRevenueLeg[] }));
+    const result = plan(twoChildren(legs as LegOverrides));
     expect(result).toMatchObject({ outcome: "CONFLICT", reason, frozenMapping: { componentTaxCodes: [] } });
     expect(result).not.toHaveProperty("coverage");
     // The lines are still the sender's: a conflict never changes what was sent.
@@ -145,7 +146,7 @@ describe("planCombinedGroupInvoice (#4525, ALP-437)", () => {
 
 describe("planReplayedCombinedGroupInvoice (#4525, ALP-437)", () => {
   const children = twoChildren().map(({ bookingId, postedLegs }) => ({ bookingId, postedLegs }));
-  const stored = sanitizeForJson([...directLines(4500, 0), ...directLines(4000, 2500)]) as LineItem[];
+  const stored = sanitizeForJson([...directLines(4500, 0), ...directLines(4000, 2500)]) as unknown as LineItem[];
 
   it("covers the children's components from the stored lines, rebuilding nothing", () => {
     const result = planReplayedCombinedGroupInvoice({ legacyKey: KEY, liveCoverage: [], storedLines: stored, storedLineAmountTypes: "Inclusive", children });
