@@ -1079,10 +1079,21 @@ jobs:
       # above beside the full-history checkout it depends on; placing this
       # blocking quality gate here ensures every correctness and security gate
       # reports before a size-budget failure ends `verify`.
+      #
+      # #5196: the wrapper runs exactly `pnpm run quality:budget --base
+      # "$BUDGET_BASE"` unless the repository variable
+      # QUALITY_BUDGET_UPSTREAM_REPO is set, as only a deployment fork does.
+      # Then it fetches that repository's `main` and passes it as
+      # `--upstream-ref`, so a sync-down is not refused for upstream's own
+      # reviewed code. The upstream comes from a repository variable, never
+      # from anything a pull request controls; unset (upstream, or where a
+      # fork's variables are unavailable) it behaves as before, on pull
+      # requests and on pushes alike.
       - name: File-size budget ratchet
         env:
           BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false && !startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || 'origin/main' }}
-        run: pnpm run quality:budget --base "$BUDGET_BASE"
+          BUDGET_UPSTREAM_REPO: ${{ vars.QUALITY_BUDGET_UPSTREAM_REPO }}
+        run: node scripts/ci/run-budget-gate.mjs
 
   migration-drift:
     name: Migration drift check

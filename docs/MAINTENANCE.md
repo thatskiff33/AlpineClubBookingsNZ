@@ -1087,6 +1087,9 @@ and by how much in total — run `pnpm run quality:budget --report`, or read the
 from the tree through the same function, so neither can drift from the other or
 from the gate.
 
+A deployment fork syncing down from upstream judges upstream's own changes
+differently; see [Syncing a fork from upstream](#syncing-a-fork-from-upstream).
+
 ### Function-length ratchet
 
 The file-size budget measures whole files, so a 2,000-line function inside a
@@ -1149,6 +1152,65 @@ function's real length, it is one-shot, an unneeded one fails, and it may not
 cover a new function or carry one over 300 for the first time. The hard ceiling
 is a file rule; a function allowance has no upper bound of its own.
 [`size-allowances.d/README.md`](../size-allowances.d/README.md) has the format.
+
+A deployment fork syncing down from upstream: see
+[Syncing a fork from upstream](#syncing-a-fork-from-upstream).
+
+### Syncing a fork from upstream
+
+Both ratchets judge one pull request at a time against its base. A deployment
+fork that syncs down from this repository's `main` moves its base across many
+upstream pull requests at once, so without help the gate refuses code upstream
+already reviewed: a function upstream took over 300 lines before the
+function ratchet existed reads as new, a file upstream moved under a heavy
+rewrite no longer reads as a rename, and every upstream `size-allowances.d/`
+fragment in the range arrives looking live (#5196).
+
+`pnpm run quality:budget --upstream-ref <ref>` names the upstream to trust.
+The rules, all in `scripts/lib/budget-upstream-ref.ts`:
+
+- **The trusted commit is the upstream commit the checkout contains**: the
+  merge base of `<ref>` and `HEAD`, not wherever upstream has got to since. An
+  upstream tip the fork has not merged adds no trust.
+- **Only the paths the sync brings in are trusted**: those upstream changed
+  between the fork's last meeting point with it and the trusted commit. Every
+  other path is judged against the fork's base as before.
+- **The longer of the two lengths is the previous length.** For a trusted
+  path, a file or function is judged against the longer of its length on the
+  fork's base and on the trusted commit, matched at the same path. So code
+  left as upstream wrote it passes with no allowance, while growth the fork
+  adds beyond upstream's length is judged as the fork's own and may need its
+  own allowance. A file past its hard ceiling upstream may stay as it is or
+  shrink, never grow.
+- **Upstream's fragments are spent.** A `size-allowances.d/` fragment whose
+  bytes equal the trusted commit's copy is not live, so it neither applies nor
+  fails as unused nor collides with the fork's own fragment for the same path.
+  A fragment the fork wrote or edited is judged as usual. Nothing upstream
+  merged has to be deleted or re-declared by hand.
+- The size-debt line still reports the change against the fork's base, so it
+  includes the debt the sync brings in.
+
+Every run with trust names the trusted commit, its subject, how many files or
+functions were judged against its length and how many fragments were ignored.
+When the trusted commit is `HEAD` itself (a fast-forward sync, or a push of
+one to the fork's `main`), there is no fork change to separate from upstream's,
+so the run prints `Trusted upstream ignored: resolves to HEAD` once and is
+otherwise exactly an ordinary run. An upstream ref that cannot be resolved
+fails the run, and so does `--upstream-ref` with no value.
+
+**In CI**, set the repository variable `QUALITY_BUDGET_UPSTREAM_REPO` to the
+upstream's `owner/repo` on the fork only; leave it unset here.
+`scripts/ci/run-budget-gate.mjs` then fetches that repository's `main`, without
+tags and needing no extra credentials, and passes it as `--upstream-ref`, on pull requests and on
+pushes. A malformed value or a failed fetch fails the step rather than falling
+back to an ordinary run. With the variable unset the step runs exactly
+`pnpm run quality:budget --base "$BUDGET_BASE"`. A private upstream cannot be
+fetched this way.
+
+Merge a sync pull request with a merge commit, never a squash or rebase. The
+trusted commit is the merge-base of upstream's `main` and `HEAD`; a squash or
+rebase leaves no upstream commit among the fork's ancestors, so the push run on
+the fork's `main` judges upstream's code as the fork's own and goes red.
 
 ### Quality report
 

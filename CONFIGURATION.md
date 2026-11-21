@@ -2974,9 +2974,10 @@ Public forks should keep live provider credentials out of GitHub Actions. Use
 Stripe test mode, Xero demo tenants, SES sandbox credentials, and non-production
 databases for validation.
 
-The status board reads one repository variable (Settings, then Secrets and
-variables, then Actions):
+The status board and the budget gate each read one repository variable
+(Settings, then Secrets and variables, then Actions):
 
 | Variable | Description |
 | --- | --- |
+| `QUALITY_BUDGET_UPSTREAM_REPO` | Optional, and for a deployment fork only: leave it unset in this repository. The `owner/repo` on github.com the fork syncs down from, such as `thatskiff33/AlpineClubBookingsNZ`. When set, CI's file-size budget step fetches that repository's `main` and trusts it, so a sync-down is not refused for upstream's own reviewed code (#5196); see [Syncing a fork from upstream](docs/MAINTENANCE.md#syncing-a-fork-from-upstream). The upstream must be public; the fetch needs no extra credentials. A malformed value or a failed fetch fails the step. |
 | `STATUS_BOARD_ISSUE` | Optional. The number of the issue whose body `.github/workflows/status-board.yml` overwrites hourly with the generated lane status board (#4464). Only the repository owner can set it; see [status board setup](docs/agents/COORDINATION.md#the-status-board). While unset, the job warns and writes nothing. It refuses an issue that is a pull request or whose body is neither empty nor an earlier board. |
