@@ -8,8 +8,9 @@
   alone, dropping metadata, comments, titles, editor file paths and scripts.
 
   An image the app cannot confirm clean — a damaged file, an animated AVIF, an
-  SVG that loads something from outside itself, or a file named `.svg` that is
-  not an SVG drawing — is no longer stored with a
+  SVG that loads something from outside itself, or a file that opens like an
+  SVG but is not an SVG drawing (for example, its root is not in the SVG
+  namespace) — is no longer stored with a
   line in the server log. It is refused with a message asking for a fresh copy
   from an image editor. This applies to the image library, the Image Manager
   (the rest of a batch still uploads), member photos, the club logo, and a

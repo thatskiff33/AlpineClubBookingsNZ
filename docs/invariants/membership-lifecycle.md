@@ -718,13 +718,14 @@ club logo on `ClubTheme.logoDataUrl` (the site-style save and the bundle
 import). Every allowed type has a keep-list cleaner (#5244): JPEG, PNG and
 WebP keep only what draws the picture plus an EXIF Orientation; GIF keeps only
 picture, timing and looping blocks; a still AVIF has every non-picture item,
-property and box blanked in place; SVG is rebuilt from an allow-list of drawing
+property (bar the kept `colr` colour profile) and box blanked in place; SVG is rebuilt from an allow-list of drawing
 elements and attributes. An unchanged inline logo resent by a site-style save
 is not re-cleaned.
 
 Every path fails **closed** through `cleanImageForStorage` /
 `storableLogoDataUrl`: an image that cannot be confirmed clean (malformed,
-truncated, an animated AVIF, an SVG reaching outside itself) is refused with
+truncated, an animated AVIF, an SVG reaching outside itself, a drawing whose
+root is not in the SVG namespace) is refused with
 `IMAGE_NOT_CLEAN_MESSAGE` and nothing is stored — a configuration restore stops
 at its dry run naming the file. `POST /api/admin/site-style/logo` needs no
 strip step: it re-encodes through sharp, which drops metadata unless asked to

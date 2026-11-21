@@ -144,7 +144,8 @@ picture:
 
 An upload is **refused**, with a plain message asking for a fresh copy from an
 image editor, when the app cannot confirm it is clean: a damaged or truncated
-file, an animated AVIF, a file named `.svg` that is not an SVG drawing, or an
+file, an animated AVIF, a file that opens like an SVG but is not an SVG drawing
+(for example, its root is not in the SVG namespace), or an
 SVG that reaches outside itself (an `@import` or an outside `url()`). Nothing is stored in that case. A configuration restore
 stops at its dry run and names the file.
 

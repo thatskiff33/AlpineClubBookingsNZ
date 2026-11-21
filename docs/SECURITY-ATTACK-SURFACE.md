@@ -1598,8 +1598,9 @@ image anyway.
   orientation-only EXIF (dropping it turned phone portraits sideways);
   GIF keeps only image, graphic-control and looping (`NETSCAPE2.0`) blocks,
   rebuilt from their defined fields so nothing rides in extra sub-blocks;
-  a still AVIF has every non-picture item (`Exif`, XMP `mime`), property and
-  top-level box retyped `free` and zeroed in place, with every `mdat`/`idat`
+  a still AVIF has every non-picture item (`Exif`, XMP `mime`), property
+  (except `colr`, which is kept and can hold an ICC profile) and top-level
+  box retyped `free` and zeroed in place, with every `mdat`/`idat`
   byte outside a picture item's extents zeroed, data-reference location
   strings zeroed and unknown file-type brands replaced; SVG is rebuilt by
   `sanitize-html` from an allow-list of drawing elements and attributes, with
@@ -1618,7 +1619,8 @@ image anyway.
 - **SVG fails closed on reach, not just on parse**: CSS `@import`,
   `image-set()`, a CSS escape, an unterminated CSS comment, a `url()` that is
   not `#id`, markup nested in a `<style>`, an embedded image that cannot be
-  cleaned, bytes that are not UTF-8, output without an `<svg` root, or output
+  cleaned, bytes that are not UTF-8, output without an `<svg` root in the SVG
+  namespace, or output
   that does not rebuild to itself all refuse the file. Each `<style>` body is
   checked whole after the rebuild, because the parser hands its text over in
   pieces split at character references, comments and CDATA; the `url()` scan is
