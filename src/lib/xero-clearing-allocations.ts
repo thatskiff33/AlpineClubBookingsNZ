@@ -33,6 +33,7 @@ import {
   type ModificationNoteWording,
 } from "@/lib/xero-refund-method";
 import type { ClubFormat } from "@/lib/club-format";
+import { NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE } from "@/lib/xero-note-allocation-link-roles";
 
 export interface ClearingAllocationTarget {
   invoiceId: string;
@@ -206,15 +207,8 @@ export function readBookingClearingNoteRetryInput(operation: {
   return { amountCents, wording: readModificationNoteWording(payload) };
 }
 
-/** The role a note's own allocation links carry: the builder's, its PARTIAL retry's and the inbound mirror's. */
-export const NOTE_ALLOCATION_ROLE = "MODIFICATION_CREDIT_NOTE_ALLOCATION";
-
-/**
- * #4767: the role `allocateCreditNoteToInvoice` gives a link when its caller
- * names none. Before #4757 the repair tool could offer a note's own failed
- * allocation row its generic ALLOCATE retry, which links with this role.
- */
-export const ROLELESS_ALLOCATION_ROLE = "CREDIT_NOTE_ALLOCATION";
+// #5289 B: defined in a leaf the Xero operation funnel reads too.
+export { NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE };
 
 /** The link roles that can show a note's planned target allocated (`linkAllocatesClearingTarget`). */
 export const CLEARING_TARGET_LINK_ROLES: readonly string[] = [NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE];

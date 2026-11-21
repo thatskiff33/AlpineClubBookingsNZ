@@ -837,7 +837,7 @@ async function repairRefundCreditNoteFollowUpActions(
     message: claimLost ? PARTIAL_REPAIR_CLAIM_LOST_MESSAGE : "Repaired Xero refund credit note follow-up actions.",
   });
   // #4279: the note becomes the payment's refund note only in the completion, once its claim wins
-  // (`completeAdoptingCanonicalRefundNote`), never in a write of its own before it. Never a refund
+  // (`completeUnderPaymentRows`), never in a write of its own before it. Never a refund
   // request's own note (#3827, `refundCreditNoteCompletion`), nor a per-refund or voided one (#3880 F1,
   // `INV-ADDPAY-041`, re-checked under the Payment row).
   const refundRequestId = readRefundRequestIdFromPayload(operation.requestPayload);

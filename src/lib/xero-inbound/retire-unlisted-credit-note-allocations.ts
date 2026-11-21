@@ -39,7 +39,7 @@ import { bankTransferPaymentIdsOfInvoices, bankTransferPaymentsOfNoteAllocations
 import { decideXeroRefundedColumns } from "./xero-refunded-columns";
 
 /** #4449: the bank-transfer payment an allocation write decides, its invoice, and the note the alert names. */
-type DecidedPayment = { id: string; invoiceId: string; creditNoteId: string | null };
+export type DecidedPayment = { id: string; invoiceId: string; creditNoteId: string | null };
 
 /** The snapshot time an allocation link records, beside the amount it applied. */
 export function creditNoteAllocationSnapshotStamp(
@@ -170,8 +170,10 @@ async function writeLockedAllocation(tx: Prisma.TransactionClient, link: XeroObj
  * The floor's alert is returned whenever the total is held at the floor,
  * moved or not; which writer sends it is the sync's choice
  * (`withHeldFloorAlerts`), so each payment is alerted once per sync attempt.
+ * #5289 B: the outbound completion of a note's own allocation decides through
+ * this too, under the Payment row it took first (`completeUnderPaymentRows`).
  */
-async function decideBankTransferRefundedTotal(
+export async function decideBankTransferRefundedTotal(
   tx: Prisma.TransactionClient,
   target: DecidedPayment,
   linkWritten: boolean,
@@ -238,8 +240,8 @@ function decidedPaymentOf(link: { metadata?: unknown }, byInvoiceId: ReadonlyMap
   return id && invoiceId ? { payment: { id, invoiceId, creditNoteId: readString(metadata?.creditNoteId) ?? null } } : {};
 }
 
-/** Floor alerts go out after every write's commit, outside any transaction. */
-async function sendFloorAlerts(alerts: readonly BankTransferFloorAlert[]): Promise<void> {
+/** Floor alerts go out after every write's commit, outside any transaction (#5289 B: the outbound completion's too). */
+export async function sendFloorAlerts(alerts: readonly BankTransferFloorAlert[]): Promise<void> {
   if (alerts.length === 0) return;
   const format = await getClubFormat();
   for (const alert of alerts) await sendBankTransferFloorAlert(alert, format);

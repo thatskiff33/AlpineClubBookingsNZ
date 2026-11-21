@@ -522,9 +522,10 @@ const TRANSACTION_OPENERS = [
   "closeCancellationRefundAfterReplay(",
   // #4285 review 7: one read-only snapshot, run around its caller's reads.
   "withReadOnlySnapshot(",
-  // #4279: a refund-note repair's completion runs its claim, pointer and links
-  // inside the transaction that took the Payment row first.
-  "completeAdoptingCanonicalRefundNote(",
+  // #4279, #5289 B: a completion that adopts a refund note or records a note's
+  // own allocation runs its claim, pointer, links and decision inside the
+  // transaction that took the Payment rows first.
+  "completeUnderPaymentRows(",
 ] as const;
 
 /**

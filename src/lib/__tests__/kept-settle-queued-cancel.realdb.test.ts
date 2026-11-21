@@ -292,6 +292,50 @@ async function allocationActive(ids: NoteIds, noteCents: number): Promise<boolea
 }
 
 /**
+ * #5289 B: the app's own edit note, created in Xero and allocated to the
+ * invoice, completed as `createXeroCreditNoteForModification` completes it: the
+ * REAL `completeXeroSyncOperation` on the operation's RUNNING claim, with the
+ * note's link and its allocation link. `partial: "allocation-failed"` is a
+ * PARTIAL whose allocation failed in Xero (no allocation link);
+ * `partial: "allocated"` a PARTIAL carrying the allocation it did make.
+ */
+async function completeOutboundNote(
+  ids: NoteIds,
+  noteCents: number,
+  options: { partial?: "allocation-failed" | "allocated" } = {},
+) {
+  const startedAt = new Date("2026-06-30T10:00:00.000Z");
+  const operation = await prisma.xeroSyncOperation.findFirstOrThrow({ where: { localModel: "BookingModification", localId: ids.modificationId, entityType: "CREDIT_NOTE" } });
+  const xeroSync = await import("@/lib/xero-sync");
+  return xeroSync.completeXeroSyncOperation(
+    { id: operation.id, startedAt },
+    {
+      ...(options.partial ? { status: "PARTIAL" as const } : {}),
+      responsePayload: { creditNote: { creditNoteID: ids.noteId } },
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: ids.noteId,
+      xeroObjectNumber: `CN-${ids.noteId}`,
+      extraLinks: [
+        { localModel: "BookingModification", localId: ids.modificationId, xeroObjectType: "CREDIT_NOTE", xeroObjectId: ids.noteId, xeroObjectNumber: `CN-${ids.noteId}`, role: "MODIFICATION_CREDIT_NOTE" },
+        ...(options.partial === "allocation-failed" ? [] : [{ ...allocationLink(ids, noteCents), xeroObjectUrl: null }]),
+      ],
+    },
+  );
+}
+
+/** The edit note's outbound operation as its claim leaves it while Xero runs: RUNNING, stamped. */
+async function claimOutboundNote(ids: NoteIds): Promise<string> {
+  const operation = await prisma.xeroSyncOperation.findFirstOrThrow({ where: { localModel: "BookingModification", localId: ids.modificationId, entityType: "CREDIT_NOTE" } });
+  await prisma.xeroSyncOperation.update({ where: { id: operation.id }, data: { status: "RUNNING", startedAt: new Date("2026-06-30T10:00:00.000Z"), completedAt: null } });
+  await prisma.xeroObjectLink.deleteMany({ where: { localModel: "BookingModification", localId: ids.modificationId } });
+  return operation.id;
+}
+
+async function paymentUpdatedAt(): Promise<Date> {
+  return (await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { updatedAt: true } })).updatedAt;
+}
+
+/**
  * Xero reports the invoice PAID with an unquantifiable amount paid, so the cash
  * is incomplete and the settle keeps the stored $300, captured at that figure.
  */
@@ -713,5 +757,95 @@ async function paymentFigures() {
     expect(await paymentFigures()).toMatchObject({ refundedAmountCents: 10_000, status: "PARTIALLY_REFUNDED" });
     await syncNote(CORRECTION, 10_000);
     expect(await paymentFigures()).toMatchObject({ refundedAmountCents: 10_000, status: "PARTIALLY_REFUNDED" });
+  }, 60_000);
+  // #5289 B: the app's own allocation of an edit's note takes the Payment row first and decides the whole total.
+  it("OUTBOUND, SETTLE FIRST: the app's own completion of the correction's allocation waits on the settle's Payment row and counts it, before a writer queued on lock(1) reads it", async () => {
+    await bookInvoicedAndCutTo(20_000);
+    await queueModificationNote(CORRECTION, 10_000, { noteWording: "invoice-correction" });
+    await claimOutboundNote(CORRECTION);
+
+    const receipt = await holdReceiptRow();
+    const settling = settleKept([{ id: CORRECTION.noteId, cents: 10_000 }]);
+    let completing: ReturnType<typeof completeOutboundNote> | null = null;
+    let reading: Promise<number> | null = null;
+    try {
+      const [settlePid] = await untilQueuedBehind(receipt.pid);
+      let completed = false;
+      completing = completeOutboundNote(CORRECTION, 10_000).finally(() => {
+        completed = true;
+      });
+      // Before #5289 the completion took no Payment row and committed at once.
+      await untilQueuedBehind(settlePid, { unless: () => completed });
+      reading = readQueuedOnCancelLocks();
+      await untilQueuedBehind(settlePid, { count: completed ? 1 : 2 });
+      receipt.release();
+      expect(await reading).toBe(10_000);
+    } finally {
+      receipt.release();
+      await receipt.done;
+      await settling;
+      await completing?.catch(() => undefined);
+      await reading?.catch(() => undefined);
+    }
+
+    await expectCancelCredits(20_000);
+  }, 60_000);
+
+  it("OUTBOUND FIRST: the completion holds the Payment row while it waits on its operation row, the settle queues behind it, and the keep counts the allocation before a writer queued on lock(1) reads it", async () => {
+    await bookInvoicedAndCutTo(20_000);
+    await queueModificationNote(CORRECTION, 10_000, { noteWording: "invoice-correction" });
+    const operationId = await claimOutboundNote(CORRECTION);
+
+    // Hold the operation row, so the completion parks on its claim after it has taken the Payment row.
+    const operationRow = await holdLocks((tx) => tx.$queryRaw`SELECT id FROM "XeroSyncOperation" WHERE id = ${operationId} FOR UPDATE`);
+    let settling: ReturnType<typeof settleKept> | null = null;
+    let reading: Promise<number> | null = null;
+    const completing = completeOutboundNote(CORRECTION, 10_000);
+    try {
+      const [completionPid] = await untilQueuedBehind(operationRow.pid);
+      settling = settleKept([{ id: CORRECTION.noteId, cents: 10_000 }]);
+      const [settlePid] = await untilQueuedBehind(completionPid);
+      reading = readQueuedOnCancelLocks();
+      await untilQueuedBehind(settlePid);
+      operationRow.release();
+      expect(await reading).toBe(10_000);
+    } finally {
+      operationRow.release();
+      await operationRow.done;
+      await completing.catch(() => undefined);
+      await settling;
+      await reading?.catch(() => undefined);
+    }
+
+    await expectCancelCredits(20_000);
+  }, 60_000);
+
+  it("OUTBOUND, AFTER THE SETTLE: the completion decides the whole total and moves updatedAt; a PARTIAL one with no allocation link, and one refused on a lost claim, decide nothing", async () => {
+    await bookInvoicedAndCutTo(20_000);
+    await queueModificationNote(CORRECTION, 10_000, { noteWording: "invoice-correction" });
+    await claimOutboundNote(CORRECTION);
+    await settleKept([{ id: CORRECTION.noteId, cents: 10_000 }]);
+    expect(await paymentFigures()).toMatchObject({ refundedAmountCents: 0, status: "SUCCEEDED" });
+
+    // The allocation failed in Xero: no allocation link, so nothing to decide.
+    const before = await paymentUpdatedAt();
+    await completeOutboundNote(CORRECTION, 10_000, { partial: "allocation-failed" });
+    expect(await paymentFigures()).toMatchObject({ refundedAmountCents: 0 });
+    expect((await paymentUpdatedAt()).getTime()).toBe(before.getTime());
+
+    // A part-success whose claim was lost (an officer queued a Retry) is refused and writes no link: nothing decided.
+    await claimOutboundNote(CORRECTION);
+    await prisma.xeroSyncOperation.updateMany({ where: { localId: CORRECTION.modificationId }, data: { status: "PENDING", startedAt: null } });
+    await completeOutboundNote(CORRECTION, 10_000, { partial: "allocated" });
+    expect(await allocationActive(CORRECTION, 10_000)).toBe(null);
+    expect(await paymentFigures()).toMatchObject({ refundedAmountCents: 0 });
+    expect((await paymentUpdatedAt()).getTime()).toBe(before.getTime());
+
+    await claimOutboundNote(CORRECTION);
+
+    await completeOutboundNote(CORRECTION, 10_000);
+    expect(await paymentFigures()).toMatchObject({ refundedAmountCents: 10_000, status: "PARTIALLY_REFUNDED" });
+    expect((await paymentUpdatedAt()).getTime()).toBeGreaterThan(before.getTime());
+    await expectCancelCredits(20_000);
   }, 60_000);
 });

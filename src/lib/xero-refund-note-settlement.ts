@@ -222,7 +222,7 @@ export function refundCreditNoteCompletion(input: {
   refundRequestId?: string | null;
   /**
    * #4279: make the note the payment's one refund note, inside the completion
-   * and only if its claim wins (`completeAdoptingCanonicalRefundNote`). Never
+   * and only if its claim wins (`completeUnderPaymentRows`). Never
    * for a refund request's own note, whatever the caller asks.
    */
   adoptAsCanonicalRefundNote?: boolean;

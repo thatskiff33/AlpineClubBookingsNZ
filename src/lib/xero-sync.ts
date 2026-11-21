@@ -11,7 +11,8 @@ import {
   neverCanonicalRefundNoteIds,
   readCanonicalRefundNoteField,
 } from "./xero-refund-note-status";
-import { adoptCanonicalRefundNote, type CanonicalRefundNoteAdoption, completeAdoptingCanonicalRefundNote } from "./xero-refund-note-adoption";
+import { adoptCanonicalRefundNote, type CanonicalRefundNoteAdoption } from "./xero-refund-note-adoption";
+import { completeUnderPaymentRows, noteAllocationIntentOf } from "./xero-payment-first-completion";
 import { buildXeroObjectUrl, stripXeroOrgShortCode } from "./xero-links";
 import { mergeXeroObjectLinkMetadata, planXeroObjectLinkMetadataMerge } from "./xero-object-link-metadata-merge";
 import {
@@ -107,7 +108,7 @@ export interface XeroSyncOperationCompletion {
   extraLinks?: XeroObjectLinkInput[];
   /** #4256: a non-SUCCEEDED row's message; else it keeps the one it had. */
   lastErrorMessage?: string;
-  /** #4279: adopt this note as the payment's refund note, only if the claim wins (`completeAdoptingCanonicalRefundNote`). */
+  /** #4279: adopt this note as the payment's refund note, only if the claim wins (`completeUnderPaymentRows`). */
   canonicalRefundNote?: CanonicalRefundNoteAdoption;
 }
 
@@ -1013,7 +1014,9 @@ export async function completeXeroSyncOperation(
   );
 
   let lostClaim = null as { laterClaimHolds: boolean } | null; // #4686: a part-success refused for a lost claim (`INV-INT-029`).
+  let linksRecorded = false; // #5289 B: whether this transaction wrote the completion's links.
   const completeWithClient = async (tx: Prisma.TransactionClient) => {
+    linksRecorded = false;
     const status = completion.status ?? "SUCCEEDED";
     const data = {
       status,
@@ -1036,6 +1039,7 @@ export async function completeXeroSyncOperation(
         xeroObjectId: completion.xeroObjectId ?? null,
         recordLinks: async () => {
           for (const link of completion.extraLinks ?? []) await upsertXeroObjectLinkWithClient(tx, link);
+          linksRecorded = true;
         },
         lostClaim: (laterClaimHolds) => void (lostClaim = { laterClaimHolds }),
       });
@@ -1047,10 +1051,14 @@ export async function completeXeroSyncOperation(
     for (const link of completion.extraLinks ?? []) {
       await upsertXeroObjectLinkWithClient(tx, link);
     }
+    linksRecorded = true;
 
     return operation;
   };
-  const operation = completion.canonicalRefundNote ? await completeAdoptingCanonicalRefundNote(prisma, completion.canonicalRefundNote, options, completeWithClient)
+  // #4279, #5289 B: a pointer adoption or a note's own allocation takes its Payment rows before the claim.
+  const allocation = noteAllocationIntentOf(completion.extraLinks);
+  const operation = completion.canonicalRefundNote || allocation
+    ? await completeUnderPaymentRows(prisma, { adoption: completion.canonicalRefundNote, allocation }, options, completeWithClient, () => linksRecorded)
     : options?.store ? await completeWithClient(options.store) : await prisma.$transaction(completeWithClient);
 
   // #4686: its Xero object is traced after commit (or only logged inside a caller's own `store`), never written over the row.

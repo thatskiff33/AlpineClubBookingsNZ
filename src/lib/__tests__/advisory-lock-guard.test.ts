@@ -1753,9 +1753,13 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // member key), before its allocation row, so the Internet Banking settle
   // (lock(1) -> lodge -> member -> this row) and the write serialise here.
   // #4279: and by a refund-note repair's completion that adopts its note as the
-  // payment's pointer (`completeAdoptingCanonicalRefundNote`, a retry claim's own
+  // payment's pointer (`completeUnderPaymentRows`, a retry claim's own
   // transaction, no lock(1)), FIRST, before the operation row's guarded claim,
   // the pointer and the links - the create's record order. No new key.
+  // #5289 B: and by the outbound completion of a note's own allocation
+  // (`NOTE_ALLOCATION_ROLE`) on the invoice's one bank-transfer payment, in the
+  // same transaction, both intents' Payment rows one sorted set, before the
+  // claim; its total is decided after the links under the row. No new key.
   "src/lib/payment-transactions.ts": 1,
   // #4161 / #4192: the nightly link cleanup's refund-note heal takes two
   // lock-only statements: the one `XeroObjectLink` row it is about to re-write
@@ -2037,8 +2041,11 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
   // #4279 (INV-LOCK-002, INV-LOCK-003): a completion that adopts a refund note
   // as the payment's pointer takes the Payment row before the operation row's
   // claim, adopts only after the claim wins, and writes its links after that.
-  // Only that completion shape takes the row; every other keeps its transaction.
-  it("keeps a refund-note repair's adopting completion on Payment row -> guarded claim -> pointer -> links", () => {
+  // #5289 B: so does a completion recording a note's own allocation, which
+  // decides the invoice's bank-transfer payment's total after its links, under
+  // that row; both intents' rows are one sorted set, taken first. Only those
+  // completion shapes take a Payment row; every other keeps its transaction.
+  it("keeps a Payment-first completion (refund-note adoption, a note's own allocation) on Payment rows -> guarded claim -> pointer -> links -> decision", () => {
     const text = (rel: string) => stripComments(sources.find((source) => source.rel === rel)?.text ?? "");
     const inOrder = (body: string, markers: string[]) => {
       const at = markers.map((marker) => body.indexOf(marker));
@@ -2047,10 +2054,22 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
         expect(at[i], `${markers[i]} must follow ${markers[i - 1]}`).toBeGreaterThan(at[i - 1]);
       }
     };
-    const adoptionModule = text("src/lib/xero-refund-note-adoption.ts");
-    const adopting = adoptionModule.slice(adoptionModule.indexOf("export async function completeAdoptingCanonicalRefundNote<"));
-    inOrder(adopting, ["options?.store || !options?.retryClaim", "db.$transaction(", "lockPaymentForRefundedTotal(tx, adoption.paymentId)", "complete(tx)", "}, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS);"]);
-    expect(adopting).not.toMatch(/pg_advisory|acquireLodgeCapacityLock|lockMemberCreditLedger/);
+    const firstModule = text("src/lib/xero-payment-first-completion.ts");
+    const first = firstModule.slice(firstModule.indexOf("export async function completeUnderPaymentRows<"));
+    inOrder(first, [
+      "adoption && (options?.store || !options?.retryClaim)",
+      "allocation && options?.store",
+      "bankTransferPaymentIdsOfInvoices(allocation.invoiceIds)",
+      ".sort()",
+      "db.$transaction(",
+      "for (const paymentId of paymentIds) await lockPaymentForRefundedTotal(tx, paymentId)",
+      "complete(tx)",
+      "if (linksRecorded())",
+      "decideBankTransferRefundedTotal(tx,",
+      "}, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS);",
+      "sendFloorAlerts(",
+    ]);
+    expect(first).not.toMatch(/pg_advisory|acquireLodgeCapacityLock|lockMemberCreditLedger/);
     const sync = text("src/lib/xero-sync.ts");
     const complete = sync.slice(sync.indexOf("export async function completeXeroSyncOperation("));
     inOrder(complete, [
@@ -2058,9 +2077,12 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
       "if (claimed.count === 0)",
       "adoptCanonicalRefundNote(completion.canonicalRefundNote, tx)",
       "for (const link of completion.extraLinks ?? []) {",
-      "completeAdoptingCanonicalRefundNote(prisma, completion.canonicalRefundNote, options, completeWithClient)",
+      "noteAllocationIntentOf(completion.extraLinks)",
+      "completeUnderPaymentRows(prisma, { adoption: completion.canonicalRefundNote, allocation }, options, completeWithClient, () => linksRecorded)",
       ": await prisma.$transaction(completeWithClient)",
     ]);
+    // #5289 B: a total is decided only after the links are written, on a won claim or a late success's own record.
+    expect(complete.match(/upsertXeroObjectLinkWithClient\(tx, link\);?\s*\}?\s*linksRecorded = true;/g)).toHaveLength(2);
   });
 
   // #4449 (INV-LOCK-002, INV-LOCK-003): the credit-note allocation write is a
