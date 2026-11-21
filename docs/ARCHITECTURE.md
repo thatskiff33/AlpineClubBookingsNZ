@@ -764,17 +764,23 @@ Four rules, and they are all deliberate:
 **The census enforces D1 while the sweep finishes** (#4951,
 `INV-PUB-006`). `src/components/ui/__tests__/card-title-classification-census.test.ts`
 fails when any `CardTitle` under `src/app/(public)`, `src/app/(authenticated)`,
-`src/app/(website-dynamic)` or in the shared member cards it lists omits
-`headingLevel`, and holds the count of unclassified titles everywhere else at
-exactly `UNCLASSIFIED_BASELINE` (253 when #4951 landed). It fails both ways: a
-new unclassified title must be classified rather than raise the number, and a
-sweep that classifies titles lowers the constant in the same change. The admin,
-finance and lodge screens are swept by area, as are the member components that
-several kinds of page share (the edit-booking panel, the booking editor and the
-guest-consent card). The public website under `src/app/(website)`, including the
-membership application page, is held at the baseline too, not forbidden. When
-the baseline reaches zero, `headingLevel` becomes required by the type and the
-census retires.
+`src/app/(website-dynamic)`, `src/app/(website)` or in the shared member cards
+it lists omits `headingLevel`, and holds the count of unclassified titles
+everywhere else at exactly `UNCLASSIFIED_BASELINE` (253 when #4951 landed, 231
+after the member sweep, #5216). It fails both ways: a new unclassified title
+must be classified rather than raise the number, and a sweep that classifies
+titles lowers the constant in the same change and adds what it swept to the
+census's forbidden roots or shared-file list, so it cannot regress. The member
+sweep covered the components several kinds of page share (the booking editor,
+the edit-booking panel, the guest-consent card, the officer's cards on
+`/bookings/[id]`) and the public website, including the membership application
+page. The admin, finance and lodge screens are swept by area. When the baseline
+reaches zero, `headingLevel` becomes required by the type and the census
+retires.
+
+A screen's heading test asserts its outline with
+`src/lib/__tests__/support/heading-outline.ts`: exactly one named level-1
+heading, and no heading more than one level deeper than the one before it.
 
 A screen that is one card is the page: give that card's title
 `headingLevel={1}` in every render state, and give a loading state with no
@@ -941,6 +947,7 @@ Use these ownership boundaries when adding new code:
 | Booking lifecycle | `src/lib/booking-create.ts`, `src/lib/booking-create-types.ts`, `src/lib/booking-create-promo.ts`, `src/lib/booking-create-guests.ts`, `src/lib/booking-modify.ts` (barrel over `booking-modify-validation` / `booking-modify-plan` / `booking-modify-settlement`), `src/lib/booking-payment-cleanup.ts`, `src/lib/payment-recovery.ts` | Keep route handlers thin; booking orchestration and durable payment recovery live behind these services. |
 | Bed allocation | `src/lib/bed-allocation.ts`, `src/lib/bed-allocation-lifecycle.ts`, `src/lib/bed-allocation-*.ts` (the admin surface, split by responsibility in #2688 — `-rooms` / `-beds` / `-bunk-pairing` inventory, `-board` / `-board-records` / `-board-payload` / `-warnings` read model, `-placement` / `-manual-writes` / `-auto-allocate` / `-range-assign` / `-range-audit` / `-range-report` / `-approval` writers, over `-admin-contract` / `-date-range` / `-display-names` / `-admin-settings`), `src/lib/bed-allocation-removal.ts` | Room/bed inventory, family-aware allocation planning, lifecycle reconciliation, manual admin allocation, reviewed removal, and approval state live behind focused services. Each `LodgeBed` carries a descriptive **bed type** (`SINGLE` / `BUNK_TOP` / `BUNK_BOTTOM` / `DOUBLE`) and an optional `bunkGroup` label; a group holds at most two beds — one top and one bottom — enforced in `bed-allocation-bunk-pairing.ts` (serialised by a room-row lock, no partial index) and shown as an icon on the setup list and allocation board (#1675). Bed type is mostly descriptive, with one capacity exception (#1701): a **DOUBLE** bed may hold **two** occupants for a night when they are declared partners (two `ADULT` members holding a **CONFIRMED** `MemberPartnerLink` (#1742/#1744), the single-source `mayShareDoubleBed()` rule in `double-bed-sharing.ts`), added by an admin on the board onto a bed whose primary already holds capacity. Every other bed type stays one person per night. The bed-night uniqueness is `@@unique([bedId, stayDate, isSecondOccupant])` (≤1 primary + ≤1 second occupant) plus a raw-SQL partial unique index capping non-DOUBLE beds at exactly one (`WHERE "bedType" <> 'DOUBLE'`, in `prisma/partial-unique-indexes.tsv`); `BedAllocation.bedType` is a denormalized copy the partial index reads. The **base** capacity figure is unchanged — a shared double is still **one bed** of `activeBedCount` and each occupant is a full person-night — but each active DOUBLE adds one reserved, bounded **partner-shared admission slot** above it (#1745: `getLodgePartnerSharedCapacityStatus` + `checkCapacityForPartnerSharedAdmission`, admin-initiated only, never visible to public availability; see docs/CAPACITY_MODEL.md); auto-allocation never creates a second occupant. Beds may be pre-assigned on provisional statuses (`BED_ALLOCATABLE_BOOKING_STATUSES`) before a booking holds capacity, so the admin board tags each bed **Held** vs **Provisional** (#1251). The state is a server-computed flag from `bookingHoldsCapacity` (booking-status.ts) — not a per-row status check — because holding is no longer purely status-based: an accepted-but-unpaid quote is `PENDING` but holds (#1254). In the AUTOMATIC on-payment/confirmation reconcile (`bed-allocation-lifecycle.ts` → the planner's `prioritizeCapacityHolding` mode), **capacity-holding bookings get first claim**: they are allocated before provisional ones, and a held booking blocked only by a **Provisional** allocation moves that provisional aside (to a free bed) — or, if the night is otherwise full, unallocates it back to the awaiting-allocation queue — then takes the freed bed. A **Held** or admin-**approved** (#776 lock) allocation is never displaced, and displacement never strands a same-booking minor; each displacement is applied atomically and writes a `lodge` audit row on the displaced provisional booking (#1387). The planner keeps bed-night **capacity** (`bedId:stayDate` — is this bed taken?) separate from occupant **identity** (`bedId:stayDate:bookingGuestId` — who is in it?), because a shared DOUBLE holds two occupant rows on one bed-night, possibly from two different bookings (#2656): an eviction releases the physical bed-night only when no occupant remains, displacement credit is counted in beds actually freed rather than rows or bookings displaced, a bed-night whose occupants span two bookings is never a *single-bed* displacement target (the whole-stay room path instead makes every occupant a candidate and gains the bed only once ALL of them are being evicted — so both bookings on a shared double go together or the room is not chosen; see docs/CAPACITY_MODEL.md rule 3), and the apply path promotes any second occupant its displacements orphan and refuses to write onto a bed-night the database still shows as occupied rather than relying on `skipDuplicates`. The planner enforces the cross-booking age-mix invariant on every placement path (#1768): a room-night holding one booking's minors never also holds another booking's adult (in either direction), minors may fill rooms of their own once the booking has an adult on-site that night (the adult count no longer caps the rooms a large group fills), a SCHOOL-request booking rooms its adults together and its students separately (`isSchoolGroup`), and persisted violations surface as `MINOR_ADULT_MIX` board warnings. That automatic reconcile auto-places **only the reconciled booking's own** guests on its current nights (#1686): editing, confirming, promoting, or cancelling one booking never opportunistically drafts *other* bookings' guests into idle or freed beds — a cancellation's freed beds stay in the awaiting-allocation queue rather than being auto-refilled. It still loads lodge-wide occupancy so it can seat that booking whole-stay and displace blocking provisionals to seat a held booking (#1387/#1677); opportunistic lodge-wide re-planning of *everyone* is exclusively the explicit board action below. The manual board **Run auto-allocation** button (`runAutoBedAllocation`) runs pure first-fit and does NOT displace — only the automatic reconcile does. One further occupancy class has **no `BedAllocation` row at all** (#2286): a `HutLeaderAssignment` carrying a `bedId` is a **custodian bed hold**, which takes that bed out of both the bookable and the allocatable pool for every night from `startDate` to `endDate` *inclusive*, with no `Booking`, no `BookingGuest` and no allocation row anywhere (`src/lib/custodian-occupancy.ts` read side, `src/lib/custodian-assignment.ts` write side). It is counted as an **occupant** rather than as a smaller lodge, so `occupiedBeds + availableBeds === lodgeCapacity` still holds; it is fed to the planner as a #1768 blocking, never-evictable unknown occupant; and because nothing in the database enforces it, every placing write re-reads the live holds on its own client immediately before writing, inside the per-lodge advisory lock where it owns the transaction — and where it does not, which is the common no-displacement path, that re-read is the only thing standing between a hold and a bed-night written over it. The three re-filters doing it (occupied / custodian-held / whole-lodge-held) live in `bed-allocation-write-rechecks.ts` (#3128); their call sites stay in `bed-allocation-lifecycle.ts`, which is where the contract test below proves them. `custodian-write-path-contract.test.ts` scans the whole `src/` tree and fails CI when a `bedAllocation.create*` site appears undeclared — counting them per site, so a second write in an already-declared file fails too — and pins the global → per-lodge lock order over each self-wrapping writer's own body. See docs/CAPACITY_MODEL.md and DOMAIN_INVARIANTS.md. |
 | Member-guest consent | `src/lib/member-guest-consent.ts`, `src/lib/member-guest-settings.ts`, `src/lib/booking-guests.ts` | Adding another club member as a guest ("+ Add Member Guest", epic #2305). `member-guest-consent.ts` is the pure model: the named widening predicate `MEMBER_GUEST_WIDENING_ENABLED`, the `FAMILY` / `BEYOND_FAMILY` boundary types, and the eight-shape consent sub-state table with its classifier. `booking-guests.ts` computes each prospective guest's boundary scope on **every** path — the admin `skipAuthorization` paths included — so no caller can end up persisting a consent-free cross-family row by default. Policy lives in the `MemberGuestSettings` singleton (`member-guest-settings.ts`, lazily created, read through the shared defaults in `src/config/club-settings-defaults.ts`) alongside the other club-settings singletons; its two open-search privacy toggles are excluded from config transfer. **The feature is live behind the `memberGuests` module** (MG2 #2307 turned MG1's dark constant into the per-club flag; MG3 #2308 added the finder; MG4 #2309 covered the edit path, admin parity and the booking-request pipeline). With the module off — the shipped default — a cross-family add is refused with the byte-for-byte pre-existing error and nothing writes a non-null `BookingGuest.consentStatus`, so a club that never opts in sees no change. Every persisting path plans its consent columns through the single writer in `member-guest-consent.ts` by way of `member-guest-add-policy.ts`, and every one of them dispatches its notifications AFTER the transaction commits. |
+| AI app connections | `src/lib/mcp/`, `src/app/api/mcp/**`, `src/app/.well-known/**`, `src/lib/session-refresh.ts` | The `mcpServer` module (ALP-653): an MCP server and its OAuth endpoints that let a member's AI app act as that member. `oauth.ts`, `approval.ts`, `connection-gate.ts`, `grants.ts` and `settings.ts` own who may connect and the connection's life; `catalogue.ts` and `exclusions.ts` classify every API route method; `dispatch.ts` and `loopback.ts` send each action back through the site's front door, never importing a route handler; `principal.ts` and `grant-session.ts` turn the signed internal header into the member's session through `session-refresh.ts`, the same code a browser session runs. Rules: `INV-MCP` ([`mcp-connections.md`](invariants/mcp-connections.md)); guide: [`mcp-server.md`](guides/mcp-server.md). |
 | Policy rules | `src/lib/policies/` | Pricing, age-tier, cancellation, change-fee, minimum-stay, member-credit, and booking-route decisions live as testable policy helpers. |
 | Operational Xero | `src/lib/xero-*.ts` | Import the focused module that owns the behavior. The `src/lib/xero.ts` compatibility facade was retired in #4930, and the module-graph census fails any import of it. |
 | Admin/member services | `src/lib/admin-member-xero-actions.ts`, `src/lib/member-serialization.ts`, `src/lib/member-lifecycle-actions.ts`, `src/lib/membership-cancellation-*.ts` | Shared admin/member request wrappers, DTO shape, lifecycle actions, and cancellation workflows live outside page files. |
@@ -1247,10 +1254,11 @@ When one body decides between success and failure, parse it once with
 told apart) and hand the result to `apiErrorMessageFromBody`; do not spell the
 "unreadable counts as empty" rule again.
 `admin-failed-response-json-census.test.ts` fails on a new bare
-`await res.json()` read of a failed reply under `src/app/(admin)`. It does not
-see a `.then((r) => r.json())` chain or an `err.message` shown from a catch, so
-review those by eye. It has no allowance list: an unguarded failure read
-anywhere under `src/app/(admin)` fails.
+`await res.json()` read of a failed reply under `src/app/(admin)`, and in the
+password policy card (#5323 widens it to all of `src/components/admin`). It does
+not see a `.then((r) => r.json())` chain or an `err.message` shown from a catch,
+so review those by eye. It has no allowance list: an unguarded failure read
+anywhere it scans fails.
 
 Admin settings sections follow one canonical edit model (developer rule, binding
 for new or modified sections; the `AGENTS.md` routing table sends you here for it, and this page is where it is stated in full).
@@ -1869,7 +1877,11 @@ same shortcut against a normalising route would silently diverge. Each card
 keeps its own `save` callback — the
 GET-fresh-then-merge step above, multi-endpoint writes, and per-endpoint failure
 copy all stay local — and throws the hook's `ForbiddenSaveError` for a 403 so it
-maps to the shared `ADMIN_FORBIDDEN_SAVE_REASON` copy. Any other sentence the
+maps to the shared `ADMIN_FORBIDDEN_SAVE_REASON` copy. The hook's
+`saveRefusalFromResponse` reads a refused save into that error, or into the
+route's own worded 403 ("Two-factor verification required") when it carries
+one: only the bare word "Forbidden" or an unreadable body, such as a proxy's
+HTML page, becomes the shared copy (`wordedForbiddenRefusal`). Any other sentence the
 officer should read is thrown as an `ApiRefusalError`
 (`src/lib/api-error-message.ts`; `apiRefusalFromResponse` reads a route's
 refusal into one). Everything else (a request that never got an answer, an
@@ -1986,11 +1998,13 @@ officer queue screen that reads it for that list pages through `useAdminQueuePag
 `Pagination` with its "Showing 1–25 of 40" total line, shown even on a single
 page. The officer queues — member applications, refund appeals, booking
 approvals, change requests, public requests, policy exceptions, the
-membership cancellation and archive queues, and both deletion-request
-queues — do so today: pending filters read
-oldest first, a filter change returns to page 1, the page is kept in the URL
-wherever the screen keeps its filter there (not the deletion-request queues or
-the policy exceptions tab, which keep it in memory), a slower read for a page
+membership cancellation and archive queues, both deletion-request
+queues, the maintenance queue and the communications send history (which has
+no filter, and returns to page 1 after a send, where the new send is) — do so
+today: pending filters (the maintenance queue's is Open) read oldest first, a filter change returns to page 1, the page is kept in the URL
+wherever the screen keeps its filter there (not the deletion-request queues,
+the policy exceptions tab, the maintenance queue or the send history, which keep
+it in memory), a slower read for a page
 the officer has left never replaces the list, the pager stays mounted through a
 read so keyboard focus survives a page change, and a focused `bookingId=` /
 `requestId=` link pins its record when it is off the page (approvals, change
@@ -2005,13 +2019,9 @@ than the hook, show the range line once the list has more than one page, and
 share `formatAdminListRange` for the range text and
 `parseAdminListPageParam` / `setAdminListPageParam` for the URL page; the same
 census fails hand-rolled range arithmetic, an unparsed page read or a
-hand-written page write. Five capped lists sit outside this. System issue
+hand-written page write. Three capped lists sit outside this: system issue
 reports, messages notice reads and the privacy retention preview keep their own
-pagers until next changed. The communications history and the maintenance queue
-have no pager yet: the history reads its newest 25 sends with no total, and the
-queue says "Showing the newest N of T". Both predate #4960, which left them out
-of scope, and both routes already take their page fields from the shared schema,
-so a pager needs no route change.
+pagers until next changed.
 
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same
@@ -3633,7 +3643,7 @@ flowchart TD
     Leader --> Q15["Every 15 min<br/>payment-recovery, internet-banking-hold-release,<br/>xero-waiting-invoice-reaper, late-capture-held-alert,<br/>credit-release-asks, duplicate-capture-kept-alert, xero-outbox,<br/>xero-operation-replay, xero-inbound-reconcile,<br/>xero-credit-note-outside-spend-mirror"]
     Leader --> Q30["Every 30 min<br/>waitlist-processor, email-retry"]
     Leader --> Q3h["Every 3 h<br/>additional-payment-reminders, confirm-pending,<br/>placeholder-guest-name-reminders, pre-arrival-reminders,<br/>purge-booking-requests, quote-expiry-reminders,<br/>school-attendee-confirmations, group-settlement-reaper,<br/>policy-exception-hold-reaper, hosting-coverage-reevaluation"]
-    Leader --> Daily["Daily<br/>complete-bookings, data-pruning, draft-cleanup,<br/>age-up, email-inheritance-reconcile,<br/>capacity-warnings, admin-digest,<br/>credit-reconciliation, hut-leader-auto-assign,<br/>checkin-reminders, pending-deadline-alerts,<br/>member-guest-consent-expiry,<br/>nomination-reminders, finance-daily-sync,<br/>xero-membership-refresh, xero-link-backfill,<br/>xero-link-cleanup, xero-bank-refund-void-follow-up,<br/>xero-reconciliation-report,<br/>xero-credit-sync-check"]
+    Leader --> Daily["Daily<br/>complete-bookings, data-pruning, draft-cleanup,<br/>age-up, email-inheritance-reconcile,<br/>capacity-warnings, admin-digest,<br/>credit-reconciliation, hut-leader-auto-assign,<br/>checkin-reminders, pending-deadline-alerts,<br/>member-guest-consent-expiry,<br/>nomination-reminders, finance-daily-sync,<br/>xero-membership-refresh, xero-link-backfill,<br/>xero-link-cleanup, xero-bank-refund-void-follow-up,<br/>xero-reconciliation-report,<br/>xero-credit-sync-check, xero-cash-credit-refresh"]
     Leader --> Cfg["Configurable<br/>backup"]
 ```
 
@@ -3668,6 +3678,7 @@ flowchart TD
 | `xero-bank-refund-void-follow-up` | Daily | Right after the link cleanup: undo each voided bank-transfer refund note and put it back on the refund list (#4162; report-only until `XERO_ENABLE_BANK_REFUND_VOID_WRITES=true`) |
 | `xero-reconciliation-report` | Daily | Send the Xero reconciliation report |
 | `xero-credit-sync-check` | Daily | Reconcile BookingApp's stamped applied credit against Xero's live invoice allocations and warn admins on drift with the exact amount (#2501); read-only, self-throttled |
+| `xero-cash-credit-refresh` | Daily (in the credit-sync check's slot) | Refresh the snapshot of unallocated Xero overpayments and prepayments the finance queue shows (#5204); reads Xero, writes only that snapshot, and a failed read changes nothing |
 | `finance-daily-sync` | Daily when the finance dashboard module is enabled | Refresh finance report/invoice/balance snapshots from the operational Xero connection |
 | `data-pruning` | Daily | Prune expired tokens/logs and idle login-throttle rows, and run audit retention |
 | `draft-cleanup` | Daily | Delete expired draft bookings; leave out and report any that financial history names (`INV-MONEY-043`) |

@@ -48,7 +48,7 @@ function store() {
     membershipSubscriptionCharge: [], refundRequest: [], xeroObjectLink: [], bookingGuest: [], xeroContactCache: [],
     magicLinkToken: [], passwordResetToken: [], emailVerificationToken: [], emailChangeToken: [],
     twoFactorEmailCode: [], twoFactorRecoveryCode: [], twoFactorSessionChallenge: [], sessionReauthChallenge: [],
-    webAuthnCredential: [], webAuthnChallenge: [],
+    webAuthnCredential: [], webAuthnChallenge: [], mcpGrant: [],
   };
   const hooks: { beforeApplicationDelete?: () => void; beforeMemberUpdate?: () => void } = {};
   const delegates = Object.fromEntries(Object.keys(data).map(name => {
@@ -242,12 +242,16 @@ describe("privacy retention selection and execution", () => {
     s.data.booking.push({ id: "booking", memberId: "former", status: "COMPLETED", guests: [], payment });
     s.data.bookingGuest.push({ id: "guest", memberId: "former", firstName: "Former", lastName: "Person", dietaryRequirements: "Sensitive", stayEnd: NOW });
     s.data.passwordResetToken.push({ id: "reset", memberId: "former" });
+    // An AI app connection signs in as the member (INV-MCP-005): it goes with
+    // them, and another member's is left alone.
+    s.data.mcpGrant.push({ id: "grant", memberId: "former" }, { id: "kept-grant", memberId: "someone-else" });
     expect((await getPrivacyRetentionPreview({ db: s.db, now: NOW })).formerMembers.count).toBe(1);
     expect(await runFormerMemberAnonymisationJob({ db: s.db, now: NOW })).toMatchObject({ anonymised: 1 });
     expect(s.data.member[0]).toMatchObject({ id: "former", xeroContactId: "contact-former", firstName: "Deleted", canLogin: false, dietaryRequirements: null });
     expect(s.data.booking[0]).toMatchObject({ id: "booking", memberId: "former", payment });
     expect(s.data.bookingGuest[0]).toMatchObject({ id: "guest", memberId: "former", firstName: "Deleted", dietaryRequirements: null });
     expect(s.data.passwordResetToken).toEqual([]);
+    expect(s.data.mcpGrant).toEqual([{ id: "kept-grant", memberId: "someone-else" }]);
     expect(createAuditLog).toHaveBeenCalledTimes(1);
   });
 

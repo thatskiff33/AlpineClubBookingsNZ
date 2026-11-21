@@ -61,6 +61,14 @@ sequencing):
 one club, and the hosting provider and storage locations describe that
 installation, including backups across all lodges. It has no lodge key.
 
+## AI app connections (ALP-653)
+
+`McpClient`, `McpGrant`, `McpAuthCode`, `McpToken` and the `McpSettings`
+singleton (`id = "default"`) are club-wide and have no lodge key. A connection
+is a way of signing in as a member, and a sign-in has no lodge. Each action a
+connection runs is scoped by the route it calls, exactly as for a browser
+(`INV-MCP-007`).
+
 ## Privacy retention
 
 `PrivacyRetentionSettings` is a club-wide singleton (`id = "default"`). Email
@@ -97,6 +105,16 @@ M4b receipt adapters scope every settlement line, application read and residue
 transfer by the Payment's immutable booking id. Receipt legs carry that booking's
 actual lodge; no default-lodge lookup occurs. The owner-run receipt census spans
 all R01 bookings across lodges; each catch-up transaction locks only its Payment.
+
+## Xero cash credits (#5204)
+
+`XeroCashCredit`, `MemberCreditCashAllocation` and `MemberCreditCashReturn`
+are club-wide. A `XeroCashCredit` is a snapshot of one overpayment or
+prepayment in the club's one Xero organisation: money a contact paid the
+club, not any lodge. A cash allocation names its booking as a bare id, the way
+`MemberCreditNoteAllocation` does, and the booking carries the lodge. A
+return row names a credit restoration and a slice, which identify the same
+booking. None of the three gets a `lodgeId`.
 
 ## Club-Wide Defaults With Per-Lodge Overrides
 

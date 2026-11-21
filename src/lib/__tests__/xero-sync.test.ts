@@ -2001,6 +2001,115 @@ describe("completeXeroSyncOperation retryClaim", () => {
   });
 });
 
+// #4279 (`INV-LOCK-002`, `INV-INT-029`): a completion carrying a pointer
+// adoption takes the Payment row before its claim, adopts the note only on a
+// won claim and before its links, and a refused claim writes nothing. Every
+// other completion keeps its transaction and lock set exactly as before.
+describe("completeXeroSyncOperation with a canonical refund-note adoption (#4279)", () => {
+  const claimedAt = new Date("2026-06-30T23:59:00.000Z");
+  const adoption = { paymentId: "pay_1", creditNoteId: "cn_1" };
+  const bookingLink = { localModel: "Booking", localId: "b_1", xeroObjectType: "INVOICE", xeroObjectId: "inv_1", role: "PRIMARY_INVOICE" };
+
+  function adoptionTx(options: { claimed: number; noteLinks?: Array<{ xeroObjectId: string; metadata: unknown; active: boolean }>; paymentLock?: Error }) {
+    const steps: string[] = [];
+    const tx = {
+      $executeRaw: vi.fn(async (sql: TemplateStringsArray) => {
+        if (options.paymentLock) throw options.paymentLock;
+        steps.push(sql.join("?").includes('"Payment"') ? "lock Payment" : "raw");
+        return 1;
+      }),
+      xeroSyncOperation: {
+        updateMany: vi.fn(async () => {
+          steps.push("claim");
+          return { count: options.claimed };
+        }),
+        findUnique: vi.fn().mockResolvedValue({ status: "PARTIAL", startedAt: null }),
+        findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "op_repair", status: "SUCCEEDED", manuallyResolvedAt: null }),
+      },
+      xeroObjectLink: {
+        findMany: vi.fn(async () => options.noteLinks ?? []),
+        upsert: vi.fn(async ({ create }: { create: Record<string, unknown> }) => {
+          steps.push("link");
+          return { id: "link_1", ...create };
+        }),
+      },
+      payment: {
+        update: vi.fn(async () => {
+          steps.push("pointer");
+          return {};
+        }),
+      },
+    };
+    mocks.transaction.mockImplementation(async (run: (client: typeof tx) => unknown) => run(tx));
+    return { tx, steps };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("without an adoption, takes no Payment row and keeps the default transaction", async () => {
+    const { tx, steps } = adoptionTx({ claimed: 1 });
+    await completeXeroSyncOperation(xeroClaim("op_repair", claimedAt), { extraLinks: [bookingLink] }, { retryClaim: true });
+    expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function));
+    expect(tx.$executeRaw).not.toHaveBeenCalled();
+    expect(steps).toEqual(["claim", "link"]);
+  });
+
+  it("MUTATION: takes the Payment row, then the claim, then the pointer, then the links, in the Payment-row wait budget", async () => {
+    const { tx, steps } = adoptionTx({ claimed: 1 });
+    await expect(
+      completeXeroSyncOperation(xeroClaim("op_repair", claimedAt), { canonicalRefundNote: adoption, extraLinks: [bookingLink] }, { retryClaim: true }),
+    ).resolves.toMatchObject({ id: "op_repair" });
+    expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function), PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS);
+    expect(steps).toEqual(["lock Payment", "claim", "pointer", "link"]);
+    expect(tx.payment.update).toHaveBeenCalledWith({ where: { id: "pay_1" }, data: { xeroRefundCreditNoteId: "cn_1" } });
+  });
+
+  it("MUTATION: a refused claim writes neither the pointer nor a link", async () => {
+    const { tx, steps } = adoptionTx({ claimed: 0 });
+    await expect(
+      completeXeroSyncOperation(xeroClaim("op_repair", claimedAt), { canonicalRefundNote: adoption, extraLinks: [bookingLink] }, { retryClaim: true }),
+    ).resolves.toBeNull();
+    expect(steps).toEqual(["lock Payment", "claim"]);
+    expect(tx.payment.update).not.toHaveBeenCalled();
+    expect(tx.xeroObjectLink.upsert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["voided", { status: "VOIDED" }],
+    ["per-refund", { perDelta: true }],
+  ])("a won claim adopts no %s note, and still writes its links", async (_label, metadata) => {
+    const { tx, steps } = adoptionTx({ claimed: 1, noteLinks: [{ xeroObjectId: "cn_1", metadata, active: false }] });
+    await completeXeroSyncOperation(xeroClaim("op_repair", claimedAt), { canonicalRefundNote: adoption, extraLinks: [bookingLink] }, { retryClaim: true });
+    expect(tx.payment.update).not.toHaveBeenCalled();
+    expect(steps).toEqual(["lock Payment", "claim", "link"]);
+  });
+
+  it.each([
+    ["an injected store", { store: {} as never, retryClaim: true as const }],
+    ["a completion that is not a retry's claim", undefined],
+  ])("MUTATION: refuses an adoption on %s before any write", async (_label, options) => {
+    const { tx } = adoptionTx({ claimed: 1 });
+    await expect(
+      completeXeroSyncOperation(xeroClaim("op_repair", claimedAt), { canonicalRefundNote: adoption }, options),
+    ).rejects.toThrow("only in a retry claim's own completion transaction (#4279)");
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(tx.xeroSyncOperation.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("a Payment row it cannot get in time fails the completion with nothing written", async () => {
+    const timedOut = Object.assign(new Error("Transaction already closed: timeout"), { code: "P2028" });
+    const { tx } = adoptionTx({ claimed: 1, paymentLock: timedOut });
+    await expect(
+      completeXeroSyncOperation(xeroClaim("op_repair", claimedAt), { canonicalRefundNote: adoption, extraLinks: [bookingLink] }, { retryClaim: true }),
+    ).rejects.toBe(timedOut);
+    expect(tx.xeroSyncOperation.updateMany).not.toHaveBeenCalled();
+    expect(tx.payment.update).not.toHaveBeenCalled();
+    expect(tx.xeroObjectLink.upsert).not.toHaveBeenCalled();
+  });
+});
+
 // #4356 (`INV-INT-029`): two callers can hold one operation row (a start that
 // loses the insert race is handed the winner's ACTIVE row, #1354) and each
 // records its own outcome there. An outcome never replaces a better one already

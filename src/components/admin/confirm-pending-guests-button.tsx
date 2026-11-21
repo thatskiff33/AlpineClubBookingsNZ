@@ -219,7 +219,7 @@ export function ConfirmPendingGuestsButton({
       <Card>
       {confirmDialog}
       <CardHeader>
-        <CardTitle>Confirm pending guests now</CardTitle>
+        <CardTitle headingLevel={2}>Confirm pending guests now</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">

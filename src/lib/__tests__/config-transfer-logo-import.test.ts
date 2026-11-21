@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { siteContentImporter } from "@/lib/config-transfer/categories/site-content";
+import { IMAGE_NOT_CLEAN_MESSAGE } from "@/lib/image-metadata";
+import { pngDataUrl } from "@/lib/__tests__/helpers/png-fixture";
 import type { ReadDb, TxDb } from "@/lib/config-transfer/import-types";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -179,7 +181,7 @@ describe("config-transfer import validates the theme it writes (#2322)", () => {
   it("still accepts a legacy oversized data URI under the 900KB read bound", async () => {
     // Old bundles carry big inlined logos by design; the WRITE budget is an
     // admin-save rule, not an import rule.
-    const legacy = `data:image/png;base64,${Buffer.alloc(860_000, 0x61).toString("base64")}`;
+    const legacy = pngDataUrl({ totalBytes: 860_000 });
     const written = await applyTheme(
       baseTheme({ logoUrl: null, logoDataUrl: legacy }),
     );
@@ -225,7 +227,7 @@ function existingRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const LEGACY_DATA_URL = `data:image/png;base64,${Buffer.alloc(900, 0x61).toString("base64")}`;
+const LEGACY_DATA_URL = pngDataUrl({ totalBytes: 900 });
 
 describe("logo exclusivity holds in MERGE mode onto an existing row (#2322)", () => {
   // Merge mode is the DEFAULT, and updateDataForMode drops any field whose
@@ -380,16 +382,19 @@ describe("a bundled INLINE logo is metadata-stripped on import (#2242)", () => {
     expect(stored.length).toBeLessThan(bundled.length);
   });
 
-  it("FAILS OPEN and still imports an inline logo whose strip is unconfirmed", async () => {
-    // Deliberately unlike the member-photo route: an operator restoring a
-    // configuration bundle must not have the whole import blocked by one
-    // unparseable decorative logo.
+  it("stops the restore at its dry run when the inline logo cannot be confirmed clean (#5244)", async () => {
+    // Fail-closed like every image path: the plan error names the file and
+    // blocks apply; were apply reached, the logo is dropped, never stored.
     const bundled = asDataUrl(exifJpeg(false)); // no primary EOI
+    const plan = await planTheme(baseTheme({ logoUrl: null, logoDataUrl: bundled }));
+    expect(plan.errors).toEqual([
+      `site-content/theme.json: logoDataUrl — ${IMAGE_NOT_CLEAN_MESSAGE}`,
+    ]);
+
     const written = await applyTheme(
       baseTheme({ logoUrl: null, logoDataUrl: bundled }),
     );
-
-    expect(written?.logoDataUrl).toBe(bundled);
+    expect(written?.logoDataUrl).toBeNull();
   });
 
   it("keeps plan/apply parity: the dry-run diffs the STORED (stripped) value", async () => {

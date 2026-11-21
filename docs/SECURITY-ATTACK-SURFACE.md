@@ -84,7 +84,7 @@ the row, not open work. Open findings now live in labelled GitHub issues
 
 | Route or surface | Auth mechanism | Actor | Data touched | External calls | Rate, signature, or boundary controls | Logging and audit | Residual risk or follow-up |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `src/proxy.ts` global proxy, pre-setup gate, and module gates | No session auth. Applies CSP/security headers to page requests and selected API matcher paths; returns 404 for disabled module routes; returns 503 + the "Site setup in progress" screen for every public-website path until `ClubTheme.completedAt` is set (#2420, "The Pre-Setup Gate" below). | Anonymous and authenticated browser traffic. | Module settings via `loadEffectiveModuleFlags()`; setup state, club name and contact address via `setup-gate.ts` (memoised 15s, read only while setup is incomplete). | None. | CSP nonce, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, module route blocking, pre-setup 503 gate (fails closed, `no-store`, `Retry-After`). | No per-request audit. | API matcher is selective, not global for every API path. Keep route-level auth as the enforcement boundary. The setup gate never covers `/api/*`, the admin area, or the login flows — an operator must be able to finish setup. Since #2404 the matcher RUNS on asset-shaped URLs (`/foo.png`, `/favicon.ico`, `/wp-content/uploads/x.jpg`), so those carry a policy and meet the gate like any other address; only `/api`, `/_next/static/` and `/_next/image` stay excluded. A miss under `_next/static` is terminated without a document by the `afterFiles` rewrites, whose own `default-src 'none'` is then the policy that ships; a miss under `/api` is answered as JSON by `api/[[...unmatched]]`, and no rewrite rule may touch `/api` at all (module-state parity — see "Static-Asset URLs And The Nonce-Only CSP"). #2404 also removed the prefetch exemption outright, so no request header — `Purpose: prefetch`, `Next-Router-Prefetch`, `RSC`, in any combination — takes a URL outside the proxy. The gate still declines to CLAIM asset-shaped paths (a 503 holding screen is a document), so a URL of that shape which reaches a render is ungated by design; the shared public chrome (`src/components/website/website-chrome.tsx`, composed by both public route groups) and the public metadata guard cover it. |
+| `src/proxy.ts` global proxy, pre-setup gate, and module gates | No session auth. Applies CSP/security headers to page requests and selected API matcher paths; returns 404 for disabled module routes; returns 503 + the "Site setup in progress" screen for every public-website path until `ClubTheme.completedAt` is set (#2420, "The Pre-Setup Gate" below). | Anonymous and authenticated browser traffic. | Module settings via `loadEffectiveModuleFlags()`; setup state, club name and contact address via `setup-gate.ts` (memoised 15s; each refresh reads `ClubTheme.completedAt`, and the club name and contact address only while setup is incomplete). | None. | CSP nonce, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, module route blocking, pre-setup 503 gate (fails closed, `no-store`, `Retry-After`). | No per-request audit. | API matcher is selective, not global for every API path. Keep route-level auth as the enforcement boundary. The setup gate never covers `/api/*`, the admin area, or the login flows — an operator must be able to finish setup. Since #2404 the matcher RUNS on asset-shaped URLs (`/foo.png`, `/favicon.ico`, `/wp-content/uploads/x.jpg`), so those carry a policy and meet the gate like any other address; only `/api`, `/_next/static/` and `/_next/image` stay excluded. A miss under `_next/static` is terminated without a document by the `afterFiles` rewrites, whose own `default-src 'none'` is then the policy that ships; a miss under `/api` is answered as JSON by `api/[[...unmatched]]`, and no rewrite rule may touch `/api` at all (module-state parity — see "Static-Asset URLs And The Nonce-Only CSP"). #2404 also removed the prefetch exemption outright, so no request header — `Purpose: prefetch`, `Next-Router-Prefetch`, `RSC`, in any combination — takes a URL outside the proxy. The gate still declines to CLAIM asset-shaped paths (a 503 holding screen is a document), so a URL of that shape which reaches a render is ungated by design; the shared public chrome (`src/components/website/website-chrome.tsx`, composed by both public route groups) and the public metadata guard cover it. |
 | `/api/health`, `/api/health/ready` | Public. | Load balancers, operators, anonymous callers. | DB reachability, runtime version/uptime, config readiness. Public responses omit provider error detail. | DB query only. | No rate limit. No secrets in response. | Logger debug/error only. | Anonymous callers can observe availability. #615 can decide whether to add light rate limiting or cache headers. |
 | `/api/age-tier-settings`, `/api/committee` | Public read endpoints. | Anonymous website users. | Public age-tier/rate settings and published committee assignment presentation fields; and, **only when `PublicContentSettings.committeePhotoDisplay != NONE`**, per-published-member photo metadata (member id + `photoUpdatedAt` version) so the roster can build the scoped `/api/members/[id]/photo` URL. | None. | No rate limit. Committee query selects active, published assignment fields only; member email is not selected or returned, phone is returned only when show-phone is enabled, and contact keys are returned only for contactable assignments. Photo metadata (incl. member id) is emitted **only** when the club has opted the roster into photos — with `committeePhotoDisplay = NONE` (the default), no member id or photo pointer is returned. | None beyond DB errors if thrown. | Public committee names and optional phone numbers are intentional once an admin publishes the assignment; email remains server-only. Committee-photo bytes are served (and gated) by the scoped `/api/members/[id]/photo` endpoint, which applies the SAME `committeePhotoDisplay != NONE` condition to its anonymous branch (#2242) — so "Don't show photos" takes the bytes off the public internet, not just the roster metadata. |
 | `/api/address-autocomplete/search`, `/api/address-autocomplete/details/[id]` | Public server-side proxy to Addy, gated by the `addressAutocomplete` Admin Module. | Anonymous website users. | Search terms, address suggestion ids, Addy result payloads. | Addy API via `src/lib/addy-api.ts`. | Module-route/proxy gate returns 404 while disabled, Zod query validation, `rateLimiters.addressAutocomplete` at 90/min/IP. Secrets stay server-side. | Minimal error responses, no audit. | Upstream-cost and enumeration surface remains public only when the module is enabled; manual address entry remains the fallback. |
@@ -144,6 +144,12 @@ the row, not open work. Open findings now live in labelled GitHub issues
 | `/api/webhooks/ses-sns` | AWS SNS signature verification. No session auth by design. | AWS SNS for SES feedback. | Processed webhook ids, email suppression/failure records, webhook logs. | SNS certificate verification, SES feedback ingestion. | Bounded JSON envelope validation, SNS signature verification, and `SES_SNS_TOPIC_ARN` allowlisting unless a non-production unsafe override is set. | `recordWebhookLog()`, logger; duplicate event ids are idempotent. | `SES_SNS_TOPIC_ARN` must stay configured for deployed environments; unsafe missing-topic override is local-only. |
 | `/api/webhooks/servernz-posts` | HMAC over `timestamp.body` with the Alpine Central Server push secret from the encrypted `IntegrationCredential` store, five-minute window, constant-time compare. No session auth by design. | The Alpine Central Server. | Nothing from the body: a verified push only schedules the authenticated message-board pull. | The pull inside `runMirrorSync`, after the response. | Module off answers 200 `ignored` (so the server stops retrying); no stored secret answers 401, and a server address move or API-key replacement removes the stored secret in its own transaction, so pushes signed with it stop verifying (within the 45-second credential cache of any other running process) and the next sync registers again (#4470); a registration whose connection was replaced in flight stores nothing; bounded 16 KiB body; a body that is not a JSON object is refused 400 BEFORE the signature, so a captured free-beds question cannot ring the doorbell. | Logger. | `INV-INT-030`. |
 | `/api/webhooks/servernz-availability` | HMAC over `timestamp.text` with the same push secret, where the text is route-specific (`availability`, lodge, from, to), five-minute window, constant-time compare, judged BEFORE the query is parsed. No session auth by design. | The Alpine Central Server's public lodge search. | Free beds per night and their minimum for one linked lodge; never a guest, member or booking. | None: a read. | Rate-limited first; `alpineCentralServer` module off, `otherLodgesEnabled` off, an unknown, unowned, unlinked or inactive lodge are all the same 404; the stay is capped at 30 nights and 365 days ahead. No stored secret answers 401: a server address move or API-key replacement removes it (#4470), so the old server can no longer ask once the 45-second credential cache of any other running process expires, and the new server can ask once this site has registered with it again. | Logger. | `INV-INT-030`; counts only, by design. |
+| `/.well-known/oauth-protected-resource/api/mcp`, `/.well-known/oauth-authorization-server` (ALP-653) | Public GET, no session. 404 while the `mcpServer` module is off (proxy rule plus the handler's own check, `INV-MCP-001`). | Any AI app, anonymous. | None: OAuth discovery metadata built from `NEXTAUTH_URL` (RFC 9728 and RFC 8414). | None. | Module gate; `Cache-Control: public, max-age=300`. | None. | Must reach the app through the reverse proxy; the shipped `Caddyfile` passes every path except `/images/*` through unchanged. |
+| `/api/mcp` POST (ALP-653) | Bearer access token (hashed lookup, one hour, `INV-MCP-003`) for an ACTIVE connection that `resolveMcpGrantUse` still allows (`INV-MCP-002`). No cookie is read; a browser `Origin` other than the site's own is refused 403 before the token is looked at. No GET. | AI app acting for one member. | Through each action's own route only: the dispatcher sends a loopback request carrying the 30-second signed `x-mcp-principal` header, and `auth()` builds the member's session from the connection (`INV-MCP-005`, `INV-MCP-007`). Writes `McpGrant.lastUsedAt` at most every five minutes. | Loopback HTTP to `127.0.0.1:$PORT`. | `mcpUnauthenticated` (60 a minute per address) only for a missing or invalid token; `mcpCall` (120 a minute per connection) otherwise. Permanent exclusions and view-only scope refused before dispatch; 25-second action timeout; 100,000-character result cap. | `MCP_ACTION_CALLED` (`security`) for every `write` or `destructive` call, never its arguments or result (`INV-MCP-008`); `read` calls are not audited. | Member-typed text the app reads can try to steer it (prompt injection); an officer's connection sends other members' data to the officer's AI provider. See [the guide](guides/mcp-server.md#risks-and-limits). |
+| `/api/mcp/oauth/register` POST (ALP-653) | Public by necessity (RFC 7591): an app registers before any member signs in. Grants nothing. | Any AI app, anonymous. | Writes one `McpClient` (name, redirect addresses); deletes never-approved clients older than a day. | None. | `mcpClientRegister` (20 an hour per address); one to five redirect addresses, each `https` on an approved host or `http` loopback (`INV-MCP-003`). | None. | The client name is self-asserted; the approval screen shows the redirect host as the checkable fact. |
+| `/api/mcp/oauth/token`, `/api/mcp/oauth/revoke` POST (ALP-653) | No session, no client secret. Token: the PKCE S256 verifier for a five-minute single-use code, or a single-use rotating refresh token. Revoke: either token. | AI app. | `McpAuthCode`, `McpToken` (hashes only), `McpGrant` status. | None. | `mcpToken` (60 per 10 minutes per address). Code or refresh reuse ends the connection; use is re-checked before the credential is spent; revoke answers the same for a known and an unknown token. | Connection status and `endedReason`; no audit row for these ends (`INV-MCP-008`). | — |
+| `/api/member/mcp-grants` GET/POST, `/api/member/mcp-grants/[id]` DELETE, page `/connect/authorize` (ALP-653) | Auth.js session via `requireActiveSession()` (the page: the signed-in layout). Any request carrying `x-mcp-principal` is refused 403 (`mcpConnectionMayNotManage`). | Signed-in member. | The member's own connections; POST writes an `McpGrant` and a code after re-running the approval check on the current session (`INV-MCP-002`). | None. | `mcpApprove` (20 an hour per member) on POST; kiosk, unverified-email and club-policy refusals; another member's connection answers 404. | `MCP_CONNECTION_APPROVED`, `MCP_CONNECTION_REVOKED`. | — |
+| `/api/admin/mcp/settings` GET/PUT, `/api/admin/mcp/grants` GET, `/api/admin/mcp/grants/[id]` DELETE (ALP-653) | Admin session via `requireAdmin()`: `support` view to read, `support` edit to save or disconnect; PUT also calls `requireRecentAuth()` (on the fresh-proof list, `INV-AUTH-010`). A connection is refused 403. | Admin with support permission. | `McpSettings`; every live connection with member name, app and dates. | None. | Strict Zod schema; hosts normalised and capped at 50; an invalid host refuses the whole save. | `MCP_SETTINGS_UPDATED` with previous and new values, in the save's transaction; `MCP_CONNECTION_REVOKED` for an officer disconnect. | Widening `officersMayConnect` or `maxScope` applies to every connection on its next request. |
 | GitHub Actions, Dockerfile, Compose, deployment scripts | CI/deployment boundary, not app-session auth. | Maintainer, GitHub Actions, deploy operator. | Repository, package lock, Docker images, GHCR packages, environment variables, migrations. | npm, Docker, GHCR, Semgrep, gitleaks, Trivy, CodeQL if enabled by repo settings. | CI gates: audit, lint, tests, production build in CI only, Semgrep, gitleaks, Docker image security. Compose uses read-only app container, tmpfs cache, no-new-privileges, resource limits. | GitHub logs and deploy logs. | #619 should review workflow permissions, package publishing, secret scopes, image provenance, and deploy env contracts. |
 
 ## External Integration Review (#616)
@@ -295,6 +301,14 @@ These family rules are enforced by automated tests (issue #1132):
 - `src/app/api/health/route.ts`
 - `src/app/api/health/ready/route.ts`
 - `src/app/api/webhooks/**/route.ts`
+- `src/app/api/mcp/route.ts`, `src/app/api/mcp/oauth/{register,token,revoke}/route.ts`
+  (ALP-653) — the AI app endpoint and its OAuth endpoints. No cookie session:
+  a bearer token, a PKCE verifier or a refresh token is the credential, each
+  checked against a connection that is still ACTIVE and still allowed
+  (`INV-MCP-002`, `INV-MCP-003`). Each tool call then meets the target route's
+  own guards over loopback (`INV-MCP-007`). Listed in
+  `explicitPublicApiRoutes` in `src/lib/api-route-security.ts`. The two
+  `src/app/.well-known/oauth-*` discovery routes sit outside `src/app/api`.
 
 ### Authenticated Member Routes
 
@@ -324,6 +338,8 @@ These family rules are enforced by automated tests (issue #1132):
 - `src/app/api/issue-reports/route.ts`
 - `src/app/api/lodges/route.ts`
 - `src/app/api/member/**/route.ts`
+  — including `member/mcp-grants/**` (ALP-653), which also refuses any request
+  arriving as an AI app connection (`INV-MCP-002`).
 - `src/app/api/members/family/**/route.ts`
 - `src/app/api/members/guest-candidates/**/route.ts` — **a deliberate PII
   surface, see the Sensitive Data Inventory below.** The exact-email resolve
@@ -1555,7 +1571,8 @@ the Tokoroa fork's review and fixed in #2242.
   carry metadata — which silenced that warning for exactly the types that are
   never stripped; it now returns `ok: false` with the original bytes.
 
-Notes on the fail-open choice and its cost:
+Notes on the fail-open choice and its cost (the fail-open half is superseded:
+see [Hidden Image Data On Every Type](#hidden-image-data-on-every-type---2026-11-22)):
 
 - The asymmetry is deliberate. `stripJpegMetadata` is known to reject some
   spec-legal JPEG fill-byte sequences (T.81 §B.1.1.2). On a member photo —
@@ -1615,6 +1632,63 @@ Notes on the fail-open choice and its cost:
   not), exactly as it did before this change. What that timing could distinguish
   is committee-publication status, which the public roster already publishes by
   name.
+
+## Hidden Image Data On Every Type - 2026-11-22
+
+Issue #5244 closed the two gaps the 2026-08-01 review above left: three allowed
+types had no cleaner, and four of the five storing paths stored an unconfirmed
+image anyway.
+
+- **Every allowed type now has a cleaner**, each lossless and byte-identical on
+  a second pass, and each a keep-list rather than a deny-list, so a metadata
+  block nobody has named (Content Credentials, a vendor chunk) is dropped
+  anyway: JPEG keeps only structural segments, a rebuilt JFIF without its
+  thumbnail, Adobe and ICC, and refuses reserved markers; PNG and WebP keep
+  only the chunks that draw the picture (WebP animation frames are walked
+  too) and refuse an unknown critical PNG chunk; all three keep an
+  orientation-only EXIF (dropping it turned phone portraits sideways);
+  GIF keeps only image, graphic-control and looping (`NETSCAPE2.0`) blocks,
+  rebuilt from their defined fields so nothing rides in extra sub-blocks;
+  a still AVIF has every non-picture item (`Exif`, XMP `mime`), property
+  (except `colr`, which is kept and can hold an ICC profile) and top-level
+  box retyped `free` and zeroed in place, with every `mdat`/`idat`
+  byte outside a picture item's extents zeroed, data-reference location
+  strings zeroed and unknown file-type brands replaced; SVG is rebuilt by
+  `sanitize-html` from an allow-list of drawing elements and attributes, with
+  `script`, `metadata`, `title`, `desc` and `foreignObject` removed with their
+  contents, references narrowed to `#id`, and embedded raster images cleaned
+  and re-embedded.
+- **Every path fails closed.** `cleanImageForStorage` replaced
+  `storableImageBytes`: an image that cannot be confirmed clean is refused with
+  one plain message (`IMAGE_NOT_CLEAN_MESSAGE`), never stored and logged. The
+  image library answers 400, the image manager refuses that file and keeps the
+  batch, a configuration restore stops at its dry run with an error naming the
+  file, and a site-style save with an unconfirmable inline logo answers 400. The
+  fill-byte false refusal that once justified failing open is fixed. An animated
+  AVIF is refused with its own message. The image manager also refuses bytes
+  that sniff as no image, or as SVG, whatever the declared type.
+- **SVG fails closed on reach, not just on parse**: CSS `@import`,
+  `image-set()`, a CSS escape, an unterminated CSS comment, a `url()` that is
+  not `#id`, markup nested in a `<style>`, an embedded image that cannot be
+  cleaned, bytes that are not UTF-8, output without an `<svg` root in the SVG
+  namespace, or output
+  that does not rebuild to itself all refuse the file. Each `<style>` body is
+  checked whole after the rebuild, because the parser hands its text over in
+  pieces split at character references, comments and CDATA; the `url()` scan is
+  linear, so an upload cannot stall the server with unclosed `url(` runs.
+  Text inside the drawing's own `text` elements is kept, even where it is
+  hidden or only referenced from `defs`.
+- **An inline logo already stored is not re-cleaned** on a site-style save that
+  sends it back unchanged, so a legacy logo neither blocks a colour change nor
+  is rewritten.
+- **`/api/images/[id]` adds `sandbox` to its CSP**:
+  `default-src 'none'; style-src 'unsafe-inline'; sandbox`, with `nosniff` and
+  `Content-Disposition: inline` as before. Opened directly as a document, an SVG
+  gets a unique opaque origin, so markup that slipped past the rebuild can
+  neither run nor reach the site's cookies or storage.
+- **Images stored before #5244 are not altered** (owner decision, 20 Nov 2026):
+  no backfill runs over `MediaImage` rows, `public/images` or stored logos.
+  `docs/guides/image-manager.md` tells an admin how to replace one.
 
 ## Per-Route CSP Relaxation And Soft Navigation - 2026-07-26
 
@@ -2050,9 +2124,12 @@ Fixed at the root: that function now reports `readFailed` separately, and the
 shared public chrome (`src/components/website/website-chrome.tsx`, which held this
 branch as `(website)/layout.tsx` until the D1 narrowing extracted it) paints the
 holding screen only on a POSITIVE answer. The
-asymmetry with the proxy gate, which still fails closed on the same input, is
-deliberate and is the general rule worth keeping — **503 is a true statement
+asymmetry with the proxy gate, which fails closed on the same input on a cold
+start, is deliberate and is the general rule worth keeping — **503 is a true statement
 about an unreadable database; a 200 that describes the club is not.**
+Since #5264 the gate fails closed only until it has seen setup complete: after
+that, a database read that fails, throws or times out keeps serving the stale
+"complete" answer, by design, so a blip cannot close a live club's website.
 
 ## Prerendered Pages And The Nonce-Only CSP - 2026-07-31
 
@@ -2390,15 +2467,24 @@ address — real page, typo, and bot probe alike — which is the configuration 
   incomplete, the fully rendered document — is memoised for 15 seconds behind a
   single-flight promise, matching the TTL of the tagged cache the layout reads
   the same `ClubTheme` row through. Once setup is complete the cached answer is a
-  bare boolean and the club identity and contact address are never read at all.
+  bare boolean, each refresh reads `completedAt` alone (`readSetupCompletion`),
+  and the theme, club identity and contact address are never read at all. An
+  expired answer is served while one background refresh runs, so no visitor
+  waits for the read (#5264: the refresh used to load the whole theme and build
+  its CSS, stalling a page every 15 seconds); only a cold start waits.
   The proxy is bundled separately from route handlers, so the `revalidateTag`
   the site-style save issues cannot reach this memo; the TTL is the propagation
-  bound, and it is why the site opens within 15 seconds of the save rather than
-  instantly.
-- **Fails CLOSED.** A failed `ClubTheme` read leaves `isComplete` false, so a
-  database outage is answered with the holding screen and a 503 — which is what
-  503 literally means. Failing open would restore the 200-for-every-address
-  defect under exactly the conditions that make it hardest to notice. Note the
+  bound, and it is why the site opens on the second request after the 15
+  seconds rather than instantly.
+- **Fails CLOSED.** A cold start whose `ClubTheme` read fails or throws answers
+  with the holding screen and a 503 — which is what 503 literally means.
+  Failing open would restore the 200-for-every-address defect under exactly the
+  conditions that make it hardest to notice. **One deliberate exception
+  (#5264):** once the gate has seen setup complete, a refresh whose read fails,
+  throws or times out (5 seconds, `SETUP_STATE_READ_TIMEOUT_MS`) keeps serving
+  the stale "complete" answer, by design, rather than closing a live club's
+  website for a database blip — the same launch-state reasoning as finding F4. A refresh that
+  reads a POSITIVE "not complete" still closes the site. Note the
   deliberate asymmetry with the render-time fallback in
   `src/components/website/website-chrome.tsx` — `(website)/layout.tsx` until the D1
   narrowing extracted it, and now the one copy shared by both public route groups —

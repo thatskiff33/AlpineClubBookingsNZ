@@ -38,6 +38,7 @@ description, so you can find the right file without opening more than one.
 | [`product-configuration.md`](invariants/product-configuration.md) | `INV-CONFIG` | adding a value or feature a club could answer differently, a new setting existing deployments will not have, or a default an upgrade must fall back to |
 | [`single-source-of-truth.md`](invariants/single-source-of-truth.md) | `INV-SSOT` | adding a constant, helper, formatter, type, validation rule or config value a second place will need; comparing two values; putting a default on a parameter that resolves an environment or configuration authority; or writing a guard, census or ratchet that claims to cross-check another one |
 | [`authentication.md`](invariants/authentication.md) | `INV-AUTH` | password sign-in, the per-account password throttle, what a refused or throttled sign-in answers, the breach-list check on a chosen password, the maximum session age |
+| [`mcp-connections.md`](invariants/mcp-connections.md) | `INV-MCP` | AI app (MCP) connections: who may connect, the OAuth flow, the connection lifecycle, the action catalogue and its route census, the loopback dispatcher, their audit rows |
 
 Three supporting files sit beside them: the full id scheme in
 [`SCHEME.md`](invariants/SCHEME.md); the word-budget register of approved
@@ -359,7 +360,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-137` | An IB organiser-paid joiner's refund goes to the organiser, on its mirror |
 | `INV-PAY-139` | A change capture nothing else records is recorded once, against its invoice |
 | `INV-PAY-140` | A superseded card change's waiting invoice follows the carrying request |
-| `INV-PAY-141` | A card refund's reversal keeps Paid another way bank cash |
+| `INV-PAY-141` | A card refund's reversal keeps its bank-paid closes and shortfalls |
 | `INV-PAY-142` | A refund failing after a Paid another way close is held |
 | `INV-PAY-143` | An unminted approved whole-lodge booking reprices as unpaid |
 | `INV-PAY-144` | A kept change capture is recorded by the document its evidence names |
@@ -862,7 +863,7 @@ is now `INV-OPS-005` to `INV-OPS-011` in
 | `INV-LIFE-019` | `NOT_APPLICABLE` has no `AgeTierSetting` row and sits outside every age-based automation |
 | `INV-LIFE-084` | Committee assignment is presentation only; contact routing per assignment via `contactEmailMode` |
 | `INV-LIFE-085` | Member photos: scoped endpoint only; public only when rostered and displayed |
-| `INV-LIFE-086` | Every stored image has EXIF/XMP metadata stripped; member-photo path fails closed |
+| `INV-LIFE-086` | Every stored image has hidden metadata removed; unconfirmed images are refused |
 | `INV-LIFE-087` | Seasonal membership type governs pricing and lockout, never access or committee |
 | `INV-LIFE-093` | Full and Non-Member stay active with fixed booking rules; drift is repairable |
 | `INV-LIFE-020` | 2FA on: the JWT claim flips only via a server-minted challenge |
@@ -972,6 +973,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-038` | An abandoned inbound reconcile row is taken over, never shared |
 | `INV-INT-039` | A dead webhook attempt is taken over past the lease |
 | `INV-INT-040` | No subscription or joining-fee invoice work while Xero is off |
+| `INV-INT-041` | A PENDING outbox row always holds a request the outbox can claim |
 
 ## Operations
 
@@ -1083,3 +1085,23 @@ headings the index keeps verbatim.
 | `INV-AUTH-011` | Address sign-in limits exempt signout/session; refusals show a network wait |
 | `INV-AUTH-012` | Officers use an app or passkey after grace |
 | `INV-AUTH-013` | Password work leaves the event loop; placeholders use one unusable hash |
+
+## AI App Connections
+
+How a member connects an AI app to their own account over the Model Context
+Protocol: who may hold a connection, how the app obtains and keeps it, how it
+ends, and how each action reaches the site as that member.
+File: [`invariants/mcp-connections.md`](invariants/mcp-connections.md).
+Prefix `INV-MCP`. Added by ALP-653; it is not one of the ten pre-split domain
+headings the index keeps verbatim.
+
+| ID | Covers |
+| --- | --- |
+| `INV-MCP-001` | The `mcpServer` module is the only switch; off answers 404 |
+| `INV-MCP-002` | Club policy decides who connects, checked at approval and every use |
+| `INV-MCP-003` | PKCE S256, approved redirect hosts, single-use codes, rotating hashed tokens |
+| `INV-MCP-004` | ACTIVE ends once as REVOKED or EXPIRED by a guarded claim |
+| `INV-MCP-005` | A connection signs in through `auth()` as the member, never freshly |
+| `INV-MCP-006` | Every API route method is an action or has a stated exclusion |
+| `INV-MCP-007` | Actions reach routes over loopback; scope enforced before dispatch |
+| `INV-MCP-008` | Which connection events and action calls write an audit row |

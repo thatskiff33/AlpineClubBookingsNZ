@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import type { NightAvailability } from "@/lib/capacity";
 import { overCapacityNights } from "@/lib/over-capacity-confirmation";
+import { SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE } from "@/lib/saved-card-charge-claim";
 
 export const confirmPendingGuestsSchema = z.object({
   allowOverbook: z.boolean().optional(),
@@ -45,3 +46,16 @@ export function lockedClaimRefusalBody(refusal: {
       : {}),
   };
 }
+
+/**
+ * The officer's 502 answer to a charge that threw with nothing captured (#5279):
+ * today's wording when the release handed the booking back, and the truth when
+ * it lost both attempts and the booking waits, CONFIRMED, for the confirm-pending
+ * job's recovery.
+ */
+const CHARGE_FAILED_RETURNED_TO_PENDING_MESSAGE =
+  "The card charge failed; the booking was returned to pending and admins have been alerted.";
+const CHARGE_FAILED_RETURN_DEFERRED_MESSAGE = `The card charge failed and admins have been alerted. ${SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE}`;
+
+export const chargeFailedMessage = (claimReleased: boolean): string =>
+  claimReleased ? CHARGE_FAILED_RETURNED_TO_PENDING_MESSAGE : CHARGE_FAILED_RETURN_DEFERRED_MESSAGE;
