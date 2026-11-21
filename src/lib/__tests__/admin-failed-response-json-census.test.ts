@@ -29,8 +29,12 @@ import { describe, expect, it } from "vitest";
   A success read (`if (!x.ok) throw …; const data = await x.json()`, or one
   inside `if (x.ok)` or `x.ok ? read : …`) is not counted either: a route that answered 2xx with HTML is a different defect.
 
-  There is no allowance list: ALP-649 converged the last files other lanes
-  were still editing when this census landed, so any hit, in any file, is red.
+  Under `src/app/(admin)` there is no allowance list: ALP-649 converged the
+  last files other lanes were still editing when this census landed, so any
+  hit there is red. ALP-749 widened the scan to the admin components in
+  `src/components/admin`, where the password policy card lives; the files there
+  that already failed are listed in `KNOWN_UNGUARDED` below, which may only
+  shrink — an entry that no longer fails is red too, so a fixed file leaves it.
 
   What it does NOT see: only `await x.json()` with a plain identifier receiver
   is counted. A `.then((r) => r.json())` chain, or a receiver that is not an
@@ -42,7 +46,29 @@ import { describe, expect, it } from "vitest";
   reach it. Run it by name.
 */
 
-const SCANNED_DIR = join(process.cwd(), "src", "app", "(admin)");
+const SCANNED_DIRS = [
+  join(process.cwd(), "src", "app", "(admin)"),
+  join(process.cwd(), "src", "components", "admin"),
+];
+
+/** Admin components that failed when ALP-749 widened the scan. Shrink only. */
+const KNOWN_UNGUARDED = new Set([
+  "src/components/admin/ai-spend-currency-card.tsx",
+  "src/components/admin/booking-policies/default-cancellation-policy-section.tsx",
+  "src/components/admin/booking-requests/booking-approvals-panel.tsx",
+  "src/components/admin/booking-requests/booking-change-requests-panel.tsx",
+  "src/components/admin/booking-requests/policy-exception-requests-panel.tsx",
+  "src/components/admin/booking-requests/public-booking-requests-panel.tsx",
+  "src/components/admin/booking-requests/resolve-pending-school-adults.tsx",
+  "src/components/admin/copy-booking-button.tsx",
+  "src/components/admin/email-settings/email-message-settings-panel.tsx",
+  "src/components/admin/family-groups/family-suggestions-panel.tsx",
+  "src/components/admin/finance-report-mappings-panel.tsx",
+  "src/components/admin/membership-cancellation-settings-panel.tsx",
+  "src/components/admin/non-member-contact-form.tsx",
+  "src/components/admin/xero-record-activity-panel.tsx",
+  "src/components/admin/xero-sync-now-button.tsx",
+]);
 
 type Hit = { line: number; kind: "failure-branch" | "parse-before-check" };
 
@@ -212,7 +238,7 @@ function walk(dir: string, files: string[] = []): string[] {
   return files;
 }
 
-const measured = walk(SCANNED_DIR)
+const measured = SCANNED_DIRS.flatMap((dir) => walk(dir))
   .map((file) => ({
     rel: relative(process.cwd(), file).split(sep).join("/"),
     hits: unguardedFailureReads(readFileSync(file, "utf8"), file),
@@ -333,7 +359,7 @@ describe("admin failed-response JSON reads (#4976, ALP-589)", () => {
 
   it("finds no unguarded failure read in any admin file", () => {
     const over = measured
-      .filter(({ hits }) => hits.length > 0)
+      .filter(({ rel, hits }) => hits.length > 0 && !KNOWN_UNGUARDED.has(rel))
       .map(({ rel, hits }) => `${rel}: ${hits.map((h) => `${h.line} (${h.kind})`).join(", ")}`);
     expect(
       over,
@@ -341,6 +367,14 @@ describe("admin failed-response JSON reads (#4976, ALP-589)", () => {
         "readApiErrorBody) from src/lib/api-error-message.ts, never a bare " +
         "`await res.json()`: an HTML error page from the proxy throws a JSON " +
         "parse error the officer then reads as the refusal",
+    ).toEqual([]);
+  });
+
+  it("lists only admin components that still fail", () => {
+    const failing = new Set(measured.map(({ rel }) => rel));
+    expect(
+      [...KNOWN_UNGUARDED].filter((rel) => !failing.has(rel)),
+      "remove a fixed file from KNOWN_UNGUARDED so it cannot regress unseen",
     ).toEqual([]);
   });
 });
