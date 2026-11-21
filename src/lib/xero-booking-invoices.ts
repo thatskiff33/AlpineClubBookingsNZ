@@ -253,9 +253,8 @@ async function readEarlierPrimaryInvoiceRequests(idempotencyKey: string): Promis
       take: 20,
     });
     return operations.flatMap(({ requestPayload }) => {
-      const invoices = asRecord(requestPayload)?.invoices;
-      const lines = Array.isArray(invoices) ? asRecord(invoices[0])?.lineItems : undefined;
-      return Array.isArray(lines) ? [lines as LineItem[]] : [];
+      const { storedLines } = storedInvoiceRequestLines(requestPayload);
+      return storedLines ? [storedLines] : [];
     });
   } catch (error) {
     logger.error({ err: error, idempotencyKey }, "Could not read the earlier primary invoice requests");
