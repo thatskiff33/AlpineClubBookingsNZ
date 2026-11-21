@@ -9,7 +9,7 @@ import { expect } from "vitest";
  * thing by "one h1" and "no skipped level" (#5216).
  */
 
-export type OutlineEntry = { level: number; name: string };
+type OutlineEntry = { level: number; name: string };
 
 function levelOf(heading: HTMLElement): number {
   const native = /^H([1-6])$/.exec(heading.tagName);

@@ -110,8 +110,9 @@ Pinned by `image-derivatives.test.ts`, `admin-image-manager-derivatives.test.ts`
   every render state.
 - Every `CardTitle` declares a heading level or `"none"`; there is no default
   level (#2796 D1). `card-title-classification-census.test.ts` forbids
-  unclassified titles under the member-facing roots and in the member cards it
-  lists, and ratchets the rest down (#4951).
+  unclassified titles under the member-facing roots, the public website and
+  the member cards it lists, including the booking editor and edit-booking
+  panel (#5216), and ratchets the rest down (#4951).
 - Limit: a notice body's H1 renders as an H2. Lodge and hut-leader instruction
   bodies render as the admin wrote them, so an H1 there adds a second level-1
   heading; so does an H1 in the stored header or body HTML of `/join/apply`,
@@ -120,4 +121,5 @@ Pinned by `image-derivatives.test.ts`, `admin-image-manager-derivatives.test.ts`
 - Proof: `member-route-titles.test.ts`,
   `card-title-classification-census.test.ts`,
   `member-token-screen-headings.test.tsx`, `single-card-screen-headings.test.tsx`,
-  `join-apply-state-headings.test.tsx`.
+  `join-apply-state-headings.test.tsx`, `booking-detail-card-headings.test.tsx`,
+  `edit-booking/__tests__/heading-outline.test.tsx`.
