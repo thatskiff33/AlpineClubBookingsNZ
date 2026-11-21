@@ -186,7 +186,12 @@ describe("admin reports helpers", () => {
         );
         return {
           granularity: series.granularity,
-          data: series.data.map(({ label: _label, tooltipLabel: _tooltip, ...rest }) => rest),
+          data: series.data.map(({ periodStart, periodEnd, revenueCents, bookingCount }) => ({
+            periodStart,
+            periodEnd,
+            revenueCents,
+            bookingCount,
+          })),
         };
       };
       expect(withoutText(DE_CH)).toEqual(withoutText(EN_NZ));

@@ -18,71 +18,72 @@ type ChartPoint = Record<string, unknown>;
 let activeChartData: ChartPoint[] = [];
 let activeXKey = "";
 
-function Chart({ data, children }: { data: ChartPoint[]; children: ReactNode }) {
-  activeChartData = data;
-  return <div>{children}</div>;
-}
-
-vi.mock("recharts", () => ({
-  BarChart: Chart,
-  AreaChart: Chart,
-  LineChart: Chart,
-  ResponsiveContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  Tooltip: ({
-    formatter,
-    labelFormatter,
-  }: {
-    formatter?: (value: unknown) => ReactNode[];
-    labelFormatter?: (value: unknown, payload: Array<{ payload: ChartPoint }>) => ReactNode;
-  }) => {
-    const point = activeChartData[0];
-    return (
-      <div data-testid="tooltip">
-        <span data-testid="tooltip-label">
-          {labelFormatter?.(point[activeXKey], [{ payload: point }])}
-        </span>
-        {formatter?.(point.revenueCents ?? point.occupancyRate).map((value, index) => (
-          <span key={index}>{value}</span>
-        ))}
-      </div>
-    );
-  },
-  XAxis: ({
-    dataKey,
-    tickFormatter,
-  }: {
-    dataKey: string;
-    tickFormatter?: (value: unknown) => string;
-  }) => {
-    activeXKey = dataKey;
-    return (
-      <div data-testid="x-axis">
-        {activeChartData.map((point, index) => (
-          <span key={index} data-testid="x-tick">
-            {tickFormatter ? tickFormatter(point[dataKey]) : String(point[dataKey])}
+vi.mock("recharts", () => {
+  const chart = ({ data, children }: { data: ChartPoint[]; children: ReactNode }) => {
+    activeChartData = data;
+    return <div>{children}</div>;
+  };
+  return {
+    BarChart: chart,
+    AreaChart: chart,
+    LineChart: chart,
+    ResponsiveContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+    Tooltip: ({
+      formatter,
+      labelFormatter,
+    }: {
+      formatter?: (value: unknown) => ReactNode[];
+      labelFormatter?: (value: unknown, payload: Array<{ payload: ChartPoint }>) => ReactNode;
+    }) => {
+      const point = activeChartData[0];
+      return (
+        <div data-testid="tooltip">
+          <span data-testid="tooltip-label">
+            {labelFormatter?.(point[activeXKey], [{ payload: point }])}
           </span>
-        ))}
+          {formatter?.(point.revenueCents ?? point.occupancyRate).map((value, index) => (
+            <span key={index}>{value}</span>
+          ))}
+        </div>
+      );
+    },
+    XAxis: ({
+      dataKey,
+      tickFormatter,
+    }: {
+      dataKey: string;
+      tickFormatter?: (value: unknown) => string;
+    }) => {
+      activeXKey = dataKey;
+      return (
+        <div data-testid="x-axis">
+          {activeChartData.map((point, index) => (
+            <span key={index} data-testid="x-tick">
+              {tickFormatter ? tickFormatter(point[dataKey]) : String(point[dataKey])}
+            </span>
+          ))}
+        </div>
+      );
+    },
+    YAxis: ({ tickFormatter }: { tickFormatter?: (value: number) => string }) => (
+      <div data-testid="y-axis">
+        {tickFormatter
+          ? activeChartData.map((point, index) => (
+              <span key={index}>{tickFormatter(Number(point.revenueCents))}</span>
+            ))
+          : null}
       </div>
-    );
-  },
-  YAxis: ({ tickFormatter }: { tickFormatter?: (value: number) => string }) => (
-    <div data-testid="y-axis">
-      {tickFormatter
-        ? activeChartData.map((point, index) => (
-            <span key={index}>{tickFormatter(Number(point.revenueCents))}</span>
-          ))
-        : null}
-    </div>
-  ),
-  Bar: () => null,
-  CartesianGrid: () => null,
-  Line: () => null,
-  Area: () => null,
-  PieChart: () => null,
-  Pie: () => null,
-  Cell: () => null,
-  Legend: () => null,
-}));
+    ),
+    Bar: () => null,
+    CartesianGrid: () => null,
+    Line: () => null,
+    Area: () => null,
+    PieChart: () => null,
+    Pie: () => null,
+    Cell: () => null,
+    Legend: () => null,
+  };
+});
 
 import {
   OccupancyAreaChart,
