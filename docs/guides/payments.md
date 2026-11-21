@@ -245,6 +245,22 @@ Xero, record the refund against that credit note. Each change raises at most
 one task. A card-paid booking is refunded to the card automatically and raises
 none.
 
+One kind of card payment is treated like a bank payment here (#5212): a booking
+recorded as paid by card that Stripe holds no record of, so there is nothing
+for a card refund to be made against. A change that lowers its price raises the
+same task and sends the same email, and no card refund is promised or tried.
+For now, **Mark paid back** is refused on most of these tasks, because the
+payment has no card charge on record for the refund to be recorded against.
+
+**Warning: an open task of this kind may already have been paid.** Because it
+cannot be closed, it still looks unpaid after someone has paid the member, and
+a second officer following "pay it and mark it paid back" above would pay the
+member twice. Before paying one, check Xero and the club's bank account for a
+refund already sent for that booking. After paying, record the refund in Xero
+against the change's credit note, tell the other finance officers (the
+booking, the amount and the date paid) and your club administrator, and leave
+the task open until #5290 lets you close it.
+
 While such a task is open, its amount counts as already promised back. A later
 change or a cancellation of the same booking refunds only what is left of the
 money paid, never that amount a second time, and a refund appeal can ask for
@@ -914,7 +930,7 @@ Payments is a read-only ledger (aside from Generate Invoice). Its controls:
 | Reset | Restore filters, sort, and page | rolling three-month Updated range through today | Disabled while the ledger is already at its defaults |
 | Generate Invoice | Create a Xero invoice for a succeeded payment | — | Needs finance **edit**; only for succeeded, non-Internet-Banking payments with no invoice. Never offered for a manually recorded cash payment — no invoice is expected for one |
 | Record / Reverse manual payment | Record a cash or off-Xero bank-transfer settlement on a booking, or undo one | — | On the booking page, not here. Needs finance **edit**. Never contacts Xero |
-| Mark paid back / Dismiss | Close a hand-back task for a cancelled cash booking, for a price cut on a booking paid by internet banking or cash, or for a group's organiser repaid by bank transfer | — | Needs finance **edit**. "Mark paid back" writes the refund into the ledger (a group organiser's refund is already there, so it records only that the money went); "Dismiss" needs a note; a group organiser's repayment cannot be dismissed, and for now (#4516) neither can any hand-back paid by bank transfer or in cash, except a card refund shortfall's part to check and a disputed card payment's once its dispute is lost |
+| Mark paid back / Dismiss | Close a hand-back task for a cancelled cash booking, for a price cut on a booking paid by internet banking or cash (or by a card payment Stripe has no record of), or for a group's organiser repaid by bank transfer | — | Needs finance **edit**. "Mark paid back" writes the refund into the ledger (a group organiser's refund is already there, so it records only that the money went); "Dismiss" needs a note; a group organiser's repayment cannot be dismissed, and for now (#4516) neither can any hand-back paid by bank transfer or in cash, except a card refund shortfall's part to check and a disputed card payment's once its dispute is lost |
 | Refund to card / Close without refunding | Decide a card payment that went through after its booking was cancelled and was held for a treasurer's approval | — | Needs finance **edit**. "Refund to card" refunds the card through Stripe now; "Close without refunding" refunds nothing and needs a note. Only appears on a payment held for approval, which stays held if the club later switches back to automatic refunds |
 | Refunded automatically — nothing to pay back | Read-only record of a payment Stripe returned by itself, because the booking had already been cancelled — the booking's own payment or one for a change to it | last 30 days | No controls at all: the money has already gone back. Every such refund of the last 30 days is listed, grouped into bookings that were deleted (worth a look) and bookings still on file (normally nothing to do); the audit log holds anything older. A capture you had already paid back by hand is not refunded again and is not listed here — you are emailed instead |
 
@@ -1000,6 +1016,46 @@ joiners', whose Net Collected already treats that money as refunded.
 | **Reverse manual payment** is not offered | A refund, a card payment, an open task against **that payment**, or a Xero invoice has appeared since | Cancel the booking instead; a reversal can no longer be undone cleanly |
 | An old review row still shows pricing or settlement controls | The page was loaded before officer edit reviews were retired | Reload the page. Reviews can no longer be settled or closed here; their recorded history remains on the booking and in the audit log |
 | A row shows a booking identifier instead of a link | Your admin role covers finance but not bookings, and the booking is not your own | Quote the identifier to an admin who can open bookings, or ask for bookings view access |
+
+### Find older edit refunds with no card recovery record
+
+Before #5212, a price reduction could record a card refund as owed even when
+the payment had no Stripe intent. The fix does not rewrite posted money.
+A database operator can use this read-only query to identify candidates for
+reconciliation; review the payment history before arranging any payment.
+
+```sql
+SELECT e."id" AS "eventId", e."eventKey", e."effectiveAt", m."bookingId"
+FROM "MemberMoneyEvent" e
+JOIN "MemberMoneyJournal" j ON j."eventId" = e."id"
+JOIN "BookingModification" m ON m."id" = split_part(e."eventKey", '|', 3)
+WHERE e."kind" = 'REFUND_OBLIGATION'
+  AND e."eventKey" LIKE 'refund-obligation|modification|%'
+  AND NOT EXISTS (
+    SELECT 1 FROM "MemberMoneyJournal" reversal
+    WHERE reversal."reversesJournalId" = j."id"
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM "PaymentRecoveryOperation" recovery
+    WHERE recovery."idempotencyKey" =
+      'payment_recovery_modification_refund_' || m."id"
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM "MemberMoneyRefundReservation" reservation
+    JOIN "MemberMoneyObligation" o ON o."id" = reservation."obligationId"
+    WHERE o."obligationKey" LIKE 'refund-obligation|modification|%'
+      AND split_part(o."obligationKey", '|', 3) = m."id"
+  )
+ORDER BY e."effectiveAt", e."id";
+```
+
+The key encoding is defined in `src/lib/member-money/internal/keys.ts`:
+the third pipe-separated part is the modification id. Hand-back obligations
+use a different scope and are excluded. So is an edit whose card refund was
+tried without a recovery record, as edits before #4992 were: the journal
+reserved that refund against a Stripe charge, which a payment with no Stripe
+record cannot have. These results identify missing recovery records, not proof
+that a member has never been paid another way.
 
 ## Related links
 

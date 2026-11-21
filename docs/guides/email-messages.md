@@ -118,7 +118,8 @@ paid. A card refund reads "A refund of $X has been processed to your original
 payment method." once the card refund has gone through; until then — when the
 card refund failed, timed out or was not made — it reads "A refund of $X is on
 its way to your original payment method." (#4070). A refund on a booking
-paid by internet banking or in cash reads "The club will refund $X to you by
+paid by internet banking or in cash, or by a card payment Stripe holds no
+record of (#5212), reads "The club will refund $X to you by
 bank transfer." — it is promised, not reported, because a treasurer still has
 to send it from the **Money to settle** card (see the [payments guide](payments.md#pay-back-a-refund-for-a-cash-booking))
 (#3827). On a group booking the organiser paid for by card, the refund goes to
