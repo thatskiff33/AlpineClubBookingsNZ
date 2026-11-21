@@ -1445,8 +1445,7 @@ one, check the other.
     still covers, and a bank note for the whole close (`INV-PAY-151`).
   - **Inbound recount**: `INV-PAY-155`.
   - **Neither reads a capped late capture's pre-#4383 over-note as cover**
-    (`readLateCapturePreCapOverNoteCents`), less what a live reversal of that
-    capture's refunds already undid.
+    (`readLateCapturePreCapOverNoteCents`).
   - **Officers hear once per refused slice or failed-later decision**, and
     again if retries run out.
   - **Deploy window**: an older release closes a refused row as paid and drops
