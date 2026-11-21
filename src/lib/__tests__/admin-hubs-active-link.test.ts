@@ -288,6 +288,10 @@ describe("no admin active-state check compares raw hrefs", () => {
       why: string;
     }
   > = {
+    "src/app/(admin)/admin/membership/members/_hooks/use-members-query-state.ts": {
+      kind: "served",
+      why: "compares the path with the canonical Members URL to skip a router.replace to the address already shown; both address forms of the page count as already there",
+    },
     "src/components/admin-sidebar.tsx": {
       kind: "sidebar",
       why: "the active link: activeAdminHref compares in canonical form (the test above)",

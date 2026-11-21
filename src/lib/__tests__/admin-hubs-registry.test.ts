@@ -883,7 +883,7 @@ describe("the entries' shape", () => {
       ),
     ).toEqual([]);
     // Lodge is part-moved (C11 part 1 #4808): Lobby Display and Lodges have
-    // moved; these eleven wait for part 2.
+    // moved; these twelve wait for part 2.
     expect(
       ADMIN_PAGES.filter((page) => page.hub === "lodge-ops" && !page.moved).map((page) => page.id),
     ).toEqual([
@@ -896,6 +896,7 @@ describe("the entries' shape", () => {
       "work-parties",
       "lodge-instructions",
       "maintenance-reports",
+      "food-orders",
       "lockers",
       "calendar",
     ]);
@@ -2062,6 +2063,8 @@ describe("the registry is inert", () => {
   const REGISTRY_DIR = "src/lib/admin-hubs/";
   /** Every file outside the registry that may import it, and why. */
   const IMPORTERS: Record<string, string> = {
+    "e2e/admin-roles.spec.ts": "#5155: registry paths and page labels identify settled admin destinations",
+    "src/app/(admin)/admin/membership/members/_hooks/use-members-query-state.test.tsx": "#5155: registry Members path defines the canonical URL for no-op replacement tests",
     "src/app/(admin)/admin/booking-desk/bed-allocation/page.tsx": "#4972: the empty-lodge alert links to Lodges",
     "src/app/(admin)/admin/finance/xero/setup/xero-setup-wizard.tsx": "#4972: shares the step parameter and the webhooks and mapping step ids with the shortcuts",
     "src/lib/admin-permissions.ts":
@@ -2387,6 +2390,9 @@ describe("the registry is inert", () => {
     "src/components/admin/environment-xero-containment.tsx": "C9: the member link is adminHref",
     "src/components/admin/induction-register-table.tsx": "C9: the print link is adminHref",
     "src/components/audit-timeline.tsx": "C9: the member link is adminHref",
+    "src/components/calendar/event-details-view.tsx": "C9: the work-party admin link is adminHref",
+    "src/components/calendar/__tests__/event-dialog-work-party-link.test.tsx":
+      "C9: pins the work-party admin link to adminHref",
     "src/lib/email-templates/admin-membership.ts": "C9: the family-groups button is adminHref",
     "src/lib/email/admin-alerts-membership.ts": "C9: the review URLs are adminHref",
     "src/lib/xero-admin-health.ts": "C9: the unlinked-members link is adminHref",

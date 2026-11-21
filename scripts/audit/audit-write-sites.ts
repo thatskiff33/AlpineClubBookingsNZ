@@ -12,6 +12,7 @@
 import type { AuditWriteSiteLedgerEntry } from "./audit-writer-census";
 
 export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntry>> = {
+  "src/app/(authenticated)/bookings/[id]/_lib/booking-invoice-download.ts::prepareBookingInvoiceDownload#0": {"category":"booking","sink":"createAuditLog","action":"(dynamic) creditNote ? \"booking.credit_note.downloaded\" : \"booking.invoice.downloaded\""},
   "src/app/api/admin/access-roles/[id]/route.ts::DELETE#0": {"category":"admin","sink":"auditLog.create","action":"ACCESS_ROLE_DEFINITION_DELETED"},
   "src/app/api/admin/access-roles/[id]/route.ts::PATCH.updated#0": {"category":"admin","sink":"auditLog.create","action":"ACCESS_ROLE_DEFINITION_UPDATED"},
   "src/app/api/admin/access-roles/route.ts::POST.created#0": {"category":"admin","sink":"auditLog.create","action":"ACCESS_ROLE_DEFINITION_CREATED"},
@@ -114,6 +115,7 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/app/api/admin/family-suggestions/reset/route.ts::POST#0": {"category":"admin","sink":"logAudit","action":"FAMILY_SUGGESTIONS_RESET"},
   "src/app/api/admin/family-suggestions/route.ts::POST#0": {"category":"family","sink":"logAudit","action":"FAMILY_GROUP_CREATED_FROM_SUGGESTION","reviewed":["2581-applied"]},
   "src/app/api/admin/fee-configuration/route.ts::POST#0": {"category":"payment","sink":"createAuditLog","action":"(dynamic) `fee-configuration.${parsed.data.action.toLowerCase()}`","reviewed":["2581-applied","2581-no-entity-id"]},
+  "src/app/api/admin/food-orders/settings/route.ts::PUT.settings#0": {"category":"lodge","sink":"createAuditLog","action":"food_order.settings.updated"},
   "src/app/api/admin/image-library/[id]/route.ts::DELETE#0": {"category":"admin","sink":"logAudit","action":"media_image.delete"},
   "src/app/api/admin/image-library/route.ts::POST#0": {"category":"admin","sink":"logAudit","action":"media_image.upload"},
   "src/app/api/admin/induction-templates/[id]/route.ts::DELETE#0": {"category":"admin","sink":"logAudit","action":"INDUCTION_TEMPLATE_DELETED"},
@@ -226,6 +228,7 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/app/api/admin/subscription-categories/[id]/route.ts::DELETE#0": {"category":"admin","sink":"auditLog.create","action":"SUBSCRIPTION_CATEGORY_DELETED"},
   "src/app/api/admin/subscription-categories/[id]/route.ts::PATCH.updated#0": {"category":"admin","sink":"auditLog.create","action":"(dynamic) auditAction.action"},
   "src/app/api/admin/subscription-categories/route.ts::POST.created#0": {"category":"admin","sink":"auditLog.create","action":"SUBSCRIPTION_CATEGORY_CREATED"},
+  "src/app/api/admin/work-parties/[id]/calendar/route.ts::POST#0": {"category":"admin","sink":"logAudit","action":"workparty.calendar.add","reviewed":["2765-lodge-keep"]},
   "src/app/api/admin/work-parties/[id]/route.ts::DELETE#0": {"category":"admin","sink":"logAudit","action":"workparty.delete","reviewed":["2765-lodge-keep"]},
   "src/app/api/admin/work-parties/[id]/route.ts::PUT#0": {"category":"admin","sink":"logAudit","action":"workparty.update","reviewed":["2765-lodge-keep"]},
   "src/app/api/admin/work-parties/route.ts::POST#0": {"category":"admin","sink":"logAudit","action":"workparty.create","reviewed":["2765-lodge-keep"]},
@@ -422,6 +425,10 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/email-failure-review.ts::writeEmailFailureReviewAudit#0": {"category":"communication","sink":"createAuditLog","action":"(dynamic) EMAIL_FAILURE_REVIEW_ACTION"},
   "src/lib/environment-safety-override-write.ts::writeEnvironmentSafetyOverride.outcome#0": {"category":"admin","sink":"auditLog.create","action":"ENVIRONMENT_SAFETY_OVERRIDE_UPDATED"},
   "src/lib/family-booking-add-notifications.ts::sendFamilyMemberBookingAddNotifications#0": {"category":"communication","sink":"logAudit","action":"booking.family_add.notification_unreachable"},
+  "src/lib/food-orders.ts::createFoodOrder#0": {"category":"lodge","sink":"createAuditLog","action":"food_order.placed"},
+  "src/lib/food-orders.ts::markFoodOrderItemsReceived#0": {"category":"lodge","sink":"createAuditLog","action":"food_order.items_received"},
+  "src/lib/food-orders.ts::markFoodOrderItemsReceived#1": {"category":"lodge","sink":"createAuditLog","action":"food_order.received"},
+  "src/lib/food-orders.ts::setFoodOrderPrice#0": {"category":"lodge","sink":"createAuditLog","action":"food_order.price_updated"},
   "src/lib/google-oauth.ts::auditGoogleLink#0": {"category":"forwarded:buildStructuredAuditLogCreateArgs(event)","sink":"auditLog.create","action":"(forwarded)","reviewed":["2581-forwarded-category","2581-wrapper","2695-forwarded-disclosure"]},
   "src/lib/group-cancel.ts::recordLegacyGroupChildRefundRecovered#0": {"category":"booking","sink":"logAudit","action":"booking.payment.refund_recovered"},
   "src/lib/group-cancel.ts::settleGroupBookingOnOrganiserCancel#0": {"category":"booking","sink":"logAudit","action":"booking.cancel"},
@@ -543,7 +550,6 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/servernz-sync-response.ts::auditSyncFailure#0": {"category":"lodge","sink":"createAuditLog","action":"(dynamic) `alpine_server.other_lodges.${direction}`"},
   "src/lib/servernz-sync-response.ts::auditUpload#0": {"category":"lodge","sink":"createAuditLog","action":"alpine_server.other_lodges.upload"},
   "src/lib/stored-night-price-repair-store.ts::recordReviewClosurePricing#0": {"category":"payment","sink":"createAuditLog","action":"(dynamic) repaired.length > 0 ? \"booking-payment.stored-night-price.record\" : \"booking-payment.review-closure.reprice\""},
-  "src/lib/stored-night-price-strand-reconcile.ts::recordStrandNightPriceReconcile#0": {"category":"payment","sink":"createAuditLog","action":"booking-payment.stored-night-price.reconcile"},
   "src/lib/stripe-webhook-service.ts::handlePaymentIntentCanceled#0": {"category":"payment","sink":"logAudit","action":"(dynamic) isAdditionalPayment ? \"booking.modification.payment.canceled\" : \"booking.payment.canceled\"","reviewed":["2581-applied"]},
   "src/lib/stripe-webhook-service.ts::handlePaymentIntentFailed#0": {"category":"payment","sink":"logAudit","action":"(dynamic) isAdditionalPayment ? \"booking.modification.payment.failed\" : \"booking.payment.failed\"","reviewed":["2581-applied"]},
   "src/lib/stripe-webhook-service.ts::refundSupersededGroupSettlementIntent#0": {"category":"payment","sink":"logAudit","action":"group.settlement.superseded_intent_refunded","reviewed":["2581-applied"]},
