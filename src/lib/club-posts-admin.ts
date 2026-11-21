@@ -3,13 +3,18 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 
 import { assertValidClubPostContent } from "@/lib/club-posts";
+import { OUTSTANDING_COPY_SELECT, withdrawOutstandingCopies } from "@/lib/club-post-sharing";
+import {
+  SHARE_PROBLEM_SELECT,
+  STRAY_COPY_KINDS,
+  type ShareProblem,
+  classifyShareProblem,
+  strayCopyWhere,
+} from "@/lib/club-post-share-problem";
 import logger from "@/lib/logger";
 import { deletePostImage } from "@/lib/post-image-storage";
 import { prisma } from "@/lib/prisma";
-import {
-  ServerNzVersionMismatchError,
-  withdrawClubPost,
-} from "@/lib/servernz-api";
+import { ServerNzVersionMismatchError } from "@/lib/servernz-api";
 
 /**
  * Moderation for the club message board (#2998, epic #2992).
@@ -39,18 +44,26 @@ export interface AdminClubPost {
   /** Non-null once removed. The row survives; its content does not. */
   removedAt: string | null;
   originClubName: string | null;
+  /** A share or withdrawal that ended in an error (#5246); admin-only. */
+  shareProblem: ShareProblem | null;
 }
 
-function serialize(row: {
-  id: string;
-  authorName: string;
-  authorMemberId: string | null;
-  content: string;
-  postedAt: Date;
-  hiddenAt: Date | null;
-  removedAt: Date | null;
-  originClubName: string | null;
-}): AdminClubPost {
+const ADMIN_POST_SELECT = {
+  id: true,
+  authorName: true,
+  authorMemberId: true,
+  content: true,
+  postedAt: true,
+  hiddenAt: true,
+  originClubName: true,
+  // removedAt comes with the share-problem fields.
+  ...SHARE_PROBLEM_SELECT,
+} satisfies Prisma.ClubPostSelect;
+
+function serialize(
+  row: Prisma.ClubPostGetPayload<{ select: typeof ADMIN_POST_SELECT }>,
+  now: Date,
+): AdminClubPost {
   return {
     id: row.id,
     authorName: row.authorName,
@@ -60,6 +73,7 @@ function serialize(row: {
     hiddenAt: row.hiddenAt?.toISOString() ?? null,
     removedAt: row.removedAt?.toISOString() ?? null,
     originClubName: row.originClubName,
+    shareProblem: classifyShareProblem(row, now),
   };
 }
 
@@ -91,35 +105,38 @@ export async function listClubPostsForAdmin(options: {
     },
     orderBy: [{ postedAt: "desc" }, { id: "desc" }],
     take: ADMIN_POST_PAGE_SIZE,
-    select: {
-      id: true,
-      authorName: true,
-      authorMemberId: true,
-      content: true,
-      postedAt: true,
-      hiddenAt: true,
-      removedAt: true,
-      originClubName: true,
-    },
+    select: ADMIN_POST_SELECT,
   });
 
-  return rows.map(serialize);
+  const now = new Date();
+  return rows.map((row) => serialize(row, now));
 }
 
+/** Most posts the "Sharing problems" panel lists; each is a rare failure. */
+export const SHARE_PROBLEM_LIST_LIMIT = 50;
+
+export type AdminShareProblemPost = AdminClubPost & { shareProblem: ShareProblem };
+
 /**
- * Removed posts whose network copy the central server has not yet confirmed
- * taken down (#3091 review 1). The moderation screen names this count: the
- * admin was told "removed", and until this is zero that is only true locally.
+ * This club's posts that may be on other clubs' boards in a way this site did
+ * not record (#3091 review 1, #5246): an accepted copy with no recorded share,
+ * a removal the server has not confirmed taking down, or a send whose result
+ * was never recorded. Removed posts INCLUDED, unlike the moderation list: a
+ * removed post's copy elsewhere is exactly what the admin needs to see.
  */
-export function countPendingWithdrawals(): Promise<number> {
-  return prisma.clubPost.count({
-    where: {
-      removedAt: { not: null },
-      serverPostId: { not: null },
-      originClubCode: null,
-      withdrawnAt: null,
-    },
+export async function listClubPostShareProblems(): Promise<AdminShareProblemPost[]> {
+  const now = new Date();
+  const rows = await prisma.clubPost.findMany({
+    where: strayCopyWhere(now),
+    orderBy: [{ postedAt: "desc" }, { id: "desc" }],
+    take: SHARE_PROBLEM_LIST_LIMIT,
+    select: ADMIN_POST_SELECT,
   });
+  return rows
+    .map((row) => serialize(row, now))
+    .filter((post): post is AdminShareProblemPost =>
+      post.shareProblem !== null && STRAY_COPY_KINDS.includes(post.shareProblem.kind),
+    );
 }
 
 export class ClubPostNotFoundError extends Error {
@@ -135,6 +152,34 @@ export class ClubPostNotEditableError extends Error {
       "That post was written by another club's member, so its words cannot be edited here. It can be hidden or removed.",
     );
     this.name = "ClubPostNotEditableError";
+  }
+}
+
+export class ClubPostNoShareProblemError extends Error {
+  constructor() {
+    super("That post has no shared copy left to deal with.");
+    this.name = "ClubPostNoShareProblemError";
+  }
+}
+
+const ASK_THE_ADMINISTRATOR =
+  "If it keeps failing, send the central server id to the central server's administrator and ask them to take the copy down.";
+
+/** The server is on a different API version (#49): nothing was withdrawn. */
+export class ClubPostWithdrawalPausedError extends Error {
+  constructor() {
+    super(
+      `Sharing with other clubs is paused because the central server is on a different version, so the copy was not withdrawn. ${ASK_THE_ADMINISTRATOR}`,
+    );
+    this.name = "ClubPostWithdrawalPausedError";
+  }
+}
+
+/** The server did not confirm the withdrawal; the id is kept for another try. */
+export class ClubPostWithdrawalFailedError extends Error {
+  constructor(reason: string) {
+    super(`The central server did not confirm the withdrawal (${reason.slice(0, 200)}). ${ASK_THE_ADMINISTRATOR}`);
+    this.name = "ClubPostWithdrawalFailedError";
   }
 }
 
@@ -248,7 +293,7 @@ export async function removeClubPost(postId: string): Promise<void> {
     if (claim.count === 0) return null;
     const removed = await tx.clubPost.findUniqueOrThrow({
       where: { id: postId },
-      select: { serverPostId: true, originClubCode: true, images: { select: { storageKey: true } } },
+      select: { ...OUTSTANDING_COPY_SELECT, images: { select: { storageKey: true } } },
     });
     await tx.clubPostImage.deleteMany({ where: { postId } });
     return removed;
@@ -277,47 +322,74 @@ export async function removeClubPost(postId: string): Promise<void> {
   //
   // Deliberately AFTER the local write and deliberately not fatal: the local
   // removal is the part the admin asked for and must not be undone because the
-  // central server is unreachable. `serverPostId` is kept so the withdrawal can
-  // be retried; the tombstone row is what a later sweep would use.
-  // Origin check as well as id check: a MIRROR row also carries a
-  // serverPostId, but the network copy belongs to the club that wrote it, and
-  // the server would refuse the withdrawal anyway (own-club only). Removing a
-  // mirror is a local act.
-  if (post.serverPostId && post.originClubCode === null) {
-    try {
-      await withdrawClubPost(post.serverPostId);
-      // CONFIRMED down everywhere (#3091 review 1). Without this stamp the
-      // row reads as withdrawal-pending forever and the sweep re-withdraws a
-      // copy that is already gone (harmless — the server 404s — but noisy).
-      await prisma.clubPost.update({
-        where: { id: postId },
-        data: { withdrawnAt: new Date() },
-      });
-    } catch (error) {
-      // NOT fatal, and NOT forgotten (#3091 review 1): the local removal
-      // stands, `withdrawnAt` stays null, and that combination is exactly
-      // what `retryPendingWithdrawals` sweeps every general-cron cycle and
-      // what the moderation screen names until the server confirms.
-      //
-      // A version pause (#49) is the same outcome for the row and a different
-      // one for the log: it is expected, not a fault, so it is recorded at
-      // info with the two numbers rather than as an error with a stack.
-      if (error instanceof ServerNzVersionMismatchError) {
-        logger.info(
-          {
-            postId,
-            serverPostId: post.serverPostId,
-            expected: error.expected,
-            serverVersion: error.serverVersion,
-          },
-          "Removed a shared club post locally; its withdrawal waits until the central server API version matches",
-        );
-        return;
-      }
-      logger.error(
-        { postId, serverPostId: post.serverPostId, err: error },
-        "Removed a shared club post locally but could not withdraw it from the central server; the withdrawal sweep will retry",
+  // central server is unreachable. The ids are kept so the withdrawal can be
+  // retried. `withdrawOutstandingCopies` withdraws the recorded share and any
+  // unrecorded copy (#5246), own-club posts only: a MIRROR row also carries a
+  // serverPostId, but its network copy belongs to the club that wrote it.
+  try {
+    await withdrawOutstandingCopies(post);
+  } catch (error) {
+    // NOT fatal, and NOT forgotten (#3091 review 1): the local removal
+    // stands, the ids stay, and that is exactly what
+    // `retryPendingWithdrawals` sweeps every general-cron cycle and what the
+    // moderation screen lists under "Sharing problems" until the server
+    // confirms.
+    //
+    // A version pause (#49) is the same outcome for the row and a different
+    // one for the log: it is expected, not a fault, so it is recorded at
+    // info with the two numbers rather than as an error with a stack.
+    const ids = { serverPostId: post.serverPostId, unrecordedServerPostId: post.unrecordedServerPostId };
+    if (error instanceof ServerNzVersionMismatchError) {
+      logger.info(
+        { postId, ...ids, expected: error.expected, serverVersion: error.serverVersion },
+        "Removed a shared club post locally; its withdrawal waits until the central server API version matches",
       );
+      return;
     }
+    logger.error(
+      { postId, ...ids, err: error },
+      "Removed a shared club post locally but could not withdraw it from the central server; the withdrawal sweep will retry",
+    );
   }
+}
+
+/**
+ * Withdraw a post's stray copy from the central server, on the admin's
+ * request (#5246): the unrecorded copy whenever one is held, and a removed
+ * post's unconfirmed share. A live post's own recorded share is never taken
+ * down here, and the share request is never touched, so this can only ever
+ * remove a copy, never send one. Returns the ids withdrawn, for the audit row.
+ */
+export async function withdrawSharedCopy(postId: string): Promise<{ serverPostIds: string[] }> {
+  const post = await prisma.clubPost.findUnique({ where: { id: postId }, select: OUTSTANDING_COPY_SELECT });
+  if (!post) throw new ClubPostNotFoundError();
+  const serverPostIds = [
+    ...(post.unrecordedServerPostId ? [post.unrecordedServerPostId] : []),
+    ...(post.serverPostId && post.removedAt && !post.withdrawnAt ? [post.serverPostId] : []),
+  ];
+  if (post.originClubCode !== null || serverPostIds.length === 0) throw new ClubPostNoShareProblemError();
+  try {
+    await withdrawOutstandingCopies(post);
+  } catch (error) {
+    logger.warn({ postId, serverPostIds, err: error }, "An admin's withdrawal of a shared club post's copy failed");
+    if (error instanceof ServerNzVersionMismatchError) throw new ClubPostWithdrawalPausedError();
+    throw new ClubPostWithdrawalFailedError(error instanceof Error ? error.message : "no reason given");
+  }
+  return { serverPostIds };
+}
+
+/**
+ * Mark a send whose result was never recorded as dealt with (#5246): the
+ * admin has had any copy taken down, or found there was none. Clears only the
+ * marker, and only while the post still holds no server id.
+ */
+export async function dismissShareOutcome(postId: string): Promise<void> {
+  const { count } = await prisma.clubPost.updateMany({
+    where: { id: postId, shareSentAt: { not: null }, sharedAt: null, serverPostId: null },
+    data: { shareSentAt: null },
+  });
+  if (count === 1) return;
+  const exists = await prisma.clubPost.findUnique({ where: { id: postId }, select: { id: true } });
+  if (!exists) throw new ClubPostNotFoundError();
+  throw new ClubPostNoShareProblemError();
 }
