@@ -12,7 +12,7 @@ import type { DataMigrationVerification } from "./types";
  * The body is READ OUT OF THIS MIGRATION'S `$previous$` block rather than
  * restated here, so the fixture seeds exactly the bytes the guard names.
  */
-const MIGRATION = "20261229020000_add_ai_apps_to_starter_privacy";
+const MIGRATION = "20270101020000_add_ai_apps_to_starter_privacy";
 const migrationSql = readFileSync(
   path.join(process.cwd(), "prisma", "migrations", MIGRATION, "migration.sql"),
   "utf8",
@@ -47,7 +47,7 @@ const headerState = `
 `;
 
 const verification: DataMigrationVerification = {
-  migration: "20261229020000_add_ai_apps_to_starter_privacy",
+  migration: "20270101020000_add_ai_apps_to_starter_privacy",
   intent:
     "Add the AI apps entry to an unedited starter privacy page (the #5007 body) and move its starter header's date, leaving every edited privacy page and header untouched.",
   idempotentReRun: true,

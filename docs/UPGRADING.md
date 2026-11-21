@@ -224,7 +224,7 @@ after any bundle import.
 
 ### Starter privacy policy names the AI apps members connect (#5305)
 
-`20261229020000_add_ai_apps_to_starter_privacy` is a **data-only
+`20270101020000_add_ai_apps_to_starter_privacy` is a **data-only
 correction**. It adds and removes no schema and is safe to run in the ordinary
 deploy window with the previous app colour still serving. It runs after
 #5007's correction above, so a club upgrading across both gets both, in order.

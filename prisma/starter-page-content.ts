@@ -17,7 +17,7 @@
 // on every database that already ran it.
 //
 // The privacy page is now written by
-// 20261229020000_add_ai_apps_to_starter_privacy (#5305), which guards on the
+// 20270101020000_add_ai_apps_to_starter_privacy (#5305), which guards on the
 // body 20261222030000_rewrite_starter_privacy_recipients (#5007) wrote. That
 // migration in turn guards on the
 // bodies #4915's 20261220010000_correct_starter_privacy_subject_access,

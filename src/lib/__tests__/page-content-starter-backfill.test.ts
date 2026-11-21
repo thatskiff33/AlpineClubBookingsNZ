@@ -145,7 +145,7 @@ const PRIVACY_RETENTION_HOSTING_MIGRATION_PATH = join(
 
 // #5007 (release 2 of #4918): guarded update that lists every member-facing
 // register recipient in section 5 and names the host through {{data-hosting}}.
-// It was the writer of the privacy seed text until #5305's 20261229020000.
+// It was the writer of the privacy seed text until #5305's 20270101020000.
 const PRIVACY_RECIPIENTS_MIGRATION_PATH = join(
   process.cwd(),
   "prisma",
@@ -160,7 +160,7 @@ const PRIVACY_AI_APPS_MIGRATION_PATH = join(
   process.cwd(),
   "prisma",
   "migrations",
-  "20261229020000_add_ai_apps_to_starter_privacy",
+  "20270101020000_add_ai_apps_to_starter_privacy",
   "migration.sql",
 );
 
@@ -1098,7 +1098,7 @@ describe("starter privacy AI apps migration (#5305)", () => {
   it("sorts after the #5007 migration it follows and the connections migration", () => {
     const stamp = (path: string) => path.split(/[\\/]/).at(-2)!;
     expect(stamp(PRIVACY_AI_APPS_MIGRATION_PATH) > stamp(PRIVACY_RECIPIENTS_MIGRATION_PATH)).toBe(true);
-    expect(stamp(PRIVACY_AI_APPS_MIGRATION_PATH) > "20261229010000_add_mcp_connections").toBe(true);
+    expect(stamp(PRIVACY_AI_APPS_MIGRATION_PATH) > "20270101010000_add_mcp_connections").toBe(true);
   });
 });
 
