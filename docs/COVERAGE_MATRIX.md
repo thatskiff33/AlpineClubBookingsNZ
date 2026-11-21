@@ -111,6 +111,7 @@ For what an officer sees and does on each screen, use the
 | `family-groups` | membership | `ARCHITECTURE.md` (family groups / billing, hidden family suggestions) | [guide](guides/family-groups.md); Suggestions tab: [guide](guides/family-suggestions.md) | 2 |
 | `fee-configuration` | finance | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) (redirect → Fees) | 2 |
 | `fees` | bookings (route map); page opens on **bookings or finance** (`canAccessConsolidatedFeesPage`) | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) | 2 |
+| `food-orders` | lodge | `multi-lodge/lodge-scoping-contract.md` (FoodOrder scoping), `SECURITY-ATTACK-SURFACE.md` (member routes `/food-order`, `/food-orders` and their API) | [guide](guides/food-orders.md) | — (foodOrders module, off by default; outside #2050) |
 | `google` | finance | [`guides/security.md`](guides/security.md) (Google sign-in credentials, verified in-app before the module can be enabled), [`guides/integrations.md`](guides/integrations.md) | [guide](guides/integrations.md) (`google/setup` wizard) | — (epic #2030; postdates #2050) |
 | `health` | support | — | [guide](guides/health.md) (Integration readiness section, S1 #4796) | 4 |
 | `hut-leaders` | lodge | `ARCHITECTURE.md` (hut-leader auto-assign cron), `invariants/booking-dates-and-capacity.md` (`INV-DATE-031`: night cover, school-night kinds #3819) | [guide](guides/hut-leaders.md) | 3 |
@@ -157,12 +158,12 @@ For what an officer sees and does on each screen, use the
 | `testing` | overview (allowlisted) | TEST-ONLY: `testing/route-error` is the route-error probe for the #4467 boundary E2E. In a real production runtime it calls `notFound()` before any await and has no loading boundary above it, so the answer is a real 404 status; elsewhere it runs the admin guard itself before reading its cookie (`src/lib/route-error-probe.ts`) | — (not an operator surface) | — |
 | `video-meetings` | finance | [`guides/calendar.md`](guides/calendar.md) ("Video meetings (MiroTalk)"), `SECURITY-ATTACK-SURFACE.md` (MiroTalk meeting tokens) | [guide](guides/calendar.md) | — (MAD #2940, epic #2725; postdates #2050) |
 | `waitlist` | bookings | `ARCHITECTURE.md` (waitlist), `E2E_PLAYWRIGHT.md` | [guide](guides/waitlist.md) | 1 |
-| `work-parties` | lodge | — | [guide](guides/work-parties.md) | 3 |
+| `work-parties` | lodge | `SECURITY-ATTACK-SURFACE.md` (member route `/dashboard/work-parties/[id]` and `/api/work-parties`, #5148), [`guides/calendar.md`](guides/calendar.md) (linked calendar entries) | [guide](guides/work-parties.md) | 3 |
 | `xero` | finance | `xero/ARCHITECTURE.md`, `XERO_MEMBER_GROUPING_RUNBOOK.md` | [guide](guides/xero.md) | 2 |
 
 ## Summary
 
-- **84** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`, `membership`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
+- **85** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`, `membership`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
 - **2** areas are already served by a **feature hub** (`display` → lobby-display,
   `lodges` → multi-lodge). #2050 should extend, not duplicate, those hubs.
 - **13** areas have **no reference coverage** beyond their operator guide

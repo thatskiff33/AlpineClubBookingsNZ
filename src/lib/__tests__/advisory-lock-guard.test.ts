@@ -1137,7 +1137,13 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // the milliseconds of a whole-series regenerate/propagate/collapse/delete so
   // two concurrent editors can't interleave a delete-and-regenerate and
   // duplicate/drop occurrences. Single-lock holder; its own keyspace, composed
-  // with no booking/money/capacity/lifecycle key (calendar rows only).
+  // with no booking/money/capacity/lifecycle key (calendar rows only). #5148:
+  // `lockWorkPartyCalendar` (calendar-work-party-entries.ts) calls the same
+  // helper with a calendar-series:work-party:{workPartyEventId} key, adding no
+  // raw lock site. Its holders (create's and Add to calendar's own
+  // transaction, the work-party edit, the work-party delete) each take it
+  // first, before any row, and hold no other advisory key
+  // (docs/CONCURRENCY_AND_LOCKING.md, the calendar-series row).
   "src/lib/calendar-service.ts": 1,
   "src/lib/config-transfer-lock.ts": 1,
   // TWO: the blocking `acquireLodgeCapacityLock`, and `tryAcquireLodgeCapacityLock`
@@ -1356,7 +1362,11 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // (`STALE_WAITING_PAYMENT`) on the anchor it already holds, the same
   // guarded `CANCELLED` + code -> `PENDING` update the late-capture re-queue
   // writes, without taking the lock again. The release still takes the lock,
-  // for the webhook, the confirm route and the reaper.
+  // for the webhook, the confirm route and the reaper. #5220: on that same
+  // held key the decision also queues the revived invoice's receipt where it
+  // goes out unpaid (the receipt's enqueue re-taking it) and stamps a refusal
+  // `STALE_WAITING_PAYMENT_CAPTURED` with the release's guarded claim; the
+  // officer's email follows the commit. Same site, no new key, same order.
   // #3403 (`INV-PAY-140`): the superseded-invoice move
   // (`superseded-ask-invoice-carry.ts`) calls the same helper on each change
   // whose waiting invoice it re-points at the request carrying its balance,
@@ -1498,6 +1508,11 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // writer and "Paid another way". See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Member-money applications and refund reservations" and the M4c paragraph.
   "src/lib/member-money/internal/application-read.ts": 1,
+  // #4525 (Ledger M13): the capture-receipt recorder takes the capture's PaymentTransaction
+  // row (`SELECT 1 … FOR NO KEY UPDATE`, by its unique intent) in a short transaction of its
+  // own holding nothing else, so two receipts of one capture plan in turn. No advisory key.
+  // See docs/CONCURRENCY_AND_LOCKING.md -> "Capture-receipt manifest".
+  "src/lib/member-money/internal/capture-receipt-manifest.ts": 1,
   // #4823: member merge re-points `Payment.manuallyMarkedPaidByMemberId` with one
   // sorted `SELECT 1 … ORDER BY "id" FOR NO KEY UPDATE NOWAIT` over every row
   // naming the duplicate, then the update. Merge takes no lock(1) and holds

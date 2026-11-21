@@ -9,6 +9,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -40,6 +41,8 @@ async function clean() {
   await prisma.xeroSyncOperation.deleteMany({ where: { localId: CAPTURE } });
   await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT } });
   await prisma.payment.deleteMany({ where: { id: PAYMENT } });
+  // #4525: each stored leg payment records a capture-receipt manifest naming the booking.
+  await releaseBookingJournalForTeardown(prisma, [BOOKING]);
   await prisma.booking.deleteMany({ where: { id: BOOKING } });
   await prisma.lodge.deleteMany({ where: { id: LODGE } });
   await prisma.member.deleteMany({ where: { id: OWNER } });
