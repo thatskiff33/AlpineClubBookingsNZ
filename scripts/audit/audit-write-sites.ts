@@ -228,6 +228,7 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/app/api/admin/subscription-categories/[id]/route.ts::DELETE#0": {"category":"admin","sink":"auditLog.create","action":"SUBSCRIPTION_CATEGORY_DELETED"},
   "src/app/api/admin/subscription-categories/[id]/route.ts::PATCH.updated#0": {"category":"admin","sink":"auditLog.create","action":"(dynamic) auditAction.action"},
   "src/app/api/admin/subscription-categories/route.ts::POST.created#0": {"category":"admin","sink":"auditLog.create","action":"SUBSCRIPTION_CATEGORY_CREATED"},
+  "src/app/api/admin/work-parties/[id]/calendar/route.ts::POST#0": {"category":"admin","sink":"logAudit","action":"workparty.calendar.add","reviewed":["2765-lodge-keep"]},
   "src/app/api/admin/work-parties/[id]/route.ts::DELETE#0": {"category":"admin","sink":"logAudit","action":"workparty.delete","reviewed":["2765-lodge-keep"]},
   "src/app/api/admin/work-parties/[id]/route.ts::PUT#0": {"category":"admin","sink":"logAudit","action":"workparty.update","reviewed":["2765-lodge-keep"]},
   "src/app/api/admin/work-parties/route.ts::POST#0": {"category":"admin","sink":"logAudit","action":"workparty.create","reviewed":["2765-lodge-keep"]},

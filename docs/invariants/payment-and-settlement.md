@@ -1918,14 +1918,15 @@ and **`INV-PAY-147`** (slice evidence).
 **Related: `INV-PAY-110`** (kept late captures) **and `INV-PAY-139`**.
 
 - **A kept change capture on a cancelled, invoiced booking is recorded by the
-  document the evidence names** (#4324, amending one case
-  of `INV-PAY-110`): a second invoice for a change the primary bills would
-  count the income twice.
-- **One decision** (`keptChangeCaptureRoute`), taken once by the keep or
-  the repair tool, under the task row then the change's anchor lock, after
+  document the evidence names** (#4324, amending one `INV-PAY-110` case),
+  so no income counts twice.
+- **One decision** (`keptChangeCaptureRoute`), taken once, by the keep or
+  repair tool, under the task row then the change's anchor, after
   finding the capture's receipt or kept invoice:
   - a change invoice naming the capture: the late-success release
-    (`INV-PAY-104`), and a `STALE_WAITING_PAYMENT` row re-queued inside the keep, no repair finding;
+    (`INV-PAY-104`); a `STALE_WAITING_PAYMENT` row re-queued in the keep,
+    with its receipt if unpaid, or stamped captured if refused (officer
+    emailed after commit, #5220); no repair finding;
   - a #3980 gap invoice billing it (`primaryInvoiceGapBillsChange`), the
     primary billing it (settled against it, or no supplementary invoice,
     and not raced past it: `primaryInvoiceMissedChange`), or a live
@@ -1939,10 +1940,10 @@ and **`INV-PAY-147`** (slice evidence).
 - **One recorder.** `readCaptureRecorder` and `anchorCaptureHasReceipt` count
   a kept-capture invoice; a replayed release finds the receipt; the receipt
   verdict counts it, so refunds get notes. No gap invoice on a cancelled
-  booking, and no supplementary invoice for a change a kept-capture invoice
+  booking, nor supplementary invoice for a change a kept-capture invoice
   bills; a gap invoice so refused raises the treasurer's UNDERBILLED task.
 - **Reopen.** Its worker re-reads the task under the anchor and, no longer
-  kept, closes its row there; an approval takes the anchor
+  kept, closes its row; an approval takes the anchor
   first and withdraws an undecided receipt. A paid-another-way close plans
   under the task row then the anchor.
 - **Repair.** `KEPT_LATE_CAPTURE_NOT_RECORDED_IN_XERO`, dry run listing the

@@ -4392,7 +4392,10 @@ supplementary invoice WAITING_PAYMENT on a card ask's intent (INV-PAY-104;
   -> the pay door closed and nothing carries it -> CANCELLED,
      STALE_WAITING_PAYMENT (the reaper; a capture of that same intent
      revives it, and a treasurer's keep does that inside its claim for the
-     row on the anchor it holds; while a supersede's cancel of that intent is still in
+     row on the anchor it holds, queuing an unpaid row's receipt there, or,
+     where the capture does not cover it -> CANCELLED,
+     STALE_WAITING_PAYMENT_CAPTURED in that same claim, the officer told
+     after it commits, #5220; while a supersede's cancel of that intent is still in
      flight the reaper keeps it, and the cancel's last step moves it, #4665)
 inbound webhook/event recorded -> reconciliation worker processes event
   PROCESSING left by a dead worker past the webhook lease -> RECEIVED
