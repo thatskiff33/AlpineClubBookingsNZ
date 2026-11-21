@@ -12,7 +12,7 @@ import {
   isPartPaymentReviewTask,
 } from "@/lib/manual-refund-task-settlement-rules";
 import { lockMemberCreditLedger, requireMemberCreditRecipient } from "@/lib/member-credit";
-import { postHandBackPayment, postRefundObligation, withdrawRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
+import { postHandBackPayment, postRefundObligation, restoreHandBackObligation, withdrawRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
 import { memberMoneyEventKeys } from "@/lib/member-money";
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import {
@@ -120,7 +120,7 @@ export const NO_HAND_BACK_DISPUTES: HandBackDisputeContext = { disputes: [], pay
  * step after a lost dispute was always to dismiss it, #5061), any other its reductions (raised less still owed, the
  * only change these tasks' amounts take).
  */
-function lossAppliedByTask(task: PaymentHandBackTask): number {
+export function lossAppliedByTask(task: Pick<PaymentHandBackTask, "status" | "amountCents" | "raisedAmountCents">): number {
   const raised = task.raisedAmountCents ?? task.amountCents ?? 0;
   return task.status === "DISMISSED" ? raised : Math.max(0, raised - (task.amountCents ?? 0));
 }
@@ -319,6 +319,28 @@ export async function withdrawReducedHandBackDebt(tx: Prisma.TransactionClient, 
     reason: "Disputed card payment's hand-back reduced: a dispute lost for part of it, so the cardholder already has that part",
     senderKeyPrefix: `hand-back-reduce:${task.id}`,
     part: { eventKey: memberMoneyEventKeys.handBackReduced(task.id, reduction.lostDisputeIds), amountCents: reduction.cents, debtorRead: "booking-row" },
+  });
+}
+
+/**
+ * #5197: a dispute-loss hand-back put back on the queue, by a late win (Stripe reports a lost dispute won) or by an
+ * officer, owes the member again: its refund debt is posted again exactly as its dismissal withdrew it
+ * (`restoreHandBackObligation`), so the journal owes what the reopened task does. With the reopen's status claim and
+ * under its locks (`lock(1)`, the booking row, the Payment row), as the dismissal took them. Every other kind posts
+ * nothing, as before.
+ */
+export async function restoreReopenedHandBackDebt(tx: Prisma.TransactionClient, journal: BookingJournalContext, input: {
+  task: HandBackFacts & { id: string; bookingId: string; amountCents: number | null };
+  origin: "OFFICER" | "STRIPE";
+  actorMemberId: string | null;
+}): Promise<void> {
+  const { task } = input;
+  if (!isDisputeLossHandBack(task) || task.amountCents === null) return;
+  await restoreHandBackObligation(tx, journal, {
+    bookingId: task.bookingId, taskId: task.id, amountCents: task.amountCents, origin: input.origin, actorMemberId: input.actorMemberId,
+    reason: input.origin === "STRIPE"
+      ? "Disputed card payment's hand-back reopened: Stripe reports the lost dispute won, so the club owes the member again"
+      : "Disputed card payment's hand-back put back on the queue by an officer: the refund is owed again",
   });
 }
 

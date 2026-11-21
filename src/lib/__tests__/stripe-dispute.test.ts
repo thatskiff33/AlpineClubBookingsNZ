@@ -181,12 +181,11 @@ import {
   mergeDisputeSnapshot,
   recordStripeDispute,
   STRIPE_DISPUTE_CHARGE_READ_TIMEOUT_MS,
-  stripeDisputeAlertKey,
   stripeDisputeAlertSentKey,
   StripeDisputeAlertNotSentError,
-  stripeDisputeWonAfterLossOwedKey,
   type DisputeSnapshot,
 } from "@/lib/stripe-dispute";
+import { stripeDisputeAlertKey, stripeDisputeWonAfterLossOwedKey } from "@/lib/stripe-dispute-keys";
 import { STRIPE_DISPUTE_NEXT_STEP, STRIPE_DISPUTE_WON_AFTER_LOSS_NEXT_STEP } from "@/lib/stripe-dispute-note";
 import { UNRECOGNISED_ALERT_IN_FLIGHT_MS } from "@/lib/unrecognised-stripe-payment";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";

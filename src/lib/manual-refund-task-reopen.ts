@@ -1,6 +1,6 @@
 import "server-only";
 
-import { BookingStatus, ManualRefundTaskKind, ManualRefundTaskStatus } from "@prisma/client";
+import { BookingEventType, BookingStatus, ManualRefundTaskKind, ManualRefundTaskStatus, type Prisma } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import {
@@ -12,6 +12,11 @@ import {
   isNonCancellationHandBackTask,
   isRefundRequestHandBackTask,
 } from "@/lib/manual-refund-task-settlement-rules";
+import { isDisputeLossHandBack, restoreReopenedHandBackDebt } from "@/lib/manual-refund-task-hand-back-journal";
+import { lockBookingRowForOwnerRead } from "@/lib/booking-row-lock";
+import { resolveBookingDoorClock, type BookingJournalContext } from "@/lib/member-money/doors";
+import { readDisputesByBookingId } from "@/lib/stripe-dispute-hold";
+import { stripeDisputeLateWinReopenKey } from "@/lib/stripe-dispute-keys";
 import { recordManualRefundTaskReopenAudit } from "@/lib/manual-refund-task-reopen-audit";
 import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
@@ -163,6 +168,47 @@ export const REOPEN_EDIT_REVIEW_RETIRED_MESSAGE =
 */
 
 /**
+ * #5197: the late win's own refusals. The dispute it names must still read won, on the task's own payment, or the
+ * reopen is not the app's to make; the alert then names the task for an officer instead.
+ */
+export const LATE_WIN_REOPEN_NOT_WON_MESSAGE =
+  "the dispute no longer reads won on this task's card payment";
+export const LATE_WIN_REOPEN_NOT_DISPUTE_LOSS_MESSAGE =
+  "it is not a disputed card payment's hand-back";
+
+/** #5197: how long a late win's reopen waits for a lock before it gives up and the alert names the task instead. */
+export const LATE_WIN_REOPEN_LOCK_TIMEOUT = "5s";
+
+/** Who is reopening: an officer, with their reason, or the app for a lost dispute Stripe now reports won (#5197). */
+type ReopenBy =
+  | { by: "officer"; actingMemberId: string; note: string }
+  | { by: "late-win"; disputeId: string };
+
+const REOPEN_TASK_SELECT = {
+  id: true,
+  bookingId: true,
+  paymentId: true,
+  kind: true,
+  // #3827: an edit refund hand-back's marker and the cash behind it.
+  occurrenceKey: true,
+  // #5197: what `isDisputeLossHandBack` reads.
+  partPaymentReviewPaymentId: true,
+  reason: true,
+  payment: { select: { id: true, bookingId: true, status: true, amountCents: true, refundedAmountCents: true } },
+  status: true,
+  amountCents: true,
+  raisedAmountCents: true,
+  note: true,
+  completedAt: true,
+  completedByMemberId: true,
+  // #3827: whether a cancellation has since counted this task out.
+  // #3949: and whether the group organiser paid for it, whom its money goes back to.
+  booking: { select: { memberId: true, status: true, organiserSettled: true, parentBookingId: true, payment: { select: { source: true } }, organisation: { select: { name: true, email: true } } } },
+} satisfies Prisma.ManualRefundTaskSelect;
+
+type ReopenTask = Prisma.ManualRefundTaskGetPayload<{ select: typeof REOPEN_TASK_SELECT }>;
+
+/**
  * Put one DISMISSED task back on the queue, audited, as the officer doing it.
  *
  * The window above bounds the CARD, not this function: a bound written into the
@@ -188,121 +234,11 @@ export async function reopenManualRefundTask({
   if (!trimmedNote) {
     throw new ManualBookingPaymentError(REOPEN_NOTE_REQUIRED_MESSAGE, 400);
   }
-
+  // `INV-LOCK-004`: a dispute-loss hand-back's restored debt (#5197) posts on the journal read before the transaction.
+  const { journal } = await resolveBookingDoorClock();
   return prisma.$transaction(async (tx) => {
-    /*
-      `INV-LOCK-001`/`INV-LOCK-002`: the global settlement cohort, taken FIRST and
-      before the read, because `DISMISSED -> OPEN` re-arms the pending-review fence
-      against money-affecting edits already in flight. The module docblock works
-      the interleaving through. No provider call happens inside this transaction,
-      so the bounded-exception rule that keeps the CLOSURE path lock-free has
-      nothing to apply to here.
-    */
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-    const task = await tx.manualRefundTask.findUnique({
-      where: { id: taskId },
-      select: {
-        id: true,
-        bookingId: true,
-        kind: true,
-        // #3827: an edit refund hand-back's marker and the cash behind it.
-        occurrenceKey: true,
-        payment: { select: { id: true, bookingId: true, status: true, amountCents: true, refundedAmountCents: true } },
-        status: true,
-        amountCents: true,
-        raisedAmountCents: true,
-        note: true,
-        completedAt: true,
-        completedByMemberId: true,
-        // #3827: whether a cancellation has since counted this task out.
-        // #3949: and whether the group organiser paid for it, whom its money goes back to.
-        booking: { select: { memberId: true, status: true, organiserSettled: true, parentBookingId: true, payment: { select: { source: true } }, organisation: { select: { name: true, email: true } } } },
-      },
-    });
-    if (!task) {
-      throw new ManualBookingPaymentError("Refund task not found.", 404);
-    }
-    if (task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
-      throw new ManualBookingPaymentError(REOPEN_EDIT_REVIEW_RETIRED_MESSAGE, 409);
-    }
-    if (task.status === ManualRefundTaskStatus.OPEN) {
-      throw new ManualBookingPaymentError(REOPEN_ALREADY_OPEN_MESSAGE, 409);
-    }
-    if (task.status !== ManualRefundTaskStatus.DISMISSED) {
-      throw new ManualBookingPaymentError(REOPEN_ONLY_DISMISSED_MESSAGE, 409);
-    }
-    if (task.completedByMemberId === null) {
-      throw new ManualBookingPaymentError(
-        REOPEN_ONLY_OFFICER_DISMISSAL_MESSAGE,
-        409,
-      );
-    }
-
-    // #3827 (`INV-PAY-117`): a cancellation since the dismissal sized its refund
-    // without this task, so reopening it would promise the same money twice.
-    if (isEditRefundHandBackTask(task) && task.booking.status === BookingStatus.CANCELLED) {
-      throw new ManualBookingPaymentError(editRefundHandBackReopenAfterCancelMessage(task.booking), 409); // #3949
-    }
-    // #3827 (`INV-PAY-117`): never promise back more cash than was taken - for
-    // an edit's refund and (D-3813-7) an approved appeal's alike, an appeal's
-    // measured by the appeal's own ceiling (`INV-PAY-118`: every open
-    // hand-back, the late-cash credit and, #4124, the card refunds still owed).
-    // Read under lock(1), which every edit, acceptance, paid cancel and
-    // approval holds - and, for an appeal's task, the Payment row too (#4124
-    // review F2; `lock(1)` then the Payment row, `INV-LOCK-002`), which the
-    // refunded-total writers, a cancellation hand-back's completion and the
-    // failed-later card refund debt hold without `lock(1)`.
-    if (isNonCancellationHandBackTask(task) && isRefundRequestHandBackTask(task) && task.payment) {
-      await lockPaymentForRefundedTotal(tx, task.payment.id);
-    }
-    if (
-      isNonCancellationHandBackTask(task) &&
-      (task.amountCents ?? 0) >
-        (isRefundRequestHandBackTask(task)
-          ? await refundableCashForRefundAppeal(tx, task.payment)
-          : await refundableCashNetOfOpenHandBacks(tx, task.payment))
-    ) {
-      throw new ManualBookingPaymentError(REOPEN_EDIT_REFUND_EXCEEDS_CASH_MESSAGE, 409);
-    }
-
-    /*
-      The same status-fenced conditional update the closure uses, in the other
-      direction. `updateMany` rather than `update` precisely so the fence can
-      live in the `where`: a row somebody else has already reopened, or
-      completed, matches nothing and is answered as the race it is rather than
-      being written over.
-
-      `completedAt` and `completedByMemberId` are cleared because they describe a
-      closure this row no longer has, and a reader filtering "who closed this"
-      would otherwise be handed the officer whose decision has just been undone.
-      `note` is NOT cleared - see the module docblock.
-
-      `amountCents` and `settlementDirection` are not touched either. A dismissal
-      writes neither, so there is nothing of a closure's on those columns to
-      undo; a task raised with a proposed amount keeps it, which is the state it
-      was in before it was dismissed.
-    */
-    const claimed = await tx.manualRefundTask.updateMany({
-      where: { id: task.id, status: ManualRefundTaskStatus.DISMISSED },
-      data: {
-        status: ManualRefundTaskStatus.OPEN,
-        completedAt: null,
-        completedByMemberId: null,
-      },
-    });
-    if (claimed.count === 0) {
-      throw new ManualBookingPaymentError(REOPEN_RACED_MESSAGE, 409);
-    }
-
-    await recordManualRefundTaskReopenAudit({
-      task,
-      subjectMemberId: bookingOwner(task.booking).memberId,
-      actingMemberId,
-      summary: "Dismissed booking money task put back on the queue",
-      details: trimmedNote,
-      store: tx,
-    });
-
+    const task = await reopenInTransaction(tx, journal, taskId, { by: "officer", actingMemberId, note: trimmedNote });
+    if (task === "already-open") throw new ManualBookingPaymentError(REOPEN_ALREADY_OPEN_MESSAGE, 409);
     return {
       taskId: task.id,
       bookingId: task.bookingId,
@@ -310,6 +246,187 @@ export async function reopenManualRefundTask({
       status: ManualRefundTaskStatus.OPEN,
     };
   }, LOCK1_HOLDER_TRANSACTION_BUDGET);
+}
+
+/**
+ * #5197 (owner decision, 18 Nov 2026): a dispute-loss hand-back dismissed while its card dispute read lost, put back
+ * on the queue by the app once Stripe reports that dispute won (a "late win"): the club holds the money again and
+ * owes the member. The officer's own rules and order apply, with no officer: origin `STRIPE`, no actor (as the inbound
+ * Xero sync reopens a part-payment review, `part-payment-review-cover.ts`), the dispute named in the audit entry, and
+ * its debt posted again. Every lock wait is bounded (`LATE_WIN_REOPEN_LOCK_TIMEOUT`), so a busy officer holding the
+ * booking makes the webhook give up rather than stall; the caller reports that, as it reports every refusal
+ * (`ManualBookingPaymentError`), never retrying here. A task already open (reopened by an officer, or by an earlier
+ * delivery) answers `already-open` and writes nothing. The `AlertCooldown` marker for (dispute, task) commits with
+ * the claim, so a redelivery names the task as reopened even though the allocation no longer counts it.
+ */
+export async function reopenHandBackAfterLateWin({ taskId, disputeId }: { taskId: string; disputeId: string }): Promise<"reopened" | "already-open"> {
+  const { journal } = await resolveBookingDoorClock();
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('lock_timeout', ${LATE_WIN_REOPEN_LOCK_TIMEOUT}, true)`;
+    const task = await reopenInTransaction(tx, journal, taskId, { by: "late-win", disputeId });
+    if (task === "already-open") return "already-open";
+    const key = stripeDisputeLateWinReopenKey(disputeId, task.id);
+    await tx.alertCooldown.upsert({ where: { key }, create: { key, lastAlertedAt: new Date() }, update: {} });
+    return "reopened";
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
+}
+
+/**
+ * The reopen both doors share, in one transaction. Order (`INV-LOCK-002`): `lock(1)` first (the module docblock),
+ * the task read, then for an appeal's hand-back its Payment row, as before. A dispute-loss hand-back (#5197) instead
+ * takes its booking row straight after the read, re-reads the task under it, then its Payment row and the booking's
+ * disputes: exactly the order its Dismiss and Reduce took (`lock(1)`, booking row, Payment row), and the restored
+ * debt reads its debtor under that booking row.
+ */
+async function reopenInTransaction(
+  tx: Prisma.TransactionClient,
+  journal: BookingJournalContext,
+  taskId: string,
+  reopenBy: ReopenBy,
+): Promise<ReopenTask | "already-open"> {
+  /*
+    `INV-LOCK-001`/`INV-LOCK-002`: the global settlement cohort, taken FIRST and
+    before the read, because `DISMISSED -> OPEN` re-arms the pending-review fence
+    against money-affecting edits already in flight. The module docblock works
+    the interleaving through. No provider call happens inside this transaction,
+    so the bounded-exception rule that keeps the CLOSURE path lock-free has
+    nothing to apply to here.
+  */
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+  let task = await tx.manualRefundTask.findUnique({ where: { id: taskId }, select: REOPEN_TASK_SELECT });
+  if (!task) {
+    throw new ManualBookingPaymentError("Refund task not found.", 404);
+  }
+  const disputeLoss = isDisputeLossHandBack(task);
+  if (disputeLoss) {
+    // #5197: the booking row before anything else row-level; the task re-read under it is the one decided on.
+    await lockBookingRowForOwnerRead(tx, task.bookingId);
+    task = await tx.manualRefundTask.findUniqueOrThrow({ where: { id: taskId }, select: REOPEN_TASK_SELECT });
+  }
+  if (task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
+    throw new ManualBookingPaymentError(REOPEN_EDIT_REVIEW_RETIRED_MESSAGE, 409);
+  }
+  if (task.status === ManualRefundTaskStatus.OPEN) return "already-open";
+  if (task.status !== ManualRefundTaskStatus.DISMISSED) {
+    throw new ManualBookingPaymentError(REOPEN_ONLY_DISMISSED_MESSAGE, 409);
+  }
+  if (task.completedByMemberId === null) {
+    throw new ManualBookingPaymentError(
+      REOPEN_ONLY_OFFICER_DISMISSAL_MESSAGE,
+      409,
+    );
+  }
+  if (reopenBy.by === "late-win" && !disputeLoss) {
+    throw new ManualBookingPaymentError(LATE_WIN_REOPEN_NOT_DISPUTE_LOSS_MESSAGE, 409);
+  }
+  // #5197: the Payment row (the dismissal's order), then the disputes re-read under every lock above.
+  if (disputeLoss && task.paymentId !== null) await lockPaymentForRefundedTotal(tx, task.paymentId);
+  if (reopenBy.by === "late-win") await assertLateWinDisputeWon(tx, task, reopenBy.disputeId);
+
+  // #3827 (`INV-PAY-117`): a cancellation since the dismissal sized its refund
+  // without this task, so reopening it would promise the same money twice.
+  // #5197: except a dismissal made after the cancellation, which only a lost
+  // dispute allows (#4516, owner decision 18 Nov 2026): the cancel counted the
+  // task as going back, so putting it back restores what the cancel assumed.
+  if (isEditRefundHandBackTask(task) && task.booking.status === BookingStatus.CANCELLED && !(await dismissedAfterCancellation(tx, task))) {
+    throw new ManualBookingPaymentError(editRefundHandBackReopenAfterCancelMessage(task.booking), 409); // #3949
+  }
+  // #3827 (`INV-PAY-117`): never promise back more cash than was taken - for
+  // an edit's refund and (D-3813-7) an approved appeal's alike, an appeal's
+  // measured by the appeal's own ceiling (`INV-PAY-118`: every open
+  // hand-back, the late-cash credit and, #4124, the card refunds still owed).
+  // Read under lock(1), which every edit, acceptance, paid cancel and
+  // approval holds - and, for an appeal's task, the Payment row too (#4124
+  // review F2; `lock(1)` then the Payment row, `INV-LOCK-002`), which the
+  // refunded-total writers, a cancellation hand-back's completion and the
+  // failed-later card refund debt hold without `lock(1)`.
+  if (isNonCancellationHandBackTask(task) && isRefundRequestHandBackTask(task) && task.payment) {
+    await lockPaymentForRefundedTotal(tx, task.payment.id);
+  }
+  if (
+    isNonCancellationHandBackTask(task) &&
+    (task.amountCents ?? 0) >
+      (isRefundRequestHandBackTask(task)
+        ? await refundableCashForRefundAppeal(tx, task.payment)
+        : await refundableCashNetOfOpenHandBacks(tx, task.payment))
+  ) {
+    throw new ManualBookingPaymentError(REOPEN_EDIT_REFUND_EXCEEDS_CASH_MESSAGE, 409);
+  }
+
+  /*
+    The same status-fenced conditional update the closure uses, in the other
+    direction. `updateMany` rather than `update` precisely so the fence can
+    live in the `where`: a row somebody else has already reopened, or
+    completed, matches nothing and is answered as the race it is rather than
+    being written over.
+
+    `completedAt` and `completedByMemberId` are cleared because they describe a
+    closure this row no longer has, and a reader filtering "who closed this"
+    would otherwise be handed the officer whose decision has just been undone.
+    `note` is NOT cleared - see the module docblock.
+
+    `amountCents` and `settlementDirection` are not touched either. A dismissal
+    writes neither, so there is nothing of a closure's on those columns to
+    undo; a task raised with a proposed amount keeps it, which is the state it
+    was in before it was dismissed.
+  */
+  const claimed = await tx.manualRefundTask.updateMany({
+    where: { id: task.id, status: ManualRefundTaskStatus.DISMISSED },
+    data: {
+      status: ManualRefundTaskStatus.OPEN,
+      completedAt: null,
+      completedByMemberId: null,
+    },
+  });
+  if (claimed.count === 0) {
+    throw new ManualBookingPaymentError(REOPEN_RACED_MESSAGE, 409);
+  }
+  // #5197: with the claim, so a lost claim posts nothing; a journal refusal rolls the reopen back.
+  await restoreReopenedHandBackDebt(tx, journal, {
+    task,
+    origin: reopenBy.by === "officer" ? "OFFICER" : "STRIPE",
+    actorMemberId: reopenBy.by === "officer" ? reopenBy.actingMemberId : null,
+  });
+
+  await recordManualRefundTaskReopenAudit({
+    task,
+    subjectMemberId: bookingOwner(task.booking).memberId,
+    actingMemberId: reopenBy.by === "officer" ? reopenBy.actingMemberId : null,
+    ...(reopenBy.by === "officer"
+      ? { summary: "Dismissed booking money task put back on the queue", details: reopenBy.note }
+      : {
+          summary: "Disputed card payment's hand-back put back on the queue: Stripe reports the lost dispute won",
+          details: `Stripe dispute ${reopenBy.disputeId} was recorded lost, and this hand-back was dismissed because the cardholder had the money back. Stripe now reports the dispute won, so the club holds the money again and owes the member.`,
+          extraMetadata: { lateWinDisputeId: reopenBy.disputeId },
+        }),
+    store: tx,
+  });
+  return task;
+}
+
+/** #5197: a late win's reopen names its dispute, which must read won on the task's own payment. */
+async function assertLateWinDisputeWon(tx: Prisma.TransactionClient, task: ReopenTask, disputeId: string): Promise<void> {
+  const disputes = (await readDisputesByBookingId(tx, [task.bookingId])).get(task.bookingId) ?? [];
+  const won = disputes.some((dispute) => dispute.stripeDisputeId === disputeId && dispute.paymentId !== null
+    && dispute.paymentId === task.paymentId && dispute.status === "WON");
+  if (!won) throw new ManualBookingPaymentError(LATE_WIN_REOPEN_NOT_WON_MESSAGE, 409);
+}
+
+/**
+ * #5197: whether this edit hand-back was dismissed AFTER its booking's latest cancellation. The after-cancel
+ * dismissal refusal (`INV-PAY-117`) lets only a lost dispute through (#4516, owner decision 18 Nov 2026), so such a
+ * dismissal was a dispute-loss one, and the cancellation counted the task as going back. Every cancellation records
+ * a CANCELLED or REFUNDED booking event; a later REFUNDED event (another task paid) only makes this answer no, the
+ * safe side. No such event, or no dismissal time, is no evidence: no.
+ */
+async function dismissedAfterCancellation(tx: Prisma.TransactionClient, task: ReopenTask): Promise<boolean> {
+  if (task.completedAt === null) return false;
+  const latest = await tx.bookingEvent.findFirst({
+    where: { bookingId: task.bookingId, type: { in: [BookingEventType.CANCELLED, BookingEventType.REFUNDED] } },
+    orderBy: { occurredAt: "desc" },
+    select: { occurredAt: true },
+  });
+  return latest !== null && task.completedAt.getTime() > latest.occurredAt.getTime();
 }
 
 export { MANUAL_PAYMENT_NOTE_MAX };

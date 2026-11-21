@@ -34,6 +34,12 @@ const mocks = vi.hoisted(() => ({
   paymentRead: vi.fn(),
   /** #4124: the card refund rows on the payment (none unless a test says). */
   cardRefundOperations: [] as unknown[],
+  // #5197: a dispute-loss hand-back's booking row, disputes, restored debt and late-win marker.
+  lockBookingRow: vi.fn(),
+  disputes: [] as { stripeDisputeId: string; status: string; amountCents: number; paymentId: string | null }[],
+  restoreHandBackObligation: vi.fn(),
+  latestCancellation: null as { occurredAt: Date } | null,
+  alertCooldownUpsert: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -44,7 +50,27 @@ vi.mock("@/lib/audit", () => ({
   createAuditLog: (...a: unknown[]) => mocks.createAuditLog(...a),
 }));
 vi.mock("@/lib/payment-transactions", () => ({
-  lockPaymentForRefundedTotal: (...a: unknown[]) => mocks.lockPaymentForRefundedTotal(...a),
+  lockPaymentForRefundedTotal: (...a: unknown[]) => {
+    calls.push("paymentRow");
+    return mocks.lockPaymentForRefundedTotal(...a);
+  },
+}));
+vi.mock("@/lib/booking-row-lock", () => ({
+  lockBookingRowForOwnerRead: (...a: unknown[]) => {
+    calls.push("bookingRow");
+    return mocks.lockBookingRow(...a);
+  },
+}));
+vi.mock("@/lib/stripe-dispute-hold", () => ({
+  readDisputesByBookingId: async () => {
+    calls.push("disputes");
+    return new Map([["booking-1", mocks.disputes]]);
+  },
+}));
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/member-money/doors")>()),
+  resolveBookingDoorClock: async () => ({ zone: "Pacific/Auckland", journal: { journalActive: true } }),
+  restoreHandBackObligation: (...a: unknown[]) => mocks.restoreHandBackObligation(...a),
 }));
 
 import {
@@ -55,8 +81,11 @@ import {
   REOPEN_ONLY_DISMISSED_MESSAGE,
   REOPEN_ONLY_OFFICER_DISMISSAL_MESSAGE,
   REOPEN_RACED_MESSAGE,
+  LATE_WIN_REOPEN_NOT_WON_MESSAGE,
+  reopenHandBackAfterLateWin,
   reopenManualRefundTask,
 } from "@/lib/manual-refund-task-reopen";
+import { stripeDisputeLateWinReopenKey } from "@/lib/stripe-dispute-keys";
 
 /** Every call the transaction makes, in order, so the LOCK's position is testable. */
 const calls: string[] = [];
@@ -71,6 +100,10 @@ const tx = {
       calls.push("findUnique");
       return mocks.findUnique(...a);
     },
+    findUniqueOrThrow: (...a: unknown[]) => {
+      calls.push("findUniqueOrThrow");
+      return mocks.findUnique(...a);
+    },
     updateMany: (...a: unknown[]) => {
       calls.push("updateMany");
       return mocks.updateMany(...a);
@@ -79,6 +112,12 @@ const tx = {
   },
   memberCredit: {
     aggregate: (...a: unknown[]) => mocks.creditAggregate(...a),
+  },
+  bookingEvent: {
+    findFirst: async () => mocks.latestCancellation,
+  },
+  alertCooldown: {
+    upsert: (...a: unknown[]) => mocks.alertCooldownUpsert(...a),
   },
   // `INV-PAY-118`: an appeal task's reopen re-reads the payment after the
   // handed-back sums; echo whatever the task row carried.
@@ -118,6 +157,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   calls.length = 0;
   mocks.cardRefundOperations = [];
+  mocks.disputes = [];
+  mocks.latestCancellation = null;
   mocks.executeRaw.mockResolvedValue(1);
   mocks.transaction.mockImplementation(
     async (fn: (store: typeof tx) => Promise<unknown>) => fn(tx),
@@ -463,9 +504,10 @@ describe("reopening a dismissed refund APPEAL hand-back (#3827, D-3813-7, INV-PA
     for (const readAt of reads) expect(paymentRowAt).toBeLessThan(readAt);
   });
 
-  it("CONTROL: an edit's hand-back takes no Payment row (its cap reads no card refund debt)", async () => {
+  it("an edit's hand-back takes its booking row, then its Payment row (#5197), never the appeal's cap reads", async () => {
     mocks.findUnique.mockResolvedValue({
       ...dismissedAppeal({ amountCents: 20000, refundedAmountCents: 10000 }),
+      paymentId: "pay-1",
       kind: "CANCELLED_BOOKING_HAND_BACK",
       occurrenceKey: "edit-refund-hand-back:mod-1",
       booking: { memberId: "member-1", status: "CONFIRMED", organisation: null },
@@ -473,7 +515,8 @@ describe("reopening a dismissed refund APPEAL hand-back (#3827, D-3813-7, INV-PA
 
     await reopen();
 
-    expect(mocks.lockPaymentForRefundedTotal).not.toHaveBeenCalled();
+    expect(calls.filter((call) => !call.startsWith("lock:"))).toEqual(["findUnique", "bookingRow", "findUniqueOrThrow", "paymentRow", "updateMany"]);
+    expect(mocks.creditAggregate).not.toHaveBeenCalled();
   });
 
   // #4124: a card refund not yet made on the payment is money already
@@ -545,5 +588,100 @@ describe("reopening a dismissed hand-back on a joiner the organiser paid for by 
       await expect(reopen()).resolves.toMatchObject({ status: ManualRefundTaskStatus.OPEN });
       expect(mocks.updateMany).toHaveBeenCalledTimes(1);
     }
+  });
+});
+
+/**
+ * #5197: a dispute-loss hand-back (a cancellation's own, or an edit's held by a dispute) dismissed while its card
+ * dispute read lost. Only a lost dispute lets an edit's be dismissed once its booking is cancelled (#4516, owner
+ * decision 18 Nov 2026), and then the cancel counted it as going back: a dismissal after the latest cancellation is
+ * spared the after-cancel refusal. Reopening a dispute-loss hand-back owes the member again, so its debt is restored.
+ */
+describe("reopening a dispute-loss hand-back (#5197)", () => {
+  const DISMISSED_AT = new Date("2026-06-20T03:00:00.000Z");
+  const LOST_EDIT = {
+    ...DISMISSED_BY_OFFICER,
+    paymentId: "pay-1",
+    occurrenceKey: "edit-refund-hand-back:mod-1",
+    amountCents: 10000,
+    raisedAmountCents: 10000,
+    completedAt: DISMISSED_AT,
+    payment: { id: "pay-1", bookingId: "booking-1", status: "SUCCEEDED", amountCents: 40000, refundedAmountCents: 0 },
+    booking: { memberId: "member-1", status: "CANCELLED", organisation: null },
+  };
+  const dispute = (status: string) => ({ stripeDisputeId: "dp_1", status, amountCents: 40000, paymentId: "pay-1" });
+  const cancelledAt = (offsetMs: number) => ({ occurredAt: new Date(DISMISSED_AT.getTime() + offsetMs) });
+
+  it("an officer reopens an edit's dismissed after its booking was cancelled, and its debt is restored", async () => {
+    mocks.findUnique.mockResolvedValue(LOST_EDIT);
+    mocks.latestCancellation = cancelledAt(-60_000);
+
+    await expect(reopen()).resolves.toMatchObject({ status: ManualRefundTaskStatus.OPEN });
+    expect(mocks.restoreHandBackObligation).toHaveBeenCalledWith(tx, expect.anything(), expect.objectContaining({
+      bookingId: "booking-1", taskId: "task-1", amountCents: 10000, origin: "OFFICER", actorMemberId: "admin-1",
+    }));
+  });
+
+  it("MUTATION: dismissed before the latest cancellation, at the same moment, or with none recorded, it is refused", async () => {
+    mocks.findUnique.mockResolvedValue(LOST_EDIT);
+    for (const latest of [cancelledAt(60_000), cancelledAt(0), null]) {
+      mocks.latestCancellation = latest;
+      await expect(reopen()).rejects.toMatchObject({ status: 409, message: EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE });
+    }
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("a lost claim restores nothing", async () => {
+    mocks.findUnique.mockResolvedValue(LOST_EDIT);
+    mocks.latestCancellation = cancelledAt(-60_000);
+    mocks.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(reopen()).rejects.toMatchObject({ message: REOPEN_RACED_MESSAGE });
+    expect(mocks.restoreHandBackObligation).not.toHaveBeenCalled();
+  });
+
+  describe("by the app, for a late win", () => {
+    const lateWin = () => reopenHandBackAfterLateWin({ taskId: "task-1", disputeId: "dp_1" });
+
+    it("bounds its lock waits before lock(1), reopens as STRIPE with no actor, names the dispute and marks the task", async () => {
+      mocks.findUnique.mockResolvedValue(LOST_EDIT);
+      mocks.disputes = [dispute("WON")];
+      mocks.latestCancellation = cancelledAt(-60_000);
+
+      await expect(lateWin()).resolves.toBe("reopened");
+
+      expect(calls[0]).toContain("lock_timeout");
+      expect(calls[1]).toContain("pg_advisory_xact_lock(1)");
+      expect(mocks.restoreHandBackObligation).toHaveBeenCalledWith(tx, expect.anything(), expect.objectContaining({ origin: "STRIPE", actorMemberId: null }));
+      const audit = mocks.createAuditLog.mock.calls[0]![0];
+      expect(audit).not.toHaveProperty("actorMemberId");
+      expect(audit.metadata).toMatchObject({ lateWinDisputeId: "dp_1", dismissedByMemberId: "officer-9" });
+      const key = stripeDisputeLateWinReopenKey("dp_1", "task-1");
+      expect(mocks.alertCooldownUpsert).toHaveBeenCalledWith(expect.objectContaining({ where: { key } }));
+    });
+
+    it("answers a task already open without writing anything", async () => {
+      mocks.findUnique.mockResolvedValue({ ...LOST_EDIT, status: ManualRefundTaskStatus.OPEN });
+
+      await expect(lateWin()).resolves.toBe("already-open");
+      expect(mocks.updateMany).not.toHaveBeenCalled();
+      expect(mocks.alertCooldownUpsert).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: refuses when its dispute no longer reads won on the task's payment", async () => {
+      mocks.findUnique.mockResolvedValue(LOST_EDIT);
+      for (const disputes of [[dispute("LOST")], [{ ...dispute("WON"), paymentId: "pay-other" }]]) {
+        mocks.disputes = disputes;
+        await expect(lateWin()).rejects.toMatchObject({ status: 409, message: LATE_WIN_REOPEN_NOT_WON_MESSAGE });
+      }
+      expect(mocks.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("keeps the officer's other rules: a machine's dismissal is refused", async () => {
+      mocks.findUnique.mockResolvedValue({ ...LOST_EDIT, completedByMemberId: null });
+      mocks.disputes = [dispute("WON")];
+
+      await expect(lateWin()).rejects.toMatchObject({ message: REOPEN_ONLY_OFFICER_DISMISSAL_MESSAGE });
+    });
   });
 });

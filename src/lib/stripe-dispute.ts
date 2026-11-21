@@ -58,6 +58,7 @@ import {
   STRIPE_DISPUTE_WON_AFTER_LOSS_NEXT_STEP,
   type StripeDisputeAlertStage,
 } from "@/lib/stripe-dispute-note";
+import { stripeDisputeAlertKey, stripeDisputeWonAfterLossOwedKey } from "@/lib/stripe-dispute-keys";
 import {
   UNRECOGNISED_ALERT_IN_FLIGHT_MS,
   stripeDashboardPaymentUrl,
@@ -316,11 +317,6 @@ export async function recordStripeDispute(
 
 type AlertStage = StripeDisputeAlertStage;
 
-/** #5061 follow-up: the durable marker that a lost dispute's won-after-loss alert is owed. */
-export function stripeDisputeWonAfterLossOwedKey(disputeId: string): string {
-  return `stripe-dispute-won-after-loss-owed:${disputeId}`;
-}
-
 /**
  * Send the won-after-loss alert while its owed marker stands, then settle the
  * marker. A replay after the send finds the once-ever claim kept and sends
@@ -334,11 +330,6 @@ async function ensureWonAfterLossAlert(row: StripeDispute, livemode: boolean, fo
   if (!owed) return;
   await ensureAlert(row, "won-after-loss", livemode, format);
   await settleOwedAlert({ key });
-}
-
-/** The once-ever claim of one dispute's alert at one stage. */
-export function stripeDisputeAlertKey(disputeId: string, stage: AlertStage): string {
-  return `stripe-dispute-${stage}:${disputeId}`;
 }
 
 /** The marker that the alert went out although its stamp on the row failed. */
