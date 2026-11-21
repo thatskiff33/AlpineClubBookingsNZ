@@ -35,6 +35,11 @@ const mocks = vi.hoisted(() => ({
   findBookingEvents: vi.fn<(args: unknown) => Promise<Array<{ type: string; reason?: string | null; snapshot: unknown; occurredAt?: Date }>>>(async () => []),
   createBookingEvent: vi.fn<(args: unknown) => Promise<unknown>>(async () => ({})),
   createStillOwedRow: vi.fn<(args: unknown) => Promise<{ id: string }>>(async () => ({ id: "op-rest" })),
+  // #4879: no live superseded capture on these payments unless a test says so (its realdb proof:
+  // `superseded-refund-other-doors-hold-back.realdb.test.ts`).
+  readSupersededCaptureHeldBack: vi.fn<(...args: unknown[]) => Promise<{ byTransaction: Map<string, number>; totalCents: number }>>(
+    async () => ({ byTransaction: new Map<string, number>(), totalCents: 0 }),
+  ),
 }));
 
 vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
@@ -75,6 +80,12 @@ vi.mock("@/lib/logger", () => ({ default: { error: vi.fn(), warn: vi.fn(), info:
 vi.mock("@/lib/payment-recovery", () => ({
   CLAIMABLE_PAYMENT_RECOVERY_STATUSES: ["PENDING", "FAILED"],
 }));
+vi.mock("@/lib/superseded-capture-hold-back", () => ({
+  readSupersededCaptureHeldBack: (...args: unknown[]) => {
+    calls.push("read-held-back");
+    return mocks.readSupersededCaptureHeldBack(...args);
+  },
+}));
 vi.mock("@/lib/payment-transactions", () => ({
   applyLocalRefundAllocation: (...args: unknown[]) => {
     calls.push("allocate");
@@ -106,6 +117,8 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
     return mocks.enqueueXeroRefundCreditNoteOperation(...args);
   },
   kickQueuedXeroOutboxOperationsIfConnected: mocks.kick,
+}));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
   // #4324 (review C4): a change capture's anchor.
   lockSupplementaryInvoiceAnchor: (_tx: unknown, anchorId: string) => {
     calls.push(`lock-anchor:${anchorId}`);
@@ -328,6 +341,7 @@ describe("closing a dead card refund as paid another way", () => {
       "lock-payment-row",
       "read-payment",
       "claim",
+      "read-held-back", // #4879: after the claim, so a superseded refund's own close does not hold its charge back
       "allocate",
       "record",
       "ledger-line",
@@ -361,6 +375,20 @@ describe("closing a dead card refund as paid another way", () => {
 
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith(
       expect.objectContaining({ paymentId: "p-1", amountCents: 10_000, preferTransactionIds: ["txn-1"] }),
+    );
+  });
+
+  it("MUTATION #4879: leaves a live superseded capture's charge to its own refund, read after the claim and passed to the allocation", async () => {
+    const heldBack = new Map([["txn-superseded", 9_000]]);
+    mocks.readSupersededCaptureHeldBack.mockResolvedValueOnce({ byTransaction: heldBack, totalCents: 9_000 });
+
+    await close(10_000);
+
+    expect(mocks.readSupersededCaptureHeldBack).toHaveBeenCalledWith(expect.anything(), "p-1");
+    expect(calls.indexOf("claim")).toBeLessThan(calls.indexOf("read-held-back"));
+    expect(calls.indexOf("read-held-back")).toBeLessThan(calls.indexOf("allocate"));
+    expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "p-1", heldBackByTransaction: heldBack }),
     );
   });
 
@@ -885,6 +913,7 @@ describe("closing a dead card refund as paid another way", () => {
         "read-approval-task",
         "read-receipt",
         "claim",
+        "read-held-back",
         "allocate",
         "record",
         "ledger-line",

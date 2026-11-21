@@ -1,9 +1,11 @@
+import { getAppVersion } from "@/lib/app-version";
 import {
   readEnvironmentRoleDeclaration,
   type EnvironmentRoleDeclaration,
 } from "@/lib/environment-role-declaration";
 import { prisma } from "@/lib/prisma";
 import { readXeroConnection } from "@/lib/xero-connection";
+import { readXeroTaxHealth } from "@/lib/xero-tax-health";
 import { getRuntimeConfigCheck } from "@/lib/runtime-config";
 import { countExhaustedPaymentRecoveryOperations } from "@/lib/payment-recovery-health";
 import { PAYMENT_RECOVERY_CLAIMABLE_LATER_WHERE } from "@/lib/payment-recovery-constants";
@@ -169,6 +171,12 @@ async function checkXero(): Promise<CheckResult> {
         error: "Token expired",
       };
     }
+    // #4632: the tax code in force must still be usable in Xero. A read that
+    // fails or times out says nothing about tax, so it leaves the check ok.
+    const tax = await withTimeout(readXeroTaxHealth(), CHECK_TIMEOUT_MS).catch(() => null);
+    if (tax && tax.problems.length > 0) {
+      return { status: "error", latencyMs: Date.now() - start, error: tax.problems.join(" ") };
+    }
     return { status: "ok", latencyMs: Date.now() - start };
   } catch (err) {
     return {
@@ -260,7 +268,7 @@ async function checkPaymentRecoveryQueue(): Promise<CheckResult> {
 
 function getBaseMetadata() {
   return {
-    version: process.env.npm_package_version || "0.1.0",
+    version: getAppVersion(),
     uptime: Math.floor((Date.now() - processStartTime) / 1000),
   };
 }

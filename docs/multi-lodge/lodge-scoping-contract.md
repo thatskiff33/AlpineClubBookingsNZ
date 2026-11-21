@@ -33,6 +33,8 @@ sequencing):
 | `MaintenanceReport` | direct `lodgeId` | a reported physical fault belongs to one building (#2780); `onDelete: Cascade` — a deleted lodge takes its fault history with it |
 | `LodgeMaintenanceReportToken` | direct `lodgeId` (`@unique`) | one live QR-sign bearer token per lodge (#2780); rotating overwrites in place, `onDelete: Cascade` |
 | `MaintenanceReportAnswer` | via `MaintenanceReport` | no direct FK; answers store the question label as asked, so they carry the report's lodge |
+| `FoodOrder` | direct `lodgeId` | a food order is for one building's supplies (fork #121); every list, total and both hut-leader rules (`foodOrderVisibility` and `canManageFoodOrder`: a hut leader sees and manages only orders at the lodges their access window covers today, owner decision on PR #5143) read it; ordering follows booking eligibility (`getEligibleLodgeIdsForMember`). `onDelete: Cascade`, like `MaintenanceReport` |
+| `FoodOrderItem` | via `FoodOrder` | no direct FK; an item line carries its order's lodge |
 | Model                                                              | Scoping                                                            | Notes                                                                                                                                                                                                                                                                                                                                                   |
 | ------------------------------------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `LodgeRoom`                                                        | direct `lodgeId`                                                   | `name` unique per lodge, not globally                                                                                                                                                                                                                                                                                                                   |
@@ -71,8 +73,10 @@ takes no lodge parameter.
 
 `MemberMoneyEvent`, `MemberMoneyJournal`, `MemberMoneyObligation`,
 `MemberMoneyApplication`, `MemberMoneySourceLink`, `MemberMoneySourcePosting`,
-`MemberMoneyRefundReservation` and `MemberMoneyRefundReservationRelease` are club-wide economic
-records: one receipt may cover several lodges. A reservation names its obligation
+`MemberMoneyRefundReservation`, `MemberMoneyRefundReservationRelease`, `MemberMoneyExportManifest`
+and `MemberMoneyExportCoverage` are club-wide economic
+records: one receipt may cover several lodges. An export manifest names its
+booking, which identifies the lodge. A reservation names its obligation
 and its funding batch, which identify the booking; an application batch names
 one booking and takes that booking's Payment row. `MemberMoneyLine` carries optional
 `bookingId` and `lodgeId` dimensions with RESTRICT foreign keys and no update
@@ -623,14 +627,19 @@ new ADR:
 - `GroupDiscountSetting` and `BookingDefaults.nonMemberHoldDays` /
   `waitlistCrossLodgeOrder`: booking policy knobs that are club fairness
   decisions, edited club-wide on the booking-policies page.
-- Skifield conditions (`WhakapapaReportCache`, the `skifieldConditions`
-  module): public-website content, not lodge UI. A per-lodge/per-field
+- Skifield conditions (`WhakapapaReportCache`, the `skifieldConditions` and
+  `skifieldWhakapapa` modules): public-website content, not lodge UI. A per-lodge/per-field
   conditions widget would be a future enhancement, not a scoping change.
 - Maintenance-report policy and questions (`MaintenanceReportSettings`
   singleton, `MaintenanceReportQuestion`): the club asks the same bounded
   question set at every lodge, and the photo/retention/anonymous-QR policy is a
   club decision (#2780). The reports and their per-lodge QR signs above are
   lodge-scoped; the questions asked and the policy governing them are not.
+- Food-order settings (`FoodOrderSettings` singleton, fork #121): one food
+  officer email and one officer label for the club. The orders above are
+  lodge-scoped; who buys the food and what the club calls them is a club
+  decision. A per-lodge officer would be a new setting, not a widening of this
+  row.
 - AI spend settings (`AiAssistantSettings`, `DiagnosticsSettings`, and the
   `AiSpendCurrencySettings` conversion-rate singleton added by #3354): each is
   one `id = "default"` row. The two AI modules are club-wide paid products with
@@ -942,6 +951,13 @@ setup wizard: a second copy bought no reachable safety, pushed a 913-line file
 past its size ceiling, and made the wizard reject any incomplete test fixture —
 it broke a passing back-link test on a lodge row that simply had not bothered to
 include `doorCode`.
+
+Booking fresh email copies (`booking-fresh-email-copy.ts`, ALP-588) use the
+selected booking's persisted `lodgeId` for confirmations and pre-arrival
+reminders. The shared reminder projection carries that same lodge to the
+sender. Split payment links delegate to `issueSplitGuestPaymentLink`, which
+uses each split child's lodge and existing per-lodge mint lock. These actions
+never accept a lodge from the caller.
 
 ## Presentation Rule
 

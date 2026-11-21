@@ -7,14 +7,15 @@ import {
   automaticallyRefundedManualRefundTaskFilter,
 } from "@/lib/deleted-booking-modification-payment";
 import {
-  OPEN_TASK_BOOKING_PAYMENT_SELECT, OPEN_TASK_REFUND_PAYMENT_SELECT,
+  OPEN_TASK_BOOKING_PAYMENT_SELECT,
   toAutoRefundedManualRefundTaskPayload,
   toDismissedManualRefundTaskPayload,
-  toOpenManualRefundTaskPayload,
+  toOpenManualRefundTaskPayloads,
 } from "@/lib/manual-refund-task-queue-payload";
-import { unpricedNightsSummariesForQueue } from "@/lib/stored-night-price-repair-queue";
 import {
+  NOT_RETIRED_REVIEW_WHERE,
   readDismissedManualRefundTasks,
+  readOpenTaskDisputes,
   readOrDegrade,
 } from "@/lib/manual-refund-task-queue-reads";
 
@@ -132,7 +133,15 @@ export async function GET() {
 
   const [tasks, autoRefundedRead, dismissedRead] = await Promise.all([
     prisma.manualRefundTask.findMany({
-      where: { status: "OPEN" },
+      /*
+        #4344 (wave C1 of #4302): the retired officer edit review is left out
+        IN THE QUERY, before the `take`, so a leftover row can neither be acted
+        on here nor push a hand-back the club still owes past the limit. Wave B
+        closed every open review and nothing raises one any more; the resolve
+        route refuses the kind as well. A completed or dismissed review stays
+        readable as history on the booking and in the audit log.
+      */
+      where: { status: "OPEN", ...NOT_RETIRED_REVIEW_WHERE },
       orderBy: { createdAt: "asc" },
       take: 100,
       select: {
@@ -143,9 +152,10 @@ export async function GET() {
           #3033/#3827. `kind` - with `occurrenceKey`, which marks an edit's or an
           appeal's hand-back (`INV-PAY-117`, `INV-PAY-118`) - decides the SENTENCE
           the card prints: the standing "paid in cash or by a bank transfer that
-          never reached Xero" is untrue of those and of an EDIT_FINANCIAL_REVIEW
-          row. `raisedAmountCents` shows an amended amount on its face, not only
-          in the audit log; `reviewContext` is D3's evidence, never sent raw.
+          never reached Xero" is untrue of those. `raisedAmountCents` shows an
+          amended amount on its face, not only in the audit log; `reviewContext`
+          holds a group hand-back's or a re-confirmed bank refund's own facts and
+          is never sent raw.
         */
         kind: true,
         occurrenceKey: true,
@@ -160,7 +170,7 @@ export async function GET() {
         reviewContext: true,
         reason: true,
         createdAt: true,
-        ...OPEN_TASK_REFUND_PAYMENT_SELECT,
+        paymentId: true,
         booking: { select: handBackBookingSummary },
       },
     }),
@@ -207,14 +217,7 @@ export async function GET() {
     ),
   ]);
 
-  // #3191: which reviews have unpriced nights the settle screen can offer to fill
-  // in. Keyed by TASK id so no payload has to hold a guest-strand id to find its
-  // own; fails closed on its own rather than taking the money queue down with it.
-  // Both reasons are on `unpricedNightsSummariesForQueue`.
-  const unpricedNights = await unpricedNightsSummariesForQueue({
-    tasks,
-    store: prisma,
-  });
+  const disputes = await readOpenTaskDisputes(prisma, tasks);
 
   return NextResponse.json({
     // #3033: whether the "open the booking's payment and rate history" link is
@@ -223,16 +226,9 @@ export async function GET() {
     viewerCanViewBookings,
     /*
       Shaped by `manual-refund-task-queue-payload.ts`, which is also where the
-      redaction lives: the stored review context is parsed there and the raw
-      column never crosses the wire.
+      redaction lives: the raw context column never crosses the wire.
     */
-    tasks: tasks.map((task) =>
-      toOpenManualRefundTaskPayload(
-        task,
-        guard.session.user.id,
-        unpricedNights.get(task.id) ?? [],
-      ),
-    ),
+    tasks: toOpenManualRefundTaskPayloads(tasks, guard.session.user.id, disputes),
     // True only when the notices read itself failed. The surface says so in a
     // line of its own rather than showing an empty card, because "no automatic
     // refunds in the last 30 days" is a claim about money and a failed query is

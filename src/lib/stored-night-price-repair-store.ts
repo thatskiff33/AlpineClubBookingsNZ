@@ -1,5 +1,5 @@
 import "server-only";
-import { Prisma, type BookingGuestNightPriceSource, type ManualRefundTaskDirection } from "@prisma/client";
+import { Prisma, type ManualRefundTaskDirection } from "@prisma/client";
 
 import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -8,7 +8,7 @@ import { postReviewClosureLedgerLines } from "@/lib/booking-ledger-modification-
 import type { BookingJournalContext } from "@/lib/member-money/doors";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { editReviewSettlementIssuesXeroDocument } from "@/lib/edit-financial-review-xero-leg";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import type { ClubFormat } from "@/lib/club-format";
 import {
   type RecordedNightPrice,
@@ -405,12 +405,11 @@ function isNightRowAlreadyPresent(err: unknown): boolean {
  * what the strand is worth, all on the caller's transaction.
  *
  * `stored-night-price-repair-census.test.ts` pins that this module is the only
- * one in the tree that updates a `BookingGuestNight` price in place, so a second
- * caller shares this function rather than growing a second writer. Two do:
- * {@link applyStoredNightPriceRepair}, which fills a review's blanks while it is
- * being settled (#3191), and {@link applyStrandNightPriceReconcile}, the strand
- * reconcile a booking's own admin tools offer (#3214). They differ only in what
- * they hand over.
+ * one in the tree that may fill a blank `BookingGuestNight` price, so a second
+ * caller shares this function rather than growing a second writer. Its caller
+ * is {@link applyStoredNightPriceRepair}, which fills a review's blanks while it
+ * is being settled (#3191). The create arm served #3214's strand reconcile on
+ * the booking's Admin tools card, retired with the officer review (#4344).
  *
  * EVERY ARM IS A COMPARE-AND-SET, and that is the whole of this path's
  * single-flight guarantee - there is no advisory lock here (see the module
@@ -538,112 +537,4 @@ export async function applyStoredNightPriceRepair({
     store,
   });
   return { newGuestTotalCents };
-}
-
-/**
- * The #3214 arm: set every night a non-reconciling strand holds, creating the
- * rows it does not have.
- *
- * A SEPARATE ENTRY POINT RATHER THAN A FLAG ON THE ONE ABOVE, because the two
- * acts have different preconditions and different callers, and because the
- * settle path has to keep a signature a reviewer can see is unchanged. Both
- * reach the same fenced writer, so there is still exactly one place a night
- * price is written (`INV-SSOT`).
- *
- * THE MONEY-NEUTRALITY GUARANTEE IS ENFORCED HERE, by the function that makes
- * the write, rather than a module away by the one caller that happens to have
- * it. The caller supplies the arithmetic - with `summary.knownNightTotalCents`
- * at 0 and every held night in `writes`, the re-based total is `sum(writes)`,
- * which `checkStoredNightPriceRepair` has already forced to equal
- * `summary.storedGuestTotalCents` - but an exported function taking an arbitrary
- * `summary` and `writes` will re-base the strand's total to whatever those two
- * add up to, and its NAME promises otherwise. A second caller would inherit the
- * promise and none of the check. So the check sits on this side of the call: it
- * throws inside the caller's transaction, so every row goes back with it.
- *
- * WHAT IT DOES AND DOES NOT GUARANTEE. It guarantees that the MEMBER'S TOTAL is
- * unchanged - `BookingGuest.priceCents` holds the number it already held, so
- * nothing anybody owes moves. It does NOT guarantee that nothing else moves: see
- * `stored-night-price-strand-reconcile.ts`'s module docblock for the two
- * consequences that follow from the night rows themselves changing.
- */
-export async function applyStrandNightPriceReconcile({
-  bookingGuestId,
-  summary,
-  writes,
-  store,
-}: {
-  bookingGuestId: string;
-  summary: UnpricedNightsSummary;
-  writes: readonly FencedNightWrite[];
-  store: Prisma.TransactionClient;
-}): Promise<{ newGuestTotalCents: number; rowsCreated: number }> {
-  const result = await applyFencedStrandNightPrices({
-    bookingGuestId,
-    summary,
-    writes,
-    store,
-  });
-  if (result.newGuestTotalCents !== summary.storedGuestTotalCents) {
-    throw new Error(
-      "Recording night prices moved what the stay is stored as being worth, which this act may never do.",
-    );
-  }
-  return result;
-}
-
-// ---------------------------------------------------------------------------
-// #3531 3b: the rate-derived backfill's write, here because THIS is the module
-// that rewrites a night row in place (`stored-night-price-repair-census`).
-// ---------------------------------------------------------------------------
-
-/** Thrown when a planned row no longer holds what it was planned from. */
-export class RateDerivedBackfillRacedError extends Error {
-  constructor(bookingGuestId: string, nightId: string) {
-    super(`Night ${nightId} of guest ${bookingGuestId} changed since it was planned; booking rolled back`);
-    this.name = "RateDerivedBackfillRacedError";
-  }
-}
-
-export type RateDerivedNightRewrite = {
-  bookingGuestId: string;
-  nights: ReadonlyArray<{
-    id: string;
-    fromPriceCents: number;
-    fromSource: BookingGuestNightPriceSource;
-    toPriceCents: number;
-  }>;
-};
-
-/**
- * Rewrite planned rows as `RATE_DERIVED`, every one a compare-and-set on the
- * price and provenance it was planned from - the same single-flight rule as
- * the officer repair above, and the same refusal: a row that no longer holds
- * what it was read holding matches nothing, and the caller's transaction rolls
- * back. Never fills a NULL: the planner lists such a strand instead
- * (`INV-MOD-028`), and the fence's `fromPriceCents` is an integer.
- */
-export async function applyRateDerivedNightRewrites(
-  rewrites: ReadonlyArray<RateDerivedNightRewrite>,
-  store: Pick<Prisma.TransactionClient, "bookingGuestNight">,
-): Promise<number> {
-  let rows = 0;
-  for (const strand of rewrites) {
-    for (const night of strand.nights) {
-      const written = await store.bookingGuestNight.updateMany({
-        where: {
-          id: night.id,
-          bookingGuestId: strand.bookingGuestId,
-          priceCents: night.fromPriceCents,
-          priceSource: night.fromSource,
-        },
-        data: { priceCents: night.toPriceCents, priceSource: "RATE_DERIVED" },
-      });
-      if (written.count !== 1) {
-        throw new RateDerivedBackfillRacedError(strand.bookingGuestId, night.id);
-      }
-      rows += 1;
-    }
-  }
-  return rows;
 }

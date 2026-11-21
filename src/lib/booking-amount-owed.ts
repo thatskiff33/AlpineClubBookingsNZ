@@ -11,11 +11,18 @@ import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
  *
  * THE ONE READ (`INV-SSOT`) for every surface that quotes the amount owed to a
  * member or charges what is owed (the saved-card charge takes the booking's
- * full worth by design, #3864, and does not read this): the `/pay/<token>` page and its card intent, the pay-link and
- * exception-approved emails, the booking page (its narrative, pay card and
- * `{amountDue}` token, read once per page load) and the member's card intent
- * (`create-payment-intent`, both reads, the second under its transaction). So
+ * full worth by design, #3864, and does not read this): the `/pay/<token>` page and its card intent, the pay-link
+ * emails, the booking page (its narrative, pay card and
+ * `{amountDue}` token, read once per page load), the member's card intent
+ * (`create-payment-intent`, both reads, the second under its transaction) and
+ * the member dashboard's Payment Owed card (`member-dashboard.ts`, #4944). So
  * a page, the email a member opens it from and the charge cannot disagree.
+ *
+ * NOT "IS IT PAID?" (#4069, `INV-PAY-159`). This sizes what an UNPAID booking's
+ * pay step asks; it takes off credit, never cash already received. Whether a
+ * booking's cash covers it is `readBookingCashCover` (`booking-cash-evidence.ts`),
+ * which the exception-approved email reads; it builds on the same
+ * `bookingAmountOwedCents` and never calls this.
  *
  * The credit is the LEDGER's (`deriveBookingAppliedCreditCents`, the sum of the
  * booking's `BOOKING_APPLIED` rows), which every intent is minted against —

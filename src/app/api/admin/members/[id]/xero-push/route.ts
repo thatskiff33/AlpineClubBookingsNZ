@@ -2,15 +2,18 @@ import { after, NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 import { prisma } from "@/lib/prisma";
 import {
   createXeroContactForMember,
-  findPotentialXeroContactsForMember,
-  flushMemberSubscriptionHistory,
-  syncMemberSubscriptionHistoryForLinkedContact,
   XeroContactCreatePartialSuccessError,
   XeroContactValidationError,
-} from "@/lib/xero";
+} from "@/lib/xero-contacts";
+import { findPotentialXeroContactsForMember } from "@/lib/xero-duplicate-contacts";
+import { flushMemberSubscriptionHistory, syncMemberSubscriptionHistoryForLinkedContact } from "@/lib/xero-membership-sync";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { buildXeroContactUrl } from "@/lib/xero-links";
@@ -351,6 +354,12 @@ export async function POST(
         status: 409,
       });
     }
+    const contended = transactionContendedResponse(
+      err,
+      "Member Xero push contended for the lock(1) budget",
+      { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, context: { memberId: id } },
+    );
+    if (contended) return contended;
     if (err instanceof XeroContactValidationError) {
       return NextResponse.json(
         {

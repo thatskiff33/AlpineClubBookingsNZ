@@ -2,7 +2,7 @@
 export { MEMBER_MONEY_ACCOUNTS } from "./internal/accounts";
 export { verifyMemberMoneyJournal } from "./internal/verify";
 // M2 (#4514): read-only references a deletion path must respect (D1, #4482).
-export { bookingIdsNamedByJournal, journalRowsNamingDebtor } from "./internal/references";
+export { bookingIdsNamedByExportManifest, bookingIdsNamedByJournal, journalRowsNamingDebtor } from "./internal/references";
 // M3a (#4626): the one posting command, its plan types, keys and tax split.
 // The booking doors reach it only through M3b's adapter in `./doors`
 // (`member-money-journal-writer-census.test.ts` admits exactly those callers).
@@ -21,7 +21,7 @@ export { splitTaxInclusiveGross } from "./internal/tax";
 // shared by the doors' adapter and the comparison census. The doors' own entry,
 // which reads settings through the server's client, is `./doors` (server-only),
 // so a plain-Node operator command can still import this index.
-export { bookingChargeIdentity, journalComponentOfLegacyLine, refundCloseOutRecordOfIdentity } from "./internal/booking-charges";
+export { bookingChargeIdentity, journalComponentOfLegacyLine, keptCapturePaymentIntentOfIdentity, refundCloseOutRecordOfIdentity } from "./internal/booking-charges";
 export {
   countBookingJournalEvents,
   isJournalEraBooking,

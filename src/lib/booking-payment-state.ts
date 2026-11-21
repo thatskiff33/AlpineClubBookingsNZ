@@ -658,6 +658,15 @@ export function recordedChangeFeeCents(
   return Math.max(0, payment?.changeFeeCents ?? 0);
 }
 
+/** #5039 (`INV-MOD-042`): the fee an edit's credit clamp keeps credit for - the
+ * payment's fee read before the edit's write, plus this edit's own. Both doors. */
+export function feeOwedAfterEditCents(
+  paymentBeforeEdit: { changeFeeCents: number | null } | null | undefined,
+  feeRecordedByThisEditCents: number,
+): number {
+  return recordedChangeFeeCents(paymentBeforeEdit) + feeRecordedByThisEditCents;
+}
+
 /**
  * What `readBookingAmountOwed` (`booking-amount-owed.ts`, #4058, #3991) reads
  * for one booking. Its own pure type, here, so the narrative can take it as

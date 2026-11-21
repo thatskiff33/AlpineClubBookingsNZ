@@ -63,3 +63,9 @@ c7df5c92c2a2d419538428be36c1618cc7c13d6c:src/lib/__tests__/ledger-insertion-seq.
 # builds it rather than quoting it.
 d7d8618d9b3a40143f34b06c10b4f1494fffcc3a:src/lib/__tests__/xero-partial-repair-claim.realdb.test.ts:generic-api-key:117
 d7d8618d9b3a40143f34b06c10b4f1494fffcc3a:src/lib/__tests__/xero-partial-repair-claim.realdb.test.ts:generic-api-key:118
+
+# #4990: a sentence of prose in the adult-member hosting invariants, where an
+# ordinary noun ending one sentence sat a few words ahead of a slash-joined pair
+# of plain words in the next. Not a credential; the paragraph has since been
+# re-wrapped so the current text no longer matches the rule.
+ffdacbb228e60c5d014a2cbccf6598a2cdd9fcc9:docs/invariants/adult-member-hosting.md:generic-api-key:589

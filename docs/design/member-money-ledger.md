@@ -109,17 +109,25 @@ and subscription component rounding. Section 10 asks how the journal's tax and
 recognition settings should cover clubs with different accounting policies.
 
 M3a ([#4626](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4626))
-delivered D3's setting and split. `ClubTaxSettings` records GST registration,
-the rate in basis points and the date it applies from. With no row, the club
-is registered at 1500 basis points from 1 October 2010, which is the
-GST-inclusive 15% treatment the Xero documents already render.
+delivered D3's setting and split; [#4632](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4632)
+made every fresh revenue leg resolve it the same way Xero's own documents do.
+`ClubTaxSettings` is a schedule of dated periods — GST registration, the rate
+in basis points and the Xero tax type each applies from — with one writer
+behind Full Admin (`club-tax-settings-write.ts`) and append-only history: a
+change only ever adds a period starting in the future. With no row beyond the
+baseline, the club is registered at 1500 basis points from 1 October 2010,
+which is the GST-inclusive 15% treatment the Xero documents already render.
 `splitTaxInclusiveGross` derives tax = round-half-up(gross × rate ÷ (10000 +
 rate)) and net = gross − tax, in integer arithmetic only. An unregistered club
-posts revenue with no tax fields and no GST leg. A date before the setting
-starts has no treatment. Only a revenue leg that needs a fresh split refuses
-that; a receipt, a refund, a correction or a zero event posts as usual. A
-correction never re-splits at today's rate: it repeats the split its component
-was posted with (section 3).
+posts revenue with no tax fields and no GST leg. Each fresh split takes the
+period in force on its own charge's anchor date — a booking's creation date
+(a group place's organiser's booking's), the one definition its Xero documents
+also read (`booking-tax-anchor.ts`) — never the
+date it posts, so a booking keeps the treatment it was made under for its
+whole life (owner decision A). A date the schedule does not cover refuses only
+a revenue leg that needs a fresh split; a receipt, a refund, a correction or a
+zero event posts as usual. A correction never re-splits at today's rate: it
+repeats the split its component was posted with (section 3).
 
 ## 3. Journal model and enforcement
 
@@ -556,6 +564,134 @@ record. A replacement after a genuine void is a new explicit render revision;
 retrying a lost response always uses the original manifest and key. Never derive
 a retry key from the current refund watermark or current set of voids.
 
+M13 (#4525) ships the first role, `PRIMARY_BOOKING_INVOICE`, as an observer.
+`createXeroInvoiceForBooking` still sends its own lines; the pure
+`planPrimaryBookingInvoice` builds the same lines through the sender's one
+composition, `buildPrimaryInvoiceLines`, and compares them in cents with the
+booking's posted charge legs. Stay lines must
+equal the stay component's live gross, the change-fee line the live fee
+components', and the total what is covered; otherwise the manifest records
+`CONFLICT` (`STAY_CENTS`, `FEE_CENTS` or `COMPONENT_UNUSABLE`) and covers
+nothing. A covered plan also becomes `CONFLICT` when the
+invoice Xero returns bills other stay or fee cents than were planned, as a
+replayed create's original invoice can. The manifest is written after the invoice link, in its own short
+transaction, under the invoice's existing correlation key
+(`buildXeroBookingInvoiceCorrelationKey`): the first row
+wins, and a failure is logged without changing the send or its operation. A
+replay records it from the operation's stored lines. The frozen mapping keeps
+the Xero tax type and the journal's tax codes side by side, untranslated. No
+delivery record or dispatcher exists yet.
+
+The next cohort (ALP-436) adds two roles to the same manifest, still as
+observers: `XeroSyncOperation` keeps sending. `SUPPLEMENTARY_BOOKING_INVOICE`
+(`planSupplementaryBookingInvoice`) bills a *slice* of the stay component,
+because an edit corrects the whole component and charges the remainder: the
+non-fee lines must equal what the edit's own `modification:` event moved the
+stay charge by, and the coverage row names that event in `sliceKey`. A second
+ask bills the movement of its review task's one live `review-close:` event, and
+no fee. An edit whose lines itemise settled review shares bills each itemised
+share too, and each share's movement was posted by its task's closure, not by
+the edit's event: each closure is a slice of its own, keyed by its event, the
+stay lines must equal the sum of the slices, and a closure moving a fee or a
+give-back share netted against the charge is a conflict. Only the shares the
+sent lines itemise count: one the single fallback line leaves out, or one
+settled after the lines were built, is not covered by this invoice's manifest:
+a second ask covers it when one is raised; when the ask was withheld because
+this invoice was in flight, the closure stays uncovered and the officer's
+uncollected-share record stands. The
+change-fee line must equal the fee the event posted and the edit's
+fee component's live gross, and is covered whole. A reduction netted against a
+fee (`REDUCTION_NETTED`), a missing, reversed or ambiguous event, or any other
+mismatch is a `CONFLICT` with no coverage. The primary invoice's coverage keeps
+`sliceKey` empty (a CHECK says so), and the coverage key is role, component and
+slice, so each edit's slice is billed once. `PRIMARY_BOOKING_INVOICE_UPDATE`
+records what `updateXeroBookingInvoiceForBooking` sent: it covers nothing, and
+is `COVERED` only beside a `COVERED` primary manifest for the same invoice and
+total (`PRIMARY_UNMATCHED` otherwise; the deferred trigger enforces it). The
+provider's gross total includes discounts and tax; it is never rebuilt from
+unit prices. With no primary manifest or no usable provider total, no update
+manifest is written. Two limits stand: coverage is
+not yet summed across roles against the component's live gross (credit notes,
+a later cohort, reduce it), and the supplementary sender has no replay, so a
+manifest that failed to write stays unwritten.
+
+The refund-note cohort (ALP-439) adds three more roles on the same manifest.
+`REFUND_NOTE` covers the one live R05 refund debt (REFUND_PAYABLE) a note
+answers, whole, never revenue; `REFUND_NOTE_PAYMENT` covers the whole R12
+(Stripe clearing) or R14 (bank) cash slice its payment records. Both cover
+whole components, so `sliceKey` stays empty. `createXeroCreditNote` and
+`finishRefundCreditNoteSettlement` record them after completing their row, under
+the note's and the payment's existing keys, with the Xero id as the provider
+object; a replay hashes the stored request's lines, never rebuilt ones. A note
+whose cents differ is `CENTS`; one naming no single debt (a watermark note) or a
+missing R05 or R12 is `COMPONENT_UNUSABLE`; a debt an earlier note already
+covers is `ALREADY_COVERED`. A bank note's R14 is read from what is posted:
+`paidAnotherWay(record)` for a close, else `handBackPaid(task)` for a hand-back
+(including a cancellation noted on its own record, a card-shortfall part and a
+review closed by hand), each at its live chain tip, so a reversed R14 is never
+covered. A hand-back paid "In cash" posts its R14 on CASH while its Xero
+payment settles to the bank code: a known `COMPONENT_UNUSABLE` conflict. A payment left unsettled, part-settled or found
+already settled records nothing.
+
+`FAILED_LATER_REFUND_REVERSAL` records the invoice #4369's
+`createXeroCardRefundReversalInvoice` already sends at a paid-another-way close
+(`INV-PAY-151`), after completing its row, under its key
+(`cardRefundReversalInvoiceKey`) with the Xero invoice as the provider object;
+a replay hashes the stored request's lines, which a retry keeps. The close's record names the card
+refund row it closed (a still-owed rest, the row it was first owed on), that row
+the one refund Stripe failed later, and that refund's R12 its R13: the
+`reversal:<journalId>` batch's Stripe-clearing debit, covered whole. An invoice
+for less than that R13, because the close paid back part or the card note's
+excess was smaller, is `CENTS` and covers nothing; never a part cover. A row
+owed for no failed refund or several, an R12 missing or not yet reversed, or an
+R13 itself reversed, is `COMPONENT_UNUSABLE`; an R13 an earlier reversal covers
+is `ALREADY_COVERED`. Both replays (this and the primary booking invoice) read
+the stored lines and their basis through one reader, `storedInvoiceRequestLines`.
+As on every other manifest since #4632, the frozen mapping records the
+line-amount basis and line tax types the invoice was sent with: the rendering
+the sender resolved for the booking and built it under, or a replay's stored
+request's own, never the schedule's current treatment.
+
+The capture-receipt cohort (ALP-605) adds `CAPTURE_RECEIPT`, which records the
+cents each existing capture sender stores, and those senders still send exactly
+what they sent before: the primary invoice's Stripe payment, a change capture's
+receipt legs, a supplementary invoice's payment, a kept late capture's payment
+and a PARTIAL invoice repair. Once a sender has stored a Xero payment id it calls
+`recordCaptureReceiptManifest` with the payment's own idempotency key, which is
+both the manifest's legacy key and its coverage row's `sliceKey`. The pure
+`planCaptureReceipt` covers those cents against the capture's live R06
+`STRIPE_CLEARING` debit (`memberMoneyEventKeys.capture`) less what other
+receipts already cover, so several receipts may name one capture while the
+primary invoice still bills each component once. More cents than are left is
+`CAPTURE_CENTS`; a payment naming no one capture, or a capture with no live
+receipt, is `CAPTURE_NOT_JOURNALLED`; either covers nothing. The primary
+invoice's payment names the one capture the split saved with its link says its
+cash came from (`intentsRecordedByPrimaryCash`). This cohort does not split one
+payment across captures: a primary payment whose cash came from several, and a
+primary-invoice gap invoice's payment (its queued payload names several
+captures and no `paymentIntentId`), name no one capture and record that
+conflict from the sender, and nothing from a PARTIAL repair. Only cents a stored
+payment sent are coverage, never the unsent rest of a capture. Bank, cash,
+credit-release and refund-note payments are not this role. The recorder holds
+the capture's `PaymentTransaction` row in its own short transaction, and a
+failure is logged without changing the send; the row is then written only where
+a replay re-reaches the stored payment id, which the supplementary sender and a
+closed repair never do. A PARTIAL repair records a recovered
+payment only when its outbound operation or the original invoice response proves
+which payment was sent; an inbound bank payment may close the repair but adds no
+capture coverage. Primary invoice replays preserve the stored payment through
+completion so a later replay can retry a failed manifest write, and record it
+as soon as they read it, before anything else in the replay can fail. A primary
+run that fails after Xero took its payment and after its link was stored
+records the receipt in its failure path, before failing the row. It also writes
+the payment beside the error on the FAILED row, but that copy survives only an
+officer's inline retry: the outbox fails the same row again with the error
+alone, so a queued run relies on the failure-path record.
+A supplementary invoice names the capture its queued payload names; an
+officer's inline retry of a FAILED one passes that payload's
+`paymentIntentId` to the sender, so the retry's receipt names the same capture
+the outbox run would have.
+
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |
 | Primary, supplementary or combined group invoice | Exact issued charge components, including fee coverage assigned once. Combined invoices consume child charge coverage; individual child invoices cannot consume it again. Pending bank-transfer obligations already have R01 postings. |
@@ -563,7 +699,7 @@ a retry key from the current refund watermark or current set of voids.
 | Account-credit note and allocation | Original R09/R11 grant/restore lot and R10 applications, subject to the existing restore/noteless policy. This patch queues the note on today's credit row when a manual grant is approved. The ledger render replaces that queue, adopts `xeroCreditNoteId` and the `ADMIN_GRANT_CREDIT_NOTE` link, and does not raise another note. An already-exported grant cannot become a second expense at spend. |
 | Refund note and its payment | Charge reversal/entitlement plus R12/R14 cash slice, linked separately so a composite note cannot double-count the price reduction. Never one invoice-applied edit credit plus another full credit for that same reduction. A note can remain outstanding before hand-back; only the cash slice creates its payment. |
 | Capture receipt, including late/change capture | R06 applications across the invoices actually billing those obligations. A capture of 8000 with only 5000 room on one invoice is fully recorded through valid remaining targets; unexplained room is a task/unapplied receipt, never silently clipped. No invented second revenue charge to fit the cash. |
-| Failed-later refund reversal | R13, rendered using #4361: full reversal invoice coded like its credit note, paid into Stripe, never emailed/allocated. Date is the failure day or first open day after Xero's lock; reference retains the actual failure day. Its void raises one task and never automatically recreates it. |
+| Failed-later refund reversal | R13, rendered by #4369's sender: a reversal invoice for the cents a card note covers at a paid-another-way close, coded like its credit note, paid into Stripe, never emailed/allocated. Dated the close day or first open day after Xero's lock; the reference keeps the close day. A voided one is never raised again. Covers its R13 whole, or records a conflict. |
 | Stripe fee/payout | R16/R17 provider balance facts; no second fee where Xero's connected feed already covers the exact transaction. Missing external identity is a conflict to resolve, not amount-based adoption. |
 
 A component may be covered partly by more than one provider document, but the
@@ -701,7 +837,7 @@ rendering are active and its test passes; this design closes no bug by itself.
 | #3992 | One change fee appears on one document after primary void/reissue | R03: unique fee component and section 7's signed live coverage; replacement transfers coverage, never creates another fee |
 | #3993 | A card-refunded reduction creates one credit and no nightly missing-credit finding | R02/R05/R12: one reduction/refund identity; composite document coverage prevents two credits and the coverage monitor sees the same manifest |
 | #4051 | Retried late-capture note counts once; voided note stops counting | R24/R23: exact source/manifest identity, terminal tombstone and signed coverage, not succeeded-operation sums |
-| #4069 | Unpaid bank amount stays owing regardless of booking status | R01/R07: derive obligation outstanding from charge minus applications; operational booking status cannot zero AR |
+| #4069 | Unpaid bank amount stays owing regardless of booking status | R01/R07: derive obligation outstanding from charge minus applications; operational booking status cannot zero AR; until then the one cash-cover reader ([paid-from-cash.md](paid-from-cash.md)) answers it, and M11 extends that reader |
 | #4200 | Inbound void and new refund-note recording finish without deadlock or loss | R23 and section 3's common business-row-before-object order; journal and coverage outcome commit under one guarded claim |
 | #4219 | Outside spend writes credit down and releases booking credit as owed | R22: exact release plus lot write-down in one transaction, unchanged free balance, no duplicate Xero grant |
 | #4279 | A repair losing its claim after a void cannot leave a live link | R23: object-head terminal check and guarded export completion; returned id is evidence, not active coverage |
@@ -776,14 +912,15 @@ scope still excludes GST returns and does not assume every adopting club is
 GST-registered. Not taken: a new universal tax or recognition basis.
 Delivered for future charges by M3a (#4626): section 2 describes the setting
 and the split. Back-posting history by the rate in force on each charge date
-remains with M9. Until the Xero tax-type issue
-([#4632](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4632)) makes
-Xero's renders read the setting, nothing may write it, because the renderers
-hard-code the inclusive OUTPUT2 code and the two would disagree
-(`club-tax-settings-writer-census.test.ts`, `INV-CONFIG-007`). So M3b (#4627)
-posts every club's charges at the default treatment, which is what Xero renders
-today. A club that is not GST-registered needs that surface before its journal's
-tax legs can be right; no reader uses them yet.
+remains with M9. The Xero tax-type issue
+([#4632](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4632))
+closed the gap this section originally flagged: Xero's own renders now read
+the same schedule, through the same reader and renderer as the journal
+(`docs/xero/ARCHITECTURE.md#tax-treatment`, `INV-CONFIG-007`), so the two can
+no longer disagree, and `club-tax-settings-write.ts` is the one writer a Full
+Admin reaches to schedule a future change (`club-tax-settings-one-writer-census.test.ts`
+holds every other path to reads). A club that is not GST-registered can now
+have that recorded from the admin card on `/admin/finance/xero`.
 
 ### D4. Member merge: transfer open balances explicitly
 
@@ -925,6 +1062,34 @@ A rollback across M4c can strand a reservation. `pnpm run
 member-money:refund-reservations` lists them, answers those a recovery row marks
 made by an exact refund, and releases any other only on the owner's explicit
 OPERATOR command ([maintenance](../MAINTENANCE.md#reconcile-and-census-card-refund-reservations-m4c)).
+
+### M4d bank and cash hand-backs
+
+A hand-back the club pays by bank transfer or in cash posts its refund debt
+(R05, scope `hand-back`) with the task, then pays it (R14, `hand-back-paid:<task>`)
+when the treasurer marks it paid. The payment is funded only from the receipts
+that completion placed the money on. Cash is never refused for a cap: the
+applied part trims to what the debt still has open, and the rest debits the
+owner's receivable. A task raised before this milestone has no debt in the
+journal, so its payment posts unapplied (Dr receivable, Cr bank or cash).
+Dismissing a real bank or cash hand-back, whenever it was raised, is refused
+for now, so its debt stays open until it is paid (owner decision, 14 Nov 2026,
+#4516); a four-way dismissal that records why follows in its own change. A card
+shortfall's part to check keeps its dismissal, and a disputed card payment's
+hand-back, a cancellation's or a dispute-held edit's, is dismissed once its
+dispute is lost, or reduced by a dispute lost for part of it, lost cents counted
+once across the payment's hand-backs, oldest first (owner decisions, 15 and 18
+Nov 2026, `INV-PAY-157`); each withdraws its debt, or that
+part of it, exactly (a part is a Dr refund payable, Cr receivable batch paying
+the debt). An
+approved appeal's bank part posts its concession against goodwill first, as
+its card part does, so once paid the member owes nothing. A late capture the treasurer keeps closes the capture-return debt,
+then records the keep: collected against the booking for the cents an invoice
+already bills, and a retained component (`kept-capture:<intent>`) for the rest.
+Approving that keep later reverses the component before the return posts. The
+comparison counts a kept-capture component on the ledger side as the gross it
+still carries. No card reservation is taken: the bank payment happens in the
+same transaction as the task. Organiser shares stay M6's.
 
 ## 11. Proposed children, in shipping order
 

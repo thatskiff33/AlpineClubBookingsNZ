@@ -11,6 +11,7 @@ import {
   CREDIT_ELECTION_NOT_APPLIED_BODIES,
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
   PAYMENT_PROCESSING_BODY,
+  SUPERSEDED_PAYMENT_PROCESSING_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
   REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_BODY,
@@ -114,6 +115,108 @@ describe("BookingPaymentWrapper", () => {
     });
   });
 
+  const creditElection = {
+    requestedCents: 10000, appliedCents: 4000, shortfallCents: 6000,
+    shortfallReason: "balance", availableBalanceCents: 4000, fullyCovered: false,
+  };
+  function renderCreditPayment(onPaymentComplete = vi.fn()) {
+    return render(<BookingPaymentWrapper bookingId="booking-credit" amountCents={30000}
+      paymentMode="payment"
+      onPaymentComplete={onPaymentComplete} />);
+  }
+
+  it.each([
+    ["balance", "you no longer hold that much credit"],
+    ["price", "the booking no longer costs that much"],
+    ["balance_and_price", "you no longer hold that much credit and the booking no longer costs that much"],
+  ])("discloses a %s shortfall on a card response", async (shortfallReason, reason) => {
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({
+      clientSecret: "cs_test", chargedAmountCents: 26000,
+      creditElection: { ...creditElection, shortfallReason },
+    }) });
+    renderCreditPayment();
+    const notice = await screen.findByRole("status", { name: "Saved account credit" });
+    expect(notice).toHaveTextContent(`You asked to use $100.00 credit. $40.00 was applied because ${reason}.`);
+    expect(notice).toHaveTextContent("Any unused credit stays on your account.");
+    expect(notice).toHaveTextContent("Your card will be charged $260.00 today.");
+    expect(screen.getByTestId("charged-amount")).toHaveTextContent("26000");
+  });
+
+  it("discloses a full election on a reused intent", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({
+      clientSecret: "cs_reused", chargedAmountCents: 20000,
+      creditElection: { ...creditElection, appliedCents: 10000, shortfallCents: 0,
+        shortfallReason: "none", availableBalanceCents: 10000 },
+    }) });
+    renderCreditPayment();
+    expect(await screen.findByRole("status", { name: "Saved account credit" })).toHaveTextContent("Your credit of $100.00 was applied. Your card will be charged $200.00 today.");
+  });
+
+  it.each([null, undefined, { ...creditElection, appliedCents: 1.5 },
+    { ...creditElection, shortfallReason: "unknown" }, { ...creditElection, shortfallCents: -1 }])(
+    "does not invent a credit outcome for absent or invalid response data %j", async (outcome) => {
+      fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ clientSecret: "cs_test", creditElection: outcome }) });
+      renderCreditPayment();
+      await screen.findByText("payment-form");
+      expect(screen.queryByRole("status", { name: "Saved account credit" })).toBeNull();
+    },
+  );
+
+  it("lets the member read that credit covered the booking before continuing", async () => {
+    const complete = vi.fn();
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ alreadyPaid: true,
+      creditElection: { ...creditElection, fullyCovered: true },
+    }) });
+    renderCreditPayment(complete);
+    expect(await screen.findByRole("status", { name: "Saved account credit" })).toHaveTextContent("Your credit covered it all. No card payment is needed.");
+    expect(screen.queryByText("payment-form")).toBeNull();
+    expect(screen.queryByText(/Unable to initialize/)).toBeNull();
+    expect(complete).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
+  it("completes an already-paid response without inventing a credit notice", async () => {
+    const complete = vi.fn();
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ alreadyPaid: true, creditElection: null }) });
+    renderCreditPayment(complete);
+    await waitFor(() => expect(complete).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("status", { name: "Saved account credit" })).toBeNull();
+  });
+
+  it.each([PAYMENT_PROCESSING_BODY, SUPERSEDED_PAYMENT_PROCESSING_BODY, SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY,
+    BELOW_STRIPE_MINIMUM_MEMBER_BODY])("discloses consumed credit on a 409 recovery %j", async (body) => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 409,
+      json: async () => ({ ...body, creditElection }) });
+    renderCreditPayment();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("$40.00 was applied");
+    expect(alert).toHaveTextContent("you no longer hold that much credit");
+    expect(alert).not.toHaveTextContent("Your card will be charged");
+    expect(screen.queryByText("payment-form")).toBeNull();
+  });
+
+  it("retains the zero-dollar short-circuit without creating a card intent", () => {
+    render(<BookingPaymentWrapper bookingId="booking-zero" amountCents={0}
+      paymentMode="payment" onPaymentComplete={vi.fn()} />);
+    expect(screen.getByText("No payment is required for this booking.")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not promise another charge when confirmation needs recovery", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({
+      clientSecret: "cs_test", chargedAmountCents: 26000, creditElection,
+    }) }).mockResolvedValueOnce({ ok: false, status: 409,
+      json: async () => PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY });
+    renderCreditPayment();
+    fireEvent.click(await screen.findByText("trigger-success"));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("$40.00 was applied"));
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Your card will be charged");
+    // #4943 review: the recovery alert is the only place the credit sentence appears.
+    expect(screen.queryByRole("status", { name: "Saved account credit" })).toBeNull();
+    expect(screen.getAllByText(/\$40\.00 was applied/)).toHaveLength(1);
+  });
+
   // #4949: "Preparing payment..." is silent to a screen reader unless it sits in
   // a status region.
   it("says it is preparing payment through a status region while the payment is set up", async () => {
@@ -124,7 +227,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />
     );
@@ -148,7 +250,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />
     );
@@ -195,7 +296,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -224,7 +324,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -250,7 +349,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -286,7 +384,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={onPaymentComplete}
       />,
     );
@@ -330,7 +427,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -369,7 +465,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -396,7 +491,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -423,7 +517,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={32}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -454,7 +547,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -483,7 +575,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -522,7 +613,6 @@ describe("BookingPaymentWrapper", () => {
           bookingId="booking-1"
           amountCents={12500}
           paymentMode="payment"
-          returnUrl="http://localhost/bookings/booking-1"
           onPaymentComplete={vi.fn()}
         />,
       );
@@ -560,7 +650,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -591,7 +680,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={20000}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />
     );
@@ -618,7 +706,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />
     );
@@ -647,7 +734,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={onPaymentComplete}
       />
     );
@@ -691,7 +777,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={onPaymentComplete}
       />
     );
@@ -738,7 +823,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={onPaymentComplete}
       />,
     );
@@ -781,7 +865,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={onPaymentComplete}
       />,
     );
@@ -821,7 +904,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={onPaymentComplete}
       />,
     );
@@ -850,7 +932,6 @@ describe("BookingPaymentWrapper", () => {
         bookingId="booking-1"
         amountCents={12500}
         paymentMode="payment"
-        returnUrl="http://localhost/bookings/booking-1"
         onPaymentComplete={vi.fn()}
       />,
     );
@@ -869,7 +950,7 @@ describe("BookingPaymentWrapper", () => {
     try {
       fetchMock.mockResolvedValueOnce({ ok: false, status: 409, json: async () => SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY });
       render(
-        <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode="payment" returnUrl="http://localhost/book" onPaymentComplete={vi.fn()} />,
+        <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode="payment" onPaymentComplete={vi.fn()} />,
       );
       fireEvent.click(await screen.findByRole("button", { name: "Reload booking", hidden: true }));
       expect(assign).toHaveBeenCalledWith("/bookings/booking-1");
@@ -881,7 +962,7 @@ describe("BookingPaymentWrapper", () => {
   it("#4300: the pay step's going-back notice is shown beside the fresh form", async () => {
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ clientSecret: "cs_test", previousPaymentRefunding: true }) });
     render(
-      <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode="payment" returnUrl="http://localhost/bookings/booking-1" onPaymentComplete={vi.fn()} />,
+      <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode="payment" onPaymentComplete={vi.fn()} />,
     );
     expect(await screen.findByText(PREVIOUS_PAYMENT_REFUNDING_NOTICE)).not.toBeNull();
     expect(screen.getByText("trigger-success")).not.toBeNull();
@@ -893,7 +974,7 @@ describe("BookingPaymentWrapper", () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ({ clientSecret: "cs_test" }) })
       .mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ error: "PaymentIntent does not match booking" }) });
     render(
-      <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode="payment" returnUrl="http://localhost/bookings/booking-1" onPaymentComplete={onPaymentComplete} />,
+      <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode="payment" onPaymentComplete={onPaymentComplete} />,
     );
     fireEvent.click(await screen.findByText("trigger-success"));
     const alert = screen.getByRole("alert", { hidden: true });
@@ -929,7 +1010,6 @@ describe("BookingPaymentWrapper", () => {
           bookingId="booking-1"
           amountCents={12500}
           paymentMode="payment"
-          returnUrl="http://localhost/bookings/booking-1"
           onPaymentComplete={onPaymentComplete}
         />,
       );
@@ -978,7 +1058,6 @@ describe("BookingPaymentWrapper", () => {
           bookingId="booking-1"
           amountCents={12500}
           paymentMode="payment"
-          returnUrl="http://localhost/bookings/booking-1"
           onPaymentComplete={onPaymentComplete}
         />,
       );

@@ -38,6 +38,12 @@ vi.mock("@/lib/booking-ledger-modification-sync", () => ({
   postModificationLedgerLines: vi.fn().mockResolvedValue(undefined),
   postReviewClosureLedgerLines: vi.fn().mockResolvedValue(undefined),
 }));
+// #5061 follow-up: no capture here is disputed; the edit's hold is proved in
+// `stripe-dispute-edit.realdb.test.ts`.
+vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
+  paymentDisputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (...args: unknown[]) => {
@@ -119,6 +125,11 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+// #4516 (M4d): a hand-back's R05 is the journal's; here, that the removal asks for it.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  postHandBackObligation: vi.fn(async () => null),
+}));
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/capacity", () => ({
   checkCapacity: vi.fn(),
@@ -223,11 +234,13 @@ vi.mock("@/lib/member-credit", () => ({
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceUpdateOperation: mockEnqueueXeroBookingInvoiceUpdateOperation,
-  enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation: mockEnqueueXeroModificationCreditNoteOperation,
   enqueueXeroRefundCreditNoteOperation: mockEnqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected: mockKickQueuedXeroOutboxOperationsIfConnected,
   recordSkippedXeroBookingInvoiceUpdateOperation: mockRecordSkippedXeroBookingInvoiceUpdateOperation,
+}));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
+  enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
 }));
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -485,6 +498,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
   // pass, not a bypass.
   const fenceBooking = recordingBookingDouble(async () => booking);
   return {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     // #1881 — the date/batch service takes the global lock(1) via $executeRaw.
     $executeRaw: vi.fn().mockResolvedValue(undefined),
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
@@ -553,6 +567,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       findMany: vi.fn().mockResolvedValue([]),
       // #3827 (D-3813-6): an internet-banking reduction's officer refund task.
       createMany: vi.fn().mockResolvedValue({ count: 1 }),
+      // #4516 (M4d): that task, read back for its R05.
+      findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "hand-back-1", amountCents: 2500 }),
     },
     bookingModification: {
       create: vi.fn().mockResolvedValue({ id: "mod1" }),
@@ -2607,6 +2623,10 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       data: [expect.objectContaining({ amountCents: 2500, kind: "CANCELLED_BOOKING_HAND_BACK" })],
       skipDuplicates: true,
     });
+    const { postHandBackObligation } = await import("@/lib/member-money/doors");
+    expect(vi.mocked(postHandBackObligation)).toHaveBeenCalledWith(tx, expect.anything(), expect.objectContaining({
+      bookingId: "bk1", taskId: "hand-back-1", amountCents: 2500, debtorRead: "booking-row",
+    }));
     expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ refundAmountCents: 2500, refundByBankTransfer: "member" }),
       expect.anything(),

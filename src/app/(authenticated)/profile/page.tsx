@@ -15,7 +15,7 @@ import { ProfileSectionCard } from "./profile-section-card";
 import { ChangeEmailCard } from "./change-email-card";
 import { NotificationPreferences } from "./notification-preferences";
 import { PostLoginLandingPreference } from "./post-login-landing-preference";
-import { FamilyGroupSection } from "./family-group-section";
+import { FamilyGroupSection } from "@/components/profile/family-group-section";
 import { PartnerLinkSection } from "./partner-link-section";
 import { AccountCreditSection } from "./account-credit-section";
 import { ProfilePhotoSection } from "./profile-photo-section";
@@ -353,7 +353,7 @@ export default async function ProfilePage({
         {/* Profile photo */}
         <Card id="profile-photo" className="scroll-mt-20">
           <CardHeader>
-            <CardTitle>Profile Photo</CardTitle>
+            <CardTitle headingLevel={2}>Profile Photo</CardTitle>
             <CardDescription>
               Add a photo of yourself. Committee members&apos; photos appear on
               the public committee page.
@@ -378,7 +378,7 @@ export default async function ProfilePage({
           <CardHeader>
             <div className="flex items-start justify-between">
               <div>
-                <CardTitle>Account Information</CardTitle>
+                <CardTitle headingLevel={2}>Account Information</CardTitle>
                 <CardDescription>
                   Your membership details and status
                 </CardDescription>
@@ -430,7 +430,7 @@ export default async function ProfilePage({
         {/* Security */}
         <Card id="security" className="scroll-mt-20">
           <CardHeader>
-            <CardTitle>Security</CardTitle>
+            <CardTitle headingLevel={2}>Security</CardTitle>
             <CardDescription>
               Manage your password and account security
             </CardDescription>
@@ -675,7 +675,7 @@ export default async function ProfilePage({
         {/* Privacy & Data */}
         <Card id="privacy-data" className="scroll-mt-20">
           <CardHeader>
-            <CardTitle>Privacy &amp; Data</CardTitle>
+            <CardTitle headingLevel={2}>Privacy &amp; Data</CardTitle>
             <CardDescription>
               Download a copy of your data or request account deletion
             </CardDescription>
@@ -683,8 +683,10 @@ export default async function ProfilePage({
           <CardContent className="space-y-4">
             <div>
               <p className="text-sm text-muted-foreground mb-2">
-                Download a machine-readable copy of all data the system holds
-                about you (JSON format, max 5 times per day).
+                Download your profile, bookings, credits and other personal records
+                as JSON (up to 5 times per day). The file lists exclusions.
+                Contact the club’s privacy officer for anything else, including
+                a dependant’s record.
               </p>
               <DataExportButton />
             </div>

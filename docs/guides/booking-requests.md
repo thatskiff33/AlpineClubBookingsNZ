@@ -23,10 +23,46 @@ Find it at **Admin → Bookings & Beds → Booking Requests**
 appears under **Admin → Needs Attention → Booking Requests**, and the badge
 counts waiting policy exceptions alongside the other queues.
 
+Each tab shows how many items are waiting on it, across every page of that
+queue, not only the 25 rows on screen. The four counts are worked out
+the same way as the sidebar badge, so they add up to it. The page reads them
+again whenever the sidebar does: after you decide something on any tab, and
+when you come back to the window or browser tab. The tab you are on stays put.
+If a read fails, the badges keep their last numbers.
+
+A link to the page that names no tab, such as the sidebar entry followed from
+another page, the dashboard card, or a typed address, opens on the first tab
+that has work, in tab order (Approvals, Changes, Policy Exceptions, Public
+Requests), or on **Approvals** when nothing is waiting or the counts could not
+be read when the page opened. The dashboard's
+**Booking Requests** card links to that tab. A link that names a tab, a single
+booking or request, or a status filter always opens where it points. Once the
+page is open its address names the tab, so a bookmark taken then keeps that
+tab, and the sidebar entry followed while you are already on this page opens
+**Approvals**, as it always has. The tab counts show where the work is.
+
+**Changes** counts only locked-period change requests; a policy-exception
+request, whether for a new booking or a change to one, is counted on **Policy
+Exceptions**, where it is listed.
+
 > The two older routes **`/admin/booking-approvals`** and
 > **`/admin/booking-change-requests`** are redirects: they open this page on the
 > **Approvals** and **Changes** tabs respectively. They have no separate screen,
 > so they are documented here.
+
+Every tab's list shows 25 requests a page, with a total line such as "Showing
+1–25 of 40" under it (shown even when everything fits on one page) and
+previous and next arrows with page numbers when there is more. On **Approvals**,
+**Changes**, **Public Requests** and **Policy Exceptions** the waiting filter
+lists the oldest request first, so the one that has waited longest is at the top; decided and **All**
+filters list the newest first, and **All** on Approvals keeps every pending
+booking ahead of the decided ones. Changing the filter or tab, or pressing
+**Reset**, returns to page 1; the page stays in the address (except on
+**Policy Exceptions**, which keeps its filter and page on screen only); and if deciding the last request on a page
+empties it, the list steps back a page. A link that opens one booking or
+request — from an email, **Needs Attention** or the Bookings Review chip —
+shows that record pinned above the list, with a note, when it is not on the
+page you are looking at.
 
 Money is integer cents (shown as dollars); dates are NZ date-only lodge nights.
 Every approve/reject/decline flow asks whether to email the member, and records
@@ -36,6 +72,13 @@ nothing can be sent either way, so the dialog says so instead of asking. On a
 silenced booking a **reject** emails the member nothing at all: the cancellation
 notice that normally always goes out is withheld too, and the withheld messages
 are listed on the booking for you to relay.
+
+The club can set the policy-exception hold length under **Booking Policies →
+Cancellation → Reminder and hold timings** (1–30 days, default 7). Changing it
+applies to new requests only: an existing hold keeps its stamped deadline.
+The same section controls arrival reminder lead time and the first reminder
+for an extra payment (both default to 3 days). Changes are staged with Edit,
+then Save or Cancel.
 
 ## When you'd use it
 
@@ -49,7 +92,8 @@ are listed on the booking for you to relay.
 
 ### Approvals — decide a flagged booking
 
-1. Open **Booking Requests**; the **Approvals** tab is selected by default.
+1. Open **Booking Requests** and choose the **Approvals** tab (the page opens on
+   it when it has work, or when no tab does).
    Filter by **Pending**, **Approved**, **Rejected**, or **All**.
 
    ![Booking Requests, Approvals tab: a pending review card for a member with Approve and Reject and cancel buttons](../images/admin/admin-booking-requests.png)
@@ -641,8 +685,15 @@ Two things worth knowing:
   one.
 - **An approved new booking emails the member** what was approved and what is
   left to pay, because they are not standing in the payment screen the way an
-  ordinary booker is. An approved change is announced by the usual "your booking
-  was changed" email.
+  ordinary booker is. The amount comes from the money the club has actually
+  received for the booking, not from its status (#4069): what it costs, less
+  account credit applied, less money already held. The email also says whether
+  the beds are held while it waits. A booking that is already covered gets no
+  payment line; a stay a group organiser pays for says so; and where the
+  records cannot prove a figure the email names no amount and sends the member
+  to the booking or the club — see
+  [the five payment lines](email-messages.md#there-is-no-only-if--write-lines-that-always-read-correctly). An
+  approved change is announced by the usual "your booking was changed" email.
 - **A refusal emails the member too**, carrying your member-facing explanation
   verbatim, the nights it was about, and the fact that nothing was booked and any
   beds the request held have been released. That is the whole reason the

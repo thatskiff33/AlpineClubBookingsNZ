@@ -6,14 +6,15 @@ import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-host
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { clubFormat } from "@/lib/club-format-server";
 import type { BoundClubFormat } from "@/lib/club-format-bound";
 import {
   applyManualBookingPayment,
-  ManualBookingPaymentError,
   MANUAL_PAYMENT_NOTE_MAX,
   type ManualBookingAdditionalOutcome,
 } from "@/lib/manual-booking-payment";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 
 const bodySchema = z
   .object({
@@ -243,6 +244,13 @@ export async function POST(
         additionalNote(result.direction, result.additional, money),
     });
   } catch (error) {
+    // `INV-LOCK-006`: the settle or reversal's one transaction rolled back.
+    const contended = transactionContendedResponse(
+      error,
+      "Manual booking payment contended for the lock(1) budget",
+      { context: { bookingId: id, direction } },
+    );
+    if (contended) return contended;
     const hostingRetry = hostingCoverageParticipantRetryResponse(error);
     if (hostingRetry) return hostingRetry;
     if (error instanceof ManualBookingPaymentError) {

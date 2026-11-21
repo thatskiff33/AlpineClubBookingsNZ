@@ -27,6 +27,7 @@ export const MODULE_KEYS = [
   "memberNotices",
   "eventsCalendar",
   "skifieldConditions",
+  "skifieldWhakapapa",
   "twoFactor",
   "magicLink",
   "googleLogin",
@@ -39,6 +40,7 @@ export const MODULE_KEYS = [
   "memberLodgeRoster",
   "alpineCentralServer",
   "commsPortal",
+  "foodOrders",
 ] as const;
 
 export type ModuleKey = (typeof MODULE_KEYS)[number];
@@ -169,6 +171,12 @@ export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
   memberNotices: true,
   eventsCalendar: true,
   skifieldConditions: true,
+  // Default OFF, inverting the general ON rule above on purpose: this report
+  // reads one ski field's public feed (Whakapapa, Mt Ruapehu), so a club at any
+  // other mountain should not start with it. An existing install keeps the
+  // value it had, because migration 20261221010000_add_skifield_whakapapa_module
+  // copies skifieldConditions onto it (#4932).
+  skifieldWhakapapa: false,
   twoFactor: false,
   magicLink: false,
   googleLogin: false,
@@ -191,6 +199,11 @@ export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
   // every other member who can book that lodge. An upgrade must not start
   // doing that because nobody opted out (#2942).
   memberLodgeRoster: false,
+  // Default OFF, inverting the general ON rule above on purpose (fork #121,
+  // owner decision 14): an order goes to the food officer's email address, and
+  // until the committee has entered one in the Food Orders settings there is
+  // nobody to send it to.
+  foodOrders: false,
 };
 
 /**
@@ -375,8 +388,17 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     key: "skifieldConditions",
     label: "Ski-field conditions",
     description:
-      "Live mountain/road status panel and widgets, plus the admin conditions cache.",
+      "Snow.nz ski-field condition widgets for any New Zealand ski field, placed on a public page with the {{skifield-conditions:<id>}} token.",
     dependencies: [],
+  },
+  skifieldWhakapapa: {
+    key: "skifieldWhakapapa",
+    label: "Whakapapa (Mt Ruapehu) conditions report",
+    description:
+      "Whakapapa-specific: the live Mt Ruapehu mountain and road status panel, its {{skifield-whakapapa}} token, and the admin Mountain Conditions cache page.",
+    dependencies: [
+      "Only useful to a club whose lodge is at Whakapapa. When off, the panel, its feed and the admin Mountain Conditions page return Not Found.",
+    ],
   },
   twoFactor: {
     key: "twoFactor",
@@ -403,7 +425,7 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     description:
       "Let members sign in with their linked Google account. Additive to password login, never a replacement. A member links their own Google account from their profile while signed in — no account is ever created from Google, and unlinked Google accounts are refused.",
     dependencies: [
-      "Your club's Google Cloud OAuth credentials are entered and verified in-app on the Google sign-in setup page (Admin → Integrations → Google) — no environment variables or restart. The module stays locked until a real Google sign-in round-trip verifies.",
+      "Your club's Google Cloud OAuth credentials are entered and verified in-app on the Google sign-in setup page (Admin → Integrations → Google Sign-in Setup) — no environment variables or restart. The module stays locked until a real Google sign-in round-trip verifies.",
     ],
   },
   analytics: {
@@ -501,7 +523,7 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     description:
       "Connect this club to the Alpine Central Server (ServerNZ) to upload and download data shared across clubs — starting with the Other Clubs registry. SHARES DATA OUTSIDE THIS CLUB: your lodges' names, locations, bed counts and booking-officer contact details are sent to the central server and redistributed to every other connected club. The booking-officer email is the committee role's shared address, never a member's personal one, and a member's phone is shared only if your club already publishes it on your own committee page. Nothing is sent until you also enable an item on the setup page.",
     dependencies: [
-      "Request a connection and obtain an API key from the central server, then enter it under Admin → Integrations → Alpine Central Server.",
+      "Request a connection and obtain an API key from the central server, then enter it under Admin → Integrations → Alpine Central Server Setup.",
     ],
   },
   commsPortal: {
@@ -527,6 +549,18 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       "A booking that includes a child never names anyone in it: it shows a family or group label instead, at every setting.",
       "Nights under a whole-lodge hold are shown as \"Reserved for a private booking\", without naming or counting the party. The booking calendar still shows them as full.",
       "When off, the roster page returns Not Found and no roster data is read.",
+    ],
+  },
+  // Fork #121.
+  foodOrders: {
+    key: "foodOrders",
+    label: "Food orders",
+    description:
+      "Members order food for a lodge stay from a card on their dashboard. Each order is emailed to your food officer, and a hut leader or Lodge Operations admin marks it received when it arrives. The price can be recorded for the club's history; nothing is charged.",
+    dependencies: [
+      "Enter the food officer's email address under Admin → Lodge → Food Orders before members can order. Until then the order page says ordering is not set up.",
+      "Hut leaders at that lodge and Lodge Operations edit admins tick items received as they arrive (the order closes on the last) and record its price. The price is a record only: it is never charged, invoiced or sent to Xero.",
+      "When off, the order and history pages and their APIs return Not Found, and the dashboard card and settings page are hidden. Existing orders are kept.",
     ],
   },
 };

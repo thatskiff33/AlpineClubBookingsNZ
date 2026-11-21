@@ -59,8 +59,7 @@ const cancellationLedger = vi.hoisted(() => ({ postCancellationLedgerLines: vi.f
 // `stripe-dispute-hold.test.ts` and `stripe-dispute-cancel.realdb.test.ts`.
 vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
-  disputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
-  paymentCaptureIntentIds: async () => [],
+  paymentDisputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
 }));
 
 vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
@@ -137,7 +136,7 @@ vi.mock("@/lib/waitlist", () => ({
   processWaitlistForDates: mocks.processWaitlistForDates,
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: mocks.isXeroConnected,
 }));
 
@@ -313,6 +312,7 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
             mocks.bookingFindUnique(args),
           );
           const mockTx = {
+            $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
             bookingEvent: { create: mocks.txBookingEventCreate },
             // #3835: the reviews settled before the cancel, frozen on its event.
             manualRefundTask: {

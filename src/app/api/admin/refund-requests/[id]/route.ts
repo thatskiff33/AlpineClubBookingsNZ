@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { PaymentSource } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { prisma } from "@/lib/prisma";
-import { z } from "zod";
 import { createAuditLog } from "@/lib/audit";
-import { isXeroConnected } from "@/lib/xero";
+import { isXeroConnected } from "@/lib/xero-token-store";
 import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
 import { sendEmail } from "@/lib/email";
 import {
@@ -47,20 +47,12 @@ import {
   runOrganiserChildAppealRefundNow,
 } from "@/lib/organiser-child-appeal-refund";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { reviewSchema } from "@/lib/refund-request-review-schema";
+import { reviewedRefundRequestInclude } from "@/lib/refund-request-reviewed-include";
 
 /** #3827 (`INV-PAY-118`): thrown inside the approval to roll its claim back. */
 class RefundRequestHandBackNotRaisedError extends Error {}
-
-const reviewSchema = z.object({
-  status: z.enum(["APPROVED", "REJECTED"]),
-  adminNotes: z.string().max(2000).optional(),
-  approvedAmountCents: z.number().int().min(0).optional(),
-  // #1792: admin per-action email choice. Absent/undefined = notify (default);
-  // false = suppress the member outcome email. A non-boolean is rejected 400 by
-  // this parse. Only affects the outcome notice — refund execution, ledger math,
-  // and Stripe/Xero are unchanged.
-  notifyMember: z.boolean().optional(),
-});
 
 export async function PUT(
   req: NextRequest,
@@ -286,6 +278,7 @@ export async function PUT(
           paymentId: payment.id,
           refundRequestId: id,
           amountCents: bankTransferCents, booking: { ...booking, payment: lockedPayment }, // #3949: names the payee
+          journal, actorMemberId: session.user.id,
         });
         // A row already holds this request's key (left by an earlier approval
         // of it), so nobody would be asked to send this money. Refuse rather
@@ -303,7 +296,7 @@ export async function PUT(
         bankTransferCents,
         organiserChildDebtId: null as string | null,
       };
-    }).catch((err: unknown) => {
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET).catch((err: unknown) => {
       if (err instanceof RefundRequestHandBackNotRaisedError) {
         return { kind: "handBackNotRaised" as const };
       }
@@ -311,8 +304,17 @@ export async function PUT(
       if (err instanceof OrganiserChildRefundRefusedError || err instanceof GroupCancelInProgressError) {
         return { kind: "organiserCardRefused" as const, message: err.message };
       }
+      // INV-LOCK-006: the claim is the first write and rolled back whole.
+      const contended = transactionContendedResponse(
+        err,
+        "Refund appeal approval claim contended for the lock(1) budget",
+        { context: { refundRequestId: id } },
+      );
+      if (contended) return { kind: "contended" as const, response: contended };
       throw err;
     });
+
+    if (capped.kind === "contended") return capped.response;
 
     if (capped.kind === "exceeds") {
       return NextResponse.json(
@@ -468,17 +470,26 @@ export async function PUT(
               },
             });
             if (released.count === 1) {
+              const handBack = await tx.manualRefundTask.findFirst({
+                where: { occurrenceKey: refundRequestHandBackOccurrenceKey(id), status: "OPEN" },
+                select: { id: true },
+              });
               await tx.manualRefundTask.deleteMany({
                 where: {
                   occurrenceKey: refundRequestHandBackOccurrenceKey(id),
                   status: "OPEN",
                 },
               });
-              // #4516 (M4c): the approval's R05 goes with it, its open reservations released, under the Payment row.
+              // #4516 (M4c): the approval's card R05 goes with it. #4516 (M4d): so does the bank part's hand-back R05.
+              // A journal refusal rethrows: the release rolls back rather than leaving the debt.
               await withdrawRefundObligation(tx, journal, { bookingId: booking.id, scope: "refund-request", id, actorMemberId: session.user.id,
                 reason: "Refund appeal approval released: its card refund was never sent", senderKeyPrefix: buildRefundRequestRefundStripeKeyPrefix(id) });
+              if (handBack) {
+                await withdrawRefundObligation(tx, journal, { bookingId: booking.id, scope: "hand-back", id: handBack.id, actorMemberId: session.user.id,
+                  reason: "Refund appeal approval released: its bank hand-back was withdrawn", senderKeyPrefix: buildRefundRequestRefundStripeKeyPrefix(id) });
+              }
             }
-          })
+          }, LOCK1_HOLDER_TRANSACTION_BUDGET)
           .catch((revertErr: unknown) => {
             logger.error(
               { err: revertErr, refundRequestId: id },
@@ -731,26 +742,7 @@ export async function PUT(
 
   const updated = await prisma.refundRequest.findUnique({
     where: { id },
-    include: {
-      booking: {
-        select: {
-          id: true,
-          checkIn: true,
-          checkOut: true,
-          finalPriceCents: true,
-          status: true,
-          payment: {
-            select: {
-              amountCents: true,
-              refundedAmountCents: true,
-            },
-          },
-        },
-      },
-      member: {
-        select: { id: true, firstName: true, lastName: true, email: true },
-      },
-    },
+    include: reviewedRefundRequestInclude,
   });
 
   return NextResponse.json({ ...updated, ...cardRefund });

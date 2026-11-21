@@ -33,10 +33,10 @@ vi.mock("next-auth/react", () => ({
   }),
 }));
 
-// SiteStyleWizard calls useRouter().refresh() after a save; the render-only
-// cases here never save, so a stub router is enough.
+// SiteStyleWizard and the Modules page call useRouter().refresh() after a save;
+// the render-only cases here never save, so a stub router is enough.
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
   useParams: () => ({ id: "lodge-1" }),
   useSearchParams: () => new URLSearchParams(),
 }));
@@ -125,19 +125,19 @@ import AdminMemberFieldsPage from "@/app/(admin)/admin/membership/member-fields/
 import AdminMembershipTypesPage from "@/app/(admin)/admin/membership/membership-types/page";
 import LockersPage from "@/app/(admin)/admin/lockers/page";
 import CommitteePage from "@/app/(admin)/admin/membership/committee/page";
-import AdminDisplayDevicesPage from "@/app/(admin)/admin/display/devices/page";
-import AdminDisplayLayoutsPage from "@/app/(admin)/admin/display/layouts/page";
-import AdminDisplayTemplatesPage from "@/app/(admin)/admin/display/templates/page";
+import AdminDisplayDevicesPage from "@/app/(admin)/admin/lodge-ops/display/devices/page";
+import AdminDisplayLayoutsPage from "@/app/(admin)/admin/lodge-ops/display/layouts/page";
+import AdminDisplayTemplatesPage from "@/app/(admin)/admin/lodge-ops/display/templates/page";
 import { LodgeCapacityCard } from "@/components/admin/lodge-capacity-card";
-import { LodgeDisplaySettingsCard } from "@/app/(admin)/admin/lodges/[id]/_components/lodge-display-settings-card";
+import { LodgeDisplaySettingsCard } from "@/app/(admin)/admin/lodge-ops/lodges/[id]/_components/lodge-display-settings-card";
 import ChoresPage from "@/app/(admin)/admin/chores/page";
 import AdminWorkPartiesPage from "@/app/(admin)/admin/work-parties/page";
-import AdminLodgesPage from "@/app/(admin)/admin/lodges/page";
+import AdminLodgesPage from "@/app/(admin)/admin/lodge-ops/lodges/page";
 import HutLeadersPage from "@/app/(admin)/admin/hut-leaders/page";
 import AdminLodgePage from "@/app/(admin)/admin/lodge/page";
 import RosterPage from "@/app/(admin)/admin/roster/page";
-import LodgeConfigurationHubPage from "@/app/(admin)/admin/lodges/[id]/page";
-import LodgeSetupWizardPage from "@/app/(admin)/admin/lodges/[id]/setup/page";
+import LodgeConfigurationHubPage from "@/app/(admin)/admin/lodge-ops/lodges/[id]/page";
+import LodgeSetupWizardPage from "@/app/(admin)/admin/lodge-ops/lodges/[id]/setup/page";
 import { ClubIdentityProvider } from "@/components/club-identity-provider";
 import { clubIdentity } from "@/config/club-identity";
 // #1997 admin action-button surfaces (bookings lane).
@@ -2642,7 +2642,7 @@ describe("AdminBookPage view-only gating (#1997, bookings)", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { name: /Book on Behalf of Member/i }),
+        screen.getByRole("heading", { name: /Book on Behalf/i }),
       ).toBeInTheDocument(),
     );
     expect(
@@ -2737,7 +2737,7 @@ describe("MemberApplicationsPage view-only gating (#1997, membership)", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { name: /Member Applications/i }),
+        screen.getByRole("heading", { name: /^Applications$/i }),
       ).toBeInTheDocument(),
     );
     expect(
@@ -2786,7 +2786,7 @@ describe("MembershipCancellationsPage view-only gating (#1997, membership)", () 
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { name: /Membership Cancellations/i }),
+        screen.getByRole("heading", { name: /Cancellation Requests/i }),
       ).toBeInTheDocument(),
     );
     expect(
@@ -2843,7 +2843,15 @@ describe("CommunicationsPage view-only gating (#1997, membership)", () => {
   beforeEach(() => {
     sessionMatrix = null;
     stubFetchRoutes({
-      "/api/admin/communications/send": { limit: 5, windowSeconds: 3600 },
+      // The rate limit, and the live recipient count (#4987), share one route.
+      "/api/admin/communications/send": {
+        limit: 5,
+        windowSeconds: 3600,
+        totalRecipients: 2,
+        eligibleRecipients: 2,
+        optedOut: 0,
+        neverOptedIn: 0,
+      },
       "/api/admin/communications/history": { history: [] },
     });
   });
@@ -2872,6 +2880,8 @@ describe("CommunicationsPage view-only gating (#1997, membership)", () => {
     const body = screen.getByLabelText(/Message|Body/i);
     fireEvent.change(subject, { target: { value: "Hello" } });
     fireEvent.change(body, { target: { value: "World" } });
+    // #4987: the sender must choose the kind of message before sending.
+    fireEvent.click(screen.getByLabelText(/Club notice/i));
 
     expect(
       screen.getByRole("button", { name: /Send to Members/i }),

@@ -1,6 +1,4 @@
-import { randomBytes } from "crypto";
-import { hash } from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
+import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import {
   AgeTier,
   BookingRequestPricingMode,
@@ -82,6 +80,8 @@ import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { isPendingSchoolAdultsWriteEnabled } from "@/lib/pending-school-adults-gate";
 import { pendingAdultReservationNightsMatch, releasePendingAdultNights, reservePendingAdultNights } from "@/lib/booking-request-pending-adult-reservations";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { cleanNullableString } from "@/lib/member-application-fields";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -239,11 +239,6 @@ const quoteOptionsSchema = z.array(
     ),
   })
 );
-
-function cleanNullableString(value?: string | null) {
-  const trimmed = value?.replace(/[\r\n]/g, " ").trim() ?? "";
-  return trimmed || null;
-}
 
 function getNightCount(checkIn: Date, checkOut: Date) {
   return Math.max(0, Math.ceil((checkOut.getTime() - checkIn.getTime()) / DAY_MS));
@@ -1411,7 +1406,7 @@ export async function respondToBookingRequestQuote(input: {
         });
       }
       return { finalised: false as const, withdrawnMemberGuestIds, releasedHeldBookingId: liveRequest.heldBookingId };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
     if (cancelled.finalised) {
       // A concurrent admin decline (or a prior cancel) already finalised the
       // request in the narrow window after loadSentQuoteByToken read this quote
@@ -1527,7 +1522,7 @@ export async function respondToBookingRequestQuote(input: {
           supersededAt: respondedAt,
         },
       });
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
     logAudit({
       action:
         input.action === "MODIFY"
@@ -1621,7 +1616,7 @@ export async function respondToBookingRequestQuote(input: {
       throw new BookingRequestQuoteError("The quote changed while it was being accepted.", 409);
     }
     return { count: 1, retired: false as const };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   if (accepted.count === 0) {
     throw new BookingRequestQuoteError(
       accepted.retired
@@ -1752,7 +1747,7 @@ export async function holdBookingRequestSlots(input: {
               })) {
             throw new BookingRequestError("The held unnamed bed reservations changed. Reload and reconcile this request before sending a quote.", 409);
           }
-        });
+        }, LOCK1_HOLDER_TRANSACTION_BUDGET);
       }
       return {
         type: "held" as const,
@@ -1822,7 +1817,7 @@ export async function holdBookingRequestSlots(input: {
     throw new BookingRequestQuoteError("Create a quote before holding capacity", 409);
   }
 
-  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
+  const placeholderPasswordHash = UNUSABLE_PLACEHOLDER_PASSWORD_HASH;
   // MG4-D-b (#2309). Read BEFORE the transaction opens — the ordering rule in
   // `member-guest-add-policy.ts`: a settings read under the per-lodge capacity
   // lock is a second query held across the whole hold, for nothing.
@@ -2156,7 +2151,7 @@ export async function holdBookingRequestSlots(input: {
                 entriesByMemberId: consentPlan.entriesByMemberId,
               }),
       };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
 
     // #2576 §7. Every path that can ENQUEUE bounded re-evaluation work must also

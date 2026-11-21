@@ -12,7 +12,7 @@ import { postHandBackLedgerLine } from "@/lib/booking-ledger-hand-back";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { recordManualRefundTaskClosureAudit } from "@/lib/manual-refund-task-audit";
 import { hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
-import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
+import { isNonNegativeIntegerCents } from "@/lib/cents-schema";
 import { editReviewLaterRemovalRefusal } from "@/lib/edit-review-guest-removed-since-raised";
 import { chooseEditReviewSettlementRoute, executeEditReviewSettlement, queueEditReviewChargeInvoiceInTransaction, type EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { giveBackCancelledShareCredit, writeEditReviewAccountCredit, type EditReviewAccountCreditOutcome } from "@/lib/edit-financial-review-account-credit";
@@ -21,7 +21,7 @@ import { releaseOrganiserExtraRefundNotes } from "@/lib/organiser-extra-netting"
 import { applyGroupSettlementMirrorRefund, isBankTransferHandBackRoute } from "@/lib/group-settlement-mirror-hand-back"; // #3949
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { requireMemberCreditRecipient } from "@/lib/member-credit";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { enqueueEditFinancialReviewRefundRecovery } from "@/lib/payment-recovery";
 import { applyLocalRefundAllocation, lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
@@ -30,7 +30,8 @@ import { readCapacityRaceStripeRefundedForTask } from "@/lib/capacity-race-refun
 import { settlementWriteRefusal } from "@/lib/manual-refund-task-settlement-refusal";
 import { prisma } from "@/lib/prisma";
 import { clubToday } from "@/lib/club-time";
-import { lockBookingRowForOwnerRead, postRefundObligation, resolveBookingDoorClock } from "@/lib/member-money/doors";
+import { lockBookingRowForOwnerRead, postRefundObligation, resolveBookingDoorClock, reverseKeptCapture } from "@/lib/member-money/doors";
+import { decideJournalHandBackDismissal, lockCancellationHandBackBeforeClaim, postHandBackCompletion, takesHandBackJournalLocksFirst, withdrawDismissedHandBackDebt } from "@/lib/manual-refund-task-hand-back-journal";
 // #3195: the $0 refusal is said by the settle SCREEN as well as thrown here, and
 // this module is `server-only` - so the sentence lives in a client-safe home and
 // both read it (`INV-SSOT`).
@@ -59,11 +60,11 @@ import { recordReviewClosurePricing } from "@/lib/stored-night-price-repair-stor
  *
  * It sits beside `manual-booking-payment.ts` rather than inside it because the
  * two answer different questions — "the club has just taken cash for this
- * booking" versus "the club has just handed money back" — and share nothing but
- * the note-length rule and the error type, both of which have their own homes.
+ * booking" versus "the club has just handed money back" — and share only the
+ * note-length rule, re-exported below; the error type lives in its own module.
  * `INV-PAY-051` is the invariant these rules belong to.
  */
-export { ManualBookingPaymentError, MANUAL_PAYMENT_NOTE_MAX };
+export { MANUAL_PAYMENT_NOTE_MAX };
 
 export type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
 import type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
@@ -76,6 +77,7 @@ import {
   planKeptLateCaptureXeroRecord,
   type KeptLateCaptureXeroPlan,
 } from "@/lib/late-capture-kept-xero";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * B5 (#2262): close a hand-back task raised when a cash-settled booking was
@@ -90,7 +92,9 @@ import {
  * member-facing event log would be a claim nothing backs — see `recordedRefund`
  * below. DISMISSED exists for
  * "the member declined it" / "settled another way" and requires a note; it
- * moves no money and writes no allocation. For an `EDIT_FINANCIAL_REVIEW` task
+ * moves no money and writes no allocation (#4516: `journalHandBackDismissal`
+ * decides a journal hand-back's, and an allowed one withdraws its journal
+ * debt exactly). For an `EDIT_FINANCIAL_REVIEW` task
  * DISMISSED carries its #2797 meaning: reviewed, and THIS SYSTEM MOVED NO MONEY
  * for that occurrence — which is a real decision, and is why it is not the same
  * thing as an unknown amount. The required note is what says which decision it
@@ -118,18 +122,10 @@ export async function resolveManualRefundTask(
 ) {
   const { taskId, resolution, note, actingMemberId } = input;
   const trimmedNote = normaliseManualPaymentNote(note);
-  if (resolution === "dismissed" && !trimmedNote) {
-    throw new ManualBookingPaymentError(
-      "Say why this refund is being dismissed — a note is required.",
-      400
-    );
-  }
+  if (resolution === "dismissed" && !trimmedNote) throw new ManualBookingPaymentError("Say why this refund is being dismissed — a note is required.", 400);
   const confirmedAmountCents = resolution === "completed" ? input.confirmedAmountCents : null;
   const requestedDirection = resolution === "completed" ? (input.direction ?? null) : null;
-  if (
-    confirmedAmountCents !== null &&
-    !isNonNegativeIntegerCents(confirmedAmountCents)
-  ) {
+  if (confirmedAmountCents !== null && !isNonNegativeIntegerCents(confirmedAmountCents)) {
     // `INV-MONEY-001`: integer cents, non-negative, through the ONE predicate
     // (`INV-SSOT`, #3030) rather than a fourth inline spelling of the rule. The
     // DB `ManualRefundTask_amount_nonnegative` CHECK says the same; this refuses
@@ -160,13 +156,14 @@ export async function resolveManualRefundTask(
     // cannot commit between the two reads, which would count the same money
     // as neither refunded nor promised. Its occurrence key, like its kind, is
     // written once at creation and never again.
-    const head = await tx.manualRefundTask.findUnique({ where: { id: taskId }, select: { kind: true, occurrenceKey: true, bookingId: true } });
-    // #4042 (`INV-PAY-124`): so does a group organiser's, which later joiners' shares grow under it.
-    if (head?.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW || (head !== null && (isNonCancellationHandBackTask(head) || isGroupOrganiserHandBackTask(head)))) {
+    const head = await tx.manualRefundTask.findUnique({ where: { id: taskId }, select: { kind: true, occurrenceKey: true, bookingId: true, lateCaptureApprovalIntentId: true, partPaymentReviewPaymentId: true, reason: true } });
+    // #4042 (`INV-PAY-124`): so does a group organiser's, which later joiners' shares grow under it. #4516 (M4d): so do a late-capture approval and a journal hand-back.
+    const handBackJournalFirst = head !== null && takesHandBackJournalLocksFirst(head);
+    if (head?.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW || (head !== null && (isNonCancellationHandBackTask(head) || isGroupOrganiserHandBackTask(head) || handBackJournalFirst))) {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     }
-    // #4840 (#4627): an edit review's booking row next, so the owner below is read under it, and the claim (the officer) and credit writes (the owner), each a Member KEY SHARE, follow it as member merge orders them; no other kind takes it after the claim.
-    if (head?.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) await lockBookingRowForOwnerRead(tx, head.bookingId);
+    // #4840 (#4627): an edit review's booking row next, so the owner below is read under it, and the claim (the officer) and credit writes (the owner), each a Member KEY SHARE, follow it as member merge orders them. A late-capture approval and a journal hand-back take it here too, before any Payment row.
+    if (head && (head.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW || handBackJournalFirst)) await lockBookingRowForOwnerRead(tx, head.bookingId);
     const task = await tx.manualRefundTask.findUnique({
       where: { id: taskId },
       select: MANUAL_REFUND_TASK_RESOLUTION_SELECT,
@@ -194,10 +191,11 @@ export async function resolveManualRefundTask(
     // settled by paying it. The cancel counted it as going back; dismissing it
     // now would leave the cancellation's kept figure wrong. Read under lock(1)
     // (taken above for this kind), which a paid cancel also holds.
-    if (resolution === "dismissed" && isEditRefundHandBackTask(task) && task.booking.status === BookingStatus.CANCELLED) {
+    const journalDismissal = await decideJournalHandBackDismissal(tx, task, resolution); // #4516: under lock(1), the booking row and the Payment row, disputes and the payment's tasks re-read; before the claim
+    if (resolution === "dismissed" && isEditRefundHandBackTask(task) && task.booking.status === BookingStatus.CANCELLED && !journalDismissal.disputeLost) { // #4516 (owner, 18 Nov 2026): a lost dispute already sent it back
       throw new ManualBookingPaymentError(editRefundHandBackDismissAfterCancelMessage(task.booking), 409); // #3949: names the organiser on a group child
     }
-    const groupRefusal = groupOrganiserHandBackRefusal(task, resolution, confirmedAmountCents, format); if (groupRefusal) throw new ManualBookingPaymentError(groupRefusal, 409); // #4042
+    const groupRefusal = groupOrganiserHandBackRefusal(task, resolution, confirmedAmountCents, format); if (groupRefusal) throw new ManualBookingPaymentError(groupRefusal, 409); if (journalDismissal.refusal) throw new ManualBookingPaymentError(journalDismissal.refusal, 409); // #4042; #4516
     const laterRemoval = resolution === "completed" && input.refuseIfGuestRemovedSinceRaised === true ? await editReviewLaterRemovalRefusal(tx, task, resolution) : null; if (laterRemoval) throw new ManualBookingPaymentError(laterRemoval, 409); // #4343: the clean-up's opt-in, under lock(1), which a consent removal also holds; an officer is warned instead (owner, 24 Oct)
     const isEditReview = task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW;
 
@@ -235,10 +233,9 @@ export async function resolveManualRefundTask(
         );
       }
       if (confirmedAmountCents === null) {
-        // #2797 (owner decision D2): a task cannot be COMPLETED without a
-        // confirmed amount. The DB `ManualRefundTask_completed_amount_present`
-        // check enforces the same rule; this throws first with a message an
-        // operator can read.
+        // #2797 (owner decision D2): no COMPLETED task without a confirmed
+        // amount. The DB `ManualRefundTask_completed_amount_present` check
+        // enforces it too; this throws first, with a message an operator reads.
         if (task.amountCents === null) {
           throw new ManualBookingPaymentError(
             "This refund has no confirmed amount yet — price it before completing.",
@@ -338,7 +335,8 @@ export async function resolveManualRefundTask(
         : null,
       store: tx,
     });
-    await prepareLateCaptureDecision(tx, journal, { task, resolution, actingMemberId }); // #4516 review F2, M5: Payment row before the claim; a keep's R05
+    await prepareLateCaptureDecision(tx, journal, { task, resolution, actingMemberId }); // #4516 review F2, M5: Payment row before the claim; a keep's R05. M4d: lock(1) and the booking row are already held.
+    await lockCancellationHandBackBeforeClaim(tx, { task, route: settlementRoute, ownerMemberId: () => bookingOwner(task.booking).memberId }); // #4516 (M4d): its Payment row before the claim
     const now = new Date();
     const claimed = await tx.manualRefundTask.updateMany({
       where: { id: task.id, status: ManualRefundTaskStatus.OPEN },
@@ -373,7 +371,8 @@ export async function resolveManualRefundTask(
     if (claimed.count === 0) {
       throw new ManualBookingPaymentError("This refund task changed while you were closing it — refresh and try again.", 409);
     }
-
+    await withdrawDismissedHandBackDebt(tx, journal, { task, dismissal: journalDismissal, actingMemberId }); // #4516 (owner, 15 Nov 2026): with the claim, so a lost claim leaves the debt
+    let handBackFunding: readonly string[] = [];
     if (settlement && settlementRoute) {
       // #3835: the credit part goes back FIRST: member ledger lock before any Payment row (INV-LOCK-002).
       if ("creditBackCents" in settlementRoute && settlementRoute.creditBackCents > 0) {
@@ -396,12 +395,12 @@ export async function resolveManualRefundTask(
           // #4872: after the credit give-back (member ledger first); also covers a card-shortfall check part's fall-through.
           await lockPaymentForRefundedTotal(tx, settlementRoute.paymentId);
           heldBack = await readSupersededCaptureHeldBack(tx, settlementRoute.paymentId);
-          await applyLocalRefundAllocation({
+          handBackFunding = (await applyLocalRefundAllocation({ // #4516 (M4d): the receipts it consumed fund the R14
             paymentId: settlementRoute.paymentId,
             amountCents: settlementRoute.refundCents,
             store: tx, preferTransactionIds: settlementRoute.cardShortfall?.preferTransactionIds, onlyTransactionIds: settlementRoute.cardShortfall?.onlyTransactionIds, // #4097, #4154
             heldBackByTransaction: heldBack.byTransaction,
-          });
+          })).map((placed) => placed.transactionId);
         }
         // `account-credit` is written by the closure's re-price below, once the
         // re-price has run: what of a share is applied credit coming back
@@ -427,6 +426,7 @@ export async function resolveManualRefundTask(
         // #3639: the same persist-the-debt-first rule for an approved late
         // capture, under the webhook's own Stripe prefix.
         else if (settlementRoute.kind === "late-capture-refund") {
+          if (task.lateCaptureApprovalIntentId) await reverseKeptCapture(tx, journal, { bookingId: task.bookingId, paymentIntentId: task.lateCaptureApprovalIntentId, actorMemberId: actingMemberId }); // #4516 (M4d): an earlier keep, reversed before this debt posts
           await persistLateCaptureApprovalRefundDebt({
             bookingId: task.bookingId,
             route: settlementRoute,
@@ -472,7 +472,6 @@ export async function resolveManualRefundTask(
     }
 
     if (resolution === "completed") await releaseOrganiserExtraRefundNotes(tx, task.id);
-
     // #3635 (`INV-PAY-110`): DISMISSED keeps the money, recorded in Xero from
     // inside this claim, so a replayed dismissal queues nothing.
     const keptLateCaptureXeroPlan: KeptLateCaptureXeroPlan =
@@ -545,6 +544,7 @@ export async function resolveManualRefundTask(
       });
     }
     if (settlement && settlementRoute?.kind === "stripe-refund" && settlementRoute.refundCents > 0) await postRefundObligation(tx, journal, { bookingId: task.bookingId, scope: "review", id: task.id, amountCents: settlementRoute.refundCents, origin: "OFFICER", actorMemberId: actingMemberId, debtorRead: "booking-row" }); // #4516 R05: after R21 and any credit write (member key, then Payment row, INV-LOCK-002)
+    await postHandBackCompletion(tx, journal, { task, route: settlementRoute, settled: settlement !== null, actingMemberId, inCash: input.resolution === "completed" && input.handedBackInCash === true, fundingTransactionIds: handBackFunding }); // #4516 (M4d): R14, after the allocation
     const chargeInvoice = settlement ? await queueEditReviewChargeInvoiceInTransaction({ bookingId: task.bookingId, route: settlementRoute, hasIssuedXeroInvoice, createdByMemberId: actingMemberId, store: tx }) : null; // #3947: the invoice route's invoice, queued LAST - its anchor key after every other lock
     await recordManualRefundTaskClosureAudit({
       task,
@@ -649,7 +649,7 @@ export async function resolveManualRefundTask(
           : ManualRefundTaskStatus.DISMISSED,
       keptLateCaptureXeroPlan, chargeInvoice, // #3947: the invoice route's queued invoice
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   if (result.recordedRefund) {
     await recordBookingEvent({

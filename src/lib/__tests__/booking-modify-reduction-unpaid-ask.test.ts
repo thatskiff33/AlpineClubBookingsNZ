@@ -52,6 +52,12 @@ const minterDb = vi.hoisted(() => {
   };
   return db;
 });
+// #5061 follow-up: no capture here is disputed; the edit's hold is proved in
+// `stripe-dispute-edit.realdb.test.ts`.
+vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
+  paymentDisputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
+}));
 vi.mock("@/lib/prisma", async () => {
   const { vi: hoistedVi } = await import("vitest");
   minterDb.recoveryFindUnique = hoistedVi.fn(async (args?: { where?: { id?: string } }) =>
@@ -564,10 +570,44 @@ describe("#3954: a credit-paid ($0) booking's reduction is set against its unpai
     expect(result.additionalAsk.amountCents).toBe(3_500);
     expect(result.additionalAsk.reissuesUnpaidAsk).toBe(true);
     expect(result.appliedCreditGivenBackCents).toBe(0);
-    // The settled arm never reaches a credit-paid reduction, so the fee is
-    // recorded by the ask's own branch - once.
+    // #5039: the fee rides the edit's one payment write, never also the ask's.
     expect(feeIncrements()).toEqual([500]);
     expect(bookingLedgerResidualCents(ledgerAfter(booking, -2_000, result))).toBe(0);
+  });
+});
+
+/** A paid booking with no ask outstanding: captured by card, or settled wholly by credit from `source`. */
+function settledBooking({ creditPaid = false, source = PaymentSource.STRIPE as PaymentSource } = {}) {
+  const booking = grownBooking({ creditPaid });
+  Object.assign(booking.payment!, { source, additionalAmountCents: 0, additionalPaymentStatus: null, additionalPaymentIntentId: null });
+  return { ...booking, finalPriceCents: 10_000 };
+}
+
+describe("#5039: a paid edit's fee is recorded on its payment exactly once, whatever was captured", () => {
+  beforeEach(() => {
+    state.rows = [];
+  });
+
+  it.each([
+    ["MUTATION: a credit-paid booking made cheaper by more than its fee", { creditPaid: true }, -2_000],
+    ["MUTATION: a credit-paid booking made cheaper by exactly its fee", { creditPaid: true }, -500],
+    ["MUTATION: a credit-paid bank-transfer booking moved for the fee alone", { creditPaid: true, source: PaymentSource.INTERNET_BANKING }, 0],
+    ["a credit-paid card booking moved for the fee alone (the zero-dollar card increase)", { creditPaid: true }, 0],
+    ["a card-captured booking made dearer", {}, 1_000],
+    ["a card-captured booking made cheaper", {}, -2_000],
+    ["a bank-transfer-captured booking made cheaper", { source: PaymentSource.INTERNET_BANKING }, -2_000],
+  ] as const)("%s", async (_name, shape, priceDiffCents) => {
+    await adjust(settledBooking(shape), priceDiffCents, { changeFeeCents: 500 });
+    expect(feeIncrements()).toEqual([500]);
+  });
+
+  it("MUTATION: a caller that records the fee itself (a finished-stay correction) leaves the payment write without it", async () => {
+    const booking = settledBooking({ creditPaid: true });
+    await applyPaymentAdjustments(tx, {
+      booking, priceDiffCents: -2_000, changeFeeCents: 500, reduction: noReductionAgainstUnpaidAsk(-1_500),
+      todayAtClub: TODAY, format: CLUB_FORMAT_TEST, changeFeeRecordedByCaller: true,
+    });
+    expect(feeIncrements()).toEqual([]);
   });
 });
 
@@ -700,6 +740,7 @@ describe("#3954: the save refuses options sized before the offset", () => {
           requiresSettlementMethod: true,
           returnsToOrganiser: false,
           organiserRefundByBankTransfer: false,
+          refundHeldForDispute: false,
         },
         settlementMethod: "card",
         todayAtClub: TODAY,
@@ -749,6 +790,7 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
       bookingId: "booking_3954",
       result: {
         ...result,
+        ownCardRefund: null, // #4992: the minter never reads the edit's card-refund reservation
         paymentId: "payment_1",
         paymentCustomerId: "cus_1",
         memberEmail: "member@example.invalid",
@@ -1752,6 +1794,7 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
       bookingId: "booking_3954",
       result: {
         ...result,
+        ownCardRefund: null, // #4992: the minter never reads the edit's card-refund reservation
         paymentId: "payment_1",
         paymentCustomerId: "cus_1",
         memberEmail: "member@example.invalid",

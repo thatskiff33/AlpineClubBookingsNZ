@@ -32,6 +32,9 @@ import {
   guestIsStayingOn,
   resolveBedLodgeIdForLock,
 } from "@/lib/bed-allocation-placement";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { assertGlobalLockHeld } from "@/lib/global-lock-held";
+import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 
 interface ManualAllocationInput {
   bookingGuestId: string;
@@ -42,6 +45,10 @@ interface ManualAllocationInput {
 export async function manuallyAllocateBedWithLocksHeld(
   input: ManualAllocationInput & { db: BedAllocationDb },
 ): Promise<{ allocation: BedAllocation; promotedPartner: BedAllocation | null }> {
+  await assertGlobalLockHeld(input.db, "manuallyAllocateBedWithLocksHeld");
+  const lockKey = await resolveBedLodgeIdForLock(input.bedId, input.db);
+  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey, "manuallyAllocateBedWithLocksHeld");
+
   if (!isDateOnlyString(input.stayDate)) {
     throw new BedAllocationAdminError("Invalid stay date", 400);
   }
@@ -87,7 +94,7 @@ export async function manuallyAllocateBed(
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     if (lockLodgeId) await acquireLodgeCapacityLock(tx, lockLodgeId);
     return manuallyAllocateBedWithLocksHeld({ ...input, db: tx });
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 export interface SameDateAllocationMoveResult {
@@ -124,6 +131,10 @@ interface SameDateAllocationMoveInput {
 export async function moveBedAllocationsSameDateWithLocksHeld(
   input: SameDateAllocationMoveInput & { db: BedAllocationDb },
 ): Promise<SameDateAllocationMoveResult> {
+  await assertGlobalLockHeld(input.db, "moveBedAllocationsSameDateWithLocksHeld");
+  const lockKey = await resolveBedLodgeIdForLock(input.bedId, input.db);
+  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey, "moveBedAllocationsSameDateWithLocksHeld");
+
   const allocationIds = [...new Set(input.allocationIds)];
   if (allocationIds.length === 0) {
     throw new BedAllocationAdminError(
@@ -298,7 +309,7 @@ export async function moveBedAllocationsSameDate(
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       if (lockLodgeId) await acquireLodgeCapacityLock(tx, lockLodgeId);
       return moveBedAllocationsSameDateWithLocksHeld({ ...input, db: tx });
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (error) {
     if (
       error instanceof BedAllocationAdminError &&
@@ -348,6 +359,10 @@ interface BulkAllocationInput {
 export async function manuallyAllocateBedForNightsWithLocksHeld(
   input: BulkAllocationInput & { db: BedAllocationDb },
 ): Promise<BulkAllocationResult> {
+  await assertGlobalLockHeld(input.db, "manuallyAllocateBedForNightsWithLocksHeld");
+  const lockKey = await resolveBedLodgeIdForLock(input.bedId, input.db);
+  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey, "manuallyAllocateBedForNightsWithLocksHeld");
+
   if (input.stayDates.length === 0) {
     throw new BedAllocationAdminError(
       "At least one stay date is required",
@@ -468,7 +483,7 @@ export async function manuallyAllocateBedForNights(
         stayDates: [stayDate],
         db: tx,
       });
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
     combined.allocations.push(...result.allocations);
     combined.conflicts.push(...result.conflicts);
     combined.skipped.push(...result.skipped);
@@ -484,6 +499,10 @@ interface DeleteBedAllocationInput {
 export async function deleteBedAllocationWithLocksHeld(
   input: DeleteBedAllocationInput & { db: BedAllocationDb },
 ): Promise<{ deleted: BedAllocation; promotedPartner: BedAllocation | null }> {
+  await assertGlobalLockHeld(input.db, "deleteBedAllocationWithLocksHeld");
+  const lockKey = await input.db.bedAllocation.findUnique({ where: { id: input.id }, select: { room: { select: { lodgeId: true } } } });
+  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey.room.lodgeId, "deleteBedAllocationWithLocksHeld");
+
   const deleted = await input.db.bedAllocation.delete({
     where: { id: input.id },
   });
@@ -522,5 +541,5 @@ export async function deleteBedAllocation(
       await acquireLodgeCapacityLock(tx, allocationKey.room.lodgeId);
     }
     return deleteBedAllocationWithLocksHeld({ ...input, db: tx });
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }

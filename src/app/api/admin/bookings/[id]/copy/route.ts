@@ -5,6 +5,7 @@ import { ApiError } from "@/lib/api-error";
 import { copyBookingToDraft } from "@/lib/admin-booking-copy";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
 const copyBookingSchema = z.object({
   checkIn: z.string().min(1),
@@ -49,6 +50,13 @@ export async function POST(
     });
     return NextResponse.json(result);
   } catch (error) {
+    // `INV-LOCK-006`: the draft's one transaction rolled back.
+    const contended = transactionContendedResponse(
+      error,
+      "Admin booking copy contended for the lock(1) budget",
+      { context: { bookingId } },
+    );
+    if (contended) return contended;
     if (error instanceof ApiError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }

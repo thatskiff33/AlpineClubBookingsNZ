@@ -29,7 +29,8 @@ import { MemberMoneyPlanError } from "@/lib/member-money/internal/plan";
 import { PartialRefundError } from "@/lib/payment-transactions";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { MemberMoneyMemoryDb } from "./support/member-money-memory-db";
-import { memberMoneyTestContext } from "./support/member-money-fixtures";
+import { memberMoneyTestContext, MEMBER_MONEY_TEST_TAX_ANCHOR } from "./support/member-money-fixtures";
+import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
 
 const context = memberMoneyTestContext();
 const INACTIVE = { inactive: "unusable-currency", detail: "test club's currency cannot be charged" } as const;
@@ -45,13 +46,13 @@ async function setup(input: { owner?: MemberMoneyDebtor; db?: MemberMoneyMemoryD
   const id = input.id ?? "booking";
   const owner = input.owner ?? { kind: "MEMBER", memberId: A };
   const at = { bookingId: id, lodgeId: LODGE };
-  db.seed("booking", { id, lodgeId: LODGE, memberId: owner.kind === "MEMBER" ? owner.memberId : null, organisationId: owner.kind === "ORGANISATION" ? owner.organisationId : null });
+  db.seed("booking", { id, lodgeId: LODGE, createdAt: new Date(FROZEN_TEST_CLOCK_BASE_ISO), memberId: owner.kind === "MEMBER" ? owner.memberId : null, organisationId: owner.kind === "ORGANISATION" ? owner.organisationId : null });
   db.seed("payment", { id: `${id}-payment`, bookingId: id });
   await postMemberMoneyEvent(db.tx, context, { kind: "CHARGE", eventKey: keys.bookingCharge(id), origin: "APP", source: { kind: "BOOKING", id, version: "1" }, reason: "Synthetic R01",
     obligations: [{ key: keys.bookingCharge(id), kind: "CHARGE", debtor: owner, faceCents: 10_000, evidence: {} }],
     legs: [
       { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: 10_000, booking: at, debtor: owner, obligationKey: keys.bookingCharge(id), evidence: {} },
-      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 10_000, booking: at, chargeIdentity: `booking:${id}:nights`, evidence: {} },
+      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 10_000, booking: at, chargeIdentity: `booking:${id}:nights`, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
     ] });
   let sequence = 0;
   const capture = async (cents: number, collect = true) => {
@@ -68,7 +69,7 @@ async function setup(input: { owner?: MemberMoneyDebtor; db?: MemberMoneyMemoryD
     await postMemberMoneyEvent(db.tx, context, { kind: "ADJUSTMENT", eventKey: keys.cancellation(id, 0), origin: "APP", source: { kind: "BOOKING", id, version: "cancel" }, reason: "Synthetic R04",
       legs: [
         { type: "revenue", account: "BOOKING_REVENUE", side: "DEBIT", grossCents: 10_000, booking: at, chargeIdentity: `booking:${id}:nights`, evidence: {} },
-        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: kept, booking: at, chargeIdentity: `booking:${id}:nights`, evidence: {} },
+        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: kept, booking: at, chargeIdentity: `booking:${id}:nights`, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
         { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: 10_000 - kept, booking: at, debtor: owner, evidence: {} },
       ] });
   };

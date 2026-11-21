@@ -61,6 +61,21 @@ The **Your authenticator was reset** email (#4618) is account-security mail,
 like the password-reset and email-change notices. It goes to the member whose
 authenticator and passkeys were reset, and no booking flag withholds it.
 
+### Bulk email categories
+
+Delivery rules govern automated emails. Bulk email that an admin sends —
+[Communications](communications.md) and a notice's
+[email on publish](member-notices.md#email-on-publish-optional) — is governed by
+the member's own preferences instead, according to its category (#4987,
+[`INV-PRIV-026`](../invariants/analytics-and-privacy.md#inv-priv-025)):
+
+| Category | Member preference | A member who never saved preferences |
+| --- | --- | --- |
+| **Club notice** — club business | **Club notices**, on unless turned off | Receives it |
+| **Club newsletter** — optional news | **Club newsletters**, off unless turned on | Does not receive it |
+
+Email suppression (bounces and complaints) applies to both.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -80,3 +95,5 @@ authenticator and passkeys were reset, and no booking flag withholds it.
   [Email Deliverability](email-deliverability.md).
 - Reference: the template catalogue in
   [`../../src/lib/email-message-registry.ts`](../../src/lib/email-message-registry.ts).
+  Which templates are admin alerts, and which of those cannot be muted, is in
+  [`../../src/lib/email-message-template-classes.ts`](../../src/lib/email-message-template-classes.ts).

@@ -166,6 +166,7 @@ function buildDb(input: {
   );
 
   const db = {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     bookingGuest: {
       findUnique: vi
         .fn()
@@ -681,26 +682,25 @@ describe("assignBedRange", () => {
    * slipped keystroke in a date field.
    */
   it("refuses an absurd span WITHOUT enumerating it, and before touching the database", async () => {
-    const { db } = buildDb({});
+    vi.mocked(prisma.lodgeBed.findUnique).mockClear();
 
     await expect(
-      assignBedRange({
+      assignBedRangePublic({
         bookingGuestId: "guest-1",
         bedId: "bed-1",
         from: "2026-01-01",
         to: "9999-12-31",
         approvedByMemberId: "admin-1",
-        db: db as never,
       }),
     ).rejects.toThrow(
       `A range assignment covers at most ${MAX_BED_ALLOCATION_ASSIGN_RANGE_NIGHTS} nights`,
     );
 
     expect(eachDateOnlyInRange).not.toHaveBeenCalled();
-    // Validation happens before the guest/bed lookups, so no connection is held
-    // while a nonsense range is being refused.
-    expect(db.bookingGuest.findUnique).not.toHaveBeenCalled();
-    expect(db.lodgeBed.findUnique).not.toHaveBeenCalled();
+    // The public entry validates before its lodge-key lookup and transaction
+    // (the mock has no $transaction), so no connection is held while a
+    // nonsense range is being refused.
+    expect(prisma.lodgeBed.findUnique).not.toHaveBeenCalled();
   });
 
   it("rejects a range whose date out is not after its date in", async () => {
@@ -1031,7 +1031,7 @@ describe("assignBedRange write-conflict handling", () => {
     delete prismaMock.$transaction;
   });
 
-  it.each(["P2002", "P2034"])(
+  it.each(["P2002"])(
     "retries a %s once, then refuses with a 409 rather than a 500",
     async (code) => {
       const transaction = vi.fn().mockRejectedValue(knownError(code));
@@ -1053,6 +1053,21 @@ describe("assignBedRange write-conflict handling", () => {
       );
     },
   );
+
+  it("preserves contention after the existing retry so the route can answer 503", async () => {
+    const error = knownError("P2034");
+    const transaction = vi.fn().mockRejectedValue(error);
+    prismaMock.$transaction = transaction;
+
+    await expect(assignBedRangePublic({
+      bookingGuestId: "guest-1",
+      bedId: "bed-1",
+      from: "2026-06-01",
+      to: "2026-06-06",
+      approvedByMemberId: "admin-1",
+    })).rejects.toBe(error);
+    expect(transaction).toHaveBeenCalledTimes(2);
+  });
 
   it("returns the retry's result when the second attempt succeeds", async () => {
     const { db } = buildDb({});

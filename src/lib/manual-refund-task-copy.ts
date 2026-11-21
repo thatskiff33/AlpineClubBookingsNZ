@@ -36,9 +36,8 @@ import {
   EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE,
   manualRefundTaskKindAllowsSettlement,
 } from "@/lib/manual-refund-task-settlement-rules";
-import { namedDisputes } from "@/lib/stripe-dispute-note";
+import { namedDisputes, STRIPE_DISPUTE_STATUS_LABEL } from "@/lib/stripe-dispute-note";
 import { formatCents } from "@/lib/utils";
-import type { EditReviewStillOwedPreview } from "@/lib/edit-financial-review-still-owed";
 
 /**
  * A completion at zero stays refused, and the refusal names the way out.
@@ -253,62 +252,15 @@ export function completionSummary(shape: CompletionSettlementShape): string {
 }
 
 /**
- * #4317 (owner decision on #4302; review rounds 3 and 6 wording): the officer's
- * warning on an OPEN edit review one of whose MOVED guests was removed from the
- * booking after the review was raised (`editFinancialReviewGuestsRemovedSinceRaised`).
- * The removal credited that guest's STORED total, which a parked edit never
- * changed (`INV-MOD-040`): it still held the nights the edit gave back, and
- * never held the nights it added. So settling could credit given-back nights
- * again, or charge for added nights the guest no longer holds - each strand is
- * warned in the direction it moved, a mixed one in both. The review may still
- * hold money owed for another guest, so it asks for a check, not a dismissal.
- *
- * The guest is named the way the settle card's evidence block names it - its
- * ordinal on a several-guest item, and its stored total - because the payload
- * carries no guest id and the guest's row is gone.
+ * #4344 (wave C1 of #4302): the resolve route's refusal for an officer edit
+ * review. The review is retired - every edit is priced automatically, and wave
+ * B closed every open one - so nothing settles or dismisses one any more. Said
+ * in words a stale settle screen's officer can act on: there is nothing left to
+ * do, and the record is still there. The finance queue's card for a retired
+ * review shows this same sentence, so the card and the route cannot drift.
  */
-export function reviewGuestRemovedSinceRaisedWarning(
-  guest: { ordinal: string | null; guestTotalCents: number | null; gaveNightsBack: boolean; addedNights: boolean },
-  format: ClubFormat,
-): string {
-  const who = guest.ordinal ?? "This review's guest";
-  const stored =
-    guest.guestTotalCents !== null ? `, stored at ${formatCents(guest.guestTotalCents, format)},` : "";
-  const risks = [
-    ...(guest.gaveNightsBack
-      ? ["the nights this change gave back were already credited with this guest's stored total, so settling could credit those nights again"]
-      : []),
-    ...(guest.addedNights
-      ? ["the nights this change added were never part of this guest's stored total, so settling could charge for nights this guest no longer holds"]
-      : []),
-  ];
-  return `${who}${stored} was removed from the booking after this review was raised. Check Xero and the booking before settling: ${risks.join("; and ")}.`;
-}
-
-/**
- * #3191: the second half of the receipt, when the officer also said what the
- * booking's unpriced nights sold for.
- *
- * Appended rather than folded into the sentences above, because it is a
- * different claim about a different thing - one says what happened to the money,
- * this says what the booking now records - and it has to be able to follow a
- * DISMISSAL, which those sentences never describe. Empty when nothing was
- * recorded, which is the ordinary case.
- *
- * IT CLAIMS THE GUEST AND NOT THE BOOKING: one review names one guest's nights.
- * It used to add that those nights would no longer send the booking back for
- * review, and that another guest's blanks still could. #4317 (epic #4302) prices
- * every edit from stored data, so no edit sends a booking for review any more
- * and that promise is true of every booking; it is dropped rather than kept as a
- * gain the officer did not make. This receipt goes with the settle screen in
- * wave C.
- */
-export function nightPricesRecordedMessage(count: number): string {
-  if (count === 0) return "";
-  return count === 1
-    ? " One night's price was recorded for this guest."
-    : ` ${count} nights' prices were recorded for this guest.`;
-}
+export const RETIRED_EDIT_REVIEW_REFUSAL =
+  "Officer edit reviews were retired, so this review stays as it is and cannot be settled or closed here. What was recorded for it is still on the booking's history. Reload the page.";
 
 /**
  * #3213: what an officer is told a DISMISSAL actually did.
@@ -345,32 +297,6 @@ export function dismissalMessage(
   }
   if (manualRefundTaskKindAllowsSettlement(kind, false)) return "Refund task dismissed.";
   return "Item closed. It moved no money and raised no invoice — your note is the only record of what the booking's Xero invoices showed and what you billed by hand.";
-}
-
-/**
- * #3835: what the settle dialog tells the officer, BEFORE completing, about a
- * share on a cancelled booking - the figure the completion will actually
- * settle (`previewEditReviewStillOwed`), so money handed back by hand is the
- * netted amount, not the typed share. Null where there is nothing to add.
- */
-export function stillOwedNoticeText(preview: EditReviewStillOwedPreview | null, format: ClubFormat): string | null {
-  if (preview === null) return null;
-  if ("refusal" in preview) return preview.refusal;
-  const { shareCents, stillOwedCents, captureCents, creditCents, route } = preview;
-  const owed = formatCents(stillOwedCents, format);
-  const capture = formatCents(captureCents, format);
-  const credit = formatCents(creditCents, format);
-  // #3835: a capture never takes the credit's part, so a split is always said.
-  const split = route !== "account-credit" && creditCents > 0
-    ? { "hand-back": captureCents > 0 ? `hand back ${capture}, not the full share, and ${credit} goes back as account credit` : `hand nothing back: ${credit} goes back as account credit`, card: captureCents > 0 ? `${capture} to the card and ${credit} as account credit` : `${credit} as account credit, nothing to the card` }[route]
-    : null;
-  if (stillOwedCents >= shareCents && split === null) return null;
-  if (stillOwedCents >= shareCents) return `The ${formatCents(shareCents, format)} share goes back in two parts - ${split}.`;
-  if (stillOwedCents === 0) {
-    return `Nothing of this share is still owed: the booking's cancellation already returned it.${route === "hand-back" ? " Do not hand anything back." : ""} Completing records no refund.`;
-  }
-  const then = split ?? { "hand-back": `hand back ${owed}, not the full share`, card: `${owed} will be refunded to the card`, "account-credit": `${owed} will be credited` }[route];
-  return `Only ${owed} of the ${formatCents(shareCents, format)} share is still owed after the booking's cancellation - ${then}.`;
 }
 
 /**
@@ -418,6 +344,95 @@ export function editRefundHandBackReopenAfterCancelMessage(booking: PayeeBooking
 }
 
 /**
+ * #4516 (owner decisions, 14 and 15 Nov 2026): a real bank or cash hand-back the member-money journal records as a
+ * refund debt (`journalHandBackDismissal`; never a card shortfall's part to check) is not dismissed until
+ * dismissal asks the officer why. The server refuses it and the queue shows this sentence where the Dismiss button
+ * would be, in the same words (`INV-SSOT`).
+ */
+export const JOURNAL_HAND_BACK_DISMISS_REFUSAL =
+  "This refund can't be dismissed yet. Mark it paid once the money has gone back, or leave it open. Dismissing with a reason is coming in a later update.";
+
+/**
+ * #4516 (owner decision, 15 Nov 2026): the hand-back a paid cancel of a disputed card payment raises (#5061) is
+ * dismissed only once the dispute is recorded as lost. Before then the server refuses, and the queue prints the
+ * same words where the Dismiss button would be. Named by the dispute that is not yet lost.
+ */
+export function disputedHandBackDismissRefusal(status: StripeDisputeStatus): string {
+  return status === "OPEN"
+    ? "This refund can't be dismissed while the card payment's dispute is open: the club may still owe it. Once Stripe records the dispute as lost, the cardholder already has the money back and this task can be dismissed."
+    : `This refund can't be dismissed: the card payment's dispute was ${STRIPE_DISPUTE_STATUS_LABEL[status]}, so the club still owes it. Mark it paid once the money has gone back.`;
+}
+
+/**
+ * That hand-back when its lost disputes cover only part of what is still owed (owner decision, 15 Nov 2026, comment
+ * 6893252570): not dismissed, and not marked paid in full (that would pay the lost part twice), but reduced.
+ */
+export const DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL =
+  "This refund can't be dismissed: the lost card dispute covered only part of it. Reduce it by the lost amount instead; the rest stays owed. Do not mark it paid in full: the cardholder already has the lost part back.";
+
+/** Mark paid on that hand-back while a lost dispute's cents are not yet applied: it would pay the lost part twice. */
+export const DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING =
+  "This refund can't be marked paid at its full amount: a card dispute was lost for part of it, and the cardholder already has that part back. Reduce it by the lost amount first.";
+
+/**
+ * Mark paid on that hand-back while a dispute on its payment was lost (cents not yet applied) and another is still
+ * open (#4516 review): paying in full would pay the lost part twice, and the reduction waits for the open dispute
+ * (owner decision, 15 Nov 2026, comment 6893252570).
+ */
+export const DISPUTED_HAND_BACK_WAIT_FOR_OPEN_DISPUTE =
+  "This refund can't be marked paid at its full amount: one card dispute on this payment was lost, so the cardholder already has that part back, and another is still open. Wait until the open dispute is decided, then reduce the refund by what was lost, or dismiss it if the disputes cover all of it.";
+
+/** Mark paid on that hand-back once its lost disputes cover it: the cardholder already has all of it back. */
+export const DISPUTED_HAND_BACK_LOST_NOT_PAYABLE =
+  "This refund can't be marked paid: the card dispute was lost for all of it, so the cardholder already has the money back. Dismiss it instead.";
+
+/** The reduce action failed for a reason the server did not name: the route's answer and the screen's fallback. */
+export const DISPUTED_HAND_BACK_REDUCTION_FAILED = "Could not reduce the refund.";
+
+/** That hand-back once every lost dispute has reduced it and the rest is still owed. */
+export const DISPUTED_HAND_BACK_REDUCED_REFUSAL =
+  "This refund can't be dismissed: the lost card dispute has already reduced it, and the club still owes the rest. Mark it paid once the money has gone back.";
+
+/**
+ * That hand-back while the payment's lost disputes go to an older refund on the same payment first (owner decision,
+ * 18 Nov 2026: lost cents are counted once across the payment's refunds, oldest first). The club still owes this one.
+ */
+export const DISPUTED_HAND_BACK_LOSS_ON_ANOTHER_REFUND =
+  "This refund can't be dismissed: the lost card dispute is set against an earlier refund on the same card payment, so the club still owes this one. Mark it paid once the money has gone back.";
+
+/** The reduce action on that hand-back: nothing of the lost dispute is left for it. */
+export const DISPUTED_HAND_BACK_LOSS_ON_ANOTHER_REFUND_REDUCTION =
+  "There is nothing to reduce here: the lost card dispute is set against an earlier refund on the same card payment.";
+
+/** The reduce action refused on a task that is not a disputed card payment's hand-back. */
+export const NOT_A_DISPUTED_HAND_BACK_REDUCTION_REFUSAL =
+  "Only a refund handed to the treasurer because its card payment is disputed can be reduced by a lost dispute.";
+
+/** The reduce action refused by the dispute's state: still open, or won or closed with no funds taken. */
+export function disputedHandBackReductionRefusal(status: StripeDisputeStatus): string {
+  return status === "OPEN"
+    ? "This refund can't be reduced while the card payment's dispute is open: the club may still owe it."
+    : `This refund can't be reduced: the card payment's dispute was ${STRIPE_DISPUTE_STATUS_LABEL[status]}, so the club still owes it.`;
+}
+
+/** The reduce action refused because every lost dispute has already reduced it. */
+export const DISPUTED_HAND_BACK_NOTHING_TO_REDUCE =
+  "There is nothing more to reduce: every lost card dispute has already reduced this refund, and the rest is still owed.";
+
+/** The reduce action refused because the lost disputes now cover everything still owed. */
+export const DISPUTED_HAND_BACK_FULLY_LOST_REDUCTION_REFUSAL =
+  "The lost card dispute now covers all of this refund: dismiss it instead.";
+
+/** The reduce action's confirmation and its toast: what the refund was, what it is reduced by and what is still owed. */
+export function disputedHandBackReductionSummary(cents: { wasCents: number; reducedByCents: number; stillOwedCents: number }, format: ClubFormat): string {
+  return `Was ${formatCents(cents.wasCents, format)}. Reduced by ${formatCents(cents.reducedByCents, format)}, the lost card dispute: the cardholder already has that back through their bank. Still owed ${formatCents(cents.stillOwedCents, format)}.`;
+}
+
+/** The dismiss dialog's sentence for that hand-back once its lost dispute covers it (#4516, owner decision 15 Nov 2026). */
+export const DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION =
+  "The card payment's dispute was lost, so the cardholder already has this money back through their bank. Dismissing closes the task without refunding anything and takes the refund off what the club owes. Say so in the note.";
+
+/**
  * B5 (#2262), #3949 (owner decision, 22 Oct 2026): THE REASON LINE of a paid
  * cancellation's hand-back task. A cash settlement's refund goes back to the
  * member; a joiner's own cancel of a place the group organiser paid for by
@@ -448,5 +463,19 @@ export function disputedCancellationHandBackReason({ bookingId, refundPercentage
   refundPercentage: number;
   disputes: readonly { stripeDisputeId: string; status: StripeDisputeStatus }[];
 }): string {
-  return `Booking ${bookingId} cancelled while its card payment is disputed by the cardholder (Stripe dispute ${namedDisputes(disputes)}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the ${refundPercentage}% due under the policy in effect at the time.`;
+  return `Booking ${bookingId} cancelled while its card payment is disputed by the cardholder (Stripe dispute ${namedDisputes(disputes)}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the ${refundPercentage}% due under the policy in effect at the time. If the dispute is lost for at least this refund, the cardholder already has it: dismiss this task.`;
+}
+
+/**
+ * #5061 follow-up (`INV-PAY-154`): THE REASON LINE of an edit's refund
+ * hand-back raised because the card payment is disputed - a lowered price whose
+ * refund the app neither sends to the card nor holds as credit. Worded as the
+ * cancel's (`disputedCancellationHandBackReason`), naming each dispute.
+ */
+export function disputedEditRefundHandBackReason({ bookingId, editLabel, disputes }: {
+  bookingId: string;
+  editLabel: string;
+  disputes: readonly { stripeDisputeId: string; status: StripeDisputeStatus }[];
+}): string {
+  return `Booking ${bookingId} lowered by a ${editLabel} while its card payment is disputed by the cardholder (Stripe dispute ${namedDisputes(disputes) || "since closed"}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the difference.`;
 }

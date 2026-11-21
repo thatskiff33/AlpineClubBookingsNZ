@@ -20,7 +20,9 @@ on `MembershipSubscriptionCharge`. Its correlation key is charge-stable.
 Dispatch resolves the snapshotted recipient and uses the account/item mapping
 frozen at confirmation,
 then searches by the immutable `MEMSUB-*` reference. Zero matches creates an
-AUTHORISED ACCREC invoice with inclusive line amounts and `OUTPUT2`; one exact
+AUTHORISED ACCREC invoice with inclusive line amounts, at the tax treatment
+resolved for the charge's own anchor (see
+["Tax treatment"](#tax-treatment) below); one exact
 contact/account/item/amount/due-interval/type/state match is adopted. Only `AUTHORISED` is
 adoptable; draft, submitted, paid, voided, and deleted invoices conflict rather
 than being emailed. Duplicates or a mismatch set
@@ -519,6 +521,49 @@ DB lock across the provider call, backstopped by the raw partial unique index
 `XeroObjectLink_entrance_fee_active_unique` (at most one ACTIVE entrance-fee link
 per member).
 
+## Tax treatment
+
+Every document above — membership subscription invoices, entrance-fee
+invoices, booking and group-settlement invoices, credit notes and the promo
+adjustment lines — carries the tax treatment resolved by
+`resolveXeroTaxRendering` in
+[`xero-tax-anchors.ts`](../../src/lib/xero-tax-anchors.ts), never a literal
+tax code (#4632, `INV-CONFIG-007`). This is the ONE renderer: it reads the
+club's GST schedule (`loadClubTaxSchedule`,
+[`club-tax-settings.ts`](../../src/lib/club-tax-settings.ts)), resolves the
+period in force on the document's own anchor date, and turns it into the
+`LineAmountTypes` and `taxType` string every builder uses
+([`xero-tax-rendering.ts`](../../src/lib/xero-tax-rendering.ts)).
+
+**The anchor is the charge, never the render or send date** (owner decision A,
+11 Nov 2026): a booking's anchor is `Booking.createdAt`, and a group place's
+is its organiser's booking's, so a joiner's journal split matches the combined
+invoice its lines go on (`readBookingTaxAnchorInstant`,
+[`booking-tax-anchor.ts`](../../src/lib/booking-tax-anchor.ts), read by both
+sides); a subscription
+charge's is its own `createdAt`, and its cancellation credit note shares that
+anchor; an entrance-fee invoice's is its outbox operation's `createdAt`. A
+booking made before the club's GST registration or rate changes keeps the
+treatment it was made under for its whole life, so its invoice, every edit's
+document and every credit note agree with each other and with the
+member-money journal, which splits the same booking's charges on the same
+anchor (`resolveBookingMoneyPostingContext`,
+[`door-context.ts`](../../src/lib/member-money/internal/door-context.ts)).
+
+The schedule has one writer, `scheduleClubTaxChange`/
+`cancelScheduledClubTaxChange`
+([`club-tax-settings-write.ts`](../../src/lib/club-tax-settings-write.ts)),
+behind `PUT`/`DELETE /api/admin/club-tax`, Full Admin only. A change only ever
+adds a period starting after the club's today, so no document already rendered
+changes —
+and is refused outright when Xero's own tax-rate list does not carry the
+chosen code active, at the chosen rate, usable on revenue; the schedule and
+Xero's own codes can never disagree. The admin card on `/admin/finance/xero`
+("GST / tax treatment") shows the period in force and any change already
+scheduled; before a change saves it counts the bookings still in progress on
+the chosen date that will keep the old treatment (bookings, not documents —
+each booking's documents all follow its one anchor).
+
 ## Bird's-eye dataflow
 
 ```mermaid
@@ -594,11 +639,14 @@ Two design rules shape everything below:
 
 ## Module map
 
-`src/lib/xero.ts` is a compatibility facade (re-exports only, no logic) for
-external callers. New code should import the focused module. The subsystem's
-own `src/lib/xero-*` modules must import the source domain module directly, not
-the facade — an `eslint.config.mjs` `no-restricted-imports` override enforces
-this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
+Every caller imports the focused module that owns the behaviour. The
+`src/lib/xero.ts` compatibility facade (re-exports only) was retired in #4930:
+it hid the subsystem's real dependency graph and closed one of the money-core
+import loops. `src/lib/__tests__/module-graph-census.test.ts` fails any import
+of it, of any kind, and any static import cycle (`INV-SSOT-008`); it replaced
+the `eslint.config.mjs` override #1208 added for the `xero-*` modules alone.
+The facade's `import "server-only"` marker moved to `xero-api-client`, the one
+module every provider call goes through (`INV-OPS-013`). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 `readNumber`) live in `xero-json`. The subsystem groups as:
 
 ### Infrastructure
@@ -627,13 +675,14 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | --- | --- |
 | `xero-sync` | The ledger primitives: `startXeroSyncOperation` / `completeXeroSyncOperation` / `failXeroSyncOperation`, payload redaction + hashing, `buildXeroIdempotencyKey`, `upsertXeroObjectLink` (enforces single-active canonical links for Member CONTACT, Payment PRIMARY_INVOICE, MemberSubscription SUBSCRIPTION_INVOICE; a `mergeMetadata` write lays its record over the stored metadata in one statement, `xero-object-link-metadata-merge.ts`, so two writers of one link both keep their keys, #4445), `recordXeroInboundEvent`. |
 | `xero-sync-cursors` | `XeroSyncCursor` read/write for incremental syncs, plus throttling helpers. |
-| `xero-stale-operations` | Filters/counters for operations stuck in RUNNING and inbound events stuck in PROCESSING (feeds cron health and the admin reset/replay actions). |
+| `xero-stale-operations` | Filters/counters for operations stuck in RUNNING and inbound events stuck in PROCESSING (feeds cron health, the admin reset/replay actions and the automatic inbound takeover). |
 
 ### Outbound document pipeline
 
 | Module | Owns |
 | --- | --- |
 | `xero-operation-outbox` | `enqueueXero*Operation` (every queue type in `XERO_OUTBOX_QUEUE_TYPES`) and the worker `processQueuedXeroOutboxOperations` (scans the indexed `queueType` column via `XERO_OUTBOX_QUEUE_TYPES`); also WAITING_PAYMENT release/reap for supplementary invoices. |
+| `xero-supplementary-invoice-enqueue` | Queueing a booking change's supplementary invoice (`enqueueXeroSupplementaryInvoiceOperation`, the edit-review and organiser-extra in-transaction enqueues, pending-amount restatement) and the per-anchor advisory lock `lockSupplementaryInvoiceAnchor` (#3170). Moved out of the outbox unchanged by #4930 so the worker and its booking-invoice handlers no longer import each other. |
 | `xero-operation-outbox-payload` | The queue-type constants (17 since #3635, plus the `XERO_OUTBOX_QUEUE_TYPES` list the pending scan filters on), payload schemas, and payload→expected-operation mapping used to claim rows safely. |
 | `xero-operation-retry` | `retryXeroSyncOperation`: immediate replay of a failed operation (admin "Retry"), including contact-payload rebuild for member contact ops. |
 | `xero-operation-queue` | Background replay: a REQUEUE `XeroSyncOperation` wraps the original id; `processQueuedXeroOperationRetries` claims and executes them via `retryXeroSyncOperation`. |
@@ -653,6 +702,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | --- | --- |
 | `xero-booking-invoices` | Primary booking invoice create/update (`buildInvoiceLineItems`). |
 | `xero-invoice-payments` | Recording Stripe payments against invoices and Stripe refunds as credit-note payments. |
+| `capture-receipt-senders` | Ledger M13 (#4525): after a capture sender stores a Xero payment id, that payment's cents are recorded on the export manifest as a `CAPTURE_RECEIPT` (`recordCaptureReceiptManifest`); the payment is sent exactly as before. This module names the capture, key and cents for the primary invoice's Stripe payment and a PARTIAL invoice repair; the other capture senders call the recorder themselves. See [member-money-ledger.md section 7](../design/member-money-ledger.md#7-outbound-rendering-and-optional-xero). |
 | `xero-credit-notes` | Refund credit notes, unapplied (account-credit) credit notes, allocation to invoices. Stripe refunds settle **per delta** (#1162): a payment refunded in several steps gets one credit note per uncovered delta, keyed on a cumulative refunded-cents watermark; non-Stripe refunds keep one note per payment, except that a later cancellation hand-back on a bank transfer gets its own note keyed and sized on its task (#4287, `INV-ADDPAY-043`), and so does each card refund on one, keyed and sized on its `PaymentRefund` row (#4312, `INV-ADDPAY-047`), and each refund request (appeal) paid back by bank transfer gets its own note when its task is marked paid back, for the amount paid back, keyed by the request (`payment:<id>:refund-request-credit-note:<request>:v1`) and linked under its own role `REFUND_REQUEST_CREDIT_NOTE` (#3827, owner decision D-3813-8, `INV-PAY-118`). That role is selected by none of the one-note machinery (the link normaliser's single-note rule in `xero-sync.ts`, `cleanupStaleCanonicalXeroObjectLinks`, the drift report), never takes `Payment.xeroRefundCreditNoteId`, and is left out of `findCanonicalPaymentRefundCreditNote`'s fallbacks, so a cancellation's note and a request's never absorb each other. The booking repair tool and the failed-operations panel leave a request's note out of everything that answers for the payment's one refund note (`isRefundRequestNoteOperation`), and the request's note is queued in the same transaction as the completion that records its refund. A cash refund note's settling payment is recorded only where the money verifiably moved (`resolveRefundSettlement`, `INV-PAY-101`): Stripe for a card refund, the configured bank-transfer refund account for a recorded bank transfer, and otherwise the note is left unsettled with `refundPaymentSkipped` on the operation. The note is recorded (payment field, covering link, the row's `xeroObjectId`) in one transaction the moment Xero returns it, so an attempt that dies before its payment leaves a FAILED row naming its note; the retry and repair legs and the repair tool finish it through one read-back-then-settle (`xero-refund-note-settlement.ts`, `INV-PAY-111`): the payment or the skip, PARTIAL if the payment fails, one note-keyed payment key, dated the note's own day, and never a second payment on a note Xero already shows paid, part-paid or allocated. Rows written before #3548 with neither are listed by the reconciliation report and the repair tool (`xero-refund-note-unsettled.ts`) and settled only by an operator. |
 | `xero-refund-method` | Leaf, pure: how the money went back — `card`, `internet-banking`, `account-credit` — as the ONE home for the wording every refund or credit document carries (#3529, `INV-PAY-101`), the default a method-less legacy row falls to (Stripe → card, anything else → bank transfer), and which mapping key settles a cash refund. The method is threaded from the settlement decision through the outbox payload; the builders never infer it from `Payment.source` when the caller said. Two booking-edit wordings (#3536) — *Invoice correction — nothing refunded* (an unpaid pay-on-account invoice lowered) and *Refunded in cash* (an edit-review refund paid back by hand, when the resolving officer says it went in cash; never inferred, `INV-PAY-116`) — ride beside the method as `noteWording`, which retries and the repair tool carry forward; words only, no settlement changes. Since #3935 the cash wording also reaches a since-cancelled booking's review refund note (`readRefundNoteWording`: cash only beside the internet-banking method). |
 | `xero-supplementary-invoices` | Positive booking-modification delta invoices. Since #3530 (stage 2b) itemised from the edit's stored lines when they sum exactly to what the invoice bills; otherwise the single price-adjustment line, with the reason under `requestPayload.priceLines`. |
@@ -746,7 +796,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `XeroConnection` | Single row (id `default`): the connected tenant, the access token's expiry and the only refresh lease. No secret. |
 | `XeroSyncOperation` | The ledger. `direction` INBOUND/OUTBOUND, `entityType`, `operationType`, optional `localModel`/`localId`, `idempotencyKey`, `correlationKey`, `replayable`, error fields, redacted request/response payloads, resulting Xero object identity, manual-resolution override fields, and `queueType` (a denormalized, indexed copy of `requestPayload.queueType` set at enqueue — canonical value still lives in the payload; #1271). **Status machine:** `PENDING → RUNNING → SUCCEEDED | FAILED`, plus `WAITING_PAYMENT → PENDING` for supplementary invoices held until their Stripe payment settles. Claims are optimistic `updateMany` transitions, so concurrent workers cannot double-run a row. |
 | `XeroObjectLink` | Local record ⇄ Xero object links with a `role` (e.g. `PRIMARY_INVOICE`, `REFUND_CREDIT_NOTE`, `CONTACT`, `ENTRANCE_FEE_INVOICE`) and `active` flag; unique on (local, xero, role). Canonical single-active scopes are enforced on upsert. |
-| `XeroInboundEvent` | Stored webhook/admin events. **Status machine:** `RECEIVED → PROCESSING → PROCESSED | FAILED` (FAILED retried after a backoff; stale PROCESSING is operator-replayable). Unique `correlationKey` makes webhook delivery idempotent. |
+| `XeroInboundEvent` | Stored webhook/admin events. **Status machine:** `RECEIVED → PROCESSING → PROCESSED | FAILED` (FAILED retried after a backoff; PROCESSING past the webhook lease is taken over automatically, `INV-INT-039`). Unique `correlationKey` makes webhook delivery idempotent. |
 | `ProcessedWebhookEvent` | Provider-scoped processing dedupe (`source`+`eventId` unique); the inbound worker claims a row before reconciling and releases it on failure. |
 | `WebhookValidationReceipt` | One row per provider recording the last valid intent-to-receive (ITR) validation ping (#2081): `validatedAt` + a non-reversible SHA-256 `keyFingerprint` of the webhook key that signed it (never the key). Drives the wizard's freshness-scoped, key-bound webhook Verify and the persistent amber "webhooks not configured" badge. |
 | `XeroSyncCursor` | Incremental checkpoints per (`resourceType`, `scope`) for contact/membership/invoice reconciliation. |
@@ -988,7 +1038,11 @@ note.
    `callXeroApi` meters usage and trips process-local cool-downs
    (`XeroDailyLimitError`, `XeroTransientOutageError`).
 2. **Stale contact repair** — `retryXeroWriteWithContactRepair` repairs the
-   member↔contact link once and retries the write.
+   member↔contact link once and retries the write. Before the retry it
+   replaces the row's stored request with the caller's `buildRequestPayload`.
+   On a queued row that payload must keep every field the outbox and Retry
+   read, `queueType` first: a row given back to PENDING without it is never
+   claimed again (#5221, `INV-INT-037`).
 3. **Operation replay** — a FAILED ledger row is never auto-retried by the
    outbox loop (it only claims PENDING). Admins either replay immediately
    (`retryXeroSyncOperation`) or queue a background REQUEUE wrapper
@@ -1208,8 +1262,11 @@ note.
    before it checks for an overlapping retry.) Once FAILED, the ordinary
    Retry / Requeue applies.
 4. **Inbound event retry** — FAILED `XeroInboundEvent` rows are re-swept after
-   `XERO_INBOUND_FAILED_RETRY_BACKOFF_MS`; stale PROCESSING rows are
-   operator-replayable.
+   `XERO_INBOUND_FAILED_RETRY_BACKOFF_MS`; rows left PROCESSING past
+   `WEBHOOK_PROCESSING_LEASE_MINUTES` are reset to RECEIVED by the worker,
+   with their `xero` dedup row cleared, in one guarded write
+   (`xero-inbound/stale-event-takeover.ts`, `INV-INT-039`). A Replay takes one
+   over at once through the same helper.
 
 ### Stripe payments the app did not create (#4532)
 
@@ -1323,6 +1380,26 @@ A kept void stays inactive and retires no sibling. A pointer naming it is
 released without waiting on Payment, as for a status-less write, and the inbound
 pointer gate refuses the note. A hand-made answer whose note was voided
 meanwhile is refused (409), and its completion rolls back.
+
+**Voids an older reading already erased (#4336).** #4288 stops new cases; it
+cannot see a mirror an older live reading revived before it, because the void
+is gone from the local row. The webhook path (#4046, #4091) records a void only
+when Xero sends an event for it, and the nightly #4161 heal only acts on a link
+whose recorded status already says VOIDED or DELETED. Neither revisits a note
+whose recorded status went back to live. The #4370 recount takes off card
+refunds Stripe failed later, a different drift. So the owner-run, read-only
+`pnpm run xero:revived-refund-note-report` (`xero-revived-refund-note-report.ts`,
+reader in `xero-revived-refund-note-reader.ts`) asks Xero about the note on
+every active link in both refund-note roles, through the same link definition,
+status predicate and contribution helper as the rest of this section, and lists
+each one Xero reports cancelled. It changes no booking, payment, credit, link
+or Xero record, and its reads never arm the in-process outage pause. A link
+the app already records cancelled is counted apart and needs no action: the
+app already treats it as cancelled, and on the payment's own role the #4161
+heal also retires the link. Each listed note is corrected by a booking's
+**Sync from Xero now**, whose fresh VOIDED reading the rule above always
+applies. Runbook:
+[MAINTENANCE.md](../MAINTENANCE.md#find-refund-notes-xero-voided-that-the-app-still-counts-4336).
 
 The inbound reconcile then acts on each payment's note as that payment's own
 refund-note row holds it when it acts (`readRefundNoteRowsByPayment`), never on
@@ -3501,6 +3578,48 @@ Payment routes retain their final guards. No settlement, reconciliation, new loc
 key, schema change, historical operation or ledger reader cutover is introduced
 (`INV-INT-003`, `INV-LOCK-001`, `INV-LOCK-002`, `INV-LOCK-003`).
 
+## Booking-page invoice and credit-note downloads (#5066)
+
+With the Xero module on, the booking page offers Xero's own PDF of the
+booking's primary invoice and of each credit note raised against it
+(`booking-invoice-download.ts`; owner decisions on #5066, 15 Nov 2026, and on
+PR #5201, 17 Nov 2026). One offer (`resolveBookingInvoiceOffer`) drives the
+page and both routes, so neither can serve what the page does not offer.
+
+- **Which credit notes** (`readBookingCreditNotes`): only notes whose Xero id
+  the app holds — active CREDIT_NOTE links on the booking, its payment or its
+  modifications in a role that credits the booking (modification, refund,
+  refund-request, account-credit and applied-credit remainder notes), the
+  refund-note columns on `Payment` and `PaymentRefund`, and the owner's own
+  credit lots allocated to the booking (`MemberCreditNoteAllocation`). A note
+  any link records as voided or deleted is left out, as is one whose every
+  link is inactive. A note an applied-credit slice names is "credit used",
+  whatever an older link calls it, and a remainder note is listed only while a
+  slice for the booking names it. Organiser-extra notes credit another invoice
+  and are not listed. The credit-note route serves only an id in this list.
+- **The Xero read**: one `getInvoiceAsPdf` or `getCreditNoteAsPdf` through
+  `callXeroApi`, outside any transaction, no retries, no breaker arming, and
+  no writes to Xero.
+- **The summary** (`bookingInvoiceSummary`) is the page's own figures, not a
+  ledger statement: the price (the Payment card's Total), the recorded change
+  fee, the ledger's applied credit, what the payment still holds after refunds
+  and returned credit (Net Collected's cash rule), and the amount due (now, or
+  once a review or pending booking is confirmed). When a reduction was
+  refunded only in part, a "kept" row is the one sum that makes the rows
+  reconcile: paid = total + fee - credit - due + kept.
+- **Not showing the latest change** (`readPrimaryInvoiceUpdateState`): the page
+  says so when the latest primary-invoice update failed unresolved, or when a
+  credit note for the booking (modification, account-credit or refund note)
+  failed unresolved; and that the documents may lag while either is queued or
+  running. When the latest update was skipped (`isSkippedPrimaryInvoiceUpdate`:
+  by the edit's policy, or by the worker on a paid, credited, voided or
+  deleted invoice), no update is queued for that change, and neither of those
+  applies, the page says instead that the invoice stays as it was issued. A
+  failed credit note outranks a queued one, and both outrank this state.
+- **Later work.** A single statement PDF for the booking (invoice, credits,
+  payments and balance in one document) belongs to #5066's generated-document
+  slice, which waits on the club GST status work (#5153).
+
 ## OAuth and token lifecycle (supporting flow)
 
 1. Admin hits `/api/admin/xero/connect` → consent URL with a signed state
@@ -4237,7 +4356,9 @@ These are candidates for future issues, not commitments.
    (#1208):_ no `src/lib/xero-*` module imports the `@/lib/xero` facade anymore
    — each imports the source domain module directly, and an `eslint.config.mjs`
    `no-restricted-imports` override forbids the facade path from `xero-*` files
-   to hold the boundary. The facade stays for external callers.
+   to hold the boundary. #4930 finished the job: every external caller moved
+   to the focused modules, the facade was deleted, and the module-graph census
+   replaced that override.
 8. **Minor:** _Partly done (#1208):_ the `messageForTask` nested-ternary chain
    in `xero-cron-runner` is now a `switch`. The webhook route's per-category
    `if` blocks were kept — they emit real observability log lines, so dropping

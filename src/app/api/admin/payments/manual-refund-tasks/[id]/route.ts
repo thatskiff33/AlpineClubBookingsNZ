@@ -5,17 +5,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
+import { ManualRefundTaskKind } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 // `INV-SSOT` (#3030): the one non-negative-integer-cents rule, not a fourth
 // inline `.number().int().nonnegative()`.
-import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
-import { recordedStrandNightPricesSchema } from "@/lib/stored-night-price-repair";
+import { nonNegativeCentsSchema } from "@/lib/cents-schema";
 import {
   completionMessage,
   dismissalMessage,
-  nightPricesRecordedMessage,
+  RETIRED_EDIT_REVIEW_REFUSAL,
 } from "@/lib/manual-refund-task-copy";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import {
-  ManualBookingPaymentError,
   MANUAL_PAYMENT_NOTE_MAX,
   resolveManualRefundTask,
 } from "@/lib/manual-refund-task-resolution";
@@ -81,19 +83,6 @@ const bodySchema = z.discriminatedUnion("resolution", [
         .optional()
         .nullable(),
       /**
-       * #3191: what the officer says each of this review's unpriced nights sold
-       * for. Optional over HTTP and defaulted to null, which means "not
-       * recording those now" and is the body every client sent before this
-       * issue.
-       *
-       * #3498: an array PER REPAIRABLE STRAND, since one item now covers the
-       * whole parked edit. A pre-#3498 client posting the old flat array is
-       * refused by this schema rather than half-understood.
-       */
-      recordedNightPrices: recordedStrandNightPricesSchema
-        .optional()
-        .nullable(),
-      /**
        * #3536 (`INV-PAY-116`): on a refund the club pays back by hand, the
        * officer's answer to how it went back - true for cash, false for a bank
        * transfer. Optional: no answer keeps the bank-transfer wording. It
@@ -109,16 +98,6 @@ const bodySchema = z.discriminatedUnion("resolution", [
       resolution: z.literal("dismissed"),
       note: noteField,
       confirmed: confirmedField,
-      /**
-       * #3191: ON A DISMISSAL TOO, and that is not symmetry for its own sake. A
-       * parked edit whose guest kept the same nights owes nothing either way, so
-       * "no adjustment" is its ordinary ending - and if only a completion could
-       * fill the blanks in, exactly those bookings would park forever, which is
-       * the defect this issue exists to remove.
-       */
-      recordedNightPrices: recordedStrandNightPricesSchema
-        .optional()
-        .nullable(),
     })
     .strict(),
 ]);
@@ -134,24 +113,18 @@ const bodySchema = z.discriminatedUnion("resolution", [
  * audited either way.
  *
  * #3030 (epic #2797, owner decision D2): a completion may also carry
- * `confirmedAmountCents`, which is how an `EDIT_FINANCIAL_REVIEW` task raised
- * with an unknown amount gets priced — and, where it differs from a figure the
- * task already held, how that amount is amended at completion with the change
- * recorded in the audit entry. On a legacy hand-back a differing figure is
- * refused as a stale screen rather than applied.
+ * `confirmedAmountCents` - today the total a group organiser's hand-back card
+ * showed (#4042). On a legacy hand-back a differing figure is refused as a
+ * stale screen rather than applied.
  *
- * #3032 CHANGED WHAT THIS ROUTE CAN SET IN MOTION, and the docblock used to say
- * the opposite ("never calls Stripe or Xero"). Completing an
- * `EDIT_FINANCIAL_REVIEW` task now routes the confirmed amount down whichever of
- * the club's three existing settlement paths the booking's money actually took:
- * a Stripe refund on a card booking, a ledger mirror of a hand-back, or account
- * credit — and queues the matching Xero credit note on the outbox afterwards.
- * The legacy task kinds are untouched and still move only the local ledger.
+ * #4344 (wave C1 of #4302): an `EDIT_FINANCIAL_REVIEW` task is refused at 409
+ * before anything else happens. The officer review that priced and settled one
+ * here - through a Stripe refund, a ledger mirror or account credit, with the
+ * matching Xero document - is retired; wave B closed every open one. The
+ * per-night prices a review settle could record went with it.
  *
- * That is why the success message below is per-route rather than one sentence.
- * "Refund recorded as paid back by hand" over a Stripe refund that FAILED is a
- * false receipt: the money is still in the club's account, and the operator who
- * reads it has no reason to look again.
+ * The success message is per-route rather than one sentence: "Refund recorded
+ * as paid back by hand" over a Stripe refund that FAILED is a false receipt.
  */
 export async function POST(
   request: NextRequest,
@@ -167,6 +140,26 @@ export async function POST(
   let body: unknown;
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
+
+  /*
+    #4344 (wave C1 of #4302): the officer edit review is retired. Refused here,
+    after the permission and recent-sign-in checks and BEFORE the body is read,
+    so a stale settle screen posting the old review fields is told what happened
+    rather than "invalid request" - and before any Xero read or resolution, so a
+    refused request writes nothing and calls no provider. Wave B closed every
+    open review; a row that is somehow still open stays where it is. A missing
+    task falls through to the resolution, which answers it as it always has.
+  */
+  const retiring = await prisma.manualRefundTask.findUnique({
+    where: { id },
+    select: { kind: true },
+  });
+  if (retiring?.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
+    return NextResponse.json(
+      { error: RETIRED_EDIT_REVIEW_REFUSAL },
+      { status: 409 },
+    );
+  }
   try {
     body = await request.json();
   } catch {
@@ -198,7 +191,7 @@ export async function POST(
             actingMemberId: guard.session.user.id,
             confirmedAmountCents: parsed.data.confirmedAmountCents ?? null,
             direction: parsed.data.direction ?? null,
-            recordedNightPrices: parsed.data.recordedNightPrices ?? null,
+            recordedNightPrices: null,
             handedBackInCash: parsed.data.handedBackInCash ?? null,
             bankRefundVoidAnswer,
           }
@@ -207,7 +200,7 @@ export async function POST(
             resolution: "dismissed",
             note: parsed.data.note ?? null,
             actingMemberId: guard.session.user.id,
-            recordedNightPrices: parsed.data.recordedNightPrices ?? null,
+            recordedNightPrices: null,
           },
       format,
     );
@@ -217,18 +210,22 @@ export async function POST(
     return NextResponse.json({
       success: true,
       task: result,
-      message: `${
-        bankRefundVoidAnswer
-          ? bankRefundVoidAnswerMessage(bankRefundVoidAnswer)
-          : parsed.data.resolution === "completed"
+      message: bankRefundVoidAnswer
+        ? bankRefundVoidAnswerMessage(bankRefundVoidAnswer)
+        : parsed.data.resolution === "completed"
           ? completionMessage(result, format)
-          : dismissalMessage(result.kind, result.partPaymentReview)
-      }${nightPricesRecordedMessage(result.recordedNightPriceCount)}`,
+          : dismissalMessage(result.kind, result.partPaymentReview),
     });
   } catch (error) {
     if (error instanceof ManualBookingPaymentError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
+    const contended = transactionContendedResponse(
+      error,
+      "Manual refund task resolution contended for the lock(1) budget",
+      { context: { taskId: id } },
+    );
+    if (contended) return contended;
     logger.error({ err: error, taskId: id }, "Manual refund task resolution failed");
     return NextResponse.json(
       { error: "Could not close the refund task." },

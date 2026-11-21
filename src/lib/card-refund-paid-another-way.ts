@@ -45,6 +45,7 @@ import { deadRowClaimWhere, lockDeadCardRefundRow } from "@/lib/card-refund-dead
 import { isOwedCardRefundOperation } from "@/lib/open-card-refund-owed";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { prisma } from "@/lib/prisma";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import { LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL } from "@/lib/card-refund-group-copy";
 import { legacyGroupSettlementRefundUnsentCents } from "@/lib/group-settlement-refund-plan";
 import {
@@ -58,6 +59,7 @@ import {
   RefundAllocationRacedError,
 } from "@/lib/payment-transactions";
 import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * #3372 (owner, 7 Oct 2026: "Count + add close action"; 8 Oct 2026: "Keep it
@@ -548,11 +550,17 @@ export async function closeCardRefundPaidAnotherWay(
     }
 
     // The money moves only after the claim, so a lost claim moves nothing.
+    // #4879 (`INV-PAY-150`): any other live superseded capture's charge is left
+    // to its own refund. Read AFTER the claim, under the Payment row already
+    // held: the claim has made this row SUCCEEDED, so closing a superseded
+    // refund itself does not hold its own charge back and still lands there.
+    const heldBack = await readSupersededCaptureHeldBack(tx, payment.id);
     try {
       await applyLocalRefundAllocation({
         paymentId: payment.id,
         amountCents: input.amountCents,
         preferTransactionIds: unsentTransactionIds,
+        heldBackByTransaction: heldBack.byTransaction,
         store: tx,
       });
     } catch (error) {
@@ -666,7 +674,7 @@ export async function closeCardRefundPaidAnotherWay(
       paidBack: input.paidBack, rest, stillOwedOperationId,
       xeroQueued,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   // Round 10: only a close that queued a row - its note, or the receipt its
   // note follows - kicks the outbox; a close whose note waits on another

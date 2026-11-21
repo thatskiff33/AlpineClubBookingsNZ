@@ -35,8 +35,14 @@ function fragmentNames(): string[] {
 }
 
 describe("changelog fragment shape (#3112)", () => {
-  it("finds fragments to check, so a rename cannot make this vacuous", () => {
-    expect(fragmentNames().length).toBeGreaterThan(0);
+  it("reads the real fragment directory, so a rename cannot make this vacuous", () => {
+    // A release cut compiles and deletes every fragment, so an empty directory
+    // is the normal state straight after a release. What would make the checks
+    // below vacuous is reading the wrong directory or a filter that matches
+    // nothing, so assert those instead of a fragment count.
+    const names = readdirSync(FRAGMENT_DIR);
+    expect(names).toContain("README.md");
+    expect(FRAGMENT_PATTERN.test("2448-example-slug.md")).toBe(true);
   });
 
   it("carries no Markdown heading in any fragment", () => {

@@ -11,11 +11,16 @@ const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
   resolveManualRefundTask: vi.fn(),
   prepare: vi.fn(),
+  taskFindUnique: vi.fn(),
   order: [] as string[],
 }));
 
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+// The route reads the task's kind first, to refuse a retired officer edit review (#4344).
+vi.mock("@/lib/prisma", () => ({
+  prisma: { manualRefundTask: { findUnique: mocks.taskFindUnique } },
+}));
 vi.mock("@/lib/logger", () => ({ default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
 vi.mock("@/lib/bank-refund-void-answer", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/bank-refund-void-answer")),
@@ -24,6 +29,8 @@ vi.mock("@/lib/bank-refund-void-answer", async (importOriginal) => ({
 vi.mock("@/lib/manual-refund-task-resolution", () => ({
   resolveManualRefundTask: mocks.resolveManualRefundTask,
   MANUAL_PAYMENT_NOTE_MAX: 500,
+}));
+vi.mock("@/lib/manual-booking-payment-error", () => ({
   ManualBookingPaymentError: class ManualBookingPaymentError extends Error {
     status: number;
     constructor(message: string, status = 400) {
@@ -34,7 +41,7 @@ vi.mock("@/lib/manual-refund-task-resolution", () => ({
 }));
 
 import { POST } from "@/app/api/admin/payments/manual-refund-tasks/[id]/route";
-import { ManualBookingPaymentError } from "@/lib/manual-refund-task-resolution";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 
 function request(body: unknown) {
   return new Request("http://localhost/api/admin/payments/manual-refund-tasks/t1", { method: "POST", body: JSON.stringify(body) }) as never;
@@ -46,6 +53,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.order.length = 0;
   mocks.requireAdmin.mockResolvedValue({ ok: true, session: { user: { id: "admin-1" } } });
+  mocks.taskFindUnique.mockResolvedValue({ kind: "CANCELLED_BOOKING_HAND_BACK" });
   mocks.prepare.mockImplementation(async ({ answer }: { answer: { answer: string } }) => {
     mocks.order.push("xero-check");
     return answer.answer === "fresh-note" ? { answer: "fresh-note" } : { answer: "recorded-in-xero", note: verified };

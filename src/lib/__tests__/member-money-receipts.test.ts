@@ -16,7 +16,7 @@ import type { BookingJournalContext } from "@/lib/member-money/internal/journal-
 import { readBookingReceiptCensus, receiptPopulationPaymentIds } from "@/lib/member-money/internal/receipt-census";
 import { ORGANISER_SHARE_RECEIPT_REASON } from "@/lib/organiser-extra-state";
 import { MemberMoneyMemoryDb } from "./support/member-money-memory-db";
-import { memberMoneyTestContext } from "./support/member-money-fixtures";
+import { memberMoneyTestContext, MEMBER_MONEY_TEST_TAX_ANCHOR } from "./support/member-money-fixtures";
 
 const context = memberMoneyTestContext();
 const LODGE = "lodge";
@@ -43,7 +43,7 @@ async function setup(input: { charge?: number; zero?: boolean; owner?: MemberMon
       obligations: [{ key: root, kind: "CHARGE", debtor: owner, faceCents: charge, evidence: {} }],
       legs: [
         { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: charge, booking: at, debtor: owner, obligationKey: root, evidence: {} },
-        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: charge, booking: at, chargeIdentity: `booking:${id}:nights`, evidence: {} },
+        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: charge, booking: at, chargeIdentity: `booking:${id}:nights`, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
       ] });
   let sequence = 0;
   const lines = (model: string, where: Record<string, unknown> = {}) => db.rows(model, where);
@@ -95,7 +95,7 @@ async function setup(input: { charge?: number; zero?: boolean; owner?: MemberMon
     increase: (cents: number, debtor: MemberMoneyDebtor, version = "increase") => postMemberMoneyEvent(db.tx, context, { kind: "ADJUSTMENT", eventKey: keys.modification(`${id}-${version}`),
       origin: "APP", source: { kind: "BOOKING", id, version }, reason: "Synthetic price increase", legs: [
         { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: cents, debtor, booking: at, evidence: {} },
-        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: cents, booking: at, chargeIdentity: `booking:${id}:${version}`, evidence: {} },
+        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: cents, booking: at, chargeIdentity: `booking:${id}:${version}`, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
       ] }),
   };
 }
@@ -379,7 +379,7 @@ describe("M4b receipt census", () => {
     await postMemberMoneyEvent(over.db.tx, context, { kind: "ADJUSTMENT", eventKey: keys.modification("over-decrease"), origin: "APP",
       source: { kind: "BOOKING", id: "over", version: "decrease" }, reason: "Synthetic decrease after collection", legs: [
         { type: "revenue", account: "BOOKING_REVENUE", side: "DEBIT", grossCents: 10_000, chargeIdentity: "booking:over:nights", booking: { bookingId: "over", lodgeId: LODGE }, evidence: {} },
-        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 6_000, chargeIdentity: "booking:over:nights", booking: { bookingId: "over", lodgeId: LODGE }, evidence: {} },
+        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 6_000, chargeIdentity: "booking:over:nights", booking: { bookingId: "over", lodgeId: LODGE }, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
         { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: 4_000, debtor: member(A), booking: { bookingId: "over", lodgeId: LODGE }, evidence: {} },
       ] });
     expect((await over.census()).filter((f) => f.kind === "OVER_COLLECTED")).toEqual([{ kind: "OVER_COLLECTED", identity: "over", bookingId: "over", cents: 4_000 }]);

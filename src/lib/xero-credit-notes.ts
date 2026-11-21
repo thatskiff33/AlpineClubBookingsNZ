@@ -31,7 +31,7 @@ import {
   readResolvedRefundCreditNoteCoverage,
   sumRefundCreditNoteCoverageCents,
 } from "@/lib/xero-resolved-in-xero-fences";
-import { CreditNote, LineAmountTypes, type LineItem } from "xero-node";
+import { CreditNote, type LineItem } from "xero-node";
 import { PaymentSource } from "@prisma/client";
 import { prisma } from "./prisma";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -62,6 +62,8 @@ import {
 } from "@/lib/organisation-xero-contacts";
 import { formatDateOnly } from "@/lib/date-only";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroLineTax } from "@/lib/xero-tax-rendering";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { buildSyntheticAllocationId } from "./xero-invoice-helpers";
 import { failAllocation } from "@/lib/xero-credit-note-spent-detail";
@@ -70,6 +72,7 @@ import type { CashRefundMethod } from "./xero-invoice-payments";
 import {
   finishRefundCreditNoteSettlement,
   refundCreditNoteCompletion,
+  recordSentRefundNotePaymentManifest,
   refundNoteSettlementInterrupted,
   settleRefundCreditNote,
 } from "@/lib/xero-refund-note-settlement";
@@ -84,6 +87,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import { stampBookingModificationCreditXeroNote, stampCancellationCreditXeroNote } from "@/lib/xero-account-credit-note-stamp";
 import { REFUND_REQUEST_CREDIT_NOTE_ROLE } from "@/lib/refund-request-credit-note";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { recordRefundNoteManifest } from "@/lib/member-money/doors";
 
 /** #4104: how often a card note re-reads the closes' figure until it agrees with the cash read between. */
 const STABLE_CLOSE_READ_ATTEMPTS = 3;
@@ -317,6 +321,7 @@ export async function createXeroCreditNote(
         await failXeroSyncOperation(queuedOperation, error);
         throw error;
       }
+      await recordRefundNoteManifest({ paymentId, bookingId: payment.booking.id, creditNoteId: own.xeroObjectId, source: { kind: "REPLAY", operationId: queuedOperation.id } });
       return own.xeroObjectId;
     }
   }
@@ -621,6 +626,7 @@ export async function createXeroCreditNote(
       });
     }
     logger.info({ paymentId, creditNoteId: existingCreditNoteId }, "Xero credit note already exists, skipping");
+    await recordRefundNoteManifest({ paymentId, bookingId: payment.booking.id, creditNoteId: existingCreditNoteId, source: { kind: "REPLAY", operationId: null } });
     return existingCreditNoteId;
   }
 
@@ -645,6 +651,8 @@ export async function createXeroCreditNote(
     options,
   );
   const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
+  // #4632: a note returns money under the treatment the booking was charged under.
+  const taxRendering = await resolveXeroTaxRendering({ kind: "booking", bookingId: payment.booking.id });
   const refundLineItem: LineItem = hutFeeRefundLine(
     buildRefundDocumentDescription({
       method: documentWording,
@@ -656,6 +664,7 @@ export async function createXeroCreditNote(
     }),
     effectiveRefundAmountCents,
     refundMapping,
+    taxRendering,
   );
 
   // The stay dates above are `@db.Date` lodge nights, left on truncation —
@@ -667,7 +676,7 @@ export async function createXeroCreditNote(
     type: CreditNote.TypeEnum.ACCRECCREDIT,
     contact: { contactID: resolvedContactId },
     date: creditNoteDate,
-    lineAmountTypes: LineAmountTypes.Inclusive,
+    lineAmountTypes: taxRendering.lineAmountTypes,
     lineItems: [refundLineItem],
     reference: buildRefundDocumentReference({
       method: documentWording,
@@ -826,6 +835,10 @@ export async function createXeroCreditNote(
         refundRequestId,
       })
     );
+    // #4525 (M13): the note's and its payment's export manifests, each in its own transaction; never throw.
+    const door = { cardRefundId, refundRequestId, paidAnotherWayTaskId: options?.paidAnotherWayTaskId ?? null, handBackTaskId: options?.handBackTaskId ?? null, reviewTaskId: options?.reviewTaskId ?? null };
+    await recordRefundNoteManifest({ paymentId, bookingId: payment.booking.id, creditNoteId: createdNote.creditNoteID, source: { kind: "BUILT", lines: [refundLineItem], legacyKey: creditNoteIdempotencyKey, door, taxRendering } });
+    await recordSentRefundNotePaymentManifest(outcome, { paymentId, creditNoteId: createdNote.creditNoteID, operationId: operationId!, refundMethod });
 
     return createdNote.creditNoteID;
   } catch (error) {
@@ -953,6 +966,8 @@ export async function createUnappliedXeroCreditNote(
   );
   const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
   const accountCode = refundMapping.code ?? "200";
+  // #4632: a note returns money under the treatment the booking was charged under.
+  const taxRendering = await resolveXeroTaxRendering({ kind: "booking", bookingId: payment.booking.id });
 
   // #3530 (`INV-MOD-058`): a modification's note carries the edit's stored
   // lines, inverted, when they explain exactly what it credits; otherwise the
@@ -964,6 +979,7 @@ export async function createUnappliedXeroCreditNote(
         bookingModificationId,
         document: "MODIFICATION_CREDIT_NOTE",
         billedCents: refundAmountCents,
+        taxRendering,
       }, format)
     : null;
 
@@ -981,7 +997,7 @@ export async function createUnappliedXeroCreditNote(
     }),
     quantity: 1,
     unitAmount: refundAmountCents / 100,
-    taxType: "OUTPUT2",
+    ...xeroLineTax(taxRendering),
   };
   if (refundMapping.itemCode) {
     creditLineItem.itemCode = refundMapping.itemCode;
@@ -998,7 +1014,7 @@ export async function createUnappliedXeroCreditNote(
     type: CreditNote.TypeEnum.ACCRECCREDIT,
     contact: { contactID: resolvedContactId },
     date: creditNoteDate,
-    lineAmountTypes: LineAmountTypes.Inclusive,
+    lineAmountTypes: taxRendering.lineAmountTypes,
     lineItems: itemised?.lineItems ?? [creditLineItem],
     reference: buildRefundDocumentReference({
       method: "account-credit",

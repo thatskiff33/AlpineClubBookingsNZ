@@ -222,6 +222,7 @@ export async function recordAdditionalCaptureReceipt(
   }
   const { bookingId, paymentId, paymentTransactionId, paymentIntentId } = queued;
   const reference = additionalCapturePaymentReference(paymentIntentId);
+  const paymentKey = (invoiceId: string) => additionalCapturePaymentKey(paymentIntentId, invoiceId);
 
   const refuse = async (reason: AdditionalCaptureReceiptRefusal, details: Record<string, unknown> = {}) => {
     const recordedNote = typeof details.recordedNote === "string" && details.recordedNote ? ` ${details.recordedNote}` : "";
@@ -285,7 +286,7 @@ export async function recordAdditionalCaptureReceipt(
         existingLinks.find((link) => asRecord(link.metadata)?.invoiceId === leg.invoiceId)?.xeroObjectId ?? linkedId,
       );
       await completeRecordedReceipt(
-        { plan: queued.plan, paymentTransactionId, paymentIntentId, paymentId, bookingId, operationId, syncOperation: params.syncOperation, alertOfficer },
+        { plan: queued.plan, paymentTransactionId, paymentIntentId, paymentId, bookingId, operationId, syncOperation: params.syncOperation, reference, paymentKey, alertOfficer },
         { paymentIds, recoveredExisting: true },
       );
       return paymentIds[0] ?? null;
@@ -316,7 +317,7 @@ export async function recordAdditionalCaptureReceipt(
       operationId,
       createdByMemberId: params.createdByMemberId,
       syncOperation: params.syncOperation,
-      paymentKey: (invoiceId) => additionalCapturePaymentKey(paymentIntentId, invoiceId),
+      paymentKey,
       readInvoice: (client, invoiceId) => readInvoice(providers, client, invoiceId),
       primaryRoom,
       refuse,
@@ -480,6 +481,8 @@ export async function recordAdditionalCaptureReceipt(
           bookingId,
           operationId,
           syncOperation: params.syncOperation,
+          reference,
+          paymentKey,
           alertOfficer,
         },
         { paymentIds: [owned.paymentID], recoveredExisting: true },
@@ -550,7 +553,7 @@ export async function recordAdditionalCaptureReceipt(
     });
     // Stored BEFORE the Xero call, under the same anchor lock, after the
     // ordered target list is read again. No new key. A lost claim sends nothing.
-    const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-operation-outbox");
+    const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-supplementary-invoice-enqueue");
     const stored = await prisma.$transaction(async (tx) => {
       const changeId = captureChangeId(transaction);
       await lockSupplementaryInvoiceAnchor(tx, keptCaptureAnchorId(transaction, bookingId));

@@ -1,4 +1,3 @@
-import { buildUnpaidFinishedStaysWhere } from "@/lib/unpaid-finished-stays";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -20,18 +19,24 @@ vi.mock("@/lib/prisma", () => ({
     choreAssignment: { findMany: vi.fn() },
     bedAllocation: { findMany: vi.fn() },
     payment: { findMany: vi.fn() },
-    refundRequest: { count: vi.fn() },
-    adminCreditAdjustmentRequest: { count: vi.fn() },
-    membershipCancellationRequest: { count: vi.fn() },
-    memberLifecycleActionRequest: { count: vi.fn() },
-    deletionRequest: { count: vi.fn() },
+    // #4969: the Booking Requests counts come from the real
+    // getBookingRequestPendingCounts over these tables (see mockDashboardCounts).
     bookingChangeRequest: { count: vi.fn() },
+    newBookingPolicyExceptionRequest: { count: vi.fn(async () => 0) },
+    bookingRequest: { count: vi.fn(async () => 0) },
     lodge: { count: vi.fn() },
   },
 }));
 
 vi.mock("@/lib/auth", () => ({
   auth: vi.fn(),
+}));
+
+// #4962: the attention cards read the one work-queue counter the sidebar's
+// Needs Attention badges read. Its queries are pinned in
+// admin-pending-counts.test.ts; this suite pins the cards and their links.
+vi.mock("@/lib/admin-pending-counts", () => ({
+  getAdminPendingCounts: vi.fn(),
 }));
 
 // Partial mock: only the query is faked. coverageNeedsLodgeContext and
@@ -51,6 +56,9 @@ vi.mock("@/lib/module-settings", async (importOriginal) => ({
 }));
 
 import AdminDashboardPage from "@/app/(admin)/admin/dashboard/page";
+import { getAdminPendingCounts } from "@/lib/admin-pending-counts";
+import { getBookingRequestPendingCounts } from "@/lib/admin-booking-request-pending-counts";
+import { ZERO_ADMIN_PENDING_COUNTS } from "@/lib/admin-work-queues";
 import { auth } from "@/lib/auth";
 import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle";
 import {
@@ -64,6 +72,7 @@ import {
   getHutLeaderDashboardCoverage,
 } from "@/lib/hut-leader-coverage";
 import { prisma } from "@/lib/prisma";
+import { buildBookingRequestsHref } from "@/lib/admin-booking-requests-path";
 import {
   netCollectedBookingSelect,
   netCollectedCaptureEvidenceSelect,
@@ -73,6 +82,9 @@ import {
 function mockDashboardCounts({
   pendingBookingReviews,
   pendingBookingChangeRequests,
+  pendingPolicyExceptionRequests = 0,
+  pendingModificationPolicyExceptions = 0,
+  pendingPublicBookingRequests = 0,
   pendingDeletionRequests = 0,
   unpaidFinishedStays = 0,
   unsettledAdditionalFinishedStays = 0,
@@ -80,6 +92,11 @@ function mockDashboardCounts({
 }: {
   pendingBookingReviews: number;
   pendingBookingChangeRequests: number;
+  /** New-booking exception requests (their own table). */
+  pendingPolicyExceptionRequests?: number;
+  /** POLICY_EXCEPTION change requests, listed on the Policy Exceptions tab. */
+  pendingModificationPolicyExceptions?: number;
+  pendingPublicBookingRequests?: number;
   pendingDeletionRequests?: number;
   unpaidFinishedStays?: number;
   unsettledAdditionalFinishedStays?: number;
@@ -93,35 +110,45 @@ function mockDashboardCounts({
     accessRoles: [{ role: "ADMIN" }],
   } as any);
   vi.mocked(prisma.member.count).mockResolvedValue(0);
-  // booking.count call order mirrors getStats(): totalBookings,
-  // activeBookings, upcomingCheckIns, unpaidFinishedStays,
-  // unsettledAdditionalFinishedStays, unsettledAdditionalUpcomingStays (#2350),
-  // pendingBookingReviews. The roster and bed
-  // officer-card counts no longer use booking.count — they run through
-  // window-scoped helpers backed by booking.findMany + choreAssignment.findMany
-  // / bedAllocation.findMany (all mocked empty below → count 0).
-  vi.mocked(prisma.booking.count)
-    .mockResolvedValueOnce(0)
-    .mockResolvedValueOnce(0)
-    .mockResolvedValueOnce(0)
-    .mockResolvedValueOnce(unpaidFinishedStays)
-    .mockResolvedValueOnce(unsettledAdditionalFinishedStays)
-    .mockResolvedValueOnce(unsettledAdditionalUpcomingStays)
-    .mockResolvedValueOnce(pendingBookingReviews);
+  // booking.count serves getStats()'s own totals (totalBookings,
+  // activeBookings, upcomingCheckIns). The roster and bed officer-card counts
+  // run through window-scoped helpers backed by booking.findMany +
+  // choreAssignment.findMany / bedAllocation.findMany (all mocked empty below
+  // → count 0). Every work-queue count comes from getAdminPendingCounts (#4962).
+  // Its one booking.count of its own, the Approvals queue, is the booking
+  // review where (#4969).
+  vi.mocked(prisma.booking.count).mockImplementation((async (args?: {
+    where?: { adminReviewStatus?: unknown };
+  }) =>
+    args?.where?.adminReviewStatus === "PENDING" ? pendingBookingReviews : 0) as any);
+  // The four Booking Requests counts are the real getBookingRequestPendingCounts
+  // over the tables mocked below (#4969), so a change-type policy exception is
+  // counted on the Policy Exceptions tab exactly as in production.
+  vi.mocked(getAdminPendingCounts).mockImplementation(async () => ({
+    ...ZERO_ADMIN_PENDING_COUNTS,
+    unavailable: [],
+    ...(await getBookingRequestPendingCounts()),
+    deletionRequests: pendingDeletionRequests,
+    unpaidFinishedStays,
+    unsettledAdditionalFinishedStays,
+    unsettledAdditionalUpcomingStays,
+  }));
   // #3372: the revenue card reads the month's payments.
   vi.mocked(prisma.payment.findMany).mockResolvedValue([] as any);
   vi.mocked(prisma.booking.findMany).mockResolvedValue([]);
   vi.mocked(prisma.choreAssignment.findMany).mockResolvedValue([] as any);
   vi.mocked(prisma.bedAllocation.findMany).mockResolvedValue([] as any);
-  vi.mocked(prisma.refundRequest.count).mockResolvedValue(0);
-  vi.mocked(prisma.adminCreditAdjustmentRequest.count).mockResolvedValue(0);
-  vi.mocked(prisma.membershipCancellationRequest.count).mockResolvedValue(0);
-  vi.mocked(prisma.memberLifecycleActionRequest.count).mockResolvedValue(0);
-  vi.mocked(prisma.deletionRequest.count).mockResolvedValue(
-    pendingDeletionRequests,
+  vi.mocked(prisma.bookingChangeRequest.count).mockImplementation((async (
+    args: { where?: { kind?: string } },
+  ) =>
+    args.where?.kind === "POLICY_EXCEPTION"
+      ? pendingModificationPolicyExceptions
+      : pendingBookingChangeRequests) as any);
+  vi.mocked(prisma.newBookingPolicyExceptionRequest.count).mockResolvedValue(
+    pendingPolicyExceptionRequests,
   );
-  vi.mocked(prisma.bookingChangeRequest.count).mockResolvedValue(
-    pendingBookingChangeRequests,
+  vi.mocked(prisma.bookingRequest.count).mockResolvedValue(
+    pendingPublicBookingRequests,
   );
   vi.mocked(getHutLeaderDashboardCoverage).mockResolvedValue({
     unassignedDates: [],
@@ -159,6 +186,72 @@ describe("admin dashboard deep links", () => {
     expect(html).toContain('href="/admin/booking-requests?tab=approvals"');
   });
 
+  // #4969: the card opens the tab the Booking Requests page itself would land
+  // on, so a policy exception or public request alone no longer hides the card
+  // or sends the officer to an empty Approvals tab.
+  it.each([
+    {
+      queue: "only policy exceptions",
+      counts: { pendingPolicyExceptionRequests: 1 },
+      tab: "exceptions" as const,
+      summary: "1 policy exception request waiting",
+    },
+    {
+      queue: "only change-type policy exceptions",
+      counts: { pendingModificationPolicyExceptions: 2 },
+      tab: "exceptions" as const,
+      summary: "2 policy exception requests waiting",
+    },
+    {
+      queue: "new-booking and change-type policy exceptions",
+      counts: {
+        pendingPolicyExceptionRequests: 1,
+        pendingModificationPolicyExceptions: 1,
+      },
+      tab: "exceptions" as const,
+      summary: "2 policy exception requests waiting",
+    },
+    {
+      queue: "only public requests",
+      counts: { pendingPublicBookingRequests: 3 },
+      tab: "public" as const,
+      summary: "3 public booking requests waiting",
+    },
+    {
+      queue: "changes, exceptions and public requests",
+      counts: {
+        pendingBookingChangeRequests: 1,
+        pendingPolicyExceptionRequests: 2,
+        pendingPublicBookingRequests: 1,
+      },
+      tab: "changes" as const,
+      summary:
+        "1 change request, 2 policy exception requests and 1 public booking request waiting",
+    },
+  ])("links the booking request card to the page's landing tab when $queue are pending", async ({ counts, tab, summary }) => {
+    mockDashboardCounts({
+      pendingBookingReviews: 0,
+      pendingBookingChangeRequests: 0,
+      ...counts,
+    });
+
+    const html = renderToStaticMarkup(await AdminDashboardPage());
+
+    expect(html).toContain(`href="${buildBookingRequestsHref(tab)}"`);
+    expect(html).toContain(summary);
+  });
+
+  it("hides the booking request card when no queue has work", async () => {
+    mockDashboardCounts({
+      pendingBookingReviews: 0,
+      pendingBookingChangeRequests: 0,
+    });
+
+    const html = renderToStaticMarkup(await AdminDashboardPage());
+
+    expect(html).not.toContain("/admin/booking-requests");
+  });
+
   it("links pending account deletion request alerts to the deletion request queue", async () => {
     mockDashboardCounts({
       pendingBookingReviews: 0,
@@ -168,7 +261,8 @@ describe("admin dashboard deep links", () => {
 
     const html = renderToStaticMarkup(await AdminDashboardPage());
 
-    expect(html).toContain('href="/admin/deletion-requests?status=PENDING"');
+    // #4962: the page lists both deletion flows, so the card opens it unfiltered.
+    expect(html).toContain('href="/admin/deletion-requests"');
     expect(html).toContain("Account Deletion Requests");
     expect(html).toContain(
       "2 account deletion requests waiting for admin review",
@@ -191,15 +285,12 @@ describe("admin dashboard deep links", () => {
     );
     expect(html).toContain("3 bookings still payment pending after check-out");
 
-    // The count uses the finished-stay predicate (#1709): still owing its price
-    // (including #4019's abandoned uncaptured card attempts), bounded by today.
-    // Assert dashboard wiring to the canonical query; its evidence cases live
-    // in unpaid-finished-stays.test.ts rather than duplicating the definition.
-    expect(vi.mocked(prisma.booking.count).mock.calls).toContainEqual([
-      {
-        where: buildUnpaidFinishedStaysWhere(getTodayDateOnly(ENVIRONMENT_CLUB_ZONE)),
-      },
-    ]);
+    // The count is the shared work-queue counter's, on this render's club day
+    // (#4962); its finished-stay predicate (#1709) is pinned in
+    // admin-pending-counts.test.ts rather than duplicated here.
+    expect(vi.mocked(getAdminPendingCounts)).toHaveBeenCalledWith(
+      expect.objectContaining({ today: getTodayDateOnly(ENVIRONMENT_CLUB_ZONE) }),
+    );
   });
 
   it("hides the unpaid finished stays card when no finished stay is owing", async () => {
@@ -231,28 +322,9 @@ describe("admin dashboard deep links", () => {
     expect(html).toContain("2 upcoming");
     expect(html).toContain("3 finished");
 
-    // The count uses the sibling finished-stay predicate (#1723 path 2):
-    // settled statuses (never PAYMENT_PENDING, so it stays disjoint from the
-    // card above) whose latest additional payment never succeeded, with
-    // check-out on or before NZ today.
-    expect(vi.mocked(prisma.booking.count).mock.calls).toContainEqual([
-      {
-        where: {
-          deletedAt: null,
-          checkOut: { lte: getTodayDateOnly(ENVIRONMENT_CLUB_ZONE) },
-          status: { in: ["CONFIRMED", "PAID", "COMPLETED"] },
-          payment: {
-            is: {
-              additionalAmountCents: { gt: 0 },
-              OR: [
-                { additionalPaymentStatus: null },
-                { additionalPaymentStatus: { not: "SUCCEEDED" } },
-              ],
-            },
-          },
-        },
-      },
-    ]);
+    // The counts come from the shared work-queue counter (#4962), whose
+    // sibling finished-stay predicate (#1723 path 2) is pinned in
+    // admin-pending-counts.test.ts.
   });
 
   it("hides the unpaid-additions card when every finished stay's additions are settled", async () => {

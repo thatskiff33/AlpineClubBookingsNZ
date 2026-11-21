@@ -2,15 +2,15 @@ import "server-only";
 import { ManualRefundTaskKind, Prisma } from "@prisma/client";
 
 import { requireCalendarDate, type CalendarDate } from "@/lib/club-time";
+import { isNonNegativeIntegerCents } from "@/lib/cents-schema";
 import {
   editFinancialReviewStrandMovesNights,
   editFinancialReviewStrandRecords,
-  isNonNegativeIntegerCents,
   parseEditFinancialReviewContext,
 } from "@/lib/edit-financial-review-context";
 import type { EditFinancialReviewStrandRecord } from "@/lib/edit-financial-review-context";
 import { getExplicitGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import type { ClubFormat } from "@/lib/club-format";
 import {
   checkStoredNightPriceRepair,
@@ -93,9 +93,9 @@ export function unpricedNightsSummaryForGuest(
   let knownNightTotalCents = 0;
   for (const night of guest.nights) {
     // Keyed through the canonical helper, one row at a time, exactly as
-    // `storedNightPricesByKey` does - a price keyed even slightly differently
-    // from its night would never match it, and the failure would be silent
-    // (INV-DATE-020). The strict NULL test is what that projection deliberately
+    // `storedNightPriceDetailsByKey` does - a price keyed even slightly
+    // differently from its night would never match it, and the failure would
+    // be silent (INV-DATE-020). The strict NULL test is what that projection deliberately
     // collapses and this one needs: an absent price and an unusable one are the
     // same thing to a READER, and completely different things to a writer whose
     // whole safety rests on a `priceCents: null` fence.

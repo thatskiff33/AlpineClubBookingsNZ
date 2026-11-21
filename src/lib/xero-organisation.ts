@@ -480,6 +480,12 @@ export interface XeroConnectedOrganisation {
    */
   baseCurrency: string | null;
   /**
+   * Whether Xero says the organisation pays tax, or null when unavailable
+   * (#4632). The tax-treatment health check compares it with the club's
+   * registered flag; null says nothing rather than guess.
+   */
+  paysTax: boolean | null;
+  /**
    * Why the last read failed, or null when it succeeded (#2394).
    *
    * Every other field on this summary degrades silently on failure — that is
@@ -505,6 +511,7 @@ const EMPTY_ORG_SUMMARY: XeroConnectedOrganisation = {
   financialYearEndMonth: null,
   shortCode: null,
   baseCurrency: null,
+  paysTax: null,
   readFailure: null,
 };
 
@@ -695,6 +702,7 @@ async function readXeroConnectedOrganisation(): Promise<XeroConnectedOrganisatio
           financialYearEndMonth: mock.financialYearEndMonth,
           shortCode: normaliseShortCode(mock.shortCode),
           baseCurrency: normaliseBaseCurrency(mock.baseCurrency),
+          paysTax: typeof mock.paysTax === "boolean" ? mock.paysTax : null,
           readFailure: null,
         },
         false,
@@ -751,6 +759,7 @@ async function readXeroConnectedOrganisation(): Promise<XeroConnectedOrganisatio
             : null,
         shortCode: normaliseShortCode(org?.shortCode),
         baseCurrency: normaliseBaseCurrency(org?.baseCurrency),
+        paysTax: typeof org?.paysTax === "boolean" ? org.paysTax : null,
         readFailure: null,
       },
       false,

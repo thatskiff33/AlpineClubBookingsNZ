@@ -1,11 +1,16 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import {
+  ADMIN_LIST_DEFAULT_PAGE_SIZE,
+  parseAdminListPageParam,
+  setAdminListPageParam,
+} from "@/lib/admin-list-page"
 import type { Filters } from "../_types"
 import { emptyFilters, getInitialLifecycleStatus } from "../_utils"
 
-import { adminHref } from "@/lib/admin-hubs";
+import { adminHref, servedAdminPathname } from "@/lib/admin-hubs";
 const MEMBERS_DATASET_QUERY_KEYS = [
   "q",
   "page",
@@ -17,11 +22,13 @@ const MEMBERS_DATASET_QUERY_KEYS = [
 
 export function useMembersQueryState() {
   const router = useRouter()
+  // The served form, so either address of the Members page counts as being on it.
+  const pathname = servedAdminPathname(usePathname())
   const searchParams = useSearchParams()
   const [search, setSearch] = useState(searchParams.get("q") || "")
   const [debouncedSearch, setDebouncedSearch] = useState(search)
-  const [page, setPage] = useState(parseInt(searchParams.get("page") || "1", 10))
-  const [pageSize] = useState(25)
+  const [page, setPage] = useState(() => parseAdminListPageParam(searchParams.get("page")))
+  const [pageSize] = useState(ADMIN_LIST_DEFAULT_PAGE_SIZE)
   const [sortBy, setSortBy] = useState(searchParams.get("sortBy") || "name")
   const [sortDir, setSortDir] = useState<"asc" | "desc">(
     (searchParams.get("sortDir") as "asc" | "desc") || "asc"
@@ -52,7 +59,7 @@ export function useMembersQueryState() {
     const params = new URLSearchParams(searchParams.toString())
     for (const key of MEMBERS_DATASET_QUERY_KEYS) params.delete(key)
     if (debouncedSearch) params.set("q", debouncedSearch)
-    if (page > 1) params.set("page", String(page))
+    setAdminListPageParam(params, page)
     if (sortBy !== "name") params.set("sortBy", sortBy)
     if (sortDir !== "asc") params.set("sortDir", sortDir)
     Object.entries(filters).forEach(([key, value]) => {
@@ -67,9 +74,15 @@ export function useMembersQueryState() {
     return queryString ? `${adminHref("members")}?${queryString}` : adminHref("members")
   }, [buildMembersSearchParams])
 
+  // Replace only when the URL is not already the canonical one. A replace to
+  // the URL the officer is already on is still a soft navigation, which the
+  // E2E accessibility audit intermittently caught without a <title> (#5155).
   useEffect(() => {
-    router.replace(buildMembersListPath(), { scroll: false })
-  }, [buildMembersListPath, router])
+    const target = buildMembersListPath()
+    const currentSearch = searchParams.toString()
+    const current = currentSearch ? `${pathname}?${currentSearch}` : pathname
+    if (target !== current) router.replace(target, { scroll: false })
+  }, [buildMembersListPath, pathname, router, searchParams])
 
   const setFilter = useCallback((key: keyof Filters, value: string) => {
     setFilters((current) => ({ ...current, [key]: value }))

@@ -164,7 +164,8 @@ vi.mock("@/lib/email", () => ({
   sendAdminNewBookingAlert: vi.fn().mockResolvedValue(undefined),
   sendWaitlistConfirmationEmail: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock("@/lib/xero", () => ({ isXeroConnected: vi.fn().mockResolvedValue(false), createXeroInvoiceForBooking: vi.fn() }));
+vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: vi.fn().mockResolvedValue(false) }));
+vi.mock("@/lib/xero-booking-invoices", () => ({ createXeroInvoiceForBooking: vi.fn() }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: vi.fn().mockResolvedValue({
     queueOperationId: null,
@@ -959,6 +960,7 @@ describe("P2.3: Guest subscription check", () => {
       requiresSettlementMethod: true,
       returnsToOrganiser: false,
       organiserRefundByBankTransfer: false,
+      refundHeldForDispute: false,
     });
   });
 

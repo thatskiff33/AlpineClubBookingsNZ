@@ -26,7 +26,10 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import {
+  apiErrorMessageFromBody,
+  apiErrorMessageFromResponse,
+} from "@/lib/api-error-message";
 import {
   committeeRoleFormSchema,
   type CommitteeRoleFormValues,
@@ -338,17 +341,25 @@ export default function CommitteePage() {
     if (!confirm(`Remove ${assignment.member.displayName} from ${assignment.committeeRole.name}?`)) {
       return;
     }
-    const response = await fetch(
-      `/api/admin/committee/assignments/${assignment.id}`,
-      {
-        method: "DELETE",
-        credentials: "same-origin",
-      },
-    );
-    if (response.ok) {
-      await fetchCommitteeData();
-    } else if (response.status === 403) {
-      setError(ADMIN_FORBIDDEN_SAVE_REASON);
+    const fallback = "Failed to remove assignment";
+    setError("");
+    try {
+      const response = await fetch(
+        `/api/admin/committee/assignments/${assignment.id}`,
+        {
+          method: "DELETE",
+          credentials: "same-origin",
+        },
+      );
+      if (response.ok) {
+        await fetchCommitteeData();
+      } else if (response.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+      } else {
+        setError(await apiErrorMessageFromResponse(response, fallback));
+      }
+    } catch {
+      setError(fallback);
     }
   }
 

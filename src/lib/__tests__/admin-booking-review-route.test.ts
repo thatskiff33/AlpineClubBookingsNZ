@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
@@ -70,6 +71,10 @@ import {
   HOSTING_COVERAGE_RETRY_MESSAGE,
   HostingCoverageParticipantRetryError,
 } from "@/lib/adult-member-hosting-queue-participants";
+import {
+  TRANSACTION_CONTENDED_CODE,
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+} from "@/lib/transaction-contended-response";
 
 function makeRequest(body: unknown) {
   return new NextRequest("https://example.test/api/admin/bookings/b1/review", {
@@ -352,6 +357,40 @@ describe("PATCH /api/admin/bookings/[id]/review", () => {
     });
     expect(mocks.sendRejectedEmail).not.toHaveBeenCalled();
   });
+
+  it.each(["P2028", "P2034"])(
+    "answers a contended cancellation (%s) with a retryable 503 that keeps the committed rejection",
+    async (code) => {
+      mocks.bookingFindUnique.mockResolvedValue({
+        id: "b1",
+        memberId: "m1",
+        adminReviewStatus: "PENDING",
+        status: "PAID",
+        member: { email: "member@example.com", firstName: "Alex" },
+        checkIn: new Date("2026-07-01"),
+        checkOut: new Date("2026-07-03"),
+      });
+      mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
+      mocks.cancelBooking.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError("private detail", { code, clientVersion: "test" }),
+      );
+
+      const response = await PATCH(
+        makeRequest({ status: "REJECTED", adminNotes: "No adult attending." }),
+        { params },
+      );
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("Retry-After")).toBe("2");
+      await expect(response.json()).resolves.toEqual({
+        error: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+        code: TRANSACTION_CONTENDED_CODE,
+        reviewRecorded: true,
+        cancellationStatusUnconfirmed: true,
+      });
+      expect(mocks.sendRejectedEmail).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps committed-rejection facts on an ordinary cancellation 409", async () => {
     mocks.bookingFindUnique.mockResolvedValue({

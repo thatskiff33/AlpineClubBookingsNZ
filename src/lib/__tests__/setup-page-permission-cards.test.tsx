@@ -18,6 +18,11 @@ vi.mock("@/components/admin/finance-report-mappings-panel", () => ({
   FinanceReportMappingsPanel: () => <div data-testid="finance-panel" />,
 }));
 
+vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
+  useAdminAreaEditAccess: () => false,
+}));
+
 import { SetupPageClient } from "@/app/(admin)/admin/setup/setup-page-client";
 
 const setupBody = {
@@ -109,7 +114,7 @@ describe("SetupPageClient — permission-aware cross-area cards (#1548)", () => 
     renderSetup({ support: "view" });
 
     await waitFor(() => {
-      expect(screen.getByText("Setup Wizard")).toBeTruthy();
+      expect(screen.getByRole("heading", { level: 1, name: "Setup" })).toBeTruthy();
     });
     expect(screen.queryByTestId("lodge-card")).toBeNull();
   });
@@ -126,7 +131,7 @@ describe("SetupPageClient — permission-aware cross-area cards (#1548)", () => 
     const { container } = renderSetup({ support: "view" });
 
     await waitFor(() => {
-      expect(screen.getByText("Setup Wizard")).toBeTruthy();
+      expect(screen.getByRole("heading", { level: 1, name: "Setup" })).toBeTruthy();
     });
     expect(screen.queryByTestId("finance-panel")).toBeNull();
     expect(container.querySelector('a[href="/admin/setup/finance"]')).toBeNull();

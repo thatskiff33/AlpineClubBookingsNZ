@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { BookingStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { issueSplitGuestPaymentLink } from "@/lib/payment-link-split-guest";
+import { SPLIT_GUEST_CHILD_WHERE } from "@/lib/split-guest-children";
 import logger from "@/lib/logger";
 import { clubFormatValues } from "@/lib/club-format-server";
 
@@ -47,12 +47,8 @@ export async function POST(
       memberId: true,
       deletedAt: true,
       linkedBookings: {
-        where: {
-          status: BookingStatus.PENDING,
-          hasNonMembers: true,
-          // Genuine split children only — group joiners are a different flow.
-          groupBookingJoin: { is: null },
-        },
+        // Genuine split children only — group joiners are a different flow.
+        where: SPLIT_GUEST_CHILD_WHERE,
         select: { id: true },
       },
     },

@@ -328,7 +328,7 @@ let ledgerStartSeconds = 0;
       await cardPaidWithTopUp();
 
       const race = await raceAgainstHeldPayment({
-        afterQueued: (tx) => payments.applyLocalRefundAllocation({ paymentId: PAYMENT_ID, amountCents: 10_000, store: tx }),
+        afterQueued: async (tx) => { await payments.applyLocalRefundAllocation({ paymentId: PAYMENT_ID, amountCents: 10_000, store: tx }); }, // #4516 (M4d): it now returns the receipts it consumed
         contender: () =>
           payments.markPaymentIntentTransactionSucceeded({ journal: memberMoneyTestContext(), paymentIntentId: ADDITIONAL_INTENT, amountCents: 5_000, paymentMethodId: "pm_race_4217" }),
       });
@@ -435,7 +435,7 @@ let ledgerStartSeconds = 0;
       await cardPaidWithTopUp();
 
       const race = await raceAgainstHeldPayment({
-        afterQueued: (tx) => payments.applyLocalRefundAllocation({ paymentId: PAYMENT_ID, amountCents: 10_000, preferTransactionIds: [PRIMARY_ID], store: tx }),
+        afterQueued: async (tx) => { await payments.applyLocalRefundAllocation({ paymentId: PAYMENT_ID, amountCents: 10_000, preferTransactionIds: [PRIMARY_ID], store: tx }); }, // #4516 (M4d): it now returns the receipts it consumed
         // `payment-recovery.ts`'s superseded-intent late capture: its own
         // autocommit row write, then the rebuild on the root client.
         contender: async () => {

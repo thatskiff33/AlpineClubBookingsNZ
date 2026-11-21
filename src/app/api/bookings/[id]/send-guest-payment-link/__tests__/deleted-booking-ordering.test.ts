@@ -45,6 +45,7 @@ vi.mock("@/lib/payment-link-split-guest", () => ({
 }));
 
 import { POST } from "@/app/api/bookings/[id]/send-guest-payment-link/route";
+import { SPLIT_GUEST_CHILD_WHERE } from "@/lib/split-guest-children";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const OWNER = {
@@ -117,6 +118,17 @@ describe("POST /api/bookings/[id]/send-guest-payment-link — deletion guard ord
     expect(res.status).toBe(403);
     await expect(res.json()).resolves.toEqual({ error: "Forbidden" });
     expect(mocks.issueSplitGuestPaymentLink).not.toHaveBeenCalled();
+  });
+
+  it("selects split children by the one shared rule (INV-SSOT)", async () => {
+    mocks.auth.mockResolvedValue(STRANGER);
+    mocks.bookingFindUnique.mockResolvedValue(parentBooking(null));
+
+    await callRoute();
+
+    expect(mocks.bookingFindUnique.mock.calls[0][0].select.linkedBookings.where).toBe(
+      SPLIT_GUEST_CHILD_WHERE,
+    );
   });
 
   it.each([

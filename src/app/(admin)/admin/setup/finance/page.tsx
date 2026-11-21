@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { Landmark, Plug, RefreshCw } from "lucide-react";
 import { BackLink } from "@/components/admin/back-link";
 import { FinanceReportMappingsPanel } from "@/components/admin/finance-report-mappings-panel";
 import {
@@ -17,31 +16,8 @@ import {
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { loadAdminSetupPermissionMatrix } from "../permission-matrix";
-import { adminAnchorHref, adminHref } from "@/lib/admin-hubs";
-
-const financeLinks = [
-  {
-    href: "/finance",
-    title: "Finance Dashboard",
-    description:
-      "Open revenue, cost, sync health, and finance reporting views.",
-    icon: Landmark,
-  },
-  {
-    href: adminHref("xero-setup"),
-    title: "Xero Setup",
-    description:
-      "Connect Xero and configure accounting settings used by finance workflows.",
-    icon: Plug,
-  },
-  {
-    href: adminAnchorHref("xero", "xero-section-mappings"),
-    title: "Xero Mappings",
-    description:
-      "Review account, item-code, and entrance-fee mappings used by Xero sync.",
-    icon: RefreshCw,
-  },
-];
+import { adminLink, getAdminPage } from "@/lib/admin-hubs";
+import { financeSetupLinks } from "../hub-cards";
 
 export default async function FinanceSetupPage() {
   const [features, permissionMatrix] = await Promise.all([
@@ -50,7 +26,7 @@ export default async function FinanceSetupPage() {
   ]);
   const hasFinanceAccess = permissionMatrix.finance !== "none";
   const visibleLinks = hasFinanceAccess
-    ? financeLinks.filter((link) => isFeatureHrefVisible(link.href, features))
+    ? financeSetupLinks.filter((link) => isFeatureHrefVisible(link.href, features))
     : [];
   const showReportMappings = hasFinanceAccess && features.financeDashboard;
 
@@ -58,9 +34,11 @@ export default async function FinanceSetupPage() {
     <div className="space-y-8">
       <div>
         <div className="mb-2">
-          <BackLink href="/admin/setup" label="Setup Wizard" />
+          <BackLink {...adminLink("setup")} />
         </div>
-        <h1 className="text-2xl font-bold text-foreground">Finance</h1>
+        <h1 className="text-2xl font-bold text-foreground">
+          {getAdminPage("setup-finance").label}
+        </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Open finance reporting, Xero setup, sync mappings, and the finance
           report mapping editor.

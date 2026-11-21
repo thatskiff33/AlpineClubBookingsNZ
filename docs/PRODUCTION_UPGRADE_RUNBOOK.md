@@ -1,26 +1,38 @@
 # Production Upgrade Runbook
 
-This runbook takes an existing production deployment from a `v0.9.0`-era release
-up to `v0.10.0` on the supported blue/green deploy path. It is written for the
-operator of a private deployment fork whose production database still predates
-the July migration wave, and it is deliberately generic: substitute your own
-values for placeholders such as `<owner>` (GitHub owner) and
-`https://your-domain.example` (your public domain).
+This runbook takes an existing production deployment from one public release
+to a later one on the supported blue/green deploy path. This runbook is
+release-agnostic: it names no release pair. Take your "from" and "to" tags from
+[§1.4](#14-capture-the-current-versiontag), and list the migrations your jump
+applies by comparing `prisma/migrations` between the two tags
+(`git diff --name-only <from-tag> <to-tag> -- prisma/migrations`). The steps
+for that jump are the release headings in `docs/UPGRADING.md`. The newest
+release's block opens with an ordered before / during / after checklist; the
+older headings have none, so read each one you cross in full. Sections below
+that name a particular release say so, and apply only when your jump crosses
+it. It is written for the operator of a private deployment fork, and it is
+deliberately generic: substitute your own values for placeholders such as
+`<owner>` (GitHub owner) and `https://your-domain.example` (your public
+domain).
 
 It is a High-risk procedure against live club data. **The owner drives or
 approves each step.** Do not run any step against production without the owner
 present for the window. Read this whole document, complete the staging
-rehearsal, then work top to bottom during the production window and fill in the
-[Production execution record](#8-production-execution-record) as you go.
+rehearsal, then work top to bottom during the production window. If you keep a
+written record, the [Production execution record](#8-production-execution-record)
+is a template for it: fill it in offline, as you go, and never commit it with
+your deployment's details.
 
 ## 0. Scope and companion documents
 
-- Version target: `v0.9.0`-era → `v0.10.0`. Confirm the exact
-  tags/commit SHAs before you start (see [§1 pre-flight](#1-pre-flight)).
+- Version target: the release you run now → the release you are moving to.
+  Confirm the exact tags/commit SHAs before you start (see
+  [§1 pre-flight](#1-pre-flight)).
 - Read alongside:
   - `docs/UPGRADING.md` — the fork-facing tag-to-tag upgrade guide and the
-    v0.10.0 release notes (the source of truth for the two
-    destructive/behaviour changes; published with the release).
+    release notes for every release your jump crosses (the source of truth for
+    each release's destructive or behaviour changes; published with the
+    release).
   - `docs/BLUE_GREEN_MIGRATION_POLICY.md` — the migration compatibility contract
     and the deploy gate this runbook relies on.
   - `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv` — the per-migration safety ledger the
@@ -33,7 +45,7 @@ rehearsal, then work top to bottom during the production window and fill in the
 
 The upgrade path does not alter the money or booking invariants: money stays in
 integer cents end to end, and booking dates stay NZ date-only lodge nights. No
-migration in the `v0.9.0 → v0.10.0` set rescales, rounds, or re-times either.
+migration may rescale, round or re-time either.
 Reconciliation totals before and after the upgrade must match to the cent
 (see the [§3 spot-check](#3-post-upgrade-checklist)).
 
@@ -44,6 +56,86 @@ Reconciliation totals before and after the upgrade must match to the cent
 Complete every item below **before** touching the deploy. None of these steps
 writes to production; the SQL is read-only.
 
+### Saved-card boundary and incident checks (#5270)
+
+Read this section now and plan the window around it. The stops it describes
+happen in the deploy window ([§2](#2-migrate)), not during pre-flight. The
+only SQL in it is read-only.
+
+For an upgrade from v0.13.2 or earlier, **stop every old web copy, cron leader
+and worker before starting v0.14.0**, drain in-flight requests and prevent old
+copies restarting. No rolling or blue/green overlap across this boundary unless
+every old copy already reads `_v2` keys. **v0.14.0 is the first public reading
+release and the rollback floor once it has run.** Older copies may retry an
+unresolved saved-card charge under another key and charge twice. This overrides
+the ordinary deployment and rollback sequences, independently of migrations.
+See the [release boundary](UPGRADING.md#saved-card-upgrade-and-rollback-boundary-5270).
+
+Before running `scripts/run-production-blue-green-deploy.sh`, use the
+[§2.4 stopped-runtime sequence](#24-windowed-migration-deploy-sequence):
+remove public traffic, drain in-flight requests, stop every old `app_blue` and
+`app_green` replica, the `app` cron leader and external workers, and prevent
+automatic restarts. Disconnect their database clients and verify no old
+connections remain. Only then export `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1`
+in the deploy shell and run the deploy, with §2.4's migration acknowledgements
+where required. The flag acknowledges the shutdown; it does not stop anything.
+Keep this window even when no migration is pending: the script warms the new
+colour and recreates `app` before switching traffic. The script verifies the
+stop only while a windowed migration is pending; with none pending it prints
+"No pending Prisma migrations detected." and checks nothing, so the stop and
+the disconnect check are then entirely yours.
+
+**If cutover fails after v0.14.0 has started, do not restart the old colour,
+cron leader or workers below v0.14.0.** Failure handling can point Caddy back at
+the old colour; keep public traffic removed and that colour stopped. Recover
+on v0.14.0 or later, rather than following the ordinary old-colour restart.
+
+If overlap or rollback below that floor occurred, stop incompatible copies and
+stop saved-card charges while the operator reconciles the affected period. The
+app has no saved-card-only switch. A saved card is charged by the
+confirm-pending cron sweep (the cron leader's scheduler, or a `POST /api/cron`
+with the cron secret), by the admin **Confirm pending guests** action, and by
+the charge-saved-method route (cron secret or admin session). So keep public
+traffic removed from every web copy, keep the cron leader stopped (or run it
+with `CRON_ENABLED=false`, which stops its scheduler only) and tell admins not
+to confirm pending guests, until the checks below are done:
+
+1. Inspect `PaymentTransaction` rows for the same `paymentId` (linked through
+   `Payment.bookingId`). Compare `id`, `reference`, `createdAt`, `status`,
+   `amountCents`, `reason` and `stripePaymentIntentId`. Saved-card references are
+   `pending_charge_<bookingId>_<rowId>`, with `_v2` appended for the new shape.
+   Different references near the incident identify attempts under different
+   keys; legitimate later retries can also produce multiple rows.
+   A v0.13.2 charge row has no `reference`: its shared key
+   `pending_charge_<bookingId>` was never stored. Find that key in Stripe
+   request logs and compare it with the newer attempt keys; missing local
+   references do not rule out an earlier charge.
+2. Check waiting `_v2` attempts with this read-only query. An empty result does
+   **not** authorise rollback or rule out completed duplicate charges:
+
+   ```sql
+   SELECT "id", "paymentId", "reference", "createdAt", "amountCents",
+          "status", "stripePaymentIntentId"
+   FROM "PaymentTransaction"
+   WHERE "source" = 'STRIPE' AND "kind" = 'PRIMARY'
+     AND starts_with("reference", 'pending_charge_')
+     AND right("reference", 3) = '_v2'
+     AND "status" = 'PENDING' AND "stripePaymentIntentId" IS NULL
+   ORDER BY "createdAt", "id";
+   ```
+
+3. Compare Stripe request logs' idempotency keys and PaymentIntents for that
+   booking (`metadata.bookingId`; `_v2` also carries `metadata.savedCardAttemptId`).
+   Check each intent's charge/capture and refund state. A lost response can
+   leave the local intent id empty even though Stripe took money. Also inspect
+   `UnrecognisedStripePayment` records and unmatched-app-payment alerts. Two
+   local rows alone are not proof of two charges; Stripe's captured payments
+   establish whether money moved twice.
+4. Keep the evidence private and resolve any duplicate or unmatched payment
+   through the normal authorised payment/refund process before resuming charges
+   on v0.14.0 or later. Do not delete attempts, rewrite their keys or restore a
+   backup as a way to undo Stripe charges.
+
 ### 1.1 Verified, restore-tested database backup (with S3 durability confirmed)
 
 A backup you have never restored is a hope, not a backup.
@@ -53,7 +145,7 @@ A backup you have never restored is a hope, not a backup.
    backup job still reported daily SUCCESS — see issue **#1361**
    (`S3-less backups report daily SUCCESS while dumps sit on RAM tmpfs wiped
    every deploy; defaults ship backups OFF`). Before you rely on any backup for
-   this upgrade, open **Admin → Integrations → Database Backups**
+   this upgrade, open **Admin → Monitoring & Support → Database Backups**
    (`/admin/backups`, #2095) and verify that the S3 destination is configured
    ("S3 durable"), that the last successful backup is recent, and that no
    "re-enter credentials" banner is showing — then confirm the latest artifact
@@ -154,17 +246,19 @@ lost. Either way, record the count in the execution record.
 ### 1.4 Capture the current version/tag
 
 Record the currently deployed release tag and commit SHA (the "from" version),
-and the target `v0.10.0` tag and its resolved `origin/main` SHA (the "to"
+and the target release tag and its resolved `origin/main` SHA (the "to"
 version). The deploy script snapshots the resolved `origin/main` commit and
 selects the matching GHCR image tags, so pin exactly which commit you are
 deploying and note it in the execution record for rollback reasoning.
 
-### 1.5 Confirm the staging dress rehearsal is recorded
+### 1.5 Rehearse on staging before production
 
-Do not run production until the [§7 staging rehearsal record](#7-staging-rehearsal-record)
-shows a PASS with a date. The rehearsal runs the same wave migrations against a
-staging copy of live data; it is the evidence that the migrate step behaves on
-your data shape.
+Rehearse this upgrade on staging before production, and do not run production
+without a rehearsal you trust. The rehearsal runs the same pending migrations
+against a staging copy of your data; it is the evidence that the migrate step
+behaves on your data shape. If you keep a written record, use the
+[§7 template](#7-staging-rehearsal-record) offline. A blank record is not a
+PASS.
 
 ### 1.6 Declare that this deployment is the live site (#3034)
 
@@ -200,6 +294,9 @@ needs nothing.
 ---
 
 ## 2. Migrate
+
+Before starting any new process, apply the
+[saved-card stop-before-start rule](#saved-card-boundary-and-incident-checks-5270).
 
 Migrate via the supported blue/green deploy path. Run from the production host:
 
@@ -265,9 +362,9 @@ matter for this upgrade:
 
 ### 2.1 The validator gate is expected green
 
-`main` ledgers **all** pending `v0.9.0 → v0.10.0` migrations in
-`docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`, including the two that a hot-table /
-trigger scan flags:
+`main` ledgers **every** migration in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`,
+whatever release you are moving from. For example, a jump that crosses
+`v0.10.0` includes two that a hot-table / trigger scan flags:
 
 - `20260702180000_add_two_factor_session_challenge` (FK to `Member`), and
 - `20260704100000_defer_booking_guest_stay_range_triggers` (trigger swap on
@@ -284,7 +381,7 @@ that flag only bypasses the *potentially-breaking-SQL* warning
 (`found_breaking`); it does **not** bypass a missing/malformed ledger entry
 (`found_failure`), and it additionally requires a non-empty
 `BLUE_GREEN_MIGRATION_OVERRIDE_REASON`. A missing-entry failure on a clean
-`v0.10.0` checkout means your migration tree or ledger has drifted from
+checkout of the target tag means your migration tree or ledger has drifted from
 `origin/main` — reconcile the checkout against the release tag rather than
 editing the ledger on the host. The gate fails **safe**: the old color keeps
 serving and no schema change has been applied.
@@ -407,7 +504,8 @@ guarantees it.
 
 ### 2.2 AgeTier `NOT_APPLICABLE` — deploy in a quiet window
 
-The `v0.10.0` set includes the #1440 AgeTier work. The backfill migration
+This applies only when your jump crosses `v0.10.0` (you start from a release
+before it). The `v0.10.0` set includes the #1440 AgeTier work. The backfill migration
 `20260707000100_backfill_org_age_tier_not_applicable` is ledgered
 `old_code_compatible=no`. Its ledger row states:
 
@@ -599,6 +697,45 @@ lists every one; these are in that class:
   missing index and changes nothing. Every hidden lodge shows again in the
   previous release. Rolling forward afterwards means re-applying both
   `migration.sql` files by hand, oldest first.
+- `20261210100000_contract_drop_xero_token` (#3806,
+  [UPGRADING.md](UPGRADING.md#the-old-xero-token-table-is-dropped-3806)) — drops
+  the `XeroToken` table, the follow trigger and both functions. R2
+  (`20261124010000_add_xero_connection`) must already be applied. R2's
+  application still selects `XeroToken`, so once the drop commits that colour
+  fails, and aborting the deploy does not bring it back. Stop the old web
+  colour **and every old worker, scheduler and queue consumer**, and confirm no
+  old database connection remains, before migrating. In the shell that runs the
+  deploy, set `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1`, a non-empty
+  `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` naming the migration, and
+  `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1` only once everything old has
+  stopped. **Rollback:** stop the new colour, run its `rollback.sql` by hand as
+  the migration role, then start R2. It restores the table, the functions, the
+  trigger and one non-secret row, but not token ciphertext; the backup taken
+  before this migrate is the only recovery of those columns.
+- `20261220044900_add_subscription_category_and_widen_charge_type_shape` and
+  `20261220044910_route_category_charges_and_enforce_axis_exclusivity` (#4496) —
+  one window, never applied apart. The first only changes the shape: three new
+  subscription-category tables, additive columns, and the charge table's
+  membership-type columns made nullable beside a parallel category group. It is
+  nearly compatible on its own and is windowed by its pairing: before the second
+  runs, a new writer could insert a category-only charge whose null type column
+  the previous release's reads (a family-charge dedup key built from it) would
+  silently mis-group rather than fail. The second adds the check and the partial
+  unique index that make every charge bill on exactly one axis. Stop the old web
+  colour **and every old worker, scheduler and queue consumer** before
+  migrating, take and verify one backup for the whole window, and in the shell
+  that runs the deploy set `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1`, a non-empty
+  `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` naming both migrations, and
+  `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1` only once everything old has
+  stopped. The locks are brief: the column changes are catalogue-only, and the
+  check scans the cold charge table once. A production database that already ran
+  this feature's earlier two migrations needs
+  [its reconciliation first](guides/subscription-category-redesign-production-reconciliation.md).
+  **Rollback:** run `20261220044910`'s `rollback.sql` first, then
+  `20261220044900`'s. Each refuses, before it changes anything, when run in the
+  wrong order or while a category charge, fee or assignment exists. After
+  traffic has run against this shape it is not a release rollback: the backup
+  taken before the window is the recovery.
 
 **If several are pending, they share ONE window.** `prisma migrate deploy` applies
 them in the same command — you do not stop and start the application repeatedly. Work
@@ -1615,12 +1752,11 @@ event, not a recurring one.
 ### 3.1a Confirm the environment role reads *production* (#3034)
 
 Open **Admin > Setup** and read the **Production Or Non-Production** step. It
-must say **production**, and **read the message rather than the tick**: a
-*non-production* installation also shows a green tick there, because both are
-validly configured states and the checklist cannot know which one this
-installation is meant to be. The tick means "answered"; the message means "which
-answer". **Admin > Setup & Configuration > Environment Safety**
-(`/admin/environment`) says the same in more detail.
+must say **production**, with a green tick. A deployment that declares
+*non-production* shows an amber warning there instead (#4980), saying members are
+getting no email and Xero contact addresses are being replaced, until an
+administrator acknowledges it as a real copy. **Admin > Setup & Configuration >
+Environment Safety** (`/admin/environment`) says the same in more detail.
 
 If it says anything else, member email and writes into the club's Xero
 organisation are being held back. Fix `APP_ENVIRONMENT_ROLE` in the production
@@ -1708,8 +1844,9 @@ every `BookingGuest.dietaryRequirements` value whose stay ended more than 30
 days ago. If the club wants to keep them, untick **Enable after-stay dietary
 clearing** in **Admin → Privacy retention** before that run; nothing already
 cleared can be restored except from the pre-migrate backup. The previous colour
-never reads the new columns. See [`UPGRADING.md`](UPGRADING.md#unreleased) and
-`INV-PRIV-023`.
+never reads the new columns. See
+[its upgrade note](UPGRADING.md#old-stays-dietary-notes-are-cleared-on-the-first-night-after-upgrading-4916)
+and `INV-PRIV-023`.
 
 ### 3.2 Re-run the audit category backfills
 
@@ -1814,6 +1951,11 @@ deployment.
 ---
 
 ## 4. Rollback plan
+
+**Once v0.14.0 has run, never roll back below v0.14.0**, the first public
+release that reads `_v2` saved-card keys. This floor overrides the ordinary
+colour-switch instructions below; if crossed, use the
+[incident checks](#saved-card-boundary-and-incident-checks-5270) before retrying charges.
 
 Rollback follows `docs/BLUE_GREEN_MIGRATION_POLICY.md`. The policy's whole point
 is that migrations preserve old-code/new-schema compatibility until the previous
@@ -1938,9 +2080,10 @@ restore service, and escalate to the owner before any data-repair action.
 
 - [ ] [§1](#1-pre-flight) pre-flight complete: restore-tested backup PASS, S3
       durability confirmed (#1361), module-flip prediction captured, in-flight
-      inductions listed, from/to versions pinned, staging rehearsal recorded.
+      inductions listed, from/to versions pinned, staging rehearsal done.
 - [ ] [§2](#2-migrate) migrate: validator gate green (step 12), migrations
-      applied (step 13), AgeTier quiet-window observed, warm-up gate green (step
+      applied (step 13), AgeTier quiet-window observed when the jump crosses
+      `v0.10.0`, warm-up gate green (step
       16), cutover clean (step 17).
 - [ ] [§3](#3-post-upgrade-checklist) post-upgrade: modules re-enabled,
       access-role audit run if applicable, money/Xero spot-check clean, all four
@@ -1953,23 +2096,47 @@ restore service, and escalate to the owner before any data-repair action.
 
 ## 7. Staging rehearsal record
 
-The private deployment fork's **staging** environment has already run the July
-wave migrations against a **live-DB snapshot** — that run is the dress
-rehearsal for this upgrade. This is asserted **per the 2026-07-06 audit /
-issue #1364**. The owner confirms the concrete date and outcome below before the
-production window opens.
+A blank template, one copy per release you upgrade to. Fill it in offline;
+never commit a filled-in copy with your deployment's details. Only the owner
+attests a rehearsal, and a blank or unconfirmed record is not a PASS.
+
+Sections 7.1 and 7.2 are recorded example rehearsals using a throwaway database
+and seeded data, kept as worked examples; they do not attest any club's upgrade,
+and operators keep their own §7/§8 record offline.
+
+The minimum rehearsal is
+`pnpm run db:rehearse-epic --database-url <throwaway> --base <from-tag>`
+against a throwaway database
+([what it proves and what it does not](BLUE_GREEN_MIGRATION_POLICY.md#rehearsing-an-epics-deploy)).
+Run it from a full-history checkout of the **to-tag**: it compares that
+checkout's migrations with the base's, so a checkout of any other release
+rehearses a different jump.
+
+Where your jump crosses a windowed migration
+([§2.4](#24-windowed-migration-deploy-sequence)), the old release cannot read
+what that migration drops or renames, so the rehearsal reports those models as
+broken and prints `REHEARSAL FAILED`. That is expected for those models only.
+Write them under "Notable findings / deviations", record PASS only when every
+broken model is one of them, and treat any other broken model as a real
+failure. The rehearsal reads only, so it says nothing about the writes the old
+release makes during a window; the windowed section covers those.
+
+A staging run against a copy of your own data adds the evidence that the
+migrate step behaves on your data shape.
 
 | Field | Value |
 | --- | --- |
-| Rehearsal environment | Private fork staging (live-DB snapshot) |
-| Wave migrations applied | `v0.9.0`-era → `v0.10.0` set (all pending) |
-| Rehearsal date | _<owner to confirm — YYYY-MM-DD>_ |
-| Result (PASS/FAIL) | _<owner to confirm — must be PASS before production>_ |
-| Notable findings / deviations | _<owner to confirm>_ |
+| Target tag | _<to-tag>_ |
+| From tag | _<from-tag>_ |
+| Rehearsal environment | _<throwaway database / staging copy>_ |
+| Rehearsal command | _<command run, at least the `db:rehearse-epic` line above>_ |
+| Rehearsal date | _<YYYY-MM-DD>_ |
+| Result (PASS/FAIL) | _<PASS/FAIL>_ |
+| Notable findings / deviations | _<...>_ |
 | Confirmed by | _<owner>_ |
 
-> A recorded PASS here is a precondition for [§2](#2-migrate). If the rehearsal
-> has not been recorded, do not run production.
+> Do not run [§2](#2-migrate) in production without a rehearsal of this jump
+> that you trust.
 
 ### 7.1 Windowed migration rehearsal: `20260803010000_contract_subscription_lockout_drop_enabled`
 
@@ -2374,7 +2541,7 @@ Fill this in live during the production window.
 | Operator | _<name>_ |
 | Owner present | _<name>_ |
 | From version (tag / SHA) | _<...>_ |
-| To version (tag / SHA) | _<v0.10.0 / SHA>_ |
+| To version (tag / SHA) | _<target tag / SHA>_ |
 | Backup object id (restore-tested) | _<...>_ |
 | S3 durability confirmed (#1361) | _<yes/no>_ |
 | Module-flip predicted (updatedByMemberId NULL?) | _<yes/no + toggles to re-enable>_ |

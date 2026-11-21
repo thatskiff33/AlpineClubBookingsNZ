@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 
 import { AREAS, areasForPair } from "./fragility-areas.mjs";
 import { AUDIT_CUTOFF, INCIDENTAL_WORDING, MIN_REFIX_GAP_DAYS, REPO, issueUrl, pairKey } from "./fragility-lib.mjs";
+import { githubHeadingAnchor } from "../lib/github-heading-anchor.mjs";
 import { isMainModule } from "../lib/is-main-module.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -206,12 +207,9 @@ function headingFor(rank, row) {
   return `${rank}. ${row.name} — ${row.confirmed.length} confirmed, ${since}`;
 }
 
-/** GitHub's heading anchor: lower case, punctuation dropped, spaces to hyphens. */
+/** The anchor GitHub gives the area's `###` heading, from the one shared rule (INV-SSOT). */
 function anchorFor(rank, row) {
-  return headingFor(rank, row)
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N} -]/gu, "")
-    .replace(/ /g, "-");
+  return githubHeadingAnchor(`### ${headingFor(rank, row)}`);
 }
 
 /** Replace the generated block in `doc`, keeping the hand-written text around it. */

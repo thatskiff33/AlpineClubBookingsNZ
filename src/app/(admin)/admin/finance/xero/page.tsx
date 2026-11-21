@@ -8,6 +8,7 @@ import { adminHref, servedAdminPathname } from "@/lib/admin-hubs"
 import { useClubIdentity } from "@/components/club-identity-provider"
 import { buildPathWithSearch } from "@/lib/internal-return-path"
 import {
+  ClubTaxCard,
   ConnectionStatusPanel,
   ContactSyncPanel,
   ErasedMemberContactsPanel,
@@ -21,6 +22,7 @@ import {
   UsagePanel,
   xeroLinkState,
 } from "./_components/panels"
+import { FocusedActionError } from "@/components/focused-action-error"
 import { Message } from "./_components/message"
 import { WebhookAmberBadge } from "./_components/webhook-amber-badge"
 import { SECTION_DEFAULTS, type SectionKey, type SyncResult } from "./_components/types"
@@ -39,6 +41,8 @@ export default function XeroPage() {
     loading,
     error,
     setError,
+    disconnectError,
+    disconnectAttention,
     connectSuccess,
     setConnectSuccess,
     sectionOpen,
@@ -109,6 +113,7 @@ export default function XeroPage() {
       </p>
 
       {error && <Message tone="error" message={error} onDismiss={() => setError("")} />}
+      <FocusedActionError id="xero-disconnect-error" error={disconnectError} attentionKey={disconnectAttention} className="mb-4" />
       {operationMessage && <Message tone="success" message={operationMessage} onDismiss={() => setOperationMessage("")} />}
       {connectSuccess && <Message tone="success" message="Xero connected successfully!" onDismiss={() => setConnectSuccess(false)} />}
 
@@ -116,6 +121,9 @@ export default function XeroPage() {
       <WebhookHealthPanel />
 
       <ConnectionStatusPanel status={status} onConnect={handleConnect} onDisconnect={handleDisconnect} />
+
+      {/* Shown connected or not: the club's tax treatment is read without Xero, and a change checks its code against Xero (#4632). */}
+      <ClubTaxCard />
 
       {connected && (
         <>

@@ -11,6 +11,7 @@ import {
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
 import { decideClubTimeZoneBackfill } from "@/lib/config-self-heal-steps";
+import { BROWSER_SENTRY_OFF_DETAIL } from "@/lib/observability/browser-sentry-config";
 import { decideEnvironmentRole } from "@/lib/environment-role";
 import type { EnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
 import {
@@ -18,10 +19,10 @@ import {
   getSetupRequiredEnvNames,
   buildSetupReadiness,
   normalizeSetupProgress,
-  renderSetupCheckReport,
   type SetupDatabaseSnapshot,
   type SetupReadiness,
 } from "@/lib/setup-readiness";
+import { renderSetupCheckReport } from "@/lib/setup-readiness-report";
 
 /**
  * A resolved environment role for the fixtures below, built by the REAL
@@ -108,6 +109,7 @@ const completeDatabase: SetupDatabaseSnapshot = {
     hutLeaders: true,
     communications: true,
     skifieldConditions: true,
+    skifieldWhakapapa: true,
     twoFactor: false,
     magicLink: false,
     googleLogin: false,
@@ -122,6 +124,7 @@ const completeDatabase: SetupDatabaseSnapshot = {
     alpineCentralServer: false,
     commsPortal: false,
     memberLodgeRoster: false,
+    foodOrders: false,
     multiPromoCodes: false,
   },
   ageTierSettingCount: 4,
@@ -232,6 +235,31 @@ describe("setup-readiness", () => {
     }
   });
 
+  describe("Sentry runtime readiness", () => {
+    it.each([undefined, "", "   ", "https://public@example.ingest.sentry.io/1"])("reports browser reporting from the runtime environment (%s)", browserDsn => {
+      const report = buildSetupReadiness({
+        env: { ...baseEnv, NEXT_PUBLIC_SENTRY_DSN: browserDsn },
+        database: completeDatabase,
+        configDir: makeConfigDir(),
+      });
+      const sentry = findStep(report, "sentry")!;
+      expect(sentry.status).toBe(browserDsn?.trim() ? "complete" : "warning");
+      expect(sentry.details.join(" ")).toContain(browserDsn?.trim() ? "configured at runtime" : "off");
+      expect(sentry.details.join(" ")).not.toContain("https://public@");
+      // One sentence per fact: the off line is not repeated as a "missing" line.
+      expect(sentry.details.filter(line => line.includes("NEXT_PUBLIC_SENTRY_DSN"))).toHaveLength(browserDsn?.trim() ? 0 : 1);
+    });
+
+    it("words browser Sentry off exactly as System Health does", () => {
+      const sentry = findStep(buildSetupReadiness({
+        env: { ...baseEnv, NEXT_PUBLIC_SENTRY_DSN: " " },
+        database: completeDatabase,
+        configDir: makeConfigDir(),
+      }), "sentry")!;
+      expect(sentry.details).toContain(BROWSER_SENTRY_OFF_DETAIL);
+    });
+  });
+
   it("reports a complete setup without exposing secret values", () => {
     const readiness = buildSetupReadiness({
       env: baseEnv,
@@ -253,6 +281,16 @@ describe("setup-readiness", () => {
     expect(report).toContain("accounting.reports.balancesheet.read");
     expect(report).toContain("accounting.reports.banksummary.read");
     expect(report).not.toContain("accounting.reports.read");
+  });
+
+  it.each([true, false])("links Xero Mappings to the wizard mapping step (database checked: %s)", (checked) => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: checked ? completeDatabase : undefined,
+      now: new Date("2026-07-01T00:00:00.000Z"),
+    });
+    expect(findStep(readiness, "xero-mappings")?.href).toBe("/admin/xero/setup?step=mapping");
   });
 
   it("warns without blocking setup when the connected role is a superuser", () => {
@@ -539,6 +577,25 @@ describe("setup-readiness", () => {
     expect(report).toContain("Runtime Environment: blocked");
     expect(report).toContain("supportEmail");
     expect(report).toContain("Run the seed command");
+  });
+
+  it("tells a Docker-only install how to seed the first admin, not only a developer (#4977)", () => {
+    // The deployment prerequisites list Docker alone, so a checklist that only
+    // says `pnpm run db:seed` leaves that operator with no command they can run.
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: { ...completeDatabase, adminCount: 0 },
+    });
+    const seedAdmin = readiness.categories
+      .flatMap((category) => category.checks)
+      .find((check) => check.id === "seed-admin");
+
+    expect(seedAdmin?.status).toBe("blocked");
+    expect(seedAdmin?.details).toEqual([
+      "Docker install: docker compose run --rm seed",
+      "Developer machine: pnpm run db:seed",
+    ]);
   });
 
   it("reports module state from Admin Modules activation only", () => {
@@ -1005,20 +1062,68 @@ describe("setup-readiness environment role (ENV-SAFETY 1, #3034)", () => {
     );
   });
 
-  it("is complete and says NON-PRODUCTION for a declared copy", () => {
+  /*
+    A DECLARED COPY IS AMBER UNTIL ACKNOWLEDGED (#4980). `.env.example` ships
+    `APP_ENVIRONMENT_ROLE=non-production`, so a live install that copied the
+    template lands here, emails no member and rewrites the club's Xero contact
+    addresses. A green tick told that operator the install worked.
+  */
+  it("warns, in plain words, for a copy declared by the deployment", () => {
     const check = environmentRoleCheck({
       ...completeDatabase,
       environmentRole: environmentRoleResolution("non-production"),
     });
 
-    expect(check.status).toBe("complete");
-    // Precise for the same reason as its sibling above: the
-    // administrator-forced message also contains "NON-PRODUCTION", so only the
-    // full phrase distinguishes a DECLARED copy from a forced one.
+    expect(check.status).toBe("warning");
+    expect(check.progress).toBe("open");
+    // Precise because the administrator-forced message also contains
+    // "NON-PRODUCTION": only the full phrase says the DEPLOYMENT declared it.
     expect(check.message).toMatch(/is declared NON-PRODUCTION/);
+    expect(check.message).toContain(
+      "If this is the club's live site, members are getting no email and Xero contact addresses are being replaced. Set APP_ENVIRONMENT_ROLE=production and restart.",
+    );
+    // The held-back count still answers "is this costing members their mail?"
+    // before anything else.
+    expect(check.details[0]).toMatch(/^Held back email:/);
     expect(check.details.join(" ")).toContain(
       "APP_ENVIRONMENT_ROLE=non-production",
     );
+  });
+
+  it("moves a declared copy to completed once acknowledged, changing nothing else", () => {
+    const environmentRole = environmentRoleResolution("non-production");
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: { ...completeDatabase, environmentRole },
+      progress: { completedStepIds: ["environment-role"] },
+    });
+    const check = readiness.categories
+      .flatMap((category) => category.checks)
+      .find((candidate) => candidate.id === "environment-role");
+
+    expect(check?.progress).toBe("completed");
+    // The acknowledgement resolves the checklist; the step still says what it is.
+    expect(check?.status).toBe("warning");
+    // And the role the resolver decided is untouched by the checklist.
+    expect(environmentRole.role).toBe("NON_PRODUCTION");
+    expect(environmentRole.decidedBy).toBe("deployment-declaration");
+  });
+
+  it("keeps a copy forced by the safer override complete, because an administrator chose it", () => {
+    // A DECLARED non-production with the override also on is still decided by
+    // the declaration (the resolver's branch 1), so it stays a warning above.
+    for (const declaration of ["production", "absent", "invalid"] as const) {
+      const check = environmentRoleCheck({
+        ...completeDatabase,
+        environmentRole: environmentRoleResolution(declaration, "on"),
+      });
+
+      expect(check.status).toBe("complete");
+      expect(check.message).toBe(
+        "This installation is treated as NON-PRODUCTION because an administrator has switched the safer override on.",
+      );
+    }
   });
 
   /*
@@ -1335,7 +1440,7 @@ describe("setup-readiness environment role (ENV-SAFETY 1, #3034)", () => {
     expect(check.details.join(" ")).toContain("prisma migrate deploy");
   });
 
-  it("keeps a declared non-production complete when the override cannot be read", () => {
+  it("treats a declared non-production the same when the override cannot be read", () => {
     const check = environmentRoleCheck({
       ...completeDatabase,
       environmentRole: environmentRoleResolution(
@@ -1343,7 +1448,8 @@ describe("setup-readiness environment role (ENV-SAFETY 1, #3034)", () => {
         "unreadable",
       ),
     });
-    expect(check.status).toBe("complete");
+    expect(check.status).toBe("warning");
+    expect(check.message).toMatch(/is declared NON-PRODUCTION/);
   });
 
   it("says 'not checked' rather than guessing when there is no snapshot", () => {

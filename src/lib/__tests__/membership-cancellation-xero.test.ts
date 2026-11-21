@@ -47,6 +47,7 @@ const mocks = vi.hoisted(() => ({
   findSubscriptionInvoiceIdFromCoverage: vi.fn(),
 }));
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: {
@@ -82,10 +83,14 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-api-client", () => ({
   callXeroApi: mocks.callXeroApi,
   getAuthenticatedXeroClient: mocks.getAuthenticatedXeroClient,
+}));
+vi.mock("@/lib/xero-mappings", () => ({
   getResolvedAccountMapping: mocks.getResolvedAccountMapping,
+}));
+vi.mock("@/lib/xero-contact-cache", () => ({
   refreshXeroContactCachesFromContact: mocks.refreshXeroContactCachesFromContact,
 }));
 

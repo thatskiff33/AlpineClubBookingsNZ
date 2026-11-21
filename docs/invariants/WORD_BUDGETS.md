@@ -35,9 +35,9 @@ The reason may not contain a `|`, even inside backticks (cells are split on pipe
 | ID | Ceiling | Deciding issue | Reason |
 | --- | ---: | --- | --- |
 
-There are no approved exceptions yet. Candidates are proposed on #2789 as the
-compaction waves reach them; until the owner approves one, an oversize entry is
-migration debt below.
+There are no approved exceptions yet. Candidates are proposed on each entry's
+deciding issue as the compaction waves (#4990) reach them; until the owner
+approves one, an oversize entry is migration debt below.
 
 ## Migration ratchet
 
@@ -53,7 +53,7 @@ settle-time re-price rule, written on `main` where this register does not exist
 and therefore never measured against a budget. The sync gave it its own id
 rather than leaving it stacked under `INV-MOD-038`, whose own 263 words it had
 pushed to 1420 while they were sharing a heading. Nothing was reworded to fit:
-compacting an owner-decided rule is a compaction-wave job on #2789, not
+compacting an owner-decided rule is a compaction-wave job on #4990, not
 something a conflict resolution should do. The fifth sync added `INV-MONEY-029`
 the same way, at 667 words: #3276's promo build-up rule, also written on `main`.
 The sixth added two more from #3340 — `INV-PAY-047` at 1211 and `INV-ADDPAY-023`
@@ -77,49 +77,52 @@ none listed), and an amendment the owner decides is new rule text, not drift to
 be compacted. When the last row goes, delete this section's table; the file
 stays for the agent-doc ceilings below.
 
+The waves that empty it are owned by #4990, which carries the wave plan. Wave 1
+compacted the ten largest rows to rule, pin and link; none reached 300 without
+semantic damage. By owner decision on #4990 (15 Nov 2026) each stays here at its
+new, lower count, and later waves take them off. After wave 1 the table held 88
+rows and 56,846 words (70,395 before it). Wave 2 compacted the sixteen
+`INV-HOST` rows: twelve reached 300 and left, and `INV-HOST-029`,
+`INV-HOST-045`, `INV-HOST-046` and `INV-HOST-050` stay at their new counts
+while exceptions are proposed on their deciding issues (#2576, #3040, #3039,
+#3232). The table now holds 76 rows and 46,711 words.
+
 | ID | Words |
 | --- | ---: |
-| `INV-MOD-025` | 4579 |
-| `INV-ADDPAY-037` | 2705 |
-| `INV-SSOT-004` | 2653 |
-| `INV-HOST-050` | 2220 |
-| `INV-PRIV-012` | 2086 |
-| `INV-CONFIG-005` | 1742 |
-| `INV-HOST-046` | 1726 |
-| `INV-HOST-045` | 1680 |
-| `INV-ADDPAY-039` | 1570 |
-| `INV-SSOT-001` | 1531 |
+| `INV-MOD-025` | 1717 |
+| `INV-ADDPAY-037` | 1417 |
+| `INV-SSOT-004` | 471 |
+| `INV-HOST-050` | 532 |
+| `INV-PRIV-012` | 857 |
+| `INV-CONFIG-005` | 676 |
+| `INV-HOST-046` | 410 |
+| `INV-HOST-045` | 476 |
+| `INV-ADDPAY-039` | 931 |
+| `INV-SSOT-001` | 427 |
 | `INV-PRIV-016` | 1512 |
-| `INV-HOST-051` | 1443 |
-| `INV-HOST-053` | 1434 |
 | `INV-OPS-013` | 1354 |
 | `INV-CONFIG-004` | 1304 |
-| `INV-OPS-012` | 1214 |
+| `INV-OPS-012` | 1200 |
 | `INV-PAY-047` | 1164 |
 | `INV-MOD-055` | 1002 |
 | `INV-ADDPAY-036` | 1137 |
 | `INV-SSOT-003` | 1094 |
 | `INV-ADDPAY-038` | 1025 |
-| `INV-HOST-052` | 1010 |
-| `INV-HOST-043` | 1003 |
 | `INV-CONFIG-002` | 874 |
 | `INV-MONEY-003` | 867 |
 | `INV-ADDPAY-034` | 828 |
 | `INV-MOD-026` | 828 |
 | `INV-PRIV-011` | 809 |
-| `INV-HOST-041` | 794 |
 | `INV-DATE-013` | 780 |
 | `INV-GUEST-016` | 781 |
 | `INV-INT-016` | 762 |
-| `INV-HOST-049` | 715 |
-| `INV-HOST-029` | 707 |
+| `INV-HOST-029` | 530 |
 | `INV-MOD-021` | 672 |
 | `INV-MONEY-029` | 808 |
 | `INV-LIFE-062` | 639 |
 | `INV-ADDPAY-017` | 637 |
-| `INV-PRIV-013` | 627 |
+| `INV-PRIV-013` | 625 |
 | `INV-MOD-006` | 623 |
-| `INV-HOST-042` | 607 |
 | `INV-ADDPAY-023` | 584 |
 | `INV-LOCK-002` | 589 |
 | `INV-CONFIG-003` | 578 |
@@ -128,7 +131,6 @@ stays for the agent-doc ceilings below.
 | `INV-ADDPAY-030` | 559 |
 | `INV-LIFE-064` | 516 |
 | `INV-LOCK-004` | 512 |
-| `INV-HOST-044` | 506 |
 | `INV-EXCEPT-009` | 505 |
 | `INV-INT-017` | 489 |
 | `INV-PRIV-015` | 458 |
@@ -139,8 +141,6 @@ stays for the agent-doc ceilings below.
 | `INV-DATE-025` | 418 |
 | `INV-MOD-017` | 412 |
 | `INV-OPS-001` | 406 |
-| `INV-HOST-028` | 404 |
-| `INV-HOST-033` | 396 |
 | `INV-REQ-007` | 391 |
 | `INV-MOD-005` | 330 |
 | `INV-ADDPAY-011` | 380 |
@@ -150,7 +150,6 @@ stays for the agent-doc ceilings below.
 | `INV-LIFE-085` | 352 |
 | `INV-CAP-031` | 351 |
 | `INV-DATE-024` | 350 |
-| `INV-HOST-023` | 348 |
 | `INV-MONEY-024` | 348 |
 | `INV-PAY-025` | 348 |
 | `INV-PAY-023` | 335 |
@@ -163,7 +162,6 @@ stays for the agent-doc ceilings below.
 | `INV-MONEY-017` | 323 |
 | `INV-MOD-016` | 319 |
 | `INV-DATE-027` | 316 |
-| `INV-HOST-004` | 310 |
 | `INV-PAY-046` | 308 |
 | `INV-CAP-027` | 303 |
 | `INV-CAP-036` | 303 |

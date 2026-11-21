@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
   findUnique: vi.fn(),
   clubTimeSettingsFindUnique: vi.fn(),
+  bookingDefaultsFindUnique: vi.fn(),
   resolveTerminal: vi.fn(),
   createAuditLog: vi.fn(),
   sendExpiredEmail: vi.fn(),
@@ -28,6 +29,11 @@ vi.mock("@/lib/prisma", () => ({
     // exist to rule out.
     clubTimeSettings: {
       findUnique: (...a: unknown[]) => mocks.clubTimeSettingsFindUnique(...a),
+    },
+    // #4932: present so a test can prove the reaper never consults the club's
+    // CURRENT hold length — the deadline was stamped when the request was raised.
+    bookingDefaults: {
+      findUnique: (...a: unknown[]) => mocks.bookingDefaultsFindUnique(...a),
     },
   },
 }));
@@ -263,6 +269,29 @@ describe("reapExpiredPolicyExceptionHolds", () => {
     expect(mocks.resolveTerminal).not.toHaveBeenCalled();
   });
 
+  it("keeps a hold's stamped deadline after the club shortens its hold length (#4932)", async () => {
+    // The club has since cut its hold to a single day. A request raised two days
+    // ago under the old seven-day setting keeps the deadline stamped on it...
+    mocks.bookingDefaultsFindUnique.mockResolvedValue({
+      preArrivalReminderDays: 3,
+      additionalPaymentReminderDays: 3,
+      policyExceptionHoldDays: 1,
+    });
+    const createdAt = new Date(NOW.getTime() - 2 * DAY_MS);
+    mocks.findMany.mockResolvedValue([
+      candidate({ createdAt, holdExpiresAt: new Date(createdAt.getTime() + 7 * DAY_MS) }),
+    ]);
+    expect((await reapExpiredPolicyExceptionHolds(NOW)).expired).toBe(0);
+
+    // ...and so does an unstamped pre-migration row: its fallback is the
+    // shipped length, never the setting as it stands now.
+    mocks.findMany.mockResolvedValue([candidate({ createdAt, holdExpiresAt: null })]);
+    expect((await reapExpiredPolicyExceptionHolds(NOW)).expired).toBe(0);
+
+    expect(mocks.resolveTerminal).not.toHaveBeenCalled();
+    expect(mocks.bookingDefaultsFindUnique).not.toHaveBeenCalled();
+  });
+
   it("reads the earliest held night, so the NULL-column fallback can cap on it", async () => {
     mocks.findMany.mockResolvedValue([]);
 
@@ -305,6 +334,7 @@ describe("reapExpiredPolicyExceptionHolds", () => {
     // expired this row — otherwise this test passes for the wrong reason.
     expect(
       computePolicyExceptionHoldExpiry({
+        ttlDays: POLICY_EXCEPTION_HOLD_TTL_DAYS,
         createdAt,
         firstHeldNight: "2026-06-29",
         zone: CLUB_ZONE,
@@ -312,7 +342,7 @@ describe("reapExpiredPolicyExceptionHolds", () => {
       // The 24-hour floor still wins over the already-started night.
     ).toBe(createdAt.getTime() + POLICY_EXCEPTION_HOLD_MIN_TTL_HOURS * HOUR_MS);
     expect(
-      computePolicyExceptionHoldExpiry({ createdAt, zone: CLUB_ZONE }).getTime(),
+      computePolicyExceptionHoldExpiry({ createdAt, ttlDays: POLICY_EXCEPTION_HOLD_TTL_DAYS, zone: CLUB_ZONE }).getTime(),
     ).toBeGreaterThan(NOW.getTime());
   });
 
@@ -446,6 +476,7 @@ describe("reapExpiredPolicyExceptionHolds", () => {
 
     expect(mocks.sendExpiredEmail.mock.calls[0][0].expiresAt).toEqual(
       computePolicyExceptionHoldExpiry({
+        ttlDays: POLICY_EXCEPTION_HOLD_TTL_DAYS,
         createdAt,
         firstHeldNight: "2026-08-01",
         zone: CLUB_ZONE,
@@ -616,13 +647,14 @@ describe("computePolicyExceptionHoldExpiry", () => {
   it("defaults to the TTL window from creation", async () => {
     const createdAt = new Date("2026-07-01T09:00:00.000Z");
     expect(
-      computePolicyExceptionHoldExpiry({ createdAt, zone: CLUB_ZONE }).getTime(),
+      computePolicyExceptionHoldExpiry({ createdAt, ttlDays: POLICY_EXCEPTION_HOLD_TTL_DAYS, zone: CLUB_ZONE }).getTime(),
     ).toBe(createdAt.getTime() + POLICY_EXCEPTION_HOLD_TTL_DAYS * DAY_MS);
   });
 
   it("never outlives the start of the first held night", async () => {
     const createdAt = new Date("2026-07-01T09:00:00.000Z");
     const expiry = computePolicyExceptionHoldExpiry({
+      ttlDays: POLICY_EXCEPTION_HOLD_TTL_DAYS,
       createdAt,
       // Two days out — well inside the 7-day TTL, so the night caps it.
       firstHeldNight: "2026-07-03",
@@ -644,11 +676,13 @@ describe("computePolicyExceptionHoldExpiry", () => {
     // configured behind its container released its held beds on the wrong day.
     const createdAt = new Date("2026-07-01T09:00:00.000Z");
     const denver = computePolicyExceptionHoldExpiry({
+      ttlDays: POLICY_EXCEPTION_HOLD_TTL_DAYS,
       createdAt,
       firstHeldNight: "2026-07-03",
       zone: CLUB_ZONE,
     });
     const auckland = computePolicyExceptionHoldExpiry({
+      ttlDays: POLICY_EXCEPTION_HOLD_TTL_DAYS,
       createdAt,
       firstHeldNight: "2026-07-03",
       zone: requireClubTimeZone("Pacific/Auckland"),
@@ -664,6 +698,7 @@ describe("computePolicyExceptionHoldExpiry", () => {
     // deadline in the past and the very next cron run would reap a request
     // nobody has looked at.
     const expiry = computePolicyExceptionHoldExpiry({
+      ttlDays: POLICY_EXCEPTION_HOLD_TTL_DAYS,
       createdAt,
       firstHeldNight: "2026-06-30",
       zone: CLUB_ZONE,
@@ -674,6 +709,7 @@ describe("computePolicyExceptionHoldExpiry", () => {
   it("ignores an unparseable night rather than producing an invalid deadline", async () => {
     const createdAt = new Date("2026-07-01T09:00:00.000Z");
     const expiry = computePolicyExceptionHoldExpiry({
+      ttlDays: POLICY_EXCEPTION_HOLD_TTL_DAYS,
       createdAt,
       firstHeldNight: "not-a-date",
       zone: CLUB_ZONE,

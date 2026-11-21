@@ -1,4 +1,5 @@
 import { bindOrganiserExtraRefundToHandBack } from "@/lib/organiser-extra-netting";
+import { postHandBackObligation, type BookingJournalContext } from "@/lib/member-money/doors";
 import {
   ManualRefundTaskKind,
   type Prisma,
@@ -20,11 +21,12 @@ import { GROUP_MIRROR_HAND_BACK_EXCEEDS_CASH_MESSAGE, REVIEW_REFUND_EXCEEDS_UNPR
 import { netCollectedCardRefundSelect } from "@/lib/additional-ledger-gap";
 import { openCardRefundOwedCents } from "@/lib/open-card-refund-owed";
 import { sumInternetBankingMintedCentsForBookings } from "@/lib/internet-banking-late-cash-credit";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 import { bankTransferRefundPayee, type BankTransferRefundPayee } from "@/lib/group-organiser-paid";
 import { GroupCancelInProgressError, groupCancelInProgress } from "@/lib/group-cancel-in-progress";
-import { editRefundHandBackReason, refundRequestHandBackReason } from "@/lib/manual-refund-task-copy";
+import { disputedEditRefundHandBackReason, editRefundHandBackReason, refundRequestHandBackReason } from "@/lib/manual-refund-task-copy";
+import { paymentDisputedCaptureCents, type HoldingDispute } from "@/lib/stripe-dispute-hold";
 
 /**
  * #3827 (owner decision D-3813-6, `INV-PAY-117`): AN EDIT'S REFUND THAT THE
@@ -48,13 +50,16 @@ import { editRefundHandBackReason, refundRequestHandBackReason } from "@/lib/man
  * Does this edit's refund go back by hand? True exactly when the edit returns
  * money (`refundAmountCents`, never the account-credit arm) and that money was
  * not captured through Stripe (`hasSucceededPayment`, the same test that
- * decides whether a Stripe refund runs). The one spelling for every door.
+ * decides whether a Stripe refund runs), or (#5061 follow-up, `INV-PAY-154`)
+ * it was, but a Stripe dispute holds it (`refundHeldForDispute`), so the
+ * treasurer settles it. The one spelling for every door.
  */
 export function editRefundGoesBackByHand(adjusted: {
   refundAmountCents: number;
   hasSucceededPayment: boolean;
+  refundHeldForDispute: boolean;
 }): boolean {
-  return adjusted.refundAmountCents > 0 && !adjusted.hasSucceededPayment;
+  return adjusted.refundAmountCents > 0 && (!adjusted.hasSucceededPayment || adjusted.refundHeldForDispute);
 }
 
 /**
@@ -62,12 +67,14 @@ export function editRefundGoesBackByHand(adjusted: {
  * edit's refund is not sent by hand: the member, or the group organiser who
  * paid for the booking by internet banking (`bankTransferRefundPayee`). The
  * one answer the hand-back's reason and the "Booking Modified" email share.
+ * A disputed refund is always the member's own card payment.
  */
 export function editRefundBankTransferPayee(
   adjusted: Parameters<typeof editRefundGoesBackByHand>[0],
   booking: Parameters<typeof bankTransferRefundPayee>[0],
 ): BankTransferRefundPayee | null {
-  return editRefundGoesBackByHand(adjusted) ? bankTransferRefundPayee(booking) : null;
+  if (!editRefundGoesBackByHand(adjusted)) return null;
+  return adjusted.refundHeldForDispute ? "member" : bankTransferRefundPayee(booking);
 }
 
 /**
@@ -80,6 +87,19 @@ export function editRefundBankTransferPayee(
 async function refuseOrganiserHandBackWhileGroupCancelInProgress(tx: Prisma.TransactionClient, bookingId: string): Promise<void> {
   const child = await tx.booking.findUnique({ where: { id: bookingId }, select: { status: true, parentBookingId: true } });
   if (child && (await groupCancelInProgress(tx, child))) throw new GroupCancelInProgressError();
+}
+
+/**
+ * #5061 follow-up (`INV-PAY-154`): the disputes holding the payment, for the
+ * hand-back's reason - the same read `applyPaymentAdjustments` made, repeated
+ * under the same locks so it names the disputes that decided it.
+ */
+async function editRefundHoldingDisputes(tx: Prisma.TransactionClient, paymentId: string): Promise<HoldingDispute[]> {
+  const payment = await tx.payment.findUniqueOrThrow({
+    where: { id: paymentId },
+    select: { id: true, stripePaymentIntentId: true, additionalPaymentIntentId: true },
+  });
+  return (await paymentDisputedCaptureCents(tx, payment)).disputes;
 }
 
 /**
@@ -102,11 +122,14 @@ export async function raiseEditRefundHandBackIfOwed(
     bookingId: string;
     paymentId: string | null;
     bookingModificationId: string;
-    adjusted: { refundAmountCents: number; hasSucceededPayment: boolean };
+    adjusted: Parameters<typeof editRefundGoesBackByHand>[0];
     /** What changed, for the task's reason line (e.g. "date change"). */
     editLabel: string;
     /** #3949: whether the group organiser paid for it, whom the reason names as the payee. */
     booking: Parameters<typeof bankTransferRefundPayee>[0];
+    /** #4516 (M4d): the edit's journal context. Present, the hand-back's refund debt posts with the task. */
+    journal?: BookingJournalContext | null;
+    actorMemberId?: string | null;
   },
 ): Promise<boolean> {
   const { bookingId, paymentId, bookingModificationId, adjusted, editLabel, booking } = params;
@@ -122,14 +145,20 @@ export async function raiseEditRefundHandBackIfOwed(
         raisedAmountCents: adjusted.refundAmountCents,
         kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
         occurrenceKey: editRefundHandBackOccurrenceKey(bookingModificationId),
-        reason: editRefundHandBackReason({ bookingId, editLabel, payee }).slice(0, MANUAL_REFUND_TASK_REASON_MAX),
+        reason: (adjusted.refundHeldForDispute
+          ? disputedEditRefundHandBackReason({ bookingId, editLabel, disputes: await editRefundHoldingDisputes(tx, paymentId) })
+          : editRefundHandBackReason({ bookingId, editLabel, payee })).slice(0, MANUAL_REFUND_TASK_REASON_MAX),
       },
     ],
     skipDuplicates: true,
   });
-  if (payee === "organiser") {
-    const task = await tx.manualRefundTask.findUniqueOrThrow({ where: { occurrenceKey: editRefundHandBackOccurrenceKey(bookingModificationId) }, select: { id: true } });
-    await bindOrganiserExtraRefundToHandBack(tx, { bookingId, handBackTaskId: task.id });
+  // The task is read only when something needs its id: the organiser binding, or the journal's R05.
+  if (payee !== "organiser" && !params.journal) return true;
+  const task = await tx.manualRefundTask.findUniqueOrThrow({ where: { occurrenceKey: editRefundHandBackOccurrenceKey(bookingModificationId) }, select: { id: true, amountCents: true } });
+  if (payee === "organiser") await bindOrganiserExtraRefundToHandBack(tx, { bookingId, handBackTaskId: task.id });
+  // Replay posts nothing more: the obligation's key is already live.
+  if (params.journal && task.amountCents) {
+    await postHandBackObligation(tx, params.journal, { bookingId, taskId: task.id, amountCents: task.amountCents, origin: "APP", actorMemberId: params.actorMemberId ?? null, debtorRead: "booking-row" });
   }
   return true;
 }
@@ -163,6 +192,9 @@ export async function raiseRefundRequestHandBack(
     amountCents: number;
     /** #3949: whether the group organiser paid for it, whom the reason names as the payee. */
     booking: Parameters<typeof bankTransferRefundPayee>[0];
+    /** #4516 (M4d): the approval's journal context. Present, the bank part's refund debt posts with the task. */
+    journal?: BookingJournalContext | null;
+    actorMemberId?: string | null;
   },
 ): Promise<number> {
   const { bookingId, paymentId, refundRequestId, amountCents, booking } = params;
@@ -183,6 +215,14 @@ export async function raiseRefundRequestHandBack(
     ],
     skipDuplicates: true,
   });
+  // The journal's R05 for the bank part; a replay posts nothing more (its key is already live).
+  if (params.journal) {
+    const task = await tx.manualRefundTask.findUniqueOrThrow({ where: { occurrenceKey: refundRequestHandBackOccurrenceKey(refundRequestId) }, select: { id: true, amountCents: true } });
+    if (task.amountCents) {
+      // An appeal's give-back is a concession, as the card part's is (refund-requests/[id]/route.ts, design R05).
+      await postHandBackObligation(tx, params.journal, { bookingId, taskId: task.id, amountCents: task.amountCents, origin: "OFFICER", actorMemberId: params.actorMemberId ?? null, debtorRead: "booking-row", concession: true });
+    }
+  }
   return raised.count;
 }
 

@@ -51,6 +51,7 @@ const {
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     member: {
       findFirst: vi.fn(),
       findUnique: vi.fn(),
@@ -123,12 +124,10 @@ vi.mock("next-auth", () => {
   return { default: mockNextAuth, CredentialsSignin };
 });
 
-vi.mock("bcryptjs", () => ({
-  default: {
-    compare: mockBcryptCompare,
-    hash: vi.fn().mockResolvedValue("$2b$12$hashed"),
-  },
-}));
+vi.mock("@/lib/password-hashing", async (importOriginal) => {
+  const { passwordHashingModuleMock } = await import("@/lib/__tests__/helpers/password-hashing-mock");
+  return passwordHashingModuleMock(await importOriginal(), { verifyPassword: mockBcryptCompare, hashPassword: vi.fn().mockResolvedValue("$2b$12$hashed") });
+});
 
 // Partial: `admin-modules` re-exports other members of this module at load time.
 vi.mock("@/lib/module-settings", async (importOriginal) => ({
@@ -172,7 +171,7 @@ vi.mock("@/lib/utils", () => ({
     classes.filter(Boolean).join(" "),
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactGroupMemberships: vi.fn().mockResolvedValue({}),
   getXeroContactIdsForGroup: vi.fn().mockResolvedValue([]),
 }));
@@ -295,6 +294,7 @@ async function captureAnonymisationPayload(
     fn: (client: unknown) => unknown,
   ) => {
     const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       $executeRaw: vi.fn().mockResolvedValue(1),
       member: {
         count: vi.fn().mockResolvedValue(0),
@@ -661,6 +661,7 @@ describe("#2620 reactivation refusals, one path at a time", () => {
       fn: (client: unknown) => unknown,
     ) =>
       fn({
+        $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
         $executeRaw: vi.fn().mockResolvedValue(1),
         member: { updateMany, count: vi.fn().mockResolvedValue(2) },
         familyGroupMember: {

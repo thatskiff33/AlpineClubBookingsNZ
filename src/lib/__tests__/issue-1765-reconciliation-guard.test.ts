@@ -312,7 +312,7 @@ describe("#1765 markBookingPaymentSucceeded refund-history guard", () => {
           ],
         },
       },
-      data: { status: BookingStatus.PAID, draftExpiresAt: null },
+      data: { status: BookingStatus.PAID, draftExpiresAt: null, savedCardClaimAt: null },
     });
   });
 

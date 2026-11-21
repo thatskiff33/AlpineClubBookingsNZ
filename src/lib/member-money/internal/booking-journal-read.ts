@@ -1,7 +1,9 @@
 import type { MemberMoneySide, Prisma } from "@prisma/client";
 import { bookingOwnerProviderMetadata } from "../../booking-owner";
+import { readBookingTaxAnchorInstant } from "../../booking-tax-anchor";
+import { clubCalendarDateOf, type CalendarDate, type ClubTimeZone } from "../../club-time";
 import { BINDING_CHARGE_SOURCE_VERSION, type BookingChargeAccount } from "./booking-charges";
-import { componentKey, liveComponentGross } from "./components";
+import { componentKey, liveComponentGross, type PostedRevenueLeg } from "./components";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
 import type { MemberMoneyDebtor } from "./plan";
 
@@ -39,14 +41,15 @@ const CHARGE_ACCOUNTS: readonly BookingChargeAccount[] = ["BOOKING_REVENUE", "FE
 /** A booking charge component's live gross, as the posted legs leave it. */
 export type LiveChargeComponent = BookingJournalCharges["components"][number];
 
-const LEG_SELECT = {
+/** The columns a charge leg is read with: what `PostedRevenueLeg` holds. */
+export const CHARGE_LEG_SELECT = {
   account: true, chargeIdentity: true, side: true, amountCents: true,
   grossCents: true, netCents: true, taxCents: true, taxCode: true, bookingId: true, lodgeId: true,
 } as const;
-type ChargeLeg = Prisma.MemberMoneyLineGetPayload<{ select: typeof LEG_SELECT }>;
+type ChargeLeg = Prisma.MemberMoneyLineGetPayload<{ select: typeof CHARGE_LEG_SELECT }>;
 
 /** Each charge component the legs post, with the gross it still carries: the one rule for the doors and the census. */
-function liveChargeComponents(legs: readonly ChargeLeg[]): LiveChargeComponent[] {
+function liveChargeComponents(legs: readonly PostedRevenueLeg[]): LiveChargeComponent[] {
   const gross = liveComponentGross(legs);
   return [...new Map(legs.map((leg) => [componentKey(leg.account, leg.chargeIdentity!), leg])).entries()]
     .map(([key, leg]) => ({
@@ -56,21 +59,45 @@ function liveChargeComponents(legs: readonly ChargeLeg[]): LiveChargeComponent[]
     }));
 }
 
-const chargeLegsOf = (bookingIds: readonly string[]) => ({
+/** The booking and fee revenue legs with a component identity, of the given bookings. */
+export const chargeLegsOf = (bookingIds: readonly string[]) => ({
   bookingId: { in: [...bookingIds] }, account: { in: [...CHARGE_ACCOUNTS] }, chargeIdentity: { not: null },
 });
+
+/** One booking's posted charge legs (booking and fee revenue), oldest first: what its components are computed from. */
+export async function readBookingChargeLegs(
+  db: Pick<Prisma.TransactionClient, "memberMoneyLine">,
+  bookingId: string,
+): Promise<PostedRevenueLeg[]> {
+  return db.memberMoneyLine.findMany({ where: chargeLegsOf([bookingId]), orderBy: { id: "asc" }, select: CHARGE_LEG_SELECT });
+}
 
 /** One booking's live charge components, read inside a door's transaction under `lock(1)`. */
 export async function readBookingLiveComponents(
   db: Pick<Prisma.TransactionClient, "memberMoneyLine">,
   bookingId: string,
 ): Promise<LiveChargeComponent[]> {
-  return liveChargeComponents(await db.memberMoneyLine.findMany({ where: chargeLegsOf([bookingId]), orderBy: { id: "asc" }, select: LEG_SELECT }));
+  return liveChargeComponents(await readBookingChargeLegs(db, bookingId));
 }
 
 /** The booking's live charge: the sum C2 caps collection by, for the receipts, the engine and the census alike. */
 export async function readBookingLiveChargeCents(db: Pick<Prisma.TransactionClient, "memberMoneyLine">, bookingId: string): Promise<number> {
   return (await readBookingLiveComponents(db, bookingId)).reduce((sum, component) => sum + component.liveGrossCents, 0);
+}
+
+/**
+ * A booking's tax anchor (#4632, owner decision A): the club date of
+ * `readBookingTaxAnchorInstant`, on which every fresh split of its charges
+ * takes the treatment in force, so a booking keeps that treatment for its whole
+ * life. The one definition its Xero documents also read (`xero-tax-anchors.ts`):
+ * a group place takes its organiser's booking, as the combined invoice does.
+ */
+export async function readBookingTaxAnchorDate(
+  db: Pick<Prisma.TransactionClient, "booking">,
+  bookingId: string,
+  zone: ClubTimeZone,
+): Promise<CalendarDate> {
+  return clubCalendarDateOf(await readBookingTaxAnchorInstant(db, bookingId), zone);
 }
 
 /** Whether an event key is in the journal: a replay check, never a lock. */
@@ -128,7 +155,7 @@ export async function readBookingJournalCharges(
   const charged = await db.memberMoneyEvent.findMany({ where: { eventKey: { in: [...keys.keys()] } }, select: { eventKey: true, sourceVersion: true } });
   const chargedIds = new Set(charged.map((event) => keys.get(event.eventKey)));
   const boundIds = new Set(charged.filter((event) => event.sourceVersion === BINDING_CHARGE_SOURCE_VERSION).map((event) => keys.get(event.eventKey)));
-  const legs = await db.memberMoneyLine.findMany({ where: chargeLegsOf(bookingIds), orderBy: { id: "asc" }, select: LEG_SELECT });
+  const legs = await db.memberMoneyLine.findMany({ where: chargeLegsOf(bookingIds), orderBy: { id: "asc" }, select: CHARGE_LEG_SELECT });
   const journalSince = await readJournalSince(db);
   const links = await db.memberMoneySourceLink.findMany({
     where: { bookingLedgerLine: { bookingId: { in: [...bookingIds] } } },

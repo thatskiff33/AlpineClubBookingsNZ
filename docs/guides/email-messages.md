@@ -127,7 +127,10 @@ only once that card refund has gone through; until then it says the refund is
 on its way to the group organiser's card (#4057). On a group booking the
 organiser paid for by internet banking, the bank transfer goes to the organiser
 and the sentence reads "The club will refund $X to the group organiser
-directly, because the group organiser paid for this booking." (#3949). A
+directly, because the group organiser paid for this booking." (#3949). When
+the member's card payment is disputed with their card issuer, no card refund or
+account credit is issued: the sentence says the refund of $X is with the
+club's treasurer, who will be in touch (#4911). A
 reduction that goes back partly to the card and partly as account credit names
 both. A reduction that
 cancels the member's unpaid additional payment outright adds "The additional
@@ -137,6 +140,27 @@ booking the club asks by card it reads "An additional payment of $X is
 required.", also while the card request waits to be retried; on a booking paid
 by internet banking it names an Internet Banking payment against the Xero
 invoice; any other amount still to pay is named without a method (#4052).
+
+`{{paymentNote}}` on the **Your Request Was Approved** message (an approved
+booking-rule exception that created a new booking) says what is left to pay, and
+it is worked out from the money the club has actually received for that booking,
+never from the booking's status (#4069). It is one of five lines:
+
+| What the records show | The line |
+| --- | --- |
+| Money is still owed and the booking holds its beds | "There is $X to pay on this booking. Your beds are held for now; open it from your account to pay or to see the payment details." |
+| Money is still owed and the beds are not held yet | "There is $X to pay on this booking. Open it from your account to pay now — the beds are not held until it is paid." |
+| The booking is covered (by a payment, account credit, or both) | Nothing: the line is left out |
+| A group organiser pays for this stay | "Your group organiser pays for this stay." |
+| The records cannot prove what is owed, or could not be read | "To see whether anything is still to pay on this booking, open it from your account or contact the club." |
+
+$X is what the booking costs, less account credit applied to it, less the money
+the club still holds for it — a payment still pending, a refund already made or
+owed, and a card charge that was replaced and is being refunded do not count as
+held. The raw `{{amount}}` token behind the line is that same figure, `$0.00`
+once the booking is covered, and **empty** on the last two rows: an override
+that prints `{{amount}}` on its own should keep `{{paymentNote}}` beside it, or
+it will show a blank where nobody can vouch for a figure.
 
 `{{refundSentence}}` on the **Refund Appeal Approved** message works the same
 way. A card refund reads "A refund of $X will be processed to your original
@@ -423,15 +447,17 @@ Two consequences worth knowing before you edit one:
   themselves are `{{amount}}` (recorded), `{{paidAmount}}` (the cash Xero shows)
   and `{{amountOwing}}` (what the booking owes, or "as recorded"). The message is
   locked to always send.
-- **One card payment dispute message serves both of its alerts (#4911).** It
-  goes once when a cardholder disputes a payment and once when the dispute
-  closes, so the subject must keep `{{disputeSubjectLabel}}`, which says which
-  of the two it is and, once closed, how it ended. A subject typed by hand
-  would title a closed dispute as a new one. `{{disputeNextStep}}` is what the
-  treasurer does now (respond in Stripe, or record a lost dispute in Xero by
-  hand), `{{disputeHoldNote}}` says the app gives no card refund or account
-  credit for the payment while the dispute is open or lost, and `{{outcome}}`
-  is the dispute's status. The message is locked to always send.
+- **One card payment dispute message serves all three of its alerts (#4911).**
+  It goes once when a cardholder disputes a payment, once when the dispute
+  closes, and once more if a dispute already reported lost is later reported
+  won. So the subject must keep `{{disputeSubjectLabel}}`, which says which
+  alert it is and, once closed, how it ended. A subject typed by hand would
+  title a closed dispute as a new one. `{{disputeNextStep}}` is what the
+  treasurer does now (respond in Stripe, record a lost dispute in Xero by hand,
+  or reverse that entry when a lost dispute is won), `{{disputeHoldNote}}` says
+  the app gives no card refund or account credit for the payment while the
+  dispute is open or lost, and `{{outcome}}` is the dispute's status. The
+  message is locked to always send.
 - **`{{refundMessage}}` on Booking Cancelled is the whole refund sentence.** It
   says where the refund went or is going: the member's original payment method,
   account credit, or a refund the club will arrange directly. Otherwise it says

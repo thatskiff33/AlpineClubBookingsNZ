@@ -58,7 +58,8 @@ import {
   finishRecordedOrganiserChildRefund,
   recordOrganiserChildRefundInTransaction,
 } from "@/lib/organiser-child-refund-executor";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import {
   groupSettlementIdForRefundRecoveryKey,
   isGroupSettlementRefundRecoveryKey,
@@ -256,7 +257,7 @@ export async function closeGroupCardRefundPaidAnotherWay(
       tx,
     );
     return body;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   if (result.finish) {
     await finishRecordedOrganiserChildRefund(result.finish);

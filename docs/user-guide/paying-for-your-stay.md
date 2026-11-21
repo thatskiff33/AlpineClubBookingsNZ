@@ -36,16 +36,17 @@ refund. If the lodge is wrong, contact the club instead of paying.
 1. On the **Pay** step of the wizard, or the **Complete Payment** card on your
    booking page, choose the card option and enter your card details.
 2. The headline shows exactly what you are being charged now:
-   - A normal booking shows **Total: $X** — the whole amount.
+   - A normal booking shows **Total: $X** — the card charge after any credit applied.
    - A **split** booking (a Members First hold, see below) shows **Charged today:
      $X** — only your **member** portion — with a second line naming the
      non-member guest portion that is "charged closer to your stay".
-3. Confirm the payment. On success the booking moves to a paid state and you get
+3. Read any saved-credit message above the form, then confirm the payment. The
+   success message quotes the same card charge. The booking moves to a paid state and you get
    a booking-confirmation email. The booking page is always the live source of
    truth if a confirmation, payment, or cancellation email goes missing.
 
-The figures come from the server, not from arithmetic in your browser, so the
-"charged today" amount always matches what is actually taken.
+The card headline and success amount come from the server payment intent, not
+from arithmetic in your browser. This applies to both normal and split bookings.
 
 If the dates fill up while your card payment is going through, the booking is
 cancelled. The payment panel tells you how much was confirmed refunded to your
@@ -105,10 +106,19 @@ can** rather than refusing your payment, and the pay step tells you what it did:
 
 | At the pay step | What it means |
 | --- | --- |
-| Your full election was applied | Nothing changed since you saved the booking |
-| Less was applied than you asked for, "you no longer hold that much credit" | Your balance went elsewhere in the meantime |
-| Less was applied than you asked for, "the booking no longer costs that much" | The booking was repriced below your election |
-| **Your credit covered it all** | Nothing is left to pay — the booking is confirmed on the spot and no card is charged |
+| "Your credit of $X was applied." | Your full election was applied |
+| "You asked to use $X credit. $Y was applied because you no longer hold that much credit." | Your current balance capped the application |
+| "You asked to use $X credit. $Y was applied because the booking no longer costs that much." | The booking's remaining price capped the application |
+| "You asked to use $X credit. $Y was applied because you no longer hold that much credit and the booking no longer costs that much." | Both limits were equal and below your choice |
+| "Your credit covered it all. No card payment is needed." | Read the message and press **Continue** to finish; no card is charged |
+
+Shortfall messages add: "Any unused credit stays on your account." If a card
+form is ready, the message also says "Your card will be charged $X today."
+If payment is paused because a payment is already processing, is being
+refunded, or is below the card minimum, the message still names the credit
+applied, without promising a card charge. If the card payment could not start at
+all, check the **Account Credit** section on your [profile](your-account.md)
+before trying again.
 
 The same applies if you switch that booking to internet banking: your credit is
 applied first and the invoice asks only for the difference. If your credit
@@ -121,6 +131,49 @@ your credit is **not** used and stays on your account down to the cent, and your
 booking's History shows a line saying so ("Saved account credit was not
 applied"). The club is told at the same time, so if you would rather have the
 difference back than keep the credit for next time, just ask.
+
+## Download your invoice
+
+When your club uses Xero for its accounts, your booking page has a **Download
+invoice** button beside **Edit Booking** once the club has raised the invoice.
+It saves Xero's own PDF of that invoice, so it is the same invoice the club's
+accounts hold, with the same invoice number. The file name starts with the
+club's short name.
+
+Under the booking's **Payment** card, an **Invoice and credits** card shows:
+
+- a short summary from the booking itself: the booking total (the same as
+  the Payment card's Total), any change fee, any account credit applied, what
+  you have paid less refunds and credits returned, anything kept under the
+  booking's change terms when a change was refunded only in part, and what is
+  still to pay (or what will be due once the booking is reviewed or
+  confirmed);
+- each Xero credit note raised against the booking (for example when a change
+  lowered the price, a refund, or account credit used on it), each with its
+  own **Download credit note** button;
+- a line in plain words when the club's accounts do not show your latest
+  change: the invoice could not be changed, a credit for the change has not
+  been made yet, or the invoice stays as it was issued because it can no
+  longer be changed, for example once it has been paid. The summary is then
+  the booking's own figures.
+
+Some things to know:
+
+- If Xero can't be reached just then, you'll see a message; try again later.
+  If the page says the invoice or credit note is no longer available, refresh
+  it.
+- If the booking may have more than one invoice (for example a change that
+  added to the price), the page says so and asks you to contact the club for
+  copies instead.
+- A cancelled booking has no invoice to download, and a place your group
+  organiser paid for by internet banking is on the organiser's invoice.
+- A guest on someone else's booking does not see the button or the card.
+- Downloads are limited to 10 an hour per person (and 20 an hour per booking),
+  because each one reads the club's accounts.
+
+Clubs that don't use Xero don't show the button yet. A single statement PDF
+for the booking (invoice, credits, payments and balance in one document) is
+planned for a later release.
 
 ## Split charges for non-member guests
 
@@ -168,7 +221,7 @@ stores. Settlement rules are in
 | Your card was declined | A normal card failure | Try another card from the **Complete Payment** card |
 | The invoice email never arrived | It may be in spam | Check spam; the booking page always shows what is owed even without the email |
 | You expected credit to be applied | Credit shows but was not used | Check the **Account Credit** section on your [profile](your-account.md); contact the club office if it looks wrong |
-| Less credit was applied than you chose | Your balance was spent elsewhere, or the booking was repriced below what you asked to apply, between saving the draft and paying | The pay step says which; the rest is still yours on your [profile](your-account.md), and the difference was charged to your card |
+| Less credit was applied than you chose | Your balance was spent elsewhere, or the booking was repriced below what you asked to apply, between saving the draft and paying | The pay step says which; any unused credit stays on your account. Check the displayed card remainder before paying |
 | Internet banking says there is nothing to pay by transfer | Your account credit covers the whole booking, so there is no invoice to raise | Go back to the booking page and complete it there — it settles for $0 |
 | Switching to internet banking says your card payment has already gone through | The card payment you started was completed, so switching would charge you twice | Refresh the booking page; it shows as paid once the card payment is recorded. If the switch says it could not confirm the card payment was cancelled, try again in a few minutes |
 | The card payment page says the booking is being paid by Internet Banking | The booking was switched to Internet Banking, here or in another tab, and an invoice was emailed | Reload the booking page and pay the invoice by bank transfer; the card option is closed so you cannot pay twice |

@@ -168,6 +168,7 @@ const h = vi.hoisted(() => {
   return { state, id, db, table, writeLinks };
 });
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => ({ prisma: h.db }));
 vi.mock("@/lib/logger", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -315,11 +316,9 @@ vi.mock("@/lib/stripe", () => ({
     return { created: 1781053200, latest_charge: { created: 1781053200 } };
   },
 }));
-vi.mock("@/lib/xero-supplementary-invoice-late-capture", async (importOriginal) => ({
-  // The REAL retired codes the keep's evidence reads (#4324).
-  RETIRED_CODES_ANSWERING_CAPTURE: (
-    (await importOriginal()) as typeof import("@/lib/xero-supplementary-invoice-late-capture")
-  ).RETIRED_CODES_ANSWERING_CAPTURE,
+// The keep's evidence reads the REAL retired codes (#4324), from
+// `xero-supplementary-invoice-capture-rules`, which is not mocked.
+vi.mock("@/lib/xero-supplementary-invoice-late-capture", () => ({
   // The approval task decides (`decideLateCapture`'s task arm), as every late capture here has one.
   lateCaptureRefundState: async ({ paymentIntentId }: { paymentIntentId: string }) => {
     const task = h.table("manualRefundTask").find((r) => r.lateCaptureApprovalIntentId === paymentIntentId);

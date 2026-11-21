@@ -58,8 +58,12 @@ const db = vi.hoisted(() => {
   return db;
 });
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => ({ prisma: db }));
-vi.mock("@/lib/xero-operation-outbox", () => ({
+// #4525 (M13): the payment's capture receipt; the recorder has its own suite.
+const captureReceipts = vi.hoisted(() => ({ record: vi.fn() }));
+vi.mock("@/lib/member-money/doors", () => ({ recordCaptureReceiptManifest: captureReceipts.record }));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
   lockSupplementaryInvoiceAnchor: (...a: unknown[]) => mocks.lockAnchor(...a),
 }));
 vi.mock("@/lib/xero-sync", () => ({
@@ -633,6 +637,30 @@ describe("createXeroKeptLateCaptureInvoice", () => {
       expect.objectContaining({ id: "op_kept" }),
       expect.objectContaining({ status: "PARTIAL" }),
     );
+    // #4525 (M13): no stored payment, no capture receipt.
+    expect(captureReceipts.record).not.toHaveBeenCalled();
+  });
+
+  describe("#4525 (M13): the payment's capture receipt", () => {
+    const receipt = {
+      bookingId: QUEUED.bookingId, paymentIntentId: "pi_kept", paymentKey: "manual-refund-task:task_kept:kept-late-capture-payment:v1",
+      amountCents: 24000, invoiceId: "inv_kept", reference: "Stripe pi_kept",
+    };
+
+    it("records the captured cents under the payment's key once the row has completed", async () => {
+      await createXeroKeptLateCaptureInvoice({ syncOperation: xeroClaim("op_kept") });
+      expect(captureReceipts.record).toHaveBeenCalledWith({ ...receipt, providerPaymentId: "pay_kept" });
+      expect(captureReceipts.record.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.completeXeroSyncOperation.mock.invocationCallOrder[0]!);
+    });
+
+    it("on a retry whose payment an earlier run linked, records that payment and sends none", async () => {
+      mocks.linkFindFirst.mockImplementation(async ({ where }: { where: { role: string } }) =>
+        where.role === KEPT_LATE_CAPTURE_INVOICE_ROLE ? { xeroObjectId: "inv_kept", xeroObjectNumber: "INV-9" }
+          : where.role === KEPT_LATE_CAPTURE_PAYMENT_ROLE ? { xeroObjectId: "pay_earlier", xeroObjectNumber: null } : null);
+      await createXeroKeptLateCaptureInvoice({ syncOperation: xeroClaim("op_kept") });
+      expect(mocks.createXeroPaymentForInvoice).not.toHaveBeenCalled();
+      expect(captureReceipts.record).toHaveBeenCalledWith({ ...receipt, providerPaymentId: "pay_earlier" });
+    });
   });
 
   it("uses the club's own hut-fee item and account when it has set them (no club value in code)", async () => {

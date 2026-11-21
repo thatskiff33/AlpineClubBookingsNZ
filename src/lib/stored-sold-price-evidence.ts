@@ -1,5 +1,5 @@
+import { isNonNegativeIntegerCents } from "@/lib/cents-schema";
 import {
-  isNonNegativeIntegerCents,
   type EditFinancialReviewCause,
   type StoredNightPriceEvidence,
 } from "@/lib/edit-financial-review-context";

@@ -24,9 +24,8 @@
  * lookup. The join orchestration (member join, non-member verify, child booking
  * creation) builds on these in the route layer.
  */
-import { randomBytes, randomInt } from "crypto";
-import { hash } from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
+import { randomInt } from "crypto";
+import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import {
   AgeTier,
   BookingEventType,
@@ -112,7 +111,7 @@ import {
 } from "@/lib/policies/booking-route-decisions";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
-import { resolveRequestBookingHoldUntil } from "@/lib/booking-request";
+import { resolveRequestBookingHoldUntil } from "@/lib/booking-request-hold";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
@@ -129,6 +128,7 @@ import { describeUniqueConstraintTarget } from "@/lib/prisma-errors";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 // Organiser booking states that may host a group. The organiser must be
 // committed (their own beds already reserved) before opening the group to
@@ -414,7 +414,7 @@ async function setGroupBookingJoinStatus(
       data: { status },
     });
     return claimed.count > 0;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   if (!written) {
     throw new GroupBookingError("This group booking has been cancelled", 409);
   }
@@ -1679,9 +1679,9 @@ export async function verifyAndCreateNonMemberJoin(
   });
   const priceCents = price.totalPriceCents;
 
-  // Non-login member: store a random bcrypt hash so the row satisfies the
+  // Non-login member: store the precomputed unusable bcrypt hash so the row satisfies the
   // schema without any usable credential (mirrors approveBookingRequest).
-  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
+  const placeholderPasswordHash = UNUSABLE_PLACEHOLDER_PASSWORD_HASH;
   const reviewedAt = new Date();
   const holdDays = await getNonMemberHoldDays(checkIn, groupLodgeId);
   const nonMemberHoldUntil = resolveRequestBookingHoldUntil(

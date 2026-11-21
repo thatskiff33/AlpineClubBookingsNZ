@@ -24,6 +24,7 @@ import {
   installScrollIntoViewSpy,
   removeScrollIntoViewSpy,
 } from "@/lib/__tests__/helpers/focus";
+import { ApiRefusalError } from "@/lib/api-error-message";
 import {
   ForbiddenSaveError,
   useSectionEditState,
@@ -35,9 +36,13 @@ interface Draft {
 }
 
 const INITIAL: Draft = { minGroupSize: 5, enabled: false };
+const LOAD_FALLBACK = "Could not load";
+const SAVE_FALLBACK = "Could not save";
+
+type SectionOptions = Parameters<typeof useSectionEditState<Draft>>[0];
 
 function renderSection(
-  overrides: Partial<Parameters<typeof useSectionEditState<Draft>>[0]> = {},
+  overrides: Partial<Extract<SectionOptions, { load?: undefined }>> = {},
 ) {
   const save = vi.fn(async (draft: Draft) => draft);
   const view = renderHook(() =>
@@ -45,11 +50,40 @@ function renderSection(
       initial: INITIAL,
       save,
       successMessage: "Saved",
+      saveErrorFallback: SAVE_FALLBACK,
       ...overrides,
     }),
   );
   return { ...view, save };
 }
+
+/** A section seeded with {@link INITIAL} whose load runs `load`. */
+function renderLoadingSection(load: (signal: AbortSignal) => Promise<Draft>) {
+  return renderHook(() =>
+    useSectionEditState<Draft>({
+      initial: INITIAL,
+      load,
+      loadErrorFallback: LOAD_FALLBACK,
+      save: async (draft) => draft,
+      successMessage: "Saved",
+      saveErrorFallback: SAVE_FALLBACK,
+    }),
+  );
+}
+
+/**
+ * What a section's load or save can throw besides its own refusal: the
+ * browser's words for a request that never got an answer (Chrome, Safari),
+ * a parse error from an HTML error page, a bug, and a non-`Error` throw. None
+ * is a sentence for an officer (#4976, ALP-650).
+ */
+const UNWORDED_FAILURES: [string, unknown][] = [
+  ["a rejected fetch", new TypeError("Failed to fetch")],
+  ["a rejected fetch in Safari", new TypeError("Load failed")],
+  ["an unreadable body", new SyntaxError("Unexpected token '<', \"<html>\" is not valid JSON")],
+  ["a plain Error", new Error("Boom")],
+  ["a non-Error throw", "nope"],
+];
 
 afterEach(() => {
   cleanup();
@@ -85,6 +119,7 @@ function StagedSection({
     initial: INITIAL,
     save,
     successMessage: "Saved",
+    saveErrorFallback: SAVE_FALLBACK,
     allowPristineSave: true,
   });
   // The real card primitives: `CardTitle` renders a `div`, not a heading, so
@@ -221,31 +256,41 @@ describe("useSectionEditState", () => {
     expect(result.current.saving).toBe(false);
   });
 
-  it("surfaces a save error message and falls back for a non-Error throw", async () => {
-    const failing = renderSection({
+  it("shows the sentence an ApiRefusalError carries", async () => {
+    const { result } = renderSection({
       save: vi.fn(async () => {
-        throw new Error("Boom");
+        throw new ApiRefusalError("That record no longer exists.");
       }),
     });
-    failing.result.current.startEditing();
-    act(() => failing.result.current.setDraft({ minGroupSize: 9 }));
+    act(() => result.current.startEditing());
+    act(() => result.current.setDraft({ minGroupSize: 9 }));
     await act(async () => {
-      await failing.result.current.save();
+      await result.current.save();
     });
-    expect(failing.result.current.error).toBe("Boom");
 
-    const odd = renderSection({
-      save: vi.fn(async () => {
-        throw "nope";
-      }),
-      saveErrorFallback: "Could not save",
-    });
-    act(() => odd.result.current.setDraft({ minGroupSize: 9 }));
-    await act(async () => {
-      await odd.result.current.save();
-    });
-    expect(odd.result.current.error).toBe("Could not save");
+    expect(result.current.error).toBe("That record no longer exists.");
+    expect(result.current.editing).toBe(true);
   });
+
+  it.each(UNWORDED_FAILURES)(
+    "shows the section's save fallback for %s",
+    async (_case, thrown) => {
+      const { result } = renderSection({
+        save: vi.fn(async () => {
+          throw thrown;
+        }),
+      });
+      act(() => result.current.startEditing());
+      act(() => result.current.setDraft({ minGroupSize: 9 }));
+      await act(async () => {
+        await result.current.save();
+      });
+
+      expect(result.current.error).toBe(SAVE_FALLBACK);
+      expect(result.current.editing).toBe(true);
+      expect(result.current.draft).toEqual({ minGroupSize: 9, enabled: false });
+    },
+  );
 
   it("clears both messages when a save starts", async () => {
     const { result } = renderSection();
@@ -308,6 +353,7 @@ describe("useSectionEditState", () => {
         initial: { rules: [1, 2] },
         save: async (draft) => draft,
         successMessage: "Saved",
+        saveErrorFallback: SAVE_FALLBACK,
         isDirty: (draft, saved) =>
           JSON.stringify(draft.rules) !== JSON.stringify(saved.rules),
       }),
@@ -328,8 +374,10 @@ describe("useSectionEditState", () => {
       const { result } = renderHook(() =>
         useSectionEditState<Draft>({
           load,
+          loadErrorFallback: LOAD_FALLBACK,
           save: async (draft) => draft,
           successMessage: "Saved",
+          saveErrorFallback: SAVE_FALLBACK,
         }),
       );
 
@@ -358,8 +406,10 @@ describe("useSectionEditState", () => {
         useSectionEditState<Draft>({
           // A brand-new arrow identity on every render, as the cards do.
           load: (signal) => load(signal),
+          loadErrorFallback: LOAD_FALLBACK,
           save: async (draft) => draft,
           successMessage: "Saved",
+          saveErrorFallback: SAVE_FALLBACK,
         }),
       );
 
@@ -375,23 +425,31 @@ describe("useSectionEditState", () => {
       expect(load).toHaveBeenCalledTimes(1);
     });
 
-    it("keeps the seeded draft visible when the load fails", async () => {
-      const { result } = renderSection({
-        load: vi.fn(async () => {
-          throw new Error("Failed to fetch");
-        }),
+    it.each(UNWORDED_FAILURES)(
+      "keeps the seeded draft visible and shows the load fallback for %s",
+      async (_case, thrown) => {
+        const { result } = renderLoadingSection(async () => {
+          throw thrown;
+        });
+
+        await waitFor(() => expect(result.current.loading).toBe(false));
+        expect(result.current.error).toBe(LOAD_FALLBACK);
+        expect(result.current.draft).toEqual(INITIAL);
+      },
+    );
+
+    it("shows the sentence an ApiRefusalError from the load carries", async () => {
+      const { result } = renderLoadingSection(async () => {
+        throw new ApiRefusalError("Settings are unavailable.");
       });
 
       await waitFor(() => expect(result.current.loading).toBe(false));
-      expect(result.current.error).toBe("Failed to fetch");
-      expect(result.current.draft).toEqual(INITIAL);
+      expect(result.current.error).toBe("Settings are unavailable.");
     });
 
     it("swallows an AbortError from an in-flight load", async () => {
-      const { result } = renderSection({
-        load: vi.fn(async () => {
-          throw new DOMException("Aborted", "AbortError");
-        }),
+      const { result } = renderLoadingSection(async () => {
+        throw new DOMException("Aborted", "AbortError");
       });
 
       await waitFor(() => expect(result.current.loading).toBe(false));
@@ -406,8 +464,10 @@ describe("useSectionEditState", () => {
       const { result } = renderHook(() =>
         useSectionEditState<Draft>({
           load,
+          loadErrorFallback: LOAD_FALLBACK,
           save: async (draft) => draft,
           successMessage: "Saved",
+          saveErrorFallback: SAVE_FALLBACK,
         }),
       );
 
@@ -458,7 +518,7 @@ describe("useSectionEditState", () => {
       // not, so the save does what the browser would while it is in flight.
       const save = vi.fn(async () => {
         (document.activeElement as HTMLElement | null)?.blur();
-        throw new Error("Rejected");
+        throw new ApiRefusalError("Rejected");
       });
       render(<StagedSection title="Discount" save={save} />);
 
@@ -523,6 +583,7 @@ describe("useSectionEditState", () => {
           initial: INITIAL,
           save: async (draft) => draft,
           successMessage: "Saved",
+          saveErrorFallback: SAVE_FALLBACK,
           regionLabel: "Club identity",
         });
         return <div {...section.sectionRegionProps} />;
@@ -571,6 +632,7 @@ describe("useSectionEditState", () => {
           initial: INITIAL,
           save: async (draft) => draft,
           successMessage: "Saved",
+          saveErrorFallback: SAVE_FALLBACK,
         });
         // Cancel sits in a wrapper so React cannot reuse the Edit's DOM node
         // for it: the Edit after Cancel is a NEW element, as in every section.
@@ -645,6 +707,7 @@ describe("useSectionEditState", () => {
         initial: INITIAL,
         save: async (draft) => draft,
         successMessage: "Saved",
+        saveErrorFallback: SAVE_FALLBACK,
       });
       const off = !section.editing;
       return (
@@ -742,6 +805,7 @@ describe("useSectionEditState", () => {
             initial: INITIAL,
             save: async (draft) => draft,
             successMessage: "Saved",
+            saveErrorFallback: SAVE_FALLBACK,
             revealTarget: cardRef,
           });
           return (

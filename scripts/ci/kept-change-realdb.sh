@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Disposable, loopback-only PostgreSQL proof for #4324 and #3403 in Sekreton.
+# Disposable, loopback-only PostgreSQL proof for #4324, #3403, #4930 and #4069 in Sekreton.
 set -euo pipefail
 
 # The cluster start lives in one sourced helper (INV-SSOT); it sets pg_dir,
@@ -18,13 +18,21 @@ export TMPDIR=/tmp/scratch
 export NODE_OPTIONS=--max-old-space-size=1800
 pnpm run db:migrate
 files=(
+  # #4069: cash-cover evidence and snapshot coherence over the real writers.
+  src/lib/__tests__/booking-cash-evidence.realdb.test.ts
   src/lib/__tests__/kept-change-capture-record.realdb.test.ts
   src/lib/__tests__/superseded-ask-invoice-carry.realdb.test.ts
   src/lib/__tests__/additional-capture-receipt.realdb.test.ts
   src/lib/__tests__/additional-capture-receipt-legs.realdb.test.ts
   src/lib/__tests__/primary-invoice-edit-race.realdb.test.ts
   src/lib/__tests__/unpaid-edit-change-fee-owed.realdb.test.ts
+  src/lib/__tests__/price-preserving-edit-preview-save.realdb.test.ts
   src/lib/__tests__/edit-quoted-figures.realdb.test.ts
+  # #4930: exercise reconciliation, cancellation and group settlement after
+  # moving their shared imports; a skipped suite is rejected below.
+  src/lib/__tests__/capacity-race-refund-shortfall-task.realdb.test.ts
+  src/lib/__tests__/booking-ledger-cancellation.realdb.test.ts
+  src/lib/__tests__/booking-ledger-group-settlement.realdb.test.ts
 )
 # An explicit report plus the existing validator rejects green describe.skip.
 pnpm exec vitest run --maxWorkers=1 --reporter=json --outputFile="$race_dir/report.json" "${files[@]}"

@@ -54,7 +54,7 @@ const mocks = vi.hoisted(() => ({
   bookingUpdateMany: vi.fn(),
   bookingModificationCreate: vi.fn(),
   memberCreditFindUnique: vi.fn(),
-  applyLocalRefundAllocation: vi.fn(),
+  applyLocalRefundAllocation: vi.fn<(...args: unknown[]) => Promise<{ transactionId: string; cents: number }[]>>(async () => []), // #4516 (M4d): the receipts it consumed
   planStripeRefundAllocation: vi.fn(),
   refundPaymentTransactions: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
@@ -97,6 +97,8 @@ vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postRefundObligation: vi.fn(async () => null),
   withdrawRefundObligation: vi.fn(async () => false),
+  // #4516 (M4d): a hand-back's R14 writes the journal, not this fake store.
+  postHandBackPayment: vi.fn(async () => 0),
 }));
 
 vi.mock("@/lib/booking-ledger-modification-sync", () => ({
@@ -231,10 +233,12 @@ vi.mock("@/lib/xero-booking-edit-settlement", () => ({
     mocks.queueXeroBookingEditSettlement(...a),
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
+  kickQueuedXeroOutboxOperationsIfConnected: (...a: unknown[]) => mocks.kickOutbox(...a),
+}));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
   // #3947 (option 2): the invoice route's invoice, queued in the completion's transaction.
   enqueueEditReviewChargeInvoiceInTransaction: (...a: unknown[]) =>
     mocks.enqueueChargeInvoiceInTransaction(...a),
-  kickQueuedXeroOutboxOperationsIfConnected: (...a: unknown[]) => mocks.kickOutbox(...a),
   restatePendingSupplementaryInvoiceAmount: (...a: unknown[]) =>
     mocks.restatePendingSupplementaryInvoiceAmount(...a),
   enqueueXeroSecondSupplementaryInvoiceOperation: (...a: unknown[]) =>
@@ -246,7 +250,7 @@ vi.mock("@/lib/audit", () => ({
 vi.mock("@/lib/booking-events", () => ({
   recordBookingEvent: (...a: unknown[]) => mocks.recordBookingEvent(...a),
 }));
-vi.mock("@/lib/payment-reconciliation", () => ({
+vi.mock("@/lib/manual-booking-payment-error", () => ({
   ManualBookingPaymentError: class ManualBookingPaymentError extends Error {
     status: number;
     constructor(message: string, status = 400) {
@@ -262,6 +266,8 @@ vi.mock("@/lib/logger", () => ({
 vi.mock("@/lib/member-credit", () => ({
   createBookingModificationCredit: (...a: unknown[]) =>
     mocks.createBookingModificationCredit(...a),
+  // #5171 review: the card arm's member key before the Payment row.
+  lockMemberCreditLedger: async () => undefined,
   // #3369: the one home for the account-credit refusal four settlement paths
   // share. Real, not stubbed: the mock must not turn a refusal into a pass.
   requireMemberCreditRecipient: (memberId: string | null) => {
@@ -337,6 +343,8 @@ const tx = {
   paymentRecoveryOperation: { aggregate: async () => ({ _sum: { amountCents: null } }) },
   // #4442: the mint's queue re-reads the live ask it carries, from the same fixture the sizing read.
   payment: { findUnique: (...a: unknown[]) => mocks.paymentFindUnique(...a) },
+  // #4516 review: a cancellation's own hand-back asks its booking's card disputes before Mark paid - none here.
+  stripeDispute: { findMany: async () => [] },
   xeroObjectLink: {
     findFirst: (...a: unknown[]) => mocks.xeroObjectLinkFindFirst(...a),
   },

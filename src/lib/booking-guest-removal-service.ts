@@ -103,7 +103,7 @@ import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import type { BookingJournalContext } from "@/lib/member-money/doors";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
-import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
+import { reserveModificationRefundDebts, type BookingModificationPaymentContext } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
 import {
   pricingSideFromPriceBreakdown,
@@ -127,6 +127,7 @@ export type RemoveBookingGuestResult = {
   priceDiffCents: number;
   refundAmountCents: number;
   accountCreditAmountCents: number;
+  ownCardRefund: BookingModificationPaymentContext["ownCardRefund"];
   pendingRefundAmountCents: number;
   additionalAmountCents: number;
   /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead of this member. */
@@ -150,6 +151,8 @@ export type RemoveBookingGuestResult = {
   organiserChildRefund: { amountCents: number } | null;
   xeroAdditionalAmountCents: number;
   hasSucceededPayment: boolean;
+  /** #5061 follow-up: see `PaymentAdjustmentResult` (`INV-PAY-154`). */
+  refundHeldForDispute: boolean;
   hasIssuedXeroInvoice: boolean;
   paymentStatus: string | null;
   paymentId: string | null;
@@ -1010,6 +1013,7 @@ export async function removeBookingGuestInTransaction({
     bookingModificationId: bookingModification.id,
     adjusted: paymentImpact,
     editLabel: "guest removal", booking, // #3949: booking names the payee (a group organiser who paid by bank transfer)
+    journal, actorMemberId, // #4516 (M4d): the R05 names the edit's actor, as its BookingModification does
   });
   // #3954, #4744: the re-issue, a folded increase's ask, and a billed-offset note are durable from this commit.
   await queueEditAskFollowUps(tx, {
@@ -1043,8 +1047,11 @@ export async function removeBookingGuestInTransaction({
       booking.payment?.id,
     );
   }
-  // #3653: an organiser-settled child's refund debt, before this edit commits.
-  await reserveOrganiserChildModificationRefund(tx, {
+  // #3653, #4992: the card refund this edit owes (an organiser's, or the member's
+  // own with its frozen plan), written before this edit commits.
+  const ownCardRefund = await reserveModificationRefundDebts(tx, {
+    door: "guestRemoval",
+    pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
     plan: paymentImpact.organiserChildRefund,
     bookingId,
     payment: booking.payment,
@@ -1076,6 +1083,7 @@ export async function removeBookingGuestInTransaction({
     priceDiffCents,
     refundAmountCents: paymentImpact.refundAmountCents,
     accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
+    ownCardRefund,
     pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
     additionalAmountCents: paymentImpact.additionalAmountCents,
     billedToOrganiserCents: paymentImpact.billedToOrganiserCents,
@@ -1089,6 +1097,7 @@ export async function removeBookingGuestInTransaction({
     organiserChildRefund: paymentImpact.organiserChildRefund,
     xeroAdditionalAmountCents: paymentImpact.xeroAdditionalAmountCents,
     hasSucceededPayment: paymentImpact.hasSucceededPayment,
+    refundHeldForDispute: paymentImpact.refundHeldForDispute,
     hasIssuedXeroInvoice: paymentImpact.hasIssuedXeroInvoice,
     paymentStatus: booking.payment?.status ?? null,
     paymentId: booking.payment?.id ?? null,

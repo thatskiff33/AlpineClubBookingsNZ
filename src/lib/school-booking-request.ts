@@ -26,9 +26,7 @@ import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
  * run after the transaction commits.
  */
 import { memberWholeLodgeChoosesPaymentMethod } from "@/lib/booking-payment-flow";
-import { randomBytes } from "crypto";
-import { hash } from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
+import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import {
   AgeTier,
   BookingRequestStatus,
@@ -158,6 +156,8 @@ import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 // Keep the existing route import surface while the schema lives in one module.
 export { schoolTeacherSchema } from "@/lib/school-teacher-schema";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { cleanNullableString, cleanString } from "@/lib/member-application-fields";
 
 /**
  * Bound a school party by the lodge's bed count — `INV-CAP`, and ONE
@@ -244,14 +244,6 @@ export interface StoredTeacher {
 // ---------------------------------------------------------------------------
 // Small helpers (kept local to avoid cross-module coupling)
 // ---------------------------------------------------------------------------
-
-function cleanString(value?: string | null) {
-  return value?.replace(/[\r\n]/g, " ").trim() || "";
-}
-
-function cleanNullableString(value?: string | null) {
-  return cleanString(value) || null;
-}
 
 function parseSchoolTeachers(raw: unknown): StoredTeacher[] {
   const parsed = storedSchoolTeacherListSchema.safeParse(raw);
@@ -890,11 +882,11 @@ export async function approveSchoolBookingRequest(input: {
     );
   }
 
-  // Non-login members never authenticate; store a random bcrypt hash so the
+  // Non-login members never authenticate; store the precomputed unusable bcrypt hash so the
   // row satisfies the schema without any usable credential. Generate teacher
   // PINs (and their hashes) before the transaction so the plaintext PIN can be
   // emailed after commit while only the hash is persisted.
-  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
+  const placeholderPasswordHash = UNUSABLE_PLACEHOLDER_PASSWORD_HASH;
   const teacherPlans: TeacherCreationPlan[] = await Promise.all(
     teachers.map(async (teacher) => {
       const pin = assignTeachersAsHutLeaders ? generateHutLeaderPin() : null;
@@ -1797,7 +1789,7 @@ export async function approveSchoolBookingRequest(input: {
         memberGuestNotificationRows,
         displacedMemberGuestIds,
       };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
     if (
       err instanceof Error &&
@@ -2899,7 +2891,7 @@ export async function approveMemberWholeLodgeRequest(input: {
         committedGuestCount: guests.length,
         alreadyConverted: false as const,
       };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
     if (
       err instanceof Error &&

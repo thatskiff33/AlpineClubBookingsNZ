@@ -170,8 +170,8 @@ vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
 }));
 
 
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import {
-  ManualBookingPaymentError,
   markBookingPaymentManuallySettled,
   reverseManualBookingPayment,
 } from "@/lib/payment-reconciliation";
@@ -436,7 +436,7 @@ describe("#2262 guard 1 — the manual settlement runs the ONE settlement body",
           ],
         },
       },
-      data: { status: BookingStatus.PAID, draftExpiresAt: null },
+      data: { status: BookingStatus.PAID, draftExpiresAt: null, savedCardClaimAt: null },
     });
     expect(mocks.reconcileBedAllocationsForBooking).toHaveBeenCalledWith(
       expect.objectContaining({ bookingId: "booking-1", db: tx })
