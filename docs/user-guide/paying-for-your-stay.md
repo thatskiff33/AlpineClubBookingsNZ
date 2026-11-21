@@ -152,8 +152,10 @@ Under the booking's **Payment** card, an **Invoice and credits** card shows:
   lowered the price, a refund, or account credit used on it), each with its
   own **Download credit note** button;
 - a line in plain words when the club's accounts do not show your latest
-  change yet: the invoice could not be changed, or a credit for the change
-  has not been made yet. The summary is then the booking's own figures.
+  change: the invoice could not be changed, a credit for the change has not
+  been made yet, or the invoice stays as it was issued because it can no
+  longer be changed, for example once it has been paid. The summary is then
+  the booking's own figures.
 
 Some things to know:
 

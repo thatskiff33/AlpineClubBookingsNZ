@@ -58,6 +58,7 @@ overrides:
   ajv>fast-uri: ^3.1.9
   typed-rest-client>qs: ^6.16.1
   "minimatch@>=7.0.0 <11.0.1": ^11.0.5
+  "@prisma/config>effect": ^3.22.1
 
 # Dependencies allowed to run install scripts, pinned to the exact version that
 # was reviewed. pnpm runs none by default and fails the install on any build it
@@ -91,11 +92,3 @@ verifyDepsBeforeRun: error
 # (docs/agents/CODEX_WORKFLOW.md, "Require an isolated dependency tree"). This
 # is pnpm 11's default for a project; it is written down so nobody turns it on.
 enableGlobalVirtualStore: false
-
-# Reviewed patches pnpm applies at install, each to one exact package@version
-# (#5252: picomatch's unfixed GHSA-fc5q-39xc-vjpf). Each one is bound by a
-# record in dependency-mitigations.d/, which says why it exists and when it
-# retires; the lockfile records each patch's hash.
-patchedDependencies:
-  picomatch@2.3.2: patches/picomatch@2.3.2.patch
-  picomatch@4.0.7: patches/picomatch@4.0.7.patch

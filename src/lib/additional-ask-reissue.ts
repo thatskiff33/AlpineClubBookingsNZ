@@ -130,17 +130,11 @@ export async function settleReductionAgainstUnpaidAsk(
   {
     booking,
     reduction,
-    changeFeeCents,
-    hasSettledPayment,
     hasIssuedXeroInvoice,
-    changeFeeRecordedByCaller,
   }: {
     booking: { id: string; payment: { id: string } | null };
     reduction: ReductionAgainstUnpaidAsk;
-    changeFeeCents: number;
-    hasSettledPayment: boolean;
     hasIssuedXeroInvoice: boolean;
-    changeFeeRecordedByCaller: boolean;
   },
 ): Promise<UnpaidAskSettlement & { reissuedAsk: AdditionalAsk }> {
   const settled = {
@@ -164,16 +158,9 @@ export async function settleReductionAgainstUnpaidAsk(
     paymentId: booking.payment.id,
     ask: reduction.ask,
   });
-  // The fee this edit charges was collected by shrinking the ask, so it is
-  // recorded beside the ask like any fee an ask collects (`INV-PAY-047`) -
-  // also on a credit-paid booking, which the settled arm never reaches - unless
-  // the caller records it on the amount owed itself (#3750).
-  if (changeFeeCents > 0 && !hasSettledPayment && !changeFeeRecordedByCaller) {
-    await tx.payment.update({
-      where: { id: booking.payment.id },
-      data: { changeFeeCents: { increment: changeFeeCents } },
-    });
-  }
+  // The fee this edit charges was collected by shrinking the ask; it is
+  // recorded once, by the edit's own payment write (#5039,
+  // `applyPaymentAdjustments`), never here as well.
   // Decision A (owner 9 Oct 2026, "Raise a $30 invoice") and the 10 Oct
   // "Auto credit note", split in one place (`splitUnpaidAskOffsetForXero`):
   // the smaller ask's own invoice bills what the retired asks' supplementary

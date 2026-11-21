@@ -33,7 +33,7 @@ import { releaseBookingJournalForTeardown } from "./support/booking-financial-hi
 
 import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
-import { memberMoneyTestContext } from "./support/member-money-fixtures";
+import { memberMoneyTestContext, MEMBER_MONEY_TEST_TAX_ANCHOR } from "./support/member-money-fixtures";
 
 /** The one shared double: the LAST file to register a factory wins, so every realdb file registers this same one. */
 vi.mock("@/lib/stripe", async (importOriginal) =>
@@ -396,7 +396,7 @@ let money: typeof import("@/lib/member-money");
         obligations: [{ key: charge, kind: "CHARGE", debtor: { kind: "MEMBER", memberId: MEMBER_ID }, faceCents: PRICE_CENTS, evidence: {} }],
         legs: [
           { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: PRICE_CENTS, booking: where, debtor: { kind: "MEMBER", memberId: MEMBER_ID }, obligationKey: charge, evidence: {} },
-          { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: PRICE_CENTS, booking: where, chargeIdentity: `booking:${BOOKING_ID}:test`, evidence: {} },
+          { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: PRICE_CENTS, booking: where, chargeIdentity: `booking:${BOOKING_ID}:test`, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
         ] }));
 
       const result = await removeGuest("card");

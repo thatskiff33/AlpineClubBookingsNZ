@@ -23,8 +23,7 @@ import {
   bookingChargePlan,
   createMemberMoneyScratchDatabase,
   memberMoneyTestContext,
-  type MemberMoneyScratchDatabase,
-} from "./support/member-money-fixtures";
+  type MemberMoneyScratchDatabase, MEMBER_MONEY_TEST_TAX_ANCHOR } from "./support/member-money-fixtures";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -169,7 +168,7 @@ const untouchable = new Proxy({}, {
       source: { kind: "BOOKING", id: `modification-mixed-${sequence}`, version: "1" },
       legs: [
         { type: "revenue", account: "BOOKING_REVENUE", side: "DEBIT", grossCents: 11500, chargeIdentity: component, evidence: {} },
-        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 5750, chargeIdentity: component, evidence: {} },
+        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 5750, chargeIdentity: component, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
         { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: 5750, debtor: MEMBER, evidence: {} },
       ],
     });

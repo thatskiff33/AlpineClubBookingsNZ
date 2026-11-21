@@ -501,7 +501,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
   "src/lib/group-booking.ts:276",
   "src/lib/kiosk-access.ts:230",
-  "src/lib/manual-refund-task-queue-payload.ts:404",
+  "src/lib/manual-refund-task-queue-payload.ts:315",
   "src/lib/requested-room-write.ts:63",
   "src/lib/waitlist-cross-lodge.ts:346",
   "src/lib/waitlist-cross-lodge.ts:534",
@@ -523,9 +523,9 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
   "src/lib/member-guest-consent-service.ts:1356",
-  "src/lib/payment-recovery.ts:2813",
-  "src/lib/payment-recovery.ts:2865",
-  "src/lib/xero-admin-health.ts:423",
+  "src/lib/payment-recovery.ts:2797",
+  "src/lib/payment-recovery.ts:2849",
+  "src/lib/xero-admin-health.ts:426",
 ];
 
 /** Measured, not counted by hand. Re-measure by running this test. */

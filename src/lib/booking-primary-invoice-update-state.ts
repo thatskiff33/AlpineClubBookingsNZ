@@ -23,9 +23,11 @@ import { isSkippedPrimaryInvoiceUpdate } from "@/lib/xero-primary-invoice-update
  *   a BookingModification). `UPDATING` while one is queued or running;
  *   otherwise the latest ended row decides: skipped
  *   (`isSkippedPrimaryInvoiceUpdate`: by the edit's policy, or by the worker on
- *   a paid, credited, voided or deleted invoice), or failed and not marked
- *   resolved in Xero, is `NOT_UPDATED`; a success or a resolved row is
- *   `CURRENT`. Rows naming a different invoice id are ignored.
+ *   a paid, credited, voided or deleted invoice) is `INVOICE_AS_ISSUED`, which
+ *   is final for that row: no update is queued for it, so its notice must
+ *   not say "yet" (re-review of 20 Nov 2026); failed and not marked resolved
+ *   in Xero is `NOT_UPDATED`; a success or a resolved row is `CURRENT`. Rows
+ *   naming a different invoice id are ignored.
  * - the credit notes a change raises against it (OUTBOUND CREDIT_NOTE CREATE,
  *   on the Booking, its Payment or a BookingModification, of the queue types
  *   the page's credit-note list reads; review F2). Until one succeeds it has no
@@ -33,9 +35,10 @@ import { isSkippedPrimaryInvoiceUpdate } from "@/lib/xero-primary-invoice-update
  *   failed or partial and not resolved in Xero is `NOT_UPDATED`. A retry
  *   re-runs the same row, so a recovered note leaves no failed row behind.
  *
- * The page shows the worse of the two.
+ * The page shows the worse of the two: a failed row outranks one still on its
+ * way, which outranks an invoice kept as issued.
  */
-export type PrimaryInvoiceUpdateState = "CURRENT" | "UPDATING" | "NOT_UPDATED";
+export type PrimaryInvoiceUpdateState = "CURRENT" | "INVOICE_AS_ISSUED" | "UPDATING" | "NOT_UPDATED";
 
 export type PrimaryInvoiceUpdateRow = {
   status: string;
@@ -49,7 +52,12 @@ export type CreditNoteCreateRow = { status: string; manuallyResolvedAt: Date | n
 
 const ACTIVE: readonly string[] = XERO_ACTIVE_OPERATION_STATUSES;
 const ENDED_UNAPPLIED: readonly string[] = XERO_RERUNNABLE_OPERATION_STATUSES.filter((status) => !ACTIVE.includes(status));
-const STATE_RANK: Readonly<Record<PrimaryInvoiceUpdateState, number>> = { CURRENT: 0, UPDATING: 1, NOT_UPDATED: 2 };
+const STATE_RANK: Readonly<Record<PrimaryInvoiceUpdateState, number>> = {
+  CURRENT: 0,
+  INVOICE_AS_ISSUED: 1,
+  UPDATING: 2,
+  NOT_UPDATED: 3,
+};
 
 /** The queue types of the credit notes `readBookingCreditNotes` can list. */
 const BOOKING_CREDIT_NOTE_QUEUE_TYPES = [
@@ -73,7 +81,7 @@ export function classifyPrimaryInvoiceUpdates(
     .filter((row) => isSkippedPrimaryInvoiceUpdate(row) || !ACTIVE.includes(row.status))
     .reduce<PrimaryInvoiceUpdateRow | null>((last, row) => (!last || row.createdAt > last.createdAt ? row : last), null);
   if (!latest || isResolvedInXero(latest)) return "CURRENT";
-  if (isSkippedPrimaryInvoiceUpdate(latest)) return "NOT_UPDATED";
+  if (isSkippedPrimaryInvoiceUpdate(latest)) return "INVOICE_AS_ISSUED";
   return latest.status === "SUCCEEDED" ? "CURRENT" : "NOT_UPDATED";
 }
 
@@ -120,6 +128,8 @@ export function primaryInvoiceUpdateNotice(state: PrimaryInvoiceUpdateState): st
   switch (state) {
     case "CURRENT":
       return null;
+    case "INVOICE_AS_ISSUED":
+      return "A later change to this booking is not shown on the invoice, which stays as it was issued. The summary here is from the booking itself.";
     case "UPDATING":
       return "A recent change to this booking is still on its way to the club's accounts, so the invoice and its credit notes may not show it yet.";
     case "NOT_UPDATED":

@@ -95,3 +95,5 @@ Email suppression (bounces and complaints) applies to both.
   [Email Deliverability](email-deliverability.md).
 - Reference: the template catalogue in
   [`../../src/lib/email-message-registry.ts`](../../src/lib/email-message-registry.ts).
+  Which templates are admin alerts, and which of those cannot be muted, is in
+  [`../../src/lib/email-message-template-classes.ts`](../../src/lib/email-message-template-classes.ts).

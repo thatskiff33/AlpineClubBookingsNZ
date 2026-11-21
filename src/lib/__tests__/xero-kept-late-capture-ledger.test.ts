@@ -168,6 +168,7 @@ const h = vi.hoisted(() => {
   return { state, id, db, table, writeLinks };
 });
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => ({ prisma: h.db }));
 vi.mock("@/lib/logger", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },

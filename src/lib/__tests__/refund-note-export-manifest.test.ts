@@ -90,6 +90,7 @@ vi.mock("@/lib/prisma", () => {
   return { prisma };
 });
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
@@ -161,6 +162,8 @@ import { createXeroCreditNote } from "@/lib/xero-credit-notes";
 import { recordSentRefundNotePaymentManifest } from "@/lib/xero-refund-note-settlement";
 import { recordRefundNoteManifest, recordRefundNotePaymentManifest } from "@/lib/member-money/doors";
 import { hutFeeRefundLine } from "@/lib/xero-hut-fee-line-codes";
+import { BASELINE_XERO_TAX_RENDERING, type XeroTaxRendering } from "@/lib/xero-tax-rendering";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { memberMoneyChainKey, memberMoneyEventKeys } from "@/lib/member-money/internal/keys";
 
 const BOOKING_ID = "cmbooking0001xyz";
@@ -326,7 +329,7 @@ function journalHolding(events: Record<string, unknown>) {
 }
 
 const DEBT = "refund-obligation|cancellation|cancel_1";
-const line = hutFeeRefundLine("Refund - Booking cmbookin", 5000, { code: "200", itemCode: null, codeExplicitlyConfigured: false });
+const line = hutFeeRefundLine("Refund - Booking cmbookin", 5000, { code: "200", itemCode: null, codeExplicitlyConfigured: false }, BASELINE_XERO_TAX_RENDERING);
 
 describe("the refund note's manifest from the sender (createXeroCreditNote)", () => {
   beforeEach(() => {
@@ -348,6 +351,25 @@ describe("the refund note's manifest from the sender (createXeroCreditNote)", ()
     })]);
     // The payment's cash names no event either: a conflict too, never coverage.
     expect(written("REFUND_NOTE_PAYMENT")).toEqual([expect.objectContaining({ outcome: "CONFLICT", providerInvoiceId: "pay_1", coverage: [] })]);
+  });
+
+  it.each([
+    ["the baseline (registered, OUTPUT2)", BASELINE_XERO_TAX_RENDERING],
+    ["a registered period with another code", { lineAmountTypes: "Inclusive", taxType: "OUTPUT3" }],
+    ["an unregistered period", { lineAmountTypes: "NoTax" }],
+  ] as Array<[string, XeroTaxRendering]>)("#4632: the note's manifest freezes the booking's treatment it was sent with, under %s", async (_label, rendering) => {
+    mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
+    vi.mocked(resolveXeroTaxRendering).mockResolvedValueOnce(rendering);
+
+    await expect(createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card" })).resolves.toBe("cn_1");
+
+    // The booking's anchor (when it was made), never today's treatment.
+    expect(resolveXeroTaxRendering).toHaveBeenCalledWith({ kind: "booking", bookingId: BOOKING_ID });
+    expect(written("REFUND_NOTE")).toEqual([expect.objectContaining({
+      frozenMapping: expect.objectContaining({
+        source: "BUILT", lineAmountTypes: rendering.lineAmountTypes, lineCodes: [expect.objectContaining({ taxType: rendering.taxType ?? null })],
+      }),
+    })]);
   });
 
   it("a manifest write that fails is swallowed: the note is still returned and the row completed", async () => {
@@ -391,7 +413,7 @@ describe("recordRefundNoteManifest", () => {
 
   const built = (door: Record<string, string | null>) => ({
     paymentId: PAYMENT_ID, bookingId: BOOKING_ID, creditNoteId: "cn_1",
-    source: { kind: "BUILT" as const, lines: [line], legacyKey: "note-key", door },
+    source: { kind: "BUILT" as const, lines: [line], legacyKey: "note-key", door, taxRendering: BASELINE_XERO_TAX_RENDERING },
   });
 
   it("a card refund's note covers only its refund debt, whole, never revenue or cash", async () => {

@@ -99,6 +99,9 @@ let observerClient: PrismaClient;
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.bookingModification.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
+      // #5212: a card payment with a Stripe record has its payment-ledger row
+      // backfilled when the edit first reads it (`ensurePaymentTransactionsBackfilled`).
+      await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
       await prisma.payment.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.bookingGuestNight.deleteMany({ where: { bookingGuest: { bookingId: BOOKING_ID } } });
       await prisma.bookingGuest.deleteMany({ where: { bookingId: BOOKING_ID } });
@@ -149,6 +152,9 @@ let observerClient: PrismaClient;
         data: {
           id: PAYMENT_ID, bookingId: BOOKING_ID, amountCents: 20_000 - appliedCents, status: "SUCCEEDED", creditAppliedCents: appliedCents,
           source: shape === "ib-allocated" ? "INTERNET_BANKING" : "STRIPE", xeroInvoiceId: XERO_INVOICE_ID,
+          // #5212 (`INV-PAY-160`): the $100 the card took has its Stripe record, so its
+          // refund is the card's. `card-invoiced` captured nothing, so it has none.
+          ...(mixed ? { stripePaymentIntentId: "pi_race_3809" } : {}),
         },
       });
       await prisma.memberCredit.create({

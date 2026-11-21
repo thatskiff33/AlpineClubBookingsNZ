@@ -2,20 +2,26 @@ import { Prisma, type MemberMoneyAccount, type MemberMoneyExportDocumentRole } f
 import type { LineItem } from "xero-node";
 import { prisma } from "../../prisma";
 import logger from "../../logger";
-import { asRecord, readString } from "../../xero-json";
+import { asRecord, readString, storedInvoiceRequestLines } from "../../xero-json";
 import type { CashRefundMethod } from "../../xero-refund-method";
+import { CARD_REFUND_STILL_OWED_ORIGIN_SELECT, cardRefundStillOwedOrigin } from "../../card-refund-still-owed-origin";
+import { paymentRecoveryOperationIdOfPaidAnotherWay } from "../../manual-refund-task-settlement-rules";
+import { cardRefundRowFailedRefundIds } from "../../open-card-refund-owed";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
 import { eventPosted } from "./booking-journal-read";
 import { memberMoneyChainTip, refundObligationChain } from "./refund-family";
 import { appliedObligationsOfEvents, cardRefundAppliedObligations } from "./refund-obligation-map";
-import { planRefundNote, type RefundExportComponent, type RefundExportPlan, type RefundExportProblem } from "./refund-note-plan";
+import { planFailedLaterRefundReversal, planRefundNote, type RefundExportComponent, type RefundExportPlan, type RefundExportProblem } from "./refund-note-plan";
 import { planRefundNotePayment } from "./refund-payment-plan";
+import type { XeroTaxRendering } from "../../xero-tax-rendering";
 import { writeExportManifest } from "./store";
 
 /**
- * A REFUND NOTE'S AND ITS PAYMENT'S EXPORT MANIFESTS, FOR THE SENDERS (#4525,
- * Ledger M13). `createXeroCreditNote` records the note once it is recorded, and
- * the settlement leg records the payment once it is paid; each in a short
+ * A REFUND NOTE'S, ITS PAYMENT'S AND A FAILED-LATER REFUND REVERSAL'S EXPORT
+ * MANIFESTS, FOR THE SENDERS (#4525, Ledger M13). `createXeroCreditNote` records
+ * the note once it is recorded, the settlement leg records the payment once it
+ * is paid, and `createXeroCardRefundReversalInvoice` records the reversal
+ * invoice once its operation completes; each in a short
  * transaction of its own, on the one manifest ALP-218 added (no second manifest,
  * no delivery record). Nothing here changes what is sent or how the sync
  * operation ends: a failure is logged and swallowed.
@@ -234,8 +240,8 @@ function logOutcome(role: MemberMoneyExportDocumentRole, context: Record<string,
 }
 
 export type RefundNoteManifestSource =
-  /** The note this run built and Xero just returned: its lines, its key and its door. */
-  | { kind: "BUILT"; lines: LineItem[]; legacyKey: string; door: RefundNoteDoor }
+  /** The note this run built and Xero just returned: its lines, its key, its door and the booking's tax rendering it was sent with (#4632). */
+  | { kind: "BUILT"; lines: LineItem[]; legacyKey: string; door: RefundNoteDoor; taxRendering: XeroTaxRendering }
   /** A note an earlier operation raised: its stored request is read, never rebuilt. Null finds the row by the note. */
   | { kind: "REPLAY"; operationId: string | null };
 
@@ -251,7 +257,9 @@ async function readStoredRefundNote(paymentId: string, creditNoteId: string, ope
     const note = asRecord(asRecord(row.requestPayload)?.creditNotes && (asRecord(row.requestPayload)!.creditNotes as unknown[])[0]);
     const lines = Array.isArray(note?.lineItems) ? (note!.lineItems as LineItem[]) : null;
     const legacyKey = row.idempotencyKey ?? row.correlationKey;
-    if (lines && lines.length > 0 && legacyKey) return { lines, legacyKey, door: refundNoteDoorOfPayload(row.requestPayload) };
+    // #4632: the basis the stored note was raised under, frozen beside its lines.
+    const lineAmountTypes = typeof note?.lineAmountTypes === "string" ? note.lineAmountTypes : null;
+    if (lines && lines.length > 0 && legacyKey) return { lines, legacyKey, lineAmountTypes, door: refundNoteDoorOfPayload(row.requestPayload) };
   }
   return null;
 }
@@ -266,7 +274,7 @@ export async function recordRefundNoteManifest(input: {
   const context = { paymentId: input.paymentId, bookingId: input.bookingId, creditNoteId: input.creditNoteId };
   await recordSafely("REFUND_NOTE", context, async () => {
     const stored = input.source.kind === "BUILT"
-      ? { lines: input.source.lines, legacyKey: input.source.legacyKey, door: input.source.door }
+      ? { lines: input.source.lines, legacyKey: input.source.legacyKey, lineAmountTypes: input.source.taxRendering.lineAmountTypes, door: input.source.door }
       : await readStoredRefundNote(input.paymentId, input.creditNoteId, input.source.operationId);
     if (!stored) return;
     const source = input.source.kind === "BUILT" ? "BUILT" : "STORED_REQUEST";
@@ -274,7 +282,7 @@ export async function recordRefundNoteManifest(input: {
       role: "REFUND_NOTE",
       bookingId: input.bookingId,
       providerObjectId: input.creditNoteId,
-      plan: planRefundNote({ lines: stored.lines, legacyKey: stored.legacyKey, source, obligation: await resolveRefundNoteObligation(tx, stored.door) }),
+      plan: planRefundNote({ lines: stored.lines, legacyKey: stored.legacyKey, source, lineAmountTypes: stored.lineAmountTypes, obligation: await resolveRefundNoteObligation(tx, stored.door) }),
     }));
     logOutcome("REFUND_NOTE", context, written);
   });
@@ -325,5 +333,90 @@ export async function recordRefundNotePaymentManifest(input: {
       }),
     }));
     logOutcome("REFUND_NOTE_PAYMENT", context, written);
+  });
+}
+
+/**
+ * The R13 a paid-another-way close's reversal invoice answers: the close's
+ * record names the card refund row it closed, that row (or, for a still-owed
+ * rest, the row it was first owed on) names the refund Stripe failed later, and
+ * that refund's R12 names the reversal batch (`reversal:<journalId>`) whose
+ * Stripe-clearing debit put the cash back. A row naming no failed refund, or
+ * several, answers no one R13.
+ */
+async function resolveFailedLaterRefundReversal(db: Db, closeTaskId: string): Promise<RefundExportComponent | RefundExportProblem> {
+  const close = await db.manualRefundTask.findUnique({ where: { id: closeTaskId }, select: { kind: true, occurrenceKey: true } });
+  const operationId = close ? paymentRecoveryOperationIdOfPaidAnotherWay(close) : null;
+  if (!operationId) return { problem: `close ${closeTaskId} is not a card refund's paid-another-way close` };
+  const closed = await db.paymentRecoveryOperation.findUnique({ where: { id: operationId }, select: CARD_REFUND_STILL_OWED_ORIGIN_SELECT });
+  if (!closed) return { problem: `the card refund row ${operationId} close ${closeTaskId} names is gone` };
+  const row = (await cardRefundStillOwedOrigin(db, closed.idempotencyKey)) ?? closed;
+  const failed = cardRefundRowFailedRefundIds(row);
+  if (failed.length !== 1) return { problem: `card refund row ${row.id} is owed for ${failed.length} failed refunds, not one` };
+  const r12Key = memberMoneyEventKeys.refund(failed[0]!);
+  const r12 = await db.memberMoneyEvent.findUnique({ where: { eventKey: r12Key }, select: { journal: { select: { id: true } } } });
+  if (!r12?.journal) return { problem: `no card refund cash is posted for ${r12Key}` };
+  const eventKey = memberMoneyEventKeys.reversal(r12.journal.id);
+  const reversal = await db.memberMoneyEvent.findUnique({
+    where: { eventKey },
+    select: { journal: { select: { reversedBy: { select: { id: true } }, lines: { select: { account: true, side: true, amountCents: true } } } } },
+  });
+  if (!reversal?.journal) return { problem: `${r12Key} is not reversed: no ${eventKey} is posted` };
+  // As for a note's cash (`resolveRefundNoteCash`): an undone R13 is no live slice.
+  if (reversal.journal.reversedBy) return { problem: `${eventKey} was itself reversed` };
+  const debits = reversal.journal.lines.filter((line) => line.account === "STRIPE_CLEARING" && line.side === "DEBIT");
+  if (debits.length === 0) return { problem: `${eventKey} moves nothing back onto STRIPE_CLEARING` };
+  return { account: "STRIPE_CLEARING", chargeIdentity: eventKey, cents: debits.reduce((sum, line) => sum + line.amountCents, 0) };
+}
+
+export type FailedLaterRefundReversalManifestSource =
+  /** The line this run built and Xero just accepted, and the booking's tax rendering it was sent with (#4632). */
+  | { kind: "BUILT"; lines: LineItem[]; taxRendering: XeroTaxRendering }
+  /** An invoice an earlier attempt raised: the operation's stored request is read, never rebuilt. */
+  | { kind: "REPLAY"; operationId: string };
+
+/**
+ * A replay's stored invoice lines and the basis that stored invoice was raised
+ * under (`storedInvoiceRequestLines`, #4632), or null when the row stores no lines.
+ */
+async function readStoredReversal(operationId: string): Promise<{ lines: LineItem[]; lineAmountTypes: string | null } | null> {
+  const row = await prisma.xeroSyncOperation.findUnique({ where: { id: operationId }, select: { requestPayload: true } });
+  const { storedLines, storedLineAmountTypes } = storedInvoiceRequestLines(row?.requestPayload);
+  return storedLines ? { lines: storedLines, lineAmountTypes: storedLineAmountTypes } : null;
+}
+
+/**
+ * Record the FAILED_LATER_REFUND_REVERSAL manifest for a reversal invoice Xero
+ * holds, under the key it was sent with. Never throws.
+ */
+export async function recordFailedLaterRefundReversalManifest(input: {
+  paymentId: string;
+  bookingId: string;
+  closeTaskId: string;
+  invoiceId: string;
+  /** `cardRefundReversalInvoiceKey(paymentId, closeTaskId)`. */
+  legacyKey: string;
+  source: FailedLaterRefundReversalManifestSource;
+}): Promise<void> {
+  const context = { paymentId: input.paymentId, bookingId: input.bookingId, closeTaskId: input.closeTaskId, invoiceId: input.invoiceId };
+  await recordSafely("FAILED_LATER_REFUND_REVERSAL", context, async () => {
+    const stored = input.source.kind === "BUILT"
+      ? { lines: input.source.lines, lineAmountTypes: input.source.taxRendering.lineAmountTypes }
+      : await readStoredReversal(input.source.operationId);
+    if (!stored) return;
+    const source = input.source.kind === "BUILT" ? "BUILT" : "STORED_REQUEST";
+    const written = await prisma.$transaction(async (tx) => writeRefundExportManifest(tx, {
+      role: "FAILED_LATER_REFUND_REVERSAL",
+      bookingId: input.bookingId,
+      providerObjectId: input.invoiceId,
+      plan: planFailedLaterRefundReversal({
+        lines: stored.lines,
+        legacyKey: input.legacyKey,
+        source,
+        lineAmountTypes: stored.lineAmountTypes,
+        reversal: await resolveFailedLaterRefundReversal(tx, input.closeTaskId),
+      }),
+    }));
+    logOutcome("FAILED_LATER_REFUND_REVERSAL", context, written);
   });
 }

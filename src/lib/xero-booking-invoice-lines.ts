@@ -24,6 +24,7 @@ import {
 } from "@/lib/xero-hut-fee-line-codes";
 import { formatDateOnly } from "@/lib/date-only";
 import { buildGuestInvoiceLines, type GuestInvoiceLineGuest } from "@/lib/booking-guest-invoice-lines";
+import { BASELINE_XERO_TAX_RENDERING, xeroLineTax, type XeroTaxRendering } from "@/lib/xero-tax-rendering";
 
 /**
  * Build Xero invoice line items from a booking's guests and stay nights.
@@ -36,6 +37,9 @@ import { buildGuestInvoiceLines, type GuestInvoiceLineGuest } from "@/lib/bookin
  * @param itemCode - Single hutFeesIncome item code applied to all guests, used
  *   only when the resolver is absent/unconfigured or no seasonType is known —
  *   never as a fallback for a per-guest miss once keyed rows exist.
+ * @param taxRendering - The treatment the lines carry (#4632), resolved from
+ *   the booking's tax anchor by every caller that sends the document; the
+ *   baseline only for a caller that totals lines without sending them.
  */
 export function buildInvoiceLineItems(
   guests: Array<
@@ -56,6 +60,7 @@ export function buildInvoiceLineItems(
   accountCodeExplicitlyConfigured: boolean = false,
   itemCodeResolver?: HutFeeItemCodeResolver,
   seasonType?: string | null,
+  taxRendering: XeroTaxRendering = BASELINE_XERO_TAX_RENDERING,
 ): LineItem[] {
   // One line item per run. The degenerate zero-night run carries
   // `nightCount: nights` over the booking's own range with the flat price as
@@ -79,7 +84,7 @@ export function buildInvoiceLineItems(
         description,
         quantity: run.nightCount,
         unitAmount: run.perNightCents / 100, // Xero uses dollars, not cents
-        taxType: "OUTPUT2", // GST on Income (NZ)
+        ...xeroLineTax(taxRendering), // the booking's tax treatment (#4632)
       },
       {
         itemCode: resolveHutFeeLineItemCode(guest, { itemCodeResolver, seasonType, itemCode }),

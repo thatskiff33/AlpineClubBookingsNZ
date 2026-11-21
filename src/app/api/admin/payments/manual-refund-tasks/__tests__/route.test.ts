@@ -38,8 +38,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
   manualRefundTaskFindMany: vi.fn(),
-  // #3191: the strands whose blank night prices the queue offers to fill in.
-  bookingGuestFindMany: vi.fn(),
   loggerError: vi.fn(),
   hasAdminAreaAccess: vi.fn(),
 }));
@@ -51,7 +49,6 @@ vi.mock("@/lib/admin-permissions", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     manualRefundTask: { findMany: mocks.manualRefundTaskFindMany },
-    bookingGuest: { findMany: mocks.bookingGuestFindMany },
   },
 }));
 vi.mock("@/lib/logger", () => ({
@@ -81,57 +78,6 @@ const OPEN_ROW = {
   reviewContext: null,
   reason: "Cancelled after a cash payment",
   createdAt: new Date("2026-06-20T00:00:00.000Z"),
-  booking: {
-    checkIn: CHECK_IN,
-    checkOut: CHECK_OUT,
-    memberId: "member-ada",
-    deletedAt: null,
-    member: { firstName: "Ada", lastName: "Lovelace" },
-  },
-};
-
-/**
- * #3033: an unpriced financial review carrying owner decision D3's evidence.
- *
- * The two identifiers at the end are the point of the redaction suite below:
- * they are stored on the row and must not reach the browser.
- */
-const REVIEW_CONTEXT = {
-  version: 1,
-  occurrence: {
-    bookingId: "booking-edit",
-    bookingGuestId: "guest-strand-1",
-    cause: "PARTIAL_STORED_NIGHT_PRICES",
-    surrenderedNightDates: ["2026-08-11"],
-    addedNightDates: [],
-    storedEvidence: {
-      guestTotalCents: 12000,
-      nightPrices: [
-        { date: "2026-08-10", priceCents: 6000 },
-        { date: "2026-08-11", priceCents: null },
-      ],
-    },
-  },
-  guestMemberId: "member-guest-9",
-  bookingCheckIn: "2026-08-10",
-  bookingCheckOut: "2026-08-12",
-  // Required by the context schema, and NULL is a legitimate value rather than a
-  // placeholder: it is the shape of a raise that had no `BookingModification`
-  // row to anchor against. Omitting the key entirely fails the `.strict()` parse,
-  // which turns every assertion below into "the evidence is unreadable" - a
-  // green-looking fixture measuring the wrong thing.
-  bookingModificationId: null,
-};
-
-const REVIEW_ROW = {
-  id: "task-review",
-  bookingId: "booking-edit",
-  amountCents: null,
-  raisedAmountCents: null,
-  kind: "EDIT_FINANCIAL_REVIEW",
-  reviewContext: REVIEW_CONTEXT,
-  reason: "A change to this booking could not be priced from stored history.",
-  createdAt: new Date("2026-06-21T00:00:00.000Z"),
   booking: {
     checkIn: CHECK_IN,
     checkOut: CHECK_OUT,
@@ -198,10 +144,16 @@ beforeEach(() => {
     that breaks for reasons nothing to do with what it asserts.
   */
   mocks.manualRefundTaskFindMany.mockResolvedValue([]);
-  // #3191: no strand has a blank night unless a case says otherwise, which is
-  // the ordinary shape — most rows in this queue offer nothing to fill in.
-  mocks.bookingGuestFindMany.mockResolvedValue([]);
 });
+
+/**
+ * #4344 (wave C1 of #4302): every list but a retired officer edit review. The
+ * `kind: null` arm keeps a legacy row written before the column existed - a
+ * bare `kind: { not: ... }` is `kind <> ...` in SQL, never true of a NULL.
+ */
+const NOT_A_RETIRED_REVIEW = {
+  OR: [{ kind: null }, { kind: { not: "EDIT_FINANCIAL_REVIEW" } }],
+};
 
 describe("GET manual-refund-tasks (#2262, #2750)", () => {
   it("a finance viewer may read both lists — neither is a write", async () => {
@@ -240,7 +192,8 @@ describe("GET manual-refund-tasks (#2262, #2750)", () => {
       tasks: { id: string; awaitingLateCaptureApproval: boolean }[];
     };
 
-    expect(calls()[0].select).toMatchObject({ lateCaptureApprovalIntentId: true });
+    expect(calls()[0].select).toMatchObject({
+      paymentId: true, lateCaptureApprovalIntentId: true });
     expect(body.tasks.map((t) => [t.id, t.awaitingLateCaptureApproval])).toEqual([
       ["task-held", true],
       ["task-2700", false],
@@ -317,13 +270,25 @@ describe("GET manual-refund-tasks (#2262, #2750)", () => {
     ]);
   });
 
-  it("keeps the hand-back queue exactly as it was: OPEN, oldest first", async () => {
+  it("keeps the hand-back queue as it was: OPEN, oldest first", async () => {
     await GET();
 
     expect(calls()[0]).toMatchObject({
-      where: { status: "OPEN" },
       orderBy: { createdAt: "asc" },
+      take: 100,
     });
+    expect((calls()[0].where as { status: string }).status).toBe("OPEN");
+  });
+
+  it("leaves a retired officer review out IN THE QUERY, keeping rows with no kind (#4344)", async () => {
+    /*
+      In the `where`, before the `take`: filtering the answer instead would let
+      leftover reviews push a hand-back the club still owes past the limit. And
+      with the NULL arm, because a legacy hand-back has no kind at all.
+    */
+    await GET();
+
+    expect(calls()[0].where).toEqual({ status: "OPEN", ...NOT_A_RETIRED_REVIEW });
   });
 
   it("asks the database for exactly the rows the shared filter defines", async () => {
@@ -486,10 +451,10 @@ describe("GET manual-refund-tasks (#2262, #2750)", () => {
 describe("the rows an officer could put back (#3498, owner decision D2)", () => {
   const DISMISSED_ROW = {
     id: "task-dismissed",
-    bookingId: "booking-edit",
+    bookingId: "booking-cash",
     amountCents: null,
-    kind: "EDIT_FINANCIAL_REVIEW",
-    reason: "A change to this booking could not be priced from stored history.",
+    kind: "CANCELLED_BOOKING_HAND_BACK",
+    reason: "Cancelled after a cash payment.",
     note: "Nothing owed either way.",
     completedAt: new Date("2026-06-25T02:00:00.000Z"),
     booking: {
@@ -524,6 +489,9 @@ describe("the rows an officer could put back (#3498, owner decision D2)", () => 
     expect(dismissedQuery.where).toMatchObject({
       status: "DISMISSED",
       completedByMemberId: { not: null },
+      // #4343/#4344: a retired review is never offered back, and a legacy row
+      // with no kind still is.
+      ...NOT_A_RETIRED_REVIEW,
     });
     expect(dismissedQuery.orderBy).toEqual({ completedAt: "desc" });
   });
@@ -534,17 +502,15 @@ describe("the rows an officer could put back (#3498, owner decision D2)", () => 
       dismissedUnavailable: boolean;
     };
     expect(body.dismissedUnavailable).toBe(false);
-    // The WHOLE object: no review evidence, no unpriced nights, and no
-    // identifier the card has no use for. This list offers one action, so it
+    // The WHOLE object: no identifier the card has no use for. This list offers one action, so it
     // carries what is needed to decide on that action and stops.
     expect(body.dismissed).toEqual([
       {
         id: "task-dismissed",
-        bookingId: "booking-edit",
+        bookingId: "booking-cash",
         amountCents: null,
-        kind: "EDIT_FINANCIAL_REVIEW",
-        reason:
-          "A change to this booking could not be priced from stored history.",
+        kind: "CANCELLED_BOOKING_HAND_BACK",
+        reason: "Cancelled after a cash payment.",
         note: "Nothing owed either way.",
         dismissedAt: "2026-06-25T02:00:00.000Z",
         bookingDeleted: false,
@@ -631,31 +597,19 @@ describe("a failed notices read must not take the work queue with it (#2750 revi
 });
 
 /**
- * #3033 — the permission and redaction half of the acceptance criteria.
+ * #3033 — what the card needs, and who may follow its booking link.
  *
- * MUTATION PROOF. Add `guestMemberId` or `bookingGuestId` to
- * `EditFinancialReviewEvidence` and pass them through
- * `toEditFinancialReviewEvidence`, and "sends no membership-roll identifier"
- * fails. Send `task.reviewContext` raw instead of the projection and it fails
- * too. Hardcode `viewerCanViewBookings: true` and "withholds the booking link
- * from a caller who may not open one" fails. Drop `kind`, `raisedAmountCents`
- * or `reviewContext` from the select and "asks the database for what the card
- * needs" fails. Treat an unreadable context as "no evidence" and "distinguishes
- * evidence it cannot read from evidence that was never taken" fails.
+ * MUTATION PROOF. Hardcode `viewerCanViewBookings: true` and "withholds the
+ * booking link from a caller who may not open one" fails. Drop `kind`,
+ * `raisedAmountCents` or `reviewContext` from the select and "asks the database
+ * for what the card needs" fails. Send `reviewContext` raw and "never sends the
+ * stored context raw" fails.
  */
-describe("financial-review evidence: what may cross the wire (#3033)", () => {
-  beforeEach(() => {
-    mocks.manualRefundTaskFindMany
-      .mockReset()
-      .mockResolvedValue([])
-      .mockResolvedValueOnce([REVIEW_ROW])
-      .mockResolvedValueOnce([]);
-  });
-
-  it("asks the database for what the card needs to describe a review row", async () => {
-    // Without `kind` the card cannot tell a review from a hand-back and prints
-    // the cash sentence over both. Without `reviewContext` owner decision D3's
-    // evidence never leaves the database.
+describe("what the card is sent (#3033)", () => {
+  it("asks the database for what the card needs to describe a row", async () => {
+    // Without `kind` the card cannot tell one kind of row from another and
+    // prints the cash sentence over all of them. `reviewContext` holds a group
+    // hand-back's or a re-confirmed bank refund's own facts.
     await GET();
 
     expect(calls()[0].select).toMatchObject({
@@ -665,109 +619,20 @@ describe("financial-review evidence: what may cross the wire (#3033)", () => {
     });
   });
 
-  it("sends no membership-roll identifier, whatever the caller may see", async () => {
-    /*
-      `guestMemberId` and `bookingGuestId` are stored ON the row and are the two
-      fields with no rendering use: the card already names the booking's own
-      member, and a raw cuid tells an operator nothing. They are dropped by
-      being absent from the shape the projection builds, not by being deleted
-      here — so this asserts the property that matters, which is that no payload
-      can carry them.
-    */
-    mocks.hasAdminAreaAccess.mockReturnValue(true);
-
-    const body = (await (await GET()).json()) as { tasks: unknown[] };
-    const serialised = JSON.stringify(body);
-
-    expect(serialised).not.toContain("guestMemberId");
-    expect(serialised).not.toContain("member-guest-9");
-    expect(serialised).not.toContain("bookingGuestId");
-    expect(serialised).not.toContain("guest-strand-1");
-  });
-
-  it("sends the evidence an admin prices from, and nothing behind it", async () => {
-    const body = (await (await GET()).json()) as {
-      tasks: {
-        kind: string;
-        amountCents: number | null;
-        raisedAmountCents: number | null;
-        reviewEvidence: Record<string, unknown> | null;
-        reviewEvidenceUnreadable: boolean;
-      }[];
-    };
-
-    expect(body.tasks[0].kind).toBe("EDIT_FINANCIAL_REVIEW");
-    // No magic zero anywhere: an unpriced review crosses the wire as null.
-    expect(body.tasks[0].amountCents).toBeNull();
-    expect(body.tasks[0].raisedAmountCents).toBeNull();
-    expect(body.tasks[0].reviewEvidenceUnreadable).toBe(false);
-    expect(body.tasks[0].reviewEvidence).toEqual({
-      cause: "PARTIAL_STORED_NIGHT_PRICES",
-      surrenderedNightDates: ["2026-08-11"],
-      addedNightDates: [],
-      storedEvidence: {
-        guestTotalCents: 12000,
-        nightPrices: [
-          { date: "2026-08-10", priceCents: 6000 },
-          // Null, not 0. An absent stored price and a comped night are
-          // different evidence and the card prints them differently.
-          { date: "2026-08-11", priceCents: null },
-        ],
-      },
-      bookingCheckIn: "2026-08-10",
-      bookingCheckOut: "2026-08-12",
-      // #3166: what the same edit added to the party, as a count and a figure.
-      // Null on this fixture, whose edit added nobody.
-      guestsAddedByEdit: null,
-      // #3498: the other strands the same parked edit recorded, as supporting
-      // detail on this one item. EMPTY on this fixture, which is a row written
-      // before the grain moved - and the empty list, rather than an absent
-      // field, is what stops the card branching on whether the row is old.
-      //
-      // MUTATION PROOF, like the redaction above: add `bookingGuestId` to a
-      // strand in `toEditFinancialReviewEvidence` and this deep-equal fails,
-      // because the projection is the only thing keeping a guest-strand
-      // identifier off a `finance:view` payload - and a list of strands is the
-      // same leak in a loop.
-      otherStrands: [],
-    });
-  });
-
-  it("distinguishes evidence it cannot read from evidence that was never taken", async () => {
-    /*
-      A row written by a shape this release does not know parses to null. The
-      task, its amount and its booking must still reach the screen — but the
-      card has to be able to SAY that the one record of what the edit destroyed
-      is unreadable, rather than render an absence an admin would read as "no
-      evidence was captured".
-    */
+  it("never sends the stored context raw, nor any review evidence (#4344)", async () => {
     mocks.manualRefundTaskFindMany
       .mockReset()
       .mockResolvedValue([])
       .mockResolvedValueOnce([
-        { ...REVIEW_ROW, reviewContext: { version: 99, nonsense: true } },
-        { ...REVIEW_ROW, id: "task-review-none", reviewContext: null },
-      ])
-      .mockResolvedValueOnce([]);
+        { ...OPEN_ROW, reviewContext: { guestMemberId: "member-guest-9" } },
+      ]);
 
-    const body = (await (await GET()).json()) as {
-      tasks: {
-        id: string;
-        reviewEvidence: unknown;
-        reviewEvidenceUnreadable: boolean;
-      }[];
-    };
+    const body = (await (await GET()).json()) as { tasks: Record<string, unknown>[] };
 
-    expect(body.tasks[0]).toMatchObject({
-      id: "task-review",
-      reviewEvidence: null,
-      reviewEvidenceUnreadable: true,
-    });
-    expect(body.tasks[1]).toMatchObject({
-      id: "task-review-none",
-      reviewEvidence: null,
-      reviewEvidenceUnreadable: false,
-    });
+    expect(JSON.stringify(body)).not.toContain("member-guest-9");
+    expect(body.tasks[0]).not.toHaveProperty("reviewContext");
+    expect(body.tasks[0]).not.toHaveProperty("reviewEvidence");
+    expect(body.tasks[0]).not.toHaveProperty("unpricedNights");
   });
 
   it("withholds the booking link from a caller who may not open one", async () => {
@@ -803,7 +668,6 @@ describe("financial-review evidence: what may cross the wire (#3033)", () => {
   });
 });
 
-
 /**
  * #3033 — the OTHER way somebody reaches `/bookings/{id}`.
  *
@@ -835,8 +699,8 @@ describe("the booking link an owner holds regardless of admin access (#3033)", (
   }
 
   const owned = {
-    ...REVIEW_ROW,
-    booking: { ...REVIEW_ROW.booking, memberId: "admin-1" },
+    ...OPEN_ROW,
+    booking: { ...OPEN_ROW.booking, memberId: "admin-1" },
   };
 
   it("an admin who owns the booking may open it without bookings access", async () => {
@@ -849,7 +713,7 @@ describe("the booking link an owner holds regardless of admin access (#3033)", (
   it("does not offer somebody else's booking to a finance-only admin", async () => {
     // The control: same shape, a different member. Nothing about the row itself
     // grants the link.
-    const body = await bodyFor(REVIEW_ROW, false);
+    const body = await bodyFor(OPEN_ROW, false);
 
     expect(body.tasks[0]?.viewerOwnsBooking).toBe(false);
   });
@@ -871,7 +735,7 @@ describe("the booking link an owner holds regardless of admin access (#3033)", (
   it("reads the owner and the deletion state for the hand-back list only", async () => {
     // The automatic-refund list offers no link at all, so it has no use for a
     // membership-roll identifier and does not ask for one.
-    await bodyFor(REVIEW_ROW, true);
+    await bodyFor(OPEN_ROW, true);
     const [handBack, autoRefunded] = calls() as [
       { select: { booking: { select: Record<string, unknown> } } },
       { select: { booking: { select: Record<string, unknown> } } },
@@ -882,108 +746,5 @@ describe("the booking link an owner holds regardless of admin access (#3033)", (
       deletedAt: true,
     });
     expect(autoRefunded.select.booking.select).not.toHaveProperty("memberId");
-  });
-});
-
-/**
- * #3191: the nights a review's guest holds with no stored price, and the two
- * totals the officer's figures have to reconcile against.
- *
- * MUTATION PROOF. Send the summary keyed by guest rather than by task and "keeps
- * the guest-strand id off the wire" fails; drop the `.catch` around the read and
- * "answers the queue without them when the strand read fails" fails.
- */
-describe("unpriced nights on a review row (#3191)", () => {
-  const STRAND = {
-    id: "guest-strand-1",
-    priceCents: 12000,
-    nights: [
-      { stayDate: new Date("2026-08-10T00:00:00.000Z"), priceCents: 6000 },
-      { stayDate: new Date("2026-08-11T00:00:00.000Z"), priceCents: null },
-    ],
-  };
-
-  beforeEach(() => {
-    mocks.manualRefundTaskFindMany
-      .mockReset()
-      .mockResolvedValue([])
-      .mockResolvedValueOnce([REVIEW_ROW])
-      .mockResolvedValueOnce([]);
-  });
-
-  it("sends the blank nights and the totals they must reconcile to", async () => {
-    mocks.bookingGuestFindMany.mockResolvedValue([STRAND]);
-
-    const body = (await (await GET()).json()) as {
-      tasks: { unpricedNights: Record<string, unknown>[] }[];
-    };
-
-    // #3498: a LIST, one entry per repairable strand of the item, because one
-    // item now covers the whole parked edit. This review names one strand.
-    expect(body.tasks[0].unpricedNights).toEqual([
-      {
-        summary: {
-          dates: ["2026-08-11"],
-          knownNightTotalCents: 6000,
-          storedGuestTotalCents: 12000,
-        },
-        // #3498: the strand the settled amount moves the stored worth of. This
-        // review names one strand and it leads, so it is this one - and the
-        // browser reads the answer rather than guessing it from the position.
-        absorbsSettlement: true,
-        // The ITEM's ordinal, which the card numbers both its evidence blocks
-        // and its price boxes from, and which the officer's figures come back
-        // naming - one ordinal, one binding (#3498 fix round).
-        strandIndex: 0,
-      },
-    ]);
-  });
-
-  it("keeps the guest-strand id off the wire even while sending its nights", async () => {
-    mocks.bookingGuestFindMany.mockResolvedValue([STRAND]);
-
-    const serialised = JSON.stringify(await (await GET()).json());
-
-    expect(serialised).toContain("unpricedNights");
-    expect(serialised).not.toContain("guest-strand-1");
-    expect(serialised).not.toContain("bookingGuestId");
-  });
-
-  it("offers nothing where the strand has no blank night", async () => {
-    // THE CONTROL. A row with nothing to repair must send null rather than an
-    // empty list, because the screen renders the section on presence alone.
-    mocks.bookingGuestFindMany.mockResolvedValue([
-      {
-        ...STRAND,
-        nights: [
-          { stayDate: new Date("2026-08-10T00:00:00.000Z"), priceCents: 6000 },
-          { stayDate: new Date("2026-08-11T00:00:00.000Z"), priceCents: 6000 },
-        ],
-      },
-    ]);
-
-    const body = (await (await GET()).json()) as {
-      tasks: { unpricedNights: unknown }[];
-    };
-    expect(body.tasks[0].unpricedNights).toEqual([]);
-  });
-
-  it("answers the queue without them when the strand read fails", async () => {
-    /*
-      Fail-closed and on its own. The money work on this card is unaffected by a
-      repair it cannot offer, and blanking the queue over a secondary read would
-      take a list of money the club owes members off the screen.
-    */
-    mocks.bookingGuestFindMany.mockRejectedValue(new Error("boom"));
-
-    const response = await GET();
-    const body = (await response.json()) as {
-      tasks: { id: string; unpricedNights: unknown }[];
-    };
-
-    expect(response.status).toBe(200);
-    expect(body.tasks).toHaveLength(1);
-    expect(body.tasks[0].unpricedNights).toEqual([]);
-    expect(mocks.loggerError).toHaveBeenCalled();
   });
 });

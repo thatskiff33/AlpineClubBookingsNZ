@@ -376,6 +376,8 @@ Prefix `INV-PAY`.
 | `INV-PAY-156` | Stuck States signals name their records with the count's filter |
 | `INV-PAY-157` | Lost dispute cents close a payment's hand-backs once, oldest first |
 | `INV-PAY-158` | A saved-card claim is marked durably and recovered when stranded |
+| `INV-PAY-159` | Cash cover is read from cash records by one reader |
+| `INV-PAY-160` | An edit refunds a card only where Stripe holds a record |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -1026,7 +1028,7 @@ headings the index keeps verbatim.
 | `INV-CONFIG-004` | Every application-controlled send passes one environment-aware boundary; four outcomes, all distinguishable |
 | `INV-CONFIG-005` | Every application-managed Xero contact write consumes the canonical role; copies contained |
 | `INV-CONFIG-006` | One persisted currency and locale; the environment seeds them once |
-| `INV-CONFIG-007` | One GST treatment setting, today's default, unwritten until Xero reads it |
+| `INV-CONFIG-007` | One GST schedule, dated periods; Xero and the journal resolve it |
 
 ## Single Source Of Truth
 

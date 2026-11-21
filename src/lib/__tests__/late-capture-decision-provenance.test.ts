@@ -106,6 +106,8 @@ const PROVENANCE_SCANNED_FILES = [
   "src/lib/late-capture-reason-sentences.ts",
   "src/lib/stripe-webhook-service.ts",
   "src/lib/email-message-registry.ts",
+  // PR #5143: the admin/system and locked-delivery template sets moved here from the registry, citations and all.
+  "src/lib/email-message-template-classes.ts",
   "src/lib/email-message-renderer.ts",
   "src/lib/email-message-audit-defaults.ts",
   "src/lib/email-message-notes.ts",
@@ -240,7 +242,7 @@ const TRUE_OWNER_CITATIONS = [
   { path: "docs/invariants/additional-payment-chasing.md", issue: "#2750" },
   { path: "docs/invariants/additional-payment-chasing.md", issue: "#2760" },
   { path: "src/lib/deleted-booking-modification-payment.ts", issue: "#2760" },
-  { path: "src/lib/email-message-registry.ts", issue: "#2761" },
+  { path: "src/lib/email-message-template-classes.ts", issue: "#2761" },
   { path: "src/lib/email/admin-alerts-finance.ts", issue: "#2761" },
 ] as const;
 
