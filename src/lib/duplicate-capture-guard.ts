@@ -20,9 +20,11 @@
  * capture whose refund failed later (#4227) each looked like "another capture
  * holding money", so a REPLAY of the real settlement was refunded. Nor does
  * "the arriving row was already SUCCEEDED" alone tell a replay apart: every
- * saved-card path writes its attempt row SUCCEEDED before it settles, so those
- * callers say they did (`recordedByCaller`, #4285 review), and the guard reads
- * that answer only where no other payment holds money (rule 3).
+ * saved-card path writes its attempt row SUCCEEDED before it settles, so that
+ * write flags the capture as not yet settled and the settle consumes the flag
+ * (`unsettled-capture-marker.ts`, #5240) - even on a later arrival after the
+ * caller stopped between the two - and the guard reads that answer only where
+ * no other payment holds money (rule 3).
  *
  * 1. **The recorded settler is never refunded.** Its replay is kept whatever
  *    else holds money on the booking.
@@ -51,9 +53,10 @@
  *    or a failed send is retried by a replay or the payments cron's drain until
  *    an alert is delivered. Every such alert names the other payment by the
  *    telling reading (`readTellingWhere`, #4285 review) and shows what the
- *    kept capture's card still holds; the verdict never reads either. Limit:
- *    a saved-card capture whose caller crashed or threw between its
- *    pre-record and the settle reads as a replay on its next arrival.
+ *    kept capture's card still holds; the verdict never reads either. A
+ *    saved-card capture whose settle never ran is new money on its next
+ *    arrival (#5240), and the payments cron's drain turns a flag no arrival
+ *    consumes on a paid booking into this alert.
  *
  * Every read runs under the lock(1) every caller of `markBookingPaymentSucceeded`
  * holds, so the check-then-enqueue cannot interleave with another settlement,
@@ -241,7 +244,8 @@ export async function judgeCaptureOnPaidBooking(
     /**
      * #4285 review: the arriving capture's row was SUCCEEDED before this delivery
      * - a replay of a capture already recorded - rather than new money. Read by
-     * the caller before it wrote the row.
+     * the caller before it wrote the row; (#5240) false while the saved-card
+     * "not yet settled" flag stood, which the caller consumed.
      */
     arrivingAlreadyCaptured: boolean;
   },

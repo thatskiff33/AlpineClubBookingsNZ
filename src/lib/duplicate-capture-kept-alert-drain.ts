@@ -40,7 +40,7 @@
  * refund as account credit also fills. Any delivered
  * alert for the capture clears the marker. Never throws for one marker.
  */
-import type { Prisma } from "@prisma/client";
+import type { PaymentStatus, Prisma } from "@prisma/client";
 import { listOwedAlertKeys, noteOwedAlertAttempt, settleOwedAlert } from "@/lib/alert-cooldown";
 import { bookingOwner } from "@/lib/booking-owner";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
@@ -57,6 +57,7 @@ import {
   alertCaptureKeptWithoutRecordedSettler,
   NEW_CAPTURE_ALERT_OWED_PREFIX,
   readOtherSettledCaptureWhere,
+  recordNewCaptureAlertOwed,
 } from "@/lib/duplicate-capture-guard";
 import type { CancellationRefundNote, ShortfallPartNote } from "@/lib/duplicate-capture-kept-note";
 import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
@@ -67,10 +68,11 @@ import { CARD_REFUND_OPERATION_WHERE, parseRefundAllocationPlan } from "@/lib/op
 import { findCombinedCardSettlementForChild } from "@/lib/organiser-child-refund";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { PAYMENT_RECOVERY_OPERATION_IN_FLIGHT_WHERE } from "@/lib/payment-recovery-constants";
-import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
+import { CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST, isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { sumRecordedRefundsForCapture } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
 import { withReadOnlySnapshot } from "@/lib/read-only-snapshot";
+import { consumeCaptureAwaitingSettle, UNSETTLED_CAPTURE_HAND_OVER_MS, UNSETTLED_CAPTURE_PREFIX } from "@/lib/unsettled-capture-marker";
 import { formatCents } from "@/lib/utils";
 
 /** How long a marker waits before the drain tries it: the post-commit alert goes first. */
@@ -234,7 +236,67 @@ async function judgeOwedAlert(bookingId: string, paymentIntentId: string, format
   });
 }
 
+/**
+ * #5240: the hourly look at each saved-card capture still flagged "not yet
+ * settled" (`unsettled-capture-marker.ts`) an hour after it was written - one
+ * whose caller stopped before the settle and whose webhook has not settled it
+ * since. Read without a lock; only the flag's own delete decides, so a settle
+ * consuming it at the same moment wins or loses whole.
+ *
+ * - The capture gone, holding no money, or the booking's recorded settler:
+ *   nothing to tell, the flag is cleared.
+ * - The booking paid or completed by other means: the flag becomes an owed
+ *   `new-capture` alert, due at once, so the drain below judges and sends it
+ *   in this same run - as the capture's arrival would have.
+ * - Otherwise it waits for the webhook, unstamped, so its age stays the
+ *   capture's; at `UNSETTLED_CAPTURE_HAND_OVER_MS` Stripe's retries are long
+ *   over and it is cleared with an error logged for a person to check.
+ */
+async function promoteUnsettledCaptures(now: Date): Promise<void> {
+  const keys = await listOwedAlertKeys({ prefix: UNSETTLED_CAPTURE_PREFIX, now, retryAfterMs: NEW_CAPTURE_ALERT_DRAIN_AFTER_MS });
+  for (const key of keys) {
+    const paymentIntentId = key.slice(UNSETTLED_CAPTURE_PREFIX.length);
+    try {
+      await promoteUnsettledCapture(key, paymentIntentId, now);
+    } catch (err) {
+      logger.error({ err, key }, "Failed to check a saved-card capture left unsettled (#5240)");
+    }
+  }
+}
+
+async function promoteUnsettledCapture(key: string, paymentIntentId: string, now: Date): Promise<void> {
+  const flag = await prisma.alertCooldown.findUnique({ where: { key }, select: { lastAlertedAt: true } });
+  if (!flag) return;
+  const capture = await prisma.paymentTransaction.findUnique({
+    where: { stripePaymentIntentId: paymentIntentId },
+    select: { id: true, status: true, payment: { select: { settledByTransactionId: true, bookingId: true, booking: { select: { status: true } } } } },
+  });
+  const holdsMoney = capture !== null && (CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST as readonly PaymentStatus[]).includes(capture.status);
+  if (!capture?.payment || !holdsMoney || capture.payment.settledByTransactionId === capture.id) {
+    await settleOwedAlert({ key });
+    return;
+  }
+  const { bookingId } = capture.payment;
+  if (isPaidLikeBookingStatus(capture.payment.booking.status)) {
+    await prisma.$transaction(async (tx) => {
+      if (await consumeCaptureAwaitingSettle(tx, paymentIntentId)) {
+        await recordNewCaptureAlertOwed(tx, { bookingId, paymentIntentId, now: new Date(now.getTime() - NEW_CAPTURE_ALERT_DRAIN_AFTER_MS) });
+      }
+    });
+    return;
+  }
+  const ageMs = now.getTime() - flag.lastAlertedAt.getTime();
+  if (ageMs < UNSETTLED_CAPTURE_HAND_OVER_MS) return;
+  if (await consumeCaptureAwaitingSettle(prisma, paymentIntentId)) {
+    logger.error(
+      { bookingId, paymentIntentId, ageMs, bookingStatus: capture.payment.booking.status },
+      "A saved-card capture was never settled onto its unpaid booking within seven days; check it by hand (#5240)",
+    );
+  }
+}
+
 export async function drainOwedNewCaptureAlerts(now: Date = new Date()): Promise<{ checked: number; sent: number }> {
+  await promoteUnsettledCaptures(now);
   const keys = await listOwedAlertKeys({ prefix: NEW_CAPTURE_ALERT_OWED_PREFIX, now, retryAfterMs: NEW_CAPTURE_ALERT_DRAIN_AFTER_MS });
   if (keys.length === 0) return { checked: 0, sent: 0 };
   const format = await clubFormatValues();

@@ -305,7 +305,6 @@ async function adoptUnknownIntentsAttemptRow(
   paymentIntent: Stripe.PaymentIntent,
   event: Stripe.Event,
   bookingId: string,
-  onAdopted?: (newlyCaptured: boolean) => void, // #4285 review: the adoption wrote the capture just now
 ) {
   const adopted = await adoptSavedCardChargeAttemptForIntent({
     journal: await resolveBookingMoneyPostingContext(),
@@ -315,7 +314,6 @@ async function adoptUnknownIntentsAttemptRow(
     metadata: paymentIntent.metadata,
   });
   if (!adopted) return null;
-  onAdopted?.(adopted.newlyCaptured);
   return findPaymentTransactionByIntentId({ paymentIntentId: paymentIntent.id });
 }
 
@@ -375,11 +373,11 @@ async function handlePaymentIntentSucceeded(
     return;
   }
 
-  let recordedByCaller = false; // #4285 review: an adoption that just wrote the capture tells the settle it is new money
+  // #5240: an adoption that writes the capture flags it as new money for the settle below (`unsettled-capture-marker.ts`).
   // #4624 review: re-read after a failed adoption - a saved-card charge's own settle may just have written the intent on its row.
   const paymentTransaction =
     (await findPaymentTransactionByIntentId({ paymentIntentId: paymentIntent.id })) ??
-    (await adoptUnknownIntentsAttemptRow(paymentIntent, event, bookingId, (adopted) => (recordedByCaller = adopted))) ??
+    (await adoptUnknownIntentsAttemptRow(paymentIntent, event, bookingId)) ??
     (await findPaymentTransactionByIntentId({ paymentIntentId: paymentIntent.id }));
 
   // #4624 (`INV-INT-033`): the app's own intent, but no PRIMARY row to settle it with - money taken that nothing records.
@@ -492,7 +490,7 @@ async function handlePaymentIntentSucceeded(
   const reconciliation = await markBookingPaymentSucceeded({
     capturedAt: receiptCaptureTime(paymentIntent),
     format,
-    bookingId, recordedByCaller,
+    bookingId,
     paymentIntentId: paymentIntent.id,
     amountCents: paymentIntent.amount,
     paymentMethodId:
