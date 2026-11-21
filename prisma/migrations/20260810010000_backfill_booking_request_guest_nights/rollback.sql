@@ -52,12 +52,15 @@
 --   ORDER BY b."id", g."id";
 --
 -- For each row, FIRST repair the nights, THEN refresh the booking's invoice -
--- refreshing first re-sends the stale night prices. The repair is the officer
+-- refreshing first re-sends the stale night prices. The repair was the officer
 -- tool "Record what these nights sold for" in the booking's Admin tools card
--- (#3214, src/lib/stored-night-price-strand-reconcile.ts); run it on a release
--- that includes #3214, never on the previous colour. It also creates the
--- missing rows when the previous colour created a guest without nights.
--- If the tool does not offer a repair, stop and resolve its refusal.
+-- (#3214). #4344 RETIRED THAT TOOL with the officer edit review: only a release
+-- from #3214 up to but not including #4344 has it, and never the previous
+-- colour. On such a release it also creates the missing rows when the previous
+-- colour created a guest without nights; if it does not offer a repair, stop
+-- and resolve its refusal. A release from #4344 on has no in-app way to repair
+-- these nights: take every guest the query lists to the owner, and do not
+-- refresh that booking's invoice until the owner has answered.
 -- Normal invoice-state checks still apply: if refresh refuses a paid or
 -- credited document, stop and reconcile it rather than bypassing the refusal.
 -- To discard the rows

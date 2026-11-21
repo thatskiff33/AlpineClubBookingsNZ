@@ -2,10 +2,10 @@ import { ManualRefundTaskDirection } from "@prisma/client";
 
 import type { CalendarDate } from "@/lib/club-time";
 import { isCalendarDate } from "@/lib/club-time";
+import { isNonNegativeIntegerCents } from "@/lib/cents-schema";
 import {
   editFinancialReviewStrandMovesNights,
   editFinancialReviewStrandRecords,
-  isNonNegativeIntegerCents,
   parseEditFinancialReviewContext,
   type EditFinancialReviewStrandRecord,
 } from "@/lib/edit-financial-review-context";

@@ -752,6 +752,45 @@ function deferred() {
     expect(modification.newData).toMatchObject({ finishedStayCorrection: { feeAddedToAmountOwed: true } });
   }, 60_000);
 
+  it("#5039: a credit-paid finished stay's swap that lowers the price records the same-day fee ONCE on the payment", async () => {
+    await seed({
+      secondGuest: true,
+      creditPaid: true,
+      requested: {
+        addGuests: [
+          { firstName: "Late", lastName: "Friend", ageTier: "ADULT", isMember: false, stayStart: "2026-06-10", stayEnd: "2026-06-11" },
+        ],
+        removeGuests: [{ id: GUEST_2_ID }],
+        summary: "swap Second Guest for one night of Late Friend",
+      },
+    });
+    await prisma.memberCredit.create({
+      data: {
+        memberId: OWNER_ID,
+        amountCents: -4 * STORED_NIGHT_CENTS,
+        type: "BOOKING_APPLIED",
+        appliedToBookingId: BOOKING_ID,
+        description: "Applied at booking",
+      },
+    });
+    const result = await approve(OFFICER_ID);
+    // The removed guest's 2 x 4,321 at the credit share of the same-day tier
+    // (80%), so the fee keeps 20%; one night of 5,000 replaces them.
+    const swapFee = Math.round((2 * STORED_NIGHT_CENTS * 20) / 100);
+    const priceDiff = NIGHT_CENTS - 2 * STORED_NIGHT_CENTS;
+    expect(result, JSON.stringify(result)).toMatchObject({
+      outcome: "executed",
+      priceDiffCents: priceDiff,
+      changeFeeCents: swapFee,
+    });
+    const payment = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } });
+    // Once, by `recordFinishedStayFeeOwed` - not again by the edit's payment write.
+    expect(payment.changeFeeCents).toBe(swapFee);
+    const [modification] = await prisma.bookingModification.findMany({ where: { bookingId: BOOKING_ID } });
+    expect(modification).toMatchObject({ changeFeeCents: swapFee });
+    expect(modification.newData).toMatchObject({ finishedStayCorrection: { feeAddedToAmountOwed: true } });
+  }, 60_000);
+
   it("a swap that lowers the price keeps the tier once, on the removed portion, and refunds the rest in full", async () => {
     await seed({
       secondGuest: true,

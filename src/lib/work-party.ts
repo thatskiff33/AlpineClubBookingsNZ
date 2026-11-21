@@ -25,6 +25,12 @@ import {
   formatDateOnly,
 } from "@/lib/date-only";
 import { parsedDateOnlySchema } from "@/lib/date-only-schema";
+import {
+  isOpenWorkPartyEvent,
+  OPEN_WORK_PARTY_EVENT_WHERE,
+  workPartyNightCount,
+} from "@/lib/work-party-rules";
+import { MAX_OCCURRENCES } from "@/lib/calendar-recurrence";
 
 type WorkPartyDbClient = typeof prisma | Prisma.TransactionClient;
 
@@ -173,13 +179,12 @@ export async function findActiveWorkPartyEventsForRange(
 ) {
   return db.workPartyEvent.findMany({
     where: {
-      active: true,
+      ...OPEN_WORK_PARTY_EVENT_WHERE,
       // startDate < checkOut means the event starts on or before the last
       // booking night; endDate >= checkIn means it ends on or after the
       // first night.
       startDate: { lt: checkOut },
       endDate: { gte: checkIn },
-      promoCode: { active: true, archivedAt: null },
       ...(lodgeId ? { OR: [{ lodgeId: null }, { lodgeId }] } : {}),
     },
     select: {
@@ -231,7 +236,7 @@ export async function resolveWorkPartyEventPromoForBooking(
   if (!event) {
     return { ok: false, error: "Working bee event not found" };
   }
-  if (!event.active || !event.promoCode.active || event.promoCode.archivedAt) {
+  if (!isOpenWorkPartyEvent(event)) {
     return { ok: false, error: "This working bee event is no longer active" };
   }
   if (!workPartyWindowOverlapsStay(event, checkIn, checkOut)) {
@@ -264,12 +269,34 @@ export const workPartyEventSchema = z
   })
   .strict();
 
-export function workPartyEventDatesError(data: {
-  startDate: Date;
-  endDate: Date;
-}): string | null {
+/** The longest window a work party may have: the calendar's series cap. */
+const MAX_WORK_PARTY_NIGHTS = MAX_OCCURRENCES;
+
+/**
+ * Why a work party's dates cannot be saved, or null. `existing` is the row an
+ * edit changes (omit it on create).
+ *
+ * #5148: the calendar shows a work party as one entry per night, and a
+ * calendar series holds at most MAX_OCCURRENCES of them, so a NEW window
+ * longer than that is refused rather than cut short on the calendar without a
+ * word. The cap applies only when the dates themselves change: a work party
+ * saved longer before the cap existed can still be deactivated, renamed or
+ * re-described with its dates as they are (its calendar shows its first
+ * MAX_OCCURRENCES nights), and is refused only when its dates are edited.
+ */
+export function workPartyEventDatesError(
+  data: { startDate: Date; endDate: Date },
+  existing?: { startDate: Date; endDate: Date },
+): string | null {
   if (formatDateOnly(data.endDate) < formatDateOnly(data.startDate)) {
     return "End date must be on or after the start date";
+  }
+  const datesUnchanged =
+    existing !== undefined &&
+    formatDateOnly(existing.startDate) === formatDateOnly(data.startDate) &&
+    formatDateOnly(existing.endDate) === formatDateOnly(data.endDate);
+  if (!datesUnchanged && workPartyNightCount(data) > MAX_WORK_PARTY_NIGHTS) {
+    return `A work party can run for at most ${MAX_WORK_PARTY_NIGHTS} nights`;
   }
   return null;
 }
@@ -399,31 +426,32 @@ export async function createWorkPartyEventWithPromo(input: WorkPartyEventInput) 
 }
 
 /**
- * Update an event and keep its internal promo in sync. Deactivating stops
- * new applications only — existing redemptions and bookings are never
- * touched.
+ * Update an event and keep its internal promo in sync, inside the caller's
+ * transaction. Deactivating stops new applications only — existing
+ * redemptions and bookings are never touched. The admin edit runs it after
+ * taking the work party's calendar lock, so the entries are rewritten in the
+ * same transaction (`updateWorkPartyWithCalendar`, #5148).
  */
 export async function updateWorkPartyEventAndPromo(
+  tx: Prisma.TransactionClient,
   id: string,
   input: WorkPartyEventInput
 ) {
-  return prisma.$transaction(async (tx) => {
-    const event = await tx.workPartyEvent.update({
-      where: { id },
-      data: {
-        name: input.name,
-        description: input.description ?? null,
-        startDate: input.startDate,
-        endDate: input.endDate,
-        discountPercent: input.discountPercent,
-        active: input.active,
-        lodgeId: input.lodgeId ?? null,
-      },
-    });
-    await tx.promoCode.update({
-      where: { id: event.promoCodeId },
-      data: internalPromoDataForEvent(input),
-    });
-    return event;
+  const event = await tx.workPartyEvent.update({
+    where: { id },
+    data: {
+      name: input.name,
+      description: input.description ?? null,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      discountPercent: input.discountPercent,
+      active: input.active,
+      lodgeId: input.lodgeId ?? null,
+    },
   });
+  await tx.promoCode.update({
+    where: { id: event.promoCodeId },
+    data: internalPromoDataForEvent(input),
+  });
+  return event;
 }
