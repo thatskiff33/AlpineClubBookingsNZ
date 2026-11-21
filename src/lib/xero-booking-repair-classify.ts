@@ -104,7 +104,7 @@ import {
 import { formatDateOnly } from "@/lib/date-only";
 import { recordedPrimaryInvoiceSettlement } from "@/lib/booking-primary-invoice-claim";
 import { canonicalRefundNoteCandidates } from "@/lib/xero-refund-note-status";
-import { addRefundCreditNoteAmountFindings } from "./xero-booking-repair-refund-note-amount";
+import { addRefundCreditNoteAmountFindings } from "./xero-booking-repair-refund-note-coverage";
 import {
   decideLateCapture,
   keptLateCaptureInvoiceAsked,

@@ -1,9 +1,12 @@
-// #4328 (`INV-ADDPAY-043`): the booking-vs-Xero repair's refund-note amount
-// check. A bank-transfer payment can hold several live refund notes - its one
-// canonical note, plus a per-refund note for each later hand-back (#4287) and
-// card refund (#4312) - so the cash refund is judged against all of them
-// together, never against the canonical note alone.
-import type { BookingClassificationContext, BookingPaymentRecord, BookingXeroRepairAction, MutableFinding, ResolvedLocalObject, XeroObjectLinkRecord } from "./xero-booking-repair-types";
+// The booking-vs-Xero repair's read of a payment's refund-note gap and
+// coverage, and (#4328, `INV-ADDPAY-043`) its refund-note amount check. A
+// bank-transfer payment can hold several live refund notes - its one canonical
+// note, plus a per-refund note for each later hand-back (#4287) and card refund
+// (#4312) - so the cash refund is judged against all of them together, never
+// against the canonical note alone.
+import logger from "@/lib/logger";
+import type { BookingClassificationContext, BookingPaymentRecord, BookingRepairRecord, BookingXeroRepairAction, MutableFinding, ResolvedLocalObject, XeroObjectLinkRecord } from "./xero-booking-repair-types";
+import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { getCashCancellationRefundCandidateCents } from "./xero-booking-repair-analysis";
 import { addAction, addFinding, addXeroAmountMismatchFinding, buildManualReviewAction } from "./xero-booking-repair-findings";
 import { paidBackRefundRequestCents } from "./xero-booking-repair-request-notes";
@@ -15,7 +18,7 @@ import { isPerDeltaRefundNoteLink, isRefundNoteLinkOf } from "@/lib/xero-refund-
  * stamped `perDelta` that Xero has not voided (`INV-ADDPAY-041`). Never the
  * canonical note, which `canonicalRefundNoteCandidates` resolves from the rest.
  */
-export function livePerRefundNoteLinks(
+function livePerRefundNoteLinks(
   links: readonly XeroObjectLinkRecord[],
   cancelledRefundNoteIds: ReadonlySet<string>,
 ): XeroObjectLinkRecord[] {
@@ -28,13 +31,54 @@ export function livePerRefundNoteLinks(
   );
 }
 
-/** Whether a bank payment holds a live per-refund note, so its notes' coverage is read for the check below. */
-export function readsRefundNoteCoverage(
+/** Whether a bank payment holds a live per-refund note, so its notes' coverage is read for the amount check. */
+function readsRefundNoteCoverage(
   payment: Pick<BookingPaymentRecord, "source">,
   links: readonly XeroObjectLinkRecord[],
   cancelledRefundNoteIds: ReadonlySet<string>,
 ): boolean {
   return payment.source === "INTERNET_BANKING" && livePerRefundNoteLinks(links, cancelledRefundNoteIds).length > 0;
+}
+
+/**
+ * #3635 (composed review): the refund cents a note may still answer, read
+ * through the one gap reader (`readRefundCreditNoteGap`: note-eligible cash
+ * less coverage, resolved notes included), so the missing-refund-note arm
+ * never asks for a late capture's refund no note may answer. #3880 round 3:
+ * every source, so a bank payment's per-refund notes - never its canonical
+ * note - still count as cover and a fully covered booking asks for nothing.
+ * #4328: the same read's coverage judges a bank payment's several notes
+ * together, read once more for one that is not cancelled - never twice.
+ */
+export async function readRefundNoteGaps(
+  bookings: readonly BookingRepairRecord[],
+  deps: Pick<RepairDependencies, "readRefundCreditNoteGap">,
+  paymentLinksOf: (paymentId: string) => XeroObjectLinkRecord[],
+  cancelledRefundNoteIds: ReadonlySet<string>,
+) {
+  const refundNoteUncoveredCentsByPaymentId = new Map<string, number>();
+  const refundNoteCoveredCentsByPaymentId = new Map<string, number | "unreadable">();
+  for (const booking of bookings) {
+    const payment = booking.payment;
+    if (!payment || payment.refundedAmountCents <= 0) continue;
+    const cancelled = booking.status === "CANCELLED";
+    if (!cancelled && !readsRefundNoteCoverage(payment, paymentLinksOf(payment.id), cancelledRefundNoteIds)) continue;
+    try {
+      const gap = await deps.readRefundCreditNoteGap({
+        id: payment.id,
+        bookingId: booking.id,
+        refundedAmountCents: payment.refundedAmountCents,
+      });
+      // #3924 round 8: a CARD note's ask, so a close's own bank cash is left out.
+      if (cancelled) refundNoteUncoveredCentsByPaymentId.set(payment.id, gap.uncoveredCents - gap.paidAnotherWayUncoveredCents);
+      // No note-eligible cash means the reader summed no coverage.
+      refundNoteCoveredCentsByPaymentId.set(payment.id, gap.cashRefundCents > 0 ? gap.coveredCents : "unreadable");
+    } catch (err) {
+      refundNoteCoveredCentsByPaymentId.set(payment.id, "unreadable");
+      logger.warn({ err, paymentId: payment.id }, "Could not read a payment's refund-note gap; sizing from the refunded total");
+    }
+  }
+  return { refundNoteUncoveredCentsByPaymentId, refundNoteCoveredCentsByPaymentId };
 }
 
 const NOTES_DISAGREE_SUMMARY =
