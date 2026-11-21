@@ -370,14 +370,9 @@ export default function MembersPage() {
     setBulkDialogOpen(true)
   }
 
-  const handleSubscriptionCategoryChanged = (changed: number) => {
-    showSuccess(`Changed subscription category for ${changed} member(s)`)
-    setSelectedIds(new Set())
-    void fetchMembers()
-  }
-
-  const handleMembershipChanged = (changed: number) => {
-    showSuccess(`Changed membership type for ${changed} member(s)`)
+  // After a bulk membership-type or subscription-category run.
+  const handleBulkAssignmentChanged = (what: string) => (changed: number) => {
+    showSuccess(`Changed ${what} for ${changed} member(s)`)
     setSelectedIds(new Set())
     void fetchMembers()
   }
@@ -600,7 +595,7 @@ export default function MembersPage() {
         selectedIds={selectedIds}
         memberNames={memberNames}
         onOpenChange={setMembershipDialogOpen}
-        onComplete={handleMembershipChanged}
+        onComplete={handleBulkAssignmentChanged("membership type")}
         onError={setError}
       />
       <MemberBulkSubscriptionCategoryDialog
@@ -609,7 +604,7 @@ export default function MembersPage() {
         memberNames={memberNames}
         subscriptionCategories={subscriptionCategories}
         onOpenChange={setSubscriptionCategoryDialogOpen}
-        onComplete={handleSubscriptionCategoryChanged}
+        onComplete={handleBulkAssignmentChanged("subscription category")}
         onError={setError}
       />
       <MemberPasswordActionDialog

@@ -25,10 +25,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
 import { subscriptionCategoryFilterWhere } from "@/lib/subscription-category-filter";
-import {
-  serializeSubscriptionCategorySummary,
-  subscriptionCategorySummarySelect,
-} from "@/lib/subscription-categories";
+import { serializeSubscriptionCategorySummary, subscriptionCategorySummarySelect } from "@/lib/subscription-categories";
 import {
   effectiveSubscriptionBehavior,
   isSubscriptionNotRequiredForMembershipType,
@@ -677,15 +674,9 @@ export async function listAdminMembers(
     });
   }
 
-  // Filter: subscription category, judged on the same current-season
-  // assignment as the membership-type filter above.
-  const subscriptionCategoryCondition = subscriptionCategoryFilterWhere(
-    subscriptionCategoryFilter,
-    currentSeasonYear,
-  );
-  if (subscriptionCategoryCondition) {
-    andConditions.push(subscriptionCategoryCondition);
-  }
+  // Filter: subscription category, on the same current-season assignment (#5248).
+  const categoryWhere = subscriptionCategoryFilterWhere(subscriptionCategoryFilter, currentSeasonYear);
+  if (categoryWhere) andConditions.push(categoryWhere);
 
   // Filter: xeroLinked
   if (xeroLinkedFilter === "true") {
@@ -1249,10 +1240,9 @@ export async function listAdminMembers(
             ),
           }
         : null,
-      // The current season's billing category; null means Individual.
+      // The current season's billing category; null means Individual (#5248).
       currentSubscriptionCategory: currentSeasonAssignment?.subscriptionCategory
-        ? serializeSubscriptionCategorySummary(currentSeasonAssignment.subscriptionCategory)
-        : null,
+        ? serializeSubscriptionCategorySummary(currentSeasonAssignment.subscriptionCategory) : null,
       familyGroups: m.familyGroupMemberships.map((fg) => ({
         id: fg.familyGroup.id,
         name: fg.familyGroup.name,

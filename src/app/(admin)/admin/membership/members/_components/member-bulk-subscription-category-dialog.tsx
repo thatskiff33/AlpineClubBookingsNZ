@@ -140,6 +140,155 @@ function isAlreadyBilled(member: PreviewMember): boolean {
   )
 }
 
+type NameFor = (memberId: string, name?: string) => string
+
+/** The preview step: who moves from what to what, who is skipped and why. */
+function BulkCategoryPreview({
+  preview,
+  currentSeasonYear,
+  nameFor,
+}: {
+  preview: PreviewResponse
+  currentSeasonYear: number
+  nameFor: NameFor
+}) {
+  const changingMembers = preview.members.filter((member) => member.changed)
+  return (
+    <div className="space-y-3 text-sm">
+      <div className="rounded-md border p-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Season {preview.seasonYear}
+        </p>
+        <p className="mt-1 font-medium">
+          {preview.summary.changed} of {preview.summary.previewed} will change
+          {preview.summary.unchanged > 0
+            ? ` (${preview.summary.unchanged} already in this category)`
+            : ""}
+          .
+        </p>
+        {preview.seasonYear !== currentSeasonYear && (
+          <p className="mt-1 text-xs text-warning-11">
+            Heads up: this is not the current season ({currentSeasonYear}).
+          </p>
+        )}
+        <ul className="mt-2 space-y-1 text-muted-foreground">
+          {preview.summary.ageTierChanges > 0 && (
+            <li>Age tier corrections: {preview.summary.ageTierChanges}</li>
+          )}
+          {preview.summary.linkedGuestBlocks > 0 && (
+            <li className="text-destructive">
+              Blocked by linked-guest bookings: {preview.summary.linkedGuestBlocks}
+            </li>
+          )}
+          {preview.summary.skipped > 0 && (
+            <li>Skipped: {preview.summary.skipped}</li>
+          )}
+        </ul>
+      </div>
+      {preview.summary.alreadyBilled > 0 && (
+        <Alert variant="info">
+          {preview.summary.alreadyBilled} member(s) are already paid or invoiced
+          for season {preview.seasonYear}. The billing run skips them, so the new
+          category does not change this season&apos;s invoice.
+        </Alert>
+      )}
+      {(changingMembers.length > 0 || preview.skipped.length > 0) && (
+        <div className="max-h-48 overflow-y-auto rounded-md border p-2 text-xs">
+          {changingMembers.map((member) => (
+            <div key={member.memberId} className="py-0.5">
+              <div>
+                <span className="font-medium">{member.name}</span>
+                <span className="ml-2 text-muted-foreground">
+                  {member.categoryChanged
+                    ? `${categoryLabel(member.currentCategory)} → ${categoryLabel(member.newCategory)}`
+                    : `stays ${categoryLabel(member.currentCategory)}`}
+                </span>
+                {member.ageTierChanged && (
+                  <span className="ml-2 text-muted-foreground">
+                    age tier {member.currentAgeTier} → {member.resultingAgeTier}
+                  </span>
+                )}
+                {member.categoryChanged && isAlreadyBilled(member) && (
+                  <span className="ml-2 text-muted-foreground">
+                    (already billed this season)
+                  </span>
+                )}
+                {member.linkedGuestBlocked && (
+                  <span className="ml-2 text-destructive">
+                    blocked: linked guest on {member.linkedGuestBookings.count}{" "}
+                    future booking(s)
+                  </span>
+                )}
+              </div>
+              {member.linkedGuestBlocked && (
+                <LinkedGuestBookingList bookings={member.linkedGuestBookings} />
+              )}
+            </div>
+          ))}
+          {preview.skipped.map((skip) => (
+            <div key={skip.memberId} className="py-0.5">
+              <span className="font-medium">{nameFor(skip.memberId, skip.name)}</span>
+              <span className="ml-2 text-muted-foreground">
+                skipped: {SKIP_REASON_LABELS[skip.reason]}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** The results step: the outcome counts and every member that needs attention. */
+function BulkCategoryResults({
+  saveResult,
+  nameFor,
+}: {
+  saveResult: SaveResponse
+  nameFor: NameFor
+}) {
+  return (
+    <div className="space-y-3 text-sm">
+      <div className="grid grid-cols-2 gap-1">
+        {(Object.keys(OUTCOME_LABELS) as MemberOutcome[]).map((outcome) =>
+          (saveResult.outcomeCounts[outcome] ?? 0) > 0 ? (
+            <div key={outcome} className="flex justify-between rounded border px-2 py-1">
+              <span>{OUTCOME_LABELS[outcome]}</span>
+              <span className="font-medium">{saveResult.outcomeCounts[outcome]}</span>
+            </div>
+          ) : null,
+        )}
+      </div>
+      {saveResult.results.some((result) => ATTENTION_OUTCOMES.has(result.outcome)) && (
+        <div className="max-h-40 overflow-y-auto rounded-md border p-2 text-xs">
+          {saveResult.results
+            .filter((result) => ATTENTION_OUTCOMES.has(result.outcome))
+            .map((result) => (
+              <div key={result.memberId} className="py-0.5">
+                <div>
+                  <span className="font-medium">
+                    {nameFor(result.memberId, result.name)}
+                  </span>
+                  <span className="ml-2 text-muted-foreground">
+                    {OUTCOME_LABELS[result.outcome]}
+                    {result.skipReason
+                      ? ` — ${SKIP_REASON_LABELS[result.skipReason]}`
+                      : result.error
+                        ? ` — ${result.error}`
+                        : ""}
+                  </span>
+                </div>
+                {result.outcome === "blocked_linked_guests" && (
+                  <LinkedGuestBookingList bookings={result.linkedGuestBookings} />
+                )}
+              </div>
+            ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 interface MemberBulkSubscriptionCategoryDialogProps {
   open: boolean
   selectedIds: Set<string>
@@ -285,8 +434,6 @@ export function MemberBulkSubscriptionCategoryDialog({
   const nameFor = (memberId: string, name?: string) =>
     name ?? memberNames.get(memberId) ?? memberId
 
-  const changingMembers = preview?.members.filter((member) => member.changed) ?? []
-
   return (
     <Dialog
       open={open}
@@ -360,88 +507,11 @@ export function MemberBulkSubscriptionCategoryDialog({
         )}
 
         {step === "preview" && preview && (
-          <div className="space-y-3 text-sm">
-            <div className="rounded-md border p-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Season {preview.seasonYear}
-              </p>
-              <p className="mt-1 font-medium">
-                {preview.summary.changed} of {preview.summary.previewed} will change
-                {preview.summary.unchanged > 0
-                  ? ` (${preview.summary.unchanged} already in this category)`
-                  : ""}
-                .
-              </p>
-              {preview.seasonYear !== currentSeasonYear && (
-                <p className="mt-1 text-xs text-warning-11">
-                  Heads up: this is not the current season ({currentSeasonYear}).
-                </p>
-              )}
-              <ul className="mt-2 space-y-1 text-muted-foreground">
-                {preview.summary.ageTierChanges > 0 && (
-                  <li>Age tier corrections: {preview.summary.ageTierChanges}</li>
-                )}
-                {preview.summary.linkedGuestBlocks > 0 && (
-                  <li className="text-destructive">
-                    Blocked by linked-guest bookings: {preview.summary.linkedGuestBlocks}
-                  </li>
-                )}
-                {preview.summary.skipped > 0 && (
-                  <li>Skipped: {preview.summary.skipped}</li>
-                )}
-              </ul>
-            </div>
-            {preview.summary.alreadyBilled > 0 && (
-              <Alert variant="info">
-                {preview.summary.alreadyBilled} member(s) are already paid or invoiced
-                for season {preview.seasonYear}. The billing run skips them, so the new
-                category does not change this season&apos;s invoice.
-              </Alert>
-            )}
-            {(changingMembers.length > 0 || preview.skipped.length > 0) && (
-              <div className="max-h-48 overflow-y-auto rounded-md border p-2 text-xs">
-                {changingMembers.map((member) => (
-                  <div key={member.memberId} className="py-0.5">
-                    <div>
-                      <span className="font-medium">{member.name}</span>
-                      <span className="ml-2 text-muted-foreground">
-                        {member.categoryChanged
-                          ? `${categoryLabel(member.currentCategory)} → ${categoryLabel(member.newCategory)}`
-                          : `stays ${categoryLabel(member.currentCategory)}`}
-                      </span>
-                      {member.ageTierChanged && (
-                        <span className="ml-2 text-muted-foreground">
-                          age tier {member.currentAgeTier} → {member.resultingAgeTier}
-                        </span>
-                      )}
-                      {member.categoryChanged && isAlreadyBilled(member) && (
-                        <span className="ml-2 text-muted-foreground">
-                          (already billed this season)
-                        </span>
-                      )}
-                      {member.linkedGuestBlocked && (
-                        <span className="ml-2 text-destructive">
-                          blocked: linked guest on {member.linkedGuestBookings.count}{" "}
-                          future booking(s)
-                        </span>
-                      )}
-                    </div>
-                    {member.linkedGuestBlocked && (
-                      <LinkedGuestBookingList bookings={member.linkedGuestBookings} />
-                    )}
-                  </div>
-                ))}
-                {preview.skipped.map((skip) => (
-                  <div key={skip.memberId} className="py-0.5">
-                    <span className="font-medium">{nameFor(skip.memberId, skip.name)}</span>
-                    <span className="ml-2 text-muted-foreground">
-                      skipped: {SKIP_REASON_LABELS[skip.reason]}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <BulkCategoryPreview
+            preview={preview}
+            currentSeasonYear={currentSeasonYear}
+            nameFor={nameFor}
+          />
         )}
 
         {step === "reason" && (
@@ -464,44 +534,7 @@ export function MemberBulkSubscriptionCategoryDialog({
         )}
 
         {step === "results" && saveResult && (
-          <div className="space-y-3 text-sm">
-            <div className="grid grid-cols-2 gap-1">
-              {(Object.keys(OUTCOME_LABELS) as MemberOutcome[]).map((outcome) =>
-                (saveResult.outcomeCounts[outcome] ?? 0) > 0 ? (
-                  <div key={outcome} className="flex justify-between rounded border px-2 py-1">
-                    <span>{OUTCOME_LABELS[outcome]}</span>
-                    <span className="font-medium">{saveResult.outcomeCounts[outcome]}</span>
-                  </div>
-                ) : null,
-              )}
-            </div>
-            {saveResult.results.some((result) => ATTENTION_OUTCOMES.has(result.outcome)) && (
-              <div className="max-h-40 overflow-y-auto rounded-md border p-2 text-xs">
-                {saveResult.results
-                  .filter((result) => ATTENTION_OUTCOMES.has(result.outcome))
-                  .map((result) => (
-                    <div key={result.memberId} className="py-0.5">
-                      <div>
-                        <span className="font-medium">
-                          {nameFor(result.memberId, result.name)}
-                        </span>
-                        <span className="ml-2 text-muted-foreground">
-                          {OUTCOME_LABELS[result.outcome]}
-                          {result.skipReason
-                            ? ` — ${SKIP_REASON_LABELS[result.skipReason]}`
-                            : result.error
-                              ? ` — ${result.error}`
-                              : ""}
-                        </span>
-                      </div>
-                      {result.outcome === "blocked_linked_guests" && (
-                        <LinkedGuestBookingList bookings={result.linkedGuestBookings} />
-                      )}
-                    </div>
-                  ))}
-              </div>
-            )}
-          </div>
+          <BulkCategoryResults saveResult={saveResult} nameFor={nameFor} />
         )}
 
         <DialogFooter>

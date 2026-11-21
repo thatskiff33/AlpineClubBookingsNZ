@@ -36,6 +36,34 @@ import {
 import type { Filters, XeroContactGroup, XeroFeatureFlags } from "../_types"
 import { filterLabelMap, filterValueLabels } from "../_utils"
 
+/** #5248: the members list's subscription-category filter; "" is no filter. */
+function SubscriptionCategoryFilterSelect({
+  value,
+  options,
+  onChange,
+}: {
+  value: string
+  options: SubscriptionCategoryOption[]
+  onChange: (value: string) => void
+}) {
+  return (
+    <Select value={value || "all"} onValueChange={(next) => onChange(next === "all" ? "" : next)}>
+      <SelectTrigger className="w-[190px]" aria-label="Filter by subscription category">
+        <SelectValue placeholder="Subscription Category" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="all">All Subscription Categories</SelectItem>
+        <SelectItem value={NO_SUBSCRIPTION_CATEGORY_VALUE}>Individual (no category)</SelectItem>
+        {options.map((category) => (
+          <SelectItem key={category.id} value={category.id}>
+            {subscriptionCategoryOptionLabel(category)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+}
+
 interface MemberFilterToolbarProps {
   search: string
   filters: Filters
@@ -78,8 +106,7 @@ export function MemberFilterToolbar({
   const membershipTypeOptions = (membershipTypes ?? []).filter(
     (type) => type.isActive,
   )
-  // Archived categories stay offered: finding members still left in one is
-  // the point of the filter.
+  // Archived categories stay offered: finding members left in one is the point.
   const subscriptionCategoryOptions = subscriptionCategories ?? []
   // The `role` filter param is shared by the Access Role and Non-Member
   // Category selects (backend reads a single `role` param); the two categories
@@ -214,27 +241,11 @@ export function MemberFilterToolbar({
               ))}
             </SelectContent>
           </Select>
-          <Select
-            value={filters.subscriptionCategory || "all"}
-            onValueChange={(value) =>
-              onSetFilter("subscriptionCategory", value === "all" ? "" : value)
-            }
-          >
-            <SelectTrigger className="w-[190px]" aria-label="Filter by subscription category">
-              <SelectValue placeholder="Subscription Category" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Subscription Categories</SelectItem>
-              <SelectItem value={NO_SUBSCRIPTION_CATEGORY_VALUE}>
-                Individual (no category)
-              </SelectItem>
-              {subscriptionCategoryOptions.map((category) => (
-                <SelectItem key={category.id} value={category.id}>
-                  {subscriptionCategoryOptionLabel(category)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SubscriptionCategoryFilterSelect
+            value={filters.subscriptionCategory}
+            options={subscriptionCategoryOptions}
+            onChange={(value) => onSetFilter("subscriptionCategory", value)}
+          />
           <Select
             value={filters.lifecycleStatus || "nonArchived"}
             onValueChange={(value) =>

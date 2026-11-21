@@ -203,14 +203,9 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // Subscription category filter — the same helper as the list endpoint.
-  const subscriptionCategoryCondition = subscriptionCategoryFilterWhere(
-    sp.get("subscriptionCategory"),
-    currentSeasonYear,
-  );
-  if (subscriptionCategoryCondition) {
-    andConditions.push(subscriptionCategoryCondition);
-  }
+  // #5248: the same subscription-category filter as the list endpoint.
+  const categoryWhere = subscriptionCategoryFilterWhere(sp.get("subscriptionCategory"), currentSeasonYear);
+  if (categoryWhere) andConditions.push(categoryWhere);
 
   const xeroLinkedFilter = sp.get("xeroLinked");
   if (xeroLinkedFilter === "true") {
