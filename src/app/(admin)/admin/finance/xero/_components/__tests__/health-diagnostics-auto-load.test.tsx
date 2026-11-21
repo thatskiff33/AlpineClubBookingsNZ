@@ -160,3 +160,67 @@ describe.each(LISTS)("$name — auto-load runs once per opening (#5276)", (list)
     expect(requests("fetchJson", list.url)).toBe(2);
   });
 });
+
+// A valid re-sync result for each mismatch list, and the text it shows once
+// loaded: an up-to-date cache with nothing mismatched.
+const RESYNC_CASES = [
+  {
+    list: LISTS[1],
+    response: {
+      mode: "MEMBERSHIP_TYPE",
+      cacheReady: true,
+      lastRefreshedAt: null,
+      activeRuleCount: 1,
+      membersConsidered: 0,
+      mismatchCount: 0,
+      addCount: 0,
+      removeCount: 0,
+      estimatedXeroCalls: 0,
+      skippedNoContact: [],
+      mismatches: [],
+      informationalCount: 0,
+      informational: [],
+    },
+    shown: "No linked members are currently mismatched against the active grouping rules.",
+  },
+  {
+    list: LISTS[2],
+    response: { cacheReady: true, lastRefreshedAt: null, count: 0, mismatches: [] },
+    shown: "No linked members are currently mismatched against the cached Xero contact names.",
+  },
+];
+
+describe.each(RESYNC_CASES)("$list.name — a running re-sync counts as busy (#5276)", ({ list, response, shown }) => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // If the cached read did fire, it would succeed; the count is what matters.
+    mocks.fetchJson.mockResolvedValue(response);
+  });
+
+  it("opening the section while a re-sync is in flight makes no cached read", async () => {
+    let resolveResync: (value: unknown) => void = () => {};
+    mocks.postJson.mockImplementation(
+      () => new Promise((resolve) => { resolveResync = resolve; }),
+    );
+
+    // Refresh renders while the section is closed, so the re-sync can start
+    // before the section opens.
+    const { rerender } = render(panels(list, false));
+    const section = document.getElementById(xeroSectionId(list.section));
+    if (!section) throw new Error(`section ${list.section} not rendered`);
+    fireEvent.click(within(section).getByRole("button", { name: list.retryButton }));
+    await waitFor(() => expect(requests("postJson", list.url)).toBe(1));
+
+    rerender(panels(list, true));
+    await settle();
+    // Without the busy term the automatic read would race the re-sync and
+    // could overwrite its newer result.
+    expect(requests("fetchJson", list.url)).toBe(0);
+
+    await act(async () => { resolveResync(response); });
+    await settle();
+    expect(requests("fetchJson", list.url)).toBe(0);
+    expect(requests("postJson", list.url)).toBe(1);
+    expect(screen.getByText(shown)).toBeTruthy();
+  });
+});
