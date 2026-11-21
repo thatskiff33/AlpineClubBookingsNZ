@@ -41,6 +41,35 @@ Image Manager is edited under the **content** permission area.
    Rename and Delete appear beside the folder while it has keyboard focus or
    the pointer is over it. On touch screens these actions stay visible.
 
+### Hidden details are removed
+
+Photos can carry hidden details: where they were taken, the phone or camera,
+the owner's name. The app removes these from every image before saving it, so
+nothing hidden is published with your pictures. The picture itself is not
+changed: a GIF keeps its animation and a portrait photo stays upright.
+[Hidden details in uploaded images](../PRIVACY_RETENTION.md#hidden-details-in-uploaded-images)
+lists what is removed for each file type.
+
+If the app cannot confirm a file is clean — usually because the file is
+damaged or in an unusual form, or because it is an animated AVIF — it refuses
+that file and says so. The rest of your upload still goes ahead. Open the image
+in an image editor, export a fresh copy, and upload that instead.
+
+### Cleaning an older image
+
+**Images uploaded before this cleaning existed (#5244) are not changed.** They
+may still carry hidden details. To clean one, upload it again:
+
+- **An Image Manager image**: download it, then upload it again with the same
+  name into the same folder. It replaces the old file, and its link does not
+  change, so pages that use it keep working.
+- **An image added through a page editor's image picker**: upload it again
+  through the picker, point the page at the new copy, then delete the old one
+  from the picker.
+- **The club logo**: upload it again under **Site Style**.
+- **A member photo**: the member, or an admin, uploads it again from the
+  member's profile.
+
 ### Website-sized copies
 
 When you upload a JPG, PNG or WebP photo, the app also saves smaller copies of
@@ -91,6 +120,7 @@ volume from a backup. It touches only the images folder.
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | An upload is rejected | The file isn't an accepted format or exceeds 10 MB | Convert to JPG/PNG/GIF/WebP/AVIF and keep it under 10 MB |
+| An upload is refused because hidden details could not be removed | The file is damaged or in an unusual form, or it is an animated AVIF | Open it in an image editor and export a fresh copy (an animated AVIF as an animated GIF), then upload that. See [Hidden details are removed](#hidden-details-are-removed) |
 | An uploaded image doesn't show in the content editor | It's saved in a different folder, or the listing is stale | Check the folder and click **Refresh** |
 | I can't find an image I uploaded | It went to the folder shown in **Saving to** at upload time | Select that directory to view it |
 | A gallery still downloads full-size photos | Photos uploaded before copies existed, or restored from a backup, have none | Run the backfill in [Website-sized copies](#website-sized-copies) |

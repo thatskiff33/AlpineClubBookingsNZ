@@ -117,6 +117,33 @@ What the file contains, and what it leaves out:
   adviser before relying on it.
 - Money is in integer cents, labelled with the currency.
 
+## Hidden details in uploaded images
+
+Photos and drawings can carry hidden details: where a photo was taken, the
+camera or phone, the owner's name, the author's file paths. The app removes them
+before it stores any uploaded image, on every upload path: the image library,
+the Image Manager, member photos, the club logo and a configuration restore
+(#2242, #5244).
+
+| Type | Removed | Kept |
+| --- | --- | --- |
+| JPEG, PNG, WebP | EXIF (GPS, camera, owner, dates), XMP, IPTC, comments and text chunks, extra pictures appended after the main one | The picture, its colour profile, and the EXIF rotation alone so portraits stay upright |
+| GIF | Comments, plain-text blocks, XMP and every other application block, anything after the end of the file | The frames, their timing and transparency, and the looping setting |
+| AVIF (still) | EXIF and XMP items, every non-picture property and box, the handler name | The picture, blanked in place so its bytes are unchanged |
+| SVG | Metadata, comments, `title` and `desc`, editor attributes and file paths, scripts, event handlers, outside links, text that is not part of the drawing | The drawing: shapes, gradients, clips, masks, patterns, filters, styles, drawn text, and embedded photos cleaned the same way |
+
+An upload is **refused**, with a plain message asking for a fresh copy from an
+image editor, when the app cannot confirm it is clean: a damaged or truncated
+file, an animated AVIF, or an SVG that reaches outside itself (an `@import` or
+an outside `url()`). Nothing is stored in that case. A configuration restore
+stops at its dry run and names the file.
+
+**Images uploaded before this release are not altered** (owner decision,
+20 Nov 2026, #5244). Anything already in the image library, the Image Manager's
+folders, the club logo or a member photo may still carry hidden details until
+it is uploaded again; [`image-manager.md`](guides/image-manager.md#cleaning-an-older-image)
+says how.
+
 ## Model schedule
 
 | Prisma model | Purpose / personal data | Retention period or retained purpose | End action |
