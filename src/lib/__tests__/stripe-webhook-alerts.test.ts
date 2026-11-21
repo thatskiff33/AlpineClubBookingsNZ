@@ -361,9 +361,14 @@ vi.mock("@/lib/xero-token-store", () => ({
 // #3635 (review F2): "was this capture ever recorded in Xero?" is asked of the
 // capture's own invoice rows. Here the only such row is a released change
 // invoice, which the supplementary double below answers.
-vi.mock("@/lib/late-capture-xero-receipt", () => ({
-  hasXeroReceiptForLateCapture: (paymentIntentId: string) =>
-    mockHasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent(paymentIntentId),
+// #4383: that invoice records the whole capture, so nothing caps its refunds.
+vi.mock("@/lib/late-capture-xero-receipt", async (importOriginal) => ({
+  lateCaptureNotableRefundCents: ((await importOriginal()) as typeof import("@/lib/late-capture-xero-receipt"))
+    .lateCaptureNotableRefundCents,
+  readLateCaptureXeroReceipt: async (paymentIntentId: string) =>
+    (await mockHasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent(paymentIntentId))
+      ? { kind: "recorded", invoiceId: null, recordedCents: 24000 }
+      : { kind: "none" },
   // #3635 round-3: no charge.refunded here is of a late capture unless a case says so.
   findLateCapturePaymentIntents: (...args: unknown[]) => mockFindLateCapturePaymentIntents(...args),
   findClosedLateCaptureRecords: (...args: unknown[]) => mockFindClosedLateCaptureRecordIntents(...args),

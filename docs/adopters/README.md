@@ -223,6 +223,9 @@ per-route index if you would rather start from a URL.
   analytics, backups; feature-gated).
 - [AI Help Assistant](../guides/ai-help.md) — the in-app help widget and the
   optional paid AI assistant (module, key, spend cap, and privacy).
+- [AI App Connections](../guides/mcp-server.md) — letting members connect an
+  AI app such as Claude or ChatGPT to their own account (module, who may
+  connect, approved apps, risks).
 - [AI Diagnostics deployment](../ai-diagnostics/deployment.md) — the operator
   setup order for the separate admin-only diagnostics assistant: provisioning
   and rotating its SELECT-only database role, and reading its readiness

@@ -45,7 +45,7 @@ export function EditDatesCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Dates</CardTitle>
+        <CardTitle headingLevel={2}>Dates</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-2 gap-4">

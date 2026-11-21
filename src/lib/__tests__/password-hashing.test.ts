@@ -8,6 +8,9 @@ import {
   hashPassword,
   hashPin,
   PASSWORD_BCRYPT_COST,
+  passwordCostTopUpLadder,
+  passwordHashCost,
+  passwordHashNeedsUpgrade,
   UNUSABLE_PLACEHOLDER_PASSWORD_HASH,
   verifyPassword,
 } from "../password-hashing";
@@ -76,5 +79,44 @@ describe("password hashing (#4934)", { timeout: 30_000 }, () => {
     } finally {
       await pending;
     }
+  });
+});
+
+describe("stored password cost upgrade (#5261)", () => {
+  const SALT_AND_DIGEST = "dcc0uu0pCIFM.e5XHAXIpO2Cj6ssbDXlOEH9D5JF/RHHpnKhmy1WO";
+
+  it("reads the work factor of every standard prefix and nothing else", () => {
+    expect(passwordHashCost(`$2a$10$${SALT_AND_DIGEST}`)).toBe(10);
+    expect(passwordHashCost(`$2b$12$${SALT_AND_DIGEST}`)).toBe(12);
+    expect(passwordHashCost(`$2y$04$${SALT_AND_DIGEST}`)).toBe(4);
+    expect(passwordHashCost(DUMMY_PASSWORD_HASH)).toBe(PASSWORD_BCRYPT_COST);
+    for (const unreadable of ["", "hash", "$2x$12$abc", "$2b$1$abc", "$argon2id$v=19$m=65536"]) {
+      expect(passwordHashCost(unreadable), unreadable).toBeNull();
+    }
+  });
+
+  it("flags only a readable hash below the target cost", async () => {
+    const older = await hashPin("older-password", PASSWORD_BCRYPT_COST - 1);
+    expect(passwordHashNeedsUpgrade(older)).toBe(true);
+    expect(passwordHashNeedsUpgrade(DUMMY_PASSWORD_HASH)).toBe(false);
+    expect(passwordHashNeedsUpgrade(`$2b$${PASSWORD_BCRYPT_COST + 1}$${SALT_AND_DIGEST}`)).toBe(false);
+    expect(passwordHashNeedsUpgrade("not-a-bcrypt-hash")).toBe(false);
+  });
+
+  it("flags today's hashes once the cost constant is raised", () => {
+    const raised = PASSWORD_BCRYPT_COST + 1;
+    expect(passwordHashNeedsUpgrade(DUMMY_PASSWORD_HASH, raised)).toBe(true);
+    expect(passwordHashNeedsUpgrade(UNUSABLE_PLACEHOLDER_PASSWORD_HASH, raised)).toBe(true);
+    expect(passwordCostTopUpLadder(PASSWORD_BCRYPT_COST, raised)).toEqual([PASSWORD_BCRYPT_COST]);
+  });
+
+  it("tops a refused compare up to exactly one compare at the target cost", () => {
+    for (const target of [PASSWORD_BCRYPT_COST, PASSWORD_BCRYPT_COST + 1]) {
+      for (let stored = 4; stored <= target; stored += 1) {
+        const work = 2 ** stored + passwordCostTopUpLadder(stored, target).reduce((sum, c) => sum + 2 ** c, 0);
+        expect(work, `stored ${stored}, target ${target}`).toBe(2 ** target);
+      }
+    }
+    expect(passwordCostTopUpLadder(PASSWORD_BCRYPT_COST + 2)).toEqual([]);
   });
 });

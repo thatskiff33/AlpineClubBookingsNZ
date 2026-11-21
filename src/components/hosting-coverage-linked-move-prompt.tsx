@@ -140,6 +140,7 @@ export function HostingCoverageLinkedMovePrompt({
                     {formatLinkedMoveMoneySentence({
                       combinedAmountDueCents: prompt.combinedAmountDueCents,
                       combinedRefundCents: prompt.combinedRefundCents,
+                      combinedFreedCreditCents: prompt.combinedFreedCreditCents,
                       combinedChangeFeeCents: prompt.combinedChangeFeeCents,
                       combinedPolicyRetainedCents:
                         prompt.combinedPolicyRetainedCents,

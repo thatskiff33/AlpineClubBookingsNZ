@@ -248,7 +248,7 @@ export function ClubTaxCard() {
   return (
     <div>
       {viewOnlyBanner}
-      <Card className="mb-6" data-testid="club-tax-card">
+      <Card className="mb-6" id="club-tax-treatment" data-testid="club-tax-card">
         <ClubTaxCardHeader />
         <CardContent className="space-y-6">
           <ul className="space-y-2" aria-label="Tax treatment periods">

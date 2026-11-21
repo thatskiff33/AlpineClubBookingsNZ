@@ -21,7 +21,8 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     BookingModification, NewBookingPolicyExceptionRequest, MemberLodgeAccess, FamilyGroupJoinRequest,
     DeletionRequest, AdminCreditAdjustmentRequest, OpeningCreditBatch, CommitteeAssignment, OrganisationContact,
     SchoolMemberClassification, MemberMoneyObligation, MemberInductionAssignedSigner, MemberInductionSignOff,
-    FoodOrder, FoodOrderItem,
+    McpGrant,
+    FoodOrder, FoodOrderItem, XeroCashCredit,
   ] = await Promise.all([
     prisma.membershipSubscriptionChargeCoverage.findMany({ where: own, select: { chargeId: true, releasedAt: true, createdAt: true } }),
     prisma.membershipBillingException.findMany({ where: own, select: { seasonYear: true, code: true, firstSeenAt: true, resolvedAt: true } }),
@@ -76,6 +77,10 @@ export async function readAdditionalSubjectRecords(memberId: string) {
       where: { signerMemberId: memberId },
       select: { signerName: true, signerRole: true, signedAt: true, declarationAccepted: true },
     }),
+    prisma.mcpGrant.findMany({
+      where: own,
+      select: { scope: true, status: true, createdAt: true, lastUsedAt: true, endedAt: true, client: { select: { name: true } } },
+    }),
     // The member's own food orders. Who received or priced one is an officer's
     // snapshot id and is left out, like a maintenance report's resolver.
     prisma.foodOrder.findMany({
@@ -89,6 +94,17 @@ export async function readAdditionalSubjectRecords(memberId: string) {
       where: { foodOrder: own },
       select: { foodOrderId: true, description: true, quantity: true, unit: true, sortOrder: true, receivedAt: true },
     }).then((rows) => rows.map(({ quantity, ...item }) => ({ ...item, quantity: quantity.toString() }))),
+    // #5204: the member's open Xero overpayments and prepayments. The snapshot
+    // is keyed by Xero contact, so the rows are the ones the finance queue
+    // matches to this member through `Member.xeroContactId`; Xero's ids are left out.
+    prisma.member.findUnique({ where: { id: memberId }, select: { xeroContactId: true } }).then((member) =>
+      member?.xeroContactId
+        ? prisma.xeroCashCredit.findMany({
+          where: { xeroContactId: member.xeroContactId },
+          orderBy: [{ documentDate: { sort: "asc", nulls: "last" } }, { createdAt: "asc" }],
+          select: { kind: true, currencyCode: true, documentDate: true, totalCents: true, remainingCents: true, syncedAt: true },
+        })
+        : []),
   ]);
   return {
     MembershipSubscriptionChargeCoverage, MembershipBillingException, SeasonalMembershipAssignment,
@@ -97,6 +113,7 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     BookingModification, NewBookingPolicyExceptionRequest, MemberLodgeAccess, FamilyGroupJoinRequest,
     DeletionRequest, AdminCreditAdjustmentRequest, OpeningCreditBatch, CommitteeAssignment, OrganisationContact,
     SchoolMemberClassification, MemberMoneyObligation, MemberInductionAssignedSigner, MemberInductionSignOff,
-    FoodOrder, FoodOrderItem,
+    McpGrant,
+    FoodOrder, FoodOrderItem, XeroCashCredit,
   } satisfies Record<AdditionalRecordModel, unknown>;
 }

@@ -220,6 +220,18 @@ describe("findPaymentsWithUnrecordedLateCaptures — the self-heal's own list (#
     expect(mocks.landedAfterMany).toHaveBeenCalledWith(["pi_late", "pi_cancel_refund", "pi_hand"]);
   });
 
+  // #4383: a capture whose receipt recorded $50 of $80 and was refunded the
+  // whole $80 has its record: the $30 above what was recorded is the
+  // record-by-hand finding's, never a lost record for the self-heal to recover.
+  it("never lists a recorded capture refunded above what its capped receipt recorded", async () => {
+    mocks.paymentRefundFindMany.mockResolvedValue([refund("capped", "pi_capped", "succeeded", 8000)]);
+    mocks.findClosed.mockResolvedValueOnce(new Map([["pi_capped", "record"]]));
+
+    await expect(findPaymentsWithUnrecordedLateCaptures(NOW)).resolves.toEqual([]);
+    expect(mocks.landedAfterMany).toHaveBeenCalledWith([]);
+    expect(mocks.sendOutsideAppAlert).not.toHaveBeenCalled();
+  });
+
   it("drops what can never resolve BEFORE the cut, so it cannot starve a capture that would", async () => {
     mocks.paymentRefundFindMany.mockResolvedValue([
       refund("superseded", "pi_superseded"),

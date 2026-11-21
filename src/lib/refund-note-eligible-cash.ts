@@ -8,7 +8,9 @@
  * over-coverage count, and the refund-note link-repair script's coverage
  * target (`xero-refund-note-link-repair.ts`, #3635 C3). It is the payment's provider-backed CASH refund evidence
  * (`resolveStripeCashRefundEvidence`, #2902) LESS the refunds of late captures
- * the app never recorded in Xero.
+ * the app never recorded in Xero, and (#4383) of each late capture whose
+ * receipt recorded only part of it, the refunds above what it recorded
+ * (`lateCaptureNotableRefundCents`).
  *
  * WHY. A late capture on a cancelled booking is a receipt Xero does not hold
  * until the app records it (`readLateCaptureXeroReceipt`): refunded before
@@ -18,7 +20,10 @@
  * never went in. Counted as ordinary cash, that deliberate gap read as a
  * missing note, and the nightly self-heal raised it 24 hours later against the
  * booking's cleared pre-cancel invoice. A receipt resolved by hand is excluded
- * too: its refunds are recorded by hand, and the repair tool says so.
+ * too: its refunds are recorded by hand, and the repair tool says so. A
+ * receipt capped at its invoice's room (`INV-PAY-139`) puts only part of the
+ * capture in Xero's Stripe account, so a note above that part would take out
+ * more than went in; the rest is the officer's, as the receipt's alert says.
  *
  * Refund rows are matched to their capture by `PaymentRefund.stripePaymentIntentId`;
  * which intents are late captures is `findLateCapturePaymentIntents`, plus
@@ -38,13 +43,14 @@ import {
 } from "@/lib/stripe-cash-refund-evidence";
 import {
   findLateCapturePaymentIntents,
-  hasXeroReceiptForLateCapture,
+  lateCaptureNotableRefundCents,
+  readLateCaptureXeroReceipt,
 } from "@/lib/late-capture-xero-receipt";
 
 export interface RefundNoteEligibleCash {
   /** The payment's cash refund evidence, as `resolveStripeCashRefundEvidence` reads it. */
   evidence: StripeCashRefundEvidence;
-  /** Cash refunds of late captures the app never recorded in Xero: no note answers them. */
+  /** Cash refunds of late captures the app never recorded in Xero, or above what it recorded: no note answers them. */
   lateCaptureExcludedCents: number;
   /** What refund credit notes on this payment may cover. Never negative. */
   eligibleCashCents: number;
@@ -69,9 +75,9 @@ export async function resolveRefundNoteEligibleCash(
   }
   let lateCaptureExcludedCents = 0;
   for (const intent of lateIntents) {
-    if (!(await hasXeroReceiptForLateCapture(intent, db))) {
-      lateCaptureExcludedCents += centsByIntent.get(intent) ?? 0;
-    }
+    const refundedCents = centsByIntent.get(intent) ?? 0;
+    const receipt = await readLateCaptureXeroReceipt(intent, db);
+    lateCaptureExcludedCents += refundedCents - lateCaptureNotableRefundCents(receipt, refundedCents);
   }
   return {
     evidence,

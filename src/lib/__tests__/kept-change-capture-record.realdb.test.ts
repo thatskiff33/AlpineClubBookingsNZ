@@ -37,6 +37,14 @@
  *     capture's intent onto a carrier (#4406): the keep reads it as the
  *     change's invoice answering the capture, and the real release takes it
  *     back and pays it - no receipt and no kept-capture invoice beside it.
+ *  9. (#5220.) A reaper-retired change invoice the keep revives: raised
+ *     unpaid, its capture's receipt commits with the keep (d); refused
+ *     (short of the ask, already linked, another queued), its captured stamp
+ *     commits with the keep and only that claim carries the officer's email;
+ *     a rolled-back keep writes neither. The keep's decision racing the
+ *     webhook's release, both orders forced on the anchor, revives once and
+ *     queues one receipt (c); a reopen then approval withdraws the revived
+ *     row and its receipt (e).
  *
  * The dismissal is driven as `resolveManualRefundTask` drives it - the
  * `OPEN -> DISMISSED` guarded `updateMany`, then `planKeptLateCaptureXeroRecord`
@@ -76,6 +84,8 @@ const INVOICE_ID = "race-4324-xero-invoice";
 const ZONE = "Pacific/Auckland";
 const LOCK_POLL_TIMEOUT_MS = 5_000;
 const REFUND_OPERATION_ID = "race-4324-approval-refund";
+/** #5220: the outbox label of another ask's invoice queued on the same change. */
+const OTHER_ASK_LABEL = "race-4324-other-ask";
 
 let prisma: PrismaClient;
 let observerClient: PrismaClient;
@@ -90,6 +100,7 @@ let withdraw: typeof import("@/lib/additional-payment-withdraw");
 let paidAnotherWay: typeof import("@/lib/card-refund-paid-another-way");
 let gapCheck: typeof import("@/lib/xero-primary-invoice-fee-gap");
 let invoiceKey: typeof import("@/lib/xero-booking-invoice-key");
+let refundNote: typeof import("@/lib/late-capture-refund-credit-note");
 
 async function clean(): Promise<void> {
   await prisma.auditLog.deleteMany({ where: { OR: [{ entityId: REFUND_OPERATION_ID }, { targetId: BOOKING_ID }] } });
@@ -101,7 +112,10 @@ async function clean(): Promise<void> {
     where: { localId: { in: [CHANGE_TX_ID, PRIMARY_TX_ID, PAYMENT_ID, BOOKING_ID, MODIFICATION_ID, FIRST_ANCHOR_ID, TASK_ID] } },
   });
   await prisma.xeroObjectLink.deleteMany({ where: { localModel: "BookingModification", localId: MODIFICATION_ID } });
+  // #4383: the receipt's payment links, on the capture and the payment.
+  await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: [CHANGE_TX_ID, PAYMENT_ID] } } });
   await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
+  await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
   await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
   await prisma.bookingModification.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.payment.deleteMany({ where: { id: PAYMENT_ID } });
@@ -312,6 +326,7 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     paidAnotherWay = await import("@/lib/card-refund-paid-another-way");
     gapCheck = await import("@/lib/xero-primary-invoice-fee-gap");
     invoiceKey = await import("@/lib/xero-booking-invoice-key");
+    refundNote = await import("@/lib/late-capture-refund-credit-note");
     const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([
       import("@prisma/client"),
       import("@/lib/prisma-adapter"),
@@ -908,6 +923,371 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     expect(after).toEqual({ status: "PENDING", updatedAt: revived.updatedAt });
     expect(await supplementaryRows()).toHaveLength(1);
     expect(await receiptRows()).toEqual([]);
+  });
+
+  // #4383 (`INV-PAY-110`, `INV-PAY-139`): the primary has room for $50 of
+  // the $80 kept, so the receipt records $50 and alerts an officer about the
+  // rest. The capture is then refunded in full: its note is for the $50 Xero
+  // received, once, however often the refund's note step runs.
+  it("MUTATION #4383: a receipt capped at $50 of an $80 capture, then a full refund: exactly one $50 note", { timeout: 30_000 }, async () => {
+    await seed("OPEN");
+    await dismiss();
+    const [row] = await receiptRows();
+    const claimed = await claim.claimXeroSyncOperationToRunning(row!.id, {
+      direction: "OUTBOUND",
+      entityType: "PAYMENT",
+      operationType: "CREATE",
+      localModel: { in: ["PaymentTransaction"] },
+    });
+    const paid: Array<{ amountCents?: number }> = [];
+    await worker.recordAdditionalCaptureReceipt(
+      { syncOperation: claimed! },
+      {
+        getAuthenticatedXeroClient: async () =>
+          ({
+            tenantId: "tenant",
+            xero: {
+              accountingApi: {
+                getInvoice: async () => ({
+                  body: { invoices: [{ invoiceID: INVOICE_ID, status: "AUTHORISED", amountDue: 50, payments: [] }] },
+                }),
+              },
+            },
+          }) as never,
+        callXeroApi: ((call: () => Promise<unknown>) => call()) as never,
+        createXeroPaymentForInvoice: async (input) => {
+          paid.push(input as { amountCents?: number });
+          return "race-4383-xero-payment";
+        },
+        readStripeCaptureDocumentDate: async () => "2026-06-20",
+      },
+    );
+    // The receipt and the officer's alert stand as before: $50 recorded, $30 on no invoice.
+    expect(paid).toEqual([expect.objectContaining({ amountCents: 5_000 })]);
+    const [recorded] = await prisma.xeroSyncOperation.findMany({
+      where: { id: row!.id },
+      select: { status: true, responsePayload: true },
+    });
+    expect(recorded).toMatchObject({ status: "SUCCEEDED", responsePayload: expect.objectContaining({ unrecordedCents: 3_000 }) });
+
+    await prisma.paymentRefund.create({
+      data: {
+        paymentId: PAYMENT_ID,
+        paymentTransactionId: CHANGE_TX_ID,
+        stripeRefundId: "re_race_4383_full",
+        stripePaymentIntentId: CHANGE_INTENT,
+        amountCents: 8_000,
+        currency: "nzd",
+        status: "succeeded",
+        stripeCreatedAt: new Date("2026-06-25T00:00:00.000Z"),
+      },
+    });
+    await prisma.paymentTransaction.update({ where: { id: CHANGE_TX_ID }, data: { refundedAmountCents: 8_000 } });
+    await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: 8_000 } });
+
+    await expect(refundNote.noteLateCaptureRefunds({ paymentId: PAYMENT_ID, paymentIntentId: CHANGE_INTENT })).resolves.toBe("queued");
+    await expect(refundNote.noteLateCaptureRefunds({ paymentId: PAYMENT_ID, paymentIntentId: CHANGE_INTENT })).resolves.toBe("nothing-owed");
+    const notes = await prisma.xeroSyncOperation.findMany({
+      where: { localModel: "Payment", localId: PAYMENT_ID, queueType: "REFUND_CREDIT_NOTE", status: { not: "CANCELLED" } },
+      select: { requestPayload: true },
+    });
+    expect(notes).toEqual([
+      { requestPayload: expect.objectContaining({ refundAmountCents: 5_000, paymentIntentId: CHANGE_INTENT }) },
+    ]);
+  });
+
+  /**
+   * #5220: the change's own invoice, queued waiting on the capture's intent
+   * and then retired by the reaper before the capture landed. `recordPayment:
+   * false` is one raised unpaid, so its capture still needs a receipt.
+   */
+  async function seedRetiredChangeInvoice(options: { priceDiffCents?: number; recordPayment?: boolean } = {}): Promise<string> {
+    const queued = await supplementary.enqueueXeroSupplementaryInvoiceOperation(
+      { bookingId: BOOKING_ID, bookingModificationId: MODIFICATION_ID, priceDiffCents: options.priceDiffCents ?? 8_000, changeFeeCents: 0 },
+      { paymentIntentId: CHANGE_INTENT, waitForConfirmedAdditionalPayment: true, ...(options.recordPayment === false ? { recordPayment: false } : {}) },
+    );
+    const operationId = queued.queueOperationId!;
+    await prisma.xeroSyncOperation.update({
+      where: { id: operationId },
+      data: {
+        status: "CANCELLED",
+        completedAt: new Date("2026-06-20T00:00:00.000Z"),
+        lastErrorCode: "STALE_WAITING_PAYMENT",
+        lastErrorMessage: "retired by the reaper",
+      },
+    });
+    return operationId;
+  }
+
+  /** The keep's claim and plan, then a failure before its commit. */
+  async function rolledBackKeep(): Promise<void> {
+    await expect(
+      prisma.$transaction(async (tx) => {
+        const claimed = await tx.manualRefundTask.updateMany({
+          where: { id: TASK_ID, status: "OPEN" },
+          data: { status: "DISMISSED", completedAt: new Date(), note: "kept (rolled back)" },
+        });
+        expect(claimed.count).toBe(1);
+        await keep.planKeptLateCaptureXeroRecord({
+          manualRefundTaskId: TASK_ID,
+          bookingId: BOOKING_ID,
+          paymentIntentId: CHANGE_INTENT,
+          clubZone: ZONE as never,
+          store: tx,
+        });
+        throw new Error("roll back the keep");
+      }),
+    ).rejects.toThrow("roll back the keep");
+  }
+
+  const billedCents = () =>
+    prisma.$transaction((tx) =>
+      keep.keptCaptureBilledCents(tx, { bookingId: BOOKING_ID, paymentIntentId: CHANGE_INTENT, manualRefundTaskId: TASK_ID, amountCents: 8_000 }),
+    );
+
+  it("#5220 (d): an unpaid revived invoice's receipt is committed with the keep, and a rolled-back keep writes neither", { timeout: 30_000 }, async () => {
+    await seed("OPEN", { marked: false });
+    const operationId = await seedRetiredChangeInvoice({ recordPayment: false });
+    expect(await billedCents()).toBe(8_000);
+
+    await rolledBackKeep();
+    await expect(prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).resolves.toMatchObject({
+      status: "CANCELLED",
+      lastErrorCode: "STALE_WAITING_PAYMENT",
+    });
+    expect(await receiptRows()).toEqual([]);
+
+    // Finish is not called: both writes are the keep's own commit.
+    const plan = await dismiss();
+    const receipts = await receiptRows();
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({ status: "PENDING", requestPayload: expect.objectContaining({ paymentIntentId: CHANGE_INTENT }) });
+    expect(plan).toEqual({ kind: "change-payment", paymentIntentId: CHANGE_INTENT, receiptQueueOperationId: receipts[0]!.id });
+    const invoices = await supplementaryRows();
+    expect(invoices).toEqual([expect.objectContaining({ id: operationId, status: "PENDING", requestPayload: expect.objectContaining({ recordPayment: false }) })]);
+    // INV-PAY-139: the receipt pays the change invoice, its one recorder.
+    const now = await recorder.readCaptureRecorder({
+      bookingId: BOOKING_ID,
+      primaryInvoiceId: INVOICE_ID,
+      paymentIntentId: CHANGE_INTENT,
+      bookingModificationId: MODIFICATION_ID,
+    });
+    expect(now).toMatchObject({ kind: "receipt", targets: [expect.objectContaining({ kind: "CHANGE_INVOICE" }), expect.anything()] });
+    // #4516: the journal's reading of what already bills the capture is unchanged by the keep's writes.
+    expect(await billedCents()).toBe(8_000);
+
+    // A replayed dismissal loses its claim; the repair tool's replay finds the receipt; the release and finish add nothing.
+    await expect(dismiss()).resolves.toEqual({ kind: "lost-claim" });
+    await expect(repairRecord()).resolves.toEqual({ kind: "receipt-queued", queueOperationId: receipts[0]!.id });
+    await expect(release.releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(CHANGE_INTENT)).resolves.toMatchObject({ outcome: "already-released" });
+    await keep.finishKeptLateCaptureXeroRecord(plan as never);
+    expect(await receiptRows()).toHaveLength(1);
+    expect(await supplementaryRows()).toEqual([expect.objectContaining({ id: operationId, status: "PENDING" })]);
+  });
+
+  /**
+   * #5220 (c): the keep's decision racing the webhook's release on one
+   * payment, both orders forced on the change's anchor. The decision runs as
+   * the repair tool runs it, on a task already DISMISSED: the dismissal's own
+   * claim is invisible to a release until it commits, so before then the
+   * release answers `awaiting-decision` and never reaches the anchor. The
+   * confirm route's two arms (`confirm-modification-payment/route.ts`, already
+   * captured and newly confirmed) call this same release, so this race covers
+   * them too. Finish then runs, as the keep's own after-commit step would.
+   */
+  for (const order of ["keep first", "release first"] as const) {
+    for (const recordPayment of [false, true]) {
+      it(`#5220 (c): keep and release race on the anchor, ${order}, invoice ${recordPayment ? "recording the payment" : "raised unpaid"}: one revival and ${recordPayment ? "no" : "one"} receipt`, { timeout: 30_000 }, async () => {
+        await seed("DISMISSED", { marked: false });
+        const operationId = await seedRetiredChangeInvoice(recordPayment ? {} : { recordPayment: false });
+        const holder = await holdLock((tx) => supplementary.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID));
+        const settle = <T,>(promise: Promise<T>) =>
+          promise.then(
+            (value) => ({ status: "fulfilled" as const, value }),
+            (reason: unknown) => ({ status: "rejected" as const, reason }),
+          );
+        let keepOutcome: Awaited<ReturnType<typeof settle<Awaited<ReturnType<typeof repairRecord>>>>> | undefined;
+        let releaseOutcome: Awaited<ReturnType<typeof settle<Awaited<ReturnType<typeof release.releaseXeroSupplementaryInvoiceForCapturedPaymentIntent>>>>> | undefined;
+        try {
+          const startKeep = () => settle(repairRecord());
+          const startRelease = () => settle(release.releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(CHANGE_INTENT));
+          const first = order === "keep first" ? startKeep() : startRelease();
+          expect(await untilQueuedBehind(holder.pid, 1)).toBe(1);
+          const second = order === "keep first" ? startRelease() : startKeep();
+          expect(await untilQueuedBehind(holder.pid, 2)).toBe(2);
+          holder.release();
+          await holder.done;
+          const [a, b] = await Promise.all([first, second]);
+          [keepOutcome, releaseOutcome] = (order === "keep first" ? [a, b] : [b, a]) as [typeof keepOutcome, typeof releaseOutcome];
+        } finally {
+          holder.release();
+          await holder.done.catch(() => undefined);
+        }
+        expect(keepOutcome?.status).toBe("fulfilled");
+        expect(releaseOutcome?.status).toBe("fulfilled");
+        const plan = keepOutcome!.status === "fulfilled" ? keepOutcome!.value : null;
+        const released = releaseOutcome!.status === "fulfilled" ? releaseOutcome!.value : null;
+        // Whoever reached the anchor first revived the row; the other matched nothing.
+        expect(released?.outcome).toBe(order === "keep first" ? "already-released" : "requeued");
+        // The release reviving first leaves a live unpaid invoice, which the keep's evidence routes to the receipt.
+        expect(plan).toMatchObject({ kind: order === "release first" && !recordPayment ? "receipt-queued" : "change-payment" });
+        expect(plan).not.toHaveProperty("refusalAlert");
+        if (recordPayment) expect(plan).not.toHaveProperty("receiptQueueOperationId");
+
+        await keep.finishKeptLateCaptureXeroRecord(plan!);
+        expect(await supplementaryRows()).toEqual([
+          expect.objectContaining({ id: operationId, status: "PENDING", requestPayload: expect.objectContaining({ recordPayment }) }),
+        ]);
+        const receipts = (await receiptRows()).filter((row) => row.status !== "CANCELLED");
+        expect(receipts).toHaveLength(recordPayment ? 0 : 1);
+        if (!recordPayment) {
+          expect(plan).toMatchObject(order === "keep first" ? { receiptQueueOperationId: receipts[0]!.id } : { queueOperationId: receipts[0]!.id });
+        }
+        await expect(prisma.xeroSyncOperation.count({ where: { lastErrorCode: "STALE_WAITING_PAYMENT_CAPTURED", localId: MODIFICATION_ID } })).resolves.toBe(0);
+      });
+    }
+  }
+
+  for (const order of ["keep first", "release first"] as const) {
+    it(`#5220 (c): keep and release race on a revival the capture does not cover, ${order}: one stamp, and only its winner alerts`, { timeout: 30_000 }, async () => {
+      await seed("DISMISSED", { marked: false });
+      const operationId = await seedRetiredChangeInvoice({ priceDiffCents: 20_000 });
+      const holder = await holdLock((tx) => supplementary.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID));
+      let outcomes: [Awaited<ReturnType<typeof repairRecord>>, Awaited<ReturnType<typeof release.releaseXeroSupplementaryInvoiceForCapturedPaymentIntent>>] | undefined;
+      try {
+        const keeping = order === "keep first" ? repairRecord() : null;
+        if (keeping) expect(await untilQueuedBehind(holder.pid, 1)).toBe(1);
+        const releasing = release.releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(CHANGE_INTENT);
+        if (!keeping) expect(await untilQueuedBehind(holder.pid, 1)).toBe(1);
+        const keepingLast = keeping ?? repairRecord();
+        expect(await untilQueuedBehind(holder.pid, 2)).toBe(2);
+        holder.release();
+        await holder.done;
+        outcomes = await Promise.all([keepingLast, releasing]);
+      } finally {
+        holder.release();
+        await holder.done.catch(() => undefined);
+      }
+      const [plan, released] = outcomes!;
+      await expect(prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).resolves.toMatchObject({
+        status: "CANCELLED",
+        lastErrorCode: "STALE_WAITING_PAYMENT_CAPTURED",
+      });
+      // The release's "alerted" is its own email; the keep's is the alert its plan carries to finish. Exactly one.
+      const keepAlerts = plan.kind === "change-payment" && plan.refusalAlert ? 1 : 0;
+      const releaseAlerts = released.outcome === "alerted" ? 1 : 0;
+      expect(keepAlerts + releaseAlerts).toBe(1);
+      expect(order === "keep first" ? keepAlerts : releaseAlerts).toBe(1);
+      expect(await receiptRows()).toEqual([]);
+    });
+  }
+
+  /** #5220: each reason a capture cannot revive its retired change invoice. */
+  const refusals = [
+    { reason: "short-of-ask", arrange: () => seedRetiredChangeInvoice({ priceDiffCents: 20_000 }) },
+    {
+      reason: "invoice-already-linked",
+      arrange: async () => {
+        const id = await seedRetiredChangeInvoice();
+        await prisma.xeroObjectLink.create({
+          data: { localModel: "BookingModification", localId: MODIFICATION_ID, xeroObjectType: "INVOICE", xeroObjectId: "race-4324-other-change-invoice", role: "SUPPLEMENTARY_INVOICE", active: true },
+        });
+        return id;
+      },
+    },
+    {
+      reason: "another-invoice-queued",
+      arrange: async () => {
+        const id = await seedRetiredChangeInvoice();
+        const retired = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id } });
+        await prisma.xeroSyncOperation.create({
+          data: {
+            direction: retired.direction,
+            entityType: retired.entityType,
+            operationType: retired.operationType,
+            queueType: retired.queueType,
+            localModel: retired.localModel,
+            localId: retired.localId,
+            status: "WAITING_PAYMENT",
+            correlationKey: OTHER_ASK_LABEL,
+            idempotencyKey: OTHER_ASK_LABEL,
+            requestPayload: { ...(retired.requestPayload as Record<string, unknown>), paymentIntentId: "pi_race_4324_other_ask", priceDiffCents: 9_000 },
+          },
+        });
+        return id;
+      },
+    },
+  ] as const;
+
+  for (const { reason, arrange } of refusals) {
+    it(`MUTATION #5220: a revival refused (${reason}) is stamped captured in the keep's commit, a rolled-back keep leaves it retired, and only the winning claim alerts`, { timeout: 30_000 }, async () => {
+      await seed("OPEN", { marked: false });
+      const operationId = await arrange();
+
+      await rolledBackKeep();
+      await expect(prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).resolves.toMatchObject({
+        status: "CANCELLED",
+        lastErrorCode: "STALE_WAITING_PAYMENT",
+      });
+
+      // Finish is not called: the stamp is the keep's own commit.
+      const plan = await dismiss();
+      expect(plan).toEqual({
+        kind: "change-payment",
+        paymentIntentId: CHANGE_INTENT,
+        refusalAlert: {
+          operationId,
+          localModel: "BookingModification",
+          localId: MODIFICATION_ID,
+          paymentIntentId: CHANGE_INTENT,
+          reason,
+          wasRetired: true,
+        },
+      });
+      await expect(prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).resolves.toMatchObject({
+        status: "CANCELLED",
+        lastErrorCode: "STALE_WAITING_PAYMENT_CAPTURED",
+      });
+      expect(await receiptRows()).toEqual([]);
+      expect(await billedCents()).toBe(8_000);
+
+      // Nobody alerts again: the release reads the stamp as alerted, and the repair tool's replay carries no alert.
+      await expect(release.releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(CHANGE_INTENT)).resolves.toMatchObject({ outcome: "already-alerted" });
+      await expect(repairRecord()).resolves.toEqual({ kind: "change-payment", paymentIntentId: CHANGE_INTENT });
+      await expect(dismiss()).resolves.toEqual({ kind: "lost-claim" });
+      await expect(prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).resolves.toMatchObject({
+        status: "CANCELLED",
+        lastErrorCode: "STALE_WAITING_PAYMENT_CAPTURED",
+      });
+    });
+  }
+
+  it("#5220 (e): a reopen then an approval after the keep's revival withdraws the revived invoice and its receipt", { timeout: 30_000 }, async () => {
+    await seed("OPEN", { marked: false });
+    const operationId = await seedRetiredChangeInvoice({ recordPayment: false });
+    await dismiss();
+    expect(await supplementaryRows()).toEqual([expect.objectContaining({ id: operationId, status: "PENDING" })]);
+    expect(await receiptRows()).toEqual([expect.objectContaining({ status: "PENDING" })]);
+
+    // Reopen, then approve, as the doors' claims write it: the approval settles inside its own claim.
+    await prisma.manualRefundTask.update({ where: { id: TASK_ID }, data: { status: "OPEN", completedAt: null, note: null } });
+    await prisma.$transaction(async (tx) => {
+      const claimed = await tx.manualRefundTask.updateMany({ where: { id: TASK_ID, status: "OPEN" }, data: { status: "COMPLETED", completedAt: new Date() } });
+      expect(claimed.count).toBe(1);
+      await kept.settleKeptLateCaptureRecordOnApproval({ manualRefundTaskId: TASK_ID, paymentIntentId: CHANGE_INTENT, store: tx });
+    });
+    expect(await supplementaryRows()).toEqual([
+      expect.objectContaining({ id: operationId, status: "CANCELLED" }),
+    ]);
+    await expect(prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).resolves.toMatchObject({
+      lastErrorCode: "KEPT_LATE_CAPTURE_WITHDRAWN",
+    });
+    expect(await receiptRows()).toEqual([
+      expect.objectContaining({ status: "CANCELLED", lastErrorCode: "KEPT_LATE_CAPTURE_WITHDRAWN" }),
+    ]);
+    // A webhook replay now finds a refunded capture: nothing is revived again.
+    await expect(release.releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(CHANGE_INTENT)).resolves.toMatchObject({ outcome: "left-retired" });
+    expect(await supplementaryRows()).toEqual([expect.objectContaining({ id: operationId, status: "CANCELLED" })]);
   });
 
   it("an approval with the receipt still undecided withdraws it", async () => {

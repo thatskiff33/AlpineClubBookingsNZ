@@ -257,20 +257,35 @@ export function captureRefundState(row: {
 }
 
 /**
+ * #4280, #4488 (`INV-PAY-141`): THE KINDS OF BANK CASH a card refund's bank
+ * records hold - "Paid another way" closes and completed card refund
+ * shortfalls - each its own figure, so the audit can show them apart. The
+ * figures' type is built from this list and the floor sums every kind on it,
+ * so a kind added here can never be left out of the floor.
+ */
+const CARD_REFUND_BANK_CASH_KINDS = ["paidAnotherWayCents", "shortfallPaybackCents"] as const;
+export type CardRefundBankCash = Record<(typeof CARD_REFUND_BANK_CASH_KINDS)[number], number>;
+
+/** A payment with no card refund bank record. */
+export const NO_CARD_REFUND_BANK_CASH: Readonly<CardRefundBankCash> = Object.freeze({ paidAnotherWayCents: 0, shortfallPaybackCents: 0 });
+
+/**
  * The least a payment's refunded total can truthfully be (#3640): what it
  * captured, or - if less - its card refunds still counted plus the account
- * credit its booking issued plus (#4280) the bank cash its "Paid another way"
- * closes recorded (`readPaidAnotherWayCloseBankCashByPayment`). One home for
- * two readers that must agree: the card-refund writer's floor on a failed
- * refund's subtraction, and the refunded-total audit's expected figure.
+ * credit its booking issued plus the bank cash its card refund bank records
+ * hold (`readCardRefundBankCashByPayment`): "Paid another way" closes (#4280)
+ * and completed card refund shortfalls (#4488). One home for two readers that
+ * must agree: the card-refund writer's floor on a failed refund's subtraction,
+ * and the refunded-total audit's expected figure.
  */
 export function expectedRefundedFloorCents(input: {
   amountCents: number;
   cardRefundCents: number;
   accountCreditCents: number;
-  paidAnotherWayCents: number;
+  bankCash: Readonly<CardRefundBankCash>;
 }): number {
-  return Math.min(input.amountCents, input.cardRefundCents + input.accountCreditCents + input.paidAnotherWayCents);
+  const bankCashCents = CARD_REFUND_BANK_CASH_KINDS.reduce((sum, kind) => sum + input.bankCash[kind], 0);
+  return Math.min(input.amountCents, input.cardRefundCents + input.accountCreditCents + bankCashCents);
 }
 
 /**

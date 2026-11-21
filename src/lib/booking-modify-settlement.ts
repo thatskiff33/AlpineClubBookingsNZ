@@ -7,7 +7,6 @@ import { settleOrganiserExtraReduction } from "@/lib/organiser-extra-netting";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import {
   BookingStatus,
-  PaymentSource,
   PaymentStatus,
   type Prisma,
 } from "@prisma/client";
@@ -160,6 +159,8 @@ export {
 } from "@/lib/booking-modify-settlement-options";
 import {
   editReductionDisputeHold,
+  editReductionRefundsToCard,
+  hasSettledCardPayment,
   modificationCardRefundTier,
   refundableCashForModification,
   resolveSelectedSettlementAmount,
@@ -224,8 +225,7 @@ export async function applyPaymentAdjustments(
   // #3949 review round 5: the one place a price change is refused mid group cancel (every door settles through here).
   await refuseOrganiserBankChildPriceChangeInGroupCancel(tx, booking, { priceDiffCents, changeFeeCents });
   const inSettledStatus = isSettledBookingStatus(booking.status);
-  const hasSettledPayment =
-    inSettledStatus && hasCapturedPayment(booking.payment);
+  const hasSettledPayment = inSettledStatus && hasCapturedPayment(booking.payment);
   // #3954 (`INV-PAY-120`): every branch settles what the unpaid ask leaves.
   assertReductionReadForNet(reduction, priceDiffCents + changeFeeCents, booking.id);
   assertOptionsSizedAfterUnpaidAsk(settlementOptions, reduction, booking.id, format);
@@ -236,9 +236,9 @@ export async function applyPaymentAdjustments(
   // asked by card, as a card-paid one's; every REDUCTION reads `hasSettledPayment`.
   const zeroDollarCardIncrease =
     netAmountCents > 0 && !hasSettledPayment && canAskCardForIncrease(booking);
-  const hasSucceededPayment =
-    (hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE) ||
-    zeroDollarCardIncrease;
+  // #5212 (`INV-PAY-160`): a REDUCTION is the card's only where Stripe has a record to refund against.
+  const hasSucceededPayment = zeroDollarCardIncrease ||
+    (netAmountCents >= 0 ? hasSettledCardPayment(booking) : await editReductionRefundsToCard(tx, booking));
   // #4299: the one home's answer, or the organiser's combined invoice standing for it.
   const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking) || organiserBilling !== null;
   // #5039 (`INV-MOD-042`): a paid edit's fee is recorded here, on its one

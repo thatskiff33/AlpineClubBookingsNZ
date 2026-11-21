@@ -1,3 +1,4 @@
+import { memberImportIdentityKey } from "@/lib/member-import-identity";
 import { formatDateOnly } from "@/lib/date-only";
 import {
   GENDER_OPTIONS,
@@ -15,7 +16,6 @@ import {
 import {
   appendOversizedFamilyKeyErrors,
   memberImportTypeFamilyErrors,
-  normalizeMemberImportText,
 } from "@/lib/member-csv-import-type-family";
 
 export const MEMBER_IMPORT_MAX_ROWS = 500;
@@ -386,13 +386,6 @@ export const MEMBER_IMPORT_CANCELLED_DATE_FLAG_HINT =
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_ROLES = new Set<string>(MEMBER_IMPORT_ROLE_VALUES);
 const MEMBER_IMPORT_ROLE_LABEL = MEMBER_IMPORT_ROLE_VALUES.join(", ");
-const normalizeImportIdentityName = normalizeMemberImportText;
-const getImportIdentityKey = (row: MemberImportPreviewRow) =>
-  [
-    row.values.email.toLowerCase().trim(),
-    normalizeImportIdentityName(row.values.firstName),
-    normalizeImportIdentityName(row.values.lastName),
-  ].join("\u0000");
 const MONTHS_BY_NAME = new Map([
   ["jan", 1],
   ["january", 1],
@@ -1157,7 +1150,7 @@ export function buildMemberImportPreview(
     if (!email || !EMAIL_PATTERN.test(email)) continue;
     if (!row.values.firstName || !row.values.lastName) continue;
 
-    const identityKey = getImportIdentityKey(row);
+    const identityKey = memberImportIdentityKey(row.values);
     const firstLine = seenIdentities.get(identityKey);
     if (firstLine) {
       row.errors.push(

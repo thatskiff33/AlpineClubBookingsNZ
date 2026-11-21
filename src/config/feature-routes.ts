@@ -124,6 +124,9 @@ const HAND_WRITTEN_FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   {
     flag: "workParties",
     prefixes: [
+      // #5148: the member work party page, under `/dashboard` so the app
+      // reserves no top-level `/work-parties` (owner decision, 15 Nov 2026).
+      "/dashboard/work-parties",
       "/api/admin/work-parties",
       "/api/work-parties",
     ],
@@ -278,6 +281,24 @@ const HAND_WRITTEN_FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
       "/message-board",
       "/api/club-posts",
       "/api/admin/club-posts",
+    ],
+  },
+  {
+    // AI app connections (ALP-653). The module is the only switch: with it off
+    // the MCP endpoint, its OAuth endpoints and discovery documents, the
+    // approval screen and both connection-list APIs all 404, and every route
+    // handler re-checks the flag itself so the gate does not live only here.
+    //
+    // The admin page, /admin/system/ai-connections, is gated through its hub
+    // registry entry's `mcpServer` flag (#4799), like every admin page.
+    flag: "mcpServer",
+    prefixes: [
+      "/connect",
+      "/api/mcp",
+      "/api/member/mcp-grants",
+      "/api/admin/mcp",
+      "/.well-known/oauth-protected-resource",
+      "/.well-known/oauth-authorization-server",
     ],
   },
   {

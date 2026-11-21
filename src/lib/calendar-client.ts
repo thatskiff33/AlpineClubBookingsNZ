@@ -64,6 +64,18 @@ import type { CalendarEventDTO } from "@/lib/calendar-events";
  * from the browser's own clock.
  */
 
+/**
+ * Whether an event carries the repeat marker on the grid and in the day list.
+ * A work party's nights are stored as a daily series only so they move
+ * together (#5148), so they are one event rather than a repeating one, and
+ * the marker is not shown for them; a meeting shows its own icon instead.
+ */
+export function showsRepeatMarker(
+  event: Pick<CalendarEventDTO, "seriesId" | "isMeeting" | "workPartyEventId">,
+): boolean {
+  return Boolean(event.seriesId) && !event.isMeeting && !event.workPartyEventId;
+}
+
 /** The Monday-first column heads, in the club's locale (#3566). */
 export function weekdayLabels(format: ClubDateFormat): string[] {
   return formatClubWeekdayHeaders(format);

@@ -146,6 +146,16 @@ export const PRIVACY_RECIPIENTS = {
     hosts: [],
     privacyUrl: "https://github.com/thatskiff33/AlpineClubServerNZ",
   },
+  "ai-apps": {
+    name: "AI app a member or officer connects",
+    dataSent: "What the connected app's actions return for the person who approved it: their name, email address, phone number, street address and age group; the names, age groups and relationships of their family group's active members; their bookings and drafts, with the name, age group and member status of everyone in each party and the price and note on a booking they made; the refund figures for cancelling their own booking; and their credit balance, subscription status and the notices they can see. In stage 1 an officer's connection reaches only the officer's own records; later officer actions would send other members' information that officer can see. Card details and passwords are never sent.",
+    enablement: "The mcpServer module (off by default), a host on the club's approved list (an app on the person's own computer is always allowed), the members' switch or, for an officer, the separate officers' switch (off by default), and the person approving the app enable the flow. Switching the module or a switch off, removing the host, or disconnecting the app stops new calls; it does not erase what the app's provider already received.",
+    processing: "The person connecting chooses the app; check that provider's terms and privacy notice. The application does not fix a processing country.",
+    memberFacing: true,
+    availability: "club-turns-on",
+    hosts: [],
+    privacyUrl: "https://modelcontextprotocol.io/",
+  },
 } as const satisfies Record<string, PrivacyRecipient>;
 
 /** One recipient can have several credential namespaces; all namespaces must be classified. */

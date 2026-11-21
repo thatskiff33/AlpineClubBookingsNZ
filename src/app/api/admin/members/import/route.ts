@@ -1,3 +1,4 @@
+import { memberImportIdentityKey } from "@/lib/member-import-identity";
 import { NextRequest, NextResponse } from "next/server";
 import type { AgeTier, Gender, Title } from "@prisma/client";
 import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
@@ -85,18 +86,6 @@ function getImportRowNumber(row: ImportRow, rowIndex: number) {
 function getImportColumnContext(row: ImportRow, fieldKey: string) {
   const label = row.sourceColumnLabels?.[fieldKey];
   return label ? ` (column ${label})` : "";
-}
-
-function normalizeImportIdentityName(value: string) {
-  return value.trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-function getImportIdentityKey(identity: ImportIdentity) {
-  return [
-    identity.email,
-    normalizeImportIdentityName(identity.firstName),
-    normalizeImportIdentityName(identity.lastName),
-  ].join("\u0000");
 }
 
 function normalizeImportDateField(
@@ -268,7 +257,7 @@ export async function POST(req: NextRequest) {
         ...(existingMembersByEmail.get(email) ?? []),
         normalizedMember,
       ]);
-      return getImportIdentityKey(normalizedMember);
+      return memberImportIdentityKey(normalizedMember);
     }),
   );
   const acceptedIdentityKeys = new Set<string>();
@@ -337,7 +326,7 @@ export async function POST(req: NextRequest) {
       firstName: names.firstName,
       lastName: names.lastName,
     };
-    const identityKey = getImportIdentityKey(identity);
+    const identityKey = memberImportIdentityKey(identity);
 
     if (existingIdentityKeys.has(identityKey)) {
       results.skipped++;

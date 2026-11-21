@@ -421,6 +421,12 @@ modules identify today's doors; their future writes converge on section 3's API.
 | R25 | Ask raised/replaced/carried/withdrawn; intent setup/cancel; reminder; invoice delivery/retry; source-only name/date correction | No new money legs. Instruments name obligations and collectible slices; withdrawing an instrument leaves debt. A real price change is R02. Preserve #3340's collection scope: no automatic catch-up billing of historical under-collection, no card ask for a bank invoice already collecting it. |
 | R26 | Historical import, back-post and correction | Link existing booking lines, credit lots, subscription snapshots, provider receipts and refund facts once. Reconstruct exact event pairs where evidence allows; otherwise an approved, explicitly labelled opening event uses Opening control. Unknown cents/attribution remain a blocking finding, never zero or an invented receipt. Corrections reverse/re-post with provenance; historical export coverage is adopted, not resent. |
 
+Paid future bookings carried over by #5005 post R01 and R08 through the manual
+cash settlement, with an import row identifying their adopted history
+(`INV-PAY-161`). They are never rendered to Xero by R26 back-posting or M13's
+future document renderer: the club already received the money elsewhere.
+No Opening-control posting is invented here; M9 owns historical adoption.
+
 The application store enforces conservation in the same locked transaction:
 net applications cannot exceed a source receipt, credit lot, refund obligation
 or source capture's refundable cash, and every application refers to the
@@ -820,7 +826,9 @@ Every original triage scenario remains an executable acceptance requirement,
 even if a narrow fix has since shipped. This table is the complete 33-row list
 from [#4461's test-list comment](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4461#issuecomment-6415525566),
 which [#4451](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4451)
-identifies as “removed by the ledger switch”. A rule makes the erroneous
+identifies as “removed by the ledger switch”, plus
+[#4488](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4488), added
+later (owner, 28 Oct and 11 Nov 2026). A rule makes the erroneous
 representation impossible only when its writer, constraints, source links and
 rendering are active and its test passes; this design closes no bug by itself.
 
@@ -849,7 +857,7 @@ rendering are active and its test passes; this design closes no bug by itself.
 | #4370 | Later Xero note cannot make failed card refund count again | R13/R23 and ownership: Stripe owns card cash; Xero changes coverage/applications only |
 | #4380 | Late 5000-cent capture/refund on cancelled booking leaves matching Xero pair, net zero | R24/R06/R12: matched source pair and per-capture manifest; no unrelated cancellation invoice credit |
 | #4381 | Paid-another-way close records kept 8000-cent change once on invoice already billing it | R24/R14: distinct retained receipt and bank hand-back with exact obligation/coverage; no repeated change revenue |
-| #4382 | Kept capture survives a failure after the keep step | R24: keep decision, posting and export intent are atomic; durable manifest resumes missing provider step |
+| #4382 | Kept capture survives a failure after the keep step | R24: keep decision, posting and export intent are atomic; durable manifest resumes missing provider step. The current queue (#5010, #5220, 21 Nov 2026) commits a retired change invoice's revival, its unpaid receipt and a refusal's captured stamp with the keep; only the officer's email follows the commit, best-effort, so a crash between them leaves the stamp unannounced |
 | #4383 | Refund note for 8000-cent capture with 5000 recorded never exceeds recorded slice | R12 and section 7: source-specific 5000 coverage cap; remaining receipt/refund pair requires its own proved export |
 | #4391 | Voided request note reverses once and asks the treasurer once | R23: unique reversal of provider-owned application/legacy fact and unique conflict task; independent cash is not silently reversed (section 10) |
 | #4413 | Repaired invoice for unpaid supplementary request reaches Xero unpaid | R02/R25/R07: charge exists, receipt does not; rendering cannot infer payment from booking status |
@@ -859,6 +867,7 @@ rendering are active and its test passes; this design closes no bug by itself.
 | #4444 | Card refunded display retains earlier edit credit after any later Xero event | R12/R23: compatibility display sums distinct cash and application components; later snapshot cannot overwrite another source's posting |
 | #4447 | Removing an allocation lowers its contribution to refunded display | R23: exact application reversal; independent cash-return component remains unchanged |
 | #4449 | Cancel racing bank settle sees invoice-correction contribution | R04/R07/R23: common locking/claim transaction commits source application, projection and settlement together; cancel re-reads after locking |
+| #4488 | Card refund shortfall paid back by bank survives the lost card refund failing late | R05/R12/R13/R14: the shortfall's debt is raised at the cancel and paid by its R14 from B's receipt, the dead card refund's debt by its Paid another way close; the late refund's R12 posts unapplied and its R13 reverses it once, reopening neither debt, and the card capture funds no further refund (`member-money-card-shortfall-late-refund.realdb.test.ts`) |
 
 ## 10. Decisions
 

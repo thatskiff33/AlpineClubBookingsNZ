@@ -9,12 +9,19 @@
  * recount's subtraction of failures no reversal answers
  * (`readFailedCardRefundRecountCentsByPayment`) both read it.
  *
+ * #4383 review (money M1): less the card notes raised before #4383 above what
+ * a capped late-capture receipt recorded (`readLateCapturePreCapOverNoteCents`).
+ * Those over-notes are the officer's to correct in Xero, never refunds that
+ * failed later: read as such, a close would reverse them and the recount take
+ * them off, and Xero would be corrected twice.
+ *
  * Signed: negative where the notes cover less than the cash. Null when a note
  * an officer resolved by hand has an amount that cannot be read; callers then
  * decide nothing from it.
  */
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { readLateCapturePreCapOverNoteCents } from "@/lib/late-capture-card-notes-in-xero";
 import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
 import { readResolvedRefundCreditNoteCoverage, sumRefundCreditNoteCoverageCents } from "@/lib/xero-resolved-in-xero-fences";
 
@@ -26,5 +33,6 @@ export async function readRefundNoteCoverageAboveCashCents(
   if (resolved.unreadableOperationIds.length > 0) return null;
   const coveredCents = await sumRefundCreditNoteCoverageCents(payment.id, resolved, db);
   const { eligibleCashCents } = await resolveRefundNoteEligibleCash(payment, db);
-  return coveredCents - eligibleCashCents;
+  const preCapOverNoteCents = await readLateCapturePreCapOverNoteCents(payment.id, db);
+  return coveredCents - eligibleCashCents - preCapOverNoteCents;
 }

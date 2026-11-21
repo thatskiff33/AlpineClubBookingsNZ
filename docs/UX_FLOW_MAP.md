@@ -60,7 +60,7 @@ Journey: Fill in personal details and nominators, submit the application, and fo
 
 Screen: `/dashboard`.
 
-Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay. Next Stay, draft and Recent Bookings rows name a booking's lodge once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). The Lodge Kiosk card offers Open Kiosk and, while the roster module is on, Who's at the lodge.
+Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay. Next Stay, draft and Recent Bookings rows name a booking's lodge once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). The Lodge Kiosk card offers Open Kiosk and, while the roster module is on, Who's at the lodge. Members see a Work Parties card listing upcoming work parties, when there is at least one; each opens its work party page. The Events card shows a work party once, and only to members.
 
 [Guide](user-guide/README.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -68,7 +68,7 @@ Journey: Read upcoming stays and account notices, then open a booking or choose 
 
 Screen: `/book`.
 
-Journey: Choose lodge and nights, add guests, review the price and rules, then confirm and follow the offered payment step. If a rule blocks the stay, use the available exception-request journey. A refused confirm, draft or waitlist join, or a Continue from the guests step that is stopped, moves the page and focus to the explanation above the steps, with any button that fixes it (or a link down to the Booking Officer request, when one is offered); a full lodge does the same with its waitlist offer. Work survives profile detours and refreshes in the same tab; expired dates are dropped. Submit, waitlist join, draft save, exception request, sign-out or Start again clears it.
+Journey: Choose lodge and nights, add guests, review the price and rules, then confirm and follow the offered payment step. If a rule blocks the stay, use the available exception-request journey. A refused confirm, draft or waitlist join, or a Continue from the guests step that is stopped, moves the page and focus to the explanation above the steps, with any button that fixes it (or a link down to the Booking Officer request, when one is offered); a full lodge does the same with its waitlist offer. Work survives profile detours and refreshes in the same tab; expired dates are dropped. A Join Work Party visit does not bring back older kept work; once its dates are filled in it is kept itself, so a detour returns to the Join booking, and a Join that fills nothing in leaves the older work for the next visit. Submit, waitlist join, draft save, exception request, sign-out or Start again clears it.
 
 [Guide](user-guide/booking-a-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -119,6 +119,12 @@ Journey: Use the section rail to open personal details, sign-in security, notifi
 
 [Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
+### Connect an AI app
+
+Screen: `/connect/authorize`; `/profile`.
+
+[Guide](guides/mcp-server.md)
+
 ### Family and household
 
 Screen: Family Group and Partner sections of `/profile`.
@@ -142,6 +148,14 @@ Screen: `/message-board`.
 Journey: When enabled, read recent posts, page to older posts, or compose a message. Review whether sharing with other clubs is available and selected before posting.
 
 [Guide](user-guide/the-message-board.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Work party page
+
+Screen: `/dashboard/work-parties/{id}`.
+
+Journey: Members only. Open a work party from the dashboard's Work Parties card or its calendar entry, read its nights, lodge, discount and description, then choose Join Work Party. That opens Book a Stay with the dates, the lodge and "I am attending a working bee" filled in; choose guests and pay as usual. A finished work party has no Join button.
+
+[Guide](guides/work-parties.md#members-join-a-work-party) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Order food and food orders
 
@@ -495,7 +509,7 @@ Screen: `/admin/calendar`.
 
 Shows: Club events and the controls for managing them.
 
-Journey: Choose a date range, inspect events, and open an event to manage it.
+Journey: Choose a date range, inspect events, and open an event to manage it. A work party's entries show to members only and open read-only, with a link to Work Parties, where they are changed.
 
 [Guide](guides/calendar.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -603,9 +617,9 @@ Journey: Choose a lodge and day, inspect arrivals and departures, stage roster e
 
 Screen: `/admin/work-parties`.
 
-Shows: Work-party dates, participation and attendance.
+Shows: Work-party dates, participation and attendance, and whether each is on the Events Calendar.
 
-Journey: Inspect a work party, its participants and attendance before recording changes.
+Journey: Inspect a work party, its participants and attendance before recording changes. Creating one adds it to the Events Calendar when that module is on; Add to calendar puts an older one there, says so in a status line that takes focus, and goes.
 
 [Guide](guides/work-parties.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -725,11 +739,21 @@ Journey: Open the linked calendar event and join or manage its video meeting.
 
 Screen: `/admin/xero`.
 
-Shows: Connection setup, the health snapshot (including credit used in Xero outside the app), the GST/tax treatment schedule, accounting operations and failure details.
+Shows: Connection setup, the health snapshot (including credit used in Xero outside the app), the GST/tax treatment schedule and tax category mapping, accounting operations and failure details.
 
 Journey: Inspect connection and operations status; open a failed item to follow its documented recovery.
 
 [Guide](guides/xero.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Xero Unallocated Payments — xero
+
+Screen: `/admin/xero/unallocated-payments`.
+
+Shows: Open Xero overpayments and prepayments: date, balance, member or "No member linked", contact link (#5204).
+
+Journey: Read the nightly list; finance edit can Refresh from Xero.
+
+[Guide](guides/xero.md#unallocated-payments) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ## Admin content
 
@@ -824,6 +848,12 @@ Shows: Assistant configuration, usage and spending controls.
 Journey: Read usage and the spend cap before changing the assistant settings.
 
 [Guide](guides/ai-help.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### AI app connections — ai-connections
+
+Screen: `/admin/ai-connections`.
+
+[Guide](guides/mcp-server.md)
 
 ### Audit Log — audit-log
 

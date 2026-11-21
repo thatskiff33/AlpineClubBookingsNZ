@@ -708,6 +708,7 @@ model Member {
   twoFactorSessionChallenges                 TwoFactorSessionChallenge[]
   sessionReauthChallenges                    SessionReauthChallenge[]
   webAuthnCredentials                        WebAuthnCredential[]
+  mcpGrants                                  McpGrant[]
   webAuthnChallenges                         WebAuthnChallenge[]
   subscriptions                              MemberSubscription[]
   memberSubscriptionsManuallyPaid            MemberSubscription[]                    @relation("MemberSubscriptionManualPaidBy")
@@ -2201,6 +2202,7 @@ model Booking {
   linkedBookings              Booking[]                       @relation("BookingGroup")
   guests                      BookingGuest[]
   payment                     Payment?
+  importRow                   BookingImportRow?
   choreAssignments            ChoreAssignment[]
   // #3826 (epic #3813, C1): one redemption PER PROMO CODE, not per booking.
   // Read it only through `bookingPromoRedemptions()` (booking-promo-redemptions.ts).
@@ -2278,6 +2280,84 @@ enum BookingEventType {
   CANCELLED
   REFUNDED
   CREDITED
+}
+
+// #5005 (child A): a club moving in imports the fully paid future bookings it
+// already sold, one lodge per batch (`INV-PAY-161`, `INV-CAP-040`). The batch
+// is found again by `batchKey`, a hash of the lodge and the file's normalised
+// rows, so the same content resumes the same batch rather than creating its
+// bookings twice. The uploaded file itself is never stored: a row keeps the
+// old system's Booking Ref, its first line number, its totals and its outcome,
+// and no name or email (`INV-PRIV-011`). Actor ids are plain columns, as the
+// audit log keeps them, so no `Member` relation needs a merge rule.
+model BookingImportBatch {
+  id                  String                   @id @default(cuid())
+  lodgeId             String
+  batchKey            String                   @unique
+  status              BookingImportBatchStatus @default(OPEN)
+  // The digest of the preview the confirming officer saw.
+  digest              String
+  // File totals: every booking in the file, imported or refused.
+  bookingCount        Int
+  guestCount          Int
+  guestNightCount     Int
+  amountCents         Int
+  confirmedByMemberId String
+  confirmedAt         DateTime                 @default(now())
+  completedAt         DateTime?
+  // Reversal (#5005 child B) fills these.
+  reversedByMemberId  String?
+  reversedAt          DateTime?
+
+  lodge Lodge              @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+  rows  BookingImportRow[]
+
+  @@index([lodgeId, confirmedAt])
+}
+
+enum BookingImportBatchStatus {
+  OPEN
+  COMPLETED
+  REVERSED
+}
+
+// One booking of an import batch (all the file rows sharing one Booking Ref).
+// A Booking Ref imports once per lodge across every batch: the raw-SQL partial
+// unique index `BookingImportRow_imported_lodgeId_bookingRef_unique` covers
+// IMPORTED rows only, so a refused or reversed row frees the ref for a
+// corrected file. Listed in `prisma/partial-unique-indexes.tsv`.
+model BookingImportRow {
+  id              String                 @id @default(cuid())
+  batchId         String
+  // Copied from the batch so the partial unique index can name it.
+  lodgeId         String
+  bookingRef      String
+  firstLineNumber Int
+  status          BookingImportRowStatus @default(PENDING)
+  // Plain-language reason, never a name or email (`INV-PRIV-011`), and the
+  // planner's code for it (`BookingImportRefusalCode` in
+  // src/lib/booking-import/plan.ts), which the refused totals group by.
+  refusalReason   String?
+  refusalCode     String?
+  amountCents     Int
+  guestCount      Int
+  guestNightCount Int
+  bookingId       String?                @unique
+  createdAt       DateTime               @default(now())
+  decidedAt       DateTime?
+
+  batch   BookingImportBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  booking Booking?           @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+
+  @@unique([batchId, bookingRef])
+  @@index([lodgeId, bookingRef])
+}
+
+enum BookingImportRowStatus {
+  PENDING
+  IMPORTED
+  REFUSED
+  REVERSED
 }
 
 model BookingEvent {
@@ -3901,6 +3981,10 @@ model WorkPartyEvent {
 
   promoCode PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
   lodge     Lodge?    @relation(fields: [lodgeId], references: [id], onDelete: SetNull)
+  // The Events Calendar entries this work party manages (#5148): one
+  // all-day occurrence per night of the window, as one series. Written only by
+  // src/lib/calendar-work-party-entries.ts (replaceWorkPartyCalendarEvents).
+  calendarEvents CalendarEvent[]
 
   @@index([active])
   @@index([startDate, endDate])
@@ -4720,18 +4804,18 @@ model XeroSyncOperation {
   lastErrorCode          String?
   lastErrorMessage       String?
   requestPayload         Json?
-  // Denormalized copy of the outbox discriminator, captured once at enqueue in
+  // The outbox discriminator, captured once at enqueue in
   // `startXeroSyncOperation` and never updated afterward (#1271, item 3 of
-  // #1208). Dispatch reads queueType from `requestPayload` (not this column),
-  // BEFORE handlers may overwrite `requestPayload` -- so after dispatch this
-  // column can diverge from the payload (some handlers, e.g. the booking-invoice
-  // create/update, rewrite requestPayload wholesale and drop queueType). That is
-  // expected and safe: the pending-outbox scan (processQueuedXeroOutboxOperations,
-  // #1272) filters on this column only for rows still awaiting dispatch (PENDING /
-  // WAITING_PAYMENT), where it faithfully mirrors the enqueue-time queueType, so
-  // post-dispatch divergence is never observed. Because that scan depends on it,
-  // the column MUST remain immutable after enqueue. Null for REQUEUE, BACKFILL,
-  // inbound, and any other row enqueued with no queueType.
+  // #1208). Handlers may overwrite `requestPayload` with their execution request
+  // (e.g. the booking invoice and refund note rewrite it wholesale and drop
+  // queueType), so after dispatch the payload can lose it while this column
+  // keeps it. A row CAN come back to PENDING after that: a pre-HTTP cooldown
+  // give-back or an officer's Retry (#2423). So the pending-outbox scan
+  // (processQueuedXeroOutboxOperations, #1272) selects AND claims on this
+  // column, and every PENDING writer leaves a queued request for it
+  // (`returnOutboxRowToPending`, #5228; docs/xero/ARCHITECTURE.md). Because both
+  // depend on it, the column MUST remain immutable after enqueue. Null for
+  // REQUEUE, BACKFILL, inbound, and any other row enqueued with no queueType.
   queueType              String?
   // The creation-time Xero-invoice-email delivery instruction (#2929, MAD epic
   // #2725), captured once at enqueue and, like `queueType` above, NEVER updated
@@ -5602,6 +5686,12 @@ model ClubModuleSettings {
   // as a defaulted column because every read narrows to
   // CLUB_MODULE_SETTINGS_COLUMN_SELECT.
   skifieldWhakapapa       Boolean  @default(false)
+  // AI app connections (ALP-653): the MCP endpoint at /api/mcp, its OAuth
+  // endpoints, the approval screen and the member and admin connection lists.
+  // Default OFF so a club opts in: a connection sends the connected person's
+  // club data to their AI app's provider. Safe to add as a defaulted column
+  // because every read narrows to CLUB_MODULE_SETTINGS_COLUMN_SELECT.
+  mcpServer               Boolean  @default(false)
   updatedByMemberId       String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @default(now()) @updatedAt
@@ -5686,6 +5776,7 @@ model Lodge {
   rooms                    LodgeRoom[]
   lockers                  Locker[]
   seasons                  Season[]
+  bookingImportBatches     BookingImportBatch[]
   bookings                 Booking[]
   bookingLedgerLines       BookingLedgerLine[]
   choreTemplates           ChoreTemplate[]
@@ -6149,6 +6240,27 @@ model ClubTaxSettings {
   updatedByMemberId  String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @default(now()) @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
+// The club's tax categories mapped to its own Xero organisation's tax rates
+// (#5209; INV-CONFIG-007). Sales tax on income is NOT stored here: it is the
+// dated ClubTaxSettings schedule above, so the enum has no income value and the
+// fact cannot be recorded twice. One row per remaining category, undated, and
+// scoped to the Xero organisation it was chosen in: a row whose xeroTenantId is
+// not the connected tenant reads as unmapped. An absent row is an unmapped
+// category, which a registered club's line in that category refuses to send.
+// Written only by src/lib/xero-tax-category-write.ts (Full Admin, audited);
+// updatedByMemberId is that admin, kept as attribution, with no foreign key.
+model XeroTaxCategoryMapping {
+  id                String          @id @default(cuid())
+  category          XeroTaxCategory @unique
+  taxType           String
+  xeroTenantId      String
+  updatedByMemberId String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @default(now()) @updatedAt
 
   @@index([updatedByMemberId])
 }
@@ -7882,6 +7994,10 @@ model MemberCredit {
   // spendable lot: the release is a positive row, and without this marker the
   // planner would count it as the member's own money and mint a Xero note for it.
   outsideSpendConvergedAt     DateTime?
+  // #5204: the Xero overpayment or prepayment this credit is backed by. Set on a
+  // lot converted from one (no credit note is ever minted for it) and on a
+  // deduction of such credit. Null on every other row.
+  xeroCashCreditId            String?
   // #4988: the opening-credit batch that posted (or reversed) this row. Null on
   // every other credit. Nullable, so the previous colour keeps inserting rows
   // that do not mention it.
@@ -7903,11 +8019,20 @@ model MemberCredit {
   // allocated to booking invoices as Xero credit notes. Empty for negative
   // BOOKING_APPLIED rows and for lots never used to reduce an IB invoice.
   noteAllocations           MemberCreditNoteAllocation[]  @relation("CreditLotAllocations")
+  xeroCashCredit            XeroCashCredit?               @relation(fields: [xeroCashCreditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // #5204: slices of THIS backed lot allocated to booking invoices as Xero
+  // overpayment or prepayment allocations, and the restorations that hand
+  // a slice back.
+  cashAllocations           MemberCreditCashAllocation[]  @relation("CreditLotCashAllocations")
+  cashReturns               MemberCreditCashReturn[]      @relation("CreditCashReturnRestoration")
   openingCreditBatch        OpeningCreditBatch?           @relation(fields: [openingCreditBatchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([memberId])
   @@index([requestedById])
   @@index([approvedById])
+  @@index([xeroCashCreditId])
+  // #5204: the target of a cash slice's (lot, document) foreign key.
+  @@unique([id, xeroCashCreditId], map: "MemberCredit_id_xeroCashCreditId_key")
   @@index([sourceBookingId])
   @@index([appliedToBookingId])
   @@index([openingCreditBatchId])
@@ -7986,6 +8111,10 @@ model AdminCreditAdjustmentRequest {
   description    String
   /// Null on a deduction, and on a grant requested before an account was chosen.
   grantAccount   AdminCreditGrantAccount?
+  /// #5204: the Xero overpayment or prepayment a conversion turns into credit,
+  /// or whose credit a deduction takes. Never set with `grantAccount`
+  /// (CHECK `admin_credit_request_backing_or_grant_account`).
+  xeroCashCreditId String?
   idempotencyKey String
   status         AdminCreditAdjustmentRequestStatus @default(PENDING)
   requestedById  String
@@ -7998,11 +8127,104 @@ model AdminCreditAdjustmentRequest {
   requestedBy    Member        @relation("AdminCreditAdjustmentRequestsRequested", fields: [requestedById], references: [id])
   reviewedBy     Member?       @relation("AdminCreditAdjustmentRequestsReviewed", fields: [reviewedById], references: [id], onDelete: SetNull)
   approvedCredit MemberCredit? @relation("ApprovedAdminCreditAdjustment")
+  xeroCashCredit XeroCashCredit? @relation(fields: [xeroCashCreditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([requestedById, idempotencyKey])
   @@index([memberId, status, createdAt])
   @@index([requestedById, createdAt])
   @@index([reviewedById, createdAt])
+  @@index([xeroCashCreditId])
+}
+
+// ---------------------------------------------------------------------------
+// Xero cash credits: overpayments and prepayments (#5204)
+// ---------------------------------------------------------------------------
+
+enum XeroCashCreditKind {
+  OVERPAYMENT
+  PREPAYMENT
+}
+
+/// #5204: the app's snapshot of one receive overpayment or receive prepayment
+/// in Xero: money a contact paid the club that no invoice has taken yet. Written
+/// only by the refresh in `src/lib/xero-cash-credits.ts`, from a complete read of
+/// every page of both kinds; a document missing from that read is left with a
+/// zero balance, never deleted, because credit may still name it. `syncedAt` is
+/// when the read that wrote the row began, and a refresh writes a row only when
+/// its read began later, so an older read never overwrites a newer one. The
+/// member is not stored: it is the member whose `xeroContactId` is this
+/// document's contact, matched when the queue is read.
+model XeroCashCredit {
+  id             String             @id @default(cuid())
+  kind           XeroCashCreditKind
+  xeroDocumentId String             @unique
+  xeroContactId  String
+  /// ISO 4217 code Xero gave the document, e.g. `NZD`. Cents are in this
+  /// currency, which need not be the club's.
+  currencyCode   String
+  documentDate   DateTime?          @db.Date
+  totalCents     Int
+  remainingCents Int
+  syncedAt       DateTime
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  backedCredits      MemberCredit[]
+  conversionRequests AdminCreditAdjustmentRequest[]
+  cashAllocations    MemberCreditCashAllocation[]
+
+  @@index([xeroContactId])
+  @@index([remainingCents])
+}
+
+/// #5204: one slice of a backed credit lot allocated against one booking's Xero
+/// invoice from the lot's overpayment or prepayment. Shaped like
+/// `MemberCreditNoteAllocation`: the booking is a bare scalar, one slice per
+/// (lot, booking). `heldCents` is allocated in Xero (or about to be);
+/// `returningCents` is on its way back to the document after a cancel or hold
+/// expiry; `generation` keys each allocation request so a re-spend after a
+/// return never replays an old one. Written from the spend work (a later
+/// release); this release only creates the table.
+model MemberCreditCashAllocation {
+  id                 String   @id @default(cuid())
+  memberCreditId     String
+  xeroCashCreditId   String
+  appliedToBookingId String
+  heldCents          Int
+  returningCents     Int      @default(0)
+  generation         Int      @default(1)
+  xeroAllocationId   String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  // A slice draws on its lot's own document: the lot is referenced by
+  // (id, xeroCashCreditId), so a slice naming another document, or hanging off
+  // an unbacked lot, cannot be written.
+  memberCredit   MemberCredit             @relation("CreditLotCashAllocations", fields: [memberCreditId, xeroCashCreditId], references: [id, xeroCashCreditId], onDelete: Restrict, onUpdate: Restrict)
+  xeroCashCredit XeroCashCredit           @relation(fields: [xeroCashCreditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  returns        MemberCreditCashReturn[]
+
+  @@unique([memberCreditId, appliedToBookingId], map: "MemberCreditCashAllocation_lot_booking_key")
+  @@index([appliedToBookingId])
+  @@index([xeroCashCreditId])
+}
+
+/// #5204: which slice a credit restoration (a positive `MemberCredit` row
+/// written on cancel or hold expiry) handed back, and how much. One row per
+/// (restoration, slice). Written from the return work (a later release).
+model MemberCreditCashReturn {
+  id                  String   @id @default(cuid())
+  restorationCreditId String
+  cashAllocationId    String
+  amountCents         Int
+  generation          Int
+  createdAt           DateTime @default(now())
+
+  restorationCredit MemberCredit               @relation("CreditCashReturnRestoration", fields: [restorationCreditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  cashAllocation    MemberCreditCashAllocation @relation(fields: [cashAllocationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([restorationCreditId, cashAllocationId], map: "MemberCreditCashReturn_restoration_slice_key")
+  @@index([cashAllocationId])
 }
 
 // ---------------------------------------------------------------------------
@@ -8588,8 +8810,17 @@ model CalendarEvent {
   detachedFromSeries Boolean              @default(false)
   series             CalendarEventSeries? @relation(fields: [seriesId], references: [id], onDelete: SetNull)
 
+  // Work party this entry belongs to (#5148). Null = an ordinary calendar
+  // event. A linked entry is managed from Work Parties: the calendar API refuses
+  // to edit or delete it, and it is hidden while its work party is inactive.
+  // Club-wide like every calendar row; the work party carries the lodge
+  // (docs/multi-lodge/lodge-scoping-contract.md).
+  workPartyEventId String?
+  workPartyEvent   WorkPartyEvent? @relation(fields: [workPartyEventId], references: [id], onDelete: Cascade)
+
   @@index([startsAt])
   @@index([seriesId])
+  @@index([workPartyEventId])
 }
 
 // How a recurring calendar event repeats. The weekday / day-of-month / nth
@@ -9705,6 +9936,140 @@ model PrivacyHostingSettings {
   updatedAt         DateTime @default(now()) @updatedAt
 
   @@index([updatedByMemberId])
+}
+
+// ---------------------------------------------------------------------------
+// AI app connections (ALP-653, INV-MCP). A member approves an AI app (an MCP
+// client) to act as them through /api/mcp. All five models are club-wide, not
+// lodge-scoped: a connection is a way of signing in, and a sign-in has no lodge.
+// ---------------------------------------------------------------------------
+
+/// The most a connection may do. READ runs view-only actions; READ_WRITE also
+/// runs actions that change something.
+enum McpGrantScope {
+  READ
+  READ_WRITE
+}
+
+/// ACTIVE until the member or an officer removes it (REVOKED) or the sign-in
+/// that approved it ends (EXPIRED). Neither end state returns to ACTIVE.
+enum McpGrantStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum McpTokenKind {
+  ACCESS
+  REFRESH
+}
+
+/// An AI app that registered itself (OAuth dynamic client registration). A
+/// public client: it holds no secret, so PKCE and the exact redirect address
+/// are what bind an authorisation to it.
+model McpClient {
+  id           String        @id @default(cuid())
+  name         String        @db.VarChar(120)
+  /// Exact-match redirect addresses, each checked against the approved-app
+  /// list when registered and again when a member approves.
+  redirectUris String[]
+  createdAt    DateTime      @default(now())
+  grants       McpGrant[]
+  authCodes    McpAuthCode[]
+
+  @@index([createdAt])
+}
+
+/// One member's approval of one AI app. The connection signs in as the member
+/// through the same session refresh a browser session uses, measured from
+/// `sessionIssuedAt`, so it ends when that sign-in would.
+model McpGrant {
+  id                String         @id @default(cuid())
+  memberId          String
+  clientId          String
+  scope             McpGrantScope  @default(READ)
+  status            McpGrantStatus @default(ACTIVE)
+  /// When the browser session that approved this connection signed in. Never
+  /// moved forward: session max age and revocation are measured from it.
+  sessionIssuedAt   DateTime
+  /// Whether that browser session had passed its two-factor challenge.
+  twoFactorVerified Boolean        @default(false)
+  /// Why the connection ended, for the member and admin lists.
+  endedReason       String?        @db.VarChar(40)
+  endedAt           DateTime?
+  lastUsedAt        DateTime?
+  createdAt         DateTime       @default(now())
+  member            Member         @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  client            McpClient      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  tokens            McpToken[]
+  authCodes         McpAuthCode[]
+
+  @@index([memberId, status])
+  @@index([clientId])
+  @@index([status, createdAt])
+}
+
+/// A single-use authorisation code, stored as a SHA-256 hash and bound to the
+/// client, its redirect address and its PKCE challenge.
+model McpAuthCode {
+  id            String    @id @default(cuid())
+  codeHash      String    @unique
+  grantId       String
+  clientId      String
+  redirectUri   String
+  codeChallenge String
+  expiresAt     DateTime
+  usedAt        DateTime?
+  createdAt     DateTime  @default(now())
+  grant         McpGrant  @relation(fields: [grantId], references: [id], onDelete: Cascade)
+  client        McpClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([grantId])
+  @@index([clientId])
+  @@index([expiresAt])
+}
+
+/// An access or refresh token, stored as a SHA-256 hash. A refresh token is
+/// single-use: `usedAt` is stamped when it is exchanged, and presenting it
+/// again revokes the whole connection.
+model McpToken {
+  id        String       @id @default(cuid())
+  tokenHash String       @unique
+  kind      McpTokenKind
+  grantId   String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime     @default(now())
+  grant     McpGrant     @relation(fields: [grantId], references: [id], onDelete: Cascade)
+
+  @@index([grantId])
+  @@index([expiresAt])
+}
+
+/// The club's AI-connection policy. A singleton; a missing row reads as these
+/// defaults. Members may connect, officers may not until the club says so,
+/// and a connection is view-only until the club raises `maxScope`.
+model McpSettings {
+  id                   String        @id @default("default")
+  membersMayConnect    Boolean       @default(true)
+  officersMayConnect   Boolean       @default(false)
+  maxScope             McpGrantScope @default(READ)
+  /// Hosts an AI app's redirect address may use. An app on the person's own
+  /// computer (a loopback address) is always allowed.
+  allowedRedirectHosts String[]      @default(["claude.ai", "claude.com", "chatgpt.com"])
+  updatedByMemberId    String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @default(now()) @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
+// The tax categories a club maps to its Xero organisation's tax rates (#5209).
+// Sales tax on income has no value: it is the ClubTaxSettings schedule.
+enum XeroTaxCategory {
+  SALES_TAX_ON_EXPENSES
+  EXEMPT
+  ZERO_RATED
 }
 
 /// Food orders (fork #121). Whether an order is open or the food arrived.

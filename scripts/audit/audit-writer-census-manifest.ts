@@ -1425,6 +1425,9 @@ export const LODGE_GATED_ADMIN_CATEGORIES_2765: Readonly<
   "src/app/api/admin/work-parties/route.ts::POST#0": "admin",
   "src/app/api/admin/work-parties/[id]/route.ts::PUT#0": "admin",
   "src/app/api/admin/work-parties/[id]/route.ts::DELETE#0": "admin",
+  // #5148: "Add to calendar", the fourth writer in the subsystem; files
+  // `admin` under INV-PRIV-013's uniformity rule, as its siblings do.
+  "src/app/api/admin/work-parties/[id]/calendar/route.ts::POST#0": "admin",
 
   // ─── Other-lodges registry (#2749, arrived after the #2765 decision) ────────
   // Classified under INV-PRIV-013's rule rather than re-decided, and not merely
@@ -1510,6 +1513,8 @@ export const LODGE_GATED_ADMIN_ACTIONS_2765: readonly string[] = [
   "workparty.create",
   "workparty.update",
   "workparty.delete",
+  // #5148: no access-shaped word, so the seven-year retention class (INV-OPS-012).
+  "workparty.calendar.add",
   "OTHER_LODGE_UPDATED",
   // #58: no access-shaped word, so the seven-year retention class (INV-OPS-012).
   "OTHER_LODGE_HIDDEN",

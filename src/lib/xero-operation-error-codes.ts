@@ -49,3 +49,12 @@ export const ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE = "ADMIN_GRANT_NOTE_AWAITING_R
  * (`scanSpacesGroupInvoiceEmailsDeferred`) before asking again.
  */
 export const GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CODE = "GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED";
+
+/**
+ * #5228: the code the owner's release (`pnpm run xero:stuck-queued-report
+ * --release`) stamps on a PENDING outbox row it fails because the stored
+ * request was no queued request the outbox could claim. FAILED, so an officer
+ * sees it and Retry replays it from what the row holds; the code says why it
+ * left PENDING without ever being sent from there.
+ */
+export const XERO_STUCK_QUEUED_REQUEST_RELEASED_CODE = "QUEUED_REQUEST_RELEASED";
