@@ -43,6 +43,7 @@ import {
 import { chargeSavedCardAttempt } from "@/lib/saved-card-charge-request";
 import {
   describeUnsettledPaymentIntent,
+  describeUnsettledPaymentIntentWithClaimKept,
   settleSavedCardChargeAttempt,
   type SavedCardChargeAnswer,
 } from "@/lib/saved-card-charge-settle";
@@ -391,7 +392,9 @@ export async function POST(request: NextRequest) {
           previousRange,
         });
       }, { bookingId, lodgeId });
-      return outcome.ok ? outcome.value : { released: false };
+      // Whether the release committed. `{ ok: false }` (#4993) leaves the
+      // booking CONFIRMED with its marker for the cron's recovery (#5279).
+      return outcome.ok;
     };
     claimReleaser = async () => {
       await releaseChargeClaim();
@@ -510,15 +513,22 @@ export async function POST(request: NextRequest) {
       // release, forward only, then hand the claim back if it is still ours:
       // the booking returns to PENDING with its hold restored, and the webhook
       // — or the next attempt — resolves it.
-      await releaseChargeClaim({
+      const releaseCommitted = await releaseChargeClaim({
         attemptRowId: claim.attempt.attemptRowId,
         paymentIntent,
       });
       claimReleaser = null;
-      const account = describeUnsettledPaymentIntent(paymentIntent.status);
+      // #5279: a release that lost both attempts left the booking CONFIRMED
+      // for the cron's recovery, so neither the log nor the answer may say it
+      // is pending.
+      const account = releaseCommitted
+        ? describeUnsettledPaymentIntent(paymentIntent.status)
+        : describeUnsettledPaymentIntentWithClaimKept(paymentIntent.status);
       logger.warn(
         { bookingId, piStatus: paymentIntent.status, memberId: bookingOwner(booking).memberId },
-        "Off-session charge did not capture — booking returned to PENDING (#3267)"
+        releaseCommitted
+          ? "Off-session charge did not capture — booking returned to PENDING (#3267)"
+          : "Off-session charge did not capture — the claim release failed; the booking stays CONFIRMED for the confirm-pending job's recovery (#5279)"
       );
       // Alert admins so they can contact the member to complete payment
       // manually — with the amount that was actually asked for (the post-lock

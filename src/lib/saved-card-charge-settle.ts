@@ -1,6 +1,7 @@
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { postBookingReceipts, type BookingJournalContext } from "@/lib/member-money/doors";
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
+import { SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE } from "@/lib/saved-card-charge-claim";
 /**
  * #3267 (epic #3270) — recording Stripe's answer on a saved-card charge attempt
  * row (`INV-PAY-055`). The other half of `saved-card-charge-attempt.ts`, whose
@@ -97,6 +98,17 @@ export function describeUnsettledPaymentIntent(
     default:
       return `The charge did not complete (Stripe reports the payment as "${status}"); the booking stays pending.`;
   }
+}
+
+/**
+ * `describeUnsettledPaymentIntent` for the rare answer whose claim release did
+ * not land (#5279): every variant there says the booking stays pending or can
+ * be retried now, and neither is true while it is still CONFIRMED.
+ */
+export function describeUnsettledPaymentIntentWithClaimKept(
+  status: Stripe.PaymentIntent.Status
+): string {
+  return `The charge did not complete (Stripe reports the payment as "${status}"). ${SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE}`;
 }
 
 export interface SettledSavedCardChargeAttempt {

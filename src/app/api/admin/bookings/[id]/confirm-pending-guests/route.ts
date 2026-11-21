@@ -1,4 +1,8 @@
-import { releaseSavedCardChargeClaim, runSavedCardClaimRelease } from "@/lib/saved-card-charge-claim";
+import {
+  releaseSavedCardChargeClaim,
+  runSavedCardClaimRelease,
+  SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE,
+} from "@/lib/saved-card-charge-claim";
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { NextRequest, NextResponse } from "next/server";
 import { handOffSupersededCaptureAfterRefusal } from "@/lib/superseded-paid-intent";
@@ -29,6 +33,7 @@ import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-c
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import {
   describeUnsettledPaymentIntent,
+  describeUnsettledPaymentIntentWithClaimKept,
   settleSavedCardChargeAttempt,
   type SavedCardChargeAnswer,
 } from "@/lib/saved-card-charge-settle";
@@ -67,6 +72,15 @@ import {
   getOverbookedNightDates,
   lockedClaimRefusalBody,
 } from "@/lib/admin-confirm-pending-guests-shapes";
+
+/**
+ * The officer's answer to a charge that threw with nothing captured: the first
+ * when the release handed the booking back, the second when it lost both
+ * attempts and the booking waits for the confirm-pending job's recovery (#5279).
+ */
+const CHARGE_FAILED_RETURNED_TO_PENDING_MESSAGE =
+  "The card charge failed; the booking was returned to pending and admins have been alerted.";
+const CHARGE_FAILED_RETURN_DEFERRED_MESSAGE = `The card charge failed and admins have been alerted. ${SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE}`;
 
 /**
  * Admin override: "Confirm pending guests now".
@@ -646,7 +660,10 @@ export async function POST(
           previousRange,
         });
       }, { bookingId, lodgeId: booking.lodgeId });
-      return outcome.ok ? outcome.value : { released: false };
+      // Whether the release committed. `{ ok: false }` (#4993) leaves the
+      // booking CONFIRMED with its marker for the cron's recovery, which is
+      // what the officer must then be told (#5279).
+      return outcome.ok;
     };
 
     // Charge the saved payment method through the one attempt contract every
@@ -675,12 +692,13 @@ export async function POST(
       // alert admins, exactly like the cron path (#1418). A definite Stripe
       // refusal has already ended the attempt row, so the next click starts a
       // fresh one; an ambiguous failure leaves it to be asked about.
-      await releaseChargeClaim().catch((revertErr) =>
+      const releaseCommitted = await releaseChargeClaim().catch((revertErr) => {
         logger.error(
           { err: revertErr, bookingId },
           "Failed to release confirm-pending-guests charge claim"
-        )
-      );
+        );
+        return false;
+      });
       const stripeFields = readStripeErrorFields(chargeErr);
       // The claim's POST-LOCK amount — the one the charge asked Stripe for. A
       // price that moved between the pre-lock read and the claim would
@@ -714,7 +732,7 @@ export async function POST(
           : "";
       return NextResponse.json(
         {
-          error: `The card charge failed; the booking was returned to pending and admins have been alerted.${detail}`,
+          error: `${releaseCommitted ? CHARGE_FAILED_RETURNED_TO_PENDING_MESSAGE : CHARGE_FAILED_RETURN_DEFERRED_MESSAGE}${detail}`,
         },
         { status: 502 }
       );
@@ -729,18 +747,21 @@ export async function POST(
       // fresh), then release the claim if it is still ours and leave the
       // booking pending for the Stripe webhook to resolve rather than
       // confirming optimistically.
-      await releaseChargeClaim({
+      const releaseCommitted = await releaseChargeClaim({
         attemptRowId: claim.attempt.attemptRowId,
         paymentIntent,
-      }).catch((revertErr) =>
+      }).catch((revertErr) => {
         logger.error(
           { err: revertErr, bookingId },
           "Failed to release confirm-pending-guests charge claim"
-        )
-      );
+        );
+        return false;
+      });
       return NextResponse.json(
         {
-          error: describeUnsettledPaymentIntent(paymentIntent.status),
+          error: releaseCommitted
+            ? describeUnsettledPaymentIntent(paymentIntent.status)
+            : describeUnsettledPaymentIntentWithClaimKept(paymentIntent.status),
           paymentStatus: paymentIntent.status,
         },
         { status: 409 }
