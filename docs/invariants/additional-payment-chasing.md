@@ -778,8 +778,8 @@ the ordering has to be read. Reordered in #2674 and pinned by
 `src/app/api/bookings/[id]/send-guest-payment-link/__tests__/deleted-booking-ordering.test.ts`.
 
 **The byte-identical-body half now has one named carve-out, and only that
-half.** `INV-ADDPAY-034` lets three surfaces say the booking was cancelled or
-removed instead. The **ordering** half — after the authorisation check, always —
+half.** `INV-ADDPAY-034` lets five surfaces — three APIs and two pages — say the
+booking was cancelled or removed instead. The **ordering** half — after the authorisation check, always —
 has no carve-out anywhere and is what keeps the carve-out safe: every surface
 that departs from the body rule still answers `403` to a caller with no claim,
 so nothing is disclosed to anyone not already entitled to the record. Read the
@@ -827,64 +827,43 @@ figure would have gone to add a guard to a route that already refuses.
 
 ### INV-ADDPAY-034
 
-**Three surfaces tell the reader the booking was cancelled or removed instead of
-answering a bare 404, and they share ONE sentence to do it** (#2700, owner
-decision 10 Aug 2026). The sentence lives in
-`src/lib/deleted-booking-refusal.ts` as `DELETED_BOOKING_MESSAGE`, and the three
-callers import that constant rather than restating it:
-`guests/[guestId]/consent` POST, `change-requests` GET, and `refund-request`
-GET. One constant, not three copies, is the rule — three variants that say
-subtly different things about the same event is the failure this prevents.
+**Five surfaces tell an entitled reader the booking was cancelled or removed
+instead of answering a bare "not found", and they share ONE sentence to do it**
+— `DELETED_BOOKING_MESSAGE` in `src/lib/deleted-booking-refusal.ts`. Three are
+API answers (#2700, owner decision 10 Aug 2026): `guests/[guestId]/consent`
+POST, `change-requests` GET and `refund-request` GET. Two are the pages an old
+club email lands on (#5266, owner decision 20 Nov 2026), both rendering
+`src/components/removed-booking-notice.tsx`:
 
-**Both halves are ENFORCED, not merely written down.**
-`src/lib/__tests__/deleted-booking-refusal-callers.test.ts` sweeps `src/` for
-importers of the refusal module and fails on a fourth, and asserts per surface
-that the guard sits below that surface's own authorisation refusal. Without it
-a later contributor could import the constant — now that an informative body is
-normalised on this hazard — and place it above an ownership check, restoring the
-`send-guest-payment-link` oracle #2674 had to reorder out, with every existing
-test still green.
+- **The booking page**, for the booking's owner or a member guest on it — whom
+  the page would admit if the booking were live. Role grants nothing: a Booking
+  Officer or read-only admin not on the booking gets the plain `notFound()`; a
+  Full Admin keeps the record view.
+- **The delegate consent page**, for the consent target or the family adult the
+  delegate rule accepts. The delegate learns nothing new: the consent POST
+  already tells them this sentence (`INV-ADDPAY-035`).
 
-**This is a deliberate departure from `INV-ADDPAY-031`'s byte-identical-body
-half, and it is worth stating precisely because the general rule is the opposite
-of it.** Disclosing that a record existed and is gone is normally an oracle. It
-is not one here, because **the guard sits after the authorisation check** on
-every one of the three: to see the sentence you must already be the guest being
-asked, an accepted family delegate answering for them, the booking's owner, or
-an admin. A caller with no claim still receives `403` and learns nothing, and
-the answer they get does not move with the booking's deletion state. Disclosure
-to somebody already entitled to the record is not an oracle. The ordering half
-of `INV-ADDPAY-031` therefore has no exception and is what makes this one safe.
+Everybody else — another member, a forwarded link, a guessed id — gets the
+page's plain "not found", by the same database reads as an id that never
+existed. A signed-out visitor is sent to sign in first. Deleted drafts are
+hard-deleted and stay "not found" for everyone.
+
+**Enforced.** `src/lib/__tests__/deleted-booking-refusal-callers.test.ts` fails
+on any other importer of the module or the component, and asserts per surface
+that the sentence sits below that surface's authorisation check.
+`booking-detail-entry.test.ts` and `member-guest-delegate-page.test.ts` pin the
+identical reads and answer for "never existed" and "removed, not yours".
+
+**This departs from `INV-ADDPAY-031`'s byte-identical-body half on purpose.**
+Disclosing that a record existed and is gone is normally an oracle. It is not
+one here because **the sentence sits after the authorisation check** on all
+five: to see it you must already be the guest, an accepted delegate for them,
+the owner, or (on the APIs) an admin. Disclosure to somebody already entitled
+to the record is not an oracle. The ordering half has no exception.
 
 **Why say anything at all.** "Booking not found" is a dead end that reads as a
-fault in the system; "cancelled or removed" is an explanation the reader can act
-on. The owner's stated purpose (10 Aug 2026) was that somebody arriving from an
-old club email gets the explanation rather than the dead end.
-
-**Who actually reaches it today, stated plainly, because the rule above must not
-claim a journey the product does not have.** The reader is a client that loaded
-the booking BEFORE the deletion and acted AFTER it — the stale tab, which is the
-same race the rest of this rule and `INV-ADDPAY-036` exist for — or a direct API
-caller. **No fresh navigation reaches any of the three bodies**, and every one
-of the four paths dead-ends earlier for its own pre-existing reason:
-
-- The consent card lives on `bookings/[id]/page.tsx`, which calls `notFound()`
-  for any non-admin on a deleted booking before rendering anything.
-- The delegate consent page resolves `{ kind: "NOT_FOUND" }` on
-  `guest.booking.deletedAt` in `member-guest-delegate-page.ts`, **above** both
-  the target and the delegate branches — deliberately, so the neutral page
-  cannot be used to tell a real guest row from a fabricated id.
-- `refund-request` GET's only client is `RefundAppealButton`, which the booking
-  page renders only when the booking is not deleted.
-- `change-requests` GET has **no client at all** in `src/` or `e2e/`; the one
-  fetch of that path is the panel's `POST`.
-
-So the departure below is currently worth its cost for the race, not for the
-email journey. Making the email journey itself explain rather than dead-end
-would mean changing the delegate page's uniform `NOT_FOUND` — which is a
-privacy property with its own Playwright assertion — and is therefore an owner
-decision rather than a tidy-up. Recorded here rather than assumed: do not cite
-the email journey as a live behaviour until that decision is taken.
+fault; "cancelled or removed" is an explanation the reader can act on, which is
+what the owner asked for somebody arriving from an old club email.
 
 **What the sentence must NOT carry, and both exclusions are load-bearing:**
 
