@@ -1196,6 +1196,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # #5193: every later `pg_dump` and `psql` runs from the service's own
+      # image, never the runner's client, whose major version follows the
+      # Ubuntu release. Both services here run the same image.
+      - name: Use the PostgreSQL client tools of the service's image
+        run: bash scripts/ci/postgres-client-from-service.sh "${{ job.services.concurrency-race-postgres.id }}"
+
       - name: Create shadow database
         if: steps.scope.outputs.needed != 'false'
         run: psql "$DATABASE_URL" -c "CREATE DATABASE drift_shadow"
@@ -1393,10 +1399,10 @@ jobs:
       # so only a real server can establish them. The suite provisions the roles
       # with the SHIPPED statements and CLI in scratch databases of its own (roles
       # are cluster-global, so each run carries a random prefix and drops them),
-      # and needs pg_dump and psql from the runner. A required step, like the
-      # diagnostics proof above, so a broken grant blocks the merge; the
-      # realdb-all job runs the same file too. It describe.skip's itself without
-      # the env vars, so this step MUST stay wired —
+      # and needs pg_dump and psql, taken from the service's image (#5193). A
+      # required step, like the diagnostics proof above, so a broken grant
+      # blocks the merge; the realdb-all job runs the same file too. It
+      # describe.skip's itself without the env vars, so this step MUST stay wired —
       # `review-findings-contracts.test.ts` fails if it goes missing.
       - name: Prove the least-privilege database roles against dedicated PostgreSQL
         env:
@@ -1735,6 +1741,12 @@ jobs:
         env:
           DATABASE_URL: ${{ env.CONCURRENCY_RACE_DATABASE_URL }}
         run: pnpm exec prisma migrate deploy
+
+      # #5193: the roles proof's `pg_dump` and `psql` run from the service's
+      # own image, never the runner's client, whose major version follows the
+      # Ubuntu release.
+      - name: Use the PostgreSQL client tools of the service's image
+        run: bash scripts/ci/postgres-client-from-service.sh "${{ job.services.concurrency-race-postgres.id }}"
 
       # One `vitest run` over every file, so the log shows each one executed.
       # The list is a script, not a shell glob: a glob would not reach a file in

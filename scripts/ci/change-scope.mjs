@@ -55,6 +55,7 @@ export const CHANGE_SCOPES = {
       /^scripts\/lib\/split-sql-statements\.awk$/,
       /^scripts\/check-partial-indexes\.sh$/,
       /^scripts\/booking-ledger-seed-gate\.sh$/,
+      /^scripts\/ci\/postgres-client-from-service\.sh$/,
       /^scripts\/booking-ledger-census\.ts$/,
       /^scripts\/backfill-booking-ledger\.ts$/,
       ...WORKFLOW_AND_CLASSIFIER,
