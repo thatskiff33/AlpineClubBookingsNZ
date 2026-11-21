@@ -17,7 +17,9 @@
 // on every database that already ran it.
 //
 // The privacy page is now written by
-// 20261222030000_rewrite_starter_privacy_recipients (#5007), which guards on the
+// 20261229020000_add_ai_apps_to_starter_privacy (#5305), which guards on the
+// body 20261222030000_rewrite_starter_privacy_recipients (#5007) wrote. That
+// migration in turn guards on the
 // bodies #4915's 20261220010000_correct_starter_privacy_subject_access,
 // #4914's 20261214010000_correct_starter_privacy_retention_and_hosting,
 // #4031's 20261119010000_correct_starter_privacy_audit_retention and #1945's
@@ -40,10 +42,11 @@ const POLICY_DATE_LINE =
 
 // #5007: sections 5 and 6 follow the recipient register and the club's hosting
 // settings, on top of #4914's retention and hosting corrections and #4915's
-// section 8 (what the access download holds). Section 10 promises a date bump.
-// Terms is unchanged and keeps the shared line.
+// section 8 (what the access download holds). #5305 adds the AI apps entry to
+// section 5. Section 10 promises a date bump. Terms is unchanged and keeps the
+// shared line.
 const PRIVACY_POLICY_DATE_LINE =
-  "Effective 1 April 2026 &mdash; Last updated 18 November 2026";
+  "Effective 1 April 2026 &mdash; Last updated 21 November 2026";
 
 /** Register recipients a club's privacy notice must cover when the flow is used. */
 type MemberFacingRecipientId = {
@@ -108,6 +111,11 @@ const STARTER_PRIVACY_RECIPIENT_COPY: Record<MemberFacingRecipientId, StarterRec
     title: "Anthropic",
     text: "The AI help assistant and AI Diagnostics. The assistant receives your questions, the conversation and the page context it is allowed to use. AI Diagnostics receives officers&rsquo; troubleshooting questions and the records they look up, which can include your personal information.",
     notice: "See <a href=\"https://privacy.anthropic.com/\" target=\"_blank\" rel=\"noopener noreferrer\">Anthropic&rsquo;s Privacy Policy</a>.",
+  },
+  "ai-apps": {
+    title: "AI apps you connect",
+    text: "If the club has turned on AI app connections, you can approve an AI app, such as Claude or ChatGPT, to use your account for you. Nothing is sent to an app until you approve it. The company that runs the app you choose then receives what the app looks up for you, such as your profile, family group, bookings, account credit and club notices. If the club also lets officers connect an AI app, information about other members that an officer can see may go to the app that officer chooses. Disconnecting an app stops it, but does not remove what its company has already received.",
+    notice: "See the privacy policy of the app you choose.",
   },
   sentry: {
     title: "Sentry",

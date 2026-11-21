@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { tokensForContext } from "../token-catalogue";
 import { PRIVACY_RECIPIENTS } from "../privacy-recipient-classification";
-import { STARTER_PRIVACY_BODY_4915 } from "../config-transfer/starter-privacy-cleaned-bodies";
+import {
+  STARTER_PRIVACY_BODY_4915,
+  STARTER_PRIVACY_BODY_5007,
+} from "../config-transfer/starter-privacy-cleaned-bodies";
 import {
   STARTER_PRIVACY_AVAILABILITY_NOTES,
   STARTER_PRIVACY_RECIPIENT_ITEMS,
@@ -142,12 +145,22 @@ const PRIVACY_RETENTION_HOSTING_MIGRATION_PATH = join(
 
 // #5007 (release 2 of #4918): guarded update that lists every member-facing
 // register recipient in section 5 and names the host through {{data-hosting}}.
-// It is the current writer of the privacy seed text.
+// It was the writer of the privacy seed text until #5305's 20261229020000.
 const PRIVACY_RECIPIENTS_MIGRATION_PATH = join(
   process.cwd(),
   "prisma",
   "migrations",
   "20261222030000_rewrite_starter_privacy_recipients",
+  "migration.sql",
+);
+
+// #5305 (AI app connections, ALP-653): guarded update that adds the AI apps
+// entry to section 5. It is the current writer of the privacy seed text.
+const PRIVACY_AI_APPS_MIGRATION_PATH = join(
+  process.cwd(),
+  "prisma",
+  "migrations",
+  "20261229020000_add_ai_apps_to_starter_privacy",
   "migration.sql",
 );
 
@@ -364,7 +377,8 @@ describe("starter page content backfill migration", () => {
   const allInsertSql = `${insertSql}\n${backfill404Sql}\n${policyPagesSql}\n${bookingRequestsSql}\n${schoolBookingsSql}`;
   const privacyRetentionSql = readFileSync(PRIVACY_RETENTION_HOSTING_MIGRATION_PATH, "utf8");
   const privacyRecipientsSql = readFileSync(PRIVACY_RECIPIENTS_MIGRATION_PATH, "utf8");
-  const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}\n${genericiseLodgeCopySql}\n${privacyAuditRetentionSql}\n${faqPersonalDataSql}\n${homeGuestCopySql}\n${privacyRetentionSql}\n${privacySubjectAccessSql}\n${privacyRecipientsSql}`;
+  const privacyAiAppsSql = readFileSync(PRIVACY_AI_APPS_MIGRATION_PATH, "utf8");
+  const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}\n${genericiseLodgeCopySql}\n${privacyAuditRetentionSql}\n${faqPersonalDataSql}\n${homeGuestCopySql}\n${privacyRetentionSql}\n${privacySubjectAccessSql}\n${privacyRecipientsSql}\n${privacyAiAppsSql}`;
 
   it("inserts exactly the starter pages defined for the seed", () => {
     const insertedIds = [
@@ -948,7 +962,6 @@ describe("starter privacy subject-access correction (#4915)", () => {
 describe("starter privacy recipients and hosting migration (#5007)", () => {
   const sql = readFileSync(PRIVACY_RECIPIENTS_MIGRATION_PATH, "utf8");
   const statements = statementsOnly(sql);
-  const page = starterPageContent.find((p) => p.slug === "privacy")!;
   const subjectAccessSql = readFileSync(PRIVACY_SUBJECT_ACCESS_MIGRATION_PATH, "utf8");
   const retentionHostingSql = readFileSync(PRIVACY_RETENTION_HOSTING_MIGRATION_PATH, "utf8");
   const auditRetentionSql = readFileSync(PRIVACY_AUDIT_RETENTION_MIGRATION_PATH, "utf8");
@@ -978,17 +991,19 @@ describe("starter privacy recipients and hosting migration (#5007)", () => {
     expect(sql.match(/\$(previous|older|oldest|earliest)\$(?=[\s\S]*?\$\1\$)/g)).toHaveLength(4);
   });
 
-  it("writes the current privacy seed copy", () => {
-    expect(nthCmsBlock(sql, 1)).toBe(page.contentHtml);
+  // #5305 later added the AI apps entry and moved the date on, so the seed is
+  // no longer what this migration wrote. Its output is frozen at #5007's copy,
+  // which #5305's migration guards as `$previous$` (chained below).
+  it("wrote #5007's privacy copy", () => {
+    expect(nthCmsBlock(sql, 1)).toBe(STARTER_PRIVACY_BODY_5007);
   });
 
   it("moves each starter header to the seed's header and keeps any other", () => {
     expect(statements).toContain(
       `WHEN "headerText" IN (${sqlQuote(privacyHeaderOn("14 November 2026"))}, ${sqlQuote(privacyHeaderOn("12 November 2026"))}, ${sqlQuote(privacyHeaderOn("17 October 2026"))}, ${sqlQuote(privacyHeaderOn("1 April 2026"))})`,
     );
-    // The seed date and the migration's THEN value are the same string.
-    expect(statements).toContain(`THEN ${sqlQuote(page.headerText)}`);
-    expect(page.headerText).toContain("Last updated 18 November 2026");
+    // The header #5007 wrote, which #5305's migration guards in its turn.
+    expect(statements).toContain(`THEN ${sqlQuote(privacyHeaderOn("18 November 2026"))}`);
     expect(statements).toContain(`ELSE "headerText"`);
     // The four starter headers are the ones the earlier migrations wrote, and
     // the one the policy backfill planted with the #1945 body.
@@ -998,19 +1013,13 @@ describe("starter privacy recipients and hosting migration (#5007)", () => {
     expect(auditRetentionSql).toContain(`WHEN "headerText" = ${sqlQuote(privacyHeaderOn("1 April 2026"))}`);
   });
 
-  it("names the seed's Last updated date in the upgrade step", () => {
-    // The date is the merge date and lives in five places that must move
-    // together: the seed, the migration's header CASE, the fixture, this test
-    // and the upgrade step. The first two are held equal above, the fixture by
-    // the real-database suite; this holds the step to the seed.
-    const seedDate = /Last updated (\d{1,2} [A-Za-z]+ \d{4})/.exec(page.headerText)?.[1];
-    expect(seedDate).toBeDefined();
+  it("names the date it wrote in the upgrade step", () => {
     const guide = readFileSync(join(process.cwd(), "docs", "UPGRADING.md"), "utf8");
     const step = guide
       .split("### Starter privacy policy lists its recipients and names your host (#5007)")[1]
       ?.split(/\n#{2,3} /)[0];
     expect(step, "the #5007 upgrade step must exist").toBeDefined();
-    expect(step).toContain(`"Last updated" date moves to ${seedDate},`);
+    expect(step).toContain(`"Last updated" date moves to 18 November 2026,`);
   });
 
   it("uses the UTC statement clock, never the session clock", () => {
@@ -1030,6 +1039,66 @@ describe("starter privacy recipients and hosting migration (#5007)", () => {
     const written = nthCmsBlock(sql, 1);
     expect(written).toContain("{{data-hosting}}");
     expect(written).not.toMatch(/Lightsail|Sydney|backups are encrypted|encrypted and stored/i);
+  });
+});
+
+describe("starter privacy AI apps migration (#5305)", () => {
+  const sql = readFileSync(PRIVACY_AI_APPS_MIGRATION_PATH, "utf8");
+  const statements = statementsOnly(sql);
+  const page = starterPageContent.find((p) => p.slug === "privacy")!;
+
+  it("only updates the privacy row, and never inserts or deletes", () => {
+    expect(statements.match(/UPDATE\s+"PageContent"/g)).toHaveLength(1);
+    expect(sql).not.toMatch(/\bDELETE\b/i);
+    expect(sql).not.toMatch(/\bINSERT\b/i);
+    expect(statements).toContain(`WHERE "slug" = ${sqlQuote("privacy")}`);
+  });
+
+  it("guards on exactly the body #5007 wrote, so edited rows are untouched", () => {
+    const recipientsSql = readFileSync(PRIVACY_RECIPIENTS_MIGRATION_PATH, "utf8");
+    expect(statements).toContain(`AND "contentHtml" = $previous$`);
+    expect(sql.match(/\$previous\$([\s\S]*?)\$previous\$/)?.[1]).toBe(nthCmsBlock(recipientsSql, 1));
+    expect(sql.match(/\$previous\$([\s\S]*?)\$previous\$/)?.[1]).toBe(STARTER_PRIVACY_BODY_5007);
+    // One alternative, and no second.
+    expect(sql.match(/\$(previous|older|oldest|earliest)\$(?=[\s\S]*?\$\1\$)/g)).toHaveLength(1);
+  });
+
+  it("writes the current privacy seed copy, with the AI apps entry", () => {
+    expect(nthCmsBlock(sql, 1)).toBe(page.contentHtml);
+    expect(page.contentHtml).toContain(STARTER_PRIVACY_RECIPIENT_ITEMS["ai-apps"]);
+  });
+
+  it("moves #5007's starter header to the seed's header and keeps any other", () => {
+    expect(statements).toContain(
+      `WHEN "headerText" = ${sqlQuote(privacyHeaderOn("18 November 2026"))} THEN ${sqlQuote(page.headerText)} ELSE "headerText" END`,
+    );
+    expect(page.headerText).toContain("Last updated 21 November 2026");
+  });
+
+  it("names the seed's Last updated date in the upgrade step", () => {
+    // The date lives in five places that must move together: the seed, the
+    // migration's header CASE, the fixture, this test and the upgrade step.
+    // The first two are held equal above, the fixture by the real-database
+    // suite; this holds the step to the seed.
+    const seedDate = /Last updated (\d{1,2} [A-Za-z]+ \d{4})/.exec(page.headerText)?.[1];
+    expect(seedDate).toBeDefined();
+    const guide = readFileSync(join(process.cwd(), "docs", "UPGRADING.md"), "utf8");
+    const step = guide
+      .split("### Starter privacy policy names the AI apps members connect (#5305)")[1]
+      ?.split(/\n#{2,3} /)[0];
+    expect(step, "the #5305 upgrade step must exist").toBeDefined();
+    expect(step).toContain(`"Last updated" date moves to ${seedDate},`);
+  });
+
+  it("uses the UTC statement clock, never the session clock", () => {
+    expect(statements).toContain(`"updatedAt" = timezone('UTC', statement_timestamp())`);
+    expect(statements).not.toMatch(/CURRENT_TIMESTAMP|\bnow\(\)|LOCALTIMESTAMP/i);
+  });
+
+  it("sorts after the #5007 migration it follows and the connections migration", () => {
+    const stamp = (path: string) => path.split(/[\\/]/).at(-2)!;
+    expect(stamp(PRIVACY_AI_APPS_MIGRATION_PATH) > stamp(PRIVACY_RECIPIENTS_MIGRATION_PATH)).toBe(true);
+    expect(stamp(PRIVACY_AI_APPS_MIGRATION_PATH) > "20261229010000_add_mcp_connections").toBe(true);
   });
 });
 
@@ -1077,6 +1146,7 @@ describe("starter privacy policy versus the recipient register (#5007)", () => {
       anthropic: ["aiAssistant", "aiDiagnostics"],
       addy: ["addressAutocomplete"],
       servernz: ["alpineCentralServer"],
+      "ai-apps": ["mcpServer"],
     };
     for (const [id, fields] of Object.entries(offByDefault)) {
       expect(PRIVACY_RECIPIENTS[id as keyof typeof PRIVACY_RECIPIENTS].availability, id).toBe("club-turns-on");

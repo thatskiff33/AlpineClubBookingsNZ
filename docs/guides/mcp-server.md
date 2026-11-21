@@ -47,7 +47,15 @@ set of member actions; see [The roadmap](#the-roadmap).
    members send their club data to an AI provider ([Modules](modules.md)).
 2. Open **Admin → Help & system → AI app connections** and check the four
    settings below before telling members about it.
-3. Add AI apps to your privacy notice (see [Risks and limits](#risks-and-limits)).
+3. Review your privacy notice. The
+   [recipient register](../PRIVACY_RECIPIENTS.md) has an `ai-apps` row for the
+   AI app a member or officer connects, and the starter privacy policy's
+   section 5 has a matching **AI apps you connect** entry, marked "Only if the
+   club turns it on". An unedited starter page gets it on upgrade
+   ([UPGRADING](../UPGRADING.md#starter-privacy-policy-names-the-ai-apps-members-connect-5305));
+   an edited page does not, so add it yourself. Either way, check the notice
+   says what your club does. What each action sends is listed under
+   [What a connection sends to the AI provider](#what-a-connection-sends-to-the-ai-provider).
 
 While the module is off, every AI-connection address answers **Not Found**:
 the MCP endpoint, its sign-in endpoints and discovery documents, the approval
@@ -76,8 +84,13 @@ default, `OFFICER_SIGN_IN_ENFORCED` — the save goes straight through. Every sa
 writes an audit row with the previous and new values.
 
 Switching a group off, or removing a host, applies at once: those people's
-existing connections stop on their next request, and no new approval for that
-host is accepted (`INV-MCP-002`, `INV-MCP-003`).
+existing connections, and every connection approved for that host, are
+refused on their next request and their next token renewal, and no new
+approval for that host is accepted (`INV-MCP-002`, `INV-MCP-003`). A refused
+connection is kept, not ended: switching the group back on, or adding the
+host back, lets it work again within its life. To end connections for good,
+disconnect them under **Connections**. An app on the member's own computer
+(loopback) is always allowed.
 
 ### How a member connects an app
 
@@ -158,15 +171,15 @@ calls an existing API route, and the route decides, exactly as for a browser.
 | `list_lodges` | The lodges that can be booked, with their ids | read | `GET /api/lodges` |
 | `list_my_bookings` | The member's newest 200 bookings, made by them or as a guest; says when there are older ones | read | `GET /api/bookings/mine` |
 | `get_my_booking` | A summary of one of those bookings; the price and note only on a booking the member made, and whether the price is still being checked | read | `GET /api/bookings/[id]` |
-| `get_my_family_group` | The member and their family groups' active members | read | `GET /api/members/family` |
+| `get_my_family_group` | The member and their family groups' active members: id, name, age group, relationship and whether they can be booked | read | `GET /api/members/family` |
 | `get_my_profile` | The member's own name, contact details, address and age group | read | `GET /api/profile/summary` |
 | `list_notices` | Club notices the member can see | read | `GET /api/notices` |
-| `create_draft_booking` | Saves a **draft** booking: holds no beds, takes no payment; the member finishes and pays on the website | write | `POST /api/bookings` (always `draft: true`) |
+| `create_draft_booking` | Saves a **draft** booking: holds no beds, takes no payment; the member finishes and pays on the website. Answers with the draft's summary | write | `POST /api/bookings` (always `draft: true`) |
 | `preview_cancel_booking` | What cancelling would refund, without cancelling | read | `GET /api/bookings/[id]/cancel-preview` |
-| `cancel_my_booking` | Cancels a booking and refunds it under the club's policy. An officer who may cancel members' bookings on the website may through this action too | destructive | `POST /api/bookings/[id]/cancel` |
-| `list_my_draft_bookings` | The member's unconfirmed drafts | read | `GET /api/bookings/drafts` |
+| `cancel_my_booking` | Cancels one of the member's own bookings and refunds it under the club's policy. An officer's connection is refused anyone else's booking | destructive | `POST /api/bookings/[id]/cancel` |
+| `list_my_draft_bookings` | The member's unconfirmed drafts, in the same summary | read | `GET /api/bookings/drafts` |
 | `get_my_credit_balance` | The member's account credit, in cents | read | `GET /api/member/credit-balance` |
-| `get_my_subscription_status` | Whether this season's subscription is paid | read | `GET /api/member/subscription-status` |
+| `get_my_subscription_status` | Whether this season's subscription is paid, without the invoice link | read | `GET /api/member/subscription-status` |
 
 The last three are reached through `find_actions` rather than listed as their
 own tools. Four built-in tools sit alongside: `who_am_i` (the member, the site
@@ -221,16 +234,56 @@ shows that it was used.
 
 ### An officer's connection sends other members' data to their AI provider
 
-An officer's connection acts with the officer's permissions, so whatever the
-officer asks about — another member's details, bookings or payments — goes to
-that officer's AI provider. Stage 1's actions are member actions, but the
-route decides whose record an action may touch: `preview_cancel_booking` and
-`cancel_my_booking` already accept any member's booking from an officer who
-may cancel bookings on the website. The follow-on stages add officer actions,
-and the switch governs the connection, not the action list. That is why **Officers may
-connect an AI app** is a separate switch, off by default. Before switching it
-on, the club should cover it in its privacy notice and decide which AI
-providers are acceptable.
+In stage 1, an officer's connection reaches only what the same person could
+reach as a member: every action answers it with the officer's own records.
+`preview_cancel_booking` and `cancel_my_booking` refuse an officer's
+connection any booking but the officer's own, even though the officer may
+cancel members' bookings on the website (`INV-MCP-006`). Like any member's
+connection, it does carry the names on the officer's own bookings and in
+their family group.
+
+The follow-on stages add officer actions (ALP-719 onwards), and the switch
+governs the connection, not the action list. Once those ship, whatever the
+officer asks about, such as another member's details, bookings or payments,
+goes to that officer's AI provider. That is why **Officers may connect an AI
+app** is a separate switch, off by default. Before switching it on, the club
+should cover it in its privacy notice and decide which AI providers are
+acceptable.
+
+### What a connection sends to the AI provider
+
+Everything an action returns goes to the company that runs the app. Stage 1
+sends only the connected person's own records, as follows:
+
+- `who_am_i`: their name and email address, whether they are an officer, the
+  club's website, the app's name and the connection's level.
+- `get_my_profile`: name, email address, phone number, street address, age
+  group and whether two-step sign-in is on.
+- `get_my_family_group`: for the person and each active member of their family
+  groups, an id, name, age group, relationship and whether they can be booked.
+  No dates of birth, email addresses, notes or pending requests.
+- `list_my_bookings` and `get_my_booking`: dates, lodge, status and the party
+  (each guest's name, age group and member status), plus the price and note on
+  a booking the person made. A booking they are only a guest on carries no
+  price or note.
+- `list_my_draft_bookings` and `create_draft_booking`: each draft's dates,
+  lodge, expiry, note and party in the same form. No dietary notes, consent
+  records or payment columns.
+- `preview_cancel_booking` and `cancel_my_booking`: for the person's own
+  booking, what was paid, the refund figures and method, and the club's
+  cancellation rules that apply.
+- `get_my_credit_balance`: the balance in cents, not the credit history.
+- `get_my_subscription_status`: this season's status and why, the invoice
+  number, the membership type and any member-rate notice. Not the invoice link.
+- `list_notices`: the notices the person can see, with whether they read and
+  acknowledged each.
+- `get_availability` and `list_lodges`: free beds per night and the lodges the
+  person can book. No personal information.
+
+The app also holds whatever the person typed to it, such as the guest names
+for a draft. Disconnecting stops new calls; it does not remove what the
+provider already received. The club's register row is `ai-apps` in
+[PRIVACY_RECIPIENTS.md](../PRIVACY_RECIPIENTS.md).
 
 ### The site calls itself over loopback, and discovery must pass the proxy
 
@@ -308,6 +361,7 @@ is given a catalogue entry or a reason.
 | The app says it cannot find the server, or `/api/mcp` answers 404 | The module is off | Switch on **AI app connections (MCP)** in Modules |
 | "… is not on this club's list of approved AI apps" | The app returns to a host not on **Approved AI apps** | Add the host, if the club accepts that app |
 | "This club does not allow your account to connect an AI app" | The member's group (members or officers) is switched off | Change the setting, or explain the club's choice |
+| A connected app is refused with "This app is no longer on the club's list of approved AI apps" | The host it was approved for was removed from **Approved AI apps** | Add the host back to let the connection work again, or disconnect it to end it |
 | "This app's registration with the club has expired or was never made" | The app registered, nobody approved it for a day, and the app reused its old registration | In the app, remove the club's connector and add it again |
 | "Verify your email address before connecting an AI app" | The member's email is not verified | The member verifies their email first |
 | A connected app suddenly asks the member to connect again | The connection ended: the member's sign-in expired, their password changed, a refresh token was reused, or someone disconnected it | The member connects again |

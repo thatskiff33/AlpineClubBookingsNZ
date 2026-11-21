@@ -43,6 +43,7 @@ import {
   STARTER_PRIVACY_BODY_4031,
   STARTER_PRIVACY_BODY_4914,
   STARTER_PRIVACY_BODY_4915,
+  STARTER_PRIVACY_BODY_5007,
 } from "./starter-privacy-cleaned-bodies";
 
 /** One planted value that a cleanup migration removed. */
@@ -210,6 +211,21 @@ export const CLEANED_LITERALS: readonly CleanedLiteral[] = [
     issue: "#5007",
     describe:
       "the starter privacy policy that said members' data is held in Sydney and audit logs are pruned after 90 days",
+  },
+  {
+    // #5305: 20261229020000_add_ai_apps_to_starter_privacy adds the AI apps
+    // entry to section 5 of an unedited starter privacy policy. This is the
+    // body #5007 wrote, which the migration guards as `$previous$`: the text
+    // an unedited page holds when it runs. A bundle exported before the
+    // upgrade must not plant it back without the entry.
+    entity: "page-content",
+    key: "privacy",
+    field: "contentHtml",
+    literal: STARTER_PRIVACY_BODY_5007,
+    migration: "20261229020000_add_ai_apps_to_starter_privacy",
+    issue: "#5305",
+    describe:
+      "the starter privacy policy from before it listed the AI apps members connect",
   },
 ];
 
