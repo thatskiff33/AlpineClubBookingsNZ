@@ -73,6 +73,7 @@ export async function anonymiseFormerMember(
     tx.sessionReauthChallenge.deleteMany({ where: { memberId: id } }),
     tx.webAuthnCredential.deleteMany({ where: { memberId: id } }),
     tx.webAuthnChallenge.deleteMany({ where: { memberId: id } }),
+    tx.mcpGrant.deleteMany({ where: { memberId: id } }),
     tx.bookingGuest.updateMany({ where: { memberId: id }, data: { firstName: "Deleted", lastName: "Member", ...DIETARY_ERASURE_PATCH } }),
     ...(member.xeroContactId ? [tx.xeroContactCache.deleteMany({ where: { contactId: member.xeroContactId } })] : []),
   ]);

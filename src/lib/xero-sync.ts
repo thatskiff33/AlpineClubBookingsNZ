@@ -11,6 +11,7 @@ import {
   neverCanonicalRefundNoteIds,
   readCanonicalRefundNoteField,
 } from "./xero-refund-note-status";
+import { adoptCanonicalRefundNote, type CanonicalRefundNoteAdoption, completeAdoptingCanonicalRefundNote } from "./xero-refund-note-adoption";
 import { buildXeroObjectUrl, stripXeroOrgShortCode } from "./xero-links";
 import { mergeXeroObjectLinkMetadata, planXeroObjectLinkMetadataMerge } from "./xero-object-link-metadata-merge";
 import {
@@ -106,6 +107,8 @@ export interface XeroSyncOperationCompletion {
   extraLinks?: XeroObjectLinkInput[];
   /** #4256: a non-SUCCEEDED row's message; else it keeps the one it had. */
   lastErrorMessage?: string;
+  /** #4279: adopt this note as the payment's refund note, only if the claim wins (`completeAdoptingCanonicalRefundNote`). */
+  canonicalRefundNote?: CanonicalRefundNoteAdoption;
 }
 
 export interface CanonicalPaymentRefundCreditNoteLink {
@@ -1038,6 +1041,8 @@ export async function completeXeroSyncOperation(
       });
     }
     const operation = await tx.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } });
+    // #4279: on the won claim, under the Payment row taken first, before the links normalise against it.
+    if (completion.canonicalRefundNote) await adoptCanonicalRefundNote(completion.canonicalRefundNote, tx);
 
     for (const link of completion.extraLinks ?? []) {
       await upsertXeroObjectLinkWithClient(tx, link);
@@ -1045,9 +1050,8 @@ export async function completeXeroSyncOperation(
 
     return operation;
   };
-  const operation = options?.store
-    ? await completeWithClient(options.store)
-    : await prisma.$transaction(completeWithClient);
+  const operation = completion.canonicalRefundNote ? await completeAdoptingCanonicalRefundNote(prisma, completion.canonicalRefundNote, options, completeWithClient)
+    : options?.store ? await completeWithClient(options.store) : await prisma.$transaction(completeWithClient);
 
   // #4686: its Xero object is traced after commit (or only logged inside a caller's own `store`), never written over the row.
   if (lostClaim) await import("./xero-late-partial-trace").then((trace) => trace.afterLostClaimPartial(claim, completion, Boolean(options?.store), lostClaim!.laterClaimHolds), (err) => logger.error({ operationId, err }, "Xero part-success trace not loaded (#4686)"));

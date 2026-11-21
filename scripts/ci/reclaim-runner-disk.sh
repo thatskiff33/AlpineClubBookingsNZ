@@ -94,7 +94,7 @@ fi
 echo "Reclaiming: ${avail_gb:-unknown}G available is below the ${threshold_gb}G threshold."
 
 # Preinstalled toolchains none of these jobs use. Roughly 25 GB in total on a
-# current `ubuntu-latest` image; see the note above about why none of this is
+# current Ubuntu runner image; see the note above about why none of this is
 # allowed to fail the build.
 sudo rm -rf /usr/share/dotnet || true
 sudo rm -rf /usr/local/lib/android || true

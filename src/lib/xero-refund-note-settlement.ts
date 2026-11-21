@@ -220,6 +220,12 @@ export function refundCreditNoteCompletion(input: {
    * it as this payment's single note. Absent for every other refund note.
    */
   refundRequestId?: string | null;
+  /**
+   * #4279: make the note the payment's one refund note, inside the completion
+   * and only if its claim wins (`completeAdoptingCanonicalRefundNote`). Never
+   * for a refund request's own note, whatever the caller asks.
+   */
+  adoptAsCanonicalRefundNote?: boolean;
 }): XeroSyncOperationCompletion {
   const { paymentId, creditNoteId, creditNoteNumber, outcome } = input;
   const paymentLinks: XeroObjectLinkInput[] = outcome.payments.map((payment) => ({
@@ -262,6 +268,7 @@ export function refundCreditNoteCompletion(input: {
     xeroObjectType: "CREDIT_NOTE",
     xeroObjectId: creditNoteId,
     xeroObjectNumber: creditNoteNumber,
+    ...(input.adoptAsCanonicalRefundNote && !input.refundRequestId ? { canonicalRefundNote: { paymentId, creditNoteId } } : {}),
     extraLinks: [
       {
         localModel: "Payment",
@@ -610,32 +617,56 @@ export async function finishRefundCreditNoteSettlement(input: {
   recordOnly?: boolean;
   /** #3827 (D-3813-8): see `refundCreditNoteCompletion`. */
   refundRequestId?: string | null;
-  /** #4256: the row is a retry's claim (`operation`); complete onto that claim only. */
-  retryClaim?: true;
-}): Promise<RefundNoteSettlementOutcome & { completionClaimLost: boolean }> {
+} & (
+  | {
+      /** #4256: the row is a retry's claim (`operation`); complete onto that claim only. */
+      retryClaim?: true;
+      adoptAsCanonicalRefundNote?: never;
+    }
+  | {
+      retryClaim: true;
+      /**
+       * #4279: see `refundCreditNoteCompletion`. A retry claim's only, by type:
+       * the completion refuses it otherwise, which here would be after Xero was paid.
+       */
+      adoptAsCanonicalRefundNote: boolean;
+    }
+)): Promise<RefundNoteSettlementOutcome & { completionClaimLost: boolean }> {
   const settled = await settleRefundNoteFromXero(input);
-  const completed = await completeXeroSyncOperation(
-    input.operation,
-    refundCreditNoteCompletion({
+  let completed: Awaited<ReturnType<typeof completeXeroSyncOperation>>;
+  try {
+    completed = await completeXeroSyncOperation(
+      input.operation,
+      refundCreditNoteCompletion({
+        paymentId: input.paymentId,
+        creditNoteBody: settled.creditNoteBody,
+        creditNoteId: input.creditNoteId,
+        creditNoteNumber: settled.creditNoteNumber,
+        originalInvoiceId: input.originalInvoiceId,
+        refundMethod: input.refundMethod,
+        outcome: settled.outcome,
+        priorResponse: input.priorResponse,
+        extraResponse: { interruptedAttemptCompleted: true },
+        refundRequestId: input.refundRequestId,
+        adoptAsCanonicalRefundNote: input.adoptAsCanonicalRefundNote,
+      }),
+      input.retryClaim ? { retryClaim: true } : undefined,
+    );
+  } finally {
+    // #4279: also when the completion throws (a Payment row it could not get in time). The payment
+    // went to Xero, and the next leg reads it back as already settled, which records no manifest.
+    // The writer never throws by contract; caught anyway, so a throw here can never replace
+    // the completion's own error.
+    const manifestInput = {
       paymentId: input.paymentId,
-      creditNoteBody: settled.creditNoteBody,
       creditNoteId: input.creditNoteId,
-      creditNoteNumber: settled.creditNoteNumber,
-      originalInvoiceId: input.originalInvoiceId,
+      operationId: input.operation.id,
       refundMethod: input.refundMethod,
-      outcome: settled.outcome,
-      priorResponse: input.priorResponse,
-      extraResponse: { interruptedAttemptCompleted: true },
-      refundRequestId: input.refundRequestId,
-    }),
-    input.retryClaim ? { retryClaim: true } : undefined,
-  );
-  await recordSentRefundNotePaymentManifest(settled.outcome, {
-    paymentId: input.paymentId,
-    creditNoteId: input.creditNoteId,
-    operationId: input.operation.id,
-    refundMethod: input.refundMethod,
-  });
+    };
+    await recordSentRefundNotePaymentManifest(settled.outcome, manifestInput).catch((error: unknown) => {
+      logger.error({ err: error, ...manifestInput }, "Could not record a sent refund-note payment's manifest; the completion's outcome stands");
+    });
+  }
   return { ...settled.outcome, completionClaimLost: completed === null };
 }
 
