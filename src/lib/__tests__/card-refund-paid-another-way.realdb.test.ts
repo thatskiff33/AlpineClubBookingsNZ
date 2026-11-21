@@ -132,8 +132,10 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       await prisma.refundRequest.deleteMany({ where: { bookingId: BOOKING_ID } });
       // #4516: a still-owed rest's own row.
       await prisma.paymentRecoveryOperation.deleteMany({ where: { paymentId: PAYMENT_ID, idempotencyKey: { startsWith: "card_refund_still_owed_" } } });
-      // #4383 delta review: an older close's card refund row.
-      await prisma.paymentRecoveryOperation.deleteMany({ where: { paymentId: PAYMENT_ID, id: { startsWith: "race-4383-delta-" } } });
+      // #4383 delta review and re-review: the closed card refund rows those proofs add.
+      await prisma.paymentRecoveryOperation.deleteMany({
+        where: { paymentId: PAYMENT_ID, OR: [{ id: { startsWith: "race-4383-delta-" } }, { id: { startsWith: "race-4383-rereview-" } }] },
+      });
     }
 
     async function deleteFixtures() {
@@ -1300,6 +1302,125 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
 
         // A close of the $50 failed refund is answered by its card note: a Stripe reversal for $50.
         expect(await failedLaterCardNoteCoverCents(prisma as never, failedLater, PAYMENT_ID)).toBe(REFUND_CENTS);
+      });
+
+      // #4383 delta re-review (money): a close made since #4383 reverses only
+      // what the receipt recorded, never the over-note above it. The capture
+      // recorded $100 of $200; a pre-#4383 $150 note answered its refund, which
+      // failed later and is closed "Paid another way" now: a $100 reversal and
+      // a $150 bank note. The $50 over-note still stands for the officer to
+      // reverse by hand (`docs/MAINTENANCE.md`), so it is never read as cover.
+      it("MUTATION #4383 delta re-review: a close made since #4383 leaves the over-note standing, never cover above cash", async () => {
+        const RECORDED_CENTS = 10_000;
+        const OLD_REFUND_CENTS = 15_000;
+        const FAILED_OPERATION_ID = "race-4383-rereview-op";
+        const NEW_CLOSE_ID = "race-4383-rereview-close";
+        await recordCappedReceipt(RECORDED_CENTS);
+        const refund = await prisma.paymentRefund.create({
+          data: {
+            paymentId: PAYMENT_ID,
+            paymentTransactionId: TRANSACTION_ID,
+            stripeRefundId: "re_race_4383_rereview",
+            stripePaymentIntentId: LATE_INTENT,
+            amountCents: OLD_REFUND_CENTS,
+            currency: "nzd",
+            status: "failed",
+          },
+        });
+        const failedLater = await prisma.paymentRecoveryOperation.create({
+          data: {
+            id: FAILED_OPERATION_ID,
+            type: "REFUND_BOOKING_MODIFICATION",
+            status: "FAILED",
+            bookingId: BOOKING_ID,
+            paymentId: PAYMENT_ID,
+            paymentIntentId: LATE_INTENT,
+            amountCents: OLD_REFUND_CENTS,
+            allocationPlan: [{ paymentTransactionId: TRANSACTION_ID, amountCents: OLD_REFUND_CENTS }],
+            idempotencyKey: `card_refund_failed_later_${refund.stripeRefundId}`,
+            attempts: 5,
+            nextRetryAt: null,
+          },
+        });
+        // The pre-#4383 note for the whole $150: $50 above the $100 recorded.
+        await prisma.xeroObjectLink.create({
+          data: {
+            localModel: "Payment",
+            localId: PAYMENT_ID,
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_race_4383_rereview_old",
+            role: "REFUND_CREDIT_NOTE",
+            active: true,
+            metadata: { amountCents: OLD_REFUND_CENTS, paymentIntentId: LATE_INTENT },
+          },
+        });
+        // A close made now reverses only what the receipt recorded.
+        expect(await failedLaterCardNoteCoverCents(prisma as never, failedLater, PAYMENT_ID)).toBe(RECORDED_CENTS);
+
+        // The close, its $100 Stripe reversal and its $150 bank note, linked.
+        await prisma.paymentRecoveryOperation.update({ where: { id: FAILED_OPERATION_ID }, data: { status: "SUCCEEDED" } });
+        await prisma.manualRefundTask.create({
+          data: {
+            id: NEW_CLOSE_ID,
+            bookingId: BOOKING_ID,
+            paymentId: PAYMENT_ID,
+            kind: "CANCELLED_BOOKING_HAND_BACK",
+            status: "COMPLETED",
+            occurrenceKey: `card-refund-paid-another-way:${FAILED_OPERATION_ID}`,
+            amountCents: OLD_REFUND_CENTS,
+            completedAt: NIGHT,
+            completedByMemberId: OFFICER_ID,
+            reason: "Paid-another-way close since #4383 (race proof)",
+          },
+        });
+        await prisma.xeroObjectLink.createMany({
+          data: [
+            {
+              localModel: "Payment",
+              localId: PAYMENT_ID,
+              xeroObjectType: "INVOICE",
+              xeroObjectId: "inv_race_4383_rereview_reversal",
+              role: CARD_REFUND_REVERSAL_INVOICE_ROLE,
+              active: true,
+              metadata: { closeTaskId: NEW_CLOSE_ID, amountCents: RECORDED_CENTS, bookingId: BOOKING_ID },
+            },
+            {
+              localModel: "Payment",
+              localId: PAYMENT_ID,
+              xeroObjectType: "CREDIT_NOTE",
+              xeroObjectId: "cn_race_4383_rereview_bank",
+              role: "REFUND_CREDIT_NOTE",
+              active: true,
+              metadata: { amountCents: OLD_REFUND_CENTS },
+            },
+          ],
+        });
+        await prisma.xeroSyncOperation.create({
+          data: {
+            direction: "OUTBOUND",
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            localModel: "Payment",
+            localId: PAYMENT_ID,
+            queueType: "REFUND_CREDIT_NOTE",
+            status: "SUCCEEDED",
+            xeroObjectId: "cn_race_4383_rereview_bank",
+            idempotencyKey: "race-4383-rereview-bank-note",
+            correlationKey: "race-4383-rereview-bank-note",
+            requestPayload: {
+              queueType: "REFUND_CREDIT_NOTE",
+              refundAmountCents: OLD_REFUND_CENTS,
+              refundMethod: "internet-banking",
+              paidAnotherWayTaskId: NEW_CLOSE_ID,
+            },
+          },
+        });
+        await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: OLD_REFUND_CENTS } });
+        const payment = { id: PAYMENT_ID, bookingId: BOOKING_ID, refundedAmountCents: OLD_REFUND_CENTS };
+        await expect(resolveRefundNoteEligibleCash(payment)).resolves.toMatchObject({ eligibleCashCents: OLD_REFUND_CENTS });
+        // Coverage $150 + $150 - $100 = $200 against $150 cash: the $50 is the
+        // over-note. Netting the whole $100 reversal off it would read $50 here.
+        expect(await readRefundNoteCoverageAboveCashCents(payment)).toBe(0);
       });
 
       it("a close that waits on the approval task's row behind the REAL receipt worker reads the receipt recorded and queues its own note", async () => {

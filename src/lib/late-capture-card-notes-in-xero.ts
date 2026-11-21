@@ -47,11 +47,15 @@ type PreCapOverNoteStore = Pick<
  * were coverage above cash before #4383 too.
  *
  * #4383 delta review (money): coverage is net of live Stripe reversals, so an
- * over-note a reversal already undid is not taken off again. The live
- * reversals answering this capture's refunds
- * (`readLateCaptureReversalCentsByIntent`) come off its over-note first: a
- * close reverses the failed refund's whole note, the part above the cap with
- * it. Without this, a later genuine failed refund's cover would be hidden.
+ * over-note a reversal already undid is not taken off again. Only the part of
+ * the live reversals answering this capture's refunds
+ * (`readLateCaptureReversalCentsByIntent`) above its capped share undoes the
+ * over-note. A close made before #4383 reversed the failed refund's whole
+ * note, the part above the cap with it; one made since reverses only what the
+ * receipt recorded (`failedLaterCardNoteCoverCents`), so the over-note still
+ * stands for the officer to reverse by hand. Netting the whole reversal would
+ * hide a later failed refund's cover after an older close, or read a newer
+ * close's over-note as cover and have Xero corrected twice.
  */
 export async function readLateCapturePreCapOverNoteCents(paymentId: string, db: PreCapOverNoteStore = prisma): Promise<number> {
   const intents = await readCardNotedPaymentIntentIds(paymentId, db);
@@ -65,7 +69,9 @@ export async function readLateCapturePreCapOverNoteCents(paymentId: string, db: 
     const grossOverNoteCents = inXeroCents - lateCaptureNotableRefundCents(receipt, inXeroCents);
     if (grossOverNoteCents <= 0) continue;
     reversedByIntent ??= await readLateCaptureReversalCentsByIntent(paymentId, db);
-    overNoteCents += Math.max(0, grossOverNoteCents - (reversedByIntent.get(intent) ?? 0));
+    const cappedShareCents = inXeroCents - grossOverNoteCents;
+    const undoneCents = Math.max(0, (reversedByIntent.get(intent) ?? 0) - cappedShareCents);
+    overNoteCents += grossOverNoteCents - Math.min(grossOverNoteCents, undoneCents);
   }
   return overNoteCents;
 }
