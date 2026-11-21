@@ -45,12 +45,15 @@
  * green. The remedy printed names the ref actually asked for.
  */
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 import {
   ALLOWANCE_DIR,
   type AllowanceProblem,
   type SizeAllowance,
 } from "./file-size-allowances";
+import type { UpstreamTrust } from "./budget-upstream-ref";
 import {
   HARD_CEILING_MULTIPLE,
   hardCeilingFor,
@@ -64,7 +67,14 @@ const ALLOWANCE_FORMAT_HINT =
 
 /** How many lines a file had on the base ref, or that it did not exist there. */
 export type BaseSize =
-  | { kind: "existed"; lines: number; /** Set when git reports a rename. */ from?: string }
+  | {
+      kind: "existed";
+      lines: number;
+      /** Set when git reports a rename. */
+      from?: string;
+      /** Set when the length is the trusted upstream commit's, not the base's (#5196). */
+      upstream?: string;
+    }
   | {
       kind: "absent";
       /**
@@ -85,6 +95,11 @@ export type BaseResolution =
        * the debt a deletion removes (#4926).
        */
       deleted: FileStat[];
+      /**
+       * Each changed file's length on the trusted upstream commit, for the
+       * paths that commit brought in (#5196). Empty without trust.
+       */
+      upstreamLines: Map<string, number>;
     }
   | { ok: false; error: string };
 
@@ -416,6 +431,7 @@ export function resolveBaseSizes(
   root: string,
   ref: string,
   isProductionFile: (file: string) => boolean,
+  upstream?: UpstreamTrust,
 ): BaseResolution {
   const base = resolveBaseRef(root, ref);
   if (!base.ok) return { ok: false, error: base.error };
@@ -451,7 +467,52 @@ export function resolveBaseSizes(
     if (previous.kind === "existed") deleted.push({ file, lines: previous.lines });
   }
 
-  return { ok: true, ref: base.sha, sizes, deleted };
+  // Same path only: a trusted file is matched where it lives at U, which is
+  // what lets an upstream move the cumulative diff no longer reads as a
+  // rename keep its upstream length.
+  const upstreamLines = new Map<string, number>();
+  if (upstream?.kind === "trusted") {
+    for (const file of sizes.keys()) {
+      const content = upstream.contentAt(file);
+      if (content !== null) upstreamLines.set(file, countLinesOfBuffer(content));
+    }
+  }
+
+  return { ok: true, ref: base.sha, sizes, deleted, upstreamLines };
+}
+
+/**
+ * The previous length a file is judged against: its base length, or the
+ * trusted upstream commit's when that is longer (#5196). A file absent from
+ * the base but present at U existed upstream, so it is not new.
+ */
+function judgedPrevious(
+  previous: BaseSize,
+  upstreamLines: number | undefined,
+  upstreamSha: string,
+): BaseSize {
+  if (upstreamLines === undefined) return previous;
+  if (previous.kind === "existed" && previous.lines >= upstreamLines) return previous;
+  return { kind: "existed", lines: upstreamLines, upstream: upstreamSha };
+}
+
+/**
+ * Whether a working-tree allowance fragment is upstream's own, byte for byte
+ * (#5196). Upstream spent it there; it is not this change's declaration.
+ */
+export function isUpstreamFragment(
+  root: string,
+  upstream: UpstreamTrust | undefined,
+  source: string,
+): boolean {
+  if (upstream?.kind !== "trusted") return false;
+  const theirs = upstream.contentAt(source);
+  if (theirs === null) return false;
+  try {
+    return readFileSync(path.join(root, source)).equals(theirs);
+  } catch {
+    return false;
+  }
 }
 
 /** A changed file and where its previous version lived, if anywhere in scope. */
@@ -510,6 +571,8 @@ export function changedFilesWithBasePaths(
 
 export type ComputedFindingKind =
   | "base-unresolvable"
+  /** `--upstream-ref` was named and cannot be trusted or read (#5196). */
+  | "upstream-unusable"
   /** The scan found no production files at all, so a clean result proves nothing. */
   | "empty-scan"
   | "new-over-budget"
@@ -556,6 +619,20 @@ export type ComputedResult = {
    * it is the difference `--report` would show before and after (#4926).
    */
   debtDelta: number | null;
+  /**
+   * What a trusted upstream commit changed about this run (#5196). Absent
+   * without trust, and when trust resolved to `HEAD` and was ignored.
+   */
+  trustedUpstream?: TrustedUpstreamSummary;
+};
+
+export type TrustedUpstreamSummary = {
+  sha: string;
+  subject: string;
+  /** Judged files or functions whose previous length came from upstream. */
+  lifted: number;
+  /** Allowance fragments ignored as upstream's own. */
+  ignoredFragments: number;
 };
 
 /**
@@ -628,6 +705,11 @@ export function evaluateComputedRatchet(input: {
   /** Declared growth from `size-allowances.d/`, and anything unreadable in it. */
   allowances?: ReadonlyArray<SizeAllowance>;
   allowanceProblems?: ReadonlyArray<AllowanceProblem>;
+  /**
+   * A trusted upstream commit, for a fork syncing down (#5196). Resolved by
+   * `upstreamTrustFor`; ignored when it resolved to `HEAD`.
+   */
+  upstream?: UpstreamTrust;
 }): ComputedResult {
   const findings: ComputedFinding[] = [];
 
@@ -663,10 +745,12 @@ export function evaluateComputedRatchet(input: {
     });
   }
 
+  const upstream = input.upstream?.kind === "ignored-head" ? undefined : input.upstream;
   const resolved = resolveBaseSizes(
     input.root,
     input.baseRef,
     input.isProductionFile,
+    upstream,
   );
   if (!resolved.ok) {
     findings.push({
@@ -690,14 +774,32 @@ export function evaluateComputedRatchet(input: {
     };
   }
 
+  if (upstream?.kind === "unusable") {
+    findings.push(upstreamUnusableFinding(upstream.error));
+    return {
+      findings,
+      baseSha: resolved.ref,
+      checkedFiles: 0,
+      allowancesApplied: [],
+      debtDelta: null,
+    };
+  }
+
   // An allowance only has effect on the change that INTRODUCES it: the
   // allowance file itself has to be in this change's diff. That is what makes
   // it per-pull-request rather than a ledger by accretion — after merge it is
   // inert, so it can be swept up in bulk like a compiled changelog fragment,
-  // and it can never be reached for again by a later change.
-  const liveAllowances = (input.allowances ?? []).filter((allowance) =>
-    resolved.sizes.has(allowance.source),
-  );
+  // and it can never be reached for again by a later change. A fragment a
+  // sync-down brought in unchanged from the trusted upstream merged THERE,
+  // so it is just as inert here (#5196).
+  const ignoredFragments = new Set<string>();
+  const liveAllowances = (input.allowances ?? []).filter((allowance) => {
+    if (!resolved.sizes.has(allowance.source)) return false;
+    if (!isUpstreamFragment(input.root, upstream, allowance.source)) return true;
+    ignoredFragments.add(allowance.source);
+    return false;
+  });
+  let lifted = 0;
 
   // "One file, one allowance" — asked HERE, of the allowances live for this
   // change, and not of the directory as a whole.
@@ -747,15 +849,21 @@ export function evaluateComputedRatchet(input: {
   const headStats: FileStat[] = [];
 
   let checkedFiles = 0;
-  for (const [file, previous] of [...resolved.sizes.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    if (previous.kind === "existed") {
-      const baseFile = previous.from ?? file;
+  for (const [file, base] of [...resolved.sizes.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    // The debt line stays relative to the fork's base: it reports what this
+    // change does to the tree, and a sync-down does bring upstream's debt in.
+    if (base.kind === "existed") {
+      const baseFile = base.from ?? file;
       if (input.isProductionFile(baseFile)) {
-        baseStats.push({ file: baseFile, lines: previous.lines });
+        baseStats.push({ file: baseFile, lines: base.lines });
       }
     }
     if (!input.isProductionFile(file)) continue;
     checkedFiles += 1;
+    const previous = upstream?.kind === "trusted"
+      ? judgedPrevious(base, resolved.upstreamLines.get(file), upstream.sha)
+      : base;
+    if (previous !== base) lifted += 1;
 
     const budget = input.budgetForFile(file);
     const current = input.countLines(input.root, file);
@@ -821,6 +929,9 @@ export function evaluateComputedRatchet(input: {
     // its hard ceiling keeps its own length too, so it may stay or shrink.
     const ceiling = Math.max(budget.limit, previous.lines);
     if (current > ceiling) {
+      const onBase = previous.upstream
+        ? `on trusted upstream ${previous.upstream.slice(0, 12)}`
+        : "on the base ref";
       const renamedNote = previous.from ? ` (renamed from ${previous.from})` : "";
       const alreadyOver = previous.lines > budget.limit;
 
@@ -838,7 +949,7 @@ export function evaluateComputedRatchet(input: {
             kind: "allowance-not-permitted",
             file,
             budget: describe,
-            previous: `${previous.lines} LOC on the base ref, inside its budget (${allowance.source})`,
+            previous: `${previous.lines} LOC ${onBase}, inside its budget (${allowance.source})`,
             current: `${current} LOC, +${current - ceiling} beyond its ceiling`,
             problem:
               "an allowance cannot carry a file over its budget for the first time",
@@ -856,7 +967,7 @@ export function evaluateComputedRatchet(input: {
             kind: "allowance-over-hard-ceiling",
             file,
             budget: `${describe}, hard ceiling ${hardCeiling} LOC`,
-            previous: `${previous.lines} LOC on the base ref${renamedNote} (${allowance.source})`,
+            previous: `${previous.lines} LOC ${onBase}${renamedNote} (${allowance.source})`,
             current: `${current} LOC, +${current - hardCeiling} beyond its hard ceiling`,
             problem:
               `an allowance cannot take a file past ${HARD_CEILING_MULTIPLE} ` +
@@ -895,7 +1006,7 @@ export function evaluateComputedRatchet(input: {
         kind: "grown-beyond-base",
         file,
         budget: describe,
-        previous: `${previous.lines} LOC on the base ref${renamedNote}`,
+        previous: `${previous.lines} LOC ${onBase}${renamedNote}`,
         current: `${current} LOC, +${current - ceiling} beyond its ceiling`,
         problem: alreadyOver
           ? "an already-oversized file grew"
@@ -948,5 +1059,31 @@ export function evaluateComputedRatchet(input: {
     checkedFiles,
     allowancesApplied,
     debtDelta: sizeDebtDelta(baseStats, headStats),
+    ...(upstream?.kind === "trusted"
+      ? {
+          trustedUpstream: {
+            sha: upstream.sha,
+            subject: upstream.subject,
+            lifted,
+            ignoredFragments: ignoredFragments.size,
+          },
+        }
+      : {}),
+  };
+}
+
+/** The refusal both ratchets give when a named upstream cannot be trusted (#5196). */
+export function upstreamUnusableFinding(error: string): ComputedFinding {
+  return {
+    severity: "unusable",
+    kind: "upstream-unusable",
+    file: null,
+    budget: null,
+    previous: null,
+    current: null,
+    problem: error,
+    action:
+      "fetch the upstream ref named by --upstream-ref and re-run, or drop the " +
+      "option — this check will not fall back to a comparison nobody asked for",
   };
 }
