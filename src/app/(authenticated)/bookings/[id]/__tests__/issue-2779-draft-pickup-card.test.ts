@@ -109,6 +109,7 @@ describe("#2779 draft pick-up-and-pay card (INV-LOCKOUT-069/070)", () => {
     const page = stripComments(readPageSource());
     expect(page.match(/<h1\b/g) ?? []).toHaveLength(1);
     expect(page).not.toMatch(/headingLevel=\{\s*1\s*\}/);
+    expect(page).not.toMatch(/aria-level=\{?\s*["']?1\b/);
   });
 
   it("states the deletion deadline on the page that takes the money", () => {

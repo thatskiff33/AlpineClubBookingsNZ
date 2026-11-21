@@ -9,7 +9,8 @@ import { expect } from "vitest";
  * by "a stored Heading 1 comes back demoted".
  */
 
-const STORED_H1_TEXT = "Arriving at the lodge";
+/** The stored Heading 1's text, for tests that look the demoted heading up by name. */
+export const STORED_H1_TEXT = "Arriving at the lodge";
 
 const STORED_WITH_H1 = `<h1>${STORED_H1_TEXT}</h1><p>Turn the power on.</p>`;
 

@@ -94,13 +94,14 @@ describe("SendHistoryCard paging", () => {
     total = 25;
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     // The total line is drawn from the stepped-back page number as soon as the
-    // empty page 2 is received, a render before the effect that asks for page 1
-    // again. So the third request is awaited, never counted straight after the
+    // empty page 2 is received, in the render before the effect that asks for
+    // page 1 again runs. So the third request is awaited, never counted straight after the
     // line appears (#5361: that order failed once on main).
     await waitFor(() => expect(pages).toEqual(["1", "2", "1"]));
     expect(await screen.findByText("Showing 1–25 of 25")).toBeInTheDocument();
     // Page 1's row is back, so the step-back read was answered and shown.
     expect(await screen.findByText("Newsletter 1")).toBeInTheDocument();
+    expect(pages).toEqual(["1", "2", "1"]);
   });
 
   it("never lets a slower read for a page it has left replace the list shown", async () => {
