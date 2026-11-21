@@ -189,6 +189,9 @@ const ROUTE_AREA_PREFIXES: Array<{
     prefixes: [
       "/api/admin/bookings",
       "/api/admin/booking-requests",
+      // A school's own record (#5245): reached from its booking requests and
+      // bookings, and corrected under the same bookings:edit gate as a request.
+      "/api/admin/organisations",
       "/api/admin/booking-reviews",
       "/api/admin/booking-change-requests",
       // Unified officer exception-request queue (#2524): same class of
