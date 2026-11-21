@@ -42,9 +42,18 @@ export type RestoredWorkNotice = "kept" | "datesDropped";
  *
  * Disabled for a `?replaceRequest=` visit: replacing an exception request is
  * its own entry path, and a kept copy must never override it.
+ *
+ * `freshEntry` is a `?workParty=` visit (#5148): "Join Work Party" fills in the
+ * work party's stay, so a kept copy is NOT brought back over it, but the Join
+ * work IS kept, so a detour (to the profile's family group, say) that returns
+ * to plain `/book` brings back the Join dates, guests and working-bee tick. It
+ * starts keeping only once the visit has dates: a Join that fills nothing in
+ * (a finished work party, an unbookable lodge) leaves the older kept copy as
+ * it was for the next plain visit.
  */
 export function useWizardWorkPersistence({
   enabled,
+  freshEntry = false,
   memberId,
   lodges,
   lodgesLoading,
@@ -55,6 +64,8 @@ export function useWizardWorkPersistence({
   onRestore,
 }: {
   enabled: boolean;
+  /** Skip the restore, and keep this visit's work once it has dates. */
+  freshEntry?: boolean;
   memberId: string | null;
   lodges: readonly LodgeOption[];
   lodgesLoading: boolean;
@@ -74,6 +85,10 @@ export function useWizardWorkPersistence({
 
   useEffect(() => {
     if (restoreSettled || !enabled || stoppedRef.current) return;
+    if (freshEntry) {
+      setRestoreSettled(true);
+      return;
+    }
     // A failed lodge list is transient: wait for the retry rather than throw
     // the member's work away. A refusal (forbidden) means no lodge is bookable.
     if (!memberId || lodgesLoading || lodgesFailed) return;
@@ -102,6 +117,7 @@ export function useWizardWorkPersistence({
   }, [
     restoreSettled,
     enabled,
+    freshEntry,
     memberId,
     lodges,
     lodgesLoading,
@@ -129,7 +145,7 @@ export function useWizardWorkPersistence({
   // Serialised so the save effect runs when the CONTENT changes, not on every
   // render that rebuilds the object.
   const serialisedWork =
-    restoreSettled && memberId && work
+    restoreSettled && memberId && work && (!freshEntry || work.checkIn !== null)
       ? JSON.stringify({ ...work, memberId })
       : null;
   useEffect(() => {
