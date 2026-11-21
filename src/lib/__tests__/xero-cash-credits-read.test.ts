@@ -298,7 +298,12 @@ describe("listXeroCashCreditQueue with a stubbed database (#5204)", () => {
       [{ id: "m1", firstName: "Aroha", lastName: "Ngata", email: "a@example.test", xeroContactId: "contact-1" }],
     );
     const queue = await listXeroCashCreditQueue(stub as never);
-    expect(stub.xeroCashCredit.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { remainingCents: { gt: 0 } } }));
+    expect(stub.xeroCashCredit.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { remainingCents: { gt: 0 } },
+        orderBy: [{ documentDate: { sort: "asc", nulls: "last" } }, { xeroDocumentId: "asc" }],
+      }),
+    );
     expect(stub.member.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { xeroContactId: { in: ["contact-1", "contact-9"] } } }));
     expect(queue.refreshedAt).toBe(READ_AT);
     expect(queue.rows.map((r) => [r.xeroDocumentId, r.documentDate, r.member])).toEqual([
