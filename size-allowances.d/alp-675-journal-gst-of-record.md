@@ -1,7 +1,7 @@
 # File-size allowances for ALP-675 (#5208)
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1608
+lines: 1607
 reason: the primary invoice's create and update each gain one call to the GST
   safeguard right after Xero answers, and the create reads the pause and sends
   the plan's lines where it already plans them. The safeguard itself lives in
