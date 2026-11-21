@@ -115,6 +115,7 @@ function quote(
     combinedChangeFeeCents: 2_000,
     combinedAmountDueCents: 3_500,
     combinedRefundCents: 200,
+    combinedFreedCreditCents: 0,
     combinedPolicyRetainedCents: 0,
     combinedOrganiserRefundCents: 0,
     combinedOrganiserBankTransferRefundCents: 0,

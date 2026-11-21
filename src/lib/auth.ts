@@ -14,7 +14,12 @@ import { cache } from "react";
 import NextAuth, { CredentialsSignin, type NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
-import { burnDummyPasswordCompare, verifyPassword } from "./password-hashing";
+import {
+  burnDummyPasswordCompare,
+  burnPasswordCostShortfall,
+  verifyPassword,
+} from "./password-hashing";
+import { upgradePasswordHashAfterProof } from "./password-rehash";
 import { prisma } from "./prisma";
 import { getAuthSecret, getAuthTrustHost } from "./runtime-config";
 import logger from "./logger";
@@ -270,6 +275,9 @@ export const authConfig = {
 
         const isValid = await verifyPassword(password, member.passwordHash);
         if (!isValid) {
+          // #5261: an older, cheaper stored hash must not refuse faster than
+          // the full-cost dummy compare an unknown email spends.
+          await burnPasswordCostShortfall(password, member.passwordHash);
           return null;
         }
         await clearPasswordAttempts(email);
@@ -278,6 +286,12 @@ export const authConfig = {
         if (!member.emailVerified) {
           throw new EmailNotVerifiedError();
         }
+
+        await upgradePasswordHashAfterProof({
+          memberId: member.id,
+          plain: password,
+          storedHash: member.passwordHash,
+        });
 
         try {
           await prisma.member.update({

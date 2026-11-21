@@ -51,6 +51,7 @@ function promptData(
     ],
     combinedAmountDueCents: 3_500,
     combinedRefundCents: 0,
+    combinedFreedCreditCents: 0,
     combinedChangeFeeCents: 2_000,
     combinedPolicyRetainedCents: 0,
     combinedOrganiserRefundCents: 0,

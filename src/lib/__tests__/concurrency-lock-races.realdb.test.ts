@@ -363,10 +363,18 @@ import "./cancel-card-refund-failed-later.realdb.test";
 // #4280 reuses it to prove a card refund's reversal keeps the bank cash a "Paid
 // another way" close recorded: full and part closes, a late pending or
 // succeeded refund then failed or cancelled, each note state, several charges,
-// credit beside it, shortfalls and undone hand-backs never counted, the close
-// and the refund racing in both orders, and a rolled-back failure. Skipped
-// unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4280-` fixtures.
+// credit beside it, undone hand-backs never counted, the close and the refund
+// racing in both orders, and a rolled-back failure. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4280-` fixtures.
 import "./card-refund-reversal-bank-cash-floor.realdb.test";
+// #4488 reuses it to prove the same floor keeps the bank cash a completed card
+// refund shortfall recorded - a cancel's and a capacity race's - through the
+// real cancel, runner, close, completion, sync and failure writers: both worked
+// examples, cash on another charge counted once, an open or dismissed shortfall
+// counting for nothing, and the completion and the failure racing in both
+// orders. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its
+// own `race-4488-` fixtures.
+import "./card-refund-reversal-shortfall-floor.realdb.test";
 // #4210 reuses it to prove a card refund that fails later after its row was
 // closed "Paid another way" is held for an officer and alerted, never re-sent:
 // full and part closes, duplicate deliveries, no close and a close on another
@@ -790,6 +798,11 @@ import "./login-throttle.realdb.test";
 // claim does not. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
 // cleans its own `race-4616-` member.
 import "./session-reauth.realdb.test";
+// #5261 reuses it to prove the stored-password cost upgrade, a compare-and-swap
+// on the proved hash, never overwrites a password changed at the same moment,
+// including a change it waited on. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
+// it owns and cleans its own `race-5261-` member.
+import "./password-rehash.realdb.test";
 // #4617 reuses it to prove one of two concurrent passkey challenge claims
 // succeeds, and one of two concurrent counter updates. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4617-` member.

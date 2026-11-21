@@ -57,11 +57,10 @@ import { liveLines } from "@/lib/booking-ledger-modification-posting";
 import { findPostedSettlementLines } from "@/lib/booking-ledger-read";
 import type { PostedSettlementLine } from "@/lib/booking-ledger-settlement-posting";
 import {
-  isCancelCardShortfallTask,
-  isCardRefundPaidAnotherWayTask,
   isEditRefundHandBackTask,
   isRefundRequestHandBackTask,
 } from "@/lib/manual-refund-task-settlement-rules";
+import { isCardRefundBankRecordTask } from "@/lib/card-refund-bank-record";
 import {
   BANK_REFUND_VOID_FOLLOW_UP_KEY_PREFIX,
   BANK_REFUND_VOID_FOLLOW_UP_TASK_WHERE,
@@ -239,9 +238,11 @@ export interface ClassifiedVoidedNote {
 
 /**
  * The completed tasks on the payment whose refunds a REFUND_CREDIT_NOTE
- * records, each marked when it is a card refund's record (a "Paid another
- * way" close or a card refund shortfall): those count as covered refunds in
- * the spare check, but are never undone or picked here.
+ * records, each marked when it is a card refund's bank record (a "Paid
+ * another way" close or a completed card refund shortfall,
+ * `isCardRefundBankRecordTask`): those count as covered refunds in the spare
+ * check, but are never undone or picked here - the refunded-total floor
+ * trusts their cash (#4488, `INV-PAY-141`).
  */
 async function refundNoteHandBackTasks(db: Reader, paymentId: string): Promise<Map<string, { cardRecord: boolean }>> {
   const tasks =
@@ -250,7 +251,7 @@ async function refundNoteHandBackTasks(db: Reader, paymentId: string): Promise<M
       // that is no edit's or refund request's (their notes are another role),
       // and a review's whose refund a refund note recorded.
       where: { paymentId, status: "COMPLETED" },
-      select: { id: true, kind: true, occurrenceKey: true },
+      select: { id: true, kind: true, status: true, occurrenceKey: true },
     })) ?? [];
   const reviewIds = tasks.filter((task) => task.kind === "EDIT_FINANCIAL_REVIEW").map((task) => task.id);
   // A review's hand-back is recorded by a refund note only on a cancelled
@@ -279,7 +280,7 @@ async function refundNoteHandBackTasks(db: Reader, paymentId: string): Promise<M
       task.kind === "EDIT_FINANCIAL_REVIEW"
         ? notedReviewIds.has(task.id)
         : task.kind === "CANCELLED_BOOKING_HAND_BACK" && !isEditRefundHandBackTask(task) && !isRefundRequestHandBackTask(task);
-    if (counts) out.set(task.id, { cardRecord: isCardRefundPaidAnotherWayTask(task) || isCancelCardShortfallTask(task) });
+    if (counts) out.set(task.id, { cardRecord: isCardRefundBankRecordTask(task) });
   }
   return out;
 }

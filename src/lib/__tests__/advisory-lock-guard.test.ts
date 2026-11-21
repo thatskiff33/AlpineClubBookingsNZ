@@ -114,6 +114,10 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-001",
   },
   {
+    site: "writeOneBooking#1", tier: "GLOBAL", invariant: "INV-LOCK-002",
+    reason: "#5005: an imported booking is created PAID by the manual settlement body in one transaction, so it joins the settle/cancel cohort, then takes the lodge capacity key and the person-night keys and re-runs every import check under them. One booking per transaction; nothing leaves the app.",
+  },
+  {
     // The one spelling of the carrying-ask queue's order, taken by the inline
     // mint, the re-issue's completion and the recovery runner's claim hold.
     site: "lockAdditionalAskQueue#1",
@@ -495,6 +499,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     tier: "GLOBAL",
     reason:
       "#3750: approving a LOCKED_PERIOD change request on a finished stay claims the request and runs the canonical batch modification on the same transaction — a money and booking-status transition that must exclude a concurrent cancel, capture or refund of the same booking, composed with a capacity re-check. Global first, then the booking's immutable lodge key, then (#4845) the booking row before the claim; the tx-aware service re-enters all three and takes the member keys after.",
+    invariant: "INV-LOCK-002",
+  },
+  {
+    site: "correctWorkParty#1",
+    tier: "GLOBAL",
+    reason:
+      "Fork #119: an officer adds an existing booking to a work party (fork #130: or removes it from one; both directions are this one writer, `addBookingToWorkParty` and `removeBookingFromWorkParty` its two entry points) — the canonical batch modification on the same transaction, which moves settlement money (account credit, a refund, or an amount owed) and must exclude a concurrent cancel, capture or refund of the same booking, composed with a capacity re-check on a booking that does not yet hold its beds. Global first, then the booking's immutable lodge key, then (#4845) the booking row before the officer's re-authorisation; the tx-aware service re-enters all three and takes the member keys after. No claim row: two concurrent applies serialise here and the second re-reads a booking that already carries (or no longer carries) the work party and is refused.",
     invariant: "INV-LOCK-002",
   },
   {

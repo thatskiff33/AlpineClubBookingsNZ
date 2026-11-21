@@ -22,6 +22,7 @@ sequencing):
 | `BookingWaitlistAlternateLodge` | direct `lodgeId` junction | ADR-004 cross-lodge waitlist opt-in: lodges a waitlisted member would also accept; rows only widen what the processor may offer |
 | `BookingGuest` / `BookingGuestNight` | via `Booking` | no direct FK |
 | `BookingRequestPendingAdultReservationNight` | direct `lodgeId` | unnamed SCHOOL adult capacity, one count per request/night; always matches the held booking's immutable lodge, released with that hold (#3413) |
+| `BookingImportBatch` / `BookingImportRow` | direct `lodgeId` | a paid-booking import is one lodge per batch (#5005); the row copies the batch's lodge so a Booking Ref imports once per lodge (`INV-CAP-040`), and each imported booking's own `lodgeId` matches it |
 | `GroupBooking` | via organiser `Booking` | one group = one lodge (ADR-001 open question 1) |
 | `ChoreTemplate` | direct `lodgeId` | roster generation filters by lodge |
 | `LodgeSettings` | per-lodge row | converted from singleton |
