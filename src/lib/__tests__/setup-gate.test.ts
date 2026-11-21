@@ -422,9 +422,18 @@ describe("with setup complete", () => {
   });
 });
 
-/** Moves the frozen clock past the memo's TTL for the duration of `run`. */
-async function afterTtl(run: () => Promise<void>) {
-  vi.useFakeTimers({ toFake: ["Date"] });
+/**
+ * Moves the frozen clock past the memo's TTL for the duration of `run`.
+ * `alsoFakeTimeouts` puts the read timeout under the test's control as well;
+ * `settle()` cannot be used then, so advance the fake timers instead.
+ */
+async function afterTtl(
+  run: () => Promise<void>,
+  { alsoFakeTimeouts = false }: { alsoFakeTimeouts?: boolean } = {},
+) {
+  vi.useFakeTimers({
+    toFake: alsoFakeTimeouts ? ["Date", "setTimeout", "clearTimeout"] : ["Date"],
+  });
   try {
     vi.setSystemTime(Date.now() + SETUP_STATE_TTL_MS + 1);
     await run();
@@ -702,6 +711,77 @@ describe("an expired answer is served while it refreshes (#5264)", () => {
         isComplete: false,
       });
     });
+  });
+});
+
+describe("an expired 'not complete' stays closed when its refresh does not answer (#5352)", () => {
+  // Every refresh-failure case above starts from "complete" and proves a live
+  // site stays open. These start from "not complete": a refresh that fails,
+  // throws or hangs must never open a site that was last known to be
+  // unconfigured. Each asserts the 503 while the refresh is in flight and
+  // again once it has settled.
+  async function expectClosed() {
+    const response = await getSetupInProgressResponse(request("/"));
+    expect(response?.status).toBe(503);
+    await expect(response!.text()).resolves.toContain(
+      SETUP_IN_PROGRESS_COPY.eyebrow,
+    );
+  }
+
+  it("stays closed when the database does not answer", async () => {
+    setupIncomplete();
+    await expectClosed();
+    mocks.completion.mockResolvedValue({ readFailed: true });
+    mocks.themeState.mockResolvedValue({
+      isComplete: false,
+      readFailed: true,
+      css: "",
+    });
+
+    await afterTtl(async () => {
+      await expectClosed();
+      await settle();
+      await expectClosed();
+      // The refresh ran and was stamped fresh: one retry per TTL, not per request.
+      expect(mocks.completion).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("stays closed when the refresh throws", async () => {
+    setupIncomplete();
+    await expectClosed();
+    mocks.completion.mockRejectedValue(new Error("connection reset"));
+
+    await afterTtl(async () => {
+      await expectClosed();
+      await settle();
+      await expectClosed();
+      expect(mocks.completion).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("stays closed when the refresh hangs, and retries at the next expiry", async () => {
+    setupIncomplete();
+    await expectClosed();
+    mocks.completion.mockReturnValue(new Promise(() => {}));
+
+    await afterTtl(
+      async () => {
+        // The read is in flight and will never answer.
+        await expectClosed();
+        expect(mocks.completion).toHaveBeenCalledTimes(2);
+
+        await vi.advanceTimersByTimeAsync(SETUP_STATE_READ_TIMEOUT_MS);
+        // Timed out: still closed, stamped fresh, single-flight cleared.
+        await expectClosed();
+        expect(mocks.completion).toHaveBeenCalledTimes(2);
+
+        vi.setSystemTime(Date.now() + SETUP_STATE_TTL_MS + 1);
+        await expectClosed();
+        expect(mocks.completion).toHaveBeenCalledTimes(3);
+      },
+      { alsoFakeTimeouts: true },
+    );
   });
 });
 
