@@ -1150,3 +1150,105 @@ function, not per file or per branch (#4928). Pins:
 `member-money-pending-charges.test.ts`,
 `booking-sale-status-writer-census.test.ts`,
 `booking-ledger-pending-charge.realdb.test.ts`.
+
+## INV-MONEY-047
+
+From Ledger M4b (#4516), every legacy cash writer records the money it receives
+in the member-money journal, in its own transaction, for a booking whose R01 is
+in the journal (`postBookingReceipts`): R06 for a card capture, keyed to its
+intent; R07 for a bank receipt; R08 for cash or an officer's settle. Cash posts
+in full. Collecting it is a separate, exact application to the booking's CHARGE
+obligation, capped by the receipt's room (C1) and the booking's live charge (C2,
+`INV-MONEY-050`), and made only for the instruments the writer wrote or decided
+in that transaction: the settle that paid the booking, an additional capture on
+a booking neither cancelled nor deleted, a Xero receipt that took the paid arm,
+a part payment or close for the row it wrote. A saved-card answer defers to its
+settle; a superseded or held capture never collects. Each receipt records how it
+was posted (`postedAs`), and only a `deferred` one is collected later. Each hook
+catches up the payment's other receipts unapplied. A ZERO R01 opens its CHARGE
+obligation lazily, with no second charge. An officer reversal first reverses
+the collection exactly, through whichever credit applied it, then the receipt.
+A merged member's survivor gets CHARGE successors from the chain's one live tip,
+lazily under the Payment row, never inside merge (D4). Organiser shares stay
+M6's; no legacy decision reader changes. `pnpm run
+member-money:receipt-catch-up` is a read-only census unless `--execute`. Pins:
+`member-money-capture-writer-census.test.ts` (every transaction mutation
+classified; a receipt hook at each capturing chokepoint),
+`member-money-receipts.test.ts`, `member-money-receipts.realdb.test.ts`.
+
+## INV-MONEY-048
+
+From Ledger M4c (#4516), each card-refund door posts its refund debt (R05) in
+its own transaction, for a booking whose R01 is in the journal: one obligation
+per debt record, keyed `refund-obligation|<scope>|<id>`, re-posted only under
+its reversal chain's next key. A superseded intent's and an automatic late
+capture's refund defer R05 to the sender. Before each slice,
+`refundPaymentTransactions` reserves it under Stripe's own key, in a short
+transaction holding only the Payment row, funded from that capture's own
+receipt after taking back exactly the shortfall of its collection
+(`refund-uncollect`). A key whose reservations were all released without a
+refund reserves its next generation (`<key>#<n>`) while Stripe is sent the key
+unchanged; a key a refund answered reserves nothing. With no receipt, no R05 or
+a merged debtor's receipt, nothing is reserved and the refund posts unapplied.
+The cash writer posts R12 once per counted refund, applied only through the
+reservation its own key names; R13 reverses an answer once. No refund is
+matched to a debt by amount or time. A failed refund releases its open
+reservation (REFUSED). A "Paid another way" close posts R14 from its record,
+trimmed to what is open, and a kept rest one close-out per record. Stripe
+requests, keys and metadata are unchanged. `pnpm run
+member-money:refund-reservations` lists stranded reservations, answers those a
+recovery row marks made, and releases another only on the owner's audited
+OPERATOR command. Pins: `member-money-refunds.test.ts`,
+`member-money-refunds.realdb.test.ts`,
+`card-refund-reservation-operator.test.ts`.
+
+## INV-MONEY-049
+
+From Ledger M4d (#4516), a hand-back the club pays by bank or in cash
+(`isJournalHandBackTask`) posts its refund debt (R05, scope `hand-back`) with
+its task, in the raise's transaction; marking it paid posts R14
+(`hand-back-paid:<task>`), funded only from the receipts that completion
+allocated. Cash is never refused for a cap: the applied part trims to what is
+open and the rest debits the owner's receivable. A task raised before M4d has
+no debt, so its payment posts unapplied. Dismissing a real bank or cash
+hand-back is refused for now (owner decision, 14 Nov 2026); a card shortfall's
+part to check, and a disputed card payment's hand-back once a lost dispute
+covers it, dismiss and withdraw the debt exactly, and a dispute lost for part
+of one reduces it by those cents. A kept late capture closes its unpaid,
+unreserved capture-return R05, then posts its keep (`kept-capture:<intent>`);
+approving it later reverses the keep first. Every `ManualRefundTask` creation
+in production code is classified as posting R05 (its own function calls
+`postHandBackObligation`), recorded by another step, or not a debt
+(`manual-refund-task-creation-census.test.ts`). `booking-ledger:census`
+reports `HAND_BACK_WITHOUT_EVENT`, `HAND_BACK_PAID_WITHOUT_EVENT`,
+`UNAPPLIED_HAND_BACK`, `HAND_BACK_OBLIGATION_DRIFT` and `KEEP_WITHOUT_EVENT` as
+integrity findings, excluding history before the journal's first M4d event.
+Its report v3 (`JOURNAL_REFUND_PAYABLE`) holds each R01 booking's open refund
+payable equal to what its legacy records still owe on the debts the journal
+holds: hand-backs at their owed cents, open card refund rows at their unmade
+slices. Pins: `member-money-hand-backs.realdb.test.ts`,
+`member-money-hand-back-census.test.ts`,
+`dispute-loss-hand-backs.realdb.test.ts`.
+
+## INV-MONEY-050
+
+Every member-money application obeys the conservation caps, checked by the
+store inside the batch's transaction under the booking's Payment row and by the
+read-only verifier (`memberMoneyConservationProblems`); a refusal names its
+code (`cap-problems.ts`) and is classified by that code, never by its text. C1:
+what a source line applies stays between zero and its amount. C2: a collection
+never takes the booking's collected total past its live charge, as the applying
+caller read it in the same transaction; it caps collection, never a refund. C3:
+a refund family's funding, and its paid plus reserved cents, never exceed its
+root obligation's face. C4: for each capture, a family's paid plus reserved
+cents never exceed what that capture funded. A refund's broken cap is a
+`MemberMoneyReservationRefused`; any other plan error is a fault. What a refusal
+does depends on the writer. Money handed back by bank or in cash is never
+refused: its applied part trims to what is open and the rest debits the
+receivable. A booking door's batch is part of the door's transaction, so a
+refusal rolls the door back (`INV-MONEY-044`). A card reservation is refused
+before Stripe is asked, in its own short transaction: the committed door
+stands, the sender throws, the recovery runner stops the row without a retry
+for the treasurer's "Paid another way", and a webhook sender holds the capture
+rather than ask for redelivery. Pins: `member-money-application-store.test.ts`,
+`member-money-applications.test.ts`, `member-money-refunds.test.ts`.
