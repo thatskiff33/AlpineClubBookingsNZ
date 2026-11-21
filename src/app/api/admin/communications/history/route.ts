@@ -1,13 +1,14 @@
 /**
  * N-09: Bulk Communication History
  * GET /api/admin/communications/history
- * Returns past bulk sends with stats.
+ * Returns one page of past bulk sends with stats, newest first, through the
+ * shared admin list page keys (INV-OPS-020).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
-import { adminListPageQueryFields } from "@/lib/admin-list-page";
+import { adminListPage, adminListPageQueryFields } from "@/lib/admin-list-page";
 
 const querySchema = z.object({
   ...adminListPageQueryFields,
@@ -33,7 +34,8 @@ export async function GET(request: NextRequest) {
   const [auditEntries, total] = await Promise.all([
     prisma.auditLog.findMany({
       where,
-      orderBy: { createdAt: "desc" },
+      // `id` breaks createdAt ties so a send never repeats or vanishes between pages.
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: pageSize,
       skip: (page - 1) * pageSize,
       select: {
@@ -65,5 +67,9 @@ export async function GET(request: NextRequest) {
     };
   });
 
-  return NextResponse.json({ data: history, history, page, pageSize, total });
+  return NextResponse.json({
+    data: history,
+    history,
+    ...adminListPage({ page, pageSize, total }),
+  });
 }

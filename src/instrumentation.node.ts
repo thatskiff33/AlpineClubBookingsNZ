@@ -670,17 +670,17 @@ export async function register() {
         );
 
         try {
-          const { runXeroCronTasks } = await import(
+          const { runXeroCronTaskList } = await import(
             "./lib/xero-cron-runner"
           );
-          const result = await runXeroCronTasks("credit-sync");
+          const result = await runXeroCronTaskList(["credit-sync", "cash-credits"], { taskLabel: "credit-sync" });
           logger.info(
-            { job: XERO_CRON_JOB_NAMES["credit-sync"], result: result.creditSyncCheck },
+            { job: XERO_CRON_JOB_NAMES["credit-sync"], result: result.creditSyncCheck, cashCredits: result.cashCreditRefresh },
             "Xero credit-sync check complete"
           );
           Sentry.captureCheckIn({ checkInId, monitorSlug: XERO_CRON_JOB_NAMES["credit-sync"], status: "ok" });
         } catch (err) {
-          reportCronError({ tag: XERO_CRON_JOB_NAMES["credit-sync"], err, message: "Error reconciling Xero credit sync" });
+          reportCronError({ tag: XERO_CRON_JOB_NAMES["credit-sync"], err, message: "Error in the Xero credit-sync check or cash-credit refresh" });
           Sentry.captureCheckIn({ checkInId, monitorSlug: XERO_CRON_JOB_NAMES["credit-sync"], status: "error" });
         } finally {
           isXeroCreditSyncCronRunning = false;

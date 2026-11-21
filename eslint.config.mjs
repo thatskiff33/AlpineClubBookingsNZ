@@ -1835,6 +1835,11 @@ export const COMMENT_STRIPPER_ALLOWLIST = [
     reason:
       "It COLLECTS comments rather than removing them. `commentBlocks` groups the docblock lines above a call so the test can assert what the comment says; the canonical helper deletes exactly the text this assertion is about. The file imports `stripComments` as well, for the half of its work that is a strip — which is what makes the distinction visible rather than theoretical.",
   },
+  {
+    file: "src/lib/image-metadata-svg.ts",
+    reason:
+      "CSS inside an uploaded SVG, and PRODUCTION code, not a source scanner. `cleanCss` removes `/* … */` from a drawing's `<style>` text and `style` attributes because an editor's comment can carry the author's name (#5244), and refuses the file when an opener is left unterminated. CSS has no line comments, and the canonical helper is a test-support module that production code cannot import.",
+  },
 ];
 
 /**
