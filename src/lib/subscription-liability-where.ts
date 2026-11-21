@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 
-import { addCalendarDays, type CalendarDate } from "@/lib/club-time";
+import type { CalendarDate } from "@/lib/club-time";
 import { dateOfBirthPrefilterBoundForMinAge } from "@/lib/date-of-birth-prefilter";
 import { NON_MEMBER_ROLE_VALUES, OPERATIONAL_ROLE_VALUES } from "@/lib/member-roles";
 import {
@@ -8,6 +8,7 @@ import {
   type AgeTierSettingData,
 } from "@/lib/policies/age-tier";
 import {
+  getSeasonEndCalendarDate,
   liabilityRuleFor,
   type LiabilityAgeTierSource,
   type SubscriptionLiabilitySettings,
@@ -97,7 +98,7 @@ function exemptAgeTierWhere(
   const reference: CalendarDate =
     source === "SEASON_START"
       ? getSeasonStartCalendarDate(seasonYear)
-      : addCalendarDays(getSeasonStartCalendarDate(seasonYear + 1), -1);
+      : getSeasonEndCalendarDate(seasonYear);
   return {
     OR: [
       { AND: [{ dateOfBirth: null }, storedTierExempt] },

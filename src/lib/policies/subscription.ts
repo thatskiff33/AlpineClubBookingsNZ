@@ -5,7 +5,11 @@ import type {
   SubscriptionRequiredTypeAgeRule,
   SubscriptionStatus,
 } from "@prisma/client";
-import { addCalendarDays, dateOnlyInstantOf } from "@/lib/club-time";
+import {
+  addCalendarDays,
+  dateOnlyInstantOf,
+  type CalendarDate,
+} from "@/lib/club-time";
 import {
   computeAgeTierWithSettings,
   getSeasonStartCalendarDate,
@@ -169,13 +173,18 @@ export function liabilityRuleFor(
 }
 
 /**
- * The last day of a season year: the day before the next season starts. For
- * the default 31 March year-end, season 2026 ends on 2027-03-31.
+ * The last day of a season year, as a calendar day: the day before the next
+ * season starts. For the default 31 March year-end, season 2026 ends on
+ * 2027-03-31. The one definition the TS rule and the SQL filter
+ * (`subscription-liability-where.ts`) both read (`INV-SSOT`).
  */
+export function getSeasonEndCalendarDate(seasonYear: number): CalendarDate {
+  return addCalendarDays(getSeasonStartCalendarDate(seasonYear + 1), -1);
+}
+
+/** {@link getSeasonEndCalendarDate} as a stored date-only instant. */
 export function getSeasonEndDate(seasonYear: number): Date {
-  return dateOnlyInstantOf(
-    addCalendarDays(getSeasonStartCalendarDate(seasonYear + 1), -1),
-  );
+  return dateOnlyInstantOf(getSeasonEndCalendarDate(seasonYear));
 }
 
 /**

@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { AGE_TIER_DEFAULTS } from "@/lib/policies/age-tier";
 import {
   NOT_CHOSEN_LIABILITY_SETTINGS,
+  getSeasonEndCalendarDate,
   getSeasonEndDate,
   hasChosenLiabilityRule,
   liabilityRuleFor,
@@ -103,6 +104,8 @@ describe("liabilityRuleFor (#5190)", () => {
 describe("resolveLiabilityAgeTier (#5190)", () => {
   it("ends the season the day before the next one starts", () => {
     expect(getSeasonEndDate(SEASON).toISOString()).toBe("2027-03-31T00:00:00.000Z");
+    // The calendar-day form the SQL filter reads is the same day (INV-SSOT).
+    expect(getSeasonEndCalendarDate(SEASON)).toBe("2027-03-31");
   });
 
   it.each([
