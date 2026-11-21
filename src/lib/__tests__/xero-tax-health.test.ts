@@ -33,6 +33,7 @@ const rate = (overrides: Partial<XeroTaxRateOption>): XeroTaxRateOption => ({
   rateBasisPoints: 1500,
   active: true,
   revenue: true,
+  expenses: false,
   ...overrides,
 });
 const period = (overrides: Partial<ClubTaxPeriod> = {}): ClubTaxPeriod => ({ ...CLUB_TAX_SETTINGS_DEFAULTS, ...overrides });
@@ -42,7 +43,7 @@ describe("xeroTaxCodeProblem", () => {
   const rates = [
     rate({}),
     rate({ taxType: "OUTPUT3", name: "Old GST", active: false }),
-    rate({ taxType: "INPUT2", name: "GST on Expenses", revenue: false }),
+    rate({ taxType: "INPUT2", name: "GST on Expenses", revenue: false, expenses: true }),
     rate({ taxType: "TAX005", name: "12.5% GST", rateBasisPoints: 1250 }),
   ];
 

@@ -23,17 +23,17 @@ describe("readXeroTaxRates (#4632)", () => {
   beforeEach(() => resetXeroTaxRatesCacheForTests());
   afterEach(() => live.getTaxRates.mockReset());
 
-  it("maps each rate to its code, rate in basis points, status and revenue use, sorted by code", async () => {
+  it("maps each rate to its code, rate in basis points, status and revenue and expense use, sorted by code", async () => {
     serve([
       { taxType: "OUTPUT2", name: "15% GST on Income", effectiveRate: 15, status: TaxRate.StatusEnum.ACTIVE, canApplyToRevenue: true },
-      { taxType: "INPUT2", name: "15% GST on Expenses", displayTaxRate: 15, status: TaxRate.StatusEnum.ACTIVE, canApplyToRevenue: false },
+      { taxType: "INPUT2", name: "15% GST on Expenses", displayTaxRate: 15, status: TaxRate.StatusEnum.ACTIVE, canApplyToRevenue: false, canApplyToExpenses: true },
       { taxType: "NONE", effectiveRate: 0, status: TaxRate.StatusEnum.ARCHIVED },
       { name: "no code" },
     ]);
     await expect(readXeroTaxRates()).resolves.toEqual([
-      { taxType: "INPUT2", name: "15% GST on Expenses", rateBasisPoints: 1500, active: true, revenue: false },
-      { taxType: "NONE", name: "NONE", rateBasisPoints: 0, active: false, revenue: false },
-      { taxType: "OUTPUT2", name: "15% GST on Income", rateBasisPoints: 1500, active: true, revenue: true },
+      { taxType: "INPUT2", name: "15% GST on Expenses", rateBasisPoints: 1500, active: true, revenue: false, expenses: true },
+      { taxType: "NONE", name: "NONE", rateBasisPoints: 0, active: false, revenue: false, expenses: false },
+      { taxType: "OUTPUT2", name: "15% GST on Income", rateBasisPoints: 1500, active: true, revenue: true, expenses: false },
     ]);
   });
 

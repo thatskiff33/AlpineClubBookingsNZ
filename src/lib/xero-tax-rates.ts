@@ -39,6 +39,7 @@ function rateOf(rate: TaxRate): XeroTaxRateOption | null {
     rateBasisPoints: percentToBasisPoints(percent),
     active: rate.status === TaxRate.StatusEnum.ACTIVE,
     revenue: rate.canApplyToRevenue === true,
+    expenses: rate.canApplyToExpenses === true,
   };
 }
 
