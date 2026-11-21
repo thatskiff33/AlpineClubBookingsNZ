@@ -379,6 +379,28 @@ still use that treatment's tax code on their later edits, credit notes and
 refunds, so keep an earlier code active in Xero while such bookings remain:
 archiving it makes those documents fail in Xero.
 
+### Resume the club's GST figures after Xero changed them
+
+A new booking invoice tells Xero the GST on each line, shared out from the
+club's own figure, so Xero's GST and the club's records agree to the cent. After
+each booking invoice is raised or updated, the app checks Xero kept it.
+
+If Xero changed the GST on any line, the app pauses: new invoices go to Xero
+without the club's GST figures and Xero works the GST out itself. **GST
+overrides paused** appears on the Finance dashboard and in the Xero health
+check, and the **GST overrides** card on **Finance → Xero** lists each invoice
+with the GST sent and the GST Xero holds on each line.
+
+1. Open each listed invoice in Xero and check its GST.
+2. On the card, tick **I've checked these invoices in Xero** and write what you
+   found.
+3. Choose **I've checked these, resume**. This needs finance edit access.
+
+Resuming changes nothing in Xero and re-sends nothing; the next new invoices
+carry the club's figures again. An invoice flagged after you opened the card
+keeps the pause on until it is checked too. How it works:
+[The journal's GST on each line](../xero/ARCHITECTURE.md#the-journals-gst-on-each-line-5208).
+
 ## Settings reference
 
 | Area | What it does | Notes / constraints |

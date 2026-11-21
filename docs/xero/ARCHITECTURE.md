@@ -564,6 +564,68 @@ scheduled; before a change saves it counts the bookings still in progress on
 the chosen date that will keep the old treatment (bookings, not documents —
 each booking's documents all follow its one anchor).
 
+### The journal's GST on each line (#5208)
+
+**The member-money journal's GST is the figure of record** for a booking's
+primary invoice (owner decision, 18 Nov 2026, Option A). The journal splits a
+booking's whole stay charge once; Xero, left to itself, rounds each line, and
+the two can differ by up to half a cent a line. So a new primary invoice for a
+GST-registered club sends each line's `TaxAmount`: the stay component's live
+tax shared across the stay lines, and the change-fee components' tax across
+the fee line, by `allocateTaxAcrossLines`
+([`member-money/internal/tax.ts`](../../src/lib/member-money/internal/tax.ts)):
+each line's exact share floored, the cents left over to the largest
+remainders, earliest line first on a tie. Example at 15%: lines of 80.00,
+80.00 and 40.00 carry 10.44, 10.43 and 5.22, which is the journal's 26.09;
+Xero's own lines would sum to 26.08. The planner
+(`planPrimaryBookingInvoice`) adds the amounts only to a COVERED plan; an
+unregistered club, a conflict, a replay and a paused send carry none, and are
+byte-for-byte what they were before. Supplementary invoices, edit credit notes
+and group settlement invoices still carry Xero's own per-line tax.
+
+Xero documents the override. Its Accounting API Invoices page
+(<https://developer.xero.com/documentation/api/accounting/invoices>,
+LineItems, `TaxAmount`, read 22 Nov 2026) says: "The tax amount is auto
+calculated as a percentage of the line amount (see below) based on the tax
+rate. This value can be overriden if the calculated TaxAmount is not
+correct." Xero's OpenAPI spec as shipped in `xero-node`
+(`dist/gen/model/accounting/lineItem.d.ts`) says the same: "This value can be
+overriden if the calculated <TaxAmount> is not correct".
+
+**The live safeguard.** The app does not take that on trust. After every
+create and every update of a primary invoice,
+[`xero-tax-override-safeguard.ts`](../../src/lib/xero-tax-override-safeguard.ts)
+compares the tax Xero returns with the tax sent, line by line, on lines whose
+request carried a `TaxAmount`. A difference records one
+`XeroTaxOverrideMismatch` row per sync operation, with an audit row
+(`XERO_TAX_OVERRIDES_PAUSED`), and **pauses** the overrides: while any row is
+uncleared, new primary invoices go without line tax and Xero works the GST out
+itself. The sync operation's own outcome never changes, and the export
+manifest records the invoice as a `TAX_CENTS` conflict. The pause shows on the
+Finance dashboard (`xero-tax-overrides-paused`), in the Xero health check and
+on the "GST overrides" card on `/admin/finance/xero`, where a finance editor
+checks the listed invoices in Xero, ticks, writes a note and resumes
+(`POST /api/admin/xero/tax-override-pause/clear`, audit
+`XERO_TAX_OVERRIDE_PAUSE_CLEARED`). The app never switches to another option
+on its own (owner decision, 20 Nov 2026). A 400 from Xero on a sent
+`TaxAmount` fails the operation visibly, like any other refusal.
+
+How the pause meets queued and in-flight work:
+
+- The pause is read, outside any transaction, when each outbox run builds its
+  lines. An operation queued before the pause and sent during it carries no
+  `TaxAmount`, and its manifest freezes `taxAllocation: "PAUSED"`.
+- A run already past its pause read still sends with overrides, and is checked
+  like any other.
+- Invoices already sent keep their amounts. An update copies Xero's stored
+  amounts, so it never adds or strips an override; it is still checked.
+- A retry under the same idempotency key is compared only on lines that
+  attempt sent a `TaxAmount` for, and a reply that bills other lines (Xero
+  returning the ORIGINAL invoice) is not compared at all.
+- Clearing claims only the rows listed and still open, so an invoice flagged
+  after the card loaded keeps the pause on. Nothing is re-sent; overrides
+  resume on the next run.
+
 ## Bird's-eye dataflow
 
 ```mermaid
