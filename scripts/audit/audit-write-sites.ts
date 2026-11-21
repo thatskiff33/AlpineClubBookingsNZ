@@ -381,6 +381,7 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/booking-request.ts::verifyBookingRequest#0": {"category":"booking","sink":"logAudit","action":"booking_request.verified"},
   "src/lib/booking-request.ts::withdrawMemberWholeLodgeRequest#0": {"category":"booking","sink":"logAudit","action":"booking_request.member_whole_lodge_withdraw_refused"},
   "src/lib/booking-request.ts::withdrawMemberWholeLodgeRequest#1": {"category":"booking","sink":"logAudit","action":"booking_request.member_whole_lodge_withdrawn"},
+  "src/lib/bulk-subscription-category-assignments.ts::bulkSaveSubscriptionCategory#0": {"category":"admin","sink":"auditLog.create","action":"(dynamic) SUBSCRIPTION_CATEGORY_BULK_CHANGE_ACTION"},
   "src/lib/cancelled-booking-late-capture.ts::announceAutomaticLateCaptureRefund#0": {"category":"payment","sink":"logAudit","action":"booking.payment.late_capture_double_refund_suspected","reviewed":["2581-applied"]},
   "src/lib/cancelled-booking-late-capture.ts::recordAutomaticLateCaptureRefund#0": {"category":"payment","sink":"logAudit","action":"booking.payment.auto_refund_record_failed","reviewed":["2581-applied"]},
   "src/lib/cancelled-booking-late-capture.ts::reportAcknowledgedLateNotice#0": {"category":"payment","sink":"logAudit","action":"booking.payment.late_notice_acknowledged"},
