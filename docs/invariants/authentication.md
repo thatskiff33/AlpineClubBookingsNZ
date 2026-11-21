@@ -307,9 +307,9 @@ This file holds only the rules.
   rewritten merely by deploying the module.
 - **A password stored below `PASSWORD_BCRYPT_COST` is re-hashed only after it
   is proved**, at password sign-in or step-up, by
-  [`password-rehash.ts`](../../src/lib/password-rehash.ts) alone. Its write
-  changes only `passwordHash` and is guarded on the proved hash, so a password
-  changed meanwhile is never overwritten. A refused or failed sign-in never
-  writes.
+  [`password-rehash.ts`](../../src/lib/password-rehash.ts) alone. It runs once
+  the password is proved and before any second factor. Its write changes only
+  `passwordHash` and is guarded on the proved hash, so a password changed
+  meanwhile is never overwritten. A refused or failed sign-in never writes.
 - **A wrong password against a lower-cost hash spends the shortfall** before
   refusing, so it answers no faster than an unknown email's dummy compare.
