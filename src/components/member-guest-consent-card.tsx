@@ -120,7 +120,7 @@ export function MemberGuestConsentCard({
     return (
       <Card className="border-success-6 bg-success-3">
         <CardHeader>
-          <CardTitle className="text-success-11">
+          <CardTitle headingLevel={2} className="text-success-11">
             You&apos;re on this booking
           </CardTitle>
         </CardHeader>
@@ -149,7 +149,7 @@ export function MemberGuestConsentCard({
     return (
       <Card className="border-success-6 bg-success-3">
         <CardHeader>
-          <CardTitle className="text-success-11">You&apos;ve said no</CardTitle>
+          <CardTitle headingLevel={2} className="text-success-11">You&apos;ve said no</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 text-sm text-success-11">
           <div
@@ -187,7 +187,7 @@ export function MemberGuestConsentCard({
             Waiting for your answer
           </Badge>
         </div>
-        <CardTitle>
+        <CardTitle headingLevel={2}>
           {quotePriced
             ? `${bookerName} has added you to a booking request`
             : `${bookerName} has added you to this booking`}

@@ -7,6 +7,7 @@ import { requireInstant } from "@/lib/club-time"
 import { fetchJson } from "./api"
 import { BudgetStatusChip, budgetTone, SectionCard, toneFillClass, type ToggleSection } from "./shared"
 import { xeroSectionId } from "./types"
+import { useAutoLoadOncePerOpening } from "./use-auto-load-once-per-opening"
 import type { XeroUsageSummary } from "./types"
 
 export function UsagePanel({
@@ -40,9 +41,14 @@ export function UsagePanel({
     }
   }, [])
 
-  useEffect(() => {
-    if (connected && open && !usage && !loading) void fetchUsage()
-  }, [connected, fetchUsage, loading, open, usage])
+  // Auto-load once per opening: a failed read stays shown until the admin
+  // presses Refresh Usage, instead of re-firing each time `loading` settles (#5276).
+  useAutoLoadOncePerOpening({
+    active: connected && open,
+    needed: !usage,
+    busy: loading,
+    load: fetchUsage,
+  })
 
   useEffect(() => {
     if (connected && open && refreshToken !== 0) void fetchUsage()
