@@ -99,6 +99,7 @@ vi.mock("@/lib/stripe-cash-refund-evidence", () => ({
   resolveStripeCashRefundEvidence: vi.fn(),
 }));
 
+import { BOOKING_EXTERNAL_SETTLEMENT_WHERE } from "@/lib/booking-external-settlement";
 import {
   getMissingXeroInvoiceBookings,
   getXeroAdminHealthSnapshot,
@@ -223,14 +224,19 @@ describe("getMissingXeroInvoiceBookings reads the #3001 evidence rule (#3467)", 
 
     await getMissingXeroInvoiceBookings();
 
-    expect(mocks.bookingFindMany.mock.calls[0][0].where).toEqual({
+    const where = mocks.bookingFindMany.mock.calls[0][0].where;
+    expect(where).toEqual({
       status: "PAID",
       payment: { isNot: null },
-      NOT: [
-        { payment: { manuallyMarkedPaidAt: { not: null } } },
-        { importRow: { is: { amountCents: 0 } } },
-      ],
+      NOT: {
+        OR: [
+          { payment: { manuallyMarkedPaidAt: { not: null } } },
+          { importRow: { is: { amountCents: 0 } } },
+        ],
+      },
     });
+    // The fence's own filter, not a copy (#5167 review).
+    expect(where.NOT).toBe(BOOKING_EXTERNAL_SETTLEMENT_WHERE);
     expect(mocks.linkFindMany).not.toHaveBeenCalled();
   });
 
