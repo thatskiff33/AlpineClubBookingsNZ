@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   sendXeroReconciliationReport: vi.fn(),
   reconcileXeroCreditSync: vi.fn(),
   runCreditNoteMirrorSweep: vi.fn(),
+  refreshXeroCashCredits: vi.fn(),
   isEffectiveModuleEnabled: vi.fn(),
   recordCronJobRunSafe: vi.fn(),
 }));
@@ -67,6 +68,11 @@ vi.mock("@/lib/xero-credit-sync-checker", () => ({
 // #4270: the credit-note mirror's backstop sweep.
 vi.mock("@/lib/xero-credit-note-mirror-sweep", () => ({
   runCreditNoteMirrorSweep: mocks.runCreditNoteMirrorSweep,
+}));
+
+// #5204: the finance queue's overpayment and prepayment refresh.
+vi.mock("@/lib/xero-cash-credits", () => ({
+  refreshXeroCashCredits: mocks.refreshXeroCashCredits,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -128,10 +134,11 @@ describe("POST /api/cron/xero", () => {
       reconciliationReport: null,
       creditSyncCheck: null,
       creditNoteMirror: null,
+      cashCreditRefresh: null,
     });
     expect(mocks.isXeroConnected).not.toHaveBeenCalled();
     expect(mocks.refreshAllMembershipStatuses).not.toHaveBeenCalled();
-    expect(mocks.recordCronJobRunSafe).toHaveBeenCalledTimes(10); // #4162: + the voided bank-transfer refund notes' follow-up; #4270: + the credit-note mirror
+    expect(mocks.recordCronJobRunSafe).toHaveBeenCalledTimes(11); // #4162: + the voided bank-transfer refund notes' follow-up; #4270: + the credit-note mirror; #5204: + the cash-credit refresh
     expect(mocks.recordCronJobRunSafe).toHaveBeenCalledWith(
       expect.objectContaining({
         jobName: "xero-outbox",
@@ -275,6 +282,7 @@ describe("POST /api/cron/xero", () => {
       readFailures: 0,
       completePass: true,
     });
+    mocks.refreshXeroCashCredits.mockResolvedValue({ open: 1, written: 1, zeroed: 0, current: true });
 
     const response = await POST(makeRequest("all"));
     const body = await response.json();
@@ -375,6 +383,7 @@ describe("POST /api/cron/xero", () => {
       })
     );
     expect(body.creditNoteMirror).toMatchObject({ read: 2, writtenDown: 1, completePass: true });
+    expect(body.cashCreditRefresh).toEqual({ open: 1, written: 1, zeroed: 0, current: true });
     expect(mocks.recordCronJobRunSafe).toHaveBeenCalledWith(
       expect.objectContaining({
         jobName: "xero-credit-note-outside-spend-mirror",

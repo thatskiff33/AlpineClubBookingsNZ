@@ -117,6 +117,44 @@ What the file contains, and what it leaves out:
   adviser before relying on it.
 - Money is in integer cents, labelled with the currency.
 
+## Hidden details in uploaded images
+
+Photos and drawings can carry hidden details: where a photo was taken, the
+camera or phone, the owner's name, the author's file paths. The app removes them
+before it stores any uploaded image, on every upload path: the image library,
+the Image Manager, member photos, the club logo and a configuration restore
+(#2242, #5244).
+
+| Type | Removed | Kept |
+| --- | --- | --- |
+| JPEG, PNG, WebP | Everything not needed to draw the picture: EXIF (GPS, camera, owner, dates), XMP, IPTC, Content Credentials, comments, text chunks, embedded thumbnails, extra pictures appended after the main one | The picture, its colour profile, any animation, and the EXIF rotation alone so portraits stay upright |
+| GIF | Comments, plain-text blocks, XMP and every other application block, anything after the end of the file | The frames, their timing and transparency, and the looping setting |
+| AVIF (still) | EXIF and XMP items, every property and box not needed to draw the picture, the handler name, data-reference paths, unknown brand names | The picture and its colour information (`colr`, which can hold a colour profile); removed parts are blanked in place so the picture's bytes are unchanged |
+| SVG | Metadata, comments, `title` and `desc`, editor attributes and file paths, scripts, event handlers, outside links, any text outside the drawing's text elements | The drawing: shapes, gradients, clips, masks, patterns, filters, styles, drawn text, and embedded photos cleaned the same way |
+
+Two limits remain, because removing them would mean decoding or redrawing the
+picture:
+
+- **GIF picture data is copied as it is.** Each frame's compressed data is kept
+  byte for byte, so bytes hidden after a frame's end-of-picture code, but
+  inside its data blocks, survive. A normal image editor never writes any.
+- **JPEG, PNG, WebP and AVIF keep their colour profile** (ICC profile). A profile is
+  needed to show colours correctly, but its description and copyright text
+  can name the device or the software that made it.
+
+An upload is **refused**, with a plain message asking for a fresh copy from an
+image editor, when the app cannot confirm it is clean: a damaged or truncated
+file, an animated AVIF, a file that opens like an SVG but is not an SVG drawing
+(for example, its root is not in the SVG namespace), or an
+SVG that reaches outside itself (an `@import` or an outside `url()`). Nothing is stored in that case. A configuration restore
+stops at its dry run and names the file.
+
+**Images uploaded before this release are not altered** (owner decision,
+20 Nov 2026, #5244). Anything already in the image library, the Image Manager's
+folders, the club logo or a member photo may still carry hidden details until
+it is uploaded again; [`image-manager.md`](guides/image-manager.md#cleaning-an-older-image)
+says how.
+
 ## Model schedule
 
 | Prisma model | Purpose / personal data | Retention period or retained purpose | End action |
@@ -263,6 +301,9 @@ What the file contains, and what it leaves out:
 | `MemberCredit` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `MemberCreditNoteAllocation` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `AdminCreditAdjustmentRequest` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `XeroCashCredit` | Snapshot of a Xero contact's unallocated overpayment or prepayment, for the finance queue and backed credit | Kept with financial records while credit may name it; refreshed from Xero, never deleted automatically | Keep |
+| `MemberCreditCashAllocation` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `MemberCreditCashReturn` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `PublicContentSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `RefundRequest` | Payment, refund, recovery and officer decision evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `CommitteeRole` | Committee contact details, member roles and public biographies | While committee / contact administration and role history requires it | Keep |

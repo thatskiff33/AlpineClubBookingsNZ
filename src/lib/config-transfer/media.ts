@@ -2,8 +2,8 @@ import {
   MAX_MEDIA_IMAGE_BYTES,
   detectImageContentType,
   extractImageDimensions,
+  cleanImageForStorage,
   sanitiseMediaImageFilename,
-  storableImageBytes,
 } from "@/lib/media-image";
 import type {
   CategoryPlanResult,
@@ -21,21 +21,20 @@ import type {
 
 const MEDIA_MAP_FILE = "media/media-map.json";
 
-// Bytes to store for a bundled image: EXIF/XMP/comment metadata stripped by the
-// shared fail-open helper (`storableImageBytes`, src/lib/media-image.ts).
+// Bytes to store for a bundled image: EXIF/XMP/comment metadata removed by the
+// shared fail-closed helper (`cleanImageForStorage`, src/lib/media-image.ts).
 //
 // A recreated bundle image is an anonymously-served MediaImage — /api/images/[id]
 // serves it with `public, max-age=31536000, immutable`, exactly the same footing
-// as an admin image-library upload — so an unstripped phone photo in someone's
+// as an admin image-library upload — so an uncleaned phone photo in someone's
 // configuration bundle would publish its GPS coordinates effectively forever.
-// Fail-open (unlike the member-photo route) because an operator restoring a
-// configuration bundle must not have the import blocked by one unparseable
-// decorative image; an unconfirmed strip is logged instead.
+// An image that cannot be confirmed clean is a plan ERROR naming the file, so
+// the restore stops at its dry run (#5244); resolve reports it as not carried
+// and apply skips it, like the size-cap error beside it.
 //
 // Applied identically by the two plan helpers and by apply below, so the
 // create-vs-reuse dedup — which compares filename + kind + byteSize + stored
 // bytes — classifies the same way in all three.
-const MEDIA_LOG_SOURCE = "config-transfer bundle image";
 
 /** Categories whose content can reference bundled images. */
 const IMAGE_REFERENCING_CATEGORIES = ["site-content", "lodge-config"] as const;
@@ -181,12 +180,11 @@ export async function planBundleMediaTarget(
   const detected = detectImageContentType(buffer);
   if (!detected) return { carried: false, existingId: null };
 
-  // Resolve against the bytes apply will actually store (metadata stripped), so
+  // Resolve against the bytes apply will actually store (metadata removed), so
   // this id prediction cannot disagree with the write.
-  const storable = storableImageBytes(buffer, detected, {
-    source: MEDIA_LOG_SOURCE,
-    path: entry.path,
-  });
+  const cleaned = cleanImageForStorage(buffer, detected);
+  if (!cleaned.ok) return { carried: false, existingId: null };
+  const storable = cleaned.bytes;
   const candidates = await db.mediaImage.findMany({
     where: {
       filename: sanitiseMediaImageFilename(entry.filename),
@@ -242,12 +240,14 @@ export async function planBundleMedia(
       continue;
     }
     const filename = sanitiseMediaImageFilename(meta.filename);
-    // Classify against the bytes apply will actually store (metadata stripped),
+    // Classify against the bytes apply will actually store (metadata removed),
     // so the disclosed create/unchanged plan matches the write.
-    const storable = storableImageBytes(buffer, detected, {
-      source: MEDIA_LOG_SOURCE,
-      path: meta.path,
-    });
+    const cleaned = cleanImageForStorage(buffer, detected);
+    if (!cleaned.ok) {
+      errors.push(`${meta.path}: ${cleaned.message}`);
+      continue;
+    }
+    const storable = cleaned.bytes;
     const candidates = await db.mediaImage.findMany({
       // Kind-scoped identically to the apply-side reuse lookup (#2322): without
       // this the dry-run could match a LOGO onto an existing CONTENT row and
@@ -296,10 +296,9 @@ export async function recreateBundleMedia(
     const detected = detectImageContentType(buffer);
     if (!detected) continue; // untrusted: skip non-images
     const filename = sanitiseMediaImageFilename(meta.filename);
-    const storable = storableImageBytes(buffer, detected, {
-      source: MEDIA_LOG_SOURCE,
-      path: meta.path,
-    });
+    const cleaned = cleanImageForStorage(buffer, detected);
+    if (!cleaned.ok) continue; // plan blocked
+    const storable = cleaned.bytes;
 
     const candidates = await tx.mediaImage.findMany({
       where: {
@@ -319,7 +318,7 @@ export async function recreateBundleMedia(
       continue;
     }
 
-    const dims = extractImageDimensions(buffer, detected);
+    const dims = extractImageDimensions(storable, detected);
     const created = await tx.mediaImage.create({
       data: {
         filename,

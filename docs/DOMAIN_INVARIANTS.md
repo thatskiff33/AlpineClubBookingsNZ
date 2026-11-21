@@ -866,7 +866,7 @@ is now `INV-OPS-005` to `INV-OPS-011` in
 | `INV-LIFE-019` | `NOT_APPLICABLE` has no `AgeTierSetting` row and sits outside every age-based automation |
 | `INV-LIFE-084` | Committee assignment is presentation only; contact routing per assignment via `contactEmailMode` |
 | `INV-LIFE-085` | Member photos: scoped endpoint only; public only when rostered and displayed |
-| `INV-LIFE-086` | Every stored image has EXIF/XMP metadata stripped; member-photo path fails closed |
+| `INV-LIFE-086` | Every stored image has hidden metadata removed; unconfirmed images are refused |
 | `INV-LIFE-087` | Seasonal membership type governs pricing and lockout, never access or committee |
 | `INV-LIFE-093` | Full and Non-Member stay active with fixed booking rules; drift is repairable |
 | `INV-LIFE-020` | 2FA on: the JWT claim flips only via a server-minted challenge |

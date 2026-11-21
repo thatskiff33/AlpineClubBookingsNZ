@@ -416,6 +416,25 @@ through another's gate step (`require-test-shards.mjs`) takes no condition
 either: the gate fails on a skipped job. Renaming such a job means renaming it
 in the gate's `--job` too.
 
+**How long a gate waits is set by the jobs it waits for** (#5222). Each call
+to `require-test-shards.mjs` states two allowances: `--max-queue-minutes`, how
+long an awaited job may wait for a runner, and `--max-run-minutes`, the longest
+`timeout-minutes` among the awaited jobs. It gives up only after both plus five
+minutes' grace. A job that fails, is cancelled or hits its own limit fails
+the gate at the next poll, so the long wait only matters for a job that never
+gets a runner.
+
+| Gate | Runner queue | Longest job limit | Total wait | Gate job's limit |
+| --- | --- | --- | --- | --- |
+| `verify` | 60 | 45 (`Test shard`; `Real-PostgreSQL suites (all)` is 35) | 110 | 130 |
+| `Playwright E2E`, shards 2-3 | 25 | 45 (`E2E shard`) | 75 | 165 |
+
+The numbers are set in the workflows. `scripts/ci/require-test-shards.test.mjs`
+fails if a run allowance stops matching its jobs' `timeout-minutes` or a gate
+job's limit is too short for its wait. Before this, `verify` waited a flat 45
+minutes. `Real-PostgreSQL suites (all)` once queued 37 minutes for a runner
+and then passed, but `verify` had already gone red.
+
 **The PR-body gates read the description from a file, never an environment
 variable** (#4053). `verify` writes `.pull_request.body` from
 `$GITHUB_EVENT_PATH` to `$RUNNER_TEMP/pr-body.md` and the gates open it
