@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
+/** #5240: the saved-card capture's "not yet settled" flag, written by the adoption's settle. */
+const mockAlertCooldownUpsert = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({})));
+
 const {
   mockConstructWebhookEvent,
   mockProcessedWebhookCreate,
@@ -336,6 +339,10 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: (...args: unknown[]) => mockPaymentTransactionFindUnique(...args),
       updateMany: (...args: unknown[]) => mockPaymentTransactionUpdateMany(...args),
       deleteMany: (...args: unknown[]) => mockPaymentTransactionDeleteMany(...args),
+    },
+    // #5240: the adoption's "captured, not yet settled" flag.
+    alertCooldown: {
+      upsert: (...args: unknown[]) => mockAlertCooldownUpsert(...args),
     },
     $transaction: (...args: unknown[]) => mockTransaction(...args),
   },
@@ -690,9 +697,9 @@ describe("Stripe webhook Xero alerting", () => {
       paymentIntentId: "pi_primary",
       amountCents: 5000,
       paymentMethodId: "pm_123",
-      // #4285 review: found by its intent, not adopted - nothing this delivery wrote.
-      recordedByCaller: false,
     });
+    // #5240: found by its intent, not adopted - this delivery wrote no capture, so flags none.
+    expect(mockAlertCooldownUpsert).not.toHaveBeenCalled();
     expect(mockNotifyXeroSyncError).toHaveBeenCalledWith({
       errorType: "INVOICE_CREATION",
       operation: "Queue invoice for booking booking-1",
@@ -1508,9 +1515,12 @@ describe("Stripe webhook Xero alerting", () => {
         paymentIntentId: "pi_lost",
         amountCents: 5000,
         paymentMethodId: "pm_123",
-        // #4285 review: the adoption wrote the capture just now - new money, not a replay.
-        recordedByCaller: true,
       });
+      // #5240: the adoption flags the capture as new money before the settle,
+      // which consumes the flag - a paid booking keeps and alerts it, never a replay.
+      const flagKey = "saved-card-capture-unsettled:pi_lost";
+      expect(mockAlertCooldownUpsert).toHaveBeenCalledWith({ where: { key: flagKey }, create: { key: flagKey, lastAlertedAt: expect.any(Date) }, update: {} });
+      expect(mockAlertCooldownUpsert.mock.invocationCallOrder[0]).toBeLessThan(mockMarkBookingPaymentSucceeded.mock.invocationCallOrder[0]!);
     });
 
     it("payment_intent.payment_failed for an unknown intent: the attempt row is adopted and ends FAILED now, rather than sitting PENDING until its key expires", async () => {
@@ -1598,7 +1608,7 @@ describe("Stripe webhook Xero alerting", () => {
         where: { id: "txn_attempt_1", status: { notIn: ["REFUNDED", "PARTIALLY_REFUNDED"] }, stripePaymentIntentId: null },
         data: { stripePaymentIntentId: "pi_async", status: "SUCCEEDED", amountCents: 5000, paymentMethodId: "pm_123" },
       });
-      expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_async", recordedByCaller: true }));
+      expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_async" }));
       expect(mockRecordUnmatchedAppStripePayment).not.toHaveBeenCalled();
     });
 
@@ -4579,7 +4589,7 @@ describe("Stripe webhook Xero alerting", () => {
       expect(mockFindPaymentTransactionByIntentId).toHaveBeenCalledTimes(2);
       expect(mockRecordUnmatchedAppStripePayment).not.toHaveBeenCalled();
       expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(
-        expect.objectContaining({ bookingId: "booking-1", paymentIntentId: "pi_app", recordedByCaller: false }),
+        expect.objectContaining({ bookingId: "booking-1", paymentIntentId: "pi_app" }),
       );
     });
 
