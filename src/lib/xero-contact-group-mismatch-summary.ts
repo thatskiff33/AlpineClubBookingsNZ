@@ -1,0 +1,34 @@
+/**
+ * How the Xero contact-group mismatch count is worded (#5234).
+ *
+ * The count is two kinds of entry. A mismatch is a member a grouping rule
+ * matches whose contact sits in the wrong managed group; the re-sync repairs
+ * it. An information-only entry is a member no rule matches whose contact
+ * still sits in a managed group (often an organisation put there by hand);
+ * the re-sync never touches it, so someone removes it in Xero or adds a rule.
+ *
+ * The health tile, the Stuck States item and the mismatch panel all count both
+ * kinds, so each words the total from here and the three surfaces agree.
+ */
+
+export interface ContactGroupMismatchCounts {
+  /** Mismatches the re-sync repairs. */
+  resyncCount: number;
+  /** Information-only entries, fixed by hand in Xero or with a new rule. */
+  reviewByHandCount: number;
+}
+
+/** The total split by kind, e.g. "2 to re-sync, 1 to review by hand". */
+export function describeContactGroupMismatchCounts({
+  resyncCount,
+  reviewByHandCount,
+}: ContactGroupMismatchCounts): string {
+  const parts: string[] = [];
+  if (resyncCount > 0) parts.push(`${resyncCount} to re-sync`);
+  if (reviewByHandCount > 0) parts.push(`${reviewByHandCount} to review by hand`);
+  return parts.length > 0 ? parts.join(", ") : "none";
+}
+
+/** What to do about an information-only entry. */
+export const REVIEW_BY_HAND_GUIDANCE =
+  "No grouping rule matches these members, so the re-sync never changes them. Remove each contact from the managed group in Xero, or add a grouping rule that covers the member.";

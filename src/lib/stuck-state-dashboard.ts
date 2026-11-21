@@ -58,6 +58,10 @@ import {
 } from "@/lib/stuck-state-payment-signals";
 
 import { adminHref, adminAnchorHref } from "@/lib/admin-hubs";
+import {
+  describeContactGroupMismatchCounts,
+  type ContactGroupMismatchCounts,
+} from "@/lib/xero-contact-group-mismatch-summary";
 const BED_ALLOCATION_LOOKAHEAD_DAYS = 7;
 
 export type StuckStateSeverity = "critical" | "warning" | "info";
@@ -224,6 +228,17 @@ const defaultDependencies: StuckStateDashboardDependencies = {
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`) {
   return count === 1 ? singular : pluralForm;
+}
+
+// #5234: information-only entries stay in the count (owner decision), so the
+// summary says which entries the re-sync repairs and which need a person.
+function contactGroupMismatchSummary(counts: ContactGroupMismatchCounts) {
+  const breakdown = describeContactGroupMismatchCounts(counts);
+  const byHand =
+    counts.reviewByHandCount > 0
+      ? " Members to review by hand match no grouping rule, so the re-sync never changes them."
+      : "";
+  return `Linked members' Xero contact groups disagree with the grouping rules: ${breakdown}.${byHand}`;
 }
 
 function addItem(
@@ -470,7 +485,7 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
     severity: "warning",
     owner: "Finance",
     count: snapshot.contactLinkMismatches.count,
-    href: adminHref("xero"),
+    href: `${adminHref("xero")}?section=contactLinkMismatches`,
     summary: `${snapshot.contactLinkMismatches.count} member/Xero contact ${plural(
       snapshot.contactLinkMismatches.count,
       "link",
@@ -483,11 +498,8 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
     severity: "warning",
     owner: "Finance",
     count: snapshot.contactGroupMismatches.count,
-    href: adminHref("xero"),
-    summary: `${snapshot.contactGroupMismatches.count} active member ${plural(
-      snapshot.contactGroupMismatches.count,
-      "contact group",
-    )} need Xero age-tier group repair.`,
+    href: `${adminHref("xero")}?section=contactGroupMismatches`,
+    summary: contactGroupMismatchSummary(snapshot.contactGroupMismatches),
   });
 
   if (

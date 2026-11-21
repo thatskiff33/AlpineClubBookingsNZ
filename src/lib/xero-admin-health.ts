@@ -2,6 +2,7 @@ import { getXeroWebhookHealth } from "@/lib/xero-webhook-health";
 import type { BookingStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { getXeroMemberGroupingSnapshot } from "@/lib/xero-member-grouping-resync";
+import type { ContactGroupMismatchCounts } from "@/lib/xero-contact-group-mismatch-summary";
 import { prisma } from "@/lib/prisma";
 import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
 import { readPaidAnotherWayUncoveredCents } from "@/lib/card-refund-paid-another-way-cash";
@@ -116,7 +117,12 @@ export interface XeroAdminHealthSnapshot {
     count: number;
     graceHours: number;
   };
-  contactGroupMismatches: {
+  /**
+   * #5234: `count` is every entry the operator must look at — mismatches the
+   * re-sync repairs plus information-only entries it never touches — split
+   * so each surface can say which is which.
+   */
+  contactGroupMismatches: ContactGroupMismatchCounts & {
     count: number;
     cacheReady: boolean;
   };
@@ -549,10 +555,12 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     contactGroupMismatches: {
       // Parity with the retired age-tier snapshot: information-only entries
       // (parked members in managed groups, never written to) count toward the
-      // surfaced total so the operator still sees them.
+      // surfaced total so the operator still sees them (owner decision, #5234).
       count:
         contactGroupMismatches.mismatchCount +
         contactGroupMismatches.informationalCount,
+      resyncCount: contactGroupMismatches.mismatchCount,
+      reviewByHandCount: contactGroupMismatches.informationalCount,
       cacheReady: contactGroupMismatches.cacheReady,
     },
     contactLinkMismatches: {

@@ -103,6 +103,7 @@ import {
   getMissingXeroInvoiceBookings,
   getXeroAdminHealthSnapshot,
 } from "@/lib/xero-admin-health";
+import { getXeroMemberGroupingSnapshot } from "@/lib/xero-member-grouping-resync";
 
 function paidBooking(id: string, payment: { id: string; xeroInvoiceId: string | null }) {
   return {
@@ -288,5 +289,25 @@ describe("the club-wide count moves with the same rule", () => {
         `${relativePath} must not re-derive the missing-invoice rule (INV-SSOT-001, #3467)`,
       ).not.toMatch(/xeroSyncOperation|PRIMARY_INVOICE/);
     }
+  });
+});
+
+describe("contact group mismatches on the health snapshot (#5234)", () => {
+  it("counts an information-only entry and says it is one to review by hand, not to re-sync", async () => {
+    mocks.bookingFindMany.mockResolvedValue([]);
+    vi.mocked(getXeroMemberGroupingSnapshot).mockResolvedValueOnce({
+      mismatchCount: 0,
+      informationalCount: 1,
+      cacheReady: true,
+    } as Awaited<ReturnType<typeof getXeroMemberGroupingSnapshot>>);
+
+    const snapshot = await getXeroAdminHealthSnapshot();
+
+    expect(snapshot.contactGroupMismatches).toEqual({
+      count: 1,
+      resyncCount: 0,
+      reviewByHandCount: 1,
+      cacheReady: true,
+    });
   });
 });
