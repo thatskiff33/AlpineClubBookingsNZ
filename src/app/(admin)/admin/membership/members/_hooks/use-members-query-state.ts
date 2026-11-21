@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import {
   ADMIN_LIST_DEFAULT_PAGE_SIZE,
   parseAdminListPageParam,
@@ -10,7 +10,7 @@ import {
 import type { Filters } from "../_types"
 import { emptyFilters, getInitialLifecycleStatus } from "../_utils"
 
-import { adminHref } from "@/lib/admin-hubs";
+import { adminHref, servedAdminPathname } from "@/lib/admin-hubs";
 const MEMBERS_DATASET_QUERY_KEYS = [
   "q",
   "page",
@@ -22,6 +22,8 @@ const MEMBERS_DATASET_QUERY_KEYS = [
 
 export function useMembersQueryState() {
   const router = useRouter()
+  // The served form, so either address of the Members page counts as being on it.
+  const pathname = servedAdminPathname(usePathname())
   const searchParams = useSearchParams()
   const [search, setSearch] = useState(searchParams.get("q") || "")
   const [debouncedSearch, setDebouncedSearch] = useState(search)
@@ -73,9 +75,15 @@ export function useMembersQueryState() {
     return queryString ? `${adminHref("members")}?${queryString}` : adminHref("members")
   }, [buildMembersSearchParams])
 
+  // Replace only when the URL is not already the canonical one. A replace to
+  // the URL the officer is already on is still a soft navigation, which the
+  // E2E accessibility audit intermittently caught without a <title> (#5155).
   useEffect(() => {
-    router.replace(buildMembersListPath(), { scroll: false })
-  }, [buildMembersListPath, router])
+    const target = buildMembersListPath()
+    const currentSearch = searchParams.toString()
+    const current = currentSearch ? `${pathname}?${currentSearch}` : pathname
+    if (target !== current) router.replace(target, { scroll: false })
+  }, [buildMembersListPath, pathname, router, searchParams])
 
   const setFilter = useCallback((key: keyof Filters, value: string) => {
     setFilters((current) => ({ ...current, [key]: value }))

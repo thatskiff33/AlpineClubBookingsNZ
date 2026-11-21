@@ -31,7 +31,8 @@ import {
 } from "@/lib/edit-refund-hand-back";
 import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import type { OwnershipReader } from "@/lib/superseded-intent-ownership";
-import { paidByOrganiser, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
+import { paidByOrganiser, paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
+import { paymentHasRefundableCardIntent } from "@/lib/refundable-card-intent";
 import { paymentDisputedCaptureCents, type CaptureDisputeHold } from "@/lib/stripe-dispute-hold";
 import { heldForDisputeSettlementCents } from "@/lib/edit-dispute-held-settlement";
 
@@ -93,6 +94,23 @@ export async function editReductionDisputeHold(
   if (!payment || payment.source !== PaymentSource.STRIPE || paidByOrganiser(booking)) return NO_DISPUTE_HOLD;
   if (!isSettledBookingStatus(booking.status) || !hasCapturedPayment(payment)) return NO_DISPUTE_HOLD;
   return paymentDisputedCaptureCents(db, payment);
+}
+
+/**
+ * #5212 (`INV-PAY-160`): does a reduction on this card-paid booking have a card
+ * to go back to? Only where Stripe holds a record of the payment - otherwise
+ * the refund is the treasurer's to send by bank transfer, as an Internet
+ * Banking payment's is, and no card refund is promised or owed. A joiner the
+ * organiser paid for by card is answered by the organiser's combined payment,
+ * which holds the intent; the joiner's mirror never has one of its own. Read
+ * under the door's locks, beside the dispute hold.
+ */
+export async function editRefundHasCardToReturnTo(
+  db: Pick<Prisma.TransactionClient, "payment">,
+  booking: Pick<LoadedBookingForModify, "payment" | "organiserSettled" | "parentBookingId">,
+): Promise<boolean> {
+  if (!booking.payment) return false;
+  return paidByOrganiserCard(booking) || paymentHasRefundableCardIntent(db, booking.payment);
 }
 
 /** One cash cap for the quote and save, after unpaid asks have been netted. */

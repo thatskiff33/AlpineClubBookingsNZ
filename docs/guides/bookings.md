@@ -284,9 +284,9 @@ with a message to contact the club, and nothing is changed.
 A guest whose stored total is below zero, which the system cannot store, would
 refuse the change with a message to contact the club; nothing is changed.
 
-A booking changed before this way of pricing came in may still have a review open
-in **Refunds & Adjustments**. Until it is settled, a further price change to that
-booking is refused with a message pointing there; settle it as described in
+A booking changed before this way of pricing came in was held for an officer
+review instead. Those reviews have all been settled or closed and the review
+screens were retired; see
 [Payments & Refunds](payments.md#decide-a-booking-change-the-system-would-not-price).
 
 ### Read the results table
