@@ -202,10 +202,7 @@ export interface MemberGroupingInformationalEntry {
   memberEmail: string;
   ageTier: AgeTier;
   xeroContactId: string;
-  /**
-   * Managed-universe groups the member sits in although no rule matches, named
-   * from the contact-group cache so the admin can find them in Xero (#5234).
-   */
+  /** Managed-universe groups the member sits in although no rule matches (#5234: named). */
   unexpectedManagedGroups: XeroGroupRef[];
 }
 
@@ -341,21 +338,16 @@ export async function getXeroMemberGroupingSnapshot(options?: {
   const memberships = contactIds.length
     ? await prisma.xeroContactGroupMembershipCache.findMany({
         where: { contactId: { in: contactIds }, group: { is: { status: "ACTIVE" } } },
-        select: {
-          contactId: true,
-          contactGroupId: true,
-          group: { select: { name: true } },
-        },
+        select: { contactId: true, contactGroupId: true, group: { select: { name: true } } },
       })
     : [];
   const groupIdsByContactId = new Map<string, string[]>();
-  const groupNameById = new Map<string, string>();
   for (const row of memberships) {
     const list = groupIdsByContactId.get(row.contactId) ?? [];
     list.push(row.contactGroupId);
     groupIdsByContactId.set(row.contactId, list);
-    groupNameById.set(row.contactGroupId, row.group.name);
   }
+  const groupNameById = new Map(memberships.map((row) => [row.contactGroupId, row.group.name]));
 
   // Re-read the FULL-refresh cursor AFTER the membership-cache read and anchor
   // the snapshot's freshness to THIS value, not the earlier one (#1961 FIX 2).

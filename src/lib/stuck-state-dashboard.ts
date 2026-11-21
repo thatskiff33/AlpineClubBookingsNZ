@@ -58,11 +58,7 @@ import {
 } from "@/lib/stuck-state-payment-signals";
 
 import { adminHref, adminAnchorHref } from "@/lib/admin-hubs";
-import {
-  describeContactGroupMismatchCounts,
-  REVIEW_BY_HAND_REASON,
-  type ContactGroupMismatchCounts,
-} from "@/lib/xero-contact-group-mismatch-summary";
+import { describeContactGroupMismatchStuckState } from "@/lib/xero-contact-group-mismatch-summary";
 const BED_ALLOCATION_LOOKAHEAD_DAYS = 7;
 
 export type StuckStateSeverity = "critical" | "warning" | "info";
@@ -229,15 +225,6 @@ const defaultDependencies: StuckStateDashboardDependencies = {
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`) {
   return count === 1 ? singular : pluralForm;
-}
-
-// #5234: information-only entries stay in the count (owner decision), so the
-// summary says which entries the re-sync repairs and which need a person.
-function contactGroupMismatchSummary(counts: ContactGroupMismatchCounts) {
-  const breakdown = describeContactGroupMismatchCounts(counts);
-  const byHand =
-    counts.reviewByHandCount > 0 ? ` ${REVIEW_BY_HAND_REASON}` : "";
-  return `Linked members' Xero contact groups disagree with the grouping rules: ${breakdown}.${byHand}`;
 }
 
 function addItem(
@@ -498,7 +485,7 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
     owner: "Finance",
     count: snapshot.contactGroupMismatches.count,
     href: `${adminHref("xero")}?section=contactGroupMismatches`,
-    summary: contactGroupMismatchSummary(snapshot.contactGroupMismatches),
+    summary: describeContactGroupMismatchStuckState(snapshot.contactGroupMismatches),
   });
 
   if (

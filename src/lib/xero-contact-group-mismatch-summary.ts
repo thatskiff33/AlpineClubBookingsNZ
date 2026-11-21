@@ -37,3 +37,15 @@ export const REVIEW_BY_HAND_REASON =
 export function reviewByHandFix(groupNames: readonly string[]): string {
   return `Remove the contact from ${groupNames.join(", ")} in Xero, or add a grouping rule that covers this member.`;
 }
+
+/**
+ * The Stuck States summary. Information-only entries stay in its count (owner
+ * decision, #5234), so it says which entries the re-sync repairs and which
+ * need a person.
+ */
+export function describeContactGroupMismatchStuckState(
+  counts: ContactGroupMismatchCounts,
+): string {
+  const byHand = counts.reviewByHandCount > 0 ? ` ${REVIEW_BY_HAND_REASON}` : "";
+  return `Linked members' Xero contact groups disagree with the grouping rules: ${describeContactGroupMismatchCounts(counts)}.${byHand}`;
+}
