@@ -7,9 +7,9 @@
  * command — `pnpm run quality:budget --base "$BUDGET_BASE"` — and fetches
  * nothing. A deployment fork that syncs down from upstream sets the repository
  * variable `QUALITY_BUDGET_UPSTREAM_REPO` to `owner/repo`; this then fetches
- * that repository's `main`, anonymously and without tags, into a fixed local
- * ref and passes it as `--upstream-ref`, so a sync-down is not refused for
- * upstream's own reviewed code (see `scripts/lib/budget-upstream-ref.ts`).
+ * that repository's `main`, without tags and needing no extra credentials,
+ * into a fixed local ref and passes it as `--upstream-ref`, so a sync-down is
+ * not refused for upstream's own reviewed code (see `scripts/lib/budget-upstream-ref.ts`).
  *
  * The upstream comes only from a repository variable, never from anything a
  * pull request controls, and its branch is fixed at `main`. Arguments are
@@ -87,7 +87,7 @@ export function runBudgetGate(env, spawn, writeError) {
     if (fetched.status !== 0) {
       writeError(
         `Budget gate: could not fetch the trusted upstream (${plan.fetch.args[2]}), so the ` +
-          "gate did not run. A public upstream fetches without credentials; check the " +
+          "gate did not run. A public upstream needs no extra credentials; check the " +
           "repository variable QUALITY_BUDGET_UPSTREAM_REPO.\n",
       );
       return 1;

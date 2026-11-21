@@ -1200,12 +1200,17 @@ fails the run, and so does `--upstream-ref` with no value.
 
 **In CI**, set the repository variable `QUALITY_BUDGET_UPSTREAM_REPO` to the
 upstream's `owner/repo` on the fork only; leave it unset here.
-`scripts/ci/run-budget-gate.mjs` then fetches that repository's `main` without
-credentials or tags and passes it as `--upstream-ref`, on pull requests and on
+`scripts/ci/run-budget-gate.mjs` then fetches that repository's `main`, without
+tags and needing no extra credentials, and passes it as `--upstream-ref`, on pull requests and on
 pushes. A malformed value or a failed fetch fails the step rather than falling
 back to an ordinary run. With the variable unset the step runs exactly
 `pnpm run quality:budget --base "$BUDGET_BASE"`. A private upstream cannot be
 fetched this way.
+
+Merge a sync pull request with a merge commit, never a squash or rebase. The
+trusted commit is the merge-base of upstream's `main` and `HEAD`; a squash or
+rebase leaves no upstream commit among the fork's ancestors, so the push run on
+the fork's `main` judges upstream's code as the fork's own and goes red.
 
 ### Quality report
 
