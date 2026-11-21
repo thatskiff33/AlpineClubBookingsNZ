@@ -739,6 +739,23 @@ nothing at all — a time outside the allowed values (the field takes the hour o
 the half hour), a booking already past its check-in date, a cancelled or
 completed booking, or a caller without permission.
 
+### Booking invoice and credit-note downloads (#5066)
+
+When the club's Xero module is on, every successful **Download invoice** or
+**Download credit note** on a booking page records one entry in the
+**Booking** category: `booking.invoice.downloaded` or
+`booking.credit_note.downloaded`.
+
+- **Who it is about is the booking's owner.** The actor is whoever downloaded
+  it; the subject is the owner (none for an organisation-owned booking). The
+  metadata's `onBehalf` is `true` when an officer or admin downloaded it.
+- **Which document.** The metadata carries the Xero invoice number, or the
+  credit note's number and what it was for (`creditNoteKind`: a change, a
+  refund, account credit, or account credit used).
+- **Only real downloads.** The entry is written after Xero has returned the
+  PDF, and if it cannot be written the PDF is not handed over. A refused,
+  throttled or failed download records nothing.
+
 ### Email inheritance source entries (#2822)
 
 A member with no address of their own can inherit one from a direct parent, and

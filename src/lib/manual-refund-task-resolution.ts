@@ -12,7 +12,7 @@ import { postHandBackLedgerLine } from "@/lib/booking-ledger-hand-back";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { recordManualRefundTaskClosureAudit } from "@/lib/manual-refund-task-audit";
 import { hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
-import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
+import { isNonNegativeIntegerCents } from "@/lib/cents-schema";
 import { editReviewLaterRemovalRefusal } from "@/lib/edit-review-guest-removed-since-raised";
 import { chooseEditReviewSettlementRoute, executeEditReviewSettlement, queueEditReviewChargeInvoiceInTransaction, type EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { giveBackCancelledShareCredit, writeEditReviewAccountCredit, type EditReviewAccountCreditOutcome } from "@/lib/edit-financial-review-account-credit";

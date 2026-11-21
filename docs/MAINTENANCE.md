@@ -3524,11 +3524,17 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
      "Published release notes". The documentation hub links the index, not a
      version, so it needs no edit.
    - **The runbook stays release-agnostic.**
-     `docs/PRODUCTION_UPGRADE_RUNBOOK.md` names no release pair; its §7 and §8
-     are blank templates an operator fills in offline. If it has been
-     re-scoped to one release, re-scope it to the new tag, templates included.
-     Never write a rehearsal date, result or "confirmed by" into it: only the
-     owner attests a rehearsal, and not in the public repository.
+     `docs/PRODUCTION_UPGRADE_RUNBOOK.md` names no release pair and keeps
+     reusable operator templates. If it has been re-scoped to one release,
+     re-scope it to the new tag, templates included.
+     It may record example rehearsal transcripts, including their dates and
+     results. Record nothing that the public-writing rule bars
+     ([writing in the open](agents/ISSUE_WORKFLOW.md#writing-in-the-open)):
+     in particular secrets, credentials, production data, personal data, IP
+     addresses, hostnames, and anything else identifying a club's production
+     environment. An example does not attest any operator's upgrade, so it
+     carries no "Confirmed by" owner confirmation. Operators fill in their own
+     §7 and §8 records offline.
    - **Every windowed migration is reached.** A census
      (`src/lib/__tests__/upgrade-docs-scope.test.ts`) fails a pull request when
      a windowed ledger row is not named in the runbook's

@@ -38,6 +38,20 @@ export async function getEligibleLodgeIdsForMember(
 }
 
 /**
+ * Narrow a lodge list to the ones `access` allows, keeping the list's order.
+ * The one way a listing applies `getEligibleLodgeIdsForMember`, so the lodge
+ * picker and the food-order form cannot filter differently.
+ */
+export function filterLodgesByEligibility<T extends { id: string }>(
+  access: Awaited<ReturnType<typeof getEligibleLodgeIdsForMember>>,
+  lodges: readonly T[],
+): T[] {
+  if (access.allLodges) return [...lodges];
+  const allowed = new Set(access.lodgeIds);
+  return lodges.filter((lodge) => allowed.has(lodge.id));
+}
+
+/**
  * Whether a member may book one named lodge. Derived from
  * getEligibleLodgeIdsForMember so the single-lodge gate and any batch listing
  * filter share one rule: a member with no BOOKING_RESTRICTION rows can book

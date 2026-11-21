@@ -45,6 +45,22 @@ function row(bookingId: string, overrides: Partial<ExportManifestRow> = {}): Exp
   };
 }
 
+/** A capture receipt of `cents` of one capture, under its own Xero payment key. */
+function receipt(bookingId: string, key: string, cents: number): ExportManifestRow {
+  return {
+    documentRole: "CAPTURE_RECEIPT",
+    legacyKey: key,
+    bookingId,
+    outcome: "COVERED",
+    reason: null,
+    payloadHash: "c".repeat(64),
+    frozenMapping: { invoiceId: "INV-4525" },
+    lineTotalCents: cents,
+    providerInvoiceId: `PAY-${key}`,
+    coverage: [{ account: "STRIPE_CLEARING", chargeIdentity: `capture:pi_${bookingId}`, coveredCents: cents, taxCode: null, sliceKey: key }],
+  };
+}
+
 const write = (manifest: ExportManifestRow) => appPrisma.$transaction((tx) => writeExportManifest(tx, manifest));
 
 async function stored(bookingId: string) {
@@ -209,5 +225,18 @@ async function stored(bookingId: string) {
       await expect(write(update(id))).resolves.toBe("WRITTEN");
       await expect(write(update(id, { legacyKey: "update-2", outcome: "CONFLICT", reason: "PRIMARY_UNMATCHED", lineTotalCents: 1 }))).resolves.toBe("WRITTEN");
     });
+  });
+
+  it("lets several receipts cover one capture under their own keys, and refuses a key covering it twice", async () => {
+    const id = await booking();
+    await expect(write(receipt(id, `payment:${id}:a`, 5000))).resolves.toBe("WRITTEN");
+    await expect(write(receipt(id, `payment:${id}:b`, 3000))).resolves.toBe("WRITTEN");
+    await expect(write(receipt(id, `payment:${id}:a`, 5000))).resolves.toBe("SAME");
+    const { coverage } = await stored(id);
+    expect(coverage).toHaveLength(2);
+    expect(coverage).toEqual(expect.arrayContaining([{ chargeIdentity: `capture:pi_${id}`, coveredCents: 5000 }, { chargeIdentity: `capture:pi_${id}`, coveredCents: 3000 }]));
+    // One key naming the same capture twice, on a manifest of its own.
+    const twice = receipt(id, `payment:${id}:c`, 2000);
+    await expect(write({ ...twice, lineTotalCents: 4000, coverage: [twice.coverage[0]!, twice.coverage[0]!] })).rejects.toMatchObject({ code: "P2002" });
   });
 });
