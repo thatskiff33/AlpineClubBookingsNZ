@@ -41,7 +41,14 @@ export function normaliseRedirectHost(input: string): string | null {
       return null;
     }
   } else {
-    host = trimmed.replace(/\/.*$/, "");
+    // Cut at the first slash without a regular expression: the old
+    // `/\/.*$/` backtracked quadratically on a long run of slashes (CodeQL
+    // js/polynomial-redos). A line break never belongs in a hostname, and the
+    // old pattern left such input whole (so it was refused below); refuse it
+    // here so the result is the same.
+    if (/[\n\r\u2028\u2029]/.test(trimmed)) return null;
+    const slash = trimmed.indexOf("/");
+    host = slash === -1 ? trimmed : trimmed.slice(0, slash);
   }
 
   return HOSTNAME_PATTERN.test(host) ? host : null;

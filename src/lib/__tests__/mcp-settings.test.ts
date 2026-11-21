@@ -168,6 +168,30 @@ describe("normaliseMcpAllowedHosts", () => {
     expect(normaliseMcpAllowedHosts([])).toEqual({ ok: true, hosts: [] });
     expect(normaliseMcpAllowedHosts(["", ""])).toEqual({ ok: true, hosts: [] });
   });
+
+  it("cuts a typed address at its first slash, however many slashes follow", () => {
+    expect(normaliseMcpAllowedHosts(["chatgpt.com/a/b/c", "claude.ai////"])).toEqual({
+      ok: true,
+      hosts: ["chatgpt.com", "claude.ai"],
+    });
+  });
+
+  it("refuses an entry holding a line break, as the pattern it replaced did", () => {
+    for (const bad of ["claude.ai/x\ny", "claude.ai\n/x", "claude.ai/x\r", "claude.ai/x\u2028y"]) {
+      expect(normaliseMcpAllowedHosts([`${bad}z`])).toEqual({ ok: false, invalid: `${bad}z` });
+    }
+  });
+
+  it("answers a long run of slashes at once (no backtracking pattern on officer input)", () => {
+    // The regular expression this replaced took time quadratic in the run's
+    // length when a line break followed it (CodeQL js/polynomial-redos): on
+    // this input it runs past the test timeout, which is how this test fails.
+    const hostile = `${"/".repeat(200_000)}\n`;
+    expect(normaliseMcpAllowedHosts([`claude.ai${hostile}x`])).toEqual({
+      ok: false,
+      invalid: `claude.ai${hostile}x`,
+    });
+  });
 });
 
 describe("mcpSettingsUpdateSchema", () => {
