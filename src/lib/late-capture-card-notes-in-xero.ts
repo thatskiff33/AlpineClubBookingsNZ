@@ -8,6 +8,9 @@
  */
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { lateCaptureIntentOfCardRefundOperation } from "@/lib/late-capture-paid-another-way";
+import { paymentRecoveryOperationIdOfPaidAnotherWay } from "@/lib/manual-refund-task-settlement-rules";
+import { readLiveCardRefundReversalCentsByClose } from "@/lib/xero-resolved-in-xero-fences";
 import {
   findLateCapturePaymentIntents,
   lateCaptureNotableRefundCents,
@@ -23,7 +26,7 @@ import { xeroRefusedOperation } from "@/lib/xero-error-shape";
 type CardNoteStore = Pick<Prisma.TransactionClient, "xeroSyncOperation" | "xeroObjectLink">;
 type PreCapOverNoteStore = Pick<
   Prisma.TransactionClient,
-  "manualRefundTask" | "paymentTransaction" | "xeroObjectLink" | "xeroSyncOperation"
+  "manualRefundTask" | "paymentRecoveryOperation" | "paymentTransaction" | "xeroObjectLink" | "xeroSyncOperation"
 >;
 
 /**
@@ -42,18 +45,53 @@ type PreCapOverNoteStore = Pick<
  * uncapped receipt, and for every note sized since #4383, which never asks
  * above the cap. A capture with no recorded receipt is left out: its notes
  * were coverage above cash before #4383 too.
+ *
+ * #4383 delta review (money): coverage is net of live Stripe reversals, so an
+ * over-note a reversal already undid is not taken off again. The live
+ * reversals answering this capture's refunds
+ * (`readLateCaptureReversalCentsByIntent`) come off its over-note first: a
+ * close reverses the failed refund's whole note, the part above the cap with
+ * it. Without this, a later genuine failed refund's cover would be hidden.
  */
 export async function readLateCapturePreCapOverNoteCents(paymentId: string, db: PreCapOverNoteStore = prisma): Promise<number> {
   const intents = await readCardNotedPaymentIntentIds(paymentId, db);
   if (intents.length === 0) return 0;
   let overNoteCents = 0;
+  let reversedByIntent: Map<string, number> | null = null;
   for (const intent of await findLateCapturePaymentIntents(intents, db)) {
     const receipt = await readLateCaptureXeroReceipt(intent, db);
     if (receipt.kind !== "recorded") continue;
     const { inXeroCents } = await readLateCaptureCardNotesInXero(paymentId, intent, db);
-    overNoteCents += inXeroCents - lateCaptureNotableRefundCents(receipt, inXeroCents);
+    const grossOverNoteCents = inXeroCents - lateCaptureNotableRefundCents(receipt, inXeroCents);
+    if (grossOverNoteCents <= 0) continue;
+    reversedByIntent ??= await readLateCaptureReversalCentsByIntent(paymentId, db);
+    overNoteCents += Math.max(0, grossOverNoteCents - (reversedByIntent.get(intent) ?? 0));
   }
   return overNoteCents;
+}
+
+/**
+ * #4383 delta review (money): the payment's live Stripe reversals by the late
+ * capture whose refund each answered. A reversal's close names the card refund
+ * row it closed (`paymentRecoveryOperationIdOfPaidAnotherWay`), and that row
+ * its late capture as a close's Xero plan reads it
+ * (`lateCaptureIntentOfCardRefundOperation`). A reversal answering no late
+ * capture's refund is left out.
+ */
+async function readLateCaptureReversalCentsByIntent(paymentId: string, db: PreCapOverNoteStore): Promise<Map<string, number>> {
+  const byIntent = new Map<string, number>();
+  for (const [closeTaskId, cents] of await readLiveCardRefundReversalCentsByClose(paymentId, db)) {
+    const close = await db.manualRefundTask.findUnique({ where: { id: closeTaskId }, select: { kind: true, occurrenceKey: true } });
+    const operationId = close ? paymentRecoveryOperationIdOfPaidAnotherWay(close) : null;
+    if (!operationId) continue;
+    const closed = await db.paymentRecoveryOperation.findUnique({
+      where: { id: operationId },
+      select: { idempotencyKey: true, paymentIntentId: true },
+    });
+    const intent = closed ? await lateCaptureIntentOfCardRefundOperation(closed, db) : null;
+    if (intent !== null) byIntent.set(intent, (byIntent.get(intent) ?? 0) + cents);
+  }
+  return byIntent;
 }
 
 /** The capture intents the payment's card refund notes name, by link or by row. */

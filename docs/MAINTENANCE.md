@@ -1837,7 +1837,12 @@ change for the whole refund is left as it is: the finding does not name what it
 already credits, and the Xero reconciliation report may now list the payment as
 refund coverage above the refunded total. If you recorded the rest of the
 payment by hand, Xero is right and that line can be ignored; if not, reduce the
-note in Xero by the part above what the receipt recorded. The app never reads
+note in Xero by the part above what the receipt recorded. One case is not
+right even when you recorded the rest by hand: the over-noted refund itself
+later failed in Stripe. A "Paid another way" close of it reverses only up to
+what the receipt recorded, so reverse the part above that by hand in Xero,
+unless a close made before this change already reversed the whole refund (its
+reversal invoice is for the whole amount). The app never reads
 that part as a card refund that failed later: closing a failed refund on the
 payment as "Paid another way" queues no Stripe reversal for it, and the inbound
 credit-note recount takes nothing off for it, so your correction in Xero is the

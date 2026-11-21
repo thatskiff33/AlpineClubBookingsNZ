@@ -132,6 +132,8 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       await prisma.refundRequest.deleteMany({ where: { bookingId: BOOKING_ID } });
       // #4516: a still-owed rest's own row.
       await prisma.paymentRecoveryOperation.deleteMany({ where: { paymentId: PAYMENT_ID, idempotencyKey: { startsWith: "card_refund_still_owed_" } } });
+      // #4383 delta review: an older close's card refund row.
+      await prisma.paymentRecoveryOperation.deleteMany({ where: { paymentId: PAYMENT_ID, id: { startsWith: "race-4383-delta-" } } });
     }
 
     async function deleteFixtures() {
@@ -1141,6 +1143,163 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
           where: { localModel: "Payment", localId: PAYMENT_ID, queueType: "CARD_REFUND_REVERSAL_INVOICE" },
         });
         expect(reversals).toBe(0);
+      });
+
+      // #4383 delta review (money): coverage is net of live Stripe reversals,
+      // so an over-note a reversal already undid is not taken off again. The
+      // capture recorded $100 of $200; a pre-#4383 $150 note answered its
+      // refund, which failed later, and an older close reversed the $150. A
+      // later $50 refund on the primary charge, with its note, fails: that $50
+      // note is genuine cover above cash, never hidden behind the old over-note.
+      it("MUTATION #4383 delta review: an over-note a Stripe reversal already undid never hides a later failed refund's cover", async () => {
+        const RECORDED_CENTS = 10_000;
+        const OLD_REFUND_CENTS = 15_000;
+        const OLD_OPERATION_ID = "race-4383-delta-old-op";
+        const OLD_CLOSE_ID = "race-4383-delta-old-close";
+        await recordCappedReceipt(RECORDED_CENTS);
+        await prisma.paymentRefund.create({
+          data: {
+            paymentId: PAYMENT_ID,
+            paymentTransactionId: TRANSACTION_ID,
+            stripeRefundId: "re_race_4383_delta_old",
+            stripePaymentIntentId: LATE_INTENT,
+            amountCents: OLD_REFUND_CENTS,
+            currency: "nzd",
+            status: "failed",
+          },
+        });
+        const later = await prisma.paymentRefund.create({
+          data: {
+            paymentId: PAYMENT_ID,
+            paymentTransactionId: TRANSACTION_ID,
+            stripeRefundId: "re_race_4383_delta_primary",
+            stripePaymentIntentId: "pi_race_4383_delta_primary",
+            amountCents: REFUND_CENTS,
+            currency: "nzd",
+            status: "failed",
+          },
+        });
+        // The primary charge's failed $50 refund, still owed by card.
+        const failedLater = await prisma.paymentRecoveryOperation.create({
+          data: {
+            id: "race-4383-delta-primary-op",
+            type: "REFUND_BOOKING_MODIFICATION",
+            status: "FAILED",
+            bookingId: BOOKING_ID,
+            paymentId: PAYMENT_ID,
+            paymentIntentId: "pi_race_4383_delta_primary",
+            amountCents: REFUND_CENTS,
+            idempotencyKey: `card_refund_failed_later_${later.stripeRefundId}`,
+            attempts: 5,
+            nextRetryAt: null,
+          },
+        });
+        // The older close of the capture's failed $150 refund, and the Stripe reversal it raised.
+        await prisma.paymentRecoveryOperation.create({
+          data: {
+            id: OLD_OPERATION_ID,
+            type: "REFUND_BOOKING_MODIFICATION",
+            status: "SUCCEEDED",
+            bookingId: BOOKING_ID,
+            paymentId: PAYMENT_ID,
+            paymentIntentId: LATE_INTENT,
+            amountCents: OLD_REFUND_CENTS,
+            allocationPlan: [{ paymentTransactionId: TRANSACTION_ID, amountCents: OLD_REFUND_CENTS }],
+            idempotencyKey: "card_refund_failed_later_re_race_4383_delta_old",
+            attempts: 0,
+            nextRetryAt: null,
+          },
+        });
+        await prisma.manualRefundTask.create({
+          data: {
+            id: OLD_CLOSE_ID,
+            bookingId: BOOKING_ID,
+            paymentId: PAYMENT_ID,
+            kind: "CANCELLED_BOOKING_HAND_BACK",
+            status: "COMPLETED",
+            occurrenceKey: `card-refund-paid-another-way:${OLD_OPERATION_ID}`,
+            amountCents: OLD_REFUND_CENTS,
+            completedAt: NIGHT,
+            completedByMemberId: OFFICER_ID,
+            reason: "Older paid-another-way close (race proof)",
+          },
+        });
+        await prisma.xeroObjectLink.createMany({
+          data: [
+            // The pre-#4383 note for the whole $150: $50 above the $100 recorded.
+            {
+              localModel: "Payment",
+              localId: PAYMENT_ID,
+              xeroObjectType: "CREDIT_NOTE",
+              xeroObjectId: "cn_race_4383_delta_old",
+              role: "REFUND_CREDIT_NOTE",
+              active: true,
+              metadata: { amountCents: OLD_REFUND_CENTS, paymentIntentId: LATE_INTENT },
+            },
+            {
+              localModel: "Payment",
+              localId: PAYMENT_ID,
+              xeroObjectType: "INVOICE",
+              xeroObjectId: "inv_race_4383_delta_reversal",
+              role: CARD_REFUND_REVERSAL_INVOICE_ROLE,
+              active: true,
+              metadata: { closeTaskId: OLD_CLOSE_ID, amountCents: OLD_REFUND_CENTS, bookingId: BOOKING_ID },
+            },
+            // The older close's own bank-transfer note, for the $150 it paid back.
+            {
+              localModel: "Payment",
+              localId: PAYMENT_ID,
+              xeroObjectType: "CREDIT_NOTE",
+              xeroObjectId: "cn_race_4383_delta_bank",
+              role: "REFUND_CREDIT_NOTE",
+              active: true,
+              metadata: { amountCents: OLD_REFUND_CENTS },
+            },
+            // The primary charge's $50 refund note, raised before that refund failed.
+            {
+              localModel: "Payment",
+              localId: PAYMENT_ID,
+              xeroObjectType: "CREDIT_NOTE",
+              xeroObjectId: "cn_race_4383_delta_primary",
+              role: "REFUND_CREDIT_NOTE",
+              active: true,
+              metadata: { amountCents: REFUND_CENTS },
+            },
+          ],
+        });
+        await prisma.xeroSyncOperation.create({
+          data: {
+            direction: "OUTBOUND",
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            localModel: "Payment",
+            localId: PAYMENT_ID,
+            queueType: "REFUND_CREDIT_NOTE",
+            status: "SUCCEEDED",
+            xeroObjectId: "cn_race_4383_delta_bank",
+            idempotencyKey: "race-4383-delta-bank-note",
+            correlationKey: "race-4383-delta-bank-note",
+            requestPayload: {
+              queueType: "REFUND_CREDIT_NOTE",
+              refundAmountCents: OLD_REFUND_CENTS,
+              refundMethod: "internet-banking",
+              paidAnotherWayTaskId: OLD_CLOSE_ID,
+            },
+          },
+        });
+        await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: OLD_REFUND_CENTS } });
+        const payment = { id: PAYMENT_ID, bookingId: BOOKING_ID, refundedAmountCents: OLD_REFUND_CENTS };
+        // Only the older close's bank cash stands: both card refunds failed.
+        await expect(resolveRefundNoteEligibleCash(payment)).resolves.toMatchObject({ eligibleCashCents: OLD_REFUND_CENTS });
+        // Without the reversal netted off the over-note: 0, the $50 cover hidden.
+        expect(await readRefundNoteCoverageAboveCashCents(payment)).toBe(REFUND_CENTS);
+
+        // The inbound recount takes off the reversed $150 and the $50 failure its note answered.
+        const recount = await readFailedCardRefundRecountCentsByPayment([payment], async () => null);
+        expect(recount.centsByPayment.get(PAYMENT_ID)).toBe(OLD_REFUND_CENTS + REFUND_CENTS);
+
+        // A close of the $50 failed refund is answered by its card note: a Stripe reversal for $50.
+        expect(await failedLaterCardNoteCoverCents(prisma as never, failedLater, PAYMENT_ID)).toBe(REFUND_CENTS);
       });
 
       it("a close that waits on the approval task's row behind the REAL receipt worker reads the receipt recorded and queues its own note", async () => {
