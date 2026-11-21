@@ -400,6 +400,7 @@ export function resolveTargetDates({
   input,
   today,
   finishedStayCorrection = false,
+  workPartyCorrection = false,
 }: {
   booking: LoadedBookingForModify;
   role: Role;
@@ -411,6 +412,8 @@ export function resolveTargetDates({
    * mode; never set by a route.
    */
   finishedStayCorrection?: boolean;
+  /** Fork #127/#130: an officer's work-party correction; it moves no night. */
+  workPartyCorrection?: boolean;
   /**
    * The club's today, threaded straight into `getBookingEditPolicy` — see it for
    * why this is a required value rather than a read (#3123). This function is
@@ -429,6 +432,7 @@ export function resolveTargetDates({
     checkOut: booking.checkOut,
     adminOverride: effectiveAdminOverride,
     finishedStayCorrection,
+    workPartyCorrection,
     today,
   });
   if (!editPolicy.canModify) {
@@ -582,6 +586,9 @@ export function resolveTargetDates({
   const datesChanged =
     checkInChanged ||
     newCheckOut.getTime() !== new Date(booking.checkOut).getTime();
+  if (editPolicy.mode === "work-party-correction" && datesChanged) {
+    throw new ApiError("A work-party correction cannot change a started stay's dates.", 400);
+  }
 
   return {
     newCheckIn,

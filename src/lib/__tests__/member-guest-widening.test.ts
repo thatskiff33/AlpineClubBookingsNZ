@@ -913,6 +913,11 @@ describe("consent columns have exactly one writer", () => {
     // owed. A null status means no message was ever sent about that row.
     "src/lib/booking-batch-modification-service.ts":
       "the batch edit reads a removed guest's consent state to decide who is owed a withdrawal notice",
+    // #5149: the identity-only pricing echo, moved verbatim out of the batch
+    // service. A READER: it carries each guest's stored `consentStatus` into
+    // the echoed night rates unchanged, and writes nothing.
+    "src/lib/booking-identity-only-pricing.ts":
+      "the identity-only pricing echo carries each guest's stored consent status through unchanged; it writes nothing",
     // The same read on the single-guest removal route. It is the ONE of the
     // three callers of removeBookingGuestInTransaction that owes a withdrawal
     // notice — the decline endpoint and the expiry sweep each have their own

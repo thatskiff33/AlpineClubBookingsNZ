@@ -7,7 +7,6 @@ import { settleOrganiserExtraReduction } from "@/lib/organiser-extra-netting";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import {
   BookingStatus,
-  PaymentSource,
   PaymentStatus,
   type Prisma,
 } from "@prisma/client";
@@ -160,7 +159,8 @@ export {
 } from "@/lib/booking-modify-settlement-options";
 import {
   editReductionDisputeHold,
-  editRefundHasCardToReturnTo,
+  editReductionRefundsToCard,
+  hasSettledCardPayment,
   modificationCardRefundTier,
   refundableCashForModification,
   resolveSelectedSettlementAmount,
@@ -238,7 +238,7 @@ export async function applyPaymentAdjustments(
     netAmountCents > 0 && !hasSettledPayment && canAskCardForIncrease(booking);
   // #5212 (`INV-PAY-160`): a REDUCTION is the card's only where Stripe has a record to refund against.
   const hasSucceededPayment = zeroDollarCardIncrease ||
-    (hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE && (netAmountCents >= 0 || (await editRefundHasCardToReturnTo(tx, booking))));
+    (netAmountCents >= 0 ? hasSettledCardPayment(booking) : await editReductionRefundsToCard(tx, booking));
   // #4299: the one home's answer, or the organiser's combined invoice standing for it.
   const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking) || organiserBilling !== null;
   // #5039 (`INV-MOD-042`): a paid edit's fee is recorded here, on its one

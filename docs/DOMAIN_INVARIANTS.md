@@ -499,6 +499,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-060` | An ordinary price ask's door and replay send one Stripe request |
 | `INV-MOD-061` | An edit's card refund and its replay send one Stripe request |
 | `INV-MOD-062` | An edit settles only the figures its preview showed |
+| `INV-MOD-063` | An officer's work-party correction prices a started stay whole |
 
 ### Adult-member hosting
 
