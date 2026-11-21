@@ -119,6 +119,8 @@ const ALL_PROMO_IDS = [PROMO_ID, OTHER_PROMO_ID, PUBLIC_PROMO_ID, STARTED_PROMO_
 const GROUP_ID = "race-129-group";
 const SETTLEMENT_ID = "race-129-settlement";
 const SETTLEMENT_PI = "pi_race_129_group";
+/** #5149 review F4: the organiser's combined invoice an Internet Banking group settlement raised. */
+const COMBINED_INVOICE_ID = "race-5149-combined-invoice";
 const FAMILY_ID = "race-129-family";
 /** #5149: a third member, owning a joiner's booking whose organiser is someone else. */
 const JOINER_ID = "race-5149-joiner";
@@ -201,10 +203,10 @@ async function clean(): Promise<void> {
       if (result.status === "rejected") enqueueErrors.push(result.reason);
     }
   }
-  const localIds = [BOOKING_ID, PAYMENT_ID, ...(await modificationIds())];
+  const localIds = [BOOKING_ID, PAYMENT_ID, SETTLEMENT_ID, ORGANISER_BOOKING_ID, ...(await modificationIds())];
   await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: localIds } } });
   await prisma.xeroObjectLink.deleteMany({
-    where: { OR: [{ localId: { in: localIds } }, { xeroObjectId: XERO_INVOICE_ID }] },
+    where: { OR: [{ localId: { in: localIds } }, { xeroObjectId: { in: [XERO_INVOICE_ID, COMBINED_INVOICE_ID] } }] },
   });
   await prisma.auditLog.deleteMany({
     where: {
@@ -274,11 +276,13 @@ type Shape =
   | "part-paid"
   | "credit-paid"
   | "organiser-paid"
+  | "organiser-paid-bank"
+  | "bank-and-credit"
   | "bank-paid"
   | "card-and-credit"
   | "organiser-unpaid"
   | "organiser-settling";
-const ORGANISER_PAYS_SHAPES: readonly Shape[] = ["organiser-paid", "organiser-unpaid", "organiser-settling"];
+const ORGANISER_PAYS_SHAPES: readonly Shape[] = ["organiser-paid", "organiser-paid-bank", "organiser-unpaid", "organiser-settling"];
 
 /**
  * The owner as their own guest, four nights at the season rate, as the booking
@@ -295,6 +299,11 @@ const ORGANISER_PAYS_SHAPES: readonly Shape[] = ["organiser-paid", "organiser-un
  *  - bank-paid: PAID by Internet Banking, the whole price received;
  *  - card-and-credit (#5149): PAID, `CARD_AND_CREDIT_CREDIT_CENTS` with account
  *    credit and the rest captured by card;
+ *  - organiser-paid-bank (#5149 review F4): as organiser-paid, but the group
+ *    settled by Internet Banking on the organiser's combined invoice, so an
+ *    increase is invoiced to the organiser (`INV-PAY-148`);
+ *  - bank-and-credit (#5149 review F3): PAID, `CARD_AND_CREDIT_CREDIT_CENTS`
+ *    with account credit and the rest received by Internet Banking;
  *  - unpaid-half-credit (#5149 owner decision, 20 Nov 2026): as unpaid-credit,
  *    with `DECISION_CREDIT_CENTS` applied, half the price;
  *  - organiser-unpaid / organiser-settling (#5149 review A1): a joiner of an
@@ -335,8 +344,10 @@ async function seed(
         data: {
           id: SETTLEMENT_ID,
           groupBookingId: GROUP_ID,
-          stripePaymentIntentId: SETTLEMENT_PI,
-          source: "STRIPE",
+          ...(shape === "organiser-paid-bank"
+            ? { xeroInvoiceId: COMBINED_INVOICE_ID }
+            : { stripePaymentIntentId: SETTLEMENT_PI }),
+          source: shape === "organiser-paid-bank" ? "INTERNET_BANKING" : "STRIPE",
           amountCents: price,
           status: shape === "organiser-settling" ? "PENDING" : "SUCCEEDED",
         },
@@ -484,10 +495,38 @@ async function seed(
     await prisma.$transaction((tx) =>
       memberCredit.applyCreditToBooking(OWNER_ID, CARD_AND_CREDIT_CREDIT_CENTS, BOOKING_ID, tx, CLUB_FORMAT_TEST),
     );
-  } else if (shape === "organiser-paid") {
-    // The child's mirror of the organiser's card settlement: no intent of its own.
+  } else if (shape === "bank-and-credit") {
+    const receivedCents = price - CARD_AND_CREDIT_CREDIT_CENTS;
     await prisma.payment.create({
-      data: { id: PAYMENT_ID, bookingId: BOOKING_ID, amountCents: price, source: "STRIPE", status: "SUCCEEDED" },
+      data: {
+        id: PAYMENT_ID,
+        bookingId: BOOKING_ID,
+        amountCents: receivedCents,
+        creditAppliedCents: CARD_AND_CREDIT_CREDIT_CENTS,
+        source: "INTERNET_BANKING",
+        status: "SUCCEEDED",
+        transactions: {
+          create: { id: PRIMARY_TXN_ID, kind: "PRIMARY", source: "INTERNET_BANKING", amountCents: receivedCents, status: "SUCCEEDED" },
+        },
+      },
+    });
+    await prisma.memberCredit.create({
+      data: { memberId: OWNER_ID, amountCents: CARD_AND_CREDIT_CREDIT_CENTS, type: "ADMIN_ADJUSTMENT", description: "race 5149 opening balance" },
+    });
+    await prisma.$transaction((tx) =>
+      memberCredit.applyCreditToBooking(OWNER_ID, CARD_AND_CREDIT_CREDIT_CENTS, BOOKING_ID, tx, CLUB_FORMAT_TEST),
+    );
+  } else if (shape === "organiser-paid" || shape === "organiser-paid-bank") {
+    // The child's mirror of the organiser's settlement, its share as group
+    // settlement writes it (`amountCents: childPaidCents`): no intent of its own.
+    await prisma.payment.create({
+      data: {
+        id: PAYMENT_ID,
+        bookingId: BOOKING_ID,
+        amountCents: price,
+        source: shape === "organiser-paid-bank" ? "INTERNET_BANKING" : "STRIPE",
+        status: "SUCCEEDED",
+      },
     });
   } else {
     await seedCardPayment(shape, price);
@@ -2005,6 +2044,27 @@ async function batchRefusal(params: {
     expect(await removalRefusal()).toEqual({ status: 409, message: expect.stringContaining("group organiser") });
   }, 90_000);
 
+  it("#5149 review F4: an Internet Banking organiser-paid joiner gets past the fact, and Remove invoices the increase to the organiser", async () => {
+    await seed("organiser-paid-bank");
+    stripeRefundsFail();
+    stripeAsksFail();
+    const added = await apply(await quote());
+    expect(added, JSON.stringify(added)).toMatchObject({ outcome: "applied" });
+    expect(await removalFacts()).toMatchObject({ paidWithNoMoneyTaken: false, workPartyEventId: EVENT_ID });
+    const figures = await removalQuote();
+    expect(figures).toMatchObject({
+      newFinalPriceCents: PRICE_CENTS,
+      priceDiffCents: DISCOUNT_CENTS,
+      billedToOrganiserCents: DISCOUNT_CENTS,
+      additionalAmountCents: 0,
+      refundAmountCents: 0,
+    });
+    const removed = await removalApply(figures);
+    expect(removed, JSON.stringify(removed)).toMatchObject({ outcome: "applied", figures });
+    expect(await workPartyRedemptions()).toEqual([]);
+    expect(await bookingRow()).toMatchObject({ finalPriceCents: PRICE_CENTS });
+  }, 90_000);
+
   it("#5212 (INV-PAY-160): a card payment Stripe holds no record of is offered Refund to bank account, the edit's hand-back", async () => {
     await seed("paid");
     stripeRefundsFail();
@@ -2083,8 +2143,9 @@ async function batchRefusal(params: {
     expect(await bookingRow()).toMatchObject({ finalPriceCents: PRICE_CENTS });
   }, 90_000);
 
-  // A credit-paid booking is refused Remove (owner decision, 20 Nov 2026), proved above.
-  it.each(["bank-paid", "part-paid"] as const)(
+  // A credit-paid booking is refused Remove (owner decision, 20 Nov 2026), proved above;
+  // part credit and part card or bank is money taken, so Remove goes ahead (review F3).
+  it.each(["bank-paid", "part-paid", "card-and-credit", "bank-and-credit"] as const)(
     "#5149 Remove on a %s booking: the price goes back up, nothing comes back, and credit already given stays",
     async (shape) => {
       await seed(shape);
