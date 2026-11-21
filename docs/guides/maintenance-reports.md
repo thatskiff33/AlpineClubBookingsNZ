@@ -36,7 +36,11 @@ The page has four tabs:
 ### Deal with reported faults (Reports tab)
 
 1. The queue opens on **Open** reports across every lodge. Use the **Status**,
-   **Lodge**, and **Came from** filters to narrow it.
+   **Lodge**, and **Came from** filters to narrow it. Open reports list the
+   longest-waiting first; the other filters list the newest first. The list
+   shows 25 at a time with its total ("Showing 1–25 of 40"); use **Previous
+   page** and **Next page** to reach the rest. Changing a filter goes back to
+   the first page.
 2. Each row shows the lodge, a one-line summary, who reported it, and badges for a
    QR-code report or an attached photo.
 3. Click **Open** to read the full report — the answers as they were asked, and the

@@ -7966,6 +7966,10 @@ model MemberCredit {
   // spendable lot: the release is a positive row, and without this marker the
   // planner would count it as the member's own money and mint a Xero note for it.
   outsideSpendConvergedAt     DateTime?
+  // #5204: the Xero overpayment or prepayment this credit is backed by. Set on a
+  // lot converted from one (no credit note is ever minted for it) and on a
+  // deduction of such credit. Null on every other row.
+  xeroCashCreditId            String?
   createdAt                   DateTime   @default(now())
 
   member                    Member                        @relation(fields: [memberId], references: [id], onDelete: Restrict)
@@ -7983,10 +7987,19 @@ model MemberCredit {
   // allocated to booking invoices as Xero credit notes. Empty for negative
   // BOOKING_APPLIED rows and for lots never used to reduce an IB invoice.
   noteAllocations           MemberCreditNoteAllocation[]  @relation("CreditLotAllocations")
+  xeroCashCredit            XeroCashCredit?               @relation(fields: [xeroCashCreditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // #5204: slices of THIS backed lot allocated to booking invoices as Xero
+  // overpayment or prepayment allocations, and the restorations that hand
+  // a slice back.
+  cashAllocations           MemberCreditCashAllocation[]  @relation("CreditLotCashAllocations")
+  cashReturns               MemberCreditCashReturn[]      @relation("CreditCashReturnRestoration")
 
   @@index([memberId])
   @@index([requestedById])
   @@index([approvedById])
+  @@index([xeroCashCreditId])
+  // #5204: the target of a cash slice's (lot, document) foreign key.
+  @@unique([id, xeroCashCreditId], map: "MemberCredit_id_xeroCashCreditId_key")
   @@index([sourceBookingId])
   @@index([appliedToBookingId])
 }
@@ -8038,6 +8051,10 @@ model AdminCreditAdjustmentRequest {
   description    String
   /// Null on a deduction, and on a grant requested before an account was chosen.
   grantAccount   AdminCreditGrantAccount?
+  /// #5204: the Xero overpayment or prepayment a conversion turns into credit,
+  /// or whose credit a deduction takes. Never set with `grantAccount`
+  /// (CHECK `admin_credit_request_backing_or_grant_account`).
+  xeroCashCreditId String?
   idempotencyKey String
   status         AdminCreditAdjustmentRequestStatus @default(PENDING)
   requestedById  String
@@ -8050,11 +8067,104 @@ model AdminCreditAdjustmentRequest {
   requestedBy    Member        @relation("AdminCreditAdjustmentRequestsRequested", fields: [requestedById], references: [id])
   reviewedBy     Member?       @relation("AdminCreditAdjustmentRequestsReviewed", fields: [reviewedById], references: [id], onDelete: SetNull)
   approvedCredit MemberCredit? @relation("ApprovedAdminCreditAdjustment")
+  xeroCashCredit XeroCashCredit? @relation(fields: [xeroCashCreditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([requestedById, idempotencyKey])
   @@index([memberId, status, createdAt])
   @@index([requestedById, createdAt])
   @@index([reviewedById, createdAt])
+  @@index([xeroCashCreditId])
+}
+
+// ---------------------------------------------------------------------------
+// Xero cash credits: overpayments and prepayments (#5204)
+// ---------------------------------------------------------------------------
+
+enum XeroCashCreditKind {
+  OVERPAYMENT
+  PREPAYMENT
+}
+
+/// #5204: the app's snapshot of one receive overpayment or receive prepayment
+/// in Xero: money a contact paid the club that no invoice has taken yet. Written
+/// only by the refresh in `src/lib/xero-cash-credits.ts`, from a complete read of
+/// every page of both kinds; a document missing from that read is left with a
+/// zero balance, never deleted, because credit may still name it. `syncedAt` is
+/// when the read that wrote the row began, and a refresh writes a row only when
+/// its read began later, so an older read never overwrites a newer one. The
+/// member is not stored: it is the member whose `xeroContactId` is this
+/// document's contact, matched when the queue is read.
+model XeroCashCredit {
+  id             String             @id @default(cuid())
+  kind           XeroCashCreditKind
+  xeroDocumentId String             @unique
+  xeroContactId  String
+  /// ISO 4217 code Xero gave the document, e.g. `NZD`. Cents are in this
+  /// currency, which need not be the club's.
+  currencyCode   String
+  documentDate   DateTime?          @db.Date
+  totalCents     Int
+  remainingCents Int
+  syncedAt       DateTime
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  backedCredits      MemberCredit[]
+  conversionRequests AdminCreditAdjustmentRequest[]
+  cashAllocations    MemberCreditCashAllocation[]
+
+  @@index([xeroContactId])
+  @@index([remainingCents])
+}
+
+/// #5204: one slice of a backed credit lot allocated against one booking's Xero
+/// invoice from the lot's overpayment or prepayment. Shaped like
+/// `MemberCreditNoteAllocation`: the booking is a bare scalar, one slice per
+/// (lot, booking). `heldCents` is allocated in Xero (or about to be);
+/// `returningCents` is on its way back to the document after a cancel or hold
+/// expiry; `generation` keys each allocation request so a re-spend after a
+/// return never replays an old one. Written from the spend work (a later
+/// release); this release only creates the table.
+model MemberCreditCashAllocation {
+  id                 String   @id @default(cuid())
+  memberCreditId     String
+  xeroCashCreditId   String
+  appliedToBookingId String
+  heldCents          Int
+  returningCents     Int      @default(0)
+  generation         Int      @default(1)
+  xeroAllocationId   String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  // A slice draws on its lot's own document: the lot is referenced by
+  // (id, xeroCashCreditId), so a slice naming another document, or hanging off
+  // an unbacked lot, cannot be written.
+  memberCredit   MemberCredit             @relation("CreditLotCashAllocations", fields: [memberCreditId, xeroCashCreditId], references: [id, xeroCashCreditId], onDelete: Restrict, onUpdate: Restrict)
+  xeroCashCredit XeroCashCredit           @relation(fields: [xeroCashCreditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  returns        MemberCreditCashReturn[]
+
+  @@unique([memberCreditId, appliedToBookingId], map: "MemberCreditCashAllocation_lot_booking_key")
+  @@index([appliedToBookingId])
+  @@index([xeroCashCreditId])
+}
+
+/// #5204: which slice a credit restoration (a positive `MemberCredit` row
+/// written on cancel or hold expiry) handed back, and how much. One row per
+/// (restoration, slice). Written from the return work (a later release).
+model MemberCreditCashReturn {
+  id                  String   @id @default(cuid())
+  restorationCreditId String
+  cashAllocationId    String
+  amountCents         Int
+  generation          Int
+  createdAt           DateTime @default(now())
+
+  restorationCredit MemberCredit               @relation("CreditCashReturnRestoration", fields: [restorationCreditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  cashAllocation    MemberCreditCashAllocation @relation(fields: [cashAllocationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([restorationCreditId, cashAllocationId], map: "MemberCreditCashReturn_restoration_slice_key")
+  @@index([cashAllocationId])
 }
 
 // ---------------------------------------------------------------------------
