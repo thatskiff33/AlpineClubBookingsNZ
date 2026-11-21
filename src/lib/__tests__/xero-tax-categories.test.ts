@@ -3,6 +3,7 @@
  * name, what an Exempt line needs first, and which account mappings share the
  * Opening Credits code. The frozen clock's club today is 2026-07-01.
  */
+import { XeroTaxCategory } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 import { CLUB_TAX_SETTINGS_DEFAULTS, type ClubTaxPeriod, type ClubTaxSchedule } from "@/lib/club-tax-settings";
 import { requireCalendarDate } from "@/lib/club-time";
@@ -49,6 +50,8 @@ describe("the category registry (#5209)", () => {
       "Zero rated",
     ]);
     expect(MAPPED_XERO_TAX_CATEGORIES).toEqual(["SALES_TAX_ON_EXPENSES", "EXEMPT", "ZERO_RATED"]);
+    // The stored enum is exactly the mapped categories: income cannot be stored, and no stored value lacks a row.
+    expect([...MAPPED_XERO_TAX_CATEGORIES].sort()).toEqual(Object.values(XeroTaxCategory).sort());
   });
 
   it("says on the screen which categories no document uses yet", () => {

@@ -65,10 +65,6 @@ export const MAPPED_XERO_TAX_CATEGORIES: readonly MappedXeroTaxCategory[] = XERO
   .map((definition) => definition.key)
   .filter((key): key is MappedXeroTaxCategory => key !== "SALES_TAX_ON_INCOME");
 
-export function isMappedXeroTaxCategory(value: unknown): value is MappedXeroTaxCategory {
-  return typeof value === "string" && (MAPPED_XERO_TAX_CATEGORIES as readonly string[]).includes(value);
-}
-
 export function xeroTaxCategoryLabel(category: XeroTaxCategoryKey): string {
   return XERO_TAX_CATEGORIES.find((definition) => definition.key === category)!.label;
 }
