@@ -140,7 +140,7 @@ import {
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { refuseOnBehalfUnlessBookingOfficer } from "@/lib/on-behalf-booking";
 import { arrivesAsMcpConnection } from "@/lib/mcp-connection-request";
-import { getMemberDraftSummary } from "@/lib/member-self-read";
+import { getMemberDraftSummary } from "@/lib/member-draft-summary";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
@@ -232,6 +232,16 @@ function bookingCreateContendedResponse(
   logMessage: string,
 ): NextResponse | null {
   return transactionContendedResponse(err, logMessage, { code: BOOKING_CREATE_CONTENDED_CODE });
+}
+
+/**
+ * ALP-653: `create_draft_booking` (an AI app connection, which only reaches
+ * the draft branch) is sent the draft's narrow summary, with no dietary,
+ * consent or internal columns; the website's answer is unchanged.
+ */
+async function draftCreatedForConnection(memberId: string, bookingId: string) {
+  const summary = await getMemberDraftSummary(memberId, bookingId);
+  return NextResponse.json(summary ?? { id: bookingId }, { status: 201 });
 }
 
 export async function POST(request: NextRequest) {
@@ -1537,14 +1547,7 @@ export async function POST(request: NextRequest) {
       });
       await notifyMemberGuestAdds(newBooking);
       await notifyFamilyAdds(newBooking);
-      // ALP-653: `create_draft_booking` is sent the draft's narrow summary
-      // (no dietary, consent or internal columns); the website's answer is
-      // unchanged. A connection can only reach this draft branch.
-      if (arrivesAsMcpConnection(request)) {
-        const summary = await getMemberDraftSummary(effectiveMemberId, newBooking.id);
-        return NextResponse.json(summary ?? { id: newBooking.id }, { status: 201 });
-      }
-      return NextResponse.json(newBooking, { status: 201 });
+      return arrivesAsMcpConnection(request) ? draftCreatedForConnection(effectiveMemberId, newBooking.id) : NextResponse.json(newBooking, { status: 201 });
     } catch (err) {
       const deferred = deferredServiceRefusal(err);
       if (deferred) return deferred;

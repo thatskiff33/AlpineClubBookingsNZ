@@ -76,14 +76,9 @@ export async function GET(
     // (bookings:edit) may see the refund breakdown — the read-only companion to
     // the cancel action, gated on the same bookings:edit predicate so a
     // read-only admin (bookings:view) still cannot preview a cancellation.
-    // ALP-653 (INV-MCP-006): an AI app connection previews only the member's
-    // own booking, as `cancel_my_booking` cancels only that; it never carries
-    // the officer reach below. Officer booking actions are a later stage.
-    const viaConnection = arrivesAsMcpConnection(request);
-    const officerReach =
-      !viaConnection &&
-      (hasAdminAccess(session.user) ||
-        hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" }));
+    // ALP-653 (INV-MCP-006): an AI app connection never carries officer reach.
+    const officerReach = !arrivesAsMcpConnection(request) &&
+      (hasAdminAccess(session.user) || hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" }));
     if (bookingOwner(booking).memberId !== session.user.id && !officerReach) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }

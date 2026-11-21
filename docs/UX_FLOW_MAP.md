@@ -121,9 +121,9 @@ Journey: Use the section rail to open personal details, sign-in security, notifi
 
 ### Connect an AI app
 
-Screen: `/connect/authorize`, and the Connected AI apps card on `/profile`, while the `mcpServer` module is on.
+Screen: `/connect/authorize`; Connected AI apps card on `/profile`.
 
-Journey: Copy the connector address from Connected AI apps into the AI app. The app sends the member here; they check where the approval goes, choose View only or View and change where offered, then Allow or Don't allow and return to the app. Disconnect an app from the same card.
+Journey: Add the card's connector address to the AI app, check the approval screen, then Allow or Don't allow.
 
 [Guide](guides/mcp-server.md)
 
@@ -845,11 +845,9 @@ Journey: Read usage and the spend cap before changing the assistant settings.
 
 Screen: `/admin/ai-connections`.
 
-Served at `/admin/system/ai-connections`, under Help & system, while the `mcpServer` module is on.
+Shows: Connect switches, the most a connection may do, approved apps, connections.
 
-Shows: Who may connect an AI app, the most a connection may do, the approved apps, and every connected app.
-
-Journey: Change the settings and save, or disconnect a member's app from the Connections list.
+Journey: Save settings or disconnect an app.
 
 [Guide](guides/mcp-server.md)
 

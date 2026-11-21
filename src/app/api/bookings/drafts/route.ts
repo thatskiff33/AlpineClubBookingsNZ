@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { servingMcpConnection } from "@/lib/mcp-connection-request";
-import { listMemberDraftSummaries } from "@/lib/member-self-read";
+import { listMemberDraftSummaries } from "@/lib/member-draft-summary";
 
 export async function GET() {
   const session = await auth();
