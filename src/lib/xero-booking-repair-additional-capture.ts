@@ -30,7 +30,7 @@ import { readPrimaryInvoiceFeeAtLink } from "@/lib/xero-primary-invoice-gap-anch
 import { readCaptureRecorder, type RecorderStore } from "@/lib/additional-capture-recorder";
 import { asRecord } from "@/lib/xero-json";
 import type { PaymentStatus } from "@prisma/client";
-import { readKeptCaptureRecordedElsewhere, readKeptChangeCaptureEvidence } from "@/lib/late-capture-kept-xero";
+import { readKeptCaptureRecordedElsewhere, readKeptChangeCaptureEvidence, type KeptLateCaptureXeroPlan } from "@/lib/late-capture-kept-xero";
 import {
   decideLateCapture,
   keptChangeCaptureRoute,
@@ -641,7 +641,7 @@ export function keptInvoiceBillsChange(
  */
 export async function applyKeptChangeCaptureRecordAction(
   action: BookingXeroRepairAction,
-  deps: Pick<RepairDependencies, "prisma" | "planKeptLateCaptureXeroRecord">,
+  deps: Pick<RepairDependencies, "prisma" | "planKeptLateCaptureXeroRecord" | "alertKeptCaptureRefusal">,
 ): Promise<void> {
   const clubZone = await readClubTimeZoneOutsideRequest();
   const plan = await deps.prisma.$transaction((tx) =>
@@ -653,14 +653,29 @@ export async function applyKeptChangeCaptureRecordAction(
       store: tx,
     }),
   );
-  const queued =
-    (plan.kind === "receipt-queued" || plan.kind === "kept-invoice-queued") && plan.queueOperationId ? plan : null;
-  action.status = queued ? "queued" : "skipped";
-  action.resultMessage = queued
-    ? plan.kind === "receipt-queued"
-      ? `The kept card payment's receipt is queued or sent (operation ${queued.queueOperationId}).`
-      : `The kept card payment's Xero invoice is queued or sent (operation ${queued.queueOperationId}).`
-    : plan.kind === "change-payment"
-      ? "Nothing queued: a change invoice already answers this payment, and the late-success release owns it."
-      : "Nothing queued: the payment is no longer kept, another Xero document records it, or no booking change can be read from it.";
+  // #5220: a retired change invoice this run refused was stamped in it; its officer email follows the commit.
+  await deps.alertKeptCaptureRefusal(plan);
+  const queuedId =
+    plan.kind === "receipt-queued" || plan.kind === "kept-invoice-queued"
+      ? plan.queueOperationId
+      : plan.kind === "change-payment"
+        ? (plan.receiptQueueOperationId ?? null)
+        : null;
+  action.status = queuedId ? "queued" : "skipped";
+  action.resultMessage = keptRecordResultMessage(plan, queuedId);
+}
+
+function keptRecordResultMessage(plan: KeptLateCaptureXeroPlan, queuedId: string | null): string {
+  if (queuedId) {
+    return plan.kind === "kept-invoice-queued"
+      ? `The kept card payment's Xero invoice is queued or sent (operation ${queuedId}).`
+      : `The kept card payment's receipt is queued or sent (operation ${queuedId}).`;
+  }
+  if (plan.kind !== "change-payment") {
+    return "Nothing queued: the payment is no longer kept, another Xero document records it, or no booking change can be read from it.";
+  }
+  // #5220: this run stamped the change's retired invoice captured rather than re-issuing it.
+  return plan.refusalAlert
+    ? `Nothing queued: the change's retired Xero invoice (operation ${plan.refusalAlert.operationId}) could not be re-issued for this payment, so it was marked captured and an officer emailed; check Xero has an invoice naming the payment.`
+    : "Nothing queued: a change invoice already answers this payment, and the late-success release owns it.";
 }

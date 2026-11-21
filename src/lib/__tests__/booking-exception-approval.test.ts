@@ -103,14 +103,42 @@ vi.mock("@/lib/email", () => ({
     sendBookingPolicyExceptionApprovedEmail(...(args as [])),
 }));
 
-const deriveBookingAppliedCreditCents = vi.fn<(id: string) => Promise<number>>(async () => 0);
-vi.mock("@/lib/member-credit", () => ({
-  deriveBookingAppliedCreditCents: (id: string) => deriveBookingAppliedCreditCents(id),
+// #4069: the cash-cover reader is the email's one source of what is owed. It is
+// mocked here so this suite pins what the hook DOES with its answer; the answer
+// itself is `booking-cash-evidence.test.ts` and its realdb twin.
+type CashCover = import("@/lib/booking-cash-evidence").BookingCashCover | null;
+const readBookingCashCover = vi.fn(async (tx: unknown, bookingId: string): Promise<CashCover> => {
+  void tx;
+  void bookingId;
+  return null;
+});
+vi.mock("@/lib/booking-cash-evidence", () => ({
+  readBookingCashCover: (tx: unknown, bookingId: string) => readBookingCashCover(tx, bookingId),
 }));
 
+// `prisma.booking` is the root client; `snapshotTx` is the client the read-only
+// snapshot hands its callback. They are separate doubles so a read that slips
+// outside the snapshot is visible.
 const bookingFindUnique = vi.fn();
+const snapshotBookingFindUnique = vi.fn();
+const snapshotStatements: string[] = [];
+const snapshotTx = {
+  $executeRaw: async (strings: TemplateStringsArray) => {
+    snapshotStatements.push(strings.join("?"));
+    return 0;
+  },
+  booking: { findUnique: (...a: unknown[]) => snapshotBookingFindUnique(...a) },
+};
+const snapshotTransaction = vi.fn(async (run: (tx: typeof snapshotTx) => Promise<unknown>, options?: unknown) => {
+  void options;
+  return run(snapshotTx);
+});
 vi.mock("@/lib/prisma", () => ({
-  prisma: { booking: { findUnique: (...a: unknown[]) => bookingFindUnique(...a) } },
+  prisma: {
+    booking: { findUnique: (...a: unknown[]) => bookingFindUnique(...a) },
+    $transaction: (run: (tx: typeof snapshotTx) => Promise<unknown>, options?: unknown) =>
+      snapshotTransaction(run, options),
+  },
 }));
 
 import {
@@ -1356,27 +1384,26 @@ describe("buildOverrideReason", () => {
   });
 });
 
-// #4058 (`INV-PAY-119`): the approved-exception email quotes what the pay step
-// will ask for - price plus recorded change fee, less applied credit - never the
-// bare price.
-describe("notifyApproved quotes the amount owed (#4058)", () => {
+// #4069 (`INV-PAY-159`): the approved-exception email takes what is owed from the
+// cash-cover reader and the held-bed answer from `bookingHoldsCapacity`, both
+// read in ONE read-only snapshot - never from the booking's status.
+describe("notifyApproved reads the cash cover and the held beds in one snapshot (#4069)", () => {
   const approvedBooking = (over: Record<string, unknown> = {}) => ({
     id: "bk-new",
     checkIn: new Date("2026-08-01T00:00:00.000Z"),
     checkOut: new Date("2026-08-03T00:00:00.000Z"),
-    finalPriceCents: 30_000,
     lodgeId: LODGE,
     status: "PAYMENT_PENDING",
+    adminCapacityHoldAt: null,
+    originBookingRequest: null,
     member: { id: "m-1", email: "member@example.test", firstName: "Mia" },
     organisation: null,
     guests: [{ id: "g-1" }],
-    payment: null,
     ...over,
   });
+  type Cover = Awaited<ReturnType<typeof readBookingCashCover>>;
 
-  async function notify(booking: ReturnType<typeof approvedBooking>, appliedCreditCents: number) {
-    bookingFindUnique.mockResolvedValue(booking);
-    deriveBookingAppliedCreditCents.mockResolvedValue(appliedCreditCents);
+  function hooksFor(createdBookingId: string | null) {
     const { hooks, outcome } = buildPolicyExceptionApprovalHooks({
       format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
@@ -1385,45 +1412,103 @@ describe("notifyApproved quotes the amount owed (#4058)", () => {
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
     });
-    outcome.createdBookingId = "bk-new";
-    await hooks.notifyApproved?.({} as never);
+    outcome.createdBookingId = createdBookingId;
+    return hooks;
+  }
+
+  async function notify(booking: ReturnType<typeof approvedBooking>, cover: Cover) {
+    snapshotBookingFindUnique.mockResolvedValue(booking);
+    readBookingCashCover.mockResolvedValue(cover);
+    await hooksFor("bk-new").notifyApproved?.({} as never);
     return sendBookingPolicyExceptionApprovedEmail.mock.calls[0] as unknown as [
       unknown,
       string,
-      { amountDueCents: number },
+      { cover: Cover; bedsHeld: boolean },
     ];
   }
 
   beforeEach(() => {
     sendBookingPolicyExceptionApprovedEmail.mockClear();
-    deriveBookingAppliedCreditCents.mockClear();
+    readBookingCashCover.mockReset();
+    snapshotBookingFindUnique.mockReset();
+    bookingFindUnique.mockReset();
+    snapshotTransaction.mockClear();
+    snapshotStatements.length = 0;
   });
 
-  it("takes partial applied credit off the price", async () => {
-    const [, , args] = await notify(approvedBooking(), 12_000);
-    expect(args.amountDueCents).toBe(18_000);
+  it("hands the email the reader's answer, whatever the booking's status says", async () => {
+    // The #4069 defect: CONFIRMED (a bed-holding bank switch) and PAID were
+    // each read as "nothing owed". The status never overrides the cash answer.
+    for (const status of ["PAYMENT_PENDING", "CONFIRMED", "PAID"]) {
+      sendBookingPolicyExceptionApprovedEmail.mockClear();
+      const [, , args] = await notify(approvedBooking({ status }), { kind: "owes", cents: 18_000 });
+      expect(args.cover, status).toEqual({ kind: "owes", cents: 18_000 });
+    }
   });
 
-  it("adds a recorded change fee, as the pay step does", async () => {
-    const [, , args] = await notify(
-      approvedBooking({ payment: { status: "PENDING", changeFeeCents: 2_500 } }),
-      12_000,
-    );
-    expect(args.amountDueCents).toBe(20_500);
+  it.each<[string, NonNullable<Cover>]>([
+    ["covered", { kind: "covered" }],
+    ["organiser pays", { kind: "organiser_pays" }],
+    ["unknown", { kind: "unknown", reason: "legacy-history" }],
+  ])("passes %s through untouched", async (_label, cover) => {
+    const [, , args] = await notify(approvedBooking(), cover);
+    expect(args.cover).toEqual(cover);
   });
 
-  it("owes nothing when credit covers the whole booking", async () => {
-    const [, , args] = await notify(approvedBooking(), 30_000);
-    expect(args.amountDueCents).toBe(0);
+  it("says the beds are held exactly when the booking holds capacity", async () => {
+    const held = async (over: Record<string, unknown>) => {
+      sendBookingPolicyExceptionApprovedEmail.mockClear();
+      return (await notify(approvedBooking(over), { kind: "owes", cents: 1 }))[2].bedsHeld;
+    };
+    expect(await held({ status: "PAYMENT_PENDING" })).toBe(false);
+    expect(await held({ status: "CONFIRMED" })).toBe(true);
+    expect(await held({ status: "PAYMENT_PENDING", adminCapacityHoldAt: new Date("2026-07-01T00:00:00.000Z") })).toBe(true);
+    expect(await held({ status: "PENDING", originBookingRequest: { id: "br-1" } })).toBe(true);
+    expect(await held({ status: "PENDING" })).toBe(false);
   });
 
-  it("owes nothing when the booking was already settled at create", async () => {
-    const [, , args] = await notify(approvedBooking({ status: "PAID" }), 0);
-    expect(args.amountDueCents).toBe(0);
+  it("reads the booking and the cover through the one read-only snapshot's client", async () => {
+    await notify(approvedBooking(), { kind: "covered" });
+    expect(snapshotTransaction).toHaveBeenCalledTimes(1);
+    expect(snapshotTransaction.mock.calls[0][1]).toMatchObject({ isolationLevel: "RepeatableRead" });
+    expect(snapshotStatements).toEqual(["SET TRANSACTION READ ONLY"]);
+    expect(readBookingCashCover).toHaveBeenCalledWith(snapshotTx, "bk-new");
+    expect(snapshotBookingFindUnique).toHaveBeenCalledTimes(1);
+    // Nothing is read outside it.
+    expect(bookingFindUnique).not.toHaveBeenCalled();
   });
 
-  it("never goes negative if credit exceeds the worth", async () => {
-    const [, , args] = await notify(approvedBooking(), 35_000);
-    expect(args.amountDueCents).toBe(0);
+  it("still sends, with no cover and no held-bed claim, when the snapshot cannot be read", async () => {
+    snapshotBookingFindUnique.mockRejectedValue(new Error("connection lost"));
+    bookingFindUnique.mockResolvedValue(approvedBooking({ status: "CONFIRMED" }));
+    await hooksFor("bk-new").notifyApproved?.({} as never);
+    expect(sendBookingPolicyExceptionApprovedEmail).toHaveBeenCalledTimes(1);
+    const [, to, args] = sendBookingPolicyExceptionApprovedEmail.mock.calls[0] as unknown as [
+      unknown,
+      string,
+      { cover: Cover; bedsHeld: boolean },
+    ];
+    expect(to).toBe("member@example.test");
+    expect(args).toMatchObject({ cover: null, bedsHeld: false });
+  });
+
+  it("sends nothing, and reads nothing outside the snapshot, when the snapshot finds no booking", async () => {
+    // Only a snapshot that throws falls back to a read outside it; one that
+    // read fine and found no booking has answered.
+    snapshotBookingFindUnique.mockResolvedValue(null);
+    bookingFindUnique.mockResolvedValue(approvedBooking({ status: "CONFIRMED" }));
+    await hooksFor("bk-new").notifyApproved?.({} as never);
+    expect(snapshotTransaction).toHaveBeenCalledTimes(1);
+    expect(bookingFindUnique).not.toHaveBeenCalled();
+    expect(sendBookingPolicyExceptionApprovedEmail).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing for an approved change to an existing booking", async () => {
+    // A MODIFICATION sets no created booking: `modifyBookingBatch` sends the
+    // canonical change notice itself, and a second notice would compete with it.
+    await hooksFor(null).notifyApproved?.({} as never);
+    expect(snapshotTransaction).not.toHaveBeenCalled();
+    expect(bookingFindUnique).not.toHaveBeenCalled();
+    expect(sendBookingPolicyExceptionApprovedEmail).not.toHaveBeenCalled();
   });
 });
