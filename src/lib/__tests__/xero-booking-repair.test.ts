@@ -6905,7 +6905,7 @@ describe("runBookingXeroRepair", () => {
         details: { paymentId: "payment_1", paymentIntentId: "pi_kept", recordByHandCents: 0, aboveRecordedCents: 3000 },
       });
       expect(card?.summary).toMatch(
-        /recorded only part of it, so the app's refund credit note stops at that part\. If an officer recorded the rest of the payment in Xero by hand, as the receipt's alert asked, record the \$30\.00 of the refund above it by hand too; if not, record nothing\. This finding is report-only/,
+        /recorded only part of it, so the app's refund credit note stops at that part\. If the rest of the payment was recorded in Xero by hand, as the receipt's alert asks, record the \$30\.00 of the refund above it by hand too; if not, record nothing\. This finding is report-only/,
       );
       expect(card?.summary).not.toMatch(/resolved by hand/);
       expect(bookingReport.actions).toEqual([]);

@@ -79,7 +79,9 @@ type ReceiptStore = Pick<
  * receipt is capped at its invoices' room (`INV-PAY-139`), so it can record
  * part of a capture: there it is the gross capture less the part its stored
  * plan put on no invoice (`receiptUnrecordedCents`, every planned leg counted
- * whether linked yet or not). Every other recorder holds the gross capture.
+ * whether linked yet or not; the stated limit is a split receipt an older
+ * release completed with only its first leg, which the repair tool's dry run
+ * names). Every other recorder holds the gross capture.
  * Null only where the capture's `PaymentTransaction` is missing: nothing caps
  * it, as before #4383. Every refund-note sizing caps at it through
  * `lateCaptureNotableRefundCents`, never by reading the field itself.

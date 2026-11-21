@@ -23,5 +23,5 @@ export function cardNoteMayBeInXeroSentence(amountLabel: string): string {
  * hand only if that part was. Pure: the one home of the sentence (`INV-SSOT`).
  */
 export function cardRefundAboveRecordedSentence(amountLabel: string): string {
-  return `Xero's receipt for this card payment recorded only part of it, so the app's refund credit note stops at that part. If an officer recorded the rest of the payment in Xero by hand, as the receipt's alert asked, record the ${amountLabel} of the refund above it by hand too; if not, record nothing.`;
+  return `Xero's receipt for this card payment recorded only part of it, so the app's refund credit note stops at that part. If the rest of the payment was recorded in Xero by hand, as the receipt's alert asks, record the ${amountLabel} of the refund above it by hand too; if not, record nothing.`;
 }

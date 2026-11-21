@@ -1830,7 +1830,12 @@ app recorded only part of a late card payment in Xero (its invoice had less
 room than the payment, and the receipt's alert told you about the rest), its
 refund note stops at that part, and the same finding names the refund above it
 with its own sentence. Record that amount by hand only if you recorded the rest
-of the payment by hand; otherwise record nothing. Each record-by-hand finding keeps
+of the payment by hand; otherwise record nothing. A note raised before this
+change for the whole refund is left as it is: the finding does not name what it
+already credits, and the Xero reconciliation report may now list the payment as
+refund coverage above the refunded total. If you recorded the rest of the
+payment by hand, Xero is right and that line can be ignored; if not, reduce the
+note in Xero by the part above what the receipt recorded. Each record-by-hand finding keeps
 appearing after the refund is recorded by hand, and that is expected: recording
 a refund by hand in Xero writes no row the app can read, and the tool has no
 way to acknowledge a finding.

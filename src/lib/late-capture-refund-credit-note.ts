@@ -202,7 +202,9 @@ async function planLateCaptureAsk(
  * above what it recorded (`aboveRecordedCents`) are never a note's, so every
  * figure above is sized from the rest (`lateCaptureNotableRefundCents`). They
  * are named apart, never in `byHandCents`: an officer records them by hand
- * only if they recorded the capture's unrecorded part by hand too.
+ * only if they recorded the capture's unrecorded part by hand too. Less any
+ * a note already in Xero credits (one raised before #4383 for the whole
+ * refund), so nothing is credited twice.
  */
 export interface UnnotedLateCaptureCardRefunds {
   byHandCents: number;
@@ -220,9 +222,16 @@ export async function readUnnotedLateCaptureCardRefunds(
   const allRefundedCents = refunds.reduce((sum, refund) => sum + Math.max(0, refund.amountCents), 0);
   const receipt = await readLateCaptureXeroReceipt(paymentIntentId);
   // Without a recorded receipt nothing is capped: every refund is the officer's.
-  const aboveRecordedCents =
-    receipt.kind === "recorded" ? allRefundedCents - lateCaptureNotableRefundCents(receipt, allRefundedCents) : 0;
-  const refundedCents = allRefundedCents - aboveRecordedCents;
+  const refundedCents =
+    receipt.kind === "recorded" ? lateCaptureNotableRefundCents(receipt, allRefundedCents) : allRefundedCents;
+  let inXero: Awaited<ReturnType<typeof readLateCaptureCardNotesInXero>> | undefined;
+  let aboveRecordedCents = 0;
+  if (refundedCents < allRefundedCents) {
+    // A note raised before #4383 may already credit refunds above what was
+    // recorded: those are in Xero, and nothing of them is recorded by hand.
+    inXero = await readLateCaptureCardNotesInXero(paymentId, paymentIntentId);
+    aboveRecordedCents = Math.max(0, allRefundedCents - Math.max(refundedCents, inXero.inXeroCents));
+  }
   const notesCanStillLand = receipt.kind === "recorded" && (receipt.invoiceId !== null || !receipt.invoiceFailed);
   const none = { byHandCents: 0, mayBeInXeroCents: 0, notesCanStillLand, notedLaterCents: 0, aboveRecordedCents };
   if (refundedCents === 0) return none;
@@ -230,8 +239,19 @@ export async function readUnnotedLateCaptureCardRefunds(
     const askedCents = await sumLateCaptureNotedCents(paymentId, paymentIntentId);
     return { ...none, notedLaterCents: Math.max(0, refundedCents - askedCents) };
   }
-  // In Xero: once per credit note id, its link's amount first; plus any row
-  // resolved by hand in Xero that names no credit note.
+  const { inXeroCents, sentCents } = inXero ?? (await readLateCaptureCardNotesInXero(paymentId, paymentIntentId));
+  const unnotedCents = Math.max(0, refundedCents - inXeroCents);
+  const mayBeInXeroCents = Math.min(unnotedCents, sentCents);
+  return { ...none, byHandCents: unnotedCents - mayBeInXeroCents, mayBeInXeroCents };
+}
+
+/**
+ * Rounds 14 and 15: the capture's card notes in Xero (`inXeroCents`) - once
+ * per credit note id, its link's amount first, plus any row resolved by hand
+ * in Xero that names no credit note - and those sent with the outcome
+ * unknown (`sentCents`).
+ */
+async function readLateCaptureCardNotesInXero(paymentId: string, paymentIntentId: string) {
   const inXeroByNote = await readLateCaptureCardNoteLinkCents(paymentId, paymentIntentId);
   let resolvedByHandCents = 0;
   let sentCents = 0;
@@ -243,10 +263,7 @@ export async function readUnnotedLateCaptureCardRefunds(
     else if (!note.xeroObjectId) resolvedByHandCents += cents;
     else if (!inXeroByNote.has(note.xeroObjectId)) inXeroByNote.set(note.xeroObjectId, cents);
   }
-  const inXeroCents = [...inXeroByNote.values()].reduce((sum, cents) => sum + cents, resolvedByHandCents);
-  const unnotedCents = Math.max(0, refundedCents - inXeroCents);
-  const mayBeInXeroCents = Math.min(unnotedCents, sentCents);
-  return { ...none, byHandCents: unnotedCents - mayBeInXeroCents, mayBeInXeroCents };
+  return { inXeroCents: [...inXeroByNote.values()].reduce((sum, cents) => sum + cents, resolvedByHandCents), sentCents };
 }
 
 /** Round 14: where one card note of a late capture stands in Xero (see above). */

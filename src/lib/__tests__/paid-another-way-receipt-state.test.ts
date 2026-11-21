@@ -317,6 +317,22 @@ describe("#4383: a receipt capped at what it recorded", () => {
     });
   });
 
+  // Review: a note raised before #4383 for the whole refund already credits
+  // the part above what was recorded - nothing of it is recorded by hand.
+  it("MUTATION: a note already in Xero above what was recorded takes that part off the named figure", async () => {
+    mocks.cardReceipt.mockResolvedValue({ kind: "recorded", invoiceId: "inv_primary", recordedCents: 2500 });
+    mocks.notes.mockResolvedValue([cardNote(4000)]);
+    await expect(readUnnotedLateCaptureCardRefunds("payment_1", "pi_late")).resolves.toMatchObject({
+      notedLaterCents: 0,
+      aboveRecordedCents: 0,
+    });
+    mocks.notes.mockResolvedValue([cardNote(3000)]);
+    await expect(readUnnotedLateCaptureCardRefunds("payment_1", "pi_late")).resolves.toMatchObject({
+      notedLaterCents: 0,
+      aboveRecordedCents: 1000,
+    });
+  });
+
   it("a receipt that recorded more than was refunded caps nothing", async () => {
     mocks.cardReceipt.mockResolvedValue({ kind: "recorded", invoiceId: "inv_primary", recordedCents: 5000 });
     mocks.notes.mockResolvedValue([]);
