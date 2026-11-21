@@ -212,7 +212,7 @@ export function upstreamRefFrom(
 }
 
 /** What a trusted run says it trusted, pass or fail (#5196). */
-export function renderTrustedUpstream(
+function renderTrustedUpstream(
   summary: TrustedUpstreamSummary | undefined,
   unit: "file" | "function",
 ): string {
