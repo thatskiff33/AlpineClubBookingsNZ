@@ -2680,9 +2680,11 @@ that way offers refundable headroom that is not there, so a later cancel or
 refund could pay the same money out twice.
 `scripts/audit-refunded-total-shortfall.ts` lists each captured payment whose
 stored refunded total is below its counted card refunds plus its account-credit
-settlements plus (#4280, `INV-PAY-141`) the bank cash its "Paid another way"
-closes recorded, with the shortfall; each line shows that cash as `paid another
-way`. It is READ-ONLY and repairs nothing: whether and how to repair is the
+settlements plus (`INV-PAY-141`) the bank cash its card refunds' bank records
+hold - "Paid another way" closes (#4280) and completed card refund shortfalls, a
+cancel's or a capacity race's (#4488) - with the shortfall; each line shows that
+cash as `paid another way` and `card refund shortfall paid back`, and `--json`
+carries them as `paidAnotherWayCents` and `shortfallPaybackCents`. It is READ-ONLY and repairs nothing: whether and how to repair is the
 owner's decision, taken on this report.
 
 ```bash
@@ -2697,16 +2699,18 @@ the part the old arithmetic can explain (at most the smaller of a payment's card
 refunds and its credit, and only with a card refund), and a shortfall with
 another cause - typically a credit that was never folded into the total, such as
 internet-banking cash that became credit on an already-cancelled booking, or
-(#4280) a late card refund that failed after a "Paid another way" close and took
-the close's bank cash out of the total. Attribution to #3640 is measured against
-the floor without the closes' cash, so a payment whose shortfall only that cash
-explains shows 0 attributable to #3640. Only the first section is the #3640
+a late card refund that failed after a "Paid another way" close (#4280) or a
+paid-back card refund shortfall (#4488) and took that bank cash out of the total.
+Attribution to #3640 is measured against the floor without either kind of bank
+cash, so a payment whose shortfall only that cash explains shows 0 attributable
+to #3640. Only the first section is the #3640
 repair question. The arithmetic and its caveats are in
 `src/lib/refunded-total-shortfall-audit.ts`.
 
-Rolling the application back past #4280 restores the old subtraction: a late
-card refund failing after a close could again take the total below the close's
-cash. This audit still lists any such payment.
+Rolling the application back past #4280 or #4488 restores the old subtraction:
+a late card refund failing after a close, or after a shortfall was paid back,
+could again take the total below that cash. The same holds for a failure the old
+version handles during a deploy. This audit still lists any such payment.
 
 Do not run it while a migration runs. It reads every captured payment in ONE
 read-only `RepeatableRead` snapshot, held for up to 120 seconds, and on a very

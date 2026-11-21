@@ -498,34 +498,37 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 
 ## INV-PAY-141
 
-**Related: `INV-PAY-103`** (the one card-refund writer) and **`INV-PAY-122`**
-(closing a dead card refund).
+**Related: `INV-PAY-103`** (the card-refund writer), **`INV-PAY-122`**,
+**`INV-PAY-129`** and **`INV-PAY-135`** (the records it counts).
 
 - **A card refund's reversal never takes a payment's refunded total below the
-  bank cash its "Paid another way" closes recorded** (#4280; owner, 22 and 26
-  Oct 2026). `INV-PAY-103`'s floor on a counted refund moving to failed or
-  cancelled is the captured amount, or less: card refunds still counted, plus
-  account credit, plus that cash (`expectedRefundedFloorCents`), less what the
-  payment's other charges hold. A late refund the cap kept out takes none of it.
-- **The cash** is each completed close record's `amountCents`
-  (`CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE`): for a part close, what was paid.
-  Its note's state changes nothing. One reader,
-  `readPaidAnotherWayCloseBankCashByPayment`, on the writer's client under the
-  Payment row it holds.
-- **Only those closes.** Card and capacity shortfalls are outside this bounded
-  repair (owner, 26 Oct 2026; #4162 never undoes them). Ordinary bank
-  hand-backs are excluded because #4162 can undo one while its task reads
-  completed.
-- The floor only bounds a subtraction: it never raises a total and writes no
+  bank cash its card refund's bank records hold** (#4280, #4488; owner, 22 and
+  26 Oct and 11 Nov 2026). A record is a "Paid another way" close or a
+  completed card refund shortfall, a cancel's or a capacity race's.
+  The floor on a counted refund moving to failed or cancelled is the captured
+  amount, or less: counted card refunds, account credit and that cash
+  (`expectedRefundedFloorCents`), less what the payment's other charges hold. A late refund the cap kept out takes none of it.
+- **The cash** is each record's `amountCents`: for a part close, what was paid.
+  An open or dismissed shortfall moved no money. One definition
+  (`CARD_REFUND_BANK_RECORD_TASK_WHERE`), one reader
+  (`readCardRefundBankCashByPayment`), under the Payment row the writer holds,
+  which a close and a completion take first.
+- **Why it stands.** A completion puts its amount on the payment in one
+  transaction, and nothing undoes a record: #4162 never takes one
+  (`isCardRefundBankRecordTask`); only a dismissed task reopens.
+- **Ordinary bank hand-backs are excluded**: #4162 can undo one whose task
+  reads completed.
+- The floor only bounds a subtraction: it never raises a total or writes a
   row. No new lock (`INV-LOCK-001`).
-- **Limits.** A charge's floor nets the other charges' mirrors in full, so
-  shortfall or hand-back cash on another charge can still let it drop, unseen
-  by the audit (#4488): card A $200 closed, a $100 shortfall paid on B, A's
-  capped late refund failing takes A to $100. Overstated account credit (pre-#1636 restores) can hold
-  a total too high: the fail-safe direction.
-- **History is reported, never rewritten** by the refunded-total audit, in one
-  read-only snapshot. Rolling the code back restores the old subtraction.
+- **Limits.** A charge's floor nets the other charges' mirrors in full, so an
+  ordinary hand-back on another charge still lets it drop, unseen by the
+  audit: A $200 closed, a $100 hand-back on B, A's capped late refund failing
+  takes A to $100. Overstated account credit (pre-#1636 restores) can
+  hold a total too high: the fail-safe direction.
+- **History is reported, never rewritten** by the refunded-total audit.
 - Pinned by `card-refund-reversal-bank-cash-floor.realdb.test.ts`,
+  `card-refund-reversal-shortfall-floor.realdb.test.ts`,
+  `bank-refund-void-follow-up.realdb.test.ts`,
   `payment-transactions-refunds.test.ts` and
   `refunded-total-shortfall-audit.test.ts`.
 

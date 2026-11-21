@@ -358,7 +358,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-137` | An IB organiser-paid joiner's refund goes to the organiser, on its mirror |
 | `INV-PAY-139` | A change capture nothing else records is recorded once, against its invoice |
 | `INV-PAY-140` | A superseded card change's waiting invoice follows the carrying request |
-| `INV-PAY-141` | A card refund's reversal keeps Paid another way bank cash |
+| `INV-PAY-141` | A card refund's reversal keeps its bank-paid closes and shortfalls |
 | `INV-PAY-142` | A refund failing after a Paid another way close is held |
 | `INV-PAY-143` | An unminted approved whole-lodge booking reprices as unpaid |
 | `INV-PAY-144` | A kept change capture is recorded by the document its evidence names |
