@@ -578,4 +578,6 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/xero-late-partial-trace.ts::traceLostClaimPartial#0": {"category":"xero","sink":"createAuditLog","action":"(dynamic) LATE_PARTIAL_NOT_RECORDED_ACTION"},
   "src/lib/xero-member-import.ts::importMembersFromXeroGroups#0": {"category":"admin","sink":"auditLog.create","action":"(dynamic) XERO_MEMBER_IMPORT_MEMBERSHIP_TYPES_ACTION"},
   "src/lib/xero-refund-note-record.ts::auditUnrecordedNote#0": {"category":"xero","sink":"createAuditLog","action":"(dynamic) LATE_REFUND_NOTE_NOT_RECORDED_ACTION"},
+  "src/lib/xero-tax-category-write.ts::clearXeroTaxCategory#0": {"category":"admin","sink":"auditLog.create","action":"XERO_TAX_CATEGORY_CLEARED"},
+  "src/lib/xero-tax-category-write.ts::mapXeroTaxCategory#0": {"category":"admin","sink":"auditLog.create","action":"XERO_TAX_CATEGORY_MAPPED"},
 };

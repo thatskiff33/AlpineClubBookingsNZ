@@ -148,6 +148,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   ClubTimeSettings: "personal",
   ClubFormatSettings: "personal",
   ClubTaxSettings: "personal", // #4632: each period records the Full Admin who scheduled it (updatedByMemberId).
+  XeroTaxCategoryMapping: "personal", // #5209: each mapping records the Full Admin who last chose it (updatedByMemberId).
   LoginSecuritySetting: "personal",
   AnalyticsSettings: "personal",
   EmailTemplateOverride: "personal",

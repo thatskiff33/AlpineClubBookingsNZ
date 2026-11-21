@@ -6242,6 +6242,27 @@ model ClubTaxSettings {
   @@index([updatedByMemberId])
 }
 
+// The club's tax categories mapped to its own Xero organisation's tax rates
+// (#5209; INV-CONFIG-007). Sales tax on income is NOT stored here: it is the
+// dated ClubTaxSettings schedule above, so the enum has no income value and the
+// fact cannot be recorded twice. One row per remaining category, undated, and
+// scoped to the Xero organisation it was chosen in: a row whose xeroTenantId is
+// not the connected tenant reads as unmapped. An absent row is an unmapped
+// category, which a registered club's line in that category refuses to send.
+// Written only by src/lib/xero-tax-category-write.ts (Full Admin, audited);
+// updatedByMemberId is that admin, kept as attribution, with no foreign key.
+model XeroTaxCategoryMapping {
+  id                String          @id @default(cuid())
+  category          XeroTaxCategory @unique
+  taxType           String
+  xeroTenantId      String
+  updatedByMemberId String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @default(now()) @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
 // Club-wide login & security policy singleton (epic #2030, child #2033). Mirrors
 // the BookingDefaults / ClubModuleSettings / ClubIdentitySettings singleton
 // pattern (one row, id "default"). Governs the password-complexity rules applied
@@ -10007,6 +10028,14 @@ model McpSettings {
   updatedAt            DateTime      @default(now()) @updatedAt
 
   @@index([updatedByMemberId])
+}
+
+// The tax categories a club maps to its Xero organisation's tax rates (#5209).
+// Sales tax on income has no value: it is the ClubTaxSettings schedule.
+enum XeroTaxCategory {
+  SALES_TAX_ON_EXPENSES
+  EXEMPT
+  ZERO_RATED
 }
 
 /// Food orders (fork #121). Whether an order is open or the food arrived.
