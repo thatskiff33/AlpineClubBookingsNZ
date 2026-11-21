@@ -655,11 +655,16 @@ export async function finishRefundCreditNoteSettlement(input: {
   } finally {
     // #4279: also when the completion throws (a Payment row it could not get in time). The payment
     // went to Xero, and the next leg reads it back as already settled, which records no manifest.
-    await recordSentRefundNotePaymentManifest(settled.outcome, {
+    // The writer never throws by contract; caught anyway, so a throw here can never replace
+    // the completion's own error.
+    const manifestInput = {
       paymentId: input.paymentId,
       creditNoteId: input.creditNoteId,
       operationId: input.operation.id,
       refundMethod: input.refundMethod,
+    };
+    await recordSentRefundNotePaymentManifest(settled.outcome, manifestInput).catch((error: unknown) => {
+      logger.error({ err: error, ...manifestInput }, "Could not record a sent refund-note payment's manifest; the completion's outcome stands");
     });
   }
   return { ...settled.outcome, completionClaimLost: completed === null };

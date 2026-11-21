@@ -21,6 +21,7 @@
  * `concurrency-lock-races.realdb.test.ts` provisions, which imports this file
  * so CI reaches it; it owns and cleans its own `race-4279-` fixtures.
  */
+import type { Prisma } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -66,10 +67,16 @@ let retry: typeof import("@/lib/xero-operation-retry");
       await deleteFixtures();
       // Kept between runs: a repair's refund payment records an immutable export
       // manifest (#4525) that references the booking, so it is upserted, never deleted.
+      // Inactive and archived, in both branches, so it never joins the active
+      // population another suite on this database counts (the induction baseline).
+      const outOfPopulation = { active: false, archivedAt: new Date("2026-06-01T00:00:00.000Z") };
       await prisma.member.upsert({
         where: { id: MEMBER_ID },
-        create: { id: MEMBER_ID, email: `${MEMBER_ID}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Repair", lastName: "Proof", role: "ADMIN", ageTier: "ADULT" },
-        update: {},
+        create: {
+          id: MEMBER_ID, email: `${MEMBER_ID}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Repair", lastName: "Proof",
+          role: "ADMIN", ageTier: "ADULT", ...outOfPopulation,
+        },
+        update: outOfPopulation,
       });
       await prisma.lodge.upsert({ where: { id: LODGE_ID }, create: { id: LODGE_ID, name: "Race 4279 Lodge", slug: "race-4279" }, update: {} });
       await prisma.booking.upsert({
@@ -96,7 +103,7 @@ let retry: typeof import("@/lib/xero-operation-retry");
      * A $200 bank transfer refunded in full by one note, whose create raised the
      * note and failed its refund payment: the row is PARTIAL, the repair's to finish.
      */
-    async function seed(options: { pointer: string | null; linkMetadata?: Record<string, unknown>; refundRequestId?: string; settledEarlier?: true }) {
+    async function seed(options: { pointer: string | null; linkMetadata?: Prisma.InputJsonObject; refundRequestId?: string; settledEarlier?: true }) {
       await deleteFixtures();
       await prisma.payment.create({
         data: {
@@ -278,6 +285,63 @@ let retry: typeof import("@/lib/xero-operation-retry");
         await expect(retry.retryXeroSyncOperation(OPERATION_ID, CLUB_FORMAT_TEST)).rejects.toThrow(`is ${status} in Xero`);
         expect(createPayments).toHaveBeenCalledTimes(1);
         expect(await state()).toEqual({ pointer: null, liveLinks: [] });
+      },
+    );
+
+    /** A writer holding the operation row until `release()`: the completion's claim queues on it. */
+    async function holdOperationRow() {
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => (release = resolve));
+      let locked!: () => void;
+      const holding = new Promise<void>((resolve) => (locked = resolve));
+      const committed = prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "XeroSyncOperation" WHERE "id" = ${OPERATION_ID} FOR UPDATE`;
+        locked();
+        await released;
+      }, { timeout: 30_000 });
+      await Promise.race([holding, committed.then(() => { throw new Error("Operation-row holder ended before locking"); })]);
+      return { release, committed };
+    }
+
+    it.each(["VOIDED", "DELETED"] as const)(
+      "a won completion that holds the Payment row while an inbound %s waits commits first, and the void then releases its pointer (race, other order)",
+      async (status) => {
+        await seed({ pointer: null });
+        const repairAtXero = await holdRepairAtXero();
+        const repair = retry.retryXeroSyncOperation(OPERATION_ID, CLUB_FORMAT_TEST);
+        await repairAtXero.atXero;
+        // The claim is won; hold its row so the completion stops after taking the Payment row.
+        const operationHolder = await holdOperationRow();
+        let inbound: Promise<unknown> | undefined;
+        let inboundDone = false;
+        try {
+          repairAtXero.open();
+          await until(async () => (await lockWaiters()) === 1, "the completion to queue on its claim, holding the Payment row");
+          inbound = inboundCancelled(status).finally(() => (inboundDone = true));
+          // Two waiters: the void cannot take the Payment row the completion holds.
+          await until(async () => (await lockWaiters()) === 2, "the inbound void to queue behind the completion's Payment row");
+          expect(inboundDone).toBe(false);
+        } finally {
+          operationHolder.release();
+        }
+        await operationHolder.committed;
+        await expect(repair).resolves.toEqual({ message: "Repaired Xero refund credit note follow-up actions." });
+        await inbound;
+
+        // The completion adopted the live note and wrote its links; the void, after it,
+        // made the note's link inactive and released the pointer. The payment's link
+        // stays: it records the one payment Xero was sent, which the void does not touch.
+        expect(await readRow()).toMatchObject({ status: "SUCCEEDED" });
+        expect(createPayments).toHaveBeenCalledTimes(1);
+        const after = await state();
+        expect(after).toEqual({
+          pointer: null,
+          liveLinks: [{ xeroObjectType: "PAYMENT", xeroObjectId: "race-4279-xero-payment-1", role: "REFUND_PAYMENT" }],
+        });
+
+        // A replay of the void changes nothing.
+        await inboundCancelled(status);
+        expect(await state()).toEqual(after);
       },
     );
 

@@ -499,6 +499,21 @@ in time fails after the payment was sent; the settlement leg still records the
 payment's manifest (#4525), and the next retry reads the payment back as
 already settled and closes on it with no second payment.
 
+Reconciled with the neighbouring fixes, none of which changes:
+
+- **#4260, the guarded completion.** The adoption rides on its claim: the
+  pointer is written only after the status-guarded `updateMany` wins, in the
+  same transaction, so a refused completion (`refusedOutcomeWrite`) commits
+  neither the pointer nor a link, as it already committed no link.
+- **#4235, a statusless link write never reactivates a voided note.** The
+  repair's link writes carry no status, so a void stored before them keeps
+  the mirror inactive (`keepStoredRefundNoteVoid`), and the adoption's
+  re-check refuses a note recorded VOIDED or DELETED before it writes.
+- **#4192, the nightly heal of pointers to inactive notes**
+  (`findPointedInactiveCancelledMirrors`). It still defers while a credit-note
+  job on the payment is open, so it never raced this; after #4279 a lost
+  repair leaves no such pointer for it to find.
+
 Classified under `INV-LOCK-001`: no settlement money, booking status or
 capacity, so no advisory key. `INV-LOCK-002`: Payment row, operation row,
 pointer, link - the create's record's order, and consistent with an explicit
