@@ -18,7 +18,7 @@
  * The guide's "What does not follow it" list is the authority on those.
  */
 export const CLUB_FORMAT_REACH =
-  "Everything the site writes follows this setting as soon as you save: every amount, every date and time on screen (the lobby display's clock and the health dashboard's \"Last refresh\" line included), the currency AI spend is counted in, and alphabetical order. Emails follow too — the server that takes the save refreshes its copy at once. A few labels stay in English whatever is set, such as the date labels along the bottom of the report charts (\"Apr 16\"), some day and month names chosen from fixed lists, and relative times like \"3 hours ago\" — the Club Currency & Locale guide lists them.";
+  "Everything the site writes follows this setting as soon as you save: every amount, every date and time on screen (the lobby display's clock and the health dashboard's \"Last refresh\" line included), the currency AI spend is counted in, and alphabetical order. Emails follow too — the server that takes the save refreshes its copy at once. A few labels stay in English whatever is set, such as some day and month names chosen from fixed lists, and relative times like \"3 hours ago\" — the Club Currency & Locale guide lists them.";
 
 /** A currency change clears the AI spend conversion rate. */
 export const CLUB_FORMAT_AI_RATE_CLEARED =

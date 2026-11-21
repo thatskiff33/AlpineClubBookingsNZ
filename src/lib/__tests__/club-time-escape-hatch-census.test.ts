@@ -685,10 +685,11 @@ const CENSUS_CEILING = {
    *
    * Counted here because it is the one class on the issue's census list that no
    * lint selector reaches: a constructor, not a method call. Both live sites are
-   * reviewed report-surface adapters, so this is a recurrence counter rather
-   * than a backlog.
+   * in one reviewed report-surface adapter, so this is a recurrence counter
+   * rather than a backlog. 3 -> 2 (#5258): the report charts' `host-local-day.ts`
+   * left; the chart labels format through the club-time kernel.
    */
-  localMidnightConstructions: 3,
+  localMidnightConstructions: 2,
 } as const;
 
 describe("the escape-hatch census is exact, and only ever revised downward", () => {
@@ -799,16 +800,14 @@ describe("the classes CT-6 closed are at zero, and stay there", () => {
       file,
       count: findLocalMidnightConstruction(read(file)),
     })).filter((entry) => entry.count > 0);
-    // Three, in two files, both already reviewed: the admin report surface's
-    // own `host-local-day.ts`, which says what it is in its name, and
-    // `admin-dataset-reset-state.ts`, which is on the `date-fns` ratchet for
-    // the same report-bucketing reason. A FOURTH would not have been noticed
-    // before this counter existed, which is the whole point of adding it.
+    // Two, in one already-reviewed file: `admin-dataset-reset-state.ts`, which
+    // is on the `date-fns` ratchet for the report-bucketing reason. A THIRD
+    // would not have been noticed before this counter existed, which is the
+    // whole point of adding it.
     expect(
       offenders.map((entry) => entry.file).sort(),
       offenders.map((entry) => entry.file + ": " + entry.count).join("\n"),
     ).toEqual([
-      "src/app/(admin)/admin/finance/reports/_components/host-local-day.ts",
       "src/lib/admin-dataset-reset-state.ts",
     ]);
     expect(

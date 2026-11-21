@@ -5,16 +5,13 @@
  * ~139kB gz recharts chunk loads on demand via next/dynamic instead of inside
  * the route's First Load JS. Rendering, formatters, and colours are unchanged.
  *
- * CT-4 (#2870) changed one thing here and nothing visible: every axis and
- * tooltip label below is a CALENDAR DAY — a bucket key, not a moment — so it
- * takes no timezone. The hand-rolled `new Date(key + "T00:00:00")` local-midnight
- * parse is now `calendarDayAsLocalDate`, which validates the key and cannot
- * throw a `RangeError` into a chart render. See that module for why host-local
- * is the right encoding to hand a date-fns formatter.
+ * Every axis and tooltip date below is a CALENDAR DAY — a bucket key, not a
+ * moment — so it takes no timezone, and it is written through the club-time
+ * kernel's house shapes in the club's chosen locale (#5258), like every other
+ * date on the page. The revenue chart's labels arrive already written by
+ * `buildRevenueSeries`, in the same format.
  */
 
-import { format } from "date-fns";
-import { calendarDayAsLocalDate } from "./host-local-day";
 import {
   BarChart,
   Bar,
@@ -36,18 +33,30 @@ import type { RevenueGranularity } from "@/lib/admin-reports";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusLabel } from "@/lib/status-colors";
 import { useClubFormat } from "@/components/club-format-provider";
+import {
+  formatClubDate,
+  formatClubDayMonth,
+  formatClubWeekdayDate,
+  parseCalendarDate,
+  type CalendarDate,
+  type ClubDateFormat,
+} from "@/lib/club-time";
 
 const PIE_COLORS = ["#3b82f6", "#ef4444"];
 const STATUS_COLORS = ["#22c55e", "#3b82f6", "#8b5cf6", "#f59e0b", "#ef4444", "#f97316"];
 
 /**
- * A bucket key (`yyyy-MM-dd`) through one of the chart's date-fns patterns.
+ * A bucket key (`yyyy-MM-dd`) through one of the kernel's calendar-date shapes.
  * An unparseable key renders as itself rather than throwing into the chart.
  */
-function formatDayKey(key: unknown, pattern: string): string {
+function formatDayKey(
+  key: unknown,
+  formatDay: (date: CalendarDate, format: ClubDateFormat) => string,
+  format: ClubDateFormat,
+): string {
   if (typeof key !== "string") return String(key);
-  const day = calendarDayAsLocalDate(key);
-  return day === null ? key : format(day, pattern);
+  const day = parseCalendarDate(key);
+  return day === null ? key : formatDay(day, format);
 }
 
 export function OccupancyAreaChart({
@@ -55,6 +64,7 @@ export function OccupancyAreaChart({
 }: {
   data: Array<{ date: string; occupancyRate: number }>;
 }) {
+  const clubFormat = useClubFormat();
   return (
     <ResponsiveContainer width="100%" height="100%">
       <AreaChart data={data}>
@@ -62,7 +72,7 @@ export function OccupancyAreaChart({
         <XAxis
           dataKey="date"
           tick={{ fontSize: 12 }}
-          tickFormatter={(date) => formatDayKey(date, "MMM d")}
+          tickFormatter={(date) => formatDayKey(date, formatClubDayMonth, clubFormat)}
         />
         <YAxis
           domain={[0, 100]}
@@ -71,7 +81,7 @@ export function OccupancyAreaChart({
         />
         <Tooltip
           formatter={(value) => [`${value}%`, "Occupancy"]}
-          labelFormatter={(date) => formatDayKey(date, "EEE, MMM d yyyy")}
+          labelFormatter={(date) => formatDayKey(date, formatClubWeekdayDate, clubFormat)}
         />
         <Area
           type="monotone"
@@ -135,6 +145,7 @@ export function TrendsLineChart({
     completed: number;
   }>;
 }) {
+  const clubFormat = useClubFormat();
   return (
     <ResponsiveContainer width="100%" height="100%">
       <LineChart data={data}>
@@ -142,11 +153,11 @@ export function TrendsLineChart({
         <XAxis
           dataKey="week"
           tick={{ fontSize: 12 }}
-          tickFormatter={(week) => formatDayKey(week, "MMM d")}
+          tickFormatter={(week) => formatDayKey(week, formatClubDayMonth, clubFormat)}
         />
         <YAxis tick={{ fontSize: 12 }} />
         <Tooltip
-          labelFormatter={(week) => `Week of ${formatDayKey(week, "MMM d, yyyy")}`}
+          labelFormatter={(week) => `Week of ${formatDayKey(week, formatClubDate, clubFormat)}`}
         />
         <Legend />
         <Line
