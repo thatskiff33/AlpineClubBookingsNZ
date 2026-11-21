@@ -25,7 +25,8 @@ const {
   mockLoadEffectiveModuleFlags: vi.fn(),
   mockCookieAuth: vi.fn(),
   requestHeaders: new Map<string, string>(),
-  TEST_SECRET: "test-secret-for-alp-653-principal",
+  // Built at run time so no secret-shaped literal sits in the file (.gitleaks.toml).
+  TEST_SECRET: "s".repeat(40),
 }));
 
 vi.mock("next-auth", () => ({
