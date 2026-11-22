@@ -1,22 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
 import {
   canSignOff,
   getInductionById,
+  inductionSignerContext,
   memberInductionView,
   resolveSignerRole,
-  type SignerContext,
 } from "@/lib/induction";
 import { INDUCTION_SIGN_OFF_DECLARATION } from "@/lib/induction-checklist-template";
-import { hasAccessRole, hasAdminAccess } from "@/lib/access-roles";
 import { requireActiveSession } from "@/lib/session-guards";
 import { MEMBER_INDUCTION_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 import { inductionIdParamsSchema } from "@/lib/induction-params";
-import {
-  arrivesAsMcpConnection,
-  connectionJson,
-  memberOnlySessionUser,
-} from "@/lib/mcp-connection-request";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 const NOT_FOUND = () =>
   NextResponse.json({ error: "Induction not found" }, { status: 404 });
@@ -39,16 +33,8 @@ export async function GET(
   const { id } = parsedParams.data;
 
   const memberId = guard.session.user.id;
-  const user = memberOnlySessionUser(req, guard.session.user);
   const viaConnection = arrivesAsMcpConnection(req);
-  const ctx: SignerContext = {
-    memberId,
-    isAdmin: hasAdminAccess(user),
-    isHutLeader:
-      !viaConnection &&
-      hasAccessRole(user, "USER") &&
-      (await hasActiveHutLeaderAssignment(memberId)),
-  };
+  const ctx = await inductionSignerContext(req, guard.session.user);
 
   const induction = await getInductionById(id);
   if (!induction) return NOT_FOUND();

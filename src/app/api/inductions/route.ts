@@ -1,19 +1,13 @@
-import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
 import {
   canSignOff,
   getInductionForMember,
+  inductionSignerContext,
   listInductionsAwaitingSignOff,
   memberInductionView,
-  type SignerContext,
 } from "@/lib/induction";
-import { hasAccessRole, hasAdminAccess } from "@/lib/access-roles";
 import { requireActiveSession } from "@/lib/session-guards";
 import { MEMBER_OWN_INDUCTION_CONNECTION_SHAPE } from "@/lib/connection-shapes";
-import {
-  arrivesAsMcpConnection,
-  connectionJson,
-  memberOnlySessionUser,
-} from "@/lib/mcp-connection-request";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * The member's own induction, and the inductions they may sign off.
@@ -26,17 +20,8 @@ export async function GET(request: Request) {
   const guard = await requireActiveSession();
   if (!guard.ok) return guard.response;
   const memberId = guard.session.user.id;
-  const user = memberOnlySessionUser(request, guard.session.user);
   const viaConnection = arrivesAsMcpConnection(request);
-
-  const ctx: SignerContext = {
-    memberId,
-    isAdmin: hasAdminAccess(user),
-    isHutLeader:
-      !viaConnection &&
-      hasAccessRole(user, "USER") &&
-      (await hasActiveHutLeaderAssignment(memberId)),
-  };
+  const ctx = await inductionSignerContext(request, guard.session.user);
 
   const [ownRaw, awaiting] = await Promise.all([
     getInductionForMember(memberId),

@@ -7,7 +7,10 @@ import type {
   InductionStatus,
   Prisma,
 } from "@prisma/client";
+import { hasAccessRole, hasAdminAccess } from "@/lib/access-roles";
 import { logAudit } from "@/lib/audit";
+import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
+import { arrivesAsMcpConnection, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 import { loadMembershipNominationSettings } from "@/lib/membership-nomination-settings";
 import { prisma } from "@/lib/prisma";
 
@@ -496,6 +499,29 @@ export interface SignerContext {
   memberId: string;
   isAdmin: boolean;
   isHutLeader: boolean;
+}
+
+/**
+ * The signed-in person as an induction signer: the one reading every
+ * induction route shares (`INV-SSOT`). An AI app connection (ALP-796) is
+ * neither: `memberOnlySessionUser` drops the officer roles, and the hut-leader
+ * assignment, read from records rather than roles, is not consulted for it
+ * (`INV-MCP-006`).
+ */
+export async function inductionSignerContext<U extends Parameters<typeof memberOnlySessionUser>[1]>(
+  request: Request,
+  sessionUser: U,
+): Promise<SignerContext> {
+  const user = memberOnlySessionUser(request, sessionUser);
+  const viaConnection = arrivesAsMcpConnection(request);
+  return {
+    memberId: sessionUser.id,
+    isAdmin: hasAdminAccess(user),
+    isHutLeader:
+      !viaConnection &&
+      hasAccessRole(user, "USER") &&
+      (await hasActiveHutLeaderAssignment(sessionUser.id)),
+  };
 }
 
 /**
