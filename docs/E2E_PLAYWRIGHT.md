@@ -100,7 +100,12 @@ the journey's assertions settle streaming content first; no fixed sleeps or
 finite CSS transitions and animations finish (capped at two seconds; infinite
 ones such as spinners are ignored), so a toast fading in or an overlay fading
 out is measured at its settled colours, and waits (with the same cap) for the
-`<title>` Next streams in after an in-app navigation. Results are collected until teardown so a failure
+`<title>` Next streams in after an in-app navigation. That wait cannot see a
+`router.refresh()` still on its way: if the title is present when the audit
+starts and the refresh then replaces it, axe reports `document-title`. A step
+that refreshes before the next audit waits for the refresh's own server-rendered
+outcome and then `toHaveTitle`, as `membership-application.spec.ts` does after
+"Agree to Nominate" (#5407). Results are collected until teardown so a failure
 does not interrupt the journey's cleanup. Serious and critical violations tagged
 `wcag2a`, `wcag2aa` or `wcag22aa` fail the test. The `axe-report` JSON attachment
 contains the full axe result for each failing page, or an audit execution error.

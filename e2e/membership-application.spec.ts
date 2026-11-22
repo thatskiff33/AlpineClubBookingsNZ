@@ -1,4 +1,4 @@
-import { expect, test } from "./helpers/accessibility";
+import { expect, test, type Page } from "./helpers/accessibility";
 import { loginPersona, storageStatePath } from "./helpers/auth";
 import {
   E2E_ADMIN,
@@ -28,16 +28,27 @@ import { personas } from "./helpers/personas";
 // complete, confirmed profiles so the onboarding modal never blocks their
 // /nominations pages. The public submit is asserted separately against a fresh
 // applicant (its own tokens are unrecoverable, by design).
-test.describe.configure({ mode: "serial" });
+//
+// Only the three tests that hand state on (nominator one, nominator two, the
+// approval) are serial, so a retry of one of them never re-runs the public
+// submit, and the submit's own retry never drags them back through a database
+// they already changed (docs/E2E_PLAYWRIGHT.md, "Flake invariants", 1).
+
+// A retry, or a second run against the same seeded stack, would otherwise
+// submit an applicant whose application is already pending and be refused.
+// So each attempt applies as its own applicant. Three attempts stay within the
+// endpoint's limit of three submissions an hour from one address.
+const RUN = Date.now();
 
 test("the public membership application endpoint accepts a valid submission", async ({
   request,
-}) => {
+}, testInfo) => {
+  const applicantEmail = PUBLIC_APPLICANT_EMAIL.replace("@", `.${RUN}-${testInfo.retry}@`);
   const res = await request.post("/api/applications", {
     data: {
       applicantFirstName: "Penny",
       applicantLastName: "Public",
-      applicantEmail: PUBLIC_APPLICANT_EMAIL,
+      applicantEmail,
       applicantDateOfBirth: "1990-02-02",
       nominator1Email: personas.booker.email, // alice — PAID, eligible
       nominator2Email: NOMINATOR_TWO.email, // nadia — PAID, eligible
@@ -48,81 +59,99 @@ test("the public membership application endpoint accepts a valid submission", as
   expect(body.status).toBe("PENDING_NOMINATORS");
 });
 
-test("nominator one agrees to the seeded nomination", async ({ browser }) => {
-  // Confirmation requires being signed in as the specific nominator
-  // (confirmNomination checks the id). Nominator1 is Wanda (complete profile →
-  // no onboarding modal).
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  await loginPersona(page, WAITLISTER.email);
+/**
+ * The confirmation shows its message at once, then `router.refresh()` re-renders
+ * the page from the server, which drops the button and re-streams the page's
+ * <title>. Closing the context in between audits a page with no title for a
+ * moment (axe `document-title`). Wait for the server's re-render (no button)
+ * and then for the title, so the closing audit sees the settled page.
+ */
+async function expectConfirmationSettled(page: Page) {
+  await expect(page.getByRole("button", { name: /Agree to Nominate|Confirming/ })).toHaveCount(0);
+  await expect(page).toHaveTitle(/\S/);
+}
 
-  await page.goto(`/nominations/${NOMINATION_TOKEN_ONE}`);
-  // The applicant name renders in a CardTitle (a div, not a heading role).
-  await expect(
-    page.getByText(new RegExp(`Nominate ${MEMBERSHIP_APPLICANT.firstName}`)),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Agree to Nominate" }).click();
-  await expect(page.getByText(/confirmation has been recorded/i)).toBeVisible();
+test.describe("nomination confirmations then approval", () => {
+  test.describe.configure({ mode: "serial" });
 
-  await context.close();
-});
+  test("nominator one agrees to the seeded nomination", async ({ browser }) => {
+    // Confirmation requires being signed in as the specific nominator
+    // (confirmNomination checks the id). Nominator1 is Wanda (complete profile →
+    // no onboarding modal).
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await loginPersona(page, WAITLISTER.email);
 
-test("nominator two agrees and the application moves to committee", async ({
-  browser,
-}) => {
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  await loginPersona(page, NOMINATOR_TWO.email);
+    await page.goto(`/nominations/${NOMINATION_TOKEN_ONE}`);
+    // The applicant name renders in a CardTitle (a div, not a heading role).
+    await expect(
+      page.getByText(new RegExp(`Nominate ${MEMBERSHIP_APPLICANT.firstName}`)),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Agree to Nominate" }).click();
+    await expect(page.getByText(/confirmation has been recorded/i)).toBeVisible();
+    await expectConfirmationSettled(page);
 
-  await page.goto(`/nominations/${NOMINATION_TOKEN_TWO}`);
-  await page.getByRole("button", { name: "Agree to Nominate" }).click();
-  // The second confirmation completes both nominators → committee review.
-  await expect(page.getByText(/moved to committee review/i)).toBeVisible();
-
-  await context.close();
-});
-
-test("an admin approves the application and the applicant becomes a member", async ({
-  browser,
-}) => {
-  // Reuse the E2E admin session saved once in auth.setup.ts instead of a fresh
-  // per-spec login (#1779). This test drives the admin API directly, so it
-  // needs the session cookies but no page.
-  const context = await browser.newContext({
-    storageState: storageStatePath(E2E_ADMIN.email),
+    await context.close();
   });
 
-  // Approve via the review endpoint. Xero is absent, so skip the entrance-fee
-  // invoice (a CREATE would only queue an outbox row that never sends).
-  const approve = await context.request.put(
-    `/api/admin/member-applications/${MEMBERSHIP_APPLICATION_ID}`,
-    {
-      data: {
-        decision: "APPROVE",
-        entranceFeeInvoiceDecision: {
-          action: "SKIP",
-          reason: "E2E: Xero not connected",
+  test("nominator two agrees and the application moves to committee", async ({
+    browser,
+  }) => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await loginPersona(page, NOMINATOR_TWO.email);
+
+    await page.goto(`/nominations/${NOMINATION_TOKEN_TWO}`);
+    await page.getByRole("button", { name: "Agree to Nominate" }).click();
+    // The second confirmation completes both nominators → committee review.
+    await expect(page.getByText(/moved to committee review/i)).toBeVisible();
+    await expectConfirmationSettled(page);
+
+    await context.close();
+  });
+
+  test("an admin approves the application and the applicant becomes a member", async ({
+    browser,
+  }) => {
+    // Reuse the E2E admin session saved once in auth.setup.ts instead of a fresh
+    // per-spec login (#1779). This test drives the admin API directly, so it
+    // needs the session cookies but no page.
+    const context = await browser.newContext({
+      storageState: storageStatePath(E2E_ADMIN.email),
+    });
+
+    // Approve via the review endpoint. Xero is absent, so skip the entrance-fee
+    // invoice (a CREATE would only queue an outbox row that never sends).
+    const approve = await context.request.put(
+      `/api/admin/member-applications/${MEMBERSHIP_APPLICATION_ID}`,
+      {
+        data: {
+          decision: "APPROVE",
+          entranceFeeInvoiceDecision: {
+            action: "SKIP",
+            reason: "E2E: Xero not connected",
+          },
         },
       },
-    },
-  );
-  const approveBody = await approve.json().catch(() => ({}));
-  expect(approve.status(), JSON.stringify(approveBody)).toBe(200);
-  expect(approveBody.status).toBe("APPROVED");
+    );
+    const approveBody = await approve.json().catch(() => ({}));
+    expect(approve.status(), JSON.stringify(approveBody)).toBe(200);
+    expect(approveBody.status).toBe("APPROVED");
 
-  // The approved applicant now exists as a member (admin member search finds
-  // the new login by email).
-  const members = await context.request.get(
-    `/api/admin/members?search=${encodeURIComponent(MEMBERSHIP_APPLICANT.email)}`,
-  );
-  expect(members.ok(), `GET /api/admin/members (${members.status()})`).toBeTruthy();
-  const membersText = await members.text();
-  expect(
-    membersText.includes(MEMBERSHIP_APPLICANT.email),
-    "approved applicant should exist as a member",
-  ).toBeTruthy();
+    // The approved applicant now exists as a member (admin member search finds
+    // the new login by email).
+    const members = await context.request.get(
+      `/api/admin/members?search=${encodeURIComponent(MEMBERSHIP_APPLICANT.email)}`,
+    );
+    expect(members.ok(), `GET /api/admin/members (${members.status()})`).toBeTruthy();
+    const membersText = await members.text();
+    expect(
+      membersText.includes(MEMBERSHIP_APPLICANT.email),
+      "approved applicant should exist as a member",
+    ).toBeTruthy();
 
-  await context.close();
+    await context.close();
+  });
 });
 
 test("an admin maps a rejoining applicant onto their existing member record (E10 diff preview + approve)", async ({
