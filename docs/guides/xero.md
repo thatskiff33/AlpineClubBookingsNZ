@@ -458,6 +458,20 @@ Nothing changes on upgrade: until you map a category, every document is sent
 exactly as before. How it works:
 [`INV-CONFIG-008`](../invariants/product-configuration.md#inv-config-008).
 
+**The app checks a rate against its own copy of Xero's tax rates, which can be
+up to 15 minutes old** (#5375). When the app sends a line in a mapped category,
+such as the Exempt line of a spent opening credit, it reads Xero's tax rates
+from a copy it keeps for up to 15 minutes; it does not ask Xero each time. So
+for up to 15 minutes after a rate is changed or archived in Xero, the app can
+still send a line with that rate. Once the copy is renewed, the line is held
+back as described above. This card and the Xero health check also read a
+copy of that age, so they can take as long to show the change. A save does not
+use a copy: mapping a category on this card, saving a GST-registered
+treatment, and the Exempt check made when the **Opening Credits** account is
+saved each read Xero's rates fresh. A copy belongs to the Xero organisation it
+was read from, so after you connect a different organisation it is not used
+(`CACHE_TTL_MS` in `src/lib/xero-tax-rates.ts`).
+
 ## Settings reference
 
 | Area | What it does | Notes / constraints |
