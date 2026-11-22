@@ -3,7 +3,8 @@ import { getMemberFamily } from "@/lib/member-family-service";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { servingMcpConnection } from "@/lib/mcp-connection-request";
-import { familyForConnection } from "@/lib/member-self-read";
+import { projectForConnection } from "@/lib/connection-projection";
+import { MEMBER_FAMILY_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 /**
  * GET /api/members/family
@@ -24,10 +25,7 @@ export async function GET() {
   // else; the website's answer is unchanged.
   const ok = (result.init?.status ?? 200) === 200;
   if (ok && (await servingMcpConnection())) {
-    return NextResponse.json(
-      familyForConnection(result.body as Parameters<typeof familyForConnection>[0]),
-      result.init,
-    );
+    return NextResponse.json(projectForConnection(result.body, MEMBER_FAMILY_CONNECTION_SHAPE), result.init);
   }
   return NextResponse.json(result.body, result.init);
 }
