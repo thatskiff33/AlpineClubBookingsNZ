@@ -181,8 +181,11 @@ is display only and drives no decision, so a screen or API reads it through
 `getWaitlistPositions` on `prisma` with no advisory key; taking `lock(1)` would
 queue page renders behind the club-wide waitlist serialisation. It reads the
 queue first, then the cross-lodge order setting only when another lodge's entry
-named the target's lodge. Under READ COMMITTED a commit between those two
-statements can give a one-render off-by-one that the next read corrects.
+named the target's lodge. Nothing writes both, so a commit between the two
+statements still yields a number that was true at some moment. The one change
+the second read alone can pick up is the club flipping its cross-lodge order,
+and then the number is the new setting's, which can differ by several places;
+the next read is consistent either way.
 Inside a writer (`createWaitlistedBooking`, the offer pass, `expireStaleOffers`,
 return-to-waitlist) the read runs on the writer's own `tx` after its locks, so
 it sees the writer's changes.

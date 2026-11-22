@@ -262,26 +262,35 @@ read-only database role (`AI_DIAGNOSTICS_DATABASE_URL`). Others can skip this.
 because positions are now read from the live queue and the stored column is
 being retired. Its grant on `Booking."waitlistPosition"` leaves the allowlist.
 The diagnostics privilege check refuses a role that can read any column the
-allowlist does not name, so until the role is re-provisioned every SQL-backed
-diagnostics tool refuses with "database role unsafe". Nothing else is
+allowlist does not name. Until the role is re-provisioned, **Admin → AI
+Diagnostics** shows the database role as `over_privileged` with the blocker
+`database_role_unsafe`, and every SQL-backed diagnostics tool answers "The
+diagnostics database credential does not have the restricted, read-only
+privileges this feature requires, so no tool was run." Nothing else is
 affected.
 
 **What to do, once, after the new colour is serving.** Re-run the provisioning
-from the live app's environment, with the same password the role's connection
-string already uses (it sets the password every time):
+from the live app's environment, with the same settings you used the first
+time: the same password the role's connection string already uses (it sets the
+password every time), and the same `AI_DIAGNOSTICS_DB_ROLE` and
+`AI_DIAGNOSTICS_DB_PRESERVE_TEMP_ROLES` if you set them. Without the role name,
+the command refreshes the default `ai_diagnostics_ro` role and leaves a custom
+one holding the old grant.
 
 ```bash
-AI_DIAGNOSTICS_DB_PASSWORD='<the existing password>' pnpm run diagnostics:provision-role
+AI_DIAGNOSTICS_DB_PASSWORD='<the existing password>'   AI_DIAGNOSTICS_DB_ROLE='<your role, if not ai_diagnostics_ro>'   pnpm run diagnostics:provision-role
 ```
 
 Use `AI_DIAGNOSTICS_PROVISION_DATABASE_URL` set to the operator connection if
 your deployment uses the least-privilege database roles
 ([deployment guide](ai-diagnostics/deployment.md#provisioning)). Do it after
-cutover, not before: the previous release still expects the old grant and
-refuses the role once it is gone.
+cutover, not before: the previous release still expects the old grant.
 
-**Rollback.** Rolling back to the previous release needs the role provisioned
-by that release's code: re-run the same command from the old release.
+**Rollback.** An older release run against a role provisioned by this one
+shows the database role as `under_provisioned` with the blocker
+`database_grants_missing`, and its tools answer "The diagnostics database
+credential is missing one or more required read-only grants, so no tool was
+run." Re-run the same command, with the same settings, from the old release.
 
 ### Three unused columns leave the app's queries (#5396)
 
