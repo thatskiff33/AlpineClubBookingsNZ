@@ -165,3 +165,161 @@ export function orderWaitlistOpportunities<T extends WaitlistQueueEntry>(
       )
     : [...own, ...cross];
 }
+
+/** What the position reader needs to place a booking in its lodge's queue. */
+export type WaitlistPositionKey = {
+  id: string;
+  lodgeId: string;
+  checkIn: Date;
+  checkOut: Date;
+  createdAt: Date;
+};
+
+type WaitlistPositionDb = Pick<
+  Prisma.TransactionClient,
+  "booking" | "bookingDefaults"
+>;
+
+function overlapsNights(
+  a: { checkIn: Date; checkOut: Date },
+  b: { checkIn: Date; checkOut: Date },
+): boolean {
+  return (
+    a.checkIn.getTime() < b.checkOut.getTime() &&
+    a.checkOut.getTime() > b.checkIn.getTime()
+  );
+}
+
+/**
+ * Each booking's true place in its own lodge's waitlist queue (#5402): one
+ * plus the opportunities the offer pass would consider before the booking's
+ * own if a bed freed at its lodge on all of its nights. That counts live,
+ * offerable entries (`waitlistCandidateWhere`) at its lodge, overlapping its
+ * nights, that joined earlier (`WAITLIST_QUEUE_ORDER_BY`); and under `MERGED`
+ * only, entries from other lodges that named its lodge as an alternate and
+ * joined earlier.
+ *
+ * Each key is placed by the key itself, whatever its stored status or "No
+ * emails" switch: an email path may ask for a booking the offer pass would not
+ * consider (one just offered, or silenced). `getDisplayedWaitlistPositions` is
+ * the rule for what a screen shows.
+ *
+ * The number is an upper bound, not a promise: party size and the cross-lodge
+ * gates can let a later entry be offered first.
+ *
+ * Takes no lock (`INV-CAP-041`): a writer passes its own `tx`, after its locks;
+ * a reader passes `prisma`. Two or three statements, whatever `keys` holds.
+ */
+export async function getWaitlistPositions(
+  db: WaitlistPositionDb,
+  keys: readonly WaitlistPositionKey[],
+): Promise<Map<string, number>> {
+  const positions = new Map<string, number>();
+  if (keys.length === 0) return positions;
+
+  // One read for every key: the envelope of their nights, every entry that
+  // joined no later than the latest of them, at their lodges or naming one of
+  // their lodges as an alternate. Each key then keeps only what overlaps it.
+  const lodgeIds = Array.from(new Set(keys.map((key) => key.lodgeId)));
+  const queue = await db.booking.findMany({
+    where: {
+      ...waitlistCandidateWhere({
+        checkIn: new Date(Math.min(...keys.map((key) => key.checkIn.getTime()))),
+        checkOut: new Date(
+          Math.max(...keys.map((key) => key.checkOut.getTime())),
+        ),
+      }),
+      createdAt: {
+        lte: new Date(Math.max(...keys.map((key) => key.createdAt.getTime()))),
+      },
+      OR: [
+        { lodgeId: { in: lodgeIds } },
+        { waitlistAlternateLodges: { some: { lodgeId: { in: lodgeIds } } } },
+      ],
+    },
+    select: {
+      id: true,
+      lodgeId: true,
+      checkIn: true,
+      checkOut: true,
+      createdAt: true,
+      waitlistAlternateLodges: { select: { lodgeId: true } },
+    },
+    orderBy: WAITLIST_QUEUE_ORDER_BY,
+  });
+
+  let crossLodgeOrder: WaitlistCrossLodgeOrder | null = null;
+  for (const key of keys) {
+    // The key's own alternates never matter: its lodge is the freed lodge.
+    const target: WaitlistQueueEntry = {
+      id: key.id,
+      lodgeId: key.lodgeId,
+      createdAt: key.createdAt,
+      waitlistAlternateLodges: [],
+    };
+    // In the read's own order, the target in its row's place when the read
+    // returned it, otherwise inserted by the same order in memory.
+    const entries: WaitlistQueueEntry[] = queue
+      .filter((entry) => entry.id === key.id || overlapsNights(entry, key))
+      .map((entry) => (entry.id === key.id ? target : entry));
+    if (!entries.includes(target)) {
+      const at = entries.findIndex(
+        (entry) => compareWaitlistJoinOrder(target, entry) < 0,
+      );
+      entries.splice(at === -1 ? entries.length : at, 0, target);
+    }
+
+    const split = splitWaitlistOpportunities(entries, {
+      freedLodgeId: key.lodgeId,
+      // `Booking.lodgeId` is NOT NULL, so the offer pass's null fallback never
+      // applies to a row read here.
+      defaultLodgeId: key.lodgeId,
+    });
+    if (split.cross.length > 0 && crossLodgeOrder === null) {
+      crossLodgeOrder = await getWaitlistCrossLodgeOrder(db);
+    }
+    const ordered = orderWaitlistOpportunities(
+      split,
+      split.cross.length > 0 ? crossLodgeOrder : null,
+    );
+
+    let ahead = 0;
+    for (const opportunity of ordered) {
+      if (opportunity.candidate === target && !opportunity.cross) break;
+      if (opportunity.offerLodgeId === key.lodgeId) ahead += 1;
+    }
+    positions.set(key.id, ahead + 1);
+  }
+  return positions;
+}
+
+/**
+ * Whether a screen shows a booking a waitlist position: only a `WAITLISTED`
+ * entry the offer pass would consider. An offered entry shows its offer
+ * instead, and a silenced one ("No emails" on) shows no number (owner decision,
+ * 22 Nov 2026, #5402).
+ */
+export function isWaitlistPositionShown(row: {
+  status: BookingStatus;
+  noEmails: boolean;
+}): boolean {
+  return row.status === BookingStatus.WAITLISTED && !row.noEmails;
+}
+
+/**
+ * The position each row shows, or `null` where `isWaitlistPositionShown` says
+ * none. One batch read for the whole page.
+ */
+export async function getDisplayedWaitlistPositions(
+  db: WaitlistPositionDb,
+  rows: readonly (WaitlistPositionKey & {
+    status: BookingStatus;
+    noEmails: boolean;
+  })[],
+): Promise<Map<string, number | null>> {
+  const positions = await getWaitlistPositions(
+    db,
+    rows.filter(isWaitlistPositionShown),
+  );
+  return new Map(rows.map((row) => [row.id, positions.get(row.id) ?? null]));
+}
