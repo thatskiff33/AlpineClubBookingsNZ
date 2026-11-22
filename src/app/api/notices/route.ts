@@ -3,7 +3,8 @@ import { NextResponse } from "next/server";
 import { hasAccessRole } from "@/lib/access-roles";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { mcpModuleOffResponse } from "@/lib/mcp/http";
-import { listNoticesForMember, memberNoticeAsText } from "@/lib/notices";
+import { listNoticesForMember } from "@/lib/notices";
+import { memberNoticeAsText } from "@/lib/member-notice-text";
 import { MEMBER_NOTICE_LIST_LIMIT } from "@/lib/notice-list-limit";
 import { requireActiveSession } from "@/lib/session-guards";
 

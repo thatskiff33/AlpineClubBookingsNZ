@@ -236,9 +236,8 @@ function bookingCreateContendedResponse(
 }
 
 /**
- * ALP-653: `create_draft_booking` (an AI app connection, which only reaches
- * the draft branch) is sent the draft's narrow summary, with no dietary,
- * consent or internal columns; the website's answer is unchanged.
+ * ALP-653: `create_draft_booking` (a connection only reaches the draft branch) is
+ * sent the draft's narrow summary; the website's answer is unchanged.
  */
 async function draftCreatedForConnection(request: Request, memberId: string, bookingId: string) {
   const summary = await getMemberDraftSummary(memberId, bookingId);
@@ -260,8 +259,7 @@ export async function POST(request: NextRequest) {
   if (inactiveResponse) {
     return inactiveResponse;
   }
-  // bookings:edit holders may book on behalf (#1313, `refuseOnBehalfUnlessBookingOfficer`
-  // below); an AI app connection never may, and sees clashes as a member (INV-MCP-006).
+  // On-behalf reach (#1313) never comes from an AI app connection (INV-MCP-006).
   const memberAuthority = memberOnlySessionUser(request, session.user);
   const isAdmin = hasAdminAccess(memberAuthority);
   // Dual-hat detection: a USER token alongside admin roles means this account
@@ -352,9 +350,8 @@ export async function POST(request: NextRequest) {
   > | null = null;
 
   // Only admin-only accounts (no USER token) are forced onto the on-behalf
-  // page; dual-hat admins self-book here under full member rules (#1442). A
-  // connection reads as no admin, so its admin-only account is refused here
-  // by name: it has no member to book as, and may not book on behalf.
+  // page; dual-hat admins self-book here (#1442). A connection reads as no admin,
+  // so its admin-only account, with no member to book as, is refused here too.
   if (!isMember && !parsed.data.forMemberId && (isAdmin || arrivesAsMcpConnection(request))) {
     return NextResponse.json(
       { error: "Admins must book on behalf of a member. Use the admin booking page.", code: "ADMIN_MUST_BOOK_ON_BEHALF" },

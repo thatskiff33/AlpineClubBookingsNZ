@@ -81,6 +81,13 @@ describe("memberOnlySessionUser (ALP-718)", () => {
     }
   });
 
+  it("keeps the member role whichever shape the role assignments take, and no other", () => {
+    const assigned = { ...officer, accessRoles: [{ role: "USER" }, { role: "ADMIN" }] } as unknown as Session["user"];
+    expect(memberOnlySessionUser(connectionRequest(), assigned).accessRoles).toEqual(["USER"]);
+    const adminOnly = { ...officer, accessRoles: ["ADMIN"] } as unknown as Session["user"];
+    expect(memberOnlySessionUser(connectionRequest(), adminOnly).accessRoles).toEqual([]);
+  });
+
   it("leaves a browser's session user exactly as it is", () => {
     expect(memberOnlySessionUser(new Request("https://club.example.test/api/x"), officer)).toBe(officer);
   });

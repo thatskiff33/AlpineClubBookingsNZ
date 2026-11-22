@@ -30,7 +30,7 @@ import {
   type MemberNotificationPreferences,
 } from "@/lib/member-notification-preferences";
 import type { MemberBookingSummary, MemberProfileSummary } from "@/lib/member-self-read";
-import type { MemberNoticeTextView } from "@/lib/notices";
+import type { MemberNoticeTextView } from "@/lib/member-notice-text";
 import type { AgeTierSettingData } from "@/lib/policies/age-tier";
 import type { WhakapapaCurlData } from "@/lib/whakapapa-report";
 

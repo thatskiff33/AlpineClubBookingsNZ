@@ -1,7 +1,7 @@
 /**
- * The body of `PUT /api/profile`, a member saving their own details. Shared
- * with the AI app action catalogue (ALP-718), which offers `update_my_profile`
- * a subset of these fields, so the two cannot describe a field differently
+ * The body of `PUT /api/profile`, a member saving their own details, and the
+ * allow-listed subset an AI app connection may send as `update_my_profile`
+ * (ALP-718). One module, so the two cannot describe a field differently
  * (`INV-SSOT`).
  */
 import { z } from "zod";
@@ -12,7 +12,12 @@ import { nameField } from "@/lib/zod-helpers";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
-export const memberProfileUpdateSchema = z.object({
+/**
+ * What a connection may save. Dietary needs (health data, `INV-PRIV-022`) and
+ * the public lobby-screen phone opt-in stay website-only, so they are not in
+ * it, and zod drops them if sent.
+ */
+export const memberProfileConnectionUpdateSchema = z.object({
   firstName: nameField({ required: "First name is required" }),
   lastName: nameField({ required: "Last name is required" }),
   phoneCountryCode: z.string().max(5).optional().nullable(),
@@ -37,11 +42,15 @@ export const memberProfileUpdateSchema = z.object({
   postalPostalCode: maxStr(20),
   postalCountry: maxStr(100),
   occupation: z.string().max(100).optional().nullable().or(z.literal("")),
+  postalSameAsPhysical: z.boolean().optional(),
+});
+
+/** The website's profile form: the connection's fields plus the two it may not send. */
+export const memberProfileUpdateSchema = memberProfileConnectionUpdateSchema.extend({
   // #2941: any age tier, only while the club has the field ON; blank clears.
   dietaryRequirements: dietaryRequirementsInputSchema,
   // #126 / #37: member opt-in to show their phone on the PUBLIC lobby display
   // (the serialiser also requires lodge config on + adult). The kiosk staff
   // check-in view is exempt from this toggle.
   lodgeScreenPhoneOptIn: z.boolean().optional(),
-  postalSameAsPhysical: z.boolean().optional(),
 });

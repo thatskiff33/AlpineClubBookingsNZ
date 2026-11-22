@@ -17,6 +17,7 @@ import type { Session } from "next-auth";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 
+import { hasAccessRole } from "@/lib/access-roles";
 import { emptyAdminPermissionMatrix } from "@/lib/admin-permissions";
 import { projectForConnection, type ConnectionShape } from "@/lib/connection-projection";
 import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
@@ -49,7 +50,8 @@ export function memberOnlySessionUser<U extends Session["user"]>(request: Reques
   return {
     ...user,
     role: "USER",
-    accessRoles: (user.accessRoles ?? []).filter((role) => role === "USER"),
+    // Read through the one role resolver, so either assignment shape keeps USER.
+    accessRoles: hasAccessRole(user, "USER") ? ["USER"] : [],
     adminPermissionMatrix: emptyAdminPermissionMatrix(),
   };
 }

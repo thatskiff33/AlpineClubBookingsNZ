@@ -41,9 +41,8 @@ vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: vi.fn(async () => null),
   rateLimiters: { api: { id: "api" } },
 }));
-vi.mock("@/lib/notices", async (importOriginal) => ({
-  // The real markup rule: both notice actions strip it the same way.
-  memberNoticeAsText: ((await importOriginal()) as typeof import("@/lib/notices")).memberNoticeAsText,
+// memberNoticeAsText stays real: both notice actions strip markup the same way.
+vi.mock("@/lib/notices", () => ({
   getNoticeForMember: h.getNoticeForMember,
   listNoticesForMember: h.listNoticesForMember,
 }));
@@ -274,6 +273,23 @@ describe("update_my_profile", () => {
     const res = await putProfile(request as never);
     expect(res.status).toBe(422);
     expect(await res.json()).toMatchObject({ missingFields: ["phoneNumber"] });
+    expect(h.prisma.member.update).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["dietary needs (INV-PRIV-022)", { dietaryRequirements: "Peanuts" }],
+    ["the public lobby-screen phone opt-in", { lodgeScreenPhoneOptIn: true }],
+  ])("refuses %s from a connection, which stay website-only", async (_label, extra) => {
+    const offered = mcpActionInputSchema(findMcpAction("update_my_profile")!).shape;
+    for (const field of Object.keys(extra)) expect(offered).not.toHaveProperty(field);
+    // And the route refuses it from a connection, should anything else send it.
+    const request = new Request("https://club.example.test/api/profile", {
+      method: "PUT",
+      headers: { "content-type": "application/json", [MCP_PRINCIPAL_HEADER]: "p" },
+      body: JSON.stringify({ ...args, ...extra }),
+    });
+    const res = await putProfile(request as never);
+    expect(res.status).toBe(422);
     expect(h.prisma.member.update).not.toHaveBeenCalled();
   });
 });

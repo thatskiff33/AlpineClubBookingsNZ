@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
@@ -40,8 +41,11 @@ import {
   grantSelfDietaryAccess,
   readMemberDietaryRequirements,
 } from "@/lib/member-dietary";
-import { memberProfileUpdateSchema } from "@/lib/member-profile-update-schema";
-import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  memberProfileConnectionUpdateSchema,
+  memberProfileUpdateSchema,
+} from "@/lib/member-profile-update-schema";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 import { MEMBER_PROFILE_UPDATE_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 const PHONE_FIELDS = [
@@ -77,6 +81,25 @@ const PROFILE_AUDIT_FIELDS = [
   "lodgeScreenPhoneOptIn",
   "profileCompletedAt",
 ] as const;
+/**
+ * Postal same as physical: the postal address copied from the street address
+ * as it will be saved, sent fields over stored ones. The profile form sends
+ * every street field; an AI app (ALP-718) may send the flag alone, which must
+ * copy the stored street address rather than blank the postal one.
+ */
+function postalCopiedFromStreet(
+  updateData: Record<string, unknown>,
+  existing: Partial<Record<(typeof STREET_FIELDS)[number], string | null>>,
+): Record<(typeof POSTAL_FIELDS)[number], string | null> {
+  const street = Object.fromEntries(
+    STREET_FIELDS.map((field) => [field, (field in updateData ? updateData[field] : existing[field]) as string | null | undefined]),
+  ) as Record<(typeof STREET_FIELDS)[number], string | null | undefined>;
+  const postalAddress = copyStreetAddressToPostal(street);
+  return Object.fromEntries(
+    POSTAL_FIELDS.map((field) => [field, postalAddress[field]?.trim() || null]),
+  ) as Record<(typeof POSTAL_FIELDS)[number], string | null>;
+}
+
 const PROFILE_XERO_SYNC_SELECT = {
   id: true,
   canLogin: true,
@@ -159,7 +182,11 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const parsed = memberProfileUpdateSchema.safeParse(body);
+  // ALP-718: a connection sends only its allow-list; dietary needs and the
+  // lobby phone opt-in are refused, not silently dropped.
+  const parsed = (
+    arrivesAsMcpConnection(req) ? memberProfileConnectionUpdateSchema.strict() : memberProfileUpdateSchema
+  ).safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       {
@@ -170,7 +197,7 @@ export async function PUT(req: NextRequest) {
     );
   }
 
-  const data = parsed.data;
+  const data: z.infer<typeof memberProfileUpdateSchema> = parsed.data;
 
   const updateData: Record<string, unknown> = {
     firstName: data.firstName.trim(),
@@ -231,25 +258,8 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
-  // Postal same as physical: copied from the street address as it will be
-  // saved, sent fields over stored ones. The profile form sends every street
-  // field; an AI app (ALP-718) may send the flag alone, which must copy the
-  // stored street address rather than blank the postal one.
   if (data.postalSameAsPhysical) {
-    const street = (field: (typeof STREET_FIELDS)[number]) =>
-      (field in updateData ? updateData[field] : existing[field]) as string | null | undefined;
-    const postalAddress = copyStreetAddressToPostal({
-      streetAddressLine1: street("streetAddressLine1"),
-      streetAddressLine2: street("streetAddressLine2"),
-      streetCity: street("streetCity"),
-      streetRegion: street("streetRegion"),
-      streetPostalCode: street("streetPostalCode"),
-      streetCountry: street("streetCountry"),
-    });
-
-    for (const field of POSTAL_FIELDS) {
-      updateData[field] = postalAddress[field]?.trim() || null;
-    }
+    Object.assign(updateData, postalCopiedFromStreet(updateData, existing));
   }
 
   // #2106: apply age-tier enforcement to a DOB change. Only touch the tier when

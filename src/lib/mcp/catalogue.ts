@@ -48,7 +48,7 @@ import {
 } from "@/lib/connection-shapes";
 import { memberAuditLogQuerySchema } from "@/lib/member-audit-log-query";
 import { memberNotificationPreferencesConnectionUpdateSchema } from "@/lib/member-notification-preferences";
-import { memberProfileUpdateSchema } from "@/lib/member-profile-update-schema";
+import { memberProfileConnectionUpdateSchema } from "@/lib/member-profile-update-schema";
 import { noticeIdParamsSchema } from "@/lib/notices-shared";
 import type { StepUpHttpMethod } from "@/lib/step-up-routes";
 
@@ -293,7 +293,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     // Dietary needs are never read by an app, so it is not offered a blind
     // write; the lobby-screen phone opt-in is a consent the member gives on
     // the website.
-    body: memberProfileUpdateSchema.omit({ dietaryRequirements: true, lodgeScreenPhoneOptIn: true }),
+    body: memberProfileConnectionUpdateSchema,
     kind: "write",
     returns: MEMBER_PROFILE_UPDATE_CONNECTION_SHAPE,
     core: false,
