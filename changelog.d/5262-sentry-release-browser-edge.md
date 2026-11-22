@@ -5,4 +5,5 @@
   too; that takes effect once an edge route exists, as none runs on the edge
   today. The version is stamped into the image at build time from
   `package.json`, per the plan on #5262, because a browser tab should report
-  the code it is actually running. It is not a secret. Nothing to set or change.
+  the code it is actually running. It is not a secret. Sentry's per-page-load session tracking stays off, so
+  the release adds tagging only, with no new traffic. Nothing to set or change.

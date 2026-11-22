@@ -97,3 +97,33 @@ describe("the Sentry initialisation census (#5262)", () => {
     expect(callers.sort()).toEqual([...SENTRY_INIT_FILES].sort());
   });
 });
+
+describe("browser Sentry tags releases without session tracking (#5262)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("drops BrowserSession, so a release adds no per-page-load session ping", async () => {
+    vi.clearAllMocks();
+    const options = (await loadInitOptions("src/instrumentation-client.ts")) as {
+      integrations?: unknown;
+    };
+    expect(typeof options.integrations).toBe("function");
+    // Stand-ins for Sentry's browser defaults, named as @sentry/browser 11 names them.
+    const defaults = ["InboundFilters", "Breadcrumbs", "BrowserSession", "Dedupe"].map(
+      (name) => ({ name }),
+    );
+    const resolved = (options.integrations as (d: { name: string }[]) => { name: string }[])(
+      defaults,
+    );
+    const names = resolved.map((integration) => integration.name);
+    expect(names).not.toContain("BrowserSession");
+    expect(names).toEqual(["InboundFilters", "Dedupe", "Breadcrumbs"]);
+    expect(sentry.breadcrumbsIntegration).toHaveBeenCalledWith({
+      dom: true,
+      fetch: true,
+      history: true,
+    });
+  });
+});
