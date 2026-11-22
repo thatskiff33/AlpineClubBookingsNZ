@@ -18,10 +18,8 @@ import logger from "@/lib/logger";
 import { PUBLIC_LAYOUT_CACHE_TAGS } from "@/lib/public-layout-cache";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
 import {
-  // The write below (update or upsert) keeps its own `select`: it is a WRITE,
-  // and the shared read helper cannot serve it — but its RETURNING must still
-  // name only the live columns (hoppers99/AlpineClubBookingsNZ#175), so it
-  // spreads the canonical constant rather than a literal.
+  // The write below keeps its own `select`: the shared read helper cannot serve
+  // a write, but its RETURNING must name only live columns (#175).
   CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   MODULE_KEYS,
   readClubModuleSettingsRecord,
@@ -134,13 +132,11 @@ export async function PUT(request: Request) {
     }
   }
 
-  // The disclosure gate (#5243). The write below is conditional on the
-  // aiDiagnostics value judged here: an existing row is written only if it still
-  // holds it, so a lost race matches no row, Prisma throws P2025 and the
-  // transaction rolls back with its audit rows. With no row yet the write is an
-  // unguarded upsert: a racing first save can switch Diagnostics on only with its
-  // own acknowledgement (so two acknowledged first saves each write an
-  // acknowledgement row), and an unacknowledged one can only leave it off.
+  // The disclosure gate (#5243). An existing row is written with `update` (not
+  // `updateMany`) only if it still holds the aiDiagnostics value judged here, so
+  // a lost race throws P2025 and the array transaction rolls back with its audit
+  // rows. With no row yet the upsert is unguarded: a racing first save can switch
+  // Diagnostics on only with its own acknowledgement.
   const aiDiagnostics = judgeAiDiagnosticsEnable(
     before,
     after,
@@ -151,9 +147,6 @@ export async function PUT(request: Request) {
   }
 
   const data = { ...after, updatedByMemberId: session.user.id };
-  // `update`, not the usual `updateMany` plus count check: the array
-  // `$transaction` aborts the batch (audit rows included) only on a throw, and
-  // `update` throws P2025 when the guard matches no row.
   const write = existing
     ? prisma.clubModuleSettings.update({
         where: { id: CLUB_MODULE_SETTINGS_ID, aiDiagnostics: before.aiDiagnostics },
