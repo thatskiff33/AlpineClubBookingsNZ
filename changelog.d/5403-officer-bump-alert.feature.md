@@ -1,8 +1,9 @@
 - **Booking officers are told again when a pending booking is bumped (#5403).**
   The **Bookings bumped** notification setting ("Alerts when a pending booking
-  is bumped by another booking") had stopped doing anything: when the nightly pending-booking job released a
-  booking because its dates had filled up, the member was emailed but officers
-  were not. Officers who have the setting on (it is on by default) now get the
+  is bumped by another booking") had stopped doing anything: when the nightly
+  pending-booking job released a booking because its dates had filled up, the
+  member was emailed but officers were not. Officers who have the setting on
+  (it is on by default) now get the
   **Admin Booking Bumped** email each time it happens, once per booking.
 
   The alert names the member, the stay dates and a short booking reference, and
