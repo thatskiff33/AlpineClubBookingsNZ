@@ -1,5 +1,5 @@
-import fs from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BookingEventType,
@@ -187,7 +187,8 @@ import {
 } from "@/lib/manual-settlement-reversal-event";
 import { duplicateCaptureRefundOperationWhere } from "@/lib/duplicate-capture-ownership";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
-import { stripComments } from "./support/strip-comments";
+import { parseSourceFile } from "../../../scripts/audit/ts-call-site-scan";
+import { unwrap } from "../../../scripts/lib/ts-unwrap";
 import { IB_RECEIPT_FROM_CASH_REASON } from "@/lib/xero-inbound/ib-receipt-reasons";
 import {
   isPaymentRecoveryOperationInFlight,
@@ -1857,20 +1858,46 @@ describe("the marker is admin-only (#3638)", () => {
   // the module's exports so a fourth marker kind declared without a registry
   // entry fails here rather than leaking into the narrative as a cancellation.
   it("derives the kind test and the reason filter from one registry that names every marker kind", () => {
-    // Read from the module's source rather than through a namespace import: a
-    // `import * as` makes the dead-code gate count EVERY export of the module as
-    // used, hiding any that nothing else uses (#5407).
-    const moduleSource = stripComments(
-      fs.readFileSync(
-        path.join(process.cwd(), "src/lib/manual-settlement-reversal-event.ts"),
-        "utf8",
-      ),
+    // Read from the module's syntax tree rather than through a namespace import:
+    // a `import * as` makes the dead-code gate count EVERY export of the module as
+    // used, hiding any that nothing else uses (#5407). It fails closed: an
+    // exported `*_EVENT_KIND` that is not a plain string-literal declaration (a
+    // re-export, or an initialiser the test cannot read) is reported, never
+    // skipped, so a marker kind cannot slip past the registry check unseen.
+    const moduleFile = parseSourceFile(
+      path.join(process.cwd(), "src/lib/manual-settlement-reversal-event.ts"),
     );
-    const declaredKinds = [
-      ...moduleSource.matchAll(
-        /export const [A-Z0-9_]+_EVENT_KIND\s*=\s*"([^"]+)"/g,
-      ),
-    ].map((match) => match[1]);
+    const declaredKinds: string[] = [];
+    const unreadable: string[] = [];
+    const isKindName = (name: string) => /_EVENT_KIND$/.test(name);
+    for (const statement of moduleFile.statements) {
+      if (ts.isExportDeclaration(statement)) {
+        const clause = statement.exportClause;
+        if (!clause || !ts.isNamedExports(clause)) {
+          unreadable.push("export * / namespace re-export");
+        } else {
+          for (const element of clause.elements) {
+            if (isKindName(element.name.text)) unreadable.push(`re-export ${element.name.text}`);
+          }
+        }
+        continue;
+      }
+      if (!ts.isVariableStatement(statement)) continue;
+      const exported = statement.modifiers?.some(
+        (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
+      );
+      if (!exported) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name) || !isKindName(declaration.name.text)) continue;
+        const value = declaration.initializer ? unwrap(declaration.initializer) : undefined;
+        if (value && (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value))) {
+          declaredKinds.push(value.text);
+        } else {
+          unreadable.push(declaration.name.text);
+        }
+      }
+    }
+    expect(unreadable, "every exported *_EVENT_KIND must be a plain string-literal const").toEqual([]);
     expect(declaredKinds.length).toBeGreaterThanOrEqual(3);
     expect(SETTLEMENT_MARKERS.map((marker) => marker.kind).sort()).toEqual(
       [...declaredKinds].sort(),
