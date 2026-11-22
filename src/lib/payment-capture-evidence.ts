@@ -1,7 +1,6 @@
 // Capture evidence over a payment whose ledger rows are already loaded
-// (#1473/#1491). Moved unchanged out of the retired cancel-flattened backfill
-// (#5404): the bank-transfer hold job, the orphaned-credit detector and the
-// Xero applied-credit ledger state all ask it.
+// (#1473/#1491), in its own module since #5404: the bank-transfer hold job, the
+// orphaned-credit detector and the Xero applied-credit ledger state all ask it.
 import type { PaymentSource, PaymentStatus } from "@prisma/client";
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { paymentShowsCaptureEvidence } from "@/lib/booking-payment-state";
