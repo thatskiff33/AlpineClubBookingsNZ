@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { getXeroMemberGroupingSnapshot } from "@/lib/xero-member-grouping-resync";
@@ -50,7 +51,9 @@ export async function POST(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
-  const body = await request.json().catch(() => ({}));
+  const jsonBody = await parseOptionalJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body ?? {};
   const parsed = resyncBodySchema.safeParse(body ?? {});
   if (!parsed.success) {
     return NextResponse.json(

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { BookingRequestType } from "@prisma/client";
 import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
@@ -48,7 +49,9 @@ export async function POST(
   // plus the optional map-to-existing-contact decision (issue #1255). The body
   // is empty for general requests and for school approvals that keep the
   // submitted numbers, so parse defensively.
-  const body = (await req.json().catch(() => ({}))) as {
+  const jsonBody = await parseOptionalJsonRequestBody(req);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = (jsonBody.body ?? {}) as {
     childCounts?: unknown;
     ownerContactMemberId?: unknown;
     pricedHeadcount?: unknown;

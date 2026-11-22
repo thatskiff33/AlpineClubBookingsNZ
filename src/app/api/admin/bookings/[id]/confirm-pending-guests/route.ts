@@ -1,6 +1,7 @@
 import { releaseSavedCardChargeClaim, runSavedCardClaimRelease } from "@/lib/saved-card-charge-claim";
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { handOffSupersededCaptureAfterRefusal } from "@/lib/superseded-paid-intent";
 import { SUPERSEDED_CHARGE_NOT_SETTLED_BODY } from "@/lib/payment-recovery-contract";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -100,7 +101,9 @@ export async function POST(
 
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  const body = await request.json().catch(() => ({}));
+  const jsonBody = await parseOptionalJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body ?? {};
   const parsedBody = confirmPendingGuestsSchema.safeParse(body);
   if (!parsedBody.success) {
     return NextResponse.json(

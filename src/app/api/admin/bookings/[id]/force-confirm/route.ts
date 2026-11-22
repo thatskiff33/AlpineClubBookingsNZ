@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
@@ -55,7 +56,9 @@ export async function POST(
   const session = guard.session;
   const { id: bookingId } = await params;
 
-  const body = await request.json().catch(() => ({}));
+  const jsonBody = await parseOptionalJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body ?? {};
   const parsed = forceConfirmSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

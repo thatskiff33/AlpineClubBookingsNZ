@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { clearEmailSuppression } from "@/lib/email-suppression";
@@ -17,12 +18,9 @@ export async function POST(
   });
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  let body: unknown = {};
-  try {
-    body = await request.json();
-  } catch {
-    body = {};
-  }
+  const jsonBody = await parseOptionalJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body ?? {};
 
   const parsed = clearSuppressionSchema.safeParse(body);
   if (!parsed.success) {

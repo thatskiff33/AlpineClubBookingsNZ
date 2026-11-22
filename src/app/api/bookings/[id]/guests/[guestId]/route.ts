@@ -1,6 +1,7 @@
 import { loadModificationLinesAuditFields } from "@/lib/booking-modification-lines";
 import { editRefundBankTransferPayee } from "@/lib/edit-refund-hand-back";
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { AdultMemberHostingRequiredError, buildAdultMemberHostingRefusalBody } from "@/lib/adult-member-hosting-refusal";
@@ -83,7 +84,9 @@ export async function DELETE(
   const { id: bookingId, guestId } = await params;
   const ipAddress = getClientIp(request);
 
-  const body = await request.json().catch(() => null);
+  const jsonBody = await parseOptionalJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body ?? null;
   const rawSettlementMethod = (body as { settlementMethod?: unknown } | null)
     ?.settlementMethod;
   if (

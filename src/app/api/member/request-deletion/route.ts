@@ -6,6 +6,7 @@
  * Admins cannot self-delete.
  */
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -53,12 +54,13 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const jsonBody = await parseOptionalJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
   let body: { reason?: string } = {};
   try {
-    const raw = await request.json();
-    body = requestSchema.parse(raw);
+    body = requestSchema.parse(jsonBody.body ?? {});
   } catch {
-    // reason is optional, treat parse failure as empty
+    // reason is optional, treat a schema failure as empty
     body = {};
   }
 

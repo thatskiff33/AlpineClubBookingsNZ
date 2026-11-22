@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -43,7 +44,9 @@ export async function POST(
     return inactiveResponse;
   }
 
-  const body = await request.json().catch(() => ({}));
+  const jsonBody = await parseOptionalJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body ?? {};
   const requestedMethod = (body as { paymentMethod?: unknown }).paymentMethod;
   const paymentMethod: BookingPaymentMethod =
     typeof requestedMethod === "string" &&

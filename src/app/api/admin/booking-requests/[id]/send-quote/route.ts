@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { BookingRequestError } from "@/lib/booking-request";
 import {
@@ -31,7 +32,9 @@ export async function POST(
   // Optional map-to-existing-contact decision (issue #1255). Sending a quote
   // auto-holds capacity, which materialises the owner, so the decision rides in
   // the send body. The authoritative guard runs inside the hold transaction.
-  const body = (await req.json().catch(() => ({}))) as {
+  const jsonBody = await parseOptionalJsonRequestBody(req);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = (jsonBody.body ?? {}) as {
     ownerContactMemberId?: unknown;
     childCounts?: unknown;
   };

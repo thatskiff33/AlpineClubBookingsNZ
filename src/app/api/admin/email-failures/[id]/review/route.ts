@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import {
   EmailFailureReviewError,
@@ -20,7 +21,9 @@ export async function POST(
   });
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  const body = await request.json().catch(() => ({}));
+  const jsonBody = await parseOptionalJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body ?? {};
   const parsed = reviewSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

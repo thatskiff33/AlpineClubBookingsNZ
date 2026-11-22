@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { PaymentLinkError } from "@/lib/payment-link";
 import {
   createPaymentIntentForPaymentLink,
@@ -33,7 +34,9 @@ export async function POST(
 
   try {
     // #4300: an optional body naming the intent the payer has just paid.
-    const body = (await request.json().catch(() => null)) as { paidPaymentIntentId?: unknown } | null;
+    const jsonBody = await parseOptionalJsonRequestBody(request);
+    if (!jsonBody.ok) return jsonBody.response;
+    const body = (jsonBody.body ?? null) as { paidPaymentIntentId?: unknown } | null;
     const paidPaymentIntentId = typeof body?.paidPaymentIntentId === "string" ? body.paidPaymentIntentId : null;
     const result = await createPaymentIntentForPaymentLink(token, { paidPaymentIntentId });
 
