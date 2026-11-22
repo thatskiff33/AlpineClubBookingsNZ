@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ALLOWANCE_DIR, type SizeAllowance } from "../lib/file-size-allowances";
+import { upstreamTrustFor } from "../lib/budget-upstream-ref";
+import { ALLOWANCE_DIR, readSizeAllowances, type SizeAllowance } from "../lib/file-size-allowances";
 import { evaluateComputedRatchet } from "../lib/file-size-base";
-import { budgetForFile, isProductionFile } from "../lib/file-size-budget";
+import { budgetForFile, countLines, isProductionFile } from "../lib/file-size-budget";
 
 /**
  * #2979 — the ratchet's decision, with the previous length read from the base.
@@ -539,5 +540,206 @@ describe("evaluateComputedRatchet — the change's effect on tree-wide size debt
     repo.write("src/a.ts", 3);
     repo.commit("first");
     expect(judge(repo.root, "refs/heads/definitely-not-a-ref-4926", {}).debtDelta).toBeNull();
+  });
+});
+
+describe("evaluateComputedRatchet — a fork syncing down from a trusted upstream (#5196)", () => {
+  const REASON = "reason: the policy and its exception belong in one place here.\n";
+
+  /** Judge the real tree and the real fragments, with a flat 700 budget. */
+  function judgeTree(root: string, baseRef: string, upstreamRef?: string) {
+    const declared = readSizeAllowances(root);
+    return evaluateComputedRatchet({
+      root,
+      baseRef,
+      unclassified: [],
+      isProductionFile: (file) => file.startsWith("src/"),
+      budgetForFile: () => ({ category: "domain module", limit: 700 }),
+      countLines,
+      allowances: declared.allowances,
+      allowanceProblems: declared.problems,
+      upstream: upstreamTrustFor(root, baseRef, upstreamRef),
+    });
+  }
+
+  function allow(root: string, name: string, body: string) {
+    const full = path.join(root, ALLOWANCE_DIR, name);
+    mkdirSync(path.dirname(full), { recursive: true });
+    writeFileSync(full, body, "utf8");
+  }
+
+  /**
+   * Fork and upstream from one commit. Upstream grows `big` under its own
+   * allowance, takes `mod` over budget, and adds `panel` over budget and
+   * `huge` past the hard ceiling of 2100; the fork merges that tip.
+   */
+  function syncFixture() {
+    const repo = newRepo();
+    repo.write("src/big.ts", 1200);
+    repo.write("src/mod.ts", 600);
+    repo.commit("common");
+    git(repo.root, "branch", "-M", "fork");
+    git(repo.root, "checkout", "--quiet", "-b", "upstream");
+    repo.write("src/big.ts", 1250);
+    repo.write("src/mod.ts", 800);
+    repo.write("src/panel.ts", 900);
+    repo.write("src/huge.ts", 2500);
+    allow(repo.root, "100-big.md", `file: src/big.ts\nlines: 1250\n${REASON}`);
+    const upstreamTip = repo.commit("upstream work");
+    git(repo.root, "checkout", "--quiet", "fork");
+    repo.write("src/fork-only.ts", 10);
+    const base = repo.commit("fork work");
+    git(repo.root, "checkout", "--quiet", "-b", "sync");
+    git(repo.root, "merge", "--quiet", "--no-ff", "--no-edit", "upstream");
+    return { ...repo, base, upstreamTip };
+  }
+
+  const kinds = (result: ReturnType<typeof judgeTree>) =>
+    result.findings.map((f) => `${f.kind} ${f.file}`);
+
+  it("passes files identical to upstream with no allowance, and fails them without trust", () => {
+    const repo = syncFixture();
+    expect(kinds(judgeTree(repo.root, repo.base))).toEqual([
+      "new-over-budget src/huge.ts",
+      "grown-beyond-base src/mod.ts",
+      "new-over-budget src/panel.ts",
+    ]);
+
+    const trusted = judgeTree(repo.root, repo.base, "upstream");
+    expect(trusted.findings).toEqual([]);
+    expect(trusted.trustedUpstream).toEqual({
+      sha: repo.upstreamTip,
+      subject: "upstream work",
+      lifted: 4,
+      ignoredFragments: 1,
+    });
+    // The debt line still reports what the sync brings in, against the fork's base.
+    expect(trusted.debtDelta).toBe(judgeTree(repo.root, repo.base).debtDelta);
+  });
+
+  it("refuses fork growth beyond upstream, and lets an already-over file grow only by its own allowance", () => {
+    const repo = syncFixture();
+    repo.write("src/big.ts", 1260);
+    const grown = judgeTree(repo.root, repo.base, "upstream");
+    expect(kinds(grown)).toEqual(["grown-beyond-base src/big.ts"]);
+    expect(grown.findings[0]?.previous).toBe(
+      `1250 LOC on trusted upstream ${repo.upstreamTip.slice(0, 12)}`,
+    );
+
+    allow(repo.root, "900-fork.md", `file: src/big.ts\nlines: 1260\n${REASON}`);
+    const declared = judgeTree(repo.root, repo.base, "upstream");
+    expect(declared.findings).toEqual([]);
+    expect(declared.allowancesApplied.map((a) => a.source)).toEqual([`${ALLOWANCE_DIR}/900-fork.md`]);
+
+    allow(repo.root, "901-fork.md", `file: src/big.ts\nlines: 1260\n${REASON}`);
+    expect(kinds(judgeTree(repo.root, repo.base, "upstream"))).toContain("allowance-malformed src/big.ts");
+  });
+
+  it("keeps an upstream file past the hard ceiling as it is, and lets no allowance grow it", () => {
+    const repo = syncFixture();
+    repo.write("src/huge.ts", 2501);
+    expect(kinds(judgeTree(repo.root, repo.base, "upstream"))).toEqual(["grown-beyond-base src/huge.ts"]);
+    allow(repo.root, "900-fork.md", `file: src/huge.ts\nlines: 2501\n${REASON}`);
+    expect(kinds(judgeTree(repo.root, repo.base, "upstream"))).toEqual([
+      "allowance-over-hard-ceiling src/huge.ts",
+    ]);
+  });
+
+  it("judges an upstream fragment the fork edited as the fork's own", () => {
+    const repo = syncFixture();
+    allow(repo.root, "100-big.md", `file: src/big.ts\nlines: 1249\n${REASON}`);
+    expect(kinds(judgeTree(repo.root, repo.base, "upstream"))).toEqual(["allowance-unused src/big.ts"]);
+  });
+
+  it("keeps an upstream file moved where git no longer sees a rename", () => {
+    const repo = newRepo();
+    repo.write("src/old/tab.ts", 1200);
+    repo.commit("common");
+    git(repo.root, "branch", "-M", "fork");
+    git(repo.root, "checkout", "--quiet", "-b", "upstream");
+    git(repo.root, "rm", "--quiet", "src/old/tab.ts");
+    // Every line rewritten, so the cumulative diff reads no rename.
+    mkdirSync(path.join(repo.root, "src/admin"), { recursive: true });
+    writeFileSync(path.join(repo.root, "src/admin/tab.ts"), "moved\n".repeat(1210), "utf8");
+    repo.commit("upstream regroups admin");
+    git(repo.root, "checkout", "--quiet", "fork");
+    repo.write("src/fork-only.ts", 10);
+    const base = repo.commit("fork work");
+    git(repo.root, "checkout", "--quiet", "-b", "sync");
+    git(repo.root, "merge", "--quiet", "--no-ff", "--no-edit", "upstream");
+
+    expect(kinds(judgeTree(repo.root, base))).toEqual(["new-over-budget src/admin/tab.ts"]);
+    expect(judgeTree(repo.root, base, "upstream").findings).toEqual([]);
+  });
+
+  it("ignores trust that resolves to HEAD, returning exactly the ordinary result", () => {
+    const repo = syncFixture();
+    git(repo.root, "checkout", "--quiet", "upstream");
+    const common = git(repo.root, "merge-base", "upstream", "fork").trim();
+    const ordinary = judgeTree(repo.root, common);
+    expect(kinds(ordinary)).toEqual([
+      "new-over-budget src/huge.ts",
+      "grown-beyond-base src/mod.ts",
+      "new-over-budget src/panel.ts",
+    ]);
+    expect(ordinary.allowancesApplied.map((a) => a.file)).toEqual(["src/big.ts"]);
+    expect(judgeTree(repo.root, common, "upstream")).toStrictEqual(ordinary);
+    expect(judgeTree(repo.root, common, undefined)).toStrictEqual(ordinary);
+  });
+
+  it("adds no trust for an upstream tip the fork has not merged", () => {
+    const repo = syncFixture();
+    git(repo.root, "checkout", "--quiet", "fork");
+    git(repo.root, "checkout", "--quiet", "-b", "no-sync");
+    repo.write("src/panel.ts", 900);
+    repo.commit("fork adds the same path itself");
+    const result = judgeTree(repo.root, repo.base, "upstream");
+    expect(kinds(result)).toEqual(["new-over-budget src/panel.ts"]);
+    expect(result.trustedUpstream?.lifted).toBe(0);
+  });
+
+  it("judges a merged upstream side commit against the first-parent commit beneath it", () => {
+    // Upstream's pull request branch first takes `mod` past the hard ceiling
+    // of 2100 and adds `draft` past it too, then cuts both back before
+    // merging. A fork that merges only that first commit gets no trust for
+    // either length: upstream's main never carried them.
+    const repo = newRepo();
+    repo.write("src/mod.ts", 600);
+    repo.commit("common");
+    git(repo.root, "branch", "-M", "fork");
+    git(repo.root, "checkout", "--quiet", "-b", "upstream");
+    repo.write("src/mod.ts", 800);
+    const upstreamMain = repo.commit("upstream main");
+    git(repo.root, "checkout", "--quiet", "-b", "upstream-pr");
+    repo.write("src/mod.ts", 2500);
+    repo.write("src/draft.ts", 2500);
+    const sideCommit = repo.commit("pr: first draft");
+    repo.write("src/mod.ts", 800);
+    repo.write("src/draft.ts", 400);
+    repo.commit("pr: cut them back");
+    git(repo.root, "checkout", "--quiet", "upstream");
+    git(repo.root, "merge", "--quiet", "--no-ff", "--no-edit", "upstream-pr");
+    git(repo.root, "checkout", "--quiet", "fork");
+    repo.write("src/fork-only.ts", 10);
+    const base = repo.commit("fork work");
+    git(repo.root, "checkout", "--quiet", "-b", "sync");
+    git(repo.root, "merge", "--quiet", "--no-ff", "--no-edit", sideCommit);
+
+    const result = judgeTree(repo.root, base, "upstream");
+    expect(result.trustedUpstream?.sha).toBe(upstreamMain);
+    // `mod` is judged against the 800 upstream's main carried, not the 2500;
+    // `draft` is on no first-parent commit the fork holds, so it is simply new.
+    expect(kinds(result)).toEqual(["new-over-budget src/draft.ts", "grown-beyond-base src/mod.ts"]);
+    expect(result.findings.find((f) => f.file === "src/mod.ts")?.previous).toBe(
+      `800 LOC on trusted upstream ${upstreamMain.slice(0, 12)}`,
+    );
+    expect(result.findings.find((f) => f.file === "src/draft.ts")?.previous).toBeNull();
+  });
+
+  it("fails when the named upstream cannot be resolved", () => {
+    const repo = syncFixture();
+    const result = judgeTree(repo.root, repo.base, "nope/main");
+    expect(kinds(result)).toEqual(["upstream-unusable null"]);
+    expect(result.debtDelta).toBeNull();
   });
 });
