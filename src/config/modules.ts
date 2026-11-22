@@ -201,7 +201,7 @@ export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
   // every other member who can book that lodge. An upgrade must not start
   // doing that because nobody opted out (#2942).
   memberLodgeRoster: false,
-  // Default OFF, inverting the general ON rule above on purpose (fork #121,
+  // Default OFF, inverting the general ON rule above on purpose (fork triyder/AlpineClubBookingsNZ#121,
   // owner decision 14): an order goes to the food officer's email address, and
   // until the committee has entered one in the Food Orders settings there is
   // nobody to send it to.
@@ -565,7 +565,7 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       "When off, the roster page returns Not Found and no roster data is read.",
     ],
   },
-  // Fork #121.
+  // Fork triyder/AlpineClubBookingsNZ#121.
   foodOrders: {
     key: "foodOrders",
     label: "Food orders",

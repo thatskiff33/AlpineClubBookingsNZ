@@ -33,7 +33,7 @@ sequencing):
 | `MaintenanceReport` | direct `lodgeId` | a reported physical fault belongs to one building (#2780); `onDelete: Cascade` — a deleted lodge takes its fault history with it |
 | `LodgeMaintenanceReportToken` | direct `lodgeId` (`@unique`) | one live QR-sign bearer token per lodge (#2780); rotating overwrites in place, `onDelete: Cascade` |
 | `MaintenanceReportAnswer` | via `MaintenanceReport` | no direct FK; answers store the question label as asked, so they carry the report's lodge |
-| `FoodOrder` | direct `lodgeId` | a food order is for one building's supplies (fork #121); every list, total and both hut-leader rules (`foodOrderVisibility` and `canManageFoodOrder`: a hut leader sees and manages only orders at the lodges their access window covers today, owner decision on PR #5143) read it; ordering follows booking eligibility (`getEligibleLodgeIdsForMember`). `onDelete: Cascade`, like `MaintenanceReport` |
+| `FoodOrder` | direct `lodgeId` | a food order is for one building's supplies (fork triyder/AlpineClubBookingsNZ#121); every list, total and both hut-leader rules (`foodOrderVisibility` and `canManageFoodOrder`: a hut leader sees and manages only orders at the lodges their access window covers today, owner decision on PR #5143) read it; ordering follows booking eligibility (`getEligibleLodgeIdsForMember`). `onDelete: Cascade`, like `MaintenanceReport` |
 | `FoodOrderItem` | via `FoodOrder` | no direct FK; an item line carries its order's lodge |
 | Model                                                              | Scoping                                                            | Notes                                                                                                                                                                                                                                                                                                                                                   |
 | ------------------------------------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -655,7 +655,7 @@ new ADR:
   question set at every lodge, and the photo/retention/anonymous-QR policy is a
   club decision (#2780). The reports and their per-lodge QR signs above are
   lodge-scoped; the questions asked and the policy governing them are not.
-- Food-order settings (`FoodOrderSettings` singleton, fork #121): one food
+- Food-order settings (`FoodOrderSettings` singleton, fork triyder/AlpineClubBookingsNZ#121): one food
   officer email and one officer label for the club. The orders above are
   lodge-scoped; who buys the food and what the club calls them is a club
   decision. A per-lodge officer would be a new setting, not a widening of this
@@ -698,7 +698,7 @@ new ADR:
   a lodge on this row: it would be a restriction junction in the shape of
   `PromoCodeLodge` above.
 - Other lodges (`OtherLodge`, and `Amenity`, which hangs off it by
-  `otherLodgeId` with cascade delete, added by #50): the registry of **other
+  `otherLodgeId` with cascade delete, added by triyder/AlpineClubBookingsNZ#50): the registry of **other
   clubs'** lodges — the names the public booking-request form offers under "Are
   you a member of another lodge?", the counterpart a booking officer picks when
   charging a visiting club's members, and the entries the Alpine Central Server

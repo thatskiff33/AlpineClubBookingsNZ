@@ -55,17 +55,17 @@ type WorkPartyOption = {
 };
 
 /**
- * "Add booking to work party" (fork #119), on the admin tools card of a
+ * "Add booking to work party" (fork triyder/AlpineClubBookingsNZ#119), on the admin tools card of a
  * booking. For a member who forgot to tick "I am attending a working bee": the
  * officer picks the work party, sees what the booking will cost and how much
  * comes back (a dry run of the real change), and confirms. On a paid booking
  * the officer chooses club credit or a refund, as on an ordinary edit: to the
- * card, or by bank transfer for Internet Banking (fork #129, upstream owner
+ * card, or by bank transfer for Internet Banking (triyder/AlpineClubBookingsNZ#129, upstream owner
  * decision 15 Nov 2026); the choice re-runs the dry run. An organiser-paid joiner's money goes back to
  * the organiser. The figures shown are the figures saved — the route refuses
  * if they, or the choice, moved.
  * Bookings edit; a bookings-view admin sees the button disabled. A booking
- * already on a work party is offered "Remove from work party" instead (fork #130).
+ * already on a work party is offered "Remove from work party" instead (fork triyder/AlpineClubBookingsNZ#130).
  */
 export function BookingWorkPartyControls({
   bookingId,
@@ -368,8 +368,8 @@ function BookingWorkPartyAddControls({
 }
 
 /**
- * How the discount comes back (fork #129): a plain line for an organiser-paid
- * joiner, whose money has the organiser's one disposition (fork #129 decision 5);
+ * How the discount comes back (triyder/AlpineClubBookingsNZ#129): a plain line for an organiser-paid
+ * joiner, whose money has the organiser's one disposition (triyder/AlpineClubBookingsNZ#129 decision 5);
  * otherwise a choice only where there is one, as on an ordinary edit — club
  * credit or a refund, named for where it goes (the card, or a bank transfer
  * for Internet Banking; upstream owner decision, 15 Nov 2026).
@@ -436,7 +436,7 @@ function WorkPartyMoneyBackLines({
     return <p data-testid="work-party-ask-absorbed">{workPartyAskAbsorbedSentence(money(askOffsetCents))}</p>;
   }
   // Every cent coming back as credit: paid money credited, a paid booking's
-  // applied credit given back, and an unpaid one's applied credit freed (fork #129).
+  // applied credit given back, and an unpaid one's applied credit freed (triyder/AlpineClubBookingsNZ#129).
   const creditBackCents = workPartyCreditBackCents(figures);
   return (
     <>

@@ -1,5 +1,5 @@
 /**
- * Two Other lodges may share a name (#69): the central server's id is what
+ * Two Other lodges may share a name (triyder/AlpineClubBookingsNZ#69): the central server's id is what
  * makes them distinct, and a person picking one cannot see an id. Wherever a
  * lodge is chosen from a list, each choice whose name another choice shares is
  * labelled with its location too ("Ruapehu Lodge (Whakapapa)"); every other

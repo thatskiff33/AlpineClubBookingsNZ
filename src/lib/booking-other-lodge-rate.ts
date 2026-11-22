@@ -394,7 +394,7 @@ export async function assertOtherLodgeExists(
   otherLodgeId: string | null,
 ): Promise<void> {
   if (!otherLodgeId) return;
-  // A hidden lodge (#58) cannot be newly chosen. Callers check only a lodge the
+  // A hidden lodge (triyder/AlpineClubBookingsNZ#58) cannot be newly chosen. Callers check only a lodge the
   // edit CHANGES to (`otherLodgeIdChanged`), so a booking keeps a hidden one.
   const found = await db.otherLodge.findFirst({
     where: { id: otherLodgeId, ...visibleOtherLodgeWhere },

@@ -14,7 +14,7 @@ import {
   calculateFullReductionSettlementOptions,
   type BookingModificationSettlementOptions,
 } from "@/lib/booking-modify-settlement";
-import { editReductionDisputeHold, refundableCashForModification } from "@/lib/booking-modify-settlement-options";
+import { fullReductionLockedReads, refundableCashForModification } from "@/lib/booking-modify-settlement-options";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hasCapturedPayment, isSettledBookingStatus } from "@/lib/booking-payment-state";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
@@ -76,8 +76,8 @@ export async function fullReductionReturnRoute(
         netChargeCents: reduction.netChargeLeftCents,
         refundableCashCents: await refundableCashForModification(tx, booking.payment, reduction),
         todayAtClub,
-        // #5061 follow-up (`INV-PAY-154`): read under the acceptance's locks.
-        refundHeldForDispute: (await editReductionDisputeHold(tx, booking)).cents > 0,
+        // #5061 follow-up (`INV-PAY-154`), #5303: read under the acceptance's locks.
+        ...(await fullReductionLockedReads(tx, booking)),
       })
     : null;
   // #3653 (composed by #3829): an organiser-paid child's cash goes back to the

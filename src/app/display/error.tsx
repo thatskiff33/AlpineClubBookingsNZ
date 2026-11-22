@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import * as Sentry from "@sentry/nextjs";
 import "./display.css";
 
-// Route-segment last resort for the /display surface (issue #176, ADR-003 §5
+// Route-segment last resort for the /display surface (issue hoppers99/AlpineClubBookingsNZ#176, ADR-003 §5
 // "Unattended surface"). The in-tree React boundaries (LayoutErrorBoundary /
 // AreaErrorBoundary in display-screen.tsx) catch render throws inside the board
 // and drop to the FallbackBoard or the minimal shell; THIS boundary is the

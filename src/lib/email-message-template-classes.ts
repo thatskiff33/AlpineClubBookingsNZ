@@ -107,7 +107,7 @@ export const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // LOCKED_DELIVERY_TEMPLATE_NAMES: no money moves, and a club that would rather
   // read the queue than the mail must be allowed to mute it.
   "admin-maintenance-report",
-  // Fork #121: a food order, to the Food Orders settings address. Mutable, not
+  // Fork triyder/AlpineClubBookingsNZ#121: a food order, to the Food Orders settings address. Mutable, not
   // delivery-locked: no money moves and every order stays in the history.
   "food-order-placed",
   // #49 (owner decision "second template"): the version-only notice a Lodge

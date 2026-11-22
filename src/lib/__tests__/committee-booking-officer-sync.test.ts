@@ -29,7 +29,7 @@ function makeDb(opts: {
     committeeRole: { contactEmail: string | null };
   } | null;
   lodges?: Array<{ name: string }>;
-  /** The stored owned list (#52, by id #69): absent = no settings row = never told. */
+  /** The stored owned list (triyder/AlpineClubBookingsNZ#52, by id triyder/AlpineClubBookingsNZ#69): absent = no settings row = never told. */
   owned?: unknown;
   otherLodges?: Array<{
     id: string;
@@ -284,14 +284,14 @@ describe("syncBookingOfficerForRole", () => {
   });
 });
 
-// ── Which rows are ours (#52) ───────────────────────────────────────────────
+// ── Which rows are ours (triyder/AlpineClubBookingsNZ#52) ───────────────────────────────────────────────
 //
 // Once the central server has said which lodges this club owns, THAT list
 // decides which registry rows take the officer's contact — through the same
 // `ownsOtherLodge` rule as the admin edit route and the upload — and the
 // sync writes nothing until the server has told the site which ids it owns.
 
-describe("writes only the rows the central server says are ours (#52, by central id #69)", () => {
+describe("writes only the rows the central server says are ours (triyder/AlpineClubBookingsNZ#52, by central id triyder/AlpineClubBookingsNZ#69)", () => {
   const holder = {
     memberId: "m1",
     member: MEMBER,
@@ -321,14 +321,14 @@ describe("writes only the rows the central server says are ours (#52, by central
     expect(update.mock.calls[0][0].where).toEqual({ id: "ours" });
     // The building names were not even consulted.
     expect(db.lodge.findMany).not.toHaveBeenCalled();
-    // By central id only (#69): an unkeyed row of an owned name is not ours.
+    // By central id only (triyder/AlpineClubBookingsNZ#69): an unkeyed row of an owned name is not ours.
     expect(db.otherLodge.findMany.mock.calls[0][0].where).toEqual({
       centralId: { in: ["c-ours"] },
       hiddenAt: null,
     });
   });
 
-  it("never writes another club's lodge that shares the owned lodge's name (#69)", async () => {
+  it("never writes another club's lodge that shares the owned lodge's name (triyder/AlpineClubBookingsNZ#69)", async () => {
     const { db, update } = makeDb({
       roles: [{ id: "role_bo" }],
       holder,
@@ -345,7 +345,7 @@ describe("writes only the rows the central server says are ours (#52, by central
     expect(update.mock.calls[0][0].where).toEqual({ id: "ours" });
   });
 
-  it("never writes a row not keyed yet, even under the owned lodge's name (#69)", async () => {
+  it("never writes a row not keyed yet, even under the owned lodge's name (triyder/AlpineClubBookingsNZ#69)", async () => {
     const { db, update } = makeDb({
       roles: [{ id: "role_bo" }],
       holder,

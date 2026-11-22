@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
       // default lodge (pre-multi-lodge rows and single-lodge submissions).
       // otherLodge name (#2749) drives the "Member of another Lodge" line and
       // the Full-member rate pre-fill in the pricing panel; its location tells
-      // two lodges of one name apart (#69).
+      // two lodges of one name apart (triyder/AlpineClubBookingsNZ#69).
       include: {
         lodge: { select: { name: true } },
         otherLodge: { select: { name: true, location: true } },

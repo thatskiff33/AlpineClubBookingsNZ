@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import type { Instant } from "@/lib/club-time";
 // `eachDateOnlyInRange` is pure UTC calendar arithmetic feeding
 // `formatConsentNightsLabel`, which takes `Date[]`. It reads no timezone, so it
-// is not a second temporal authority; CT-6 (#2991) retires the module.
+// is not a second temporal authority; #2991 (CT-6) closed with the module kept as a reviewed adapter.
 import { eachDateOnlyInRange } from "@/lib/date-only";
 import type { EmailMessageSettings } from "@/lib/email-message-settings";
 import { resolveBookingSelfRemovalCard } from "@/lib/booking-guest-self-removal";
