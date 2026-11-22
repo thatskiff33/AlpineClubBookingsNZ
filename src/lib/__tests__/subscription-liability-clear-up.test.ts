@@ -62,8 +62,9 @@ function makeTx(input: {
 }) {
   const calls: string[] = [];
   const tx = {
-    $executeRaw: vi.fn(async (_strings: TemplateStringsArray, ...values: unknown[]) => {
-      calls.push(`lock:${String(values[0])}`);
+    $executeRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const shared = strings.join("?").includes("pg_advisory_xact_lock_shared(") ? "shared:" : "";
+      calls.push(`lock:${shared}${String(values[0])}`);
       return 0;
     }),
     membershipLockoutSettings: {
@@ -121,11 +122,13 @@ describe("clearStaleNotRequiredRows (#5190)", () => {
     expect(tx.memberSubscription.updateManyAndReturn).not.toHaveBeenCalled();
   });
 
-  it("takes the billing season key before it reads anything", async () => {
+  it("takes the billing season key, then the liability-rule key exclusive, before it reads anything", async () => {
     const { tx, calls } = makeTx({ settings: CHOSEN, rows: [], members: [] });
     await clearStaleNotRequiredRows(tx as never, SEASON);
+    // Season key first: the rule key is never held while waiting on a confirm.
     expect(calls[0]).toBe("lock:membership-subscription-billing:2026");
-    expect(calls[1]).toBe("settings");
+    expect(calls[1]).toBe("lock:membership-subscription-liability-rule");
+    expect(calls[2]).toBe("settings");
   });
 
   it("flips only untouched rows whose member owes under the chosen rule, and is idempotent", async () => {

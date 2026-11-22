@@ -11,6 +11,7 @@ import {
   type SubscriptionLiabilitySettings,
 } from "@/lib/policies/subscription";
 import { lockSubscriptionBillingSeason } from "@/lib/subscription-billing-season-lock";
+import { lockSubscriptionLiabilityRuleExclusive } from "@/lib/subscription-liability-rule-lock";
 
 /** The liability answers a settings save may name; either may be omitted. */
 type RequestedLiability = Partial<SubscriptionLiabilitySettings>;
@@ -71,9 +72,10 @@ export function liabilityChoiceToWrite(
 /**
  * Upsert the lockout settings row. A save that leaves the club on a chosen
  * liability rule also clears the season's stale `NOT_REQUIRED` rows, in ONE
- * transaction under the billing season key (season lock -> settings ->
- * clear-up), so a billing confirm sees the rule and the rows from before the
- * save or after it, never half of each. The caller resolves the club's
+ * transaction under the billing season key, then the liability-rule key
+ * (season lock -> rule lock -> settings -> clear-up), so a billing confirm
+ * sees the rule and the rows from before the save or after it, never half of
+ * each, and a seasonal-assignment reconcile runs wholly before or after it. The caller resolves the club's
  * `seasonYear` before the transaction opens. `clearedStaleRows` is null when no
  * clear-up ran.
  */
@@ -100,6 +102,9 @@ export async function saveLockoutSettings(
   const { seasonYear } = input;
   return db.$transaction(async (tx) => {
     await lockSubscriptionBillingSeason(tx, seasonYear);
+    // Rule key after the season key (never before): a reconcile holding
+    // `lock(1)` then waits only for this save, never for a billing confirm.
+    await lockSubscriptionLiabilityRuleExclusive(tx);
     const record = await tx.membershipLockoutSettings.upsert(upsert);
     const clearedStaleRows: StaleNotRequiredClearUp | null =
       await clearStaleNotRequiredRows(tx, seasonYear);

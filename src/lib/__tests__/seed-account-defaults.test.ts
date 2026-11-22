@@ -392,12 +392,14 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
     });
 
     expect(result).toEqual({ reconciled: true });
-    // #5190: the season key is taken before the liability rule is read, so an
-    // assignment cannot interleave with an opt-in's clear-up.
+    // #5190: the liability-rule key is taken SHARED before the rule is read, so
+    // an assignment cannot interleave with an opt-in's clear-up; the billing
+    // season key is NOT taken, so a caller holding lock(1) never waits on a
+    // billing confirm.
     expect(db.$executeRaw).toHaveBeenCalledTimes(1);
     const lockSql = (db.$executeRaw.mock.calls[0][0] as TemplateStringsArray).join("?");
-    expect(lockSql).toContain("pg_advisory_xact_lock(hashtext(");
-    expect(db.$executeRaw.mock.calls[0][1]).toBe("membership-subscription-billing:2026");
+    expect(lockSql).toContain("pg_advisory_xact_lock_shared(hashtext(");
+    expect(db.$executeRaw.mock.calls[0][1]).toBe("membership-subscription-liability-rule");
     expect(db.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       db.membershipLockoutSettings.findUnique.mock.invocationCallOrder[0],
     );

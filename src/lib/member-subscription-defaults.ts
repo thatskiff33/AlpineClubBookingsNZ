@@ -14,6 +14,10 @@ import {
 } from "@/lib/policies/subscription";
 import { lockSubscriptionBillingSeason } from "@/lib/subscription-billing-season-lock";
 import {
+  lockSubscriptionLiabilityRuleExclusive,
+  lockSubscriptionLiabilityRuleShared,
+} from "@/lib/subscription-liability-rule-lock";
+import {
   isUntouchedNotRequiredRow,
   UNTOUCHED_NOT_REQUIRED_ROW,
 } from "@/lib/subscription-season-row-note";
@@ -153,18 +157,23 @@ async function owesUnderChosenRule(
  * (releasedAt IS NULL, the #2147 "already billed" rule) or manually-marked row
  * structurally impossible, and a second run matches nothing.
  *
- * It takes the billing season key FIRST (#5190), before it reads the club's
- * liability rule. Without it, an assignment committing while a club opts in
- * could read the old (NOT_CHOSEN) rule, skip its row, and commit after the
+ It takes the liability-rule key SHARED first (#5190), before it reads the
+ * club's liability rule. Without it, an assignment committing while a club opts
+ * in could read the old (NOT_CHOSEN) rule, skip its row, and commit after the
  * clear-up had already passed that row — leaving a stale NOT_REQUIRED row the
- * chosen rule says should read NOT_INVOICED. Under the key, the reconcile runs
- * wholly before the settings save (whose clear-up then sees the row) or wholly
- * after it (and reads the chosen rule). The key is the LAST lock the assignment
- * transaction takes — after the global, lodge and member locks its callers
- * already hold — and no season-key holder takes another advisory lock, so the
- * order is acyclic (docs/CONCURRENCY_AND_LOCKING.md, writer index). It performs
- * NO provider calls, so it is safe to run inside the caller's assignment
- * transaction.
+ * chosen rule says should read NOT_INVOICED. The clear-up takes the same key
+ * exclusive, so the reconcile runs wholly before it (and the clear-up then sees
+ * the row) or wholly after it (and reads the chosen rule).
+ *
+ * It deliberately does NOT take the billing season key. Its callers already
+ * hold `lock(1)`, lodge and member keys, and a billing confirm holds the season
+ * key for up to its whole re-preview; waiting on it here would stall every
+ * cancel, capture, refund and bed-allocation writer behind that confirm. The
+ * clear-up takes the season key BEFORE the rule key, so the rule key is never
+ * held by anyone waiting on a confirm. Order: global `1` -> lodge -> member ->
+ * rule key (shared), last (docs/CONCURRENCY_AND_LOCKING.md, writer index). It
+ * performs NO provider calls, so it is safe to run inside the caller's
+ * assignment transaction.
  */
 export async function reconcileSeasonSubscriptionForAssignment(
   db: Pick<Prisma.TransactionClient, "memberSubscription" | "$executeRaw"> &
@@ -178,7 +187,7 @@ export async function reconcileSeasonSubscriptionForAssignment(
   if (params.subscriptionBehavior === "NOT_REQUIRED") {
     return { reconciled: false };
   }
-  await lockSubscriptionBillingSeason(db, params.seasonYear);
+  await lockSubscriptionLiabilityRuleShared(db);
   const settings = await loadMembershipLockoutSettingsStrict(db);
   const owes = hasChosenLiabilityRule(settings)
     ? await owesUnderChosenRule(db, { ...params, settings })
@@ -248,8 +257,9 @@ export async function reconcileSeasonSubscriptionForAssignment(
  * gate on every display surface and in the Xero sync.
  *
  * Runs in the CALLER'S transaction and first takes the billing season key, so it
- * serialises with billing confirm (`INV-LOCK-003`; writer index in
- * docs/CONCURRENCY_AND_LOCKING.md). The write is one status-guarded `updateMany`
+ * serialises with billing confirm, then the liability-rule key exclusive, so it
+ * serialises with the seasonal-assignment reconcile (`INV-LOCK-003`; writer
+ * index in docs/CONCURRENCY_AND_LOCKING.md). The write is one status-guarded `updateMany`
  * over {@link UNTOUCHED_NOT_REQUIRED_ROW}, so a paid, invoiced, covered
  * (including a `NO_INVOICE` claim) or manually-marked row is never touched, and
  * a second run matches nothing. A member whose type cannot be resolved is left
@@ -261,6 +271,9 @@ export async function clearStaleNotRequiredRows(
 ): Promise<StaleNotRequiredClearUp> {
   const nothingCleared: StaleNotRequiredClearUp = { clearedCount: 0, clearedMemberIds: [] };
   await lockSubscriptionBillingSeason(tx, seasonYear);
+  // Season key first, then the rule key: a reconcile holding `lock(1)` waits on
+  // the rule key only for this clear-up's own writes, never for a confirm.
+  await lockSubscriptionLiabilityRuleExclusive(tx);
   const settings = await loadMembershipLockoutSettingsStrict(tx);
   if (!hasChosenLiabilityRule(settings)) {
     return nothingCleared;

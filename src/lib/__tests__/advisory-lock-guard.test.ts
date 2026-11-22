@@ -1207,6 +1207,11 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // those two and the liability clear-up (clearStaleNotRequiredRows, a
   // single-lock holder) call, so the clear-up serialises with confirm.
   "src/lib/subscription-billing-season-lock.ts": 1,
+  // #5190: the liability-rule key, minted once. The seasonal-assignment
+  // reconcile takes it SHARED (last, after lock(1)/lodge/member); the settings
+  // save and the liability clear-up take it EXCLUSIVE, always after the billing
+  // season key, so a lock(1) holder never waits behind a billing confirm.
+  "src/lib/subscription-liability-rule-lock.ts": 2,
   // #1936/#3291: the two pre-existing membership-application locks
   // (application id + applicant email) remain local. Approval mapping now
   // takes its complete sorted lifecycle set through member-lifecycle-lock.ts,
