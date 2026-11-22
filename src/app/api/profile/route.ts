@@ -154,11 +154,10 @@ export async function PUT(req: NextRequest) {
     arrivesAsMcpConnection(req) ? memberProfileConnectionUpdateSchema.strict() : memberProfileUpdateSchema
   ).safeParse(body);
   if (!parsed.success) {
+    // formErrors carries what is not one field's fault, such as a key a connection may not send.
+    const { fieldErrors, formErrors } = parsed.error.flatten();
     return NextResponse.json(
-      {
-        error: "Validation failed",
-        details: parsed.error.flatten().fieldErrors,
-      },
+      { error: "Validation failed", details: fieldErrors, ...(formErrors.length > 0 ? { formErrors } : {}) },
       { status: 422 },
     );
   }

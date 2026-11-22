@@ -303,6 +303,8 @@ describe("update_my_profile", () => {
     });
     const res = await putProfile(request as never);
     expect(res.status).toBe(422);
+    // The refusal names the key, so the app can tell the member why.
+    expect((await res.json()).formErrors).toEqual([expect.stringContaining(Object.keys(extra)[0])]);
     expect(h.prisma.member.update).not.toHaveBeenCalled();
   });
 });
@@ -338,15 +340,16 @@ describe("list_notices, get_notice and mark_notice_read", () => {
   });
 
   it("lists the member's notices with the same plain-text bodies as get_notice", async () => {
-    h.listNoticesForMember.mockResolvedValue([notice]);
+    // A field the loader might add later: the website would carry it, a connection never.
+    h.listNoticesForMember.mockResolvedValue([{ ...notice, audienceSummary: "Committee: Treasurer" }]);
     const { connection, browser } = await expectActionContract({ actionId: "list_notices", handler: listNotices });
     expect(connection).toEqual({ notices: [noticeAsText] });
-    expect(browser).toEqual({ notices: [noticeAsText] });
+    expect(browser).toEqual({ notices: [{ ...noticeAsText, audienceSummary: "Committee: Treasurer" }] });
   });
 
   it("lists nothing for a kiosk-only account", async () => {
     h.auth.mockResolvedValue(lodgeSession());
-    const res = await listNotices();
+    const res = await listNotices(new Request("https://club.example.test/api/notices"));
     expect(res.status).toBe(404);
     expect(h.listNoticesForMember).not.toHaveBeenCalled();
   });

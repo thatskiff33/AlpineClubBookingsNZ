@@ -175,7 +175,7 @@ calls an existing API route, and the route decides, exactly as for a browser.
 | `get_my_family_group` | The member and their family groups' active members: id, name, age group, relationship and whether they can be booked | read | `GET /api/members/family` |
 | `get_my_profile` | The member's own name, contact details, address and age group | read | `GET /api/profile/summary` |
 | `list_notices` | Club notices the member can see, each body as plain text | read | `GET /api/notices` |
-| `create_draft_booking` | Saves a **draft** booking: holds no beds, takes no payment; the member finishes and pays on the website. Answers with the draft's summary | write | `POST /api/bookings` (always `draft: true`) |
+| `create_draft_booking` | Saves a **draft** booking: holds no beds, takes no payment; the member finishes and pays on the website. The route refuses a connection anything but a draft, and refuses an account that is not a member. Answers with the draft's summary | write | `POST /api/bookings` (always `draft: true`) |
 | `preview_cancel_booking` | What cancelling would refund, without cancelling | read | `GET /api/bookings/[id]/cancel-preview` |
 | `cancel_my_booking` | Cancels one of the member's own bookings and refunds it under the club's policy. An officer's connection is refused anyone else's booking | destructive | `POST /api/bookings/[id]/cancel` |
 | `list_my_draft_bookings` | The member's unconfirmed drafts, in the same summary | read | `GET /api/bookings/drafts` |

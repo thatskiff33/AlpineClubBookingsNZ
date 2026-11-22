@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 
 import { hasAccessRole } from "@/lib/access-roles";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { MEMBER_NOTICE_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { mcpModuleOffResponse } from "@/lib/mcp/http";
 import { listNoticesForMember } from "@/lib/notices";
 import { memberNoticeAsText } from "@/lib/member-notice-text";
@@ -13,12 +15,13 @@ import { requireActiveSession } from "@/lib/session-guards";
  *
  * The notices the signed-in member can see, pinned first and then newest: the
  * same read as the notices page, each body as plain text
- * (`memberNoticeAsText`). Listing marks nothing as read.
+ * (`memberNoticeAsText`). Listing marks nothing as read. A connection is
+ * sent only `list_notices`'s fields (`connectionJson`).
  *
  * Added for AI app connections (ALP-653), so it is absent while that module is
  * off (`INV-MCP-001`), as well as while notices are.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const off = await mcpModuleOffResponse();
   if (off) return off;
 
@@ -37,5 +40,5 @@ export async function GET() {
   const notices = await listNoticesForMember(guard.session.user.id, {
     limit: MEMBER_NOTICE_LIST_LIMIT,
   });
-  return NextResponse.json({ notices: notices.map(memberNoticeAsText) });
+  return connectionJson(request, { notices: notices.map(memberNoticeAsText) }, MEMBER_NOTICE_LIST_CONNECTION_SHAPE);
 }
