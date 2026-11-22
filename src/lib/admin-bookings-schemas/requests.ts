@@ -19,7 +19,12 @@ import {
 } from "@prisma/client";
 import { z } from "zod";
 
-import { adminListPageQueryFields, adminQueueFocusIdField } from "@/lib/admin-list-page";
+import {
+  ADMIN_LIST_DEFAULT_PAGE_SIZE,
+  ADMIN_LIST_MAX_PAGE_SIZE,
+  adminListPageQueryFields,
+  adminQueueFocusIdField,
+} from "@/lib/admin-list-page";
 import { schoolTeacherSchema } from "@/lib/school-teacher-schema";
 
 // ── Shared pieces ───────────────────────────────────────────────────────────
@@ -69,7 +74,9 @@ export const adminBookingRequestQueueQuerySchema = z.object({
       "Which requests: `QUEUE` (the default: verified requests waiting for the officer, oldest first), `ALL`, or one request status such as `VERIFIED`, `PRICED`, `QUOTE_SENT`, `ACCEPTED`, `DECLINED` or `CONVERTED`.",
     ),
   page: adminListPageQueryFields.page.describe("The page to read, from 1."),
-  pageSize: adminListPageQueryFields.pageSize.describe("Requests per page, 1 to 100; 25 by default."),
+  pageSize: adminListPageQueryFields.pageSize.describe(
+    `Requests per page, 1 to ${ADMIN_LIST_MAX_PAGE_SIZE}; ${ADMIN_LIST_DEFAULT_PAGE_SIZE} by default.`,
+  ),
   requestId: adminQueueFocusIdField.describe("One request's id, to read just that request."),
 });
 

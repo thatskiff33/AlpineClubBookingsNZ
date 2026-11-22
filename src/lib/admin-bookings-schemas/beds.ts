@@ -122,7 +122,8 @@ export const bedAllocationSettingsBodySchema = z
 
 const roomNameSchema = z.string().trim().min(1).max(100);
 const sortOrderSchema = z.coerce.number().int().min(0).max(10000);
-const roomNotesSchema = z.string().trim().max(500).nullable().optional();
+const ROOM_NOTES_MAX_LENGTH = 500;
+const roomNotesSchema = z.string().trim().max(ROOM_NOTES_MAX_LENGTH).nullable().optional();
 
 /** `GET /api/admin/bed-allocation/rooms`. */
 export const bedAllocationRoomsQuerySchema = z.object({
@@ -135,7 +136,7 @@ export const bedAllocationRoomCreateBodySchema = z
     name: roomNameSchema.describe("The room's name, unique at its lodge."),
     sortOrder: sortOrderSchema.default(0).describe("Where the room sits in lists, lowest first."),
     active: z.boolean().default(true).describe("Whether its beds can be allocated."),
-    notes: roomNotesSchema.describe("Notes for officers, up to 500 characters."),
+    notes: roomNotesSchema.describe(`Notes for officers, up to ${ROOM_NOTES_MAX_LENGTH} characters.`),
     lodgeId: z.string().min(1).optional().describe("A lodge id from `list_lodges`; the default lodge when omitted."),
   })
   .strict();
@@ -149,7 +150,7 @@ export const bedAllocationRoomUpdateBodySchema = z
       .boolean()
       .optional()
       .describe("Whether its beds can be allocated; refused while a custodian holds one of its beds."),
-    notes: roomNotesSchema.describe("Notes for officers, up to 500 characters; null clears them."),
+    notes: roomNotesSchema.describe(`Notes for officers, up to ${ROOM_NOTES_MAX_LENGTH} characters; null clears them.`),
   })
   .strict();
 

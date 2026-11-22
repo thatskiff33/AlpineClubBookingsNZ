@@ -9,13 +9,20 @@
  */
 import { z } from "zod";
 
-import { adminListPageQueryFields, adminQueueFocusIdField } from "@/lib/admin-list-page";
+import {
+  ADMIN_LIST_DEFAULT_PAGE_SIZE,
+  ADMIN_LIST_MAX_PAGE_SIZE,
+  adminListPageQueryFields,
+  adminQueueFocusIdField,
+} from "@/lib/admin-list-page";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 const queuePage = adminListPageQueryFields.page.describe("The page to read, from 1.");
 
 function queuePageSize(rows: string) {
-  return adminListPageQueryFields.pageSize.describe(`${rows} per page, 1 to 100; 25 by default.`);
+  return adminListPageQueryFields.pageSize.describe(
+    `${rows} per page, 1 to ${ADMIN_LIST_MAX_PAGE_SIZE}; ${ADMIN_LIST_DEFAULT_PAGE_SIZE} by default.`,
+  );
 }
 
 /** `GET /api/admin/booking-change-requests`: the locked-period change queue. */

@@ -126,7 +126,7 @@ export const BOOKINGS_REVIEW_QUEUE_MCP_ACTIONS: readonly McpAction[] = [
     id: "list_waitlist",
     title: "List the waitlist",
     summary:
-      "Officer: waitlisted and offered bookings in queue order, a page at a time (`page`, `pageSize`, `total`), optionally within `from`/`to` (`YYYY-MM-DD`, at most 366 days). Each entry answers with its booking id, the owner's name and member id (null for an organisation), dates (`YYYY-MM-DD`), guests, status, its place in its lodge's queue (null once offered), the offer and its expiry (ISO timestamps), review flags, whether emails are switched off, the price in integer cents and whether the offer email was delivered.",
+      "Officer: waitlisted and offered bookings in queue order, a page at a time (`page`, `pageSize`, `total`), optionally within `from`/`to` (`YYYY-MM-DD`; too long a window is refused with its limit). Each entry answers with its booking id, the owner's name and member id (null for an organisation), dates (`YYYY-MM-DD`), guests, status, its place in its lodge's queue (null once offered), the offer and its expiry (ISO timestamps), review flags, whether emails are switched off, the price in integer cents and whether the offer email was delivered.",
     method: "GET",
     path: "/api/admin/waitlist",
     // The route also limits the window and refuses a day that does not

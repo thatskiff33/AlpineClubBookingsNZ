@@ -51,6 +51,7 @@ import {
   ADMIN_LODGE_ROOMS_IMPORT_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/bookings-beds";
 
+import { MAX_BED_ALLOCATION_RANGE_NIGHTS } from "@/lib/bed-allocation-date-range";
 import type { McpAction } from "../catalogue";
 
 /** Said once on every action that changes the lodge's rooms or beds. */
@@ -62,7 +63,7 @@ export const BOOKINGS_BEDS_MCP_ACTIONS: readonly McpAction[] = [
     id: "get_bed_allocation_board",
     title: "Read the bed allocation board",
     summary:
-      "Officer: who sleeps in which bed for a window of lodge nights (default the next 7 from the club's today, at most 31), as the bed allocation board shows it. Answers the rooms and beds; the bookings in the window with their guests (names, age tiers, stay dates) and the booking owner's name; each placed `allocations` row (guest, room, bed, night, `AUTO` or `MANUAL`, `approvedAt` null for a draft); guest-nights still awaiting a bed; suggested placements; whole-lodge and custodian holds; and warnings such as a party split across rooms. Nights are `YYYY-MM-DD`; `to` is the date out. `scopedLodgeId` is the lodge shown, null for every lodge. Only when the club has bed allocation switched on.",
+      `Officer: who sleeps in which bed for a window of lodge nights (default the next 7 from the club's today, at most ${MAX_BED_ALLOCATION_RANGE_NIGHTS}), as the bed allocation board shows it. Answers the rooms and beds; the bookings in the window with their guests (names, age tiers, stay dates) and the booking owner's name; each placed \`allocations\` row (guest, room, bed, night, \`AUTO\` or \`MANUAL\`, \`approvedAt\` null for a draft); guest-nights still awaiting a bed; suggested placements; whole-lodge and custodian holds; and warnings such as a party split across rooms. Nights are \`YYYY-MM-DD\`; \`to\` is the date out. \`scopedLodgeId\` is the lodge shown, null for every lodge. Only when the club has bed allocation switched on.`,
     method: "GET",
     path: "/api/admin/bed-allocation",
     query: bedAllocationBoardQuerySchema,
@@ -88,7 +89,7 @@ export const BOOKINGS_BEDS_MCP_ACTIONS: readonly McpAction[] = [
     id: "allocate_guest_bed_nights",
     title: "Put a guest in a bed for several nights",
     summary:
-      "Officer: places one booking guest in one bed for each listed lodge night (`YYYY-MM-DD`, at most 31), as drafts. Places what it can: `conflicts` names the nights the bed was taken or held by a custodian, `skipped` the nights the guest is not staying. Answers the allocations written. Needs Bookings & Beds edit access.",
+      `Officer: places one booking guest in one bed for each listed lodge night (\`YYYY-MM-DD\`, at most ${MAX_BED_ALLOCATION_RANGE_NIGHTS}), as drafts. Places what it can: \`conflicts\` names the nights the bed was taken or held by a custodian, \`skipped\` the nights the guest is not staying. Answers the allocations written. Needs Bookings & Beds edit access.`,
     method: "POST",
     path: "/api/admin/bed-allocation/allocations/bulk",
     body: bedAllocationBulkBodySchema,
@@ -139,7 +140,7 @@ export const BOOKINGS_BEDS_MCP_ACTIONS: readonly McpAction[] = [
     id: "auto_allocate_beds",
     title: "Suggest beds automatically",
     summary:
-      "Officer: writes the board's suggested placements (`suggestedAllocations` in `get_bed_allocation_board`) for one lodge (`lodgeId` from `list_lodges`) over a window of nights (default the next 7, at most 31), as drafts; existing placements are kept. Refused when the lodge has automatic suggestions switched off. Answers `createdCount`. Needs Bookings & Beds edit access.",
+      `Officer: writes the board's suggested placements (\`suggestedAllocations\` in \`get_bed_allocation_board\`) for one lodge (\`lodgeId\` from \`list_lodges\`) over a window of nights (default the next 7, at most ${MAX_BED_ALLOCATION_RANGE_NIGHTS}), as drafts; existing placements are kept. Refused when the lodge has automatic suggestions switched off. Answers \`createdCount\`. Needs Bookings & Beds edit access.`,
     method: "POST",
     path: "/api/admin/bed-allocation/auto-allocate",
     body: bedAllocationAutoAllocateBodySchema,

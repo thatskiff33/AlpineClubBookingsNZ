@@ -49,6 +49,9 @@ import {
   ADMIN_RETURN_TO_WAITLIST_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/bookings-bookings";
 
+import { ADDITIONAL_PAYMENT_RESEND_COOLDOWN_MINUTES } from "@/lib/additional-payment-chase";
+import { DIETARY_REQUIREMENTS_MAX_LENGTH } from "@/lib/member-dietary-field";
+import { MEMBER_GUEST_SEARCH_MIN_CHARS, MEMBER_GUEST_SEARCH_RESULT_CAP } from "@/lib/member-guest-find";
 import type { McpAction } from "../catalogue";
 
 // The routes below that name their own `requireAdmin` permission, stricter
@@ -147,7 +150,7 @@ const ON_BEHALF_PICKERS: readonly McpAction[] = [
     id: "search_member_guest_candidates",
     title: "Find members to add as guests by name",
     summary:
-      "Officer: members whose first or last name starts with `q` (2 characters or more, at most 10 answered), to add to a booking (`id` from `search_bookings`) as member guests: each one's member id, names and age tier. `truncated` is true when more matched. Needs Membership view access as well; the search is recorded in the audit log.",
+      `Officer: members whose first or last name starts with \`q\` (${MEMBER_GUEST_SEARCH_MIN_CHARS} characters or more, at most ${MEMBER_GUEST_SEARCH_RESULT_CAP} answered), to add to a booking (\`id\` from \`search_bookings\`) as member guests: each one's member id, names and age tier. \`truncated\` is true when more matched. Needs Membership view access as well; the search is recorded in the audit log.`,
     method: "GET",
     path: "/api/admin/bookings/[id]/member-guest-candidates",
     params: bookingIdParamsSchema,
@@ -203,7 +206,7 @@ const ONE_BOOKING_TOOLS: readonly McpAction[] = [
     id: "send_additional_payment_reminder",
     title: "Remind a member of an extra amount owing",
     summary:
-      "Officer: emails the member again asking them to pay the extra amount still owing on a booking. Refused within 60 minutes of the last email and when nothing is owed. Answers with when it was sent and the amount in cents. Cannot be undone.",
+      `Officer: emails the member again asking them to pay the extra amount still owing on a booking. Refused within ${ADDITIONAL_PAYMENT_RESEND_COOLDOWN_MINUTES} minutes of the last email and when nothing is owed. Answers with when it was sent and the amount in cents. Cannot be undone.`,
     method: "POST",
     path: "/api/admin/bookings/[id]/additional-payment-reminder",
     params: bookingIdParamsSchema,
@@ -292,7 +295,7 @@ const ONE_BOOKING_TOOLS: readonly McpAction[] = [
     id: "update_booking_guest_dietary",
     title: "Change a guest's dietary needs for a stay",
     summary:
-      "Officer: change or clear one guest's dietary or allergy needs for this booking only (not their profile), up to 500 characters. Send the guest as last read in `occupant`; a guest changed since is refused. Only while the club has the dietary field on. Answers with the guest id and the saved value.",
+      `Officer: change or clear one guest's dietary or allergy needs for this booking only (not their profile), up to ${DIETARY_REQUIREMENTS_MAX_LENGTH} characters. Send the guest as last read in \`occupant\`; a guest changed since is refused. Only while the club has the dietary field on. Answers with the guest id and the saved value.`,
     method: "PATCH",
     path: "/api/admin/bookings/[id]/guest-dietary",
     params: bookingIdParamsSchema,
