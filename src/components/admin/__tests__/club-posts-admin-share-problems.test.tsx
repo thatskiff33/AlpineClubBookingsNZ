@@ -118,6 +118,10 @@ describe("the sharing problems panel", () => {
     fireEvent.click(liveButton!);
     await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
     expect(confirm.mock.calls[0]![0]).toMatch(/stays on this club's board/);
+    // The first withdrawal disables the panel while it runs; let it settle so
+    // the second click is not dropped by a disabled button.
+    await waitFor(() => expect(mocks.refresh).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(removedButton).toBeEnabled());
 
     fireEvent.click(removedButton!);
     await waitFor(() => expect(confirm).toHaveBeenCalledTimes(2));
