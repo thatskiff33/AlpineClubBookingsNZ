@@ -34,7 +34,7 @@ export const adminBookingsCalendarQuerySchema = z.object({
     .string()
     .optional()
     .describe(
-      "Booking statuses to show, comma separated (for example `PAID,PAYMENT_PENDING`), or `all`. Left out, every status except DRAFT is shown.",
+      "Booking statuses to show, comma separated (for example `PAID,PAYMENT_PENDING`; `DRAFT` must be named to see drafts). Left out or `all`, every status except DRAFT is shown.",
     ),
   deleted: z
     .string()

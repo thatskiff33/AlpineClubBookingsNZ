@@ -75,7 +75,7 @@ const LIST_AND_SEARCH: readonly McpAction[] = [
     id: "list_bookings_for_month",
     title: "List bookings in a month",
     summary:
-      "Officer: the bookings whose stay overlaps one calendar month (id, booker name, dates `YYYY-MM-DD`, status, deleted time, most guests on a night), and, for one lodge or a club's only lodge, the free beds on each night. Drafts are left out unless `status` asks for them.",
+      "Officer: the bookings whose stay overlaps one calendar month (id, booker name, dates `YYYY-MM-DD`, status, deleted time, most guests on a night), and, for one lodge or a club's only lodge, the free beds on each night. Drafts are left out unless `status` names `DRAFT`.",
     method: "GET",
     path: "/api/admin/bookings",
     query: adminBookingsCalendarQuerySchema,
