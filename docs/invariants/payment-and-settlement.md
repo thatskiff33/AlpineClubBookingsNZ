@@ -4033,7 +4033,7 @@ _Split from `INV-PAY-057` (#3220)._
 
 ## INV-PAY-126
 
-**Related: `INV-PAY-116`** (the wording), **`INV-PAY-125`**.
+**Related: `INV-PAY-116`**, **`INV-PAY-125`**.
 
 - **An invoice correction is not a refund** (#3979, owner decision 13 Oct
   2026). A modification note worded *Invoice correction* ([INV-PAY-116]) moved
@@ -4047,8 +4047,7 @@ _Split from `INV-PAY-057` (#3220)._
   a part payment recognised at cancel included, is cash-sized. That receipt
   still includes the corrected amount, so the correction keeps counting and the
   net stays the cash. A recount finds any payment's modification notes by its
-  invoice (#4444): a later note drops none, and no one note id counts twice
-  (two different notes for one refund still count as two).
+  invoice (#4444): a later note drops none, and each note id counts once.
   A keep sets the whole refunded total its links record under the `Payment`
   row (`decideLinkedRefundedTotalCents`, floored), never an increment; the
   note's allocation write or removal locks that row first and decides it too,
