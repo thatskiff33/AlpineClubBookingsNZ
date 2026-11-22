@@ -3342,8 +3342,10 @@ The exclusion is not retroactive: a switch turned on while an offer is already
 live does not retract it, and the offer commits before its email is sent, so a
 flip in between leaves a live offer with a withheld send. An entry in
 `WAITLIST_OFFERED` whose offer is still unexpired therefore reports
-`suppressed_live_offer` with `needsOperatorAction: true` (a held bed the member
-was never told about); one whose offer has already lapsed reports the benign
+`suppressed_live_offer` with `needsOperatorAction: true` (a live offer the member
+was never told about; an offer holds no capacity, `INV-CAP-011`, though it can
+hold a bed allocation, `INV-CAP-006`); one whose offer has
+already lapsed reports the benign
 `suppressed`. A silenced entry still in `WAITLISTED` has no EmailLog row at all
 and is marked on the board from the flag. It shows no position and is not
 counted in anyone else's while silenced; it keeps its `createdAt`, so clearing
@@ -3358,6 +3360,24 @@ of the count, so its accept (same-lodge, or the cross-lodge
 revert to `WAITLISTED` (an expired offer, a capacity-lost or failed confirm,
 return-to-waitlist) puts the entry back at its original join time. Exits still
 write `waitlistPosition: null` until that column is dropped.
+
+**An expired offer's place goes on down the queue (#5410, `INV-CAP-042`).**
+`expireStaleOffers` reverts each stale `WAITLIST_OFFERED` entry to `WAITLISTED`,
+then makes one offer pass per lapsed offer, in join order. That pass starts just
+after the lapsed entry's place, wraps to the front, and reaches the lapsed entry
+last, with any opportunity of another booking whose offer lapsed in the same
+run, at any lodge, just before it. Under
+`OWN_LODGE_FIRST` the lapses go after the cross-lodge opt-ins as well (owner
+decision, 23 Nov 2026), the one exception to own lodge first. So the
+same run offers the place to the next party that fits, the lapsed entry keeps its
+original place and number, and a queue of one is offered again. Offers that
+lapse in turn walk the place down the queue and wrap to the front only after
+everyone has had a turn. Nothing is stored: every other offer pass (a
+cancellation, a date change, a payment-pending expiry, a group settlement, a
+return to the waitlist) walks the plain order, so it can offer a still-free place
+to a member who let it lapse earlier. In that one re-offer, a member ahead of
+the lapsed one who has not yet had the offer is considered after those behind
+it; they keep their place.
 
 ## Bed Allocation Lifecycle
 

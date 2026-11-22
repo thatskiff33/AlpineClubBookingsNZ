@@ -1698,7 +1698,8 @@ capacity or double-booking violation.
   `MERGED` that includes older entries from other lodges that named this lodge;
   under `OWN_LODGE_FIRST` it does not. An offered or silenced entry shows none
   (`INV-LOCKOUT-060`). It is an upper bound, not a promise: a smaller party
-  behind can be offered first.
+  behind can be offered first. A lapsed offer changes no number: the reordering
+  in `INV-CAP-042` is applied only by the pass that re-offers that place.
 - **`Booking.waitlistPosition` is retired.** No path writes a non-null value
   and none reads it; exits keep writing `null` until the column is dropped.
 - **Reads take no lock.** A writer passes its own `tx` after its locks; a
@@ -1709,6 +1710,36 @@ capacity or double-booking violation.
   it (`docs/CONCURRENCY_AND_LOCKING.md`).
 - Guards: `waitlist-queue.test.ts` (the order against the old inline code, the
   reader against the offer pass's walk), `waitlist-position-census.test.ts`,
+  `waitlist-queue-position.realdb.test.ts`.
+
+### INV-CAP-042
+
+- **A lapsed offer's place goes on down the queue** (#5410, owner decisions
+  22 Nov 2026). `expireStaleOffers` makes one offer pass per lapsed offer, in
+  join order, handing it that lapse and every other lapse of the same run. The
+  pass walks `orderWaitlistOffers`: the `INV-CAP-041` order, started just after
+  the lapsed opportunity and wrapped to the front, then any opportunity of
+  another booking that lapsed in the run, then the lapsed opportunity, so two
+  members who lapse together cannot pass the places between them. A queue of
+  one is re-offered.
+- **Only the opportunity at the offered lodge moves.** Under `OWN_LODGE_FIRST`
+  each part rotates separately, but the lapses go after both: a member who just
+  lapsed is behind every opt-in too (owner decision, 23 Nov 2026).
+- **Nothing is stored.** Every other caller of `processWaitlistForDates` walks
+  the plain order. The lapsed booking keeps its join time and number.
+- **Limits.** Offers hold no capacity (`INV-CAP-011`), so: a later, unrelated
+  pass can offer a still-free place to a member who let it lapse; several
+  lapses on the same nights can put out more offers than free beds (never more
+  than were out before), and the second to confirm is told the place has gone.
+  A member ahead of the lapsed one who has not had this offer is considered
+  after those behind it, for that re-offer only. Two sweeps at once each know
+  only their own lapses, so two members can be offered each other's places for
+  one round; production runs one cron instance.
+- **No lock changed.** Each pass takes the same locks in its own transaction
+  (`INV-LOCK-001`, `INV-LOCK-002`); a pass that fails is counted and the rest
+  run.
+- Guards: `waitlist-queue.test.ts`, `waitlist.test.ts`,
+  `cross-lodge-waitlist-processor.test.ts`,
   `waitlist-queue-position.realdb.test.ts`.
 
 ### INV-LIFE-062

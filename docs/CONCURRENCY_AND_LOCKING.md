@@ -200,6 +200,37 @@ cancel or an expiry revert there; (c) two creates at the same lodge storing
 before #5402 as well). Screens are right on the next read, and nothing branches
 on the number. No writer's key, order, participant or transaction changed.
 
+**The re-offer after a lapsed offer changes no lock** (#5410, `INV-CAP-042`).
+`expireStaleOffers` still reverts every stale offer in one `lock(1)` transaction
+under each offer's own lodge key, then, after that commit, runs the offer pass
+once per lapsed offer, in join order, where it used to run once per distinct
+range. Each pass is the same `processWaitlistForDates` transaction as before:
+`lock(1)`, then every active lodge's capacity key in sorted order, inside
+`LOCK1_HOLDER_TRANSACTION_BUDGET`. The lapse it is handed only reorders the
+candidates it has already read under those locks (`orderWaitlistOffers` is
+pure), and the offer write is unchanged. A sweep can now run more passes, each
+its own short transaction, so none holds a lock for longer. No key, tier,
+order, guarded claim or budget changed.
+
+Three consequences, stated as limits. (a) One offer per lapsed offer means
+several lapses on the same nights can put out more offers than there are free
+beds. Offers never held capacity (`INV-CAP-011`), the number out never rises
+above what it was before those lapses, and a later confirm re-checks capacity
+under the lodge key and, finding the place gone, returns the member to the
+waitlist with a message saying so. (b) The passes take the global and lodge
+keys one at a time, after the revert commits, so two sweeps running at the same
+moment each know only their own lapses: for one round, two members who lapsed
+can be offered each other's places, and the next sweep that expires those
+offers sees both. Production runs one cron instance, and within it
+`isWaitlistCronRunning` stops a run overlapping the one before. (c) A pass that
+fails, by throwing before its transaction or by its transaction failing
+(`processWaitlistForDates` returns `failed: true`), is logged and counted and
+the remaining passes still run. The cron adds the count to a tally kept across
+its transaction-start retry attempts, recorded before its next step, and throws
+`WaitlistReofferFailedError` only after the retry loop, so a retried attempt
+cannot lose the failure and the failure itself is never retried: the reverts are
+committed, and a retried sweep would find nothing left to re-offer.
+
 ### Tier 2 — global booking-status / money serialisation
 
 `pg_advisory_xact_lock(1)` (the literal global lock) serialises **status
@@ -6405,8 +6436,9 @@ recorded four nulls and presented them as evidence.
 
 The post-commit sweep is keyed on `Booking.lodgeId`, **not**
 `waitlistOfferedLodgeId`, and this is where it deliberately differs from
-`expireStaleOffers`. That path's entry is still `WAITLIST_OFFERED` and holds a
-bed at the OFFERED lodge, so the offered lodge is what its revert frees. Here the
+`expireStaleOffers`. That path's entry is still `WAITLIST_OFFERED`, and the place
+it was offered is at the OFFERED lodge (an offer holds no capacity, `INV-CAP-011`), so
+the offered lodge is where its re-offer goes. Here the
 lodge key held above, the allocations the reconcile prunes, and any admin hold
 released are all `Booking.lodgeId`. Sweeping the offered lodge instead would
 process a queue this repair freed nothing at while leaving the nights it did free
