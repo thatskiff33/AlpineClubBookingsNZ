@@ -3344,12 +3344,17 @@ Issue #1163 was a 1–2 cent Xero invoice drift. The pre-#1231 line builder
 grouped a guest's nights into contiguous **date** runs only and billed each run
 as `quantity: nightCount, unitAmount: round(totalCents / nightCount) / 100`, so
 a run that mixed nightly prices (a season boundary, or locked-vs-re-priced
-nights) could not represent its exact cent total. **PR #1231 fixed it for new
-invoices**: `buildInvoiceLineItems` splits every run to a single price, so
-`perNightCents * nightCount === totalCents` by construction. A guest holding a
-night whose price is not known (`BookingGuestNight.priceCents` is `NULL`, a
-night a parked edit committed without valuing, #3170) has their per-night
-detail dropped and is billed on the whole-stay legacy path.
+nights) could not represent its exact cent total. The legacy no-per-night path
+drifted the same way whenever a guest's price did not divide by the night
+count. **PR #1231 fixed it for new invoices**: `buildInvoiceLineItems` builds
+its lines with `buildGuestInvoiceLines` (`booking-guest-invoice-lines.ts`),
+which splits every run to a single price, so
+`perNightCents * nightCount === totalCents` by construction. The legacy path is
+exact too: it splits the guest's total evenly over the nights
+(`evenlySplitCents`) and runs the result through the same split. A guest
+holding a night whose price is not known (`BookingGuestNight.priceCents` is
+`NULL`, a night a parked edit committed without valuing, #3170) has their
+per-night detail dropped and is billed on the whole-stay legacy path.
 
 Only `buildInvoiceLineItems` carried the drifting pattern, through both its
 callers: per-booking invoices and `xero-group-settlement-invoices`. The
@@ -3364,8 +3369,9 @@ The read-only audit that flagged invoices issued before #1231
 (`xero:audit-invoice-rounding`, #1318) served only clubs that ran `v0.9.0` or
 earlier and has left `main` under the one-off retirement rule
 ([`UPGRADING.md` → Principles](../UPGRADING.md#principles), #5404). It remains in
-the `v0.14.0` tag, with its instructions in this section there; it was not
-tested against any later schema.
+the `v0.14.0` tag, with its instructions in this file there under "Historical
+rounding-drift audit (#1318, read-only)"; it was not tested against any later
+schema.
 
 ### Stored promotion build-up on a booking invoice (#3277)
 

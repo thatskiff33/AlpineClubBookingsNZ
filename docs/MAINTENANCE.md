@@ -1927,8 +1927,9 @@ the note is fully settled.
 pre-`v0.10.0` cancellation flattened to `FAILED` (#1473 / #1506). It served
 only clubs that ran `v0.9.0` or earlier and has left `main` under the one-off
 retirement rule ([`UPGRADING.md` → Principles](UPGRADING.md#principles)). It
-remains in the `v0.14.0` tag, with its instructions in this section there; it
-was not tested against any later schema.
+remains in the `v0.14.0` tag, with its instructions in this file there under
+"Backfill cancel-flattened payment statuses (#1473 / #1506)"; it was not tested
+against any later schema.
 
 ### Backfill orphaned applied credit (#1547)
 

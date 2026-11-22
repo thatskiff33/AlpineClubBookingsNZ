@@ -56,18 +56,22 @@ It complements the two documents next to it and does not repeat them:
    migrations are written to stay old-code-compatible so the old color keeps
    working during the drain. A few are not (see below) — those need a quiet
    window or a deferral.
-5. **A one-off upgrade tool leaves `main` two releases after the upgrade it
-   serves** (owner decision, #5404). A tool that serves only the upgrade from
-   release A to release B is still in B and in the release after it, and is
-   removed before the second release after B. Two releases rather than one
-   because a club can skip a release, and the deploy script does not stop it
-   (principle 1). When the tool goes, its documentation becomes a short note
-   naming the release tag that still carries it, and any invariant that names
-   it is reworded in the same change. A club that still needs it runs it from
-   that tag; it was tested against that release's schema only. The rule does
-   not apply to a tool that is still a current remedy, a rollback check, or a
-   step to run before switching a setting on: those stay while the remedy,
-   rollback or setting does.
+5. **A one-off upgrade tool leaves `main` two minor releases after the
+   upgrade it serves** (owner decisions, 22 Nov 2026, #5404). Only minor
+   releases count; patch releases do not. A tool that serves only the upgrade
+   to 0.14.0 ships in every 0.14.x and 0.15.x release and is gone from 0.16.0.
+   The count starts from the later of that release and the release that first
+   shipped the tool, so a tool that arrives in a patch after it still gets its
+   two minor releases: a tool for the upgrade to 0.14.0 first shipped in 0.15.0
+   is gone from 0.17.0. Two rather than one because a club can skip a release,
+   and the deploy script does not stop it (principle 1). When the tool goes,
+   its documentation becomes a short note naming the release tag that still
+   carries it, and any invariant that names it is reworded in the same change.
+   A club that still needs it runs it from that tag. It has not been tested
+   against any later schema; run it against a copy of your database first. The
+   rule does not apply to a tool that is still a current remedy, a rollback
+   check, or a step to run before switching a setting on: those stay while the
+   remedy, rollback or setting does.
 
 ## How to read `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`
 
@@ -4292,7 +4296,8 @@ already compensates, so this is cosmetic-only for the stored rows. The
 one-off that restored them, `payments:backfill-cancel-flattened`, has left
 `main` under the one-off retirement rule in [Principles](#principles) (#5404).
 It remains in the `v0.14.0` tag, with its instructions in that tag's
-`docs/MAINTENANCE.md`; it was not tested against any later schema.
+`docs/MAINTENANCE.md` under "Backfill cancel-flattened payment statuses
+(#1473 / #1506)"; it was not tested against any later schema.
 
 ---
 
