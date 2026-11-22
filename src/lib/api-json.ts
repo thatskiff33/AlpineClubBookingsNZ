@@ -9,7 +9,8 @@ import { NextResponse } from "next/server";
 type InvalidJsonWording =
   | "Invalid JSON"
   | "Invalid JSON payload"
-  | "Invalid JSON.";
+  | "Invalid JSON."
+  | "That post could not be read.";
 
 export type InvalidJsonBodyOptions = { error: InvalidJsonWording };
 
