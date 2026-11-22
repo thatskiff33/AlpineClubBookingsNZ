@@ -193,10 +193,11 @@ their `README.md`. That is their normal state, so a check that reads either
 directory must pass when it is empty: assert that it read the right directory,
 never that it found a fragment. `changelog-fragment-shape` tests this itself:
 its rules pass on a directory holding only a `README.md` and still flag a bad
-fragment in a populated one. The other checks that read either directory from
-disk (`late-capture-decision-provenance`, `cli-server-only-reach-census`,
-`additive-artifact-fragments`, `agent-workflow-contract`) were run once by hand
-for #5214 with both directories emptied, and passed.
+fragment in a populated one. These other checks read either directory from
+disk and must pass when it is empty: `late-capture-decision-provenance`,
+`cli-server-only-reach-census`, `additive-artifact-fragments`,
+`agent-workflow-contract`, and the two censuses that scan
+`live-doc-surfaces` (`audit-writer-census`, `view-only-banner-contract`).
 
 A version that already has a section is refused — except with `--append`,
 which adds the fragments (and any direct `## Unreleased` entries) to the end of

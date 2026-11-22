@@ -61,6 +61,9 @@ const TITLE = String.raw`(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\))`;
  * followed by a sentence, would lend a word of prose as the target (#5214).
  * Group 1 is the lead, group 2 the target.
  */
+// A paragraph continuation line, as in "- Fixed the thing\n  [Label]: text", is
+// not told apart from a definition (CommonMark does not let a definition
+// interrupt a paragraph), so such a line is rebased too.
 const REF_DEF = new RegExp(
   String.raw`^([ \t]*\[[^\]\n]+\]:[ \t]*\n?[ \t]*)(<[^>\n]*>|\S+)(?=[ \t]*\r?$|[ \t]+${TITLE}[ \t]*\r?$)`,
   "gm",
