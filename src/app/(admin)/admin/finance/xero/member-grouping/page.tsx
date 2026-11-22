@@ -24,7 +24,6 @@ import {
 } from "@/hooks/use-admin-area-edit-access";
 import { useActionFailure } from "@/hooks/use-action-failure";
 import { formatAgeTierName } from "@/lib/use-age-tier-options";
-import { unexpectedManagedGroupRefs } from "@/lib/xero-contact-group-mismatch-summary";
 import { canonicalizeAgeTiers } from "@/lib/age-tier-schema";
 import { loadAdminXeroContactGroups } from "@/lib/admin-xero-contact-groups";
 import { useClubTime } from "@/components/club-time-provider";
@@ -77,7 +76,6 @@ type InformationalEntry = {
   memberName: string;
   ageTier: AgeTier;
   unexpectedManagedGroupIds: string[];
-  unexpectedManagedGroups?: Array<{ id: string; name: string | null }>; // #5234; optional while an older server answers
 };
 
 type Snapshot = {
@@ -678,7 +676,7 @@ export default function XeroMemberGroupingPage() {
                       {snapshot.informational.slice(0, 50).map((m) => (
                         <div key={m.memberId} className="rounded border border-dashed p-2 text-xs text-muted-foreground">
                           <span className="font-medium">{m.memberName}</span> ({formatAgeTierName(m.ageTier)}) — in:{" "}
-                          {unexpectedManagedGroupRefs(m).map((g) => g.name ?? groupName(g.id)).join(", ")}
+                          {m.unexpectedManagedGroupIds.map(groupName).join(", ")}
                         </div>
                       ))}
                     </div>
