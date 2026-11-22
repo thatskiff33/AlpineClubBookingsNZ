@@ -352,8 +352,11 @@ on the member's behalf:
 
 Where the OTHER booking's move brings money back and this booking's own edit
 needs no such choice — it is unpaid, or its price went up — a **Return method**
-choice (refund to the original card, or hold as account credit) appears directly
-above the offer, and Save waits for it. That is the case the card-or-credit
+choice (a refund, or hold as account credit) appears directly above the offer,
+and Save waits for it. The refund option names where the money goes (#5303):
+**Refund to original card**, **Refund by bank transfer** where the treasurer
+sends it (an Internet Banking booking, or a card booking Stripe holds no record
+of), or both where the one choice covers bookings paid each way. That is the case the card-or-credit
 control in the price summary cannot serve, because that one belongs to this
 booking's money and is only drawn when this booking's own total falls; without
 this the member was told to choose a refund or account credit with nothing on the

@@ -120,6 +120,7 @@ function quote(
     combinedOrganiserRefundCents: 0,
     combinedOrganiserBankTransferRefundCents: 0,
     settlementMethodRequired: true,
+    refundRoute: "CARD",
     settlementMethodChosen: false,
     bothChangeFeesCharged: true,
     feasibility: "AVAILABLE",

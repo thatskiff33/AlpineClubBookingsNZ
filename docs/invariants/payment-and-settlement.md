@@ -4474,9 +4474,10 @@ edit's card refund debt).
   Stripe is not asked. Xero records a refund not made through Stripe.
 - **One read decides it.** `readRefundableCardIntentId`
   (`src/lib/refundable-card-intent.ts`) answers the settlement
-  (`editRefundHasCardToReturnTo`, in `applyPaymentAdjustments`, under the
-  door's locks) and the debt's writer (`enqueueLedgerRefundRecovery`), so the
-  two cannot disagree about a payment neither has changed.
+  (`editReductionRefundsToCard`, in `applyPaymentAdjustments` under the
+  door's locks, and the quote's `refundByBankTransfer` label) and the debt's
+  writer (`enqueueLedgerRefundRecovery`), so they cannot disagree about a
+  payment none has changed.
 - **A reserve that cannot write its debt rolls the edit back.**
   `reserveBookingModificationCardRefund` lets no edit stand on
   `NoRefundPaymentIntentError`: a refund payable is posted only with its
