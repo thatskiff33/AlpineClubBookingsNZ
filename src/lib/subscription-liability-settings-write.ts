@@ -10,7 +10,10 @@ import {
   isChoosableLiabilityAgeSource,
   type SubscriptionLiabilitySettings,
 } from "@/lib/policies/subscription";
-import { lockSubscriptionBillingSeason } from "@/lib/subscription-billing-season-lock";
+import {
+  SUBSCRIPTION_BILLING_SEASON_WAITER_TIMEOUT_MS,
+  lockSubscriptionBillingSeason,
+} from "@/lib/subscription-billing-season-lock";
 import { lockSubscriptionLiabilityRuleExclusive } from "@/lib/subscription-liability-rule-lock";
 
 /** The liability answers a settings save may name; either may be omitted. */
@@ -109,5 +112,8 @@ export async function saveLockoutSettings(
     const clearedStaleRows: StaleNotRequiredClearUp | null =
       await clearStaleNotRequiredRows(tx, seasonYear);
     return { record, clearedStaleRows };
+  }, {
+    // The season key may be held by a billing confirm for its whole budget.
+    timeout: SUBSCRIPTION_BILLING_SEASON_WAITER_TIMEOUT_MS,
   });
 }

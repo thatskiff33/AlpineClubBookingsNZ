@@ -22,6 +22,10 @@ import { applyConfigImport } from "@/lib/config-transfer/apply";
 import { buildBundle } from "@/lib/config-transfer/bundle";
 import { buildImportPlan } from "@/lib/config-transfer/import";
 import type { ReadDb } from "@/lib/config-transfer/import-types";
+import {
+  SUBSCRIPTION_BILLING_CONFIRM_TIMEOUT_MS,
+  SUBSCRIPTION_BILLING_SEASON_WAITER_TIMEOUT_MS,
+} from "@/lib/subscription-billing-season-lock";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /**
@@ -77,7 +81,7 @@ function store() {
     }),
   };
   const tx = { membershipLockoutSettings, $executeRaw: vi.fn(async () => 0) };
-  const $transaction = vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx));
+  const $transaction = vi.fn(async (fn: (t: typeof tx) => Promise<unknown>, _options?: unknown) => fn(tx));
   return {
     tx,
     $transaction,
@@ -122,6 +126,14 @@ describe("config-transfer import of the subscription-liability rule (#5190)", ()
     expect(clearUp.clearStaleNotRequiredRows).toHaveBeenCalledTimes(1);
     // The frozen test clock is 1 July 2026: season 2026.
     expect(clearUp.clearStaleNotRequiredRows).toHaveBeenCalledWith(db.tx, 2026);
+    // The clear-up waits on the billing season key, which a confirm may hold
+    // for its whole budget, so its transaction outlasts confirm's.
+    expect(db.$transaction.mock.calls[1]![1]).toEqual({
+      timeout: SUBSCRIPTION_BILLING_SEASON_WAITER_TIMEOUT_MS,
+    });
+    expect(SUBSCRIPTION_BILLING_SEASON_WAITER_TIMEOUT_MS).toBeGreaterThan(
+      SUBSCRIPTION_BILLING_CONFIRM_TIMEOUT_MS,
+    );
     // The import's own write landed before the clear-up began.
     expect(db.membershipLockoutSettings.upsert.mock.invocationCallOrder[0]).toBeLessThan(
       clearUp.clearStaleNotRequiredRows.mock.invocationCallOrder[0]!,

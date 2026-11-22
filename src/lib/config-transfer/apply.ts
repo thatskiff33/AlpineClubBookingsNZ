@@ -17,6 +17,7 @@ import {
   clearStaleNotRequiredRows,
   clearedRowsAuditMetadata,
 } from "@/lib/member-subscription-defaults";
+import { SUBSCRIPTION_BILLING_SEASON_WAITER_TIMEOUT_MS } from "@/lib/subscription-billing-season-lock";
 import { readBundle, sha256Hex } from "./bundle";
 import { buildImportPlanFromParsed, CATEGORY_IMPORTERS } from "./import";
 import { mediaApplies, recreateBundleMedia } from "./media";
@@ -488,8 +489,11 @@ async function clearStaleRowsAfterImport(
   input: { actorMemberId: string; bundleSha256: string },
 ): Promise<void> {
   const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
-  const clearUp = await prisma.$transaction((tx) =>
-    clearStaleNotRequiredRows(tx, seasonYear),
+  // The clear-up waits on the billing season key, which a confirm may hold for
+  // its whole budget.
+  const clearUp = await prisma.$transaction(
+    (tx) => clearStaleNotRequiredRows(tx, seasonYear),
+    { timeout: SUBSCRIPTION_BILLING_SEASON_WAITER_TIMEOUT_MS },
   );
   if (clearUp.clearedCount === 0) return;
   await createAuditLog({

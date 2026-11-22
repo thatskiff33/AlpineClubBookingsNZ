@@ -30,7 +30,10 @@ import { seasonYearsLabel } from "@/lib/season-label";
 import { loadMembershipLockoutSettingsStrict } from "@/lib/membership-lockout-settings";
 import { liabilityRuleFor, resolveMemberSubscriptionLiability } from "@/lib/policies/subscription";
 import { SUBSCRIPTION_BILLING_POPULATION_WHERE } from "@/lib/subscription-billing-population";
-import { lockSubscriptionBillingSeason } from "@/lib/subscription-billing-season-lock";
+import {
+  SUBSCRIPTION_BILLING_CONFIRM_TIMEOUT_MS,
+  lockSubscriptionBillingSeason,
+} from "@/lib/subscription-billing-season-lock";
 import { prisma } from "@/lib/prisma";
 import { defaultMembershipTypeKeyForRole, storedRoleDefaultMembershipTypeWhere } from "@/lib/membership-types";
 import { getResolvedAccountMapping } from "@/lib/xero-mappings";
@@ -2467,11 +2470,9 @@ export async function confirmSubscriptionBillingPreview(input: {
       }, tx);
     }
   }, {
-    // A whole-club annual run touches every member sequentially; Prisma's
-    // default 5s interactive-transaction budget aborts it with P2028 for
-    // clubs of a few hundred members. Match the 60s whole-run batch
-    // precedent in config-transfer/apply (#1886, F12).
-    timeout: 60_000,
+    // A whole-club annual run touches every member sequentially; see the
+    // constant for why Prisma's default 5s budget is not enough (#1886, F12).
+    timeout: SUBSCRIPTION_BILLING_CONFIRM_TIMEOUT_MS,
   });
   return {
     chargeIds: [...new Set(chargeIds)],

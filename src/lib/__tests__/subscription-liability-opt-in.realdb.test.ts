@@ -43,6 +43,8 @@ import { realElapsedMs } from "./helpers/clock";
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 const RACE_TEST_TIMEOUT_MS = 60_000;
+/** Longer than Prisma's default 5 s interactive-transaction budget. */
+const PAST_DEFAULT_TRANSACTION_BUDGET_MS = 6_500;
 
 const PREFIX = "race-5190-";
 const OFFICER_ID = `${PREFIX}officer`;
@@ -499,6 +501,28 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
         expect(await childChargeCount()).toBe(0);
         expect(await storedRule()).toEqual(CHOSEN_EXEMPTS);
       });
+
+      it(
+        "an opt-in queued behind a season-key holder for longer than Prisma's default 5 s still commits",
+        async () => {
+          // Billing confirm may hold the season key for its whole budget. The
+          // save's transaction counts that wait, so on the default 5 s it would
+          // fail with P2028 and the route would answer 500.
+          expect(seasonLock.SUBSCRIPTION_BILLING_SEASON_WAITER_TIMEOUT_MS).toBeGreaterThan(
+            seasonLock.SUBSCRIPTION_BILLING_CONFIRM_TIMEOUT_MS,
+          );
+          const gate = await holdSeasonKey();
+          const saved = optIn(CHOSEN_ALWAYS);
+          await untilAdvisoryWaiters(1);
+          await new Promise((resolve) => setTimeout(resolve, PAST_DEFAULT_TRANSACTION_BUDGET_MS));
+          gate.release();
+          await gate.done;
+
+          await expect(saved).resolves.toMatchObject({ record: CHOSEN_ALWAYS });
+          expect(await storedRule()).toEqual(CHOSEN_ALWAYS);
+        },
+        RACE_TEST_TIMEOUT_MS,
+      );
 
       it("an opt-in queued behind a confirm never holds up the seasonal-assignment reconcile; its clear-up still moves the row", async () => {
         const memberId = `${PREFIX}reconciled`;
