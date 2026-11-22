@@ -171,65 +171,30 @@ describe("N-08: shouldSendEmail", () => {
     vi.resetModules();
   });
 
-  it("returns true when no preference record exists (defaults)", async () => {
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue(null);
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "bookingConfirmation")).toBe(true);
-  });
+  // Only the check-in reminder and the chore roster ask (the bulk categories'
+  // defaults are bulk-audience.ts's, INV-PRIV-026). Both default on.
+  it.each(["bookingReminder", "choreRoster"] as const)(
+    "returns true for %s when no preference record exists (defaults)",
+    async (category) => {
+      mockPrisma.notificationPreference.findUnique.mockResolvedValue(null);
+      const { shouldSendEmail } = await import("../email");
+      expect(await shouldSendEmail("member-1", category)).toBe(true);
+    },
+  );
 
-  it("returns false for marketingEmails when no preference record exists", async () => {
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue(null);
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "marketingEmails")).toBe(false);
-  });
-
-  // #4987: club notices are opt-out, so a member with no saved preferences
-  // receives them; newsletters (marketingEmails, above) stay opt-in.
-  it("returns true for clubNotices when no preference record exists", async () => {
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue(null);
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "clubNotices")).toBe(true);
-  });
-
-  it("honours a stored clubNotices opt-out", async () => {
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue({
-      clubNotices: false,
-      marketingEmails: true,
-    });
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "clubNotices")).toBe(false);
-  });
-
-  it("respects stored preference (false)", async () => {
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue({
-      bookingConfirmation: false,
-      bookingReminder: true,
-      bookingBumped: true,
-      bookingCancelled: true,
-      choreRoster: true,
-      marketingEmails: false,
-    });
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "bookingConfirmation")).toBe(false);
-  });
-
-  it("respects stored preference (true)", async () => {
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue({
-      bookingConfirmation: true,
-      bookingReminder: true,
-      bookingBumped: true,
-      bookingCancelled: true,
-      choreRoster: true,
-      marketingEmails: true,
-    });
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "marketingEmails")).toBe(true);
-  });
-
-  it("returns true for unknown categories", async () => {
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "unknownCategory")).toBe(true);
-  });
+  it.each(["bookingReminder", "choreRoster"] as const)(
+    "honours a stored %s opt-out and leaves the other category alone",
+    async (category) => {
+      mockPrisma.notificationPreference.findUnique.mockResolvedValue({
+        bookingReminder: category !== "bookingReminder",
+        choreRoster: category !== "choreRoster",
+      });
+      const { shouldSendEmail } = await import("../email");
+      expect(await shouldSendEmail("member-1", category)).toBe(false);
+      const other = category === "bookingReminder" ? "choreRoster" : "bookingReminder";
+      expect(await shouldSendEmail("member-1", other)).toBe(true);
+    },
+  );
 });
 
 describe("sendEmail logging safeguards", () => {
