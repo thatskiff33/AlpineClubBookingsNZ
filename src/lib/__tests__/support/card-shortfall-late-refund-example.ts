@@ -138,6 +138,14 @@ export function cardShortfallLateRefundExample(prisma: Db, prefix: string, forma
    * Step 1, continued: the real runner spends the card refund's retries, each
    * one due, while Stripe still never answers. The clock steps past each
    * backoff and is handed back to the instant it read before.
+   *
+   * #5373: `new Date()` here is never the real calendar. Every test file runs
+   * on the frozen test clock (`vitest.clock-setup.ts`), so `startedAt` is that
+   * fixed instant, or the caller's own pin, and the steps are fixed days after
+   * it. The clock goes back to that same instant and not to real timers: the
+   * caller's later steps (the close, the late refund) still run inside this
+   * test, and docs/TESTING.md, "Writing a date-bearing test", rule 4, keeps
+   * a test off the real calendar.
    */
   async function spendCardRefundRetries() {
     stripeNeverAnswers();

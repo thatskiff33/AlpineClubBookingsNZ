@@ -400,8 +400,13 @@ never change; only how much of each price is GST does.
 
 The Xero health check warns if the tax code in force is missing or inactive in
 Xero, its rate differs, Xero's GST registration disagrees with the card, a
-mapped tax category's rate has gone, or the **Opening Credits** account is
-mapped while a GST-registered club has no usable **Exempt** rate. How
+mapped tax category's rate has gone, the **Opening Credits** account is
+mapped while a GST-registered club has no usable **Exempt** rate, or the
+**Opening Credits** account is stored on the Xero account another mapping
+uses. The account mapping refuses to save that last one, so it appears only
+if two people saved mappings, or one saved while a configuration import ran,
+at the same moment; choose an account for **Opening Credits** that no other
+mapping uses. How
 it works: [Tax treatment](../xero/ARCHITECTURE.md#tax-treatment).
 It checks only today's treatment. Bookings made under an earlier treatment
 still use that treatment's tax code on their later edits, credit notes and
@@ -429,7 +434,9 @@ Xero organisation provides, so the app never assumes a Xero tax code:
 2. **Clear** removes a mapping. Saving and clearing are both in the audit log.
    **Exempt** cannot be cleared while the **Opening Credits** account is
    mapped and the club is, or is scheduled to be, GST-registered: unset that
-   account on the account mapping first.
+   account on the account mapping first. That holds while Xero is disconnected
+   too, so the mapping is still there when you reconnect; only a mapping
+   chosen in a different Xero organisation from the one connected now clears.
 3. A mapping belongs to the Xero organisation it was chosen in. If you connect
    a different organisation, the card and the health check say so; map the
    category again.
