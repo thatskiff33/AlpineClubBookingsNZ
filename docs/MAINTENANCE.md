@@ -2265,6 +2265,13 @@ refund reservations command as `UNAPPLIED_CARD_REFUND` or
 answers unapplied refunds; acknowledge it to the cent. So, for a while, does a
 card refund row whose slice Stripe made without answering the attempt: the row
 marks the slice made only on its next run, or on "Paid another way" once dead.
+So does a late capture kept while its capture-return debt is already partly
+paid or reserved: the keep leaves that debt open on purpose (logged as "A
+kept late capture's refund debt is paid or reserved, so the keep leaves it
+open"), the dismissed task owes nothing and the refused refund left no card
+refund row, so v3 disagrees by the debt's open cents. Today's automatic refund
+sends one slice and a refusal releases its reservation, so this is not expected;
+check the capture in Stripe, then acknowledge it to the cent.
 It prints:
 
 - per identity, how many bookings it applies to, agree, disagree, are

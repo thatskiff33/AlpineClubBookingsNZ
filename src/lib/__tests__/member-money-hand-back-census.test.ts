@@ -188,6 +188,15 @@ describe("comparison report v3: JOURNAL_REFUND_PAYABLE (#5185)", () => {
       .toMatchObject({ status: "AGREE", ledgerCents: 0 });
   });
 
+  it("(acknowledged difference) a late capture kept while its capture-return debt is part paid disagrees by the debt's open cents", () => {
+    // `closeKeptCaptureReturn` leaves a part-paid debt open on purpose; the task is dismissed and the refused refund left no row.
+    const kept = facts({ tasks: [lateCapture("t", "pi_late")], captureReturnDebts: new Set(["pi_late"]), keeps: new Map([["pi_late", true]]),
+      openRefundPayableCents: 1_500 });
+    const result = journalRefundPayableComparison(row(kept));
+    expect(result.identity).toMatchObject({ status: "DISAGREE", columnCents: 1_500, ledgerCents: 0, deltaCents: 1_500 });
+    expect(result.integrity).toEqual([]);
+  });
+
   it("disagrees on a debt with nothing behind it: a card refund made without paying its debt, or a hand-back whose task is gone", () => {
     const made = journalRefundPayableComparison(row(facts({ openRefundPayableCents: 4_000, journalCardRefundKeys: new Set() }), {
       recoveryOperations: [cardRefund("made", { status: "SUCCEEDED" })],

@@ -1,6 +1,6 @@
 import type { ManualRefundTaskKind, ManualRefundTaskStatus, Prisma } from "@prisma/client";
 import { isJournalHandBackTask } from "../../manual-refund-task-hand-back-population";
-import { openHandBackOwedCents } from "../../manual-refund-task-settlement-rules";
+import { isLateCaptureAwaitingDecisionTask, openHandBackOwedCents, openTaskOwedCents } from "../../manual-refund-task-settlement-rules";
 import { isOwedCardRefundOperation, OPEN_CARD_REFUND_OPERATION_WHERE } from "../../open-card-refund-owed";
 import { exactPrefix } from "../../prisma-exact-prefix";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
@@ -190,9 +190,9 @@ export function heldHandBackOwedCents(facts: BookingHandBackJournal): number {
  * takes over) or keeps it (the debt is reversed, the task dismissed). Report v3 adds it beside the card rows.
  */
 export function heldCaptureReturnOwedCents(facts: BookingHandBackJournal): number {
-  return facts.tasks.filter((task) => task.status === "OPEN" && task.lateCaptureApprovalIntentId !== null
-    && facts.captureReturnDebts.has(task.lateCaptureApprovalIntentId) && !facts.captureReturnsWithRow.has(task.lateCaptureApprovalIntentId))
-    .reduce((sum, task) => sum + (task.amountCents ?? 0), 0);
+  const held = facts.tasks.filter((task) => isLateCaptureAwaitingDecisionTask(task) && task.lateCaptureApprovalIntentId !== null
+    && facts.captureReturnDebts.has(task.lateCaptureApprovalIntentId) && !facts.captureReturnsWithRow.has(task.lateCaptureApprovalIntentId));
+  return openTaskOwedCents(held).lateCaptureCents;
 }
 
 /** The five classes for one booking. Pure: the facts read above in, findings out, in task order. */

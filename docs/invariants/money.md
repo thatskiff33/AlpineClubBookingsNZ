@@ -1227,8 +1227,8 @@ Its report v3 (`JOURNAL_REFUND_PAYABLE`) holds each R01 booking's open refund
 payable equal to what its legacy records still owe on the debts the journal
 holds: hand-backs at their owed cents, open card refund rows whose debt is
 still live at their unmade slices, and a late capture held open with its
-capture-return R05 and no such row at its task's amount. Pins: `member-money-hand-backs.realdb.test.ts`,
-`member-money-hand-back-census.test.ts`,
+capture-return R05 and no such row at its task's amount. Pins:
+`member-money-hand-backs.realdb.test.ts`, `member-money-hand-back-census.test.ts`,
 `dispute-loss-hand-backs.realdb.test.ts`.
 
 ## INV-MONEY-050
