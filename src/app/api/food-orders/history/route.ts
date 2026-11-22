@@ -68,13 +68,13 @@ function parseFilters(
   const filters: FoodOrderHistoryFilters = { page: page ?? 1 };
   if (lodgeId) filters.lodgeId = lodgeId;
   if (status) filters.status = status;
-  for (const [raw, field] of [
-    [from, "neededFrom"],
-    [to, "neededTo"],
+  for (const [raw, field, key] of [
+    [from, "neededFrom", "from"],
+    [to, "neededTo", "to"],
   ] as const) {
     if (!raw) continue;
     const date = parseCalendarDate(raw);
-    if (!date) return { error: FOOD_ORDER_HISTORY_FILTER_ERRORS.from };
+    if (!date) return { error: FOOD_ORDER_HISTORY_FILTER_ERRORS[key] };
     filters[field] = dateOnlyInstantOf(date);
   }
   return filters;

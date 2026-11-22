@@ -7,6 +7,7 @@
  */
 import { z } from "zod";
 
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import {
   FOOD_ORDER_ITEM_DESCRIPTION_MAX_LENGTH,
   FOOD_ORDER_MAX_ITEMS,
@@ -45,21 +46,20 @@ export const foodOrderPlaceSchema = z
   })
   .strict();
 
-const CALENDAR_DAY = /^\d{4}-\d{2}-\d{2}$/;
-
 /**
  * The filters of `GET /api/food-orders/history`. The route drops empty values
  * first, so `?status=` means no filter. A malformed value is refused rather
  * than ignored, so a typo never silently widens the totals a club forecasts
- * from; `FOOD_ORDER_HISTORY_FILTER_ERRORS` says which.
+ * from; `FOOD_ORDER_HISTORY_FILTER_ERRORS` says which. The dates are real
+ * calendar days (`dateOnlyStringSchema`), so `2026-02-30` is refused too.
  */
 export const foodOrderHistoryQuerySchema = z.object({
   lodgeId: z.string().trim().max(64).optional(),
   status: z.enum(FOOD_ORDER_STATUSES).optional(),
   /** First needed-by day, `YYYY-MM-DD`, inclusive. */
-  from: z.string().trim().regex(CALENDAR_DAY).optional(),
+  from: dateOnlyStringSchema.optional(),
   /** Last needed-by day, `YYYY-MM-DD`, inclusive. */
-  to: z.string().trim().regex(CALENDAR_DAY).optional(),
+  to: dateOnlyStringSchema.optional(),
   page: z.coerce.number().int().min(1).max(100_000).optional(),
 });
 

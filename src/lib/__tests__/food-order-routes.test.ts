@@ -70,6 +70,7 @@ import { GET as historyGet } from "@/app/api/food-orders/history/route";
 import { PATCH as pricePatch } from "@/app/api/food-orders/[id]/price/route";
 import { POST as receivedPost } from "@/app/api/food-orders/[id]/received/route";
 import { GET as formGet, POST as orderPost } from "@/app/api/food-orders/route";
+import { foodOrderHistoryQuerySchema } from "@/lib/food-order-schema";
 
 const day = (value: string) => dateOnlyInstantOf(requireCalendarDate(value));
 
@@ -841,6 +842,17 @@ describe("the history", () => {
     expect((await history("?status=CLOSED")).status).toBe(400);
     expect((await history("?from=01/07/2026")).status).toBe(400);
     expect((await history("?page=0")).status).toBe(400);
+  });
+
+  it("refuses a needed-by day that does not exist, such as 30 February", async () => {
+    mocks.session = ROLES.committee();
+    for (const query of ["?from=2026-02-30", "?to=2026-02-30"]) {
+      const answer = await history(query);
+      expect(answer.status).toBe(400);
+      expect(answer.body.error).toBe("Dates must be in YYYY-MM-DD form.");
+    }
+    expect(foodOrderHistoryQuerySchema.safeParse({ from: "2026-02-30" }).success).toBe(false);
+    expect(foodOrderHistoryQuerySchema.safeParse({ to: "2026-02-28" }).success).toBe(true);
   });
 
   it("pages 25 at a time, with the count and total across every page", async () => {
