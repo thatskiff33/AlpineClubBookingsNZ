@@ -1270,7 +1270,13 @@ export async function declineBookingRequest(input: {
   // (request.contactEmail) is always present, so decline always sends unless
   // the admin opted out — the suppression is recorded in the audit log.
   notifyMember?: boolean;
-  ipAddress?: string;
+  /**
+   * The acting officer's address for the hold release's cancellation audit
+   * (#1365). Required, so the audit row always carries what the route read
+   * (`getClientIp`, which already answers "unknown" when no header names one),
+   * never an empty string standing in for a missing value (#5407).
+   */
+  ipAddress: string;
 }) {
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
@@ -1449,7 +1455,7 @@ export async function declineBookingRequest(input: {
         request.heldBookingId,
         input.adminMemberId,
         "ADMIN",
-        input.ipAddress ?? "",
+        input.ipAddress,
         format,
         "card",
         {
