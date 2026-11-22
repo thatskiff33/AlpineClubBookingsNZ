@@ -35,9 +35,4 @@ if [ "$mem_kb" -lt "$MIN_KB" ]; then
   exit 0
 fi
 
-# Node's default V8 heap limit is about 2 GB whatever the machine has, so on a
-# runner that passes the check above tsc still ran out of heap (22 Nov 2026, an
-# 8 GiB runner, #5214). Give it the runner's memory less 1.5 GiB of headroom
-# for Next's typegen, pnpm and the kernel.
-heap_mb=$((mem_kb / 1024 - 1536))
-NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=${heap_mb}" pnpm run typecheck:src
+pnpm run typecheck:src
