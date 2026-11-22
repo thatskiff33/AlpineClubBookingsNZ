@@ -67,6 +67,8 @@ export function isUntouchedNotRequiredRow(
     row.status === UNTOUCHED_NOT_REQUIRED_ROW.status &&
     row.xeroInvoiceId === UNTOUCHED_NOT_REQUIRED_ROW.xeroInvoiceId &&
     row.manuallyMarkedPaidAt === UNTOUCHED_NOT_REQUIRED_ROW.manuallyMarkedPaidAt &&
+    // A row read without the claim select fails safe: treated as touched.
+    Array.isArray(row.chargeCoverage) &&
     row.chargeCoverage.length === 0
   );
 }

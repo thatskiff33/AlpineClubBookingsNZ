@@ -21,6 +21,8 @@ vi.mock("@/lib/prisma", () => ({
     paymentRecoveryOperation: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
     member: { count: vi.fn(), findMany: vi.fn() },
     memberSubscription: { findMany: vi.fn(), count: vi.fn(), groupBy: vi.fn() },
+    // #5190: the club's liability rule; null reads NOT_CHOSEN.
+    membershipLockoutSettings: { findUnique: vi.fn(async (): Promise<unknown> => null) },
     payment: {
       findMany: vi.fn(),
       count: vi.fn(),
@@ -272,6 +274,124 @@ describe("Admin Subscriptions API", () => {
         },
       })
     );
+  });
+});
+
+// #5190 (owner decision 22 Nov 2026, issue comment 7070827526): a saved
+// NOT_REQUIRED row the billing run will still invoice gets a plain note.
+describe("Admin Subscriptions API: billing note on a saved Not-required row (#5190)", () => {
+  const NOTE = "Marked not required, but the billing run will invoice this member";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRequireAdmin.mockImplementation(async (options) =>
+      (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock(
+        options,
+      )
+    );
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+    vi.mocked(prisma.member.findMany).mockResolvedValue([] as any);
+    vi.mocked(prisma.membershipLockoutSettings.findUnique).mockResolvedValue(null);
+    mockGetXeroContactGroupMemberships.mockResolvedValue({});
+  });
+
+  function seasonRow(opts: {
+    status: string;
+    subscriptionBehavior: string;
+    ageTier: string;
+    chargeCoverage?: unknown[];
+  }) {
+    return {
+      id: "sub-note", memberId: "m-note", seasonYear: 2026, status: opts.status,
+      xeroInvoiceId: null, xeroInvoiceNumber: null, paidAt: null,
+      manuallyMarkedPaidAt: null, manualPaymentNote: null,
+      chargeCoverage: opts.chargeCoverage ?? [],
+      member: {
+        firstName: "Note", lastName: "Shape", email: "note@test.com",
+        ageTier: opts.ageTier, dateOfBirth: null, role: "MEMBER", canLogin: false,
+        passwordChangedAt: null, lastLoginAt: null, passwordResetTokens: [],
+        xeroContactId: null,
+        seasonalMembershipAssignments: [
+          { membershipType: { subscriptionBehavior: opts.subscriptionBehavior } },
+        ],
+      },
+    };
+  }
+
+  async function rowFor(row: ReturnType<typeof seasonRow>) {
+    vi.mocked(prisma.memberSubscription.findMany).mockResolvedValue([row] as any);
+    const res = await getSubscriptions(new NextRequest("http://localhost/api/admin/subscriptions"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    return body.data[0] as { status: string; billingNote: string | null };
+  }
+
+  it("reads the active-claim test with the season rows", async () => {
+    await rowFor(seasonRow({ status: "PAID", subscriptionBehavior: "REQUIRED", ageTier: "ADULT" }));
+    expect(prisma.memberSubscription.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({
+          chargeCoverage: { where: { releasedAt: null }, take: 1, select: { id: true } },
+        }),
+      }),
+    );
+  });
+
+  it("notes an age-based member on a liable tier with a saved NOT_REQUIRED row", async () => {
+    const row = await rowFor(seasonRow({
+      status: "NOT_REQUIRED", subscriptionBehavior: "BASED_ON_AGE_TIER", ageTier: "ADULT",
+    }));
+    expect(row.status).toBe("NOT_REQUIRED");
+    expect(row.billingNote).toBe(NOTE);
+  });
+
+  it("notes a REQUIRED-type member on an exempt tier with a saved NOT_REQUIRED row", async () => {
+    const row = await rowFor(seasonRow({
+      status: "NOT_REQUIRED", subscriptionBehavior: "REQUIRED", ageTier: "CHILD",
+    }));
+    expect(row.billingNote).toBe(NOTE);
+  });
+
+  it("no note for a REQUIRED-type member whose row is not NOT_REQUIRED", async () => {
+    const row = await rowFor(seasonRow({
+      status: "NOT_INVOICED", subscriptionBehavior: "REQUIRED", ageTier: "CHILD",
+    }));
+    expect(row.billingNote).toBeNull();
+  });
+
+  it("no note when a no-invoice fee already covers the row", async () => {
+    const row = await rowFor(seasonRow({
+      status: "NOT_REQUIRED", subscriptionBehavior: "REQUIRED", ageTier: "ADULT",
+      chargeCoverage: [{ id: "claim-1" }],
+    }));
+    expect(row.billingNote).toBeNull();
+  });
+
+  it("no note once a rule is chosen and the member stops owing", async () => {
+    vi.mocked(prisma.membershipLockoutSettings.findUnique).mockResolvedValue({
+      requiredTypeAgeRule: "AGE_TIER_EXEMPTS", liabilityAgeSource: "SEASON_START",
+    } as any);
+    const row = await rowFor(seasonRow({
+      status: "NOT_REQUIRED", subscriptionBehavior: "REQUIRED", ageTier: "CHILD",
+    }));
+    expect(row.status).toBe("NOT_REQUIRED");
+    expect(row.billingNote).toBeNull();
+  });
+
+  it("a member the rule exempts outright carries no note", async () => {
+    vi.mocked(prisma.memberSubscription.findMany).mockResolvedValue([] as any);
+    vi.mocked(prisma.member.findMany).mockResolvedValue([
+      {
+        id: "m-admin", firstName: "Admin", lastName: "User", email: "admin@test.com",
+        ageTier: "ADULT", role: "ADMIN", canLogin: false, passwordChangedAt: null,
+        lastLoginAt: null, passwordResetTokens: [], xeroContactId: null,
+        seasonalMembershipAssignments: [],
+      },
+    ] as any);
+    const res = await getSubscriptions(new NextRequest("http://localhost/api/admin/subscriptions"));
+    const body = await res.json();
+    expect(body.data[0].status).toBe("NOT_REQUIRED");
+    expect(body.data[0].billingNote).toBeNull();
   });
 });
 
