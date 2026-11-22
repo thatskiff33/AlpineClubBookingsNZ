@@ -2992,11 +2992,8 @@ model BookingRequestSettings {
   // RETIRED by #3819: no runtime code reads or writes it. #3416's club-wide
   // switch, replaced by the per-lodge LodgeSettings.schoolHutLeader* kinds; the
   // expand migration 20261114020000 copied its value into every lodge.
-  // `@ignore` (#5396) removes it from the generated client so no query, INSERT
-  // included, names the column (see ClubModuleSettings.multiLodge for why a
-  // select is not enough). No migration: the column stays, with its default,
-  // for the draining colour, and a later contract release drops it together
-  // with this field.
+  // `@ignore`d (#5396) so no query names the column before its contract DROP
+  // (INV-OPS-005); the column keeps its default meanwhile.
   assignSchoolTeachersAsHutLeaders Boolean  @default(false) @ignore
   // Soft link for the phase-7 singleton-to-per-lodge conversion
   // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
@@ -5588,15 +5585,8 @@ model ClubModuleSettings {
   hutLeaders              Boolean  @default(true)
   communications          Boolean  @default(true)
   skifieldConditions      Boolean  @default(true)
-  // RETIRED (ADR-005). No code has set or read it since ADR-005 removed the
-  // module flag. `@ignore` (#5396) removes it from the generated client, so no query
-  // names the column, INSERTs included: a select narrows only SELECT and
-  // RETURNING, and a static @default is still sent in every INSERT's column
-  // list (the #2520 row of docs/BLUE_GREEN_MIGRATION_SAFETY.tsv). It changes no
-  // database state and owes no migration. The field stays only while the column
-  // does; the contract migration that drops it (tracked downstream as
-  // hoppers99/AlpineClubBookingsNZ#139) is old-code compatible only once a
-  // release carrying this `@ignore` is the draining colour.
+  // RETIRED (ADR-005). `@ignore`d (#5396) so no query names the column before
+  // its contract DROP, hoppers99/AlpineClubBookingsNZ#139 (INV-OPS-005).
   multiLodge              Boolean  @default(false) @ignore
   twoFactor               Boolean  @default(false)
   magicLink               Boolean  @default(false)
@@ -7805,12 +7795,8 @@ model NotificationPreference {
   bookingReminder            Boolean  @default(true)
   bookingBumped              Boolean  @default(true)
   bookingCancelled           Boolean  @default(true)
-  // RETIRED. Never offered in the preferences page or API and read by no send
-  // path. `@ignore` (#5396) removes it from the generated client so no query,
-  // INSERT included, names the column (see ClubModuleSettings.multiLodge for
-  // why a select is not enough). No migration: the column keeps its
-  // NOT NULL DEFAULT true, which fills new rows, until a later release's
-  // contract migration drops it together with this field.
+  // RETIRED: never offered or read. `@ignore`d (#5396) so no query names the
+  // column before its contract DROP (INV-OPS-005); its default fills new rows.
   bookingWaitlist            Boolean  @default(true) @ignore
   // #2284 (S2): FYI when a family co-member adds you (or someone you are the
   // login-holding adult for) to a booking. General family behaviour, sent

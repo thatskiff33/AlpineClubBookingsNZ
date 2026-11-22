@@ -105,9 +105,10 @@ export interface SingletonSpec {
   excluded?: Record<string, string>;
   /**
    * Explicit Prisma `select` for reads of this singleton. Only set where a
-   * shared select already exists (e.g. CLUB_MODULE_SETTINGS_COLUMN_SELECT) to
-   * keep a retired-but-not-yet-dropped column out of the generated SQL — see
-   * the doc comment on that constant. Other singletons keep a bare read.
+   * shared select already exists (e.g. CLUB_MODULE_SETTINGS_COLUMN_SELECT). It
+   * keeps a retired column out of the SELECT and a write's RETURNING, not out
+   * of an upsert's INSERT column list (INV-OPS-005). Other singletons keep a
+   * bare read.
    */
   select?: Record<string, boolean>;
   /**

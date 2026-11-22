@@ -11,17 +11,9 @@ import { balancedBrackets } from "./support/balanced-brackets";
 // findUnique/findMany/upsert/create/update has no select, so Prisma names
 // every column the client knows in its SELECT, or in a write's implicit
 // RETURNING (#175). The former multiLodge flag was the trigger
-// (hoppers99/AlpineClubBookingsNZ#139).
-//
-// What the select does NOT do: make dropping a retired column safe during a
-// blue/green deploy. It narrows SELECT and RETURNING only. Prisma still sends
-// every column with a static `@default` in an INSERT's column list, select or
-// not (the #2520 row of docs/BLUE_GREEN_MIGRATION_SAFETY.tsv), so the draining
-// colour's create/upsert would fail once the column is gone. Only marking the
-// field `@ignore` in the release before the DROP makes the drop safe; multiLodge
-// is `@ignore`d from #5396. This guard stays for what the select still
-// protects: reads and RETURNING of any column retired but not yet ignored, and
-// the single-source rule below.
+// (hoppers99/AlpineClubBookingsNZ#139). The select does not reach an INSERT's
+// column list, so it never makes a DROP safe on its own (INV-OPS-005); the
+// guard stays for reads, RETURNING and the single-source rule below.
 //
 // This is a static source scan (rather than only per-call-site unit tests) so
 // a future call site that forgets the select fails CI immediately instead of
