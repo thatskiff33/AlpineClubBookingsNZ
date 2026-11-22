@@ -360,8 +360,8 @@ async function repriceWaitlistCandidate(
  * MERGED. Same-lodge offers behave exactly as before; callers that omit
  * lodgeId get the pre-ADR-004 behaviour against the default lodge.
  *
- * `lapse` (#5410, `INV-CAP-042`) is passed only by `expireStaleOffers`, for the
- * pass that re-offers a lapsed place; every other caller walks the plain order.
+ * `lapse` (#5410, `INV-CAP-042`): passed only by `expireStaleOffers`; others walk
+ * the plain order. `failed`: the transaction failed and was logged (#5410).
  */
 export async function processWaitlistForDates(freedDates: {
   checkIn: Date;
@@ -370,7 +370,7 @@ export async function processWaitlistForDates(freedDates: {
 },
   format: ClubFormat,
   lapse?: WaitlistLapse,
-): Promise<{ offeredBookingId: string | null }> {
+): Promise<{ offeredBookingId: string | null; failed?: true }> {
   let offeredBookingId: string | null = null;
   type OfferDetails = {
     email: string;
@@ -594,8 +594,8 @@ export async function processWaitlistForDates(freedDates: {
       }
     }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
-    logger.error({ err }, "Failed to process waitlist for dates");
-    return { offeredBookingId: null };
+    logger.error({ err, ...freedDates, lapsedBookingId: lapse?.key.id }, "Failed to process waitlist for dates");
+    return { offeredBookingId: null, failed: true };
   }
 
   // Send emails after transaction commits
@@ -1216,7 +1216,7 @@ export async function confirmWaitlistOffer(
 
 /**
  * Expire stale WAITLIST_OFFERED bookings and re-offer to next candidates.
- * `failedReofferCount`: re-offer passes that threw (#5410); the cron surfaces it.
+ * `failedReofferCount`: re-offer passes that failed (#5410); the cron surfaces it.
  */
 export async function expireStaleOffers(format: ClubFormat): Promise<{
   expiredCount: number;
@@ -1340,8 +1340,8 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
   // told whose place lapsed and what else lapsed in this run. The place is at
   // the offered lodge (cross-lodge) or the entry's own, from the pre-revert
   // snapshot (the revert nulled `waitlistOfferedLodgeId` in the database only).
-  // A pass that throws is logged and counted and the rest still run: the reverts
-  // are committed, so a retried sweep would find nothing left to re-offer.
+  // A pass that fails (it throws, or its transaction failed: `failed`) is logged
+  // and counted, and the rest still run; the reverts are already committed.
   const lapses = staleOffers
     .map((offer) => ({ offer, key: { id: offer.id, createdAt: offer.createdAt, offeredLodgeId: offer.waitlistOfferedLodgeId ?? offer.lodgeId } }))
     .sort((a, b) => compareWaitlistJoinOrder(a.key, b.key));
@@ -1350,7 +1350,9 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
   for (const { offer, key } of lapses) {
     const freed = { checkIn: offer.checkIn, checkOut: offer.checkOut, lodgeId: key.offeredLodgeId };
     try {
-      if ((await processWaitlistForDates(freed, format, { key, run })).offeredBookingId) reofferedCount++;
+      const pass = await processWaitlistForDates(freed, format, { key, run });
+      if (pass.offeredBookingId) reofferedCount++;
+      if (pass.failed) failedReofferCount++;
     } catch (err) {
       failedReofferCount++;
       logger.error({ err, bookingId: offer.id, lodgeId: key.offeredLodgeId }, "Failed to re-offer a lapsed waitlist place; continuing with the next");

@@ -58,20 +58,22 @@ export type WaitlistProcessorCronResult =
       reason: string;
     };
 
+/** What the expiry sweeps of every attempt in one cron run did (#5410). */
+type ReofferTally = { failedReoffers: number; expiredOffers: number; newOffers: number };
+
 /**
- * #5410: after a sweep whose other work committed, some lapsed places could not
- * be re-offered (each failure is logged with its booking and lodge). Never
- * retried, since a retry finds nothing left to re-offer: those places wait for
- * the next offer pass that covers their nights.
+ * #5410: some lapsed places could not be re-offered (each failure is logged
+ * with its booking and lodge). Thrown by `processWaitlistCron` after its retry
+ * loop, so it is never retried: a retry would find nothing left to re-offer, and
+ * those places wait for the next offer pass that covers their nights.
  */
 class WaitlistReofferFailedError extends Error {
-  constructor(
-    readonly failedReofferCount: number,
-    readonly completed: { expiredOffers: number; newOffers: number; autoCancelled: number },
-  ) {
+  constructor(tally: ReofferTally, autoCancelled: number) {
     super(
-      `${failedReofferCount} waitlist re-offer pass(es) failed after their offers lapsed; ` +
-        "those places were not offered on. The rest of the run completed.",
+      `${tally.failedReoffers} waitlist re-offer pass(es) failed after their offers lapsed; ` +
+        "those places were not offered on. The rest of the run completed: " +
+        `${tally.expiredOffers} offer(s) expired, ${tally.newOffers} new offer(s), ` +
+        `${autoCancelled} past-date booking(s) cancelled.`,
     );
     this.name = "WaitlistReofferFailedError";
   }
@@ -90,7 +92,7 @@ function isTransactionStartFailure(error: unknown) {
   );
 }
 
-async function processWaitlistCronOnce(): Promise<{
+async function processWaitlistCronOnce(tally: ReofferTally): Promise<{
   expiredOffers: number;
   newOffers: number;
   autoCancelled: number;
@@ -101,6 +103,11 @@ async function processWaitlistCronOnce(): Promise<{
 
   // 1. Expire stale offers and re-offer
   const { expiredCount, reofferedCount, failedReofferCount } = await expireStaleOffers(format);
+  // Recorded before step 2, so a retryable failure later in this attempt cannot
+  // lose it (#5410).
+  tally.failedReoffers += failedReofferCount;
+  tally.expiredOffers += expiredCount;
+  tally.newOffers += reofferedCount;
 
   // 2. Auto-cancel waitlisted bookings where all dates are in the past.
   // checkOut is @db.Date (the NZ calendar date stored at UTC midnight), so
@@ -182,18 +189,6 @@ async function processWaitlistCronOnce(): Promise<{
     );
   }
 
-  // #5410: a re-offer pass that threw was logged and skipped so the others still
-  // ran. Fail the run once step 2 has also run, so the cron record and the error
-  // report show it. The message never matches `isTransactionStartFailure`: a
-  // retry would find the reverted offers already WAITLISTED and re-offer nothing.
-  if (failedReofferCount > 0) {
-    throw new WaitlistReofferFailedError(failedReofferCount, {
-      expiredOffers: expiredCount,
-      newOffers: reofferedCount,
-      autoCancelled: pastWaitlisted.length,
-    });
-  }
-
   return {
     expiredOffers: expiredCount,
     newOffers: reofferedCount,
@@ -216,10 +211,15 @@ export async function processWaitlistCron(): Promise<{
 }> {
   const maxAttempts = getWaitlistTransactionRetryAttempts();
   const delayMs = getWaitlistTransactionRetryDelayMs();
+  // #5410: summed across attempts, and judged only after the loop, so a failed
+  // re-offer in an attempt that is later retried still fails the run, and that
+  // failure is never itself retried.
+  const tally: ReofferTally = { failedReoffers: 0, expiredOffers: 0, newOffers: 0 };
+  let result: Awaited<ReturnType<typeof processWaitlistCronOnce>> | undefined;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+  for (let attempt = 1; attempt <= maxAttempts && result === undefined; attempt += 1) {
     try {
-      return await processWaitlistCronOnce();
+      result = await processWaitlistCronOnce(tally);
     } catch (error) {
       if (!isTransactionStartFailure(error) || attempt >= maxAttempts) {
         throw error;
@@ -236,7 +236,11 @@ export async function processWaitlistCron(): Promise<{
     }
   }
 
-  return processWaitlistCronOnce();
+  result ??= await processWaitlistCronOnce(tally);
+  if (tally.failedReoffers > 0) {
+    throw new WaitlistReofferFailedError(tally, result.autoCancelled);
+  }
+  return result;
 }
 
 export async function runWaitlistProcessorCron(

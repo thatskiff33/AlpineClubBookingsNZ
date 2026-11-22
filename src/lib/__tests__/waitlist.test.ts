@@ -925,7 +925,8 @@ describe("processWaitlistForDates", () => {
     // stored snapshot": it fails the sweep's transaction, no offer issues for
     // these dates, and the outer catch logs the invariant by name. That is the
     // documented contract (docs/guides/waitlist.md -> Troubleshooting).
-    expect(result).toEqual({ offeredBookingId: null });
+    // `failed` since #5410, so the expiry sweep can count a pass like this one.
+    expect(result).toEqual({ offeredBookingId: null, failed: true });
     expect(sendWaitlistOfferEmail).not.toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1997,7 +1998,7 @@ describe("a lapsed offer's place goes on down the queue (#5410, INV-CAP-042)", (
       mockBookingFindMany.mockResolvedValue([]); // step 2: no past-date entries
 
       await expect(processWaitlistCron()).rejects.toThrow(
-        /^1 waitlist re-offer pass\(es\) failed after their offers lapsed/,
+        /^1 waitlist re-offer pass\(es\) failed after their offers lapsed.*: 3 offer\(s\) expired, 2 new offer\(s\), 0 past-date booking\(s\) cancelled\.$/,
       );
       // Step 2 still ran, after the sweep.
       expect(mockBookingFindMany).toHaveBeenCalledWith(
@@ -2011,6 +2012,66 @@ describe("a lapsed offer's place goes on down the queue (#5410, INV-CAP-042)", (
       expect(offerReads).toHaveLength(1);
       expect(mockPrismaTransaction).toHaveBeenCalledTimes(3);
       expect(offeredIds()).toEqual(["next-1", "next-3"]);
+    });
+
+    it("still fails the cron run when the attempt that counted it is retried and the retry succeeds", async () => {
+      const originalDelay = process.env.WAITLIST_TRANSACTION_RETRY_DELAY_MS;
+      process.env.WAITLIST_TRANSACTION_RETRY_DELAY_MS = "0";
+      try {
+        const { processWaitlistCron } = await import("@/lib/cron-waitlist");
+        // Attempt 1: one lapse, whose pass throws before its transaction
+        // (time-zone read 1); step 2 then reads the zone (read 2), finds one
+        // past-date entry and fails to start its transaction.
+        mockTxBookingFindMany
+          .mockResolvedValueOnce([lapsedOffer("l1", "2026-05-01", nightsOf(1))])
+          .mockResolvedValueOnce([]) // the expiry email's position read
+          .mockResolvedValue([]); // attempt 2: nothing stale
+        zoneReadFault.failOn = 1;
+        mockBookingFindMany.mockResolvedValueOnce([{ id: "old1" }]).mockResolvedValue([]);
+        mockPrismaTransaction
+          .mockImplementationOnce(async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx))
+          .mockRejectedValueOnce(
+            new Error("Transaction API error: Unable to start a transaction in the given time."),
+          );
+
+        await expect(processWaitlistCron()).rejects.toThrow(
+          /^1 waitlist re-offer pass\(es\) failed after their offers lapsed.*: 1 offer\(s\) expired, 0 new offer\(s\), 0 past-date booking\(s\) cancelled\.$/,
+        );
+        // Attempt 2 ran: two stale-offer reads, the second finding nothing.
+        const offerReads = mockTxBookingFindMany.mock.calls.filter(
+          ([args]) => (args as { where?: { status?: string } }).where?.status === "WAITLIST_OFFERED",
+        );
+        expect(offerReads).toHaveLength(2);
+      } finally {
+        if (originalDelay === undefined) delete process.env.WAITLIST_TRANSACTION_RETRY_DELAY_MS;
+        else process.env.WAITLIST_TRANSACTION_RETRY_DELAY_MS = originalDelay;
+      }
+    });
+
+    it("counts a pass whose own transaction failed, and still runs the rest", async () => {
+      const { expireStaleOffers } = await import("@/lib/waitlist");
+      const logger = (await import("@/lib/logger")).default;
+      mockTxBookingFindMany
+        .mockResolvedValueOnce([
+          lapsedOffer("l1", "2026-05-01", nightsOf(1)),
+          lapsedOffer("l2", "2026-05-02", nightsOf(10)),
+        ])
+        .mockResolvedValueOnce([]) // the expiry emails' position read
+        .mockResolvedValueOnce([queued("next-2", "2026-05-12", nightsOf(10))]) // l2's pass
+        .mockResolvedValue([]);
+      // The revert runs; l1's pass transaction fails inside; l2's runs.
+      mockPrismaTransaction
+        .mockImplementationOnce(async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx))
+        .mockRejectedValueOnce(new Error("Transaction already closed: timeout"));
+
+      const result = await expireStaleOffers(CLUB_FORMAT_TEST);
+
+      expect(result).toEqual({ expiredCount: 2, reofferedCount: 1, failedReofferCount: 1 });
+      expect(offeredIds()).toEqual(["next-2"]);
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ lapsedBookingId: "l1", checkIn: nightsOf(1).checkIn }),
+        "Failed to process waitlist for dates",
+      );
     });
   });
 
