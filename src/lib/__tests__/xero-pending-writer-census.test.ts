@@ -106,11 +106,11 @@ const UNREAD_COMPLETIONS: Readonly<Record<string, { writes: number; why: string 
   },
   "src/lib/xero-contact-create-recovery.ts": {
     writes: 1,
-    why: "completeMemberContactOperation passes on its caller's completion; its one caller (xero-contact-groups.ts) spells one with no status, so SUCCEEDED",
+    why: "completeMemberContactOperation, the one completer for a member's contact since #5394, passes on its caller's completion; its three callers (xero-contact-groups.ts, xero-bulk-contact-sync.ts and updateXeroContact in xero-contacts.ts) each build one with no status, so SUCCEEDED",
   },
   "src/lib/xero-contacts.ts": {
-    writes: 4,
-    why: "contact completions built in this file, and the wrapper completeMemberContactUpdateOperation passing on its callers' (this file and xero-bulk-contact-sync.ts); none names a status, so SUCCEEDED",
+    writes: 3,
+    why: "contact completions built in this file and handed over as a variable: the resolver's stored completionInput, the create's completionInput and an update with no member; none names a status (the file has no status key), so SUCCEEDED",
   },
   "src/lib/xero-credit-notes.ts": {
     writes: 1,
