@@ -10,6 +10,7 @@ import {
 } from "@/lib/mcp/catalogue";
 import {
   classifyMcpRoute,
+  MCP_EXACT_EXCLUDED_ROUTES,
   MCP_NOT_YET_TASKS,
   MCP_PERMANENT_EXCLUSION_REASONS,
   mcpPermanentExclusion,
@@ -371,6 +372,17 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     expect(mcpPermanentExclusion("src/app/api/club-posts/images/route.ts", "POST")).toBe("needs-browser");
     // Exact, not a prefix: a new route beside an officer one is undecided.
     expect(officer("calendar/events/[id]/attendees", "GET")).toEqual({ kind: "unclassified" });
+  });
+
+  it("names only route methods that exist in every exact exclusion (ALP-796 review)", () => {
+    // `METHOD /api/path` → the route file's key; a stale entry would excuse a
+    // route that is gone, or hide a typo that leaves the real one undecided.
+    expect(MCP_EXACT_EXCLUDED_ROUTES).toContain("POST /api/calendar/events");
+    const stale = MCP_EXACT_EXCLUDED_ROUTES.filter((route) => {
+      const [method, path] = route.split(" ");
+      return !routeKeys.has(stepUpRouteKey(`src/app${path}/route.ts`, method));
+    });
+    expect(stale).toEqual([]);
   });
 
   it("keeps the lodge door codes website-only for good", () => {

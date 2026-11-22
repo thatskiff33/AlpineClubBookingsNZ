@@ -222,6 +222,16 @@ const OFFICER_NOT_YET_ROUTES: Readonly<Partial<Record<AdminPermissionArea, reado
   ],
 };
 
+/**
+ * Every exact `METHOD /api/path` an exclusion names, permanent or officer
+ * not-yet. The census checks each against a real route file and method, so an
+ * entry left behind by a moved or deleted route fails instead of lingering.
+ */
+export const MCP_EXACT_EXCLUDED_ROUTES: readonly string[] = [
+  ...PERMANENT_ROUTES.flatMap((rule) => rule.routes),
+  ...Object.values(OFFICER_NOT_YET_ROUTES).flatMap((routes) => routes ?? []),
+];
+
 function underPrefix(path: string, prefix: string): boolean {
   return path === prefix || path.startsWith(`${prefix}/`);
 }
