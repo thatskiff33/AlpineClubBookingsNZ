@@ -174,13 +174,6 @@ const directJsonReadAllowlist: Record<
       "src/app/api/notifications/preferences/route.ts",
     ],
   },
-  sizeCeiling: {
-    reason:
-      "The conversion is exact but adds two lines to a file over its size ceiling, which needs a size allowance carrying a pull request number. It converts with that allowance.",
-    routes: [
-      "src/app/api/admin/subscription-billing/route.ts",
-    ],
-  },
 };
 
 // Shared cross-file wrappers that perform requireAdmin internally. Keep this
