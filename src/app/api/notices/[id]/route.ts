@@ -3,10 +3,9 @@ import { NextResponse } from "next/server";
 import { hasAccessRole } from "@/lib/access-roles";
 import { MEMBER_NOTICE_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 import { projectForConnection } from "@/lib/connection-projection";
-import { htmlToPlainText } from "@/lib/email-text";
 import { mcpModuleOffResponse } from "@/lib/mcp/http";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { getNoticeForMember } from "@/lib/notices";
+import { getNoticeForMember, memberNoticeAsText } from "@/lib/notices";
 import { noticeIdParamsSchema } from "@/lib/notices-shared";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { requireActiveSession } from "@/lib/session-guards";
@@ -56,11 +55,7 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const { bodyHtml, ...rest } = notice;
   return NextResponse.json(
-    projectForConnection(
-      { notice: { ...rest, body: htmlToPlainText(bodyHtml) } },
-      MEMBER_NOTICE_CONNECTION_SHAPE,
-    ),
+    projectForConnection({ notice: memberNoticeAsText(notice) }, MEMBER_NOTICE_CONNECTION_SHAPE),
   );
 }

@@ -47,7 +47,7 @@ import {
   SUBSCRIPTION_STATUS_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes";
 import { memberAuditLogQuerySchema } from "@/lib/member-audit-log-query";
-import { memberNotificationPreferencesUpdateSchema } from "@/lib/member-notification-preferences";
+import { memberNotificationPreferencesConnectionUpdateSchema } from "@/lib/member-notification-preferences";
 import { memberProfileUpdateSchema } from "@/lib/member-profile-update-schema";
 import { noticeIdParamsSchema } from "@/lib/notices-shared";
 import type { StepUpHttpMethod } from "@/lib/step-up-routes";
@@ -275,10 +275,10 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     id: "update_my_notification_preferences",
     title: "Change my email preferences",
     summary:
-      "Turns emails from the club on (`true`) or off (`false`) for the signed-in member. Only the preferences sent change. Answers with all of them.",
+      "Turns emails from the club on (`true`) or off (`false`) for the signed-in member. Only the preferences sent change. Answers with all of them. Marketing email can only be turned off here: the member turns it on themselves on the website.",
     method: "PUT",
     path: "/api/notifications/preferences",
-    body: memberNotificationPreferencesUpdateSchema,
+    body: memberNotificationPreferencesConnectionUpdateSchema,
     kind: "write",
     returns: MEMBER_NOTIFICATION_PREFERENCES_CONNECTION_SHAPE,
     core: false,

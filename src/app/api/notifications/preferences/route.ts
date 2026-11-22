@@ -6,10 +6,11 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
-import { connectionJson } from "@/lib/mcp-connection-request";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 import { MEMBER_NOTIFICATION_PREFERENCES_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 import {
   MEMBER_NOTIFICATION_PREFERENCE_KEYS,
+  memberNotificationPreferencesConnectionUpdateSchema,
   memberNotificationPreferencesUpdateSchema,
   resolveMemberNotificationPreferences,
 } from "@/lib/member-notification-preferences";
@@ -59,7 +60,10 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const parsed = memberNotificationPreferencesUpdateSchema.safeParse(body);
+  const schema = arrivesAsMcpConnection(request)
+    ? memberNotificationPreferencesConnectionUpdateSchema
+    : memberNotificationPreferencesUpdateSchema;
+  const parsed = schema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },

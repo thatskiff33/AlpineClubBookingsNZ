@@ -30,7 +30,7 @@ import {
   type MemberNotificationPreferences,
 } from "@/lib/member-notification-preferences";
 import type { MemberBookingSummary, MemberProfileSummary } from "@/lib/member-self-read";
-import type { MemberNoticeView } from "@/lib/notices";
+import type { MemberNoticeTextView } from "@/lib/notices";
 import type { AgeTierSettingData } from "@/lib/policies/age-tier";
 import type { WhakapapaCurlData } from "@/lib/whakapapa-report";
 
@@ -117,10 +117,11 @@ const MEMBER_PROFILE_SHAPE = completeConnectionShapeFor<MemberProfileSummary>({
 
 export const MEMBER_PROFILE_CONNECTION_SHAPE: ConnectionShape = { profile: MEMBER_PROFILE_SHAPE };
 
-const MEMBER_NOTICE_SHAPE = completeConnectionShapeFor<MemberNoticeView>({
+/** One notice, its body as plain text (`memberNoticeAsText`), for `list_notices` and `get_notice` alike. */
+const MEMBER_NOTICE_SHAPE = completeConnectionShapeFor<MemberNoticeTextView>({
   id: true,
   title: true,
-  bodyHtml: true,
+  body: true,
   publishedAt: true,
   expiresAt: true,
   pinned: true,
@@ -213,46 +214,16 @@ export const MEMBER_NOTIFICATION_PREFERENCES_CONNECTION_SHAPE = connectionShapeF
 );
 
 /**
- * What a profile save sends back: the `get_my_profile` fields it holds, never
- * the sign-in, role, Xero or date-of-birth columns the route reads to decide.
+ * What a profile save sends back: the `get_my_profile` fields, never the
+ * sign-in, role, Xero or date-of-birth columns the route reads to decide.
+ * Two-step sign-in is not on the saved row, so it is the one field left out.
  */
-export const MEMBER_PROFILE_UPDATE_CONNECTION_SHAPE = connectionShapeFor<MemberProfileSummary>({
-  id: true,
-  firstName: true,
-  lastName: true,
-  email: true,
-  phoneCountryCode: true,
-  phoneAreaCode: true,
-  phoneNumber: true,
-  streetAddressLine1: true,
-  streetAddressLine2: true,
-  streetCity: true,
-  streetRegion: true,
-  streetPostalCode: true,
-  streetCountry: true,
-  ageTier: true,
-});
+const { twoFactorEnabled: _notOnTheSavedRow, ...MEMBER_PROFILE_SAVED_SHAPE } = MEMBER_PROFILE_SHAPE;
+export const MEMBER_PROFILE_UPDATE_CONNECTION_SHAPE: ConnectionShape = MEMBER_PROFILE_SAVED_SHAPE;
 
 export const NOTICE_READ_CONNECTION_SHAPE = connectionShapeFor<{ ok: boolean }>({ ok: true });
 
-/** One notice with its body as plain text, so no markup reaches the app. */
-export type MemberNoticeTextView = Omit<MemberNoticeView, "bodyHtml"> & { body: string };
-
-export const MEMBER_NOTICE_CONNECTION_SHAPE = connectionShapeFor<{ notice: MemberNoticeTextView }>({
-  notice: {
-    id: true,
-    title: true,
-    body: true,
-    publishedAt: true,
-    expiresAt: true,
-    pinned: true,
-    requiresAcknowledgement: true,
-    read: true,
-    readAt: true,
-    acknowledged: true,
-    acknowledgedAt: true,
-  },
-});
+export const MEMBER_NOTICE_CONNECTION_SHAPE: ConnectionShape = { notice: MEMBER_NOTICE_SHAPE };
 
 /** The member's own timeline: when, what kind and what happened. No request details or metadata. */
 export const MEMBER_ACCOUNT_ACTIVITY_CONNECTION_SHAPE = connectionShapeFor<AuditTimelineResponse>({

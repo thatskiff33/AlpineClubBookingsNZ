@@ -34,6 +34,14 @@ export const memberNotificationPreferencesUpdateSchema = z.object(
   ) as Record<MemberNotificationPreferenceKey, z.ZodOptional<z.ZodBoolean>>,
 );
 
+/**
+ * The same body as an AI app connection may send it (ALP-718): marketing
+ * email is an opt-in consent (`INV-PRIV-026`), which the member gives on the
+ * website, so a connection may turn it off but never on.
+ */
+export const memberNotificationPreferencesConnectionUpdateSchema =
+  memberNotificationPreferencesUpdateSchema.extend({ marketingEmails: z.literal(false).optional() });
+
 export function resolveMemberNotificationPreferences(
   preferences?: Partial<MemberNotificationPreferences> | null
 ): MemberNotificationPreferences {

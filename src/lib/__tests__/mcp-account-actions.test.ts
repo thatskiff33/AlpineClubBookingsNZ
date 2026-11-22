@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
   getNoticeForMember: vi.fn(),
+  listNoticesForMember: vi.fn(),
   buildMemberLodgeRoster: vi.fn(),
   modules: vi.fn(),
   prisma: {
@@ -40,7 +41,12 @@ vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: vi.fn(async () => null),
   rateLimiters: { api: { id: "api" } },
 }));
-vi.mock("@/lib/notices", () => ({ getNoticeForMember: h.getNoticeForMember }));
+vi.mock("@/lib/notices", async (importOriginal) => ({
+  // The real markup rule: both notice actions strip it the same way.
+  memberNoticeAsText: ((await importOriginal()) as typeof import("@/lib/notices")).memberNoticeAsText,
+  getNoticeForMember: h.getNoticeForMember,
+  listNoticesForMember: h.listNoticesForMember,
+}));
 vi.mock("@/lib/member-lodge-roster", () => ({ buildMemberLodgeRoster: h.buildMemberLodgeRoster }));
 vi.mock("@/lib/club-format-server", () => ({
   clubFormatValues: vi.fn(async () => ({ dateFormat: "DMY", currency: "NZD", locale: "en-NZ" })),
@@ -61,12 +67,14 @@ vi.mock("@/lib/member-fields-settings", () => ({
 
 import { GET as getRoster } from "@/app/api/lodge-roster/route";
 import { GET as getAuditLog } from "@/app/api/member/audit-log/route";
+import { GET as listNotices } from "@/app/api/notices/route";
 import { GET as getNotice } from "@/app/api/notices/[id]/route";
 import { POST as markNoticeRead } from "@/app/api/notices/[id]/read/route";
 import { GET as getPrefs, PUT as putPrefs } from "@/app/api/notifications/preferences/route";
 import { PUT as putProfile } from "@/app/api/profile/route";
 import { expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
 import { lodgeSession } from "@/lib/__tests__/helpers/sessions";
+import { findMcpAction, mcpActionInputSchema } from "@/lib/mcp/catalogue";
 import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
 
 /** Every key anywhere in a JSON value. */
@@ -121,16 +129,46 @@ describe("get_my_notification_preferences and update_my_notification_preferences
 
   it("changes only the preferences sent, for the member themselves", async () => {
     h.prisma.notificationPreference.findUnique.mockResolvedValue(PREFS_ROW);
-    h.prisma.notificationPreference.upsert.mockResolvedValue({ ...PREFS_ROW, marketingEmails: true });
+    h.prisma.notificationPreference.upsert.mockResolvedValue({ ...PREFS_ROW, clubNotices: false });
     const { connection } = await expectActionContract({
       actionId: "update_my_notification_preferences",
       handler: putPrefs,
-      args: { marketingEmails: true },
+      args: { clubNotices: false, marketingEmails: false },
     });
-    expect(connection).toMatchObject({ marketingEmails: true, bookingReminder: false });
+    expect(connection).toMatchObject({ clubNotices: false, bookingReminder: false });
     const upsert = h.prisma.notificationPreference.upsert.mock.calls[0][0];
     expect(upsert.where).toEqual({ memberId: "officer-1" });
-    expect(upsert.update).toEqual({ marketingEmails: true });
+    expect(upsert.update).toEqual({ clubNotices: false, marketingEmails: false });
+  });
+
+  it("never lets a connection opt the member in to marketing email (INV-PRIV-026)", async () => {
+    h.prisma.notificationPreference.findUnique.mockResolvedValue(PREFS_ROW);
+    const action = findMcpAction("update_my_notification_preferences")!;
+    expect(mcpActionInputSchema(action).safeParse({ marketingEmails: true }).success).toBe(false);
+    // And the route refuses it from a connection, should anything else send it.
+    const res = await putPrefs(
+      new Request("https://club.example.test/api/notifications/preferences", {
+        method: "PUT",
+        headers: { "content-type": "application/json", [MCP_PRINCIPAL_HEADER]: "p" },
+        body: JSON.stringify({ marketingEmails: true }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(h.prisma.notificationPreference.upsert).not.toHaveBeenCalled();
+  });
+
+  it("keeps the website's marketing opt-in", async () => {
+    h.prisma.notificationPreference.findUnique.mockResolvedValue(PREFS_ROW);
+    h.prisma.notificationPreference.upsert.mockResolvedValue({ ...PREFS_ROW, marketingEmails: true });
+    const res = await putPrefs(
+      new Request("https://club.example.test/api/notifications/preferences", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ marketingEmails: true }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(h.prisma.notificationPreference.upsert.mock.calls[0][0].update).toEqual({ marketingEmails: true });
   });
 });
 
@@ -240,7 +278,7 @@ describe("update_my_profile", () => {
   });
 });
 
-describe("get_notice and mark_notice_read", () => {
+describe("list_notices, get_notice and mark_notice_read", () => {
   const notice = {
     id: "notice-1",
     title: "Working bee",
@@ -255,16 +293,33 @@ describe("get_notice and mark_notice_read", () => {
     acknowledgedAt: null,
   };
 
+  const { bodyHtml: _html, ...noticeFields } = notice;
+  const noticeAsText = { ...noticeFields, body: "Bring gloves." };
+
   it("answers with one notice the member can see, its body as plain text", async () => {
     h.getNoticeForMember.mockResolvedValue(notice);
-    const { connection } = await expectActionContract({
+    const { connection, browser } = await expectActionContract({
       actionId: "get_notice",
       handler: getNotice,
       args: { id: "notice-1" },
     });
-    expect(connection).toMatchObject({ notice: { id: "notice-1", body: "Bring gloves." } });
-    expect(JSON.stringify(connection)).not.toContain("<");
+    expect(connection).toEqual({ notice: noticeAsText });
+    expect(browser).toEqual({ notice: noticeAsText });
     expect(h.getNoticeForMember).toHaveBeenCalledWith("officer-1", "notice-1");
+  });
+
+  it("lists the member's notices with the same plain-text bodies as get_notice", async () => {
+    h.listNoticesForMember.mockResolvedValue([notice]);
+    const { connection, browser } = await expectActionContract({ actionId: "list_notices", handler: listNotices });
+    expect(connection).toEqual({ notices: [noticeAsText] });
+    expect(browser).toEqual({ notices: [noticeAsText] });
+  });
+
+  it("lists nothing for a kiosk-only account", async () => {
+    h.auth.mockResolvedValue(lodgeSession());
+    const res = await listNotices();
+    expect(res.status).toBe(404);
+    expect(h.listNoticesForMember).not.toHaveBeenCalled();
   });
 
   it("answers a notice outside the member's audience as not found", async () => {
