@@ -96,6 +96,14 @@ export function isSingletonUpsertContention(error: unknown): boolean {
   );
 }
 
+/**
+ * Any object whose `code` is `P2002`, recognised by shape rather than class, so
+ * a test double or an error that crossed a module boundary still counts. A
+ * site asking `instanceof Prisma.PrismaClientKnownRequestError` is narrower and
+ * stays as it is: moving it here would widen what it catches (#5407 item 6). A
+ * site that must know which constraint collided reads
+ * `describeUniqueConstraintTarget` below.
+ */
 export function isPrismaUniqueConstraintError(error: unknown) {
   return hasPrismaErrorCode(error, "P2002");
 }
