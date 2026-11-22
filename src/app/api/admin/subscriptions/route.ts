@@ -1,10 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  Prisma,
-  type AgeTier,
-  type MembershipTypeSubscriptionBehavior,
-  type SubscriptionStatus,
-} from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
@@ -17,18 +12,12 @@ import {
   getXeroContactIdsForGroup,
 } from "@/lib/xero-contact-groups";
 import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
-import type { SubscriptionLiabilitySettings } from "@/lib/policies/subscription";
-import type { AgeTierSettingData } from "@/lib/age-tier";
 import { subscriptionNotRequiredMemberConditions } from "@/lib/subscription-liability-where";
+import { SEASON_ROW_STATE_SELECT } from "@/lib/subscription-season-row-note";
 import {
-  notRequiredRowBillingNote,
-  SEASON_ROW_STATE_SELECT,
-  type SeasonRowState,
-} from "@/lib/subscription-season-row-note";
-import {
-  effectiveSubscriptionBehavior,
-  isSubscriptionNotRequiredForMembershipType,
-} from "@/lib/membership-types";
+  isSubscriptionsListMemberNotRequired,
+  subscriptionsListBillingNote,
+} from "@/lib/subscriptions-list-liability";
 import { serializeSubscriptionMemberLoginStage } from "@/lib/subscription-member-login-stage";
 import { adminListPageQueryFields } from "@/lib/admin-list-page";
 
@@ -97,65 +86,6 @@ type SubscriptionCandidate = {
     }>;
   };
 };
-
-function isNotRequiredMember(
-  member: {
-    role: string;
-    ageTier: AgeTier;
-    dateOfBirth: Date | null;
-    seasonalMembershipAssignments?: Array<{
-      membershipType: { subscriptionBehavior: MembershipTypeSubscriptionBehavior };
-    }>;
-  },
-  rule: {
-    seasonYear: number;
-    ageTierSettings: AgeTierSettingData[];
-    liabilitySettings: SubscriptionLiabilitySettings;
-  },
-  seasonSubscriptionStatus?: SubscriptionStatus
-) {
-  // #2149/#5190: membership type is the sole authority (role carries no
-  // exemption), through the shared liability rule on the lists' side (billing
-  // until the club chooses, #5190 Q2), so this admin list agrees with the
-  // members list and export.
-  return isSubscriptionNotRequiredForMembershipType({
-    subscriptionBehavior: effectiveSubscriptionBehavior(
-      member.seasonalMembershipAssignments?.[0]?.membershipType
-        .subscriptionBehavior,
-      member.role
-    ),
-    member,
-    seasonRowStatus: seasonSubscriptionStatus,
-    ...rule,
-  });
-}
-
-/**
- * #5190 (owner decision 22 Nov 2026): the row note for a saved "Not required"
- * season row whose member billing treats as owing, from the shared rule on the
- * lists' side, as the members list and export compute it.
- */
-function subscriptionBillingNote(
-  subscription: SeasonRowState & {
-    member: Parameters<typeof isNotRequiredMember>[0] & {
-      active: boolean;
-      archivedAt: Date | null;
-    };
-  },
-  rule: Parameters<typeof isNotRequiredMember>[1],
-) {
-  const { member } = subscription;
-  return notRequiredRowBillingNote({
-    subscriptionBehavior: effectiveSubscriptionBehavior(
-      member.seasonalMembershipAssignments?.[0]?.membershipType
-        .subscriptionBehavior,
-      member.role
-    ),
-    member,
-    seasonRow: subscription,
-    ...rule,
-  });
-}
 
 function compareValues(left: string | number | Date | null, right: string | number | Date | null) {
   const normalizedLeft = left instanceof Date ? left.getTime() : left ?? "";
@@ -343,7 +273,7 @@ export async function GET(request: NextRequest) {
 
     const candidatesByMemberId = new Map<string, SubscriptionCandidate>();
     for (const subscription of subscriptions) {
-      const displayStatus = isNotRequiredMember(
+      const displayStatus = isSubscriptionsListMemberNotRequired(
         subscription.member,
         liabilityRule,
         subscription.status
@@ -360,7 +290,7 @@ export async function GET(request: NextRequest) {
         paidAt: subscription.paidAt,
         manuallyMarkedPaidAt: subscription.manuallyMarkedPaidAt,
         manualPaymentNote: subscription.manualPaymentNote,
-        billingNote: subscriptionBillingNote(subscription, liabilityRule),
+        billingNote: subscriptionsListBillingNote(subscription, liabilityRule),
         xeroContactGroupsLoaded: true,
         xeroContactGroups: [],
         member: serializeSubscriptionMemberLoginStage(subscription.member),

@@ -1149,11 +1149,9 @@ export async function saveSeasonalMembershipAssignment(params: {
     // "Not Required" while the booking gate treats it as owing. Idempotent and
     // status-guarded (never touches a paid/invoiced/covered/manual row), it runs
     // in this transaction so the row flips atomically with the assignment and
-    // makes no provider calls. While the club's liability rule is NOT_CHOSEN
-    // only a REQUIRED type flips the row; once chosen, the rule decides for a
-    // REQUIRED or BASED_ON_AGE_TIER type (#5190). A NOT_REQUIRED type is never
-    // flipped. It takes the liability-rule key shared, last, and never the
-    // billing season key, so this transaction never waits on a billing confirm.
+    // makes no provider calls. #5190: the liability rule decides (REQUIRED only
+    // while NOT_CHOSEN); it takes the rule key shared, last, never the billing
+    // season key, so this transaction never waits on a billing confirm.
     await reconcileSeasonSubscriptionForAssignment(tx, {
       memberId: params.memberId,
       seasonYear: params.seasonYear,
@@ -1835,11 +1833,8 @@ export async function rollForwardSeasonalMembershipAssignments(params: {
             // #2149 F1: a REQUIRED type copied into the CURRENT season supersedes
             // any stale creation-seeded NOT_REQUIRED row, exactly as the single
             // save path does. Idempotent + status-guarded; keyed off the copied
-            // type's behaviour and the club's liability rule (#5190: while
-            // NOT_CHOSEN only a REQUIRED type flips the row; once chosen the
-            // rule decides). It takes the liability-rule key shared, after this
-            // chunk's lock(1), lodge and member keys, and never the billing
-            // season key, so the chunk never waits on a billing confirm.
+            // type's behaviour and the liability rule (#5190); rule key shared,
+            // last, never the season key, so no wait on a billing confirm.
             for (const [memberId, subscriptionBehavior] of behaviorByMemberId) {
               await reconcileSeasonSubscriptionForAssignment(tx, {
                 memberId,

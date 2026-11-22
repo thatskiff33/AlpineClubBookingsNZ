@@ -10,6 +10,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { StatusChip } from "@/components/ui/status-chip"
 import { AdminDataTable } from "@/components/admin/admin-data-table"
 import { SortHeader } from "@/components/admin/sort-header"
+import { SubscriptionBillingNote } from "@/components/admin/subscription-billing-note"
 import {
   TableBody,
   TableCell,
@@ -356,9 +357,7 @@ export function MemberTable({
               <TableCell>
                 {member.subscriptionXeroInvoiceId ? (
                   <a
-                    href={buildXeroInvoiceUrl(member.subscriptionXeroInvoiceId, {
-                      shortCode: xeroOrgShortCode,
-                    })}
+                    href={buildXeroInvoiceUrl(member.subscriptionXeroInvoiceId, { shortCode: xeroOrgShortCode })}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1"
@@ -369,11 +368,7 @@ export function MemberTable({
                 ) : (
                   subscriptionChip
                 )}
-                {member.subscriptionBillingNote ? (
-                  <p className="mt-1 max-w-[16rem] text-xs text-warning-11">
-                    {member.subscriptionBillingNote}
-                  </p>
-                ) : null}
+                <SubscriptionBillingNote note={member.subscriptionBillingNote} />
               </TableCell>
               <TableCell>
                 <div className="space-y-1">

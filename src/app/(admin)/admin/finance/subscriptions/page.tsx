@@ -40,6 +40,7 @@ import {
 import { Alert } from "@/components/ui/alert";
 import { MemberLoginStageChip } from "@/components/admin/member-login-stage-chip";
 import { MemberDetailLink } from "@/components/admin/member-detail-link";
+import { SubscriptionBillingNote } from "@/components/admin/subscription-billing-note";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AdminLoadError } from "@/components/admin/admin-load-error";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
@@ -127,8 +128,7 @@ interface Subscription {
   paidAt: string | null;
   manuallyMarkedPaidAt: string | null;
   manualPaymentNote: string | null;
-  /** #5190: "Not required" row whose member billing treats as owing; else null. */
-  billingNote?: string | null;
+  billingNote?: string | null; // #5190: "Not required" row billing treats as owing
   xeroContactGroupsLoaded: boolean;
   xeroContactGroups: Array<{ id: string; name: string }>;
   member: {
@@ -815,24 +815,14 @@ export default function SubscriptionsPage() {
                     kind="subscription"
                     value={sub.status as SubscriptionStatus}
                     label={sub.manuallyMarkedPaidAt ? `${subscriptionStatusLabel(sub.status)} (manual)` : undefined}
-                    title={
-                      sub.manuallyMarkedPaidAt
-                        ? `Marked paid manually${sub.manualPaymentNote ? `: ${sub.manualPaymentNote}` : ""}`
-                        : undefined
-                    }
+                    title={sub.manuallyMarkedPaidAt ? `Marked paid manually${sub.manualPaymentNote ? `: ${sub.manualPaymentNote}` : ""}` : undefined}
                   />
-                  {sub.billingNote ? (
-                    <p className="mt-1 max-w-[16rem] text-xs text-warning-11">
-                      {sub.billingNote}
-                    </p>
-                  ) : null}
+                  <SubscriptionBillingNote note={sub.billingNote} />
                 </TableCell>
                 <TableCell>
                   {sub.xeroInvoiceId ? (
                     <a
-                      href={buildXeroInvoiceUrl(sub.xeroInvoiceId, {
-                        shortCode: xeroOrgShortCode,
-                      })}
+                      href={buildXeroInvoiceUrl(sub.xeroInvoiceId, { shortCode: xeroOrgShortCode })}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 rounded-sm text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
