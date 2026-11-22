@@ -5,6 +5,7 @@ import {
 } from "@prisma/client";
 import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
 import { bookingsOverlap } from "@/lib/booking-night-overlap";
+import { compareOrdinal } from "@/lib/ordinal-order";
 
 // The waitlist queue order (#5402): who the offer pass considers first, and
 // the position a member or officer is shown, both come from this module.
@@ -21,7 +22,7 @@ import { bookingsOverlap } from "@/lib/booking-night-overlap";
  * order in memory.
  *
  * Booking ids are lower-case alphanumeric cuids, for which the database's
- * collation and JavaScript's string comparison agree; that agreement is what
+ * collation and code-unit order (`compareOrdinal`) agree; that agreement is what
  * keeps the in-memory sort and the SQL `orderBy` from tie-breaking differently.
  */
 export const WAITLIST_QUEUE_ORDER_BY: Prisma.BookingOrderByWithRelationInput[] = [
@@ -91,16 +92,12 @@ export type WaitlistOpportunity<T> = {
   cross: boolean;
 };
 
-function compareIds(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
 /** `WAITLIST_QUEUE_ORDER_BY`, in memory. */
 export function compareWaitlistJoinOrder(
   a: Pick<WaitlistQueueEntry, "id" | "createdAt">,
   b: Pick<WaitlistQueueEntry, "id" | "createdAt">,
 ): number {
-  return a.createdAt.getTime() - b.createdAt.getTime() || compareIds(a.id, b.id);
+  return a.createdAt.getTime() - b.createdAt.getTime() || compareOrdinal(a.id, b.id);
 }
 
 /**
@@ -167,7 +164,7 @@ export function orderWaitlistOpportunities<T extends WaitlistQueueEntry>(
           // An exact tie: own-lodge before cross-lodge, which also puts an
           // entry's own lodge before its own cross-lodge opportunity.
           Number(a.cross) - Number(b.cross) ||
-          compareIds(a.candidate.id, b.candidate.id),
+          compareOrdinal(a.candidate.id, b.candidate.id),
       )
     : [...own, ...cross];
 }

@@ -53,8 +53,12 @@ vi.mock("@/lib/email", async (importOriginal) => {
     ]),
   );
 });
-vi.mock("@/lib/session-guards", async (importOriginal) => ({
-  ...((await importOriginal()) as Record<string, unknown>),
+// A full factory, never `importOriginal`: the real module imports next-auth,
+// whose own `import "next/server"` does not resolve under plain Node ESM
+// ("Did you mean to import next/server.js?"), so loading it fails this file
+// before any test runs. The admin waitlist route needs only `requireAdmin`, and
+// nothing else this suite imports reaches the module.
+vi.mock("@/lib/session-guards", () => ({
   requireAdmin: vi.fn(async () => ({ ok: true, session: { user: { id: "wq5402admin" } } })),
 }));
 

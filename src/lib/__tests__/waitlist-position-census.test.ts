@@ -161,6 +161,8 @@ describe("waitlist position census (#5402, INV-CAP-041)", () => {
       "@/config/club-settings-defaults",
       // No imports of its own; the one definition of a shared night (INV-SSOT-001).
       "@/lib/booking-night-overlap",
+      // No imports of its own; the one ordinal comparator (INV-SSOT-001, #3252).
+      "@/lib/ordinal-order",
       "@prisma/client",
     ]);
   });
