@@ -17,6 +17,7 @@ import {
 } from "@/lib/club-time-zone-settings";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { isSingletonUpsertContention } from "@/lib/prisma-errors";
 import { requireAdmin } from "@/lib/session-guards";
 
 /**
@@ -57,7 +58,7 @@ import { requireAdmin } from "@/lib/session-guards";
  * answered a retryable 503.
  */
 
-/**
+/*
  * Retryable failures of the transaction below, answered 503 rather than 500.
  * P2028 (transaction API error, including an exhausted `maxWait`/`timeout`) and
  * P2034 (write conflict, deadlock, or the serialisation failure Serializable
@@ -74,13 +75,10 @@ import { requireAdmin } from "@/lib/session-guards";
  * originate there today. Add a unique index to `AuditLog` and a duplicate-audit
  * bug starts being answered "try again shortly" — a retryable 503 for something
  * retrying cannot fix — so this set must be revisited if that ever changes.
+ *
+ * The set and the predicate are `isSingletonUpsertContention`
+ * (`@/lib/prisma-errors`); this comment is why `P2002` is safe for this writer.
  */
-const TRANSACTION_CONTENTION_CODES = new Set(["P2002", "P2028", "P2034"]);
-
-function isTransactionContentionError(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === "string" && TRANSACTION_CONTENTION_CODES.has(code);
-}
 
 export async function GET() {
   const guard = await requireAdmin({ permission: false });
@@ -207,7 +205,9 @@ export async function PUT(request: Request) {
       cannot tell what a broken database means, and dressing that up as a
       friendly "try again shortly" would hide it from whoever has to fix it.
     */
-    if (!isTransactionContentionError(error)) throw error;
+    // P2002 counts as contention for this writer; the reason is the
+    // "Retryable failures" comment near the top of this file.
+    if (!isSingletonUpsertContention(error)) throw error;
     logger.warn({ err: error }, "Club time zone save hit write contention");
     return NextResponse.json(
       { error: "Another update is in progress — try again shortly." },

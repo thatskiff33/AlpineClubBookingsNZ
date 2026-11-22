@@ -2144,7 +2144,8 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
     const approvalEnd =
       school?.indexOf("export type MemberWholeLodgeApprovalOverride") ?? -1;
     const approval = school?.slice(approvalStart, approvalEnd) ?? "";
-    const locator = approval.indexOf("const heldLodgeLocator = expectedHeldBookingId");
+    // #5398: the pre-transaction held-lodge read is the shared helper's call.
+    const locator = approval.indexOf("const heldApproval = await findHeldApprovalLodge(request)");
     const transaction = approval.indexOf("conversion = await prisma.$transaction");
     const globalLock = approval.indexOf("pg_advisory_xact_lock(1)");
     const heldKey = approval.indexOf("expectedHeldLodgeId!", globalLock);
@@ -2186,6 +2187,39 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
     expect(approval).toContain("lodgeId: conversion.lodgeId");
   });
 
+  // #5398: both approvals' held-lodge read lives once, in booking-request-approval-shared.ts.
+  // It reads only the lock key, on the root client: the census above places its
+  // call before each `$transaction`, so it never runs under either lock.
+  it("keeps the shared held-lodge read a single root-client lodge lookup", () => {
+    const shared = sources.find(
+      ({ rel }) => rel === "src/lib/booking-request-approval-shared.ts",
+    )?.text ?? "";
+    const start = shared.indexOf("export async function findHeldApprovalLodge(");
+    expect(start).toBeGreaterThanOrEqual(0);
+    const body = shared.slice(start, shared.indexOf("\n}\n", start));
+    expect(body).toContain("await prisma.booking.findUnique({");
+    expect(body).toContain("select: { lodgeId: true },");
+    expect(body).not.toMatch(/\btx\b|\$transaction|pg_advisory/);
+
+    // Closed world: the only callers are the two approvals whose order the
+    // tests beside this one check. A third caller, perhaps inside a locked
+    // transaction, fails here until its placement is reviewed.
+    const callers = sources.flatMap(({ rel, text }) => {
+      const code = stripComments(text);
+      return [...code.matchAll(/\bfindHeldApprovalLodge\(/g)]
+        .filter((match) => !code.slice(Math.max(0, (match.index ?? 0) - 30), match.index).includes("function "))
+        .map((match) => {
+          const before = code.slice(0, match.index);
+          const owner = [...before.matchAll(/export async function (\w+)/g)].at(-1)?.[1];
+          return `${rel}::${owner}`;
+        });
+    });
+    expect(callers.sort()).toEqual([
+      "src/lib/booking-request.ts::approveBookingRequest",
+      "src/lib/school-booking-request.ts::approveSchoolBookingRequest",
+    ]);
+  });
+
   it("binds generic held conversion to the immutable held-booking lodge", () => {
     const generic = sources.find(
       ({ rel }) => rel === "src/lib/booking-request.ts",
@@ -2196,7 +2230,8 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
       generic?.slice(
         generic.indexOf("export async function approveBookingRequest"),
       ) ?? "";
-    const locator = approval.indexOf("const heldLodgeLocator = expectedHeldBookingId");
+    // #5398: the pre-transaction held-lodge read is the shared helper's call.
+    const locator = approval.indexOf("const heldApproval = await findHeldApprovalLodge(request)");
     const transaction = approval.indexOf("conversion = await prisma.$transaction");
     const globalLock = approval.indexOf("pg_advisory_xact_lock(1)", transaction);
     const heldKey = approval.indexOf("expectedHeldLodgeId!", globalLock);

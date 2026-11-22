@@ -49,14 +49,11 @@ export type ModuleSettingsValues = Record<ModuleKey, boolean>;
 
 /**
  * Prisma `select` for every read of the ClubModuleSettings singleton — the live
- * module columns (derived from MODULE_KEYS) plus the two audit fields. Deriving
- * it from MODULE_KEYS matters for blue/green safety: a bare
- * `findUnique({ where })` has no `select`, so Prisma names EVERY column in its
- * schema — including retired-but-not-yet-dropped columns like the former
- * `multiLodge` flag. Selecting only the live module columns means the generated
- * SQL never references such a column, so a later contract migration that DROPs
- * it (#139) is safe from this release onward: this release's client does not
- * read it. Any read of ClubModuleSettings must use this select.
+ * module columns (derived from MODULE_KEYS) plus the two audit fields. A bare
+ * `findUnique({ where })` has no `select`, so Prisma names EVERY column the
+ * client knows. This select keeps a retired column out of reads and a write's
+ * RETURNING, not out of an INSERT, so it never makes a DROP safe on its own
+ * (INV-OPS-005). Any read of ClubModuleSettings must use this select.
  */
 export const CLUB_MODULE_SETTINGS_COLUMN_SELECT = {
   ...(Object.fromEntries(MODULE_KEYS.map((key) => [key, true])) as Record<

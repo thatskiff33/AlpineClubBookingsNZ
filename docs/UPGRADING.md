@@ -22,10 +22,12 @@ It complements the two documents next to it and does not repeat them:
    post-upgrade actions. If you must catch up several releases, apply each
    release's notes in order.
 
-   The deploy script enforces this (#4978): it refuses a commit that no
-   annotated `vX.Y.Z` tag on `origin` points at, unless
+   The deploy script enforces the first half of this (#4978): it refuses a
+   commit that no annotated `vX.Y.Z` tag on `origin` points at, unless
    `ALLOW_UNTAGGED_DEPLOY_COMMIT=1` and a written
-   `UNTAGGED_DEPLOY_COMMIT_REASON` are set. Deploy with
+   `UNTAGGED_DEPLOY_COMMIT_REASON` are set. It checks that the target is a
+   published release, not that it is the next one after the release you run,
+   so it does not stop you skipping releases. Deploy with
    `DEPLOY_REF=<tag>` after `git fetch origin tag <tag>`. **A fork** checks
    tags on its own `origin`, so a fork that does not tag either tags its own
    releases (`pnpm run release:cut` works in a fork) or sets the override on
@@ -54,6 +56,25 @@ It complements the two documents next to it and does not repeat them:
    migrations are written to stay old-code-compatible so the old color keeps
    working during the drain. A few are not (see below) — those need a quiet
    window or a deferral.
+5. **A one-off upgrade tool leaves `main` two minor releases after the
+   upgrade it serves** (owner decisions, 22 Nov 2026, #5404). Only minor
+   releases count; patch releases do not. A tool that serves only the upgrade
+   to 0.14.0 ships in every 0.14.x and 0.15.x release and is gone from 0.16.0.
+   The count starts from the later of that release and the release that first
+   shipped the tool, so a tool that arrives in a patch after it still gets its
+   two minor releases: a tool for the upgrade to 0.14.0 first shipped in 0.15.0
+   is gone from 0.17.0. Releases are cut from `main`, so the change that
+   removes a tool merges only once the next release cut will be that minor
+   release; merged earlier, a patch release in between would lose a tool the
+   rule says it still ships. Two rather than one because a club can skip a
+   release, and the deploy script does not stop it (principle 1). When the tool goes,
+   its documentation becomes a short note naming the release tag that still
+   carries it, and any invariant that names it is reworded in the same change.
+   A club that still needs it runs it from that tag. It has not been tested
+   against any later schema; run it against a copy of your database first. The
+   rule does not apply to a tool that is still a current remedy, a rollback
+   check, or a step to run before switching a setting on: those stay while the
+   remedy, rollback or setting does.
 
 ## How to read `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`
 
@@ -252,6 +273,77 @@ afterwards writes the old text back. Importing a configuration bundle exported
 before this release skips a privacy body that exactly matches the replaced
 starter text and warns in the preview (#2511), but can set the "Last updated"
 date back; re-check `/privacy` after any import.
+
+### Re-provision the AI Diagnostics role after the upgrade (#5402)
+
+**Who needs it.** A deployment that has AI Diagnostics turned on with its
+read-only database role (`AI_DIAGNOSTICS_DATABASE_URL`). Others can skip this.
+
+**What changes.** The booking search no longer reports a waitlist position,
+because positions are now read from the live queue and the stored column is
+being retired. Its grant on `Booking."waitlistPosition"` leaves the allowlist.
+The diagnostics privilege check refuses a role that can read any column the
+allowlist does not name. Until the role is re-provisioned, **Admin → AI
+Diagnostics** shows the database role as `over_privileged` with the blocker
+`database_role_unsafe`, and every SQL-backed diagnostics tool answers "The
+diagnostics database credential does not have the restricted, read-only
+privileges this feature requires, so no tool was run." Nothing else is
+affected.
+
+**What to do, once, after the new colour is serving.** Re-run the provisioning
+from the live app's environment, with the same settings you used the first
+time: the same password the role's connection string already uses (it sets the
+password every time), and the same `AI_DIAGNOSTICS_DB_ROLE` and
+`AI_DIAGNOSTICS_DB_PRESERVE_TEMP_ROLES` if you set them. Without the role name,
+the command refreshes the default `ai_diagnostics_ro` role and leaves a custom
+one holding the old grant.
+
+```bash
+AI_DIAGNOSTICS_DB_PASSWORD='<the existing password>'   AI_DIAGNOSTICS_DB_ROLE='<your role, if not ai_diagnostics_ro>'   pnpm run diagnostics:provision-role
+```
+
+Use `AI_DIAGNOSTICS_PROVISION_DATABASE_URL` set to the operator connection if
+your deployment uses the least-privilege database roles
+([deployment guide](ai-diagnostics/deployment.md#provisioning)). Do it after
+cutover, not before: the previous release still expects the old grant.
+
+**Rollback.** An older release run against a role provisioned by this one
+shows the database role as `under_provisioned` with the blocker
+`database_grants_missing`, and its tools answer "The diagnostics database
+credential is missing one or more required read-only grants, so no tool was
+run." Re-run the same command, with the same settings, from the old release.
+
+### Three unused columns leave the app's queries (#5396)
+
+**What changes.** No migration runs and nothing administrators or members see
+changes. The app stops naming `ClubModuleSettings.multiLodge`,
+`NotificationPreference.bookingWaitlist` and
+`BookingRequestSettings.assignSchoolTeachersAsHutLeaders` in any query,
+including the INSERTs behind saving the Modules page and the booking-request
+settings, importing a configuration bundle and creating a member's notification
+preferences. All three columns stay in the database with their defaults
+(`false`, `true` and `false`), so the previous release keeps working while it
+drains.
+
+**Why it matters for a later upgrade.** A later release drops these columns.
+That drop is safe during a blue-green deploy only when the release it replaces
+is this one or newer: an older release names the columns in its INSERTs, so its
+settings saves would fail between the migration and cutover. Deploy this release
+before the one that drops them, as the tag-to-tag rule above already requires.
+
+**Do not drop any of these columns yourself.** Earlier code comments said that
+dropping `multiLodge` was blue-green safe because every query selects named
+columns. That holds for reads, not INSERTs (`INV-OPS-005`), and the comments
+are corrected. A
+fork that tracks the drop (`multiLodge` is hoppers99/AlpineClubBookingsNZ#139)
+should take the upstream contract migration rather than write its own.
+
+**Subject-access exports.** A member's export no longer lists
+`bookingWaitlist` among their notification preferences. No release let a member
+or administrator set it.
+
+**Rollback.** Nothing to undo: no database change. A rolled-back release names
+the columns again, and they still exist.
 
 ---
 
@@ -4274,10 +4366,12 @@ None required.
 **Optional cleanup:** if your fork ever ran a pre-`v0.10.0` build (any build
 older than PR #1489), booking cancellations may have flattened captured
 `(PARTIALLY_)REFUNDED` payments' stored `status` to `FAILED`. The read path
-already compensates, so this is cosmetic-only for the stored rows. You can
-restore them with `pnpm run payments:backfill-cancel-flattened` (dry-run by
-default; review the report before re-running with `--apply`). See "Backfill
-cancel-flattened payment statuses" in `docs/MAINTENANCE.md`.
+already compensates, so this is cosmetic-only for the stored rows. The
+one-off that restored them, `payments:backfill-cancel-flattened`, has left
+`main` under the one-off retirement rule in [Principles](#principles) (#5404).
+It remains in the `v0.14.0` tag, with its instructions in that tag's
+`docs/MAINTENANCE.md` under "Backfill cancel-flattened payment statuses
+(#1473 / #1506)"; it was not tested against any later schema.
 
 ---
 

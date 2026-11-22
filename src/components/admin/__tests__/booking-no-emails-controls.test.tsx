@@ -276,6 +276,12 @@ describe("BookingNoEmailsControls (#2259)", () => {
         /passed over for waitlist offers/i,
       ),
     ).toBeInTheDocument();
+    // #5402 (INV-LOCKOUT-060): it drops out of everyone's position meanwhile.
+    expect(
+      within(screen.getByRole("dialog")).getByText(
+        /shows no waitlist position and is not counted in anyone else's, so the members behind it move up/i,
+      ),
+    ).toBeInTheDocument();
     unmount();
 
     renderControls({ isWaitlisted: false });
