@@ -625,7 +625,6 @@ const CATEGORY_TO_PREFERENCE: Record<
   bookingBumped: "bookingBumped",
   bookingCancelled: "bookingCancelled",
   choreRoster: "choreRoster",
-  bookingWaitlist: "bookingWaitlist",
   clubNotices: "clubNotices",
   marketingEmails: "marketingEmails",
 };

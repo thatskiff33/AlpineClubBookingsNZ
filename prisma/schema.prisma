@@ -5585,7 +5585,16 @@ model ClubModuleSettings {
   hutLeaders              Boolean  @default(true)
   communications          Boolean  @default(true)
   skifieldConditions      Boolean  @default(true)
-  multiLodge              Boolean  @default(false)
+  // RETIRED (ADR-005). No code has set or read it since ADR-005 removed the
+  // module flag. `@ignore` (#5396) removes it from the generated client, so no query
+  // names the column, INSERTs included: a select narrows only SELECT and
+  // RETURNING, and a static @default is still sent in every INSERT's column
+  // list (the #2520 row of docs/BLUE_GREEN_MIGRATION_SAFETY.tsv). It changes no
+  // database state and owes no migration. The field stays only while the column
+  // does; the contract migration that drops it (tracked downstream as
+  // hoppers99/AlpineClubBookingsNZ#139) is old-code compatible only once a
+  // release carrying this `@ignore` is the draining colour.
+  multiLodge              Boolean  @default(false) @ignore
   twoFactor               Boolean  @default(false)
   magicLink               Boolean  @default(false)
   analytics               Boolean  @default(false)
@@ -5701,8 +5710,9 @@ model ClubModuleSettings {
 // migration/seed). Multi-lodge is core (ADR-005): the Lodges admin UI is always
 // available (no module flag), and booking data scopes to this table. While
 // exactly one active lodge exists the per-page lodge selectors auto-resolve to
-// it (ADR-002 presentation rule); the vestigial ClubModuleSettings.multiLodge
-// column is retired in a follow-up (#129).
+// it (ADR-002 presentation rule). The vestigial ClubModuleSettings.multiLodge
+// column was retired by hoppers99/AlpineClubBookingsNZ#129 and is `@ignore`d
+// (#5396); its DROP is tracked as hoppers99/AlpineClubBookingsNZ#139.
 model Lodge {
   id         String   @id @default(cuid())
   name       String
@@ -7792,7 +7802,13 @@ model NotificationPreference {
   bookingReminder            Boolean  @default(true)
   bookingBumped              Boolean  @default(true)
   bookingCancelled           Boolean  @default(true)
-  bookingWaitlist            Boolean  @default(true)
+  // RETIRED. Never offered in the preferences page or API and read by no send
+  // path. `@ignore` (#5396) removes it from the generated client so no query,
+  // INSERT included, names the column (see ClubModuleSettings.multiLodge for
+  // why a select is not enough). No migration: the column keeps its
+  // NOT NULL DEFAULT true, which fills new rows, until a later release's
+  // contract migration drops it together with this field.
+  bookingWaitlist            Boolean  @default(true) @ignore
   // #2284 (S2): FYI when a family co-member adds you (or someone you are the
   // login-holding adult for) to a booking. General family behaviour, sent
   // regardless of the memberGuests module; default on, personally opt-outable.

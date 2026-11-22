@@ -258,9 +258,10 @@ export const SINGLETONS: SingletonSpec[] = [
         "travelling and reasoned that not inheriting the source's dial was " +
         "the safe direction; it is the opposite, because the fallback is the " +
         "most permissive value rather than the least",
-      multiLodge:
-        "retired-but-not-yet-dropped flag; kept out of every read via " +
-        "CLUB_MODULE_SETTINGS_COLUMN_SELECT and awaiting a contract DROP (#139)",
+      // The retired multiLodge column needs no entry: it is `@ignore`d (#5396),
+      // so the generated client, and with it this category, cannot see it. It
+      // awaits its contract DROP (hoppers99/AlpineClubBookingsNZ#139).
+      //
       // OWNER JUDGEMENT (#2178): the two auth-provider sign-in toggles do not
       // travel today, unlike EVERY other module flag (incl. twoFactor,
       // analytics, xeroIntegration) which does. (This read "the other 19

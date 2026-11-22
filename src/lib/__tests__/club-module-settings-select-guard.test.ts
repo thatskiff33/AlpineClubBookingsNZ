@@ -9,14 +9,23 @@ import { balancedBrackets } from "./support/balanced-brackets";
 // singleton must use an explicit column `select`
 // (CLUB_MODULE_SETTINGS_COLUMN_SELECT in src/config/modules.ts). A bare
 // findUnique/findMany/upsert/create/update has no select, so Prisma names
-// EVERY schema column — including a retired-but-not-yet-dropped one (the
-// former multiLodge flag was the trigger; see #139) — which breaks
-// blue/green safety for the eventual DROP. upsert/create/update matter just
-// as much as reads: Prisma's implicit RETURNING on a write names every
-// column too (#175). This is a static source scan (rather than only
-// per-call-site unit tests) so a future call site that forgets the select
-// fails CI immediately instead of relying on someone remembering to add a
-// matching mock assertion.
+// every column the client knows in its SELECT, or in a write's implicit
+// RETURNING (#175). The former multiLodge flag was the trigger
+// (hoppers99/AlpineClubBookingsNZ#139).
+//
+// What the select does NOT do: make dropping a retired column safe during a
+// blue/green deploy. It narrows SELECT and RETURNING only. Prisma still sends
+// every column with a static `@default` in an INSERT's column list, select or
+// not (the #2520 row of docs/BLUE_GREEN_MIGRATION_SAFETY.tsv), so the draining
+// colour's create/upsert would fail once the column is gone. Only marking the
+// field `@ignore` in the release before the DROP makes the drop safe; multiLodge
+// is `@ignore`d from #5396. This guard stays for what the select still
+// protects: reads and RETURNING of any column retired but not yet ignored, and
+// the single-source rule below.
+//
+// This is a static source scan (rather than only per-call-site unit tests) so
+// a future call site that forgets the select fails CI immediately instead of
+// relying on someone remembering to add a matching mock assertion.
 //
 // #2996 added the second half: a select that IS explicit but spells the module
 // vocabulary out by hand is a second copy of MODULE_KEYS (INV-SSOT-001), and
