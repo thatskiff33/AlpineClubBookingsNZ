@@ -106,8 +106,8 @@ deeper reference for what each category contains and the import safety model.
   someone classifies it as should-travel or deliberately-excluded. Deliberately
   excluded: the singleton primary key, the `updatedByMemberId` audit FK, and the
   `createdAt`/`updatedAt` timestamps (all instance-local, `COMMON_EXCLUDED_COLUMNS`);
-  the retired `ClubModuleSettings.multiLodge` flag; the phase-7 `lodgeId`
-  soft-links; `GroupDiscountSetting.rateMembershipTypeId` (an instance-local FK);
+  the phase-7 `lodgeId` soft-links; `GroupDiscountSetting.rateMembershipTypeId`
+  (an instance-local FK);
   and the two auth-provider sign-in toggles `ClubModuleSettings.magicLink` /
   `googleLogin` (a per-install auth decision; note the login/profile pages
   render these affordances off the flag alone, so an imported `true` on an
@@ -125,6 +125,9 @@ deeper reference for what each category contains and the import safety model.
   is ordinary portable policy and travels.
   `MembershipLockoutSettings.useFeeScheduleItemCodes` (#2109) is
   classified should-travel and now exports like the rest of that singleton.
+  The retired `ClubModuleSettings.multiLodge` column needs no entry: it is
+  `@ignore`d (#5396), so the generated client the guards read cannot see it.
+  Its drop is tracked as hoppers99/AlpineClubBookingsNZ#139.
 
   **Model-level completeness is audited too (#2200).** The field-level guard
   above proves no COLUMN inside a registered singleton is dropped; a second guard

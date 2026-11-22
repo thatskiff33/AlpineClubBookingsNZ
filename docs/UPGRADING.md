@@ -253,6 +253,35 @@ before this release skips a privacy body that exactly matches the replaced
 starter text and warns in the preview (#2511), but can set the "Last updated"
 date back; re-check `/privacy` after any import.
 
+### Two unused columns leave the app's queries (#5396)
+
+**What changes.** No migration runs and nothing administrators or members see
+changes. The app stops naming `ClubModuleSettings.multiLodge` and
+`NotificationPreference.bookingWaitlist` in any query, including the INSERTs
+behind saving the Modules page, importing a configuration bundle and creating a
+member's notification preferences. Both columns stay in the database with their
+defaults (`false` and `true`), so the previous release keeps working while it
+drains.
+
+**Why it matters for a later upgrade.** A later release drops both columns.
+That drop is safe during a blue-green deploy only when the release it replaces
+is this one or newer: an older release names both columns in its INSERTs, so its
+settings saves would fail between the migration and cutover. Deploy this release
+before the one that drops them, as the tag-to-tag rule above already requires.
+
+**Do not drop either column yourself.** Earlier code comments said that
+dropping `multiLodge` was blue-green safe because every query selects named
+columns. That holds for reads, not INSERTs, and the comments are corrected. A
+fork that tracks the drop (`multiLodge` is hoppers99/AlpineClubBookingsNZ#139)
+should take the upstream contract migration rather than write its own.
+
+**Subject-access exports.** A member's export no longer lists
+`bookingWaitlist` among their notification preferences. No release let a member
+or administrator set it.
+
+**Rollback.** Nothing to undo: no database change. A rolled-back release names
+both columns again, and they still exist.
+
 ---
 
 ## v0.13.2 → v0.14.0

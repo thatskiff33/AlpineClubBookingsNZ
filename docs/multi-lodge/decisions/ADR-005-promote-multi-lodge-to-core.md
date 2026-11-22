@@ -88,16 +88,24 @@ explicit test focus (Jordan's caveat).
   now unread/unwritten — `normalizeClubModuleSettings` iterates `MODULE_KEYS`
   only, and upserts rely on the default). The physical `DROP COLUMN` is a
   **separate contract migration to run one release later**, once the
-  multi-lodge-core release is deployed everywhere — tracked in **#139** and
-  blocked until then. This keeps the multi-lodge-core change expand-only.
+  multi-lodge-core release is deployed everywhere — tracked in
+  **hoppers99/AlpineClubBookingsNZ#139** and blocked until then. This keeps the
+  multi-lodge-core change expand-only.
+  Correction (#5396): "upserts rely on the default" does not keep the column
+  out of the SQL. Prisma sends a static `@default` in every INSERT's column
+  list, so the drop is old-colour-compatible only after a release that marks
+  the field `@ignore` has shipped. #5396 adds that `@ignore`.
 - **Backward-compat is the risk.** A single-lodge install must not regress;
   cover it explicitly in tests before any upstream PR.
 
 ## Implementation surface (see #123 children)
 
 1. Remove the flag + gating (module registry, feature-routes; lodge routes on). ✅ #128
-2. `ClubModuleSettings.multiLodge`: left vestigial this release (#129); physical
-   `DROP COLUMN` deferred to a later contract migration (#139, blue/green-safe).
+2. `ClubModuleSettings.multiLodge`: left vestigial this release
+   (hoppers99/AlpineClubBookingsNZ#129); `@ignore`d by #5396; physical
+   `DROP COLUMN` deferred to a later contract migration
+   (hoppers99/AlpineClubBookingsNZ#139, blue/green-safe once the `@ignore` has
+   shipped).
 3. Sidebar/nav: single Lodges entry; one-item lodge list; Add Lodge always;
    retire scattered lodge-config entries into the hub. ✅ #130 (Chores, Lockers,
    Hut Fees & Seasons retired; Bed Allocation kept as operational).
