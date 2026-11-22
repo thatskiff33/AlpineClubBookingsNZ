@@ -983,14 +983,12 @@ decision, 18 Nov 2026).
   The alert's own admin emails take the claim once (`takeOnceEverClaim`); each
   writes its `EmailLog` row in one transaction with `confirmAlertCooldownSend`,
   clearing the mark under the claim's stamp. Claim gone: no row, nothing sent.
-  A send whose emails recorded nothing gives the claim back, whatever it
-  reports. Other emails are recorded as before.
+  A send whose emails recorded nothing gives the claim back.
 - **The sweep.** `once-ever-alert-sweep`, first task of the 15-minute payments
   cycle, deletes a claim still marked after 15 minutes, only while its stamp
-  and mark stand. The row lock orders that delete against the confirm: the
-  email first keeps the claim; the delete first refuses the email. So #4696's
-  two lost cases (both give-backs fail; the write commits after the give-back)
-  are sent by the caller's next run.
+  and mark stand. The row lock orders that delete against the confirm. So
+  #4696's two lost cases (both give-backs fail; the write commits after the
+  give-back) are sent by the caller's next run.
 - **Raised-once callers** use `sendReplayableAdminAlertOnceEver`, which stores
   the alert as `once-ever-owed:<key>` first. The sweep re-sends it through the
   same claim while none holds it, settles it once kept, and drops it with an
@@ -1001,7 +999,9 @@ decision, 18 Nov 2026).
   writer index (`INV-LOCK-003`). The confirm holds no provider call.
 - **Known limits, not owner-accepted:** an alert raised while every database
   write fails is only logged (#5297); an email row a crash left `QUEUED` is
-  never sent, as the retry cron replays only `FAILED` (#5298).
+  never sent (#5298); if one recipient's row write fails while another's
+  commits, the claim is kept and that recipient gets nothing, with no `FAILED`
+  row to retry.
 
 Pinned by `admin-alert-once-lost-cases.test.ts`, `admin-alert-once.test.ts`,
 `admin-alert-once-sweep.test.ts`, `admin-alert-once-replayable.test.ts`,
