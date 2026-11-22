@@ -39,7 +39,7 @@ export const AI_DIAGNOSTICS_DISCLOSURE = {
     "earlier questions and answers in the same conversation",
     "excerpts of this application's code, its built-in guides, and any private notes this deployment adds",
     "records looked up to answer it, such as bookings, payments, settings and job runs",
-    "personal details held in member records only when the administrator ticks the personal-details box for that question, and a search for people only when the search box is ticked; anything typed into the question or a screen's search, including a name, is sent as typed",
+    "personal details held in member records only when the administrator ticks the personal-details box for that question, and a search for people only when the search box is ticked; once an answer includes personal details, they stay in the conversation and are sent again with later questions in it, ticked or not; anything typed into the question or a screen's search, including a name, is sent as typed",
   ],
   retention: `This application sends ${providerName} no instruction about how long to keep the excerpts. Retention, including zero retention, is arranged between the club and ${providerName} on the club's own ${providerName} account — the one behind the Diagnostics key.`,
   acknowledgementLabel: `I understand that switching on AI Diagnostics sends these excerpts to ${providerName}, which may process them outside New Zealand.`,

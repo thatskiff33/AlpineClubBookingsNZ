@@ -46,4 +46,18 @@ describe("AI Diagnostics disclosure and the privacy recipient register", () => {
     expect(consentLine).toContain("anything typed into the question or a screen's search, including a name, is sent as typed");
     expect(consentLine).not.toMatch(/^members' personal details only when/);
   });
+
+  // The earlier conversation is replayed with every question
+  // (`buildDiagnosticsConversationBlock` in `diagnostics/answer/prompt.ts`), and
+  // no consent box gates it: an answer holding personal details from a ticked
+  // question goes again with later, unticked ones. Both places must say so.
+  it("says personal details in an earlier answer are sent again with later questions", () => {
+    const consentLine = AI_DIAGNOSTICS_DISCLOSURE.dataSent.find((line) => line.includes("personal-details box"));
+    expect(consentLine).toContain(
+      "once an answer includes personal details, they stay in the conversation and are sent again with later questions in it, ticked or not",
+    );
+    expect(PRIVACY_RECIPIENTS.anthropic.dataSent).toContain(
+      "an answer that includes it is sent again with later questions in the same conversation",
+    );
+  });
 });

@@ -6,7 +6,9 @@
   in the same conversation, excerpts of the application's code, its built-in
   guides and any private notes this deployment adds, records looked up to answer
   it, and personal details held in member records only when the administrator
-  ticks the personal-details box for that question. Anything typed into the
+  ticks the personal-details box for that question; once an answer includes
+  them, they are sent again with later questions in the same conversation.
+  Anything typed into the
   question or a screen's search, including a name, is sent as typed. Save stays
   disabled until the administrator ticks the statement, and the acknowledgement
   is recorded in the audit log. A save built from a stale page can no longer

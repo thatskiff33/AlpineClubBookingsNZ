@@ -615,7 +615,9 @@ administrator decides to switch it on. It does (#5243):
   private notes this deployment adds; records looked up to answer it; and
   personal details held in member records only when the administrator ticks the
   personal-details box for that question (a search for people only when the
-  search box is ticked). Anything typed into the question or a screen's search,
+  search box is ticked). Once an answer includes personal details, they stay in
+  the conversation and are sent again with later questions in it, ticked or
+  not. Anything typed into the question or a screen's search,
   including a name, is sent as typed, whatever is ticked. The card's statement
   (`src/lib/ai-diagnostics-disclosure.ts`) is the full list. A save that switches
   Diagnostics on needs the administrator to tick that statement first.
