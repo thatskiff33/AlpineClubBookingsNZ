@@ -387,6 +387,38 @@ describe("evaluateFunctionLengthRatchet — a fork syncing down from a trusted u
     expect(repo.judge(common, undefined)).toStrictEqual(ordinary);
   });
 
+  it("judges a merged upstream side commit against the first-parent commit beneath it", () => {
+    // Upstream's pull request branch first takes `cancel` to 60 lines and then
+    // splits it back to 40 before merging. A fork that merges only that first
+    // commit gets no trust for the 60: upstream's main never carried it.
+    const repo = newRepo();
+    repo.write("src/door.ts", fn("cancel", 5));
+    repo.commit("common");
+    git(repo.root, "branch", "-M", "fork");
+    git(repo.root, "checkout", "--quiet", "-b", "upstream");
+    repo.write("src/door.ts", fn("cancel", 40));
+    const upstreamMain = repo.commit("upstream main");
+    git(repo.root, "checkout", "--quiet", "-b", "upstream-pr");
+    repo.write("src/door.ts", fn("cancel", 60));
+    const sideCommit = repo.commit("pr: first draft");
+    repo.write("src/door.ts", fn("cancel", 40), fn("rest", 5));
+    repo.commit("pr: split it");
+    git(repo.root, "checkout", "--quiet", "upstream");
+    git(repo.root, "merge", "--quiet", "--no-ff", "--no-edit", "upstream-pr");
+    git(repo.root, "checkout", "--quiet", "fork");
+    repo.write("src/fork-only.ts", fn("local", 3));
+    const base = repo.commit("fork work");
+    git(repo.root, "checkout", "--quiet", "-b", "sync");
+    git(repo.root, "merge", "--quiet", "--no-ff", "--no-edit", sideCommit);
+
+    const result = repo.judge(base, "upstream");
+    expect(result.trustedUpstream?.sha).toBe(upstreamMain);
+    expect(kinds(result)).toEqual(["grown-beyond-base src/door.ts#cancel"]);
+    expect(result.findings[0]?.previous).toBe(
+      `40 lines on trusted upstream ${upstreamMain.slice(0, 12)}`,
+    );
+  });
+
   it("fails when the named upstream cannot be resolved, rather than judging without it", () => {
     const repo = syncFixture();
     const result = repo.judge(repo.base, "upstream/does-not-exist");

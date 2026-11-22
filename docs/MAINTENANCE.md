@@ -1169,9 +1169,13 @@ fragment in the range arrives looking live (#5196).
 `pnpm run quality:budget --upstream-ref <ref>` names the upstream to trust.
 The rules, all in `scripts/lib/budget-upstream-ref.ts`:
 
-- **The trusted commit is the upstream commit the checkout contains**: the
-  merge base of `<ref>` and `HEAD`, not wherever upstream has got to since. An
-  upstream tip the fork has not merged adds no trust.
+- **The trusted commit is the upstream `main` commit the checkout contains**:
+  the newest commit on `<ref>`'s first-parent history that `HEAD` contains,
+  not wherever upstream has got to since. An upstream tip the fork has not
+  merged adds no trust. First parent only, so a commit from the middle of a
+  merged upstream pull request's branch is never trusted: upstream's `main`
+  never carried it, and its gate never judged it on its own. If `HEAD`
+  contains no first-parent commit of `<ref>` at all, the run fails.
 - **Only the paths the sync brings in are trusted**: those upstream changed
   between the fork's last meeting point with it and the trusted commit. Every
   other path is judged against the fork's base as before.
@@ -1207,10 +1211,12 @@ back to an ordinary run. With the variable unset the step runs exactly
 `pnpm run quality:budget --base "$BUDGET_BASE"`. A private upstream cannot be
 fetched this way.
 
-Merge a sync pull request with a merge commit, never a squash or rebase. The
-trusted commit is the merge-base of upstream's `main` and `HEAD`; a squash or
-rebase leaves no upstream commit among the fork's ancestors, so the push run on
-the fork's `main` judges upstream's code as the fork's own and goes red.
+A sync pull request merges upstream's `main` itself, and is merged with a merge
+commit, never a squash or rebase. The trusted commit has to be an upstream
+`main` commit among the fork's ancestors; a squash or rebase leaves none, so the
+push run on the fork's `main` judges upstream's code as the fork's own and goes
+red, and merging a single upstream pull request's commits trusts only the
+upstream `main` commit beneath them.
 
 ### Quality report
 

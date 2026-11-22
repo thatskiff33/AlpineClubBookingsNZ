@@ -83,6 +83,56 @@ describe("resolveUpstreamCommit", () => {
   });
 });
 
+describe("resolveUpstreamCommit — only upstream main's first-parent history is trusted", () => {
+  /**
+   * Upstream merges a pull request branch with two commits; the fork merges
+   * the FIRST of them, a commit upstream's main never carried on its own.
+   */
+  function sideCommitFixture() {
+    const repo = forkAndUpstream();
+    git(repo.root, "checkout", "--quiet", "upstream");
+    git(repo.root, "checkout", "--quiet", "-b", "upstream-pr");
+    repo.write("src/a.ts", "half-done\n");
+    const sideCommit = repo.commit("pr: first half");
+    repo.write("src/a.ts", "done\n");
+    repo.commit("pr: second half");
+    git(repo.root, "checkout", "--quiet", "upstream");
+    git(repo.root, "merge", "--quiet", "--no-ff", "--no-edit", "upstream-pr");
+    git(repo.root, "checkout", "--quiet", "fork");
+    git(repo.root, "checkout", "--quiet", "-b", "sync");
+    git(repo.root, "merge", "--quiet", "--no-ff", "--no-edit", sideCommit);
+    return { ...repo, sideCommit };
+  }
+
+  it("trusts the first-parent commit beneath a merged pull request's side commit, not the side commit", () => {
+    const repo = sideCommitFixture();
+    // A plain merge base would have trusted the half-finished side commit.
+    expect(git(repo.root, "merge-base", "upstream", "HEAD").trim()).toBe(repo.sideCommit);
+    expect(resolveUpstreamCommit(repo.root, "upstream")).toEqual({
+      kind: "commit",
+      sha: repo.upstreamTip,
+    });
+  });
+
+  it("fails when HEAD shares history with upstream but holds no first-parent commit of it", () => {
+    const repo = forkAndUpstream();
+    // An unrelated history joins upstream main through a side branch; the
+    // fork contains only that side branch.
+    git(repo.root, "checkout", "--quiet", "--orphan", "side");
+    git(repo.root, "rm", "-rf", "--quiet", ".");
+    repo.write("src/side.ts", "s\n");
+    const side = repo.commit("side root");
+    git(repo.root, "checkout", "--quiet", "upstream");
+    git(repo.root, "merge", "--quiet", "--no-ff", "--no-edit", "--allow-unrelated-histories", "side");
+    git(repo.root, "checkout", "--quiet", "-b", "side-only", side);
+
+    const result = resolveUpstreamCommit(repo.root, "upstream");
+    expect(result.kind).toBe("unusable");
+    if (result.kind !== "unusable") return;
+    expect(result.error).toContain("first-parent");
+  });
+});
+
 describe("resolveUpstreamTrust", () => {
   it("vouches only for the paths upstream changed since the fork's base met it", () => {
     const repo = forkAndUpstream();
@@ -132,5 +182,19 @@ describe("resolveUpstreamTrust", () => {
     expect(trust.kind).toBe("unusable");
     if (trust.kind !== "unusable") return;
     expect(trust.error).toContain("upstream/nope");
+  });
+
+  it("fails when the trusted upstream shares no history with the fork's base", () => {
+    const repo = forkAndUpstream();
+    git(repo.root, "checkout", "--quiet", "--orphan", "lonely");
+    git(repo.root, "rm", "-rf", "--quiet", ".");
+    repo.write("src/lonely.ts", "l\n");
+    const lonelyBase = repo.commit("unrelated base");
+    git(repo.root, "merge", "--quiet", "--no-ff", "--no-edit", "--allow-unrelated-histories", "upstream");
+
+    const trust = resolveUpstreamTrust(repo.root, "upstream", lonelyBase);
+    expect(trust.kind).toBe("unusable");
+    if (trust.kind !== "unusable") return;
+    expect(trust.error).toContain("shares no readable history");
   });
 });

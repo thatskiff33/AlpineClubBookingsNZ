@@ -13,10 +13,14 @@
  *
  * The rule this module states once, for both ratchets (INV-SSOT):
  *
- *   - U, the trusted commit, is the merge base of the upstream ref and `HEAD`:
- *     the upstream commit this checkout actually contains, not wherever the
- *     upstream branch has got to. An upstream tip the fork has not merged adds
- *     no trust at all.
+ *   - U, the trusted commit, is the newest commit on the upstream ref's
+ *     FIRST-PARENT chain that `HEAD` contains: the upstream `main` this
+ *     checkout actually merged, not wherever the upstream branch has got to.
+ *     An upstream tip the fork has not merged adds no trust at all. First
+ *     parent only, because a plain merge base can land on a commit in the
+ *     middle of a merged upstream pull request's branch — a fork that merged
+ *     that side commit would otherwise trust code upstream's `main` never
+ *     carried and upstream's gate never judged as a whole.
  *   - Only paths upstream changed between M (the merge base of U and the
  *     fork's base) and U are trusted: the files this sync brings in. A path
  *     upstream did not touch in that range gets no upstream baseline, so it
@@ -71,30 +75,67 @@ function firstLine(error: unknown): string {
   return error instanceof Error ? (error.message.split("\n")[0] ?? "") : String(error);
 }
 
+function isAncestorOfHead(root: string, sha: string): boolean {
+  try {
+    git(root, ["merge-base", "--is-ancestor", sha, "HEAD"]);
+    return true;
+  } catch {
+    // Exit 1 means "not an ancestor"; any other failure is no evidence either.
+    return false;
+  }
+}
+
 /**
  * U, the upstream commit this checkout contains, without reference to the
  * fork's base: the first step of `resolveUpstreamTrust`.
+ *
+ * The first-parent chain is newest first, and containment is monotone along
+ * it — every older first-parent commit is an ancestor of a newer one — so a
+ * binary search finds the newest contained commit in a few `--is-ancestor`
+ * calls however long upstream's history is.
  */
 export function resolveUpstreamCommit(
   root: string,
   upstreamRef: string,
 ): { kind: "commit"; sha: string } | { kind: "ignored-head"; sha: string } | { kind: "unusable"; error: string } {
-  const upstream = resolveBaseRef(root, upstreamRef);
-  if (!upstream.ok) {
+  // Resolves the ref and proves it shares history with HEAD, with the same
+  // remedies the base ref gets.
+  const shared = resolveBaseRef(root, upstreamRef);
+  if (!shared.ok) {
     return {
       kind: "unusable",
-      error: `The trusted upstream --upstream-ref could not be resolved.\n  ${upstream.error}`,
+      error: `The trusted upstream --upstream-ref could not be resolved.\n  ${shared.error}`,
     };
   }
   let head: string;
+  let chain: string[];
   try {
     head = git(root, ["rev-parse", "--verify", "HEAD^{commit}"]).trim();
+    const tip = git(root, ["rev-parse", "--verify", `${upstreamRef}^{commit}`]).trim();
+    chain = git(root, ["rev-list", "--first-parent", tip]).split("\n").filter(Boolean);
   } catch (error) {
-    return { kind: "unusable", error: `Could not resolve HEAD to compare the trusted upstream with: ${firstLine(error)}` };
+    return { kind: "unusable", error: `Could not read the trusted upstream's history: ${firstLine(error)}` };
   }
-  return upstream.sha === head
-    ? { kind: "ignored-head", sha: head }
-    : { kind: "commit", sha: upstream.sha };
+
+  let low = 0;
+  let high = chain.length;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (isAncestorOfHead(root, chain[mid] as string)) high = mid;
+    else low = mid + 1;
+  }
+  const sha = chain[low];
+  if (sha === undefined) {
+    return {
+      kind: "unusable",
+      error:
+        `No commit on the first-parent history of \`${upstreamRef}\` is contained in HEAD, so ` +
+        `there is no upstream main commit to trust.\n` +
+        `  A sync must merge upstream's main itself, with a merge commit. Fix with:  ` +
+        `merge the upstream branch rather than one of its pull requests' commits`,
+    };
+  }
+  return sha === head ? { kind: "ignored-head", sha } : { kind: "commit", sha };
 }
 
 /**
