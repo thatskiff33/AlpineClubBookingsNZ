@@ -7,7 +7,8 @@ import { BookingEventType, BookingStatus, PaymentSource, PaymentStatus, PaymentT
 import { OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 import { bookingOwner } from "@/lib/booking-owner";
-import { alertOfficersOfBump, bookingBumpReason } from "@/lib/booking-bump-alert";
+import { alertOfficersOfBump } from "@/lib/booking-bump-alert";
+import { bookingBumpReason } from "@/lib/booking-bump-reason";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import {

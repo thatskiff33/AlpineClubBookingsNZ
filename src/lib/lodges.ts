@@ -169,20 +169,6 @@ export async function countActiveLodges(db: LodgeDb): Promise<number> {
 }
 
 /**
- * The lodge name an OFFICER ALERT prints, or null to leave it out (ADR-002):
- * named only when the club has more than one active lodge, so a one-lodge
- * club's alerts read as they always have. The capacity warning and the
- * booking-bumped alert (#5403) both ask it. Admin emails sit outside
- * INV-CAP-039, which governs member- and guest-facing screens.
- */
-export function adminAlertLodgeName(
-  activeLodgeCount: number,
-  lodgeName: string,
-): string | null {
-  return activeLodgeCount > 1 ? lodgeName : null;
-}
-
-/**
  * INV-CAP-039: the lodge fields a booking LIST row selects so it can name its
  * lodge. Spread into each list query's `select` (`lodge: BOOKING_LIST_LODGE_SELECT`)
  * so every list asks the same question of the same row.
@@ -232,6 +218,10 @@ export async function countActiveLodgesForBookingList(
  * officer coverage list: here a count of 0 shows the name (there, 0 hides it),
  * and the archived test is per ROW (there, any archived row names every row).
  * A member's list names only the booking that is actually elsewhere.
+ *
+ * Two officer alerts ask the same question (#5403): the booking-bumped alert
+ * with its booking's lodge, and the capacity warning with `active: true` (it
+ * only walks active lodges). Admin emails sit outside INV-CAP-039 itself.
  *
  * The name is always the BOOKING's own lodge, never the club default (#2918,
  * #2919). The screens that ask a member to review or pay for one booking (the

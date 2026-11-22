@@ -247,13 +247,11 @@ vi.mock("../capacity", () => ({
 }));
 
 const mockLodgeFindFirst = vi.fn().mockResolvedValue({ id: "lodge-1" });
-// #5403: the bumped alert counts the active lodges to decide whether to name
-// one (the real `adminAlertLodgeName` decides); two by default, so it does.
-const mockCountActiveLodges = vi.fn().mockResolvedValue(2);
+// #5403: the real lodge helpers run, so the bumped alert's lodge line is
+// decided by the real `bookingListLodgeLabel` over the base client's reads.
 vi.mock("../lodges", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("../lodges")),
   getDefaultLodgeId: (...args: unknown[]) => mockLodgeFindFirst(...args).then((l: { id: string }) => l.id),
-  countActiveLodges: (...args: unknown[]) => mockCountActiveLodges(...args),
 }));
 
 // Mock Prisma
@@ -327,7 +325,9 @@ const mockHostingCoverageReevaluationCreate = vi
 const mockHostingCoverageReevaluationFindMany = vi.fn().mockResolvedValue([]);
 // #5403: the bumped alert names the booking's lodge, read on the base client
 // after the bump has committed.
-const mockLodgeFindUnique = vi.fn().mockResolvedValue({ name: "Ruapehu Lodge" });
+const mockLodgeFindUnique = vi.fn().mockResolvedValue({ name: "Ruapehu Lodge", active: true });
+// Active lodges: two by default, so the lodge is named.
+const mockLodgeCount = vi.fn().mockResolvedValue(2);
 
 vi.mock("../prisma", () => ({
   prisma: {
@@ -381,6 +381,7 @@ vi.mock("../prisma", () => ({
     },
     lodge: {
       findUnique: (...args: unknown[]) => mockLodgeFindUnique(...args),
+      count: (...args: unknown[]) => mockLodgeCount(...args),
     },
     $transaction: (...args: unknown[]) => mockPrismaTransaction(...args),
     // #4217: the root client, so a settle without a caller's transaction opens its own.
@@ -669,8 +670,8 @@ describe("Cron: Confirm Pending Bookings", () => {
     );
     mockSendSavedCardChargeFailedEmail.mockResolvedValue(undefined);
     mockSendAdminBookingBumpedAlert.mockResolvedValue(undefined);
-    mockLodgeFindUnique.mockResolvedValue({ name: "Ruapehu Lodge" });
-    mockCountActiveLodges.mockResolvedValue(2);
+    mockLodgeFindUnique.mockResolvedValue({ name: "Ruapehu Lodge", active: true });
+    mockLodgeCount.mockResolvedValue(2);
     mockClubTimeSettingsFindUnique.mockResolvedValue(null);
     mockMemberCreditAggregate.mockResolvedValue({ _sum: { amountCents: null } });
     mockPromoRedemptionFindMany.mockResolvedValue([]);
@@ -1815,7 +1816,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       const lodgeReadInsideTransaction: boolean[] = [];
       mockLodgeFindUnique.mockImplementation(async () => {
         lodgeReadInsideTransaction.push(transaction.inside);
-        return { name: "Ruapehu Lodge" };
+        return { name: "Ruapehu Lodge", active: true };
       });
 
       const result = await confirmPendingBookings();
@@ -1834,7 +1835,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       // The booking's own lodge, read on the base client, not the default.
       expect(mockLodgeFindUnique).toHaveBeenCalledWith({
         where: { id: "lodge-1" },
-        select: { name: true },
+        select: { name: true, active: true },
       });
       expect(sentInsideTransaction).toEqual([false]);
       // The display-only lodge read is after the commit too, never under the locks.
@@ -1930,7 +1931,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(mockProcessWaitlistForDates).toHaveBeenCalledTimes(2);
     });
 
-    it("still alerts, naming the lodge by id, when the display-only lodge read fails", async () => {
+    it("still alerts, leaving the lodge out, when the display-only lodge read fails", async () => {
       const booking = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
       mockPendingBookings([booking]);
       mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
@@ -1941,7 +1942,34 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(result.bumpedBookingIds).toEqual(["b1"]);
       expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledTimes(1);
       expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledWith(
-        expect.objectContaining({ lodgeName: "lodge-1" }),
+        expect.objectContaining({ lodgeName: null }),
+      );
+    });
+
+    it("names the lodge when the active-lodge count cannot be read", async () => {
+      const booking = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+      mockLodgeCount.mockRejectedValueOnce(new Error("db down"));
+
+      await confirmPendingBookings();
+
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ lodgeName: "Ruapehu Lodge" }),
+      );
+    });
+
+    it("names an archived lodge even in a club with one active lodge", async () => {
+      const booking = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+      mockLodgeCount.mockResolvedValue(1);
+      mockLodgeFindUnique.mockResolvedValue({ name: "Old Hut", active: false });
+
+      await confirmPendingBookings();
+
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ lodgeName: "Old Hut" }),
       );
     });
 
@@ -1949,7 +1977,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       const booking = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
       mockPendingBookings([booking]);
       mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
-      mockCountActiveLodges.mockResolvedValue(1);
+      mockLodgeCount.mockResolvedValue(1);
 
       await confirmPendingBookings();
 

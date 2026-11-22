@@ -213,7 +213,7 @@ export async function sendAdminPendingDeadlineAlert(
 export async function sendAdminBookingBumpedAlert(data: {
   bumpedMemberName: string;
   bookingReference: string;
-  // Null in a one-lodge club (`adminAlertLodgeName`, ADR-002).
+  // Null when ADR-002 hides it (`bookingListLodgeLabel`).
   lodgeName: string | null;
   checkIn: Date;
   checkOut: Date;

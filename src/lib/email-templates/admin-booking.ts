@@ -220,9 +220,9 @@ export function adminPendingDeadlineTemplate(bookings: Array<{
 
 // ---- N-07: Admin Alert — Booking Bumped ----
 
-// #5403: the lodge row appears only when the club has more than one active
-// lodge (`adminAlertLodgeName`, the capacity warning's rule); the reason also
-// marks the guests-cancelled variant.
+// #5403: the lodge row follows the ADR-002 rule the capacity warning uses
+// (`bookingListLodgeLabel`): left out in a one-lodge club unless the booking's
+// lodge is archived. The reason also marks the guests-cancelled variant.
 export function adminBookingBumpedTemplate(data: {
   bumpedMemberName: string;
   bookingReference: string;

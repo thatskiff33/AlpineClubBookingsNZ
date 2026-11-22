@@ -3,12 +3,9 @@ import { BOOKING_OWNER_NAME_SELECT, bookingOwnerName } from "@/lib/booking-owner
 import { formatBookingReference } from "@/lib/booking-reference";
 import { sendAdminBookingBumpedAlert } from "@/lib/email";
 import logger from "@/lib/logger";
-import { adminAlertLodgeName, countActiveLodges } from "@/lib/lodges";
+import { bookingListLodgeLabel, countActiveLodgesForBookingList } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
-
-// The confirm-pending cron reads both from here, so it takes one import.
-export { bookingBumpReason };
 
 type BumpedBooking = Prisma.BookingGetPayload<{ select: typeof BOOKING_OWNER_NAME_SELECT }> & {
   id: string;
@@ -19,22 +16,23 @@ type BumpedBooking = Prisma.BookingGetPayload<{ select: typeof BOOKING_OWNER_NAM
 };
 
 /**
- * The lodge line for the alert: the booking's own lodge, hidden in a one-lodge
- * club exactly as the capacity warning hides it (`adminAlertLodgeName`). It is
- * display only, so a failed read never costs the officers the alert: it falls
- * back to the lodge id rather than dropping the line.
+ * The lodge line for the alert, or null to leave it out: the booking's own
+ * lodge under the one ADR-002 presentation rule (`bookingListLodgeLabel`), so
+ * it is hidden in a one-lodge club but always named when archived. The count
+ * reads 0 if it fails, which names the lodge; a failed name read leaves the
+ * line out. It is display only, so neither failure costs the officers the
+ * alert, and a database id is never shown in its place.
  */
 async function bumpedBookingLodgeName(lodgeId: string): Promise<string | null> {
+  let lodge: { name: string; active: boolean } | null;
   try {
-    const [lodge, activeLodgeCount] = await Promise.all([
-      prisma.lodge.findUnique({ where: { id: lodgeId }, select: { name: true } }),
-      countActiveLodges(prisma),
-    ]);
-    return adminAlertLodgeName(activeLodgeCount, lodge?.name ?? lodgeId);
+    lodge = await prisma.lodge.findUnique({ where: { id: lodgeId }, select: { name: true, active: true } });
   } catch (err) {
-    logger.warn({ err, lodgeId }, "Could not read the lodge for the booking-bumped alert; naming it by id");
-    return lodgeId;
+    logger.warn({ err, lodgeId }, "Could not read the lodge for the booking-bumped alert; leaving it out");
+    return null;
   }
+  if (!lodge) return null;
+  return bookingListLodgeLabel(await countActiveLodgesForBookingList(prisma), lodge);
 }
 
 /**

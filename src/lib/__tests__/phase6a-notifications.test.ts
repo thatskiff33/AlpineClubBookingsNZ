@@ -1269,7 +1269,7 @@ describe("Email templates - Phase 6a", () => {
     expect(html).toContain("asked for the whole booking to be cancelled");
     // The cron has no triggering booking to name (#5403).
     expect(html).not.toContain("Triggered By");
-    // A one-lodge club gets no lodge row (`adminAlertLodgeName`).
+    // No lodge row when ADR-002 hides it (`bookingListLodgeLabel`).
     expect(adminBookingBumpedTemplate({ ...bumped, lodgeName: null })).not.toContain(">Lodge<");
     expect(html).toContain(">Lodge<");
   });
