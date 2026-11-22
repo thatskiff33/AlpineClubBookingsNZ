@@ -26,76 +26,162 @@ function routeContents(filePath: string) {
   return fs.readFileSync(path.join(process.cwd(), filePath), "utf8");
 }
 
-const issue675MalformedJsonRoutes = [
-  "src/app/api/admin/bed-allocation/allocations/range/route.ts",
-  "src/app/api/admin/bed-allocation/allocations/route.ts",
-  "src/app/api/admin/bed-allocation/auto-allocate/route.ts",
-  "src/app/api/admin/bed-allocation/approve/route.ts",
-  "src/app/api/admin/bed-allocation/beds/[id]/route.ts",
-  "src/app/api/admin/bed-allocation/beds/route.ts",
-  "src/app/api/admin/bed-allocation/rooms/[id]/route.ts",
-  "src/app/api/admin/bed-allocation/rooms/route.ts",
-  "src/app/api/admin/bed-allocation/settings/route.ts",
-  "src/app/api/admin/promo-codes/[id]/route.ts",
-  "src/app/api/admin/promo-codes/route.ts",
-  "src/app/api/bookings/[id]/guests/route.ts",
-  "src/app/api/bookings/[id]/modify-quote/route.ts",
-  "src/app/api/bookings/quote/route.ts",
-  "src/app/api/bookings/route.ts",
-  "src/app/api/payments/create-payment-intent/route.ts",
-  "src/app/api/promo-codes/validate/route.ts",
-  "src/app/api/admin/booking-messages/preview/route.ts",
-  "src/app/api/admin/booking-messages/reset/route.ts",
-  "src/app/api/admin/booking-messages/route.ts",
-  "src/app/api/admin/committee/assignments/[id]/route.ts",
-  "src/app/api/admin/committee/assignments/route.ts",
-  "src/app/api/admin/committee/roles/[id]/route.ts",
-  "src/app/api/admin/committee/roles/route.ts",
-  "src/app/api/admin/email-templates/preview/route.ts",
-  "src/app/api/admin/email-templates/reset/route.ts",
-  "src/app/api/admin/email-templates/route.ts",
-  "src/app/api/admin/maintenance-reports/[id]/route.ts",
-  "src/app/api/admin/maintenance-reports/questions/route.ts",
-  "src/app/api/admin/maintenance-reports/settings/route.ts",
-  "src/app/api/admin/maintenance-reports/tokens/route.ts",
-  "src/app/api/admin/setup/finance-report-mappings/route.ts",
-  "src/app/api/admin/setup/progress/route.ts",
-  "src/app/api/admin/setup/provider-test/route.ts",
-  "src/app/api/auth/2fa/enroll/email/route.ts",
-  "src/app/api/auth/2fa/enroll/totp/route.ts",
-  "src/app/api/auth/2fa/verify/route.ts",
-  "src/app/api/auth/2fa/webauthn/authenticate/verify/route.ts",
-  "src/app/api/auth/2fa/webauthn/register/verify/route.ts",
-  "src/app/api/auth/forgot-password/route.ts",
-  "src/app/api/auth/magic-link/route.ts",
-  "src/app/api/auth/reauth/route.ts",
-  "src/app/api/auth/resend-verification/route.ts",
-  "src/app/api/auth/reset-password/route.ts",
-  "src/app/api/booking-requests/quote/route.ts",
-  "src/app/api/booking-requests/respond/[token]/route.ts",
-  "src/app/api/booking-requests/route.ts",
-  "src/app/api/booking-requests/school/route.ts",
-  "src/app/api/booking-requests/whole-lodge/route.ts",
-  "src/app/api/food-orders/[id]/price/route.ts",
-  "src/app/api/food-orders/[id]/received/route.ts",
-  "src/app/api/food-orders/route.ts",
-  "src/app/api/lodge/guests/[date]/arrive/route.ts",
-  "src/app/api/lodge/guests/[date]/depart/route.ts",
-  "src/app/api/lodge/instructions/preview/route.ts",
-  "src/app/api/lodge/pin-login/route.ts",
-  "src/app/api/lodge/roster/[date]/confirm/route.ts",
-  "src/app/api/lodge/roster/[date]/generate/route.ts",
-  "src/app/api/lodge/roster/[date]/route.ts",
-  "src/app/api/members/family/[memberId]/details/route.ts",
-  "src/app/api/members/family/create-group/route.ts",
-  "src/app/api/members/family/invitations/route.ts",
-  "src/app/api/members/family/invite/route.ts",
-  "src/app/api/members/family/partner-invite/claim/route.ts",
-  "src/app/api/members/family/request-adult/route.ts",
-  "src/app/api/members/family/request-child/route.ts",
-  "src/app/api/members/family/request-join/route.ts",
-  "src/app/api/members/family/request-removal/route.ts",
-] as const;
+// `request.json()` on the incoming request, however the call is awaited.
+const DIRECT_REQUEST_JSON_READ = /\b(?:request|req)\.json\(\)/;
+// Receivers of a `.json()` call that a route file may contain: the incoming
+// request (the two names routes use) and a provider's `response`.
+const JSON_RECEIVER_NAMES = new Set(["request", "req", "response"]);
+
+/**
+ * Route files that still call `request.json()` themselves instead of the shared
+ * reader in `src/lib/api-json.ts` (#5400). The census below derives the set of
+ * such files from the tree and requires it to equal this list exactly: a route
+ * that reads the body directly and is not listed fails, and so does a listed
+ * route that no longer does (remove it from the list when you convert it).
+ *
+ * Each group is a reason the inline read could not be swapped for the shared
+ * reader without changing what a caller sees. The list is the work list for
+ * #5407 items 26 and 27 (the groups `uncaught`, `oneAnswer` and
+ * `swallowedError`); the last four groups have no item there yet. It only
+ * shrinks. Do not add a route to dodge the census: a new route uses the shared
+ * reader.
+ *
+ * Not seen: `admin/mountain-conditions` POST reads `text()` and parses it
+ * itself (#5407 item 28), and a body read under another receiver name or
+ * through `clone()`; `JSON_RECEIVER_NAMES` below fails on a new name.
+ */
+const directJsonReadAllowlist: Record<
+  string,
+  { reason: string; routes: string[] }
+> = {
+  uncaught: {
+    reason:
+      "The read has no try/catch around it, so a body that is not valid JSON is answered with a 500 today. Converting it would change the status, so converting it changes the status from 500 to 400 (#5407 item 26).",
+    routes: [
+      "src/app/api/admin/age-tier-settings/route.ts",
+      "src/app/api/admin/booking-change-requests/[id]/route.ts",
+      "src/app/api/admin/booking-policies/cancellation/route.ts",
+      "src/app/api/admin/booking-policies/group-discount/route.ts",
+      "src/app/api/admin/chores/[id]/route.ts",
+      "src/app/api/admin/chores/route.ts",
+      "src/app/api/admin/lodge/route.ts",
+      "src/app/api/admin/members/[id]/credits/[requestId]/route.ts",
+      "src/app/api/admin/members/[id]/credits/route.ts",
+      "src/app/api/admin/refund-requests/[id]/route.ts",
+      "src/app/api/admin/seasons/[id]/route.ts",
+      "src/app/api/admin/seasons/route.ts",
+      "src/app/api/auth/change-password/route.ts",
+      "src/app/api/bookings/[id]/confirm-modification-payment/route.ts",
+      "src/app/api/bookings/[id]/confirm-payment/route.ts",
+      "src/app/api/bookings/[id]/refund-request/route.ts",
+      "src/app/api/payments/charge-saved-method/route.ts",
+      "src/app/api/payments/create-setup-intent/route.ts",
+    ],
+  },
+  oneAnswer: {
+    reason:
+      "One try wraps the JSON read and the schema parse (or more) and gives both faults the same answer and status, often not the shared reader's 400. A shared reader would split them, which changes a response (#5407 item 27).",
+    routes: [
+      "src/app/api/admin/booking-policies/adult-member-hosting/route.ts",
+      "src/app/api/admin/booking-policies/minimum-stay/[id]/route.ts",
+      "src/app/api/admin/booking-policies/minimum-stay/route.ts",
+      "src/app/api/admin/booking-policies/periods/[id]/route.ts",
+      "src/app/api/admin/booking-policies/periods/route.ts",
+      "src/app/api/admin/deletion-requests/[id]/route.ts",
+      "src/app/api/admin/display/devices/[id]/pairing/route.ts",
+      "src/app/api/admin/display/devices/[id]/route.ts",
+      "src/app/api/admin/display/devices/route.ts",
+      "src/app/api/admin/display/layouts/[id]/route.ts",
+      "src/app/api/admin/display/layouts/route.ts",
+      "src/app/api/admin/display/lodge-config/route.ts",
+      "src/app/api/admin/display/preview-grant/route.ts",
+      "src/app/api/admin/display/templates/[id]/route.ts",
+      "src/app/api/admin/display/templates/route.ts",
+      "src/app/api/admin/lodges/[id]/central-lodge/route.ts",
+      "src/app/api/admin/lodges/[id]/roster-settings/route.ts",
+      "src/app/api/admin/member-lifecycle-action-requests/[requestId]/route.ts",
+      "src/app/api/admin/members/[id]/lifecycle/archive/route.ts",
+      "src/app/api/admin/members/[id]/lifecycle/delete/route.ts",
+      "src/app/api/admin/members/[id]/membership-cancellation/route.ts",
+      "src/app/api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]/route.ts",
+      "src/app/api/auth/request-email-change/route.ts",
+      "src/app/api/display/pair/route.ts",
+      "src/app/api/finance/sync/backfill-monthly-facts/route.ts",
+      "src/app/api/member/membership-cancellation-requests/confirm/route.ts",
+      "src/app/api/member/membership-cancellation-requests/route.ts",
+    ],
+  },
+  swallowedError: {
+    reason:
+      "The read swallows the failure and carries on with an empty or null body (`.catch(() => ...)`, or a catch that assigns a default), so invalid JSON is treated as no body. Converting it would turn that into a 400 (#5407 item 27).",
+    routes: [
+      "src/app/api/admin/booking-requests/[id]/approve/route.ts",
+      "src/app/api/admin/booking-requests/[id]/decline/route.ts",
+      "src/app/api/admin/booking-requests/[id]/hold/route.ts",
+      "src/app/api/admin/booking-requests/[id]/send-quote/route.ts",
+      "src/app/api/admin/bookings/[id]/capacity-hold/route.ts",
+      "src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts",
+      "src/app/api/admin/bookings/[id]/exclusive-hold/route.ts",
+      "src/app/api/admin/bookings/[id]/force-confirm/route.ts",
+      "src/app/api/admin/bookings/[id]/fresh-email-copy/route.ts",
+      "src/app/api/admin/bookings/[id]/no-emails/route.ts",
+      "src/app/api/admin/bookings/[id]/review/route.ts",
+      "src/app/api/admin/club-posts/[id]/route.ts",
+      "src/app/api/admin/club-posts/settings/route.ts",
+      "src/app/api/admin/email-failures/[id]/review/route.ts",
+      "src/app/api/admin/email-suppressions/[id]/clear/route.ts",
+      "src/app/api/admin/members/[id]/partner-link/route.ts",
+      "src/app/api/admin/opening-credits/[id]/reverse/route.ts",
+      "src/app/api/admin/opening-credits/confirm/route.ts",
+      "src/app/api/admin/opening-credits/preview/route.ts",
+      "src/app/api/admin/xero/contact-group-mismatches/route.ts",
+      "src/app/api/admin/xero/contact-link-mismatches/route.ts",
+      "src/app/api/admin/xero/member-grouping/route.ts",
+      "src/app/api/admin/xero/missing-contacts/route.ts",
+      "src/app/api/admin/xero/operations/[id]/mark-failed/route.ts",
+      "src/app/api/admin/xero/operations/[id]/mark-non-replayable/route.ts",
+      "src/app/api/admin/xero/operations/[id]/resolve/route.ts",
+      "src/app/api/bookings/[id]/confirm-draft/route.ts",
+      "src/app/api/bookings/[id]/guests/[guestId]/consent/route.ts",
+      "src/app/api/bookings/[id]/guests/[guestId]/route.ts",
+      "src/app/api/group-bookings/[code]/settle/route.ts",
+      "src/app/api/member/request-deletion/route.ts",
+      "src/app/api/pay/[token]/payment-intent/route.ts",
+    ],
+  },
+  extraResponse: {
+    reason:
+      "The invalid-JSON 400 carries something the shared reader cannot send: an extra field such as a `code`, or response headers.",
+    routes: [
+      "src/app/api/admin/roster/[date]/route.ts",
+      "src/app/api/lodge-maintenance/[token]/route.ts",
+    ],
+  },
+  ownHelper: {
+    reason:
+      "The route reads the body through its own helper whose failure answer is shared with other faults, or whose sentinel the caller turns into a response. Folding it into the shared reader needs the route reshaped.",
+    routes: [
+      "src/app/api/admin/club-tax/route.ts",
+      "src/app/api/admin/menu-role/route.ts",
+      "src/app/api/admin/xero/tax-categories/route.ts",
+    ],
+  },
+  undeclaredBody: {
+    reason:
+      "The block is the exact inline copy but its variable is declared without `: unknown` (implicitly `any`), so the shared reader's `unknown` body would change how the code below type-checks.",
+    routes: [
+      "src/app/api/admin/communications/send/route.ts",
+      "src/app/api/notifications/preferences/route.ts",
+    ],
+  },
+  sizeCeiling: {
+    reason:
+      "The conversion is exact but adds two lines to a file over its size ceiling, which needs a size allowance carrying a pull request number. It converts with that allowance.",
+    routes: [
+      "src/app/api/admin/subscription-billing/route.ts",
+    ],
+  },
+};
 
 // Shared cross-file wrappers that perform requireAdmin internally. Keep this
 // closed list synchronized with the exported route guards; the defining module
@@ -617,21 +703,45 @@ describe("API route boundary metadata", () => {
     expect(violations).toEqual([]);
   });
 
-  it("keeps issue #675 JSON-consuming routes on the controlled malformed JSON path", () => {
-    const violations = issue675MalformedJsonRoutes.flatMap((routePath) => {
-      const contents = routeContents(routePath);
-      const directParse = /\bawait\s+(?:req|request)\.json\(\)/.test(contents);
+  it("reads a request body through the shared JSON reader unless the route is listed with a reason", () => {
+    const allowlisted = Object.values(directJsonReadAllowlist).flatMap(
+      (group) => group.routes,
+    );
+    const routes = listRouteFiles(path.join(process.cwd(), "src/app/api")).map(
+      relativeRoutePath,
+    );
+    const directReaders = routes.filter((routePath) =>
+      DIRECT_REQUEST_JSON_READ.test(routeContents(routePath)),
+    );
 
-      if (!contents.includes("parseJsonRequestBody(")) {
-        return [`${routePath}: route does not use controlled JSON parsing`];
-      }
-      if (directParse) {
-        return [`${routePath}: route still directly awaits request.json()`];
-      }
-      return [];
+    const duplicated = allowlisted.filter(
+      (routePath, index) => allowlisted.indexOf(routePath) !== index,
+    );
+    const unlisted = directReaders.filter(
+      (routePath) => !allowlisted.includes(routePath),
+    );
+    const stale = allowlisted.filter(
+      (routePath) => !directReaders.includes(routePath),
+    );
+    // A request parameter under another name would slip past the pattern above.
+    const otherReceivers = routes.flatMap((routePath) =>
+      [...routeContents(routePath).matchAll(/\b(\w+)\.json\(\)/g)]
+        .map((match) => match[1] ?? "")
+        .filter((name) => !JSON_RECEIVER_NAMES.has(name))
+        .map((name) => `${routePath}: ${name}.json()`),
+    );
+
+    expect({
+      duplicated,
+      unlisted,
+      stale,
+      otherReceivers,
+    }).toEqual({
+      duplicated: [],
+      unlisted: [],
+      stale: [],
+      otherReceivers: [],
     });
-
-    expect(violations).toEqual([]);
   });
 
   it("does not allow SVG uploads through the static image-manager route (stored XSS)", () => {
