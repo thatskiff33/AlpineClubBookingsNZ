@@ -1680,6 +1680,20 @@ Raise it per test, never globally. `vitest.setup.ts` states `testTimeout` is
 a global change falsifies a documented constant in another file — and it would
 let thousands of ordinary tests hang six times as long to buy headroom for six.
 
+### A test that reads the whole tree needs its own budget too (#5439)
+
+The same rule covers a census that reads every file under `src/` (or `scripts/`,
+`e2e/`) synchronously. Reading and comment-stripping more than 1,000 files takes
+one to five seconds on an idle machine and more on a loaded CI shard, so a case
+that does it under the 5,000ms default fails on fine code. The club-time kernel
+census did exactly that on #5429.
+
+So a case that walks the tree states `CENSUS_TIMEOUT_MS` (90,000ms unless
+measured otherwise), as the `it` timeout or a `describe(..., { timeout })`
+option. When several cases scan the same tree, read it once (a `beforeAll` under
+the same budget, or a cached helper) rather than once per case. Never loosen an
+assertion or add a retry to make the scan fit.
+
 ## Census tests and the merge hazard
 
 A third convention that is load-bearing rather than stylistic, for the same

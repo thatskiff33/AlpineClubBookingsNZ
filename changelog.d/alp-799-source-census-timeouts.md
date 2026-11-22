@@ -1,0 +1,2 @@
+- **Tests that scan the whole source tree no longer fail on a busy test machine (#5439).**
+  A check that reads and searches every production file for hand-built date formatters took longer than the test runner's 5-second default on a loaded CI runner, so it failed with "Test timed out" although nothing was wrong. It and the other whole-tree scans now state their own 90-second allowance, as the repository's other source-scanning checks already do. No checks were loosened and no behaviour changes for clubs.
