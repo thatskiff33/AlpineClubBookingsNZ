@@ -7,6 +7,12 @@ import { prisma } from "@/lib/prisma";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import { requireAdmin } from "@/lib/session-guards";
 import {
+  adminPolicyLodgeQuerySchema,
+  adultMemberHostingBodySchema,
+} from "@/lib/admin-bookings-schemas/setup";
+import { ADMIN_ADULT_MEMBER_HOSTING_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-setup";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
   INACTIVE_ADULT_MEMBER_HOSTING_LODGE_MESSAGE,
   STALE_ADULT_MEMBER_HOSTING_POLICY_MESSAGE,
   lockAdultMemberHostingPolicySet,
@@ -37,67 +43,10 @@ import {
 
 const CLUB_SCOPE_KEY = "club-wide";
 
-/**
- * The host-qualification scope set as the card sends it (#2569 §2).
- *
- * `null` is the explicit `Inherit club host scopes` option — for a LODGE it means
- * "follow whatever the club decides", and for the CLUB it means "we have not
- * decided", which resolves to the built-in same-booking-only default. It is stored
- * as both columns NULL, which the database CHECK holds together.
- *
- * ABSENT is treated as `null` as well, so a caller that predates #2569 (and the
- * route tests written against it) keeps its exact meaning: no scope decision on
- * this row.
- *
- * STRICT, so a body naming a scope this build does not have — including the two
- * the owner removed from the model (#2575, #2576) — is a 400 rather than a silently
- * dropped key that would save a set the operator did not choose.
- *
- * `sameGroupTrip` (#3037) is OPTIONAL rather than required, and only that field
- * is. Strictness is about unknown keys and is unweakened; what optionality buys
- * is a blue/green window in which a browser tab loaded from the previous colour
- * can still save a policy, naming only the two fields it knows.
- *
- * OPTIONAL, NOT `.default(false)`, and the difference is a real bug rather than
- * a style preference. A default makes an ABSENT field indistinguishable from an
- * explicit `false`, so an old-colour tab saving an unrelated change — the mode,
- * the capacity mode — would silently turn Group Trip cover OFF on a row a
- * different admin had turned it on for. The compare-and-swap `version` does not
- * stop that: the old-colour tab reads the row through a GET that simply does not
- * select this column, so it can hold the CURRENT version quite legitimately, the
- * CAS passes, and the default writes the field the body could not express.
- * Absent therefore means "this writer expressed no view", and the handler leaves
- * the stored value alone; on a CREATE it stores NULL, which reads as OFF and is
- * exactly what the previous colour would have written itself.
- *
- * The reverse direction is closed by strictness rather than by this field: a
- * NEW-colour body routed to an OLD-colour instance names a key that build's
- * `.strict()` does not know, and is a 400 — a visible refusal, not a silent drop.
- */
-const hostScopesSchema = z
-  .object({
-    sameBooking: z.boolean(),
-    sameBookingOwner: z.boolean(),
-    sameGroupTrip: z.boolean().optional(),
-  })
-  .strict()
-  .nullable();
-
-const writeSchema = z.object({
-  mode: z.enum(["INHERIT", "DISABLED", "ADMIN_REVIEW_REQUIRED", "ENFORCED"]),
-  hostScopes: hostScopesSchema.optional(),
-  // Required on EVERY write, with no server-side default (epic decision D-R6:
-  // capacity mode is per policy and explicit for new policies). The column has
-  // no database default either, so there is nowhere for an unstated value to
-  // come from.
-  capacityMode: z.enum(["HOLD", "NO_HOLD"]),
-  // The revision the editor loaded. Absent means "I believe no row exists yet";
-  // present means "I am updating the row I read". Either belief being wrong is a
-  // 409, never a blind overwrite of a concurrent admin or a configuration
-  // import.
-  version: z.number().int().min(1).optional(),
-  lodgeId: z.string().min(1).optional(),
-});
+// The request schemas (and why the scope set is strict, nullable and its
+// `sameGroupTrip` optional) live in admin-bookings-schemas/setup.ts so the AI
+// app actions `get_adult_member_hosting_policy` and
+// `update_adult_member_hosting_policy` offer the same fields (ALP-719).
 
 function scopeKeyFor(lodgeId: string | null): string {
   return lodgeId ?? CLUB_SCOPE_KEY;
@@ -112,7 +61,14 @@ export async function GET(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  const lodgeId = request.nextUrl.searchParams.get("lodgeId");
+  // A string or nothing always parses; the 400 is only a backstop.
+  const query = adminPolicyLodgeQuerySchema.safeParse({
+    lodgeId: request.nextUrl.searchParams.get("lodgeId") ?? undefined,
+  });
+  if (!query.success) {
+    return NextResponse.json({ error: query.error.issues[0]?.message }, { status: 400 });
+  }
+  const lodgeId = query.data.lodgeId ?? null;
   // BOTH candidate rows, not just this scope's: #2569 §16 requires the card to
   // show whether each dimension is inherited or overridden and what the EFFECTIVE
   // answer is, and only the resolver can say that — computing it in the component
@@ -122,7 +78,7 @@ export async function GET(request: NextRequest) {
   });
   const policy = rows.find((row) => row.scopeKey === scopeKeyFor(lodgeId)) ?? null;
 
-  return NextResponse.json({
+  return connectionJson(request, {
     ...(policy
       ? { ...policy, hostScopes: storedHostScopes(policy), configured: true }
       : {
@@ -142,7 +98,7 @@ export async function GET(request: NextRequest) {
           configured: false,
         }),
     effective: effectiveView(rows, lodgeId),
-  });
+  }, ADMIN_ADULT_MEMBER_HOSTING_CONNECTION_SHAPE);
 }
 
 /**
@@ -209,9 +165,9 @@ export async function PUT(request: NextRequest) {
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  let data: z.infer<typeof writeSchema>;
+  let data: z.infer<typeof adultMemberHostingBodySchema>;
   try {
-    data = writeSchema.parse(await request.json());
+    data = adultMemberHostingBodySchema.parse(await request.json());
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
@@ -422,7 +378,11 @@ export async function PUT(request: NextRequest) {
     // answer — and the public page's cache must not be purged for a write that
     // did not happen (#2143).
     if (result.kind === "unchanged") {
-      return NextResponse.json(await savedPolicyBody(policy, lodgeId));
+      return connectionJson(
+        request,
+        await savedPolicyBody(policy, lodgeId),
+        ADMIN_ADULT_MEMBER_HOSTING_CONNECTION_SHAPE,
+      );
     }
 
     logAudit({
@@ -450,7 +410,11 @@ export async function PUT(request: NextRequest) {
     }
 
     revalidatePublicPageContent();
-    return NextResponse.json(await savedPolicyBody(policy, lodgeId));
+    return connectionJson(
+      request,
+      await savedPolicyBody(policy, lodgeId),
+      ADMIN_ADULT_MEMBER_HOSTING_CONNECTION_SHAPE,
+    );
   } catch (error) {
     if (error instanceof StalePolicyError) {
       return NextResponse.json(

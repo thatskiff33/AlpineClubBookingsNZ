@@ -3,34 +3,25 @@ import { revalidatePublicPageContent } from "@/lib/public-content-revalidation"
 import { syncOwnOtherLodgesFromFees } from "@/lib/other-lodge-fees-sync"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
-import { z } from "zod"
 import { logAudit } from "@/lib/audit"
 import { parseDateOnly } from "@/lib/date-only"
-import { dateOnlyStringSchema } from "@/lib/date-only-schema"
 import { lodgeNullTolerantScope } from "@/lib/lodges"
 import {
-  membershipTypeSeasonRateInputSchema,
   replaceMembershipTypeSeasonRates,
   validateMembershipTypeSeasonRates,
 } from "@/lib/season-rate-editor"
+import { seasonUpdateBodySchema } from "@/lib/admin-bookings-schemas/setup"
+import {
+  ADMIN_SEASON_CONNECTION_SHAPE,
+  ADMIN_SETUP_DELETED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/bookings-setup"
+import { connectionJson } from "@/lib/mcp-connection-request"
 
-// Rates keyed by membership type (#1930, E4); legacy SeasonRate is gone (#2129).
-const updateSeasonSchema = z.object({
-  name: z.string().min(1).optional(),
-  type: z.enum(["WINTER", "SUMMER"]).optional(),
-  startDate: dateOnlyStringSchema.optional(),
-  endDate: dateOnlyStringSchema.optional(),
-  active: z.boolean().optional(),
-  membershipTypeRates: membershipTypeSeasonRateInputSchema.optional(),
-  // Flat whole-lodge night rate in integer cents (#2338). Nullable so the Hut
-  // Fees editor can CLEAR it (null); omitted leaves it untouched — the
-  // windows-only /admin/seasons PUT never sends it, so a window edit never wipes
-  // a configured flat rate. Flows through `...seasonData` into the update.
-  flatWholeLodgeNightCents: z.number().int().min(0).nullable().optional(),
-})
+// The body schema lives in admin-bookings-schemas/setup.ts so the AI app
+// action `update_season` offers the same fields (ALP-719).
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin();
@@ -46,7 +37,7 @@ export async function GET(
     return NextResponse.json({ error: "Season not found" }, { status: 404 })
   }
 
-  return NextResponse.json(season)
+  return connectionJson(req, season, ADMIN_SEASON_CONNECTION_SHAPE)
 }
 
 export async function PUT(
@@ -58,7 +49,7 @@ export async function PUT(
   const session = guard.session;
   const { id } = await params
   const body = await req.json()
-  const parsed = updateSeasonSchema.safeParse(body)
+  const parsed = seasonUpdateBodySchema.safeParse(body)
 
   if (!parsed.success) {
     return NextResponse.json(
@@ -154,11 +145,11 @@ export async function PUT(
   // This club's own Other lodge follows the Fees page (#77).
   await syncOwnOtherLodgesFromFees("fees season updated", session.user.id)
   revalidatePublicPageContent()
-  return NextResponse.json(season)
+  return connectionJson(req, season, ADMIN_SEASON_CONNECTION_SHAPE)
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin();
@@ -185,5 +176,5 @@ export async function DELETE(
 
   await syncOwnOtherLodgesFromFees("fees season deleted", session.user.id)
   revalidatePublicPageContent()
-  return NextResponse.json({ success: true })
+  return connectionJson(req, { success: true }, ADMIN_SETUP_DELETED_CONNECTION_SHAPE)
 }

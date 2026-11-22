@@ -29,21 +29,22 @@ import logger from "@/lib/logger";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
-import { z } from "zod";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { adminForceConfirmBodySchema } from "@/lib/admin-bookings-schemas/bookings";
+import {
+  ADMIN_FORCE_CONFIRM_CONNECTION_SHAPE,
+  type AdminForceConfirmAnswer,
+} from "@/lib/connection-shapes/bookings-bookings";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
-const forceConfirmSchema = z.object({
-  allowOverbook: z.boolean().optional(),
-  // #1769b (#1705 semantics): per-action member-email choice. This route is
-  // requireAdmin()-only, so no actor gate is needed. Absent = notify (default);
-  // false suppresses the confirmation email (only reachable when the booking
-  // lands PAID). A non-boolean value is rejected with 400.
-  notifyMember: z.boolean().optional(),
-});
-
+/**
+ * POST /api/admin/bookings/[id]/force-confirm — confirm a waitlisted booking
+ * without waiting for an offer. Also the AI app action
+ * `force_confirm_waitlisted_booking` (ALP-719).
+ */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -56,7 +57,7 @@ export async function POST(
   const { id: bookingId } = await params;
 
   const body = await request.json().catch(() => ({}));
-  const parsed = forceConfirmSchema.safeParse(body);
+  const parsed = adminForceConfirmBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -356,14 +357,15 @@ export async function POST(
       ).catch((err) => logger.error({ err, bookingId }, "Failed to send confirmation after force-confirm"));
     }
 
-    return NextResponse.json({
+    const answer: AdminForceConfirmAnswer = {
       success: true,
       auditAction,
       overbooked,
       overbookDates,
       status,
       unpaidFinishedStay,
-    });
+    };
+    return connectionJson(request, answer, ADMIN_FORCE_CONFIRM_CONNECTION_SHAPE);
   } catch (err) {
     // `INV-LOCK-006`: the force-confirm's one transaction rolled back.
     const contended = transactionContendedResponse(

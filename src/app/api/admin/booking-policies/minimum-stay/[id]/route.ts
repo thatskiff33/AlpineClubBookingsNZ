@@ -5,26 +5,23 @@ import { prisma } from "@/lib/prisma"
 import { z } from "zod"
 import { logAudit } from "@/lib/audit"
 import { parseDateOnly } from "@/lib/date-only"
-import { dateOnlyStringSchema } from "@/lib/date-only-schema"
+import {
+  minimumStayDeleteBodySchema,
+  minimumStayUpdateBodySchema,
+} from "@/lib/admin-bookings-schemas/setup"
+import {
+  ADMIN_MINIMUM_STAY_POLICY_CONNECTION_SHAPE,
+  ADMIN_MINIMUM_STAY_POLICY_DEACTIVATED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/bookings-setup"
+import { connectionJson } from "@/lib/mcp-connection-request"
 import {
   DUPLICATE_MINIMUM_STAY_POLICY_NAME_MESSAGE,
   lockMinimumStayPolicySet,
 } from "@/lib/minimum-stay-policy-set"
 
-const updateSchema = z.object({
-  version: z.number().int().positive(),
-  name: z.string().min(1).max(200).optional(),
-  startDate: dateOnlyStringSchema.optional(),
-  endDate: dateOnlyStringSchema.optional(),
-  triggerDays: z.array(z.number().int().min(0).max(6)).min(1).optional(),
-  minimumNights: z.number().int().min(2).optional(),
-  capacityMode: z.enum(["HOLD", "NO_HOLD"]).optional(),
-  active: z.boolean().optional(),
-})
-
-const deleteSchema = z.object({
-  version: z.number().int().positive(),
-})
+// The body schemas live in admin-bookings-schemas/setup.ts so the AI app
+// actions `update_minimum_stay_policy` and `deactivate_minimum_stay_policy`
+// offer the same fields (ALP-719).
 
 function canonicalTriggerDays(days: number[]): number[] {
   return [...new Set(days)].sort((a, b) => a - b)
@@ -61,7 +58,7 @@ export async function PUT(
   const { id } = await params
 
   try {
-    const data = updateSchema.parse(await request.json())
+    const data = minimumStayUpdateBodySchema.parse(await request.json())
     const outcome = await prisma.$transaction(async (tx) => {
       // The global policy-set lock is acquired before the first read. The DB
       // statement trigger takes this same key for draining old-colour DML.
@@ -169,7 +166,7 @@ export async function PUT(
       )
     }
     if (outcome.kind === "unchanged") {
-      return NextResponse.json(outcome.existing)
+      return connectionJson(request, outcome.existing, ADMIN_MINIMUM_STAY_POLICY_CONNECTION_SHAPE)
     }
 
     logAudit({
@@ -187,7 +184,7 @@ export async function PUT(
     })
 
     revalidatePublicPageContent()
-    return NextResponse.json(outcome.policy)
+    return connectionJson(request, outcome.policy, ADMIN_MINIMUM_STAY_POLICY_CONNECTION_SHAPE)
   } catch (error) {
     if (error instanceof PolicyNotFoundError) {
       return NextResponse.json({ error: "Policy not found" }, { status: 404 })
@@ -218,7 +215,7 @@ export async function DELETE(
   const { id } = await params
 
   try {
-    const data = deleteSchema.parse(await request.json())
+    const data = minimumStayDeleteBodySchema.parse(await request.json())
     const outcome = await prisma.$transaction(async (tx) => {
       await lockMinimumStayPolicySet(tx)
       const existing = await tx.minimumStayPolicy.findUnique({ where: { id } })
@@ -243,7 +240,13 @@ export async function DELETE(
       return { existing, changed: true }
     })
 
-    if (!outcome.changed) return NextResponse.json({ success: true })
+    if (!outcome.changed) {
+      return connectionJson(
+        request,
+        { success: true },
+        ADMIN_MINIMUM_STAY_POLICY_DEACTIVATED_CONNECTION_SHAPE,
+      )
+    }
     const after = {
       ...outcome.existing,
       active: false,
@@ -264,7 +267,11 @@ export async function DELETE(
     })
 
     revalidatePublicPageContent()
-    return NextResponse.json({ success: true, policy: after })
+    return connectionJson(
+      request,
+      { success: true, policy: after },
+      ADMIN_MINIMUM_STAY_POLICY_DEACTIVATED_CONNECTION_SHAPE,
+    )
   } catch (error) {
     if (error instanceof PolicyNotFoundError) {
       return NextResponse.json({ error: "Policy not found" }, { status: 404 })

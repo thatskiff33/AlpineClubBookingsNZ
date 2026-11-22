@@ -30,7 +30,7 @@
 import { exactContains } from "@/lib/prisma-exact-prefix";
 import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import { AgeTier, Prisma, Role } from "@prisma/client";
-import { z } from "zod";
+import type { z } from "zod";
 import {
   assertMappableOwnerContact,
   BookingRequestError,
@@ -42,7 +42,7 @@ import {
   buildPlaceholderContactEmail,
   isPlaceholderContactEmail,
 } from "@/lib/placeholder-contact-email";
-import { nameField } from "@/lib/zod-helpers";
+import type { nonMemberContactCreateSchema } from "@/lib/admin-bookings-schemas/bookings";
 
 const SUGGESTION_LIMIT = 8;
 
@@ -59,25 +59,9 @@ export class NonMemberContactError extends Error {
 }
 
 /**
- * Create input. Deliberately limited to name/email/phone (+ the no-email
- * toggle): role/canLogin/emailVerified/ageTier are NOT accepted so they can
- * only ever take their server-forced values.
+ * Create input: `nonMemberContactCreateSchema` (in the pure schema module the
+ * route and the AI app action catalogue share), plus the acting officer.
  */
-export const nonMemberContactCreateSchema = z
-  .object({
-    firstName: nameField(),
-    lastName: nameField(),
-    email: z.string().trim().max(320).email().optional(),
-    phone: z.string().trim().max(50).optional(),
-    // Walk-in without an email (D-R2): store a club-internal placeholder and
-    // suppress all outbound email / Xero email-matching for this owner.
-    noEmail: z.boolean().optional().default(false),
-  })
-  .refine((data) => data.noEmail || Boolean(data.email), {
-    message: "An email address is required unless 'no email address' is set",
-    path: ["email"],
-  });
-
 export type NonMemberContactCreateInput = z.infer<
   typeof nonMemberContactCreateSchema
 > & { actorMemberId: string };

@@ -2,8 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { z } from "zod";
+import { groupDiscountBodySchema } from "@/lib/admin-bookings-schemas/setup";
 import { logAudit } from "@/lib/audit";
+import {
+  ADMIN_GROUP_DISCOUNT_CONNECTION_SHAPE,
+  ADMIN_GROUP_DISCOUNT_SAVED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/bookings-setup";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import { DEFAULT_GROUP_DISCOUNT_SETTING } from "@/config/club-settings-defaults";
 import {
@@ -11,31 +16,11 @@ import {
   lodgeGuestLimitMessage,
 } from "@/lib/lodge-booking-readiness";
 
-const groupDiscountSchema = z.object({
-  minGroupSize: z.number().int().min(2).max(200),
-  summerOnly: z.boolean(),
-  enabled: z.boolean(),
-  // #2770 (INV-MOD-026): whether a later edit earns the discount on the nights
-  // it newly buys.
-  //
-  // OPTIONAL, and the failure modes are why. A body that predates the column —
-  // an admin tab left open across the deploy, or any scripted caller — would be
-  // rejected outright by a required field, losing the whole policy save over a
-  // key it has never heard of. Optional cannot silently re-arm the switch
-  // either: `update` is `parsed.data`, and an absent optional key is simply not
-  // in that object, so Prisma leaves the column exactly as the club set it. On
-  // `create` the column's own `@default(true)` applies. Absent therefore means
-  // "do not touch this", which is the strictly safer of the two behaviours for a
-  // field that decides what a member is charged.
-  //
-  // Note the deliberate asymmetry with `EditTimeGroupDiscountSettingLike`, where
-  // the same field is REQUIRED: there it is being READ to price a booking, and an
-  // absent value would silently withhold a discount the club left on. Here it is
-  // being WRITTEN, and absent means unchanged.
-  applyToEdits: z.boolean().optional(),
-});
+// The body schema (including why `applyToEdits` is optional) lives in
+// admin-bookings-schemas/setup.ts so the AI app action
+// `update_group_discount_policy` offers the same fields (ALP-719).
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "bookings", level: "view" },
   });
@@ -52,7 +37,8 @@ export async function GET() {
   // unreachable. Creating the row is a real event, so the audit entry the PUT
   // then writes is accurate — it is a no-op re-PUT of an EXISTING row that
   // #2143 rules out, not the first save.
-  return NextResponse.json(
+  return connectionJson(
+    req,
     setting
       ? { ...setting, configured: true }
       : {
@@ -60,6 +46,7 @@ export async function GET() {
           ...DEFAULT_GROUP_DISCOUNT_SETTING,
           configured: false,
         },
+    ADMIN_GROUP_DISCOUNT_CONNECTION_SHAPE,
   );
 }
 
@@ -70,7 +57,7 @@ export async function PUT(req: NextRequest) {
   if (!guard.ok) return guard.response;
   const session = guard.session;
   const body = await req.json();
-  const parsed = groupDiscountSchema.safeParse(body);
+  const parsed = groupDiscountBodySchema.safeParse(body);
 
   if (!parsed.success) {
     return NextResponse.json(
@@ -134,5 +121,5 @@ export async function PUT(req: NextRequest) {
   });
 
   revalidatePublicPageContent();
-  return NextResponse.json(result);
+  return connectionJson(req, result, ADMIN_GROUP_DISCOUNT_SAVED_CONNECTION_SHAPE);
 }

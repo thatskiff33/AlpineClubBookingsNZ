@@ -1,19 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { adminFreshEmailCopyBodySchema } from "@/lib/admin-bookings-schemas/bookings";
 import { getAuditRequestContext } from "@/lib/audit";
 import { sendBookingFreshEmailCopy } from "@/lib/booking-fresh-email-copy";
-import { BOOKING_FRESH_COPY_TEMPLATES } from "@/lib/booking-fresh-email-copy-templates";
+import {
+  ADMIN_FRESH_EMAIL_COPY_CONNECTION_SHAPE,
+  type AdminFreshEmailCopyAnswer,
+} from "@/lib/connection-shapes/bookings-bookings";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
-
-// The template is the ONLY input. `.strict()` refuses any other key, so a
-// caller can never name a recipient, a body, a token or an amount: those are
-// all read from the booking (or minted) by the service.
-const freshEmailCopySchema = z
-  .object({
-    template: z.enum(BOOKING_FRESH_COPY_TEMPLATES),
-  })
-  .strict();
 
 /**
  * POST /api/admin/bookings/[id]/fresh-email-copy — send a freshly rendered copy
@@ -27,6 +22,10 @@ const freshEmailCopySchema = z
  * the address is suppressed or a placeholder, 429 a copy just went out, 502 the
  * mail transport failed, and 503 a setting could not be read or is incomplete.
  * Only a 200 means the member was sent the message.
+ *
+ * The body is the template alone (`adminFreshEmailCopyBodySchema`, strict): a
+ * caller can never name a recipient, a body, a token or an amount. Also the AI
+ * app action `send_fresh_booking_email_copy` (ALP-719).
  */
 export async function POST(
   request: NextRequest,
@@ -40,7 +39,7 @@ export async function POST(
   const { id: bookingId } = await params;
 
   const body = await request.json().catch(() => null);
-  const parsed = freshEmailCopySchema.safeParse(body);
+  const parsed = adminFreshEmailCopyBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Choose which booking email to send a fresh copy of." },
@@ -58,13 +57,14 @@ export async function POST(
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: result.status });
     }
-    return NextResponse.json({
+    const answer: AdminFreshEmailCopyAnswer = {
       success: true,
       template: result.template,
       sentTo: result.sentTo,
       archivedFailureCount: result.archivedFailureCount,
       warning: result.warning,
-    });
+    };
+    return connectionJson(request, answer, ADMIN_FRESH_EMAIL_COPY_CONNECTION_SHAPE);
   } catch (err) {
     logger.error(
       { err, bookingId, template: parsed.data.template },

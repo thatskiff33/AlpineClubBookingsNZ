@@ -5,43 +5,24 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { parseDateOnly } from "@/lib/date-only";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import {
-  hasDuplicateCancellationThresholds,
   normalizeCancellationRules,
   normalizeStoredCancellationRules,
 } from "@/lib/cancellation-rules";
 import { logAudit } from "@/lib/audit";
+import {
+  adminPolicyLodgeQuerySchema,
+  bookingPeriodCreateBodySchema,
+} from "@/lib/admin-bookings-schemas/setup";
+import {
+  ADMIN_BOOKING_PERIOD_CONNECTION_SHAPE,
+  ADMIN_BOOKING_PERIOD_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/bookings-setup";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
-const cancellationRuleSchema = z.object({
-  daysBeforeStay: z.number().int().min(0),
-  refundPercentage: z.number().int().min(0).max(100),
-  creditRefundPercentage: z.number().int().min(0).max(100).optional(),
-  fixedFeeCents: z.number().int().min(0).optional(),
-  creditFixedFeeCents: z.number().int().min(0).optional(),
-});
-
-const createSchema = z.object({
-  name: z.string().min(1).max(200),
-  startDate: dateOnlyStringSchema,
-  endDate: dateOnlyStringSchema,
-  nonMemberHoldEnabled: z.boolean().optional(),
-  nonMemberHoldDays: z.number().int().min(1).max(365),
-  cancellationRules: z.array(cancellationRuleSchema).min(1),
-  active: z.boolean().optional(),
-  // Per-lodge override partition (ADR-001 resolved question 3). Omitted =
-  // club-wide (null lodgeId). Any rows for a lodge REPLACE the club-wide
-  // set at runtime for that lodge.
-  lodgeId: z.string().min(1).optional(),
-}).superRefine((data, ctx) => {
-  if (hasDuplicateCancellationThresholds(data.cancellationRules)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["cancellationRules"],
-      message: "Cancellation rule day thresholds must be unique",
-    });
-  }
-});
+// The schemas live in admin-bookings-schemas/setup.ts so the AI app actions
+// `list_booking_periods` and `create_booking_period` offer the same fields
+// (ALP-719).
 
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
@@ -50,17 +31,28 @@ export async function GET(request: NextRequest) {
   if (!guard.ok) return guard.response;
   // Exact partition, not null-tolerant: null rows are the club-wide rules
   // and a lodge's rows are its override set (replace, never merge).
-  const lodgeId = request.nextUrl.searchParams.get("lodgeId")
+  // A string or nothing always parses; the 400 is only a backstop.
+  const query = adminPolicyLodgeQuerySchema.safeParse({
+    lodgeId: request.nextUrl.searchParams.get("lodgeId") ?? undefined,
+  });
+  if (!query.success) {
+    return NextResponse.json({ error: query.error.issues[0]?.message }, { status: 400 });
+  }
   const periods = await prisma.bookingPeriod.findMany({
-    where: { lodgeId: lodgeId ?? null },
+    where: { lodgeId: query.data.lodgeId ?? null },
     orderBy: { startDate: "asc" },
   });
 
-  return NextResponse.json(
-    periods.map((period) => ({
-      ...period,
-      cancellationRules: normalizeStoredCancellationRules(period.cancellationRules),
-    }))
+  const answer = periods.map((period) => ({
+    ...period,
+    cancellationRules: normalizeStoredCancellationRules(period.cancellationRules),
+  }));
+  // A connection's answer must be an object, so it gets the list under
+  // `periods`; the browser keeps the bare array.
+  return connectionJson(
+    request,
+    arrivesAsMcpConnection(request) ? { periods: answer } : answer,
+    ADMIN_BOOKING_PERIOD_LIST_CONNECTION_SHAPE,
   );
 }
 
@@ -71,7 +63,7 @@ export async function POST(request: NextRequest) {
   if (!guard.ok) return guard.response;
   try {
     const body = await request.json();
-    const data = createSchema.parse(body);
+    const data = bookingPeriodCreateBodySchema.parse(body);
 
     const startDate = parseDateOnly(data.startDate);
     const endDate = parseDateOnly(data.endDate);
@@ -114,7 +106,7 @@ export async function POST(request: NextRequest) {
     logAudit({ action: "booking-period.create", category: "booking", memberId: guard.session.user.id, targetId: period.id, entityType: "BookingPeriod", entityId: period.id, details: JSON.stringify({ lodgeId: period.lodgeId, after: period }) });
 
     revalidatePublicPageContent();
-    return NextResponse.json(period, { status: 201 });
+    return connectionJson(request, period, ADMIN_BOOKING_PERIOD_CONNECTION_SHAPE, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(

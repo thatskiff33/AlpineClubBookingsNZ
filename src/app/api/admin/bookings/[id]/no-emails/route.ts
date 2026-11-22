@@ -1,18 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import { adminNoEmailsBodySchema } from "@/lib/admin-bookings-schemas/bookings";
+import {
+  ADMIN_NO_EMAILS_CONNECTION_SHAPE,
+  type AdminNoEmailsAnswer,
+} from "@/lib/connection-shapes/bookings-bookings";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { getAuditRequestContext } from "@/lib/audit";
 import { setBookingNoEmails } from "@/lib/booking-no-emails-service";
 import logger from "@/lib/logger";
-
-const noEmailsSchema = z.object({
-  noEmails: z.boolean(),
-  // Owner decision D10: turning the switch ON requires an explicit
-  // acknowledgement in the request body. Optional in the SHAPE so a request that
-  // omits it gets the explanatory 400 below rather than a generic 422 — #2259
-  // builds the dialog that sends it.
-  acknowledged: z.boolean().optional(),
-});
 
 /**
  * POST /api/admin/bookings/[id]/no-emails — turn the per-booking "No emails"
@@ -29,7 +25,9 @@ const noEmailsSchema = z.object({
  * `notifyMember` contract (docs/DOMAIN_INVARIANTS.md): admin-only, and any
  * non-admin caller gets a 403 from `requireAdmin`. Enabling additionally
  * requires `acknowledged: true`; without it the request is refused with 400 and
- * nothing is written. Both set and clear are audited (who and when).
+ * nothing is written. Both set and clear are audited (who and when). The body
+ * is `adminNoEmailsBodySchema`. Also the AI app action `set_booking_no_emails`
+ * (ALP-719).
  */
 export async function POST(
   request: NextRequest,
@@ -43,7 +41,7 @@ export async function POST(
   const { id: bookingId } = await params;
 
   const body = await request.json().catch(() => ({}));
-  const parsed = noEmailsSchema.safeParse(body);
+  const parsed = adminNoEmailsBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten().fieldErrors },
@@ -71,7 +69,7 @@ export async function POST(
     // re-reads it there — returning a second copy here only added a query whose
     // result was discarded, and a second shape of the same truth to keep in
     // step with the banner.
-    return NextResponse.json({
+    const answer: AdminNoEmailsAnswer = {
       success: true,
       noEmails: result.noEmails,
       noEmailsAt: result.noEmailsAt,
@@ -80,7 +78,8 @@ export async function POST(
       // #2258: the caller warns the admin that a live waitlist offer keeps
       // ticking down while the member will not be told (#2259's dialog).
       hasLiveWaitlistOffer: result.hasLiveWaitlistOffer,
-    });
+    };
+    return connectionJson(request, answer, ADMIN_NO_EMAILS_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err, bookingId }, 'Failed to update the booking "No emails" switch');
     return NextResponse.json(
