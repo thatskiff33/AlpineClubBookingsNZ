@@ -17,11 +17,6 @@ export const MEMBERSHIP_FEE_BILLING_BASES = [
   "NO_INVOICE",
 ] as const satisfies readonly MembershipFeeBillingBasis[];
 
-export const FAMILY_BILLING_MODES = [
-  "BILL_FAMILY_VIA_BILLING_MEMBER",
-  "BILL_MEMBERS_INDIVIDUALLY",
-] as const satisfies readonly FamilyBillingMode[];
-
 // Behaviour-preserving default: existing deployments and a missing settings row
 // both read as the pre-#159 family-billing model. Kept in lockstep with the
 // schema column default on MembershipSubscriptionBillingSettings.

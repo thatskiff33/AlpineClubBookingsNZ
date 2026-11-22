@@ -38,7 +38,19 @@ const h = vi.hoisted(() => ({
   getXeroContactGroupMemberships: vi.fn(),
   applyManualSubscriptionPayment: vi.fn(),
   applyManualBookingPayment: vi.fn(),
+  buildSubscriptionBillingPreview: vi.fn(),
+  confirmSubscriptionBillingPreview: vi.fn(),
+  reconcileSubscriptionBillingExceptions: vi.fn(),
+  enqueueMembershipSubscriptionChargeOperation: vi.fn(),
+  closeAlreadyPaidSubscriptionCharge: vi.fn(),
+  createAuditLog: vi.fn(),
   prisma: {
+    membershipSubscriptionCharge: { findMany: vi.fn(), count: vi.fn() },
+    membershipBillingException: { findMany: vi.fn() },
+    membershipSubscriptionBillingSettings: { findUnique: vi.fn() },
+    familyGroup: { findUnique: vi.fn() },
+    familyGroupSeasonInvoiceMarker: { findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
+    $transaction: vi.fn(),
     manualRefundTask: { findMany: vi.fn() },
     refundRequest: { findMany: vi.fn(), count: vi.fn() },
     booking: { findMany: vi.fn() },
@@ -101,6 +113,25 @@ vi.mock("@/lib/manual-subscription-payment", async (importOriginal) => ({
 }));
 vi.mock("@/lib/manual-booking-payment", () => ({ applyManualBookingPayment: h.applyManualBookingPayment }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/lib/membership-subscription-billing", () => ({
+  buildSubscriptionBillingPreview: h.buildSubscriptionBillingPreview,
+  confirmSubscriptionBillingPreview: h.confirmSubscriptionBillingPreview,
+  reconcileSubscriptionBillingExceptions: h.reconcileSubscriptionBillingExceptions,
+  SubscriptionBillingError: class SubscriptionBillingError extends Error {},
+}));
+vi.mock("@/lib/xero-invoicing-guard", () => import("@/lib/__tests__/helpers/xero-invoicing-guard-mock"));
+vi.mock("@/lib/xero-subscription-invoices", () => ({
+  enqueueMembershipSubscriptionChargeOperation: h.enqueueMembershipSubscriptionChargeOperation,
+}));
+vi.mock("@/lib/membership-subscription-charge-close", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/membership-subscription-charge-close")),
+  closeAlreadyPaidSubscriptionCharge: h.closeAlreadyPaidSubscriptionCharge,
+}));
+vi.mock("@/lib/financial-year-server", () => ({ refreshFinancialYearConfig: async () => 3 }));
+vi.mock("@/lib/audit", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/audit")),
+  createAuditLog: h.createAuditLog,
+}));
 vi.mock("@/lib/manual-refund-task-settlement-rules", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/manual-refund-task-settlement-rules")),
   refundAppealCeilingParts: () => ({ ceilingCents: 30_000, cardRefundOwedCents: 0 }),
@@ -134,10 +165,11 @@ import { GET as getFinanceReport } from "@/app/api/admin/reports/route";
 import { GET as listSubscriptions } from "@/app/api/admin/subscriptions/route";
 import { POST as recordSubscriptionPayment } from "@/app/api/admin/subscriptions/[id]/manual-payment/route";
 import { POST as recordBookingPayment } from "@/app/api/admin/bookings/[id]/mark-paid/route";
+import { GET as getSubscriptionBilling, POST as runSubscriptionBilling } from "@/app/api/admin/subscription-billing/route";
 import { GET as listPayments } from "@/app/api/admin/payments/route";
 import { expectActionContract } from "@/lib/__tests__/helpers/mcp-action-contract";
 import { adminSession } from "@/lib/__tests__/helpers/sessions";
-import { findMcpAction, mcpActionInputSchema } from "@/lib/mcp/catalogue";
+import { findMcpAction, MCP_ACTIONS, mcpActionInputSchema } from "@/lib/mcp/catalogue";
 import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
 
 const financeOfficer = adminSession({ id: "treasurer-1", accessRoles: ["USER", "FINANCE_ADMIN"] });
@@ -809,5 +841,263 @@ describe("record_booking_manual_payment", () => {
     expect(
       schema.safeParse({ ...ARGS, additionalCoverage: { covered: true, expectedAdditionalAmountCents: 50.25 } }).success,
     ).toBe(false);
+  });
+});
+
+describe("subscription billing actions", () => {
+  const TOKEN = "c".repeat(64);
+  const PREVIEW = {
+    seasonYear: 2026,
+    decisionDate: "2026-07-01",
+    yearEndMonth: 3,
+    dueDays: 30,
+    scopeMemberIds: null,
+    totalCents: 18_000,
+    confirmationToken: TOKEN,
+    entries: [
+      {
+        key: "entry-1",
+        seasonYear: 2026,
+        membershipAnnualFeeId: "fee-1",
+        membershipTypeId: "type-1",
+        membershipTypeKey: "FULL",
+        membershipTypeName: "Full member",
+        subscriptionCategoryName: "Couple",
+        billingBasis: "PER_MEMBER",
+        prorationRule: "NONE",
+        annualAmountCents: 18_000,
+        chargedAmountCents: 18_000,
+        coveredMonths: 12,
+        decisionDate: "2026-07-01",
+        coverageStart: "2026-04-01",
+        coverageEnd: "2027-03-31",
+        familyGroupId: "family-1",
+        recipient: { id: "member-7", name: "Aroha Ngata", email: "aroha@example.org" },
+        coveredMembers: [{ id: "member-7", name: "Aroha Ngata" }],
+        xeroAccountCode: "200",
+        xeroItemCode: "SUB",
+        components: [
+          {
+            label: "Annual fee",
+            description: "2026/27 subscription",
+            annualAmountCents: 18_000,
+            chargedAmountCents: 18_000,
+            prorated: false,
+            xeroAccountCode: "200",
+            xeroItemCode: "SUB",
+            sortOrder: 0,
+          },
+        ],
+      },
+    ],
+    exceptions: [
+      {
+        fingerprint: "fp-1",
+        code: "NO_FEE",
+        message: "No fee for this type",
+        seasonYear: 2026,
+        memberId: "member-8",
+        familyGroupId: "family-2",
+        membershipTypeId: "type-2",
+        context: { rawSetting: "exception-context-secret" },
+      },
+    ],
+    alreadyCoveredMemberIds: ["member-9"],
+    exemptMemberIds: ["member-10"],
+    exemptMembers: [
+      { memberId: "member-10", memberName: "Tama Reti", ageTier: null, exemptBy: "MEMBERSHIP_TYPE", membershipTypeName: "Life" },
+    ],
+    alreadyInvoiced: [{ memberId: "member-11", memberName: "Mere Hohaia", xeroInvoiceNumber: "INV-0200", status: "UNPAID" }],
+    alreadyInvoicedFamilies: [
+      {
+        familyGroupId: "family-3",
+        holderMemberId: "member-12",
+        holderName: "Hemi Walker",
+        xeroInvoiceNumber: "INV-0201",
+        status: "PAID",
+        membersCovered: 3,
+        holderBasisUnresolvable: false,
+        operatorMarked: true,
+        markerNote: "Paid at AGM",
+        markedByName: "Tama Reti",
+        markedAt: "2026-06-01T00:00:00.000Z",
+      },
+    ],
+    ungroupedCategoryMembers: [
+      { subscriptionCategoryId: "cat-1", subscriptionCategoryName: "Couple", members: [{ memberId: "member-7", memberName: "Aroha Ngata" }] },
+    ],
+  };
+  const CHARGE = {
+    id: "charge-1",
+    idempotencyKey: "charge-idem-key",
+    seasonYear: 2026,
+    source: "ANNUAL_BATCH",
+    status: "INVOICE_FAILED",
+    membershipTypeName: "Full member",
+    subscriptionCategoryName: null,
+    billingBasis: "PER_MEMBER",
+    annualAmountCents: 18_000,
+    chargedAmountCents: 18_000,
+    coverageStart: "2026-04-01T00:00:00.000Z",
+    coverageEnd: "2027-03-31T00:00:00.000Z",
+    recipientMemberId: "member-7",
+    recipientName: "Aroha Ngata",
+    recipientEmail: "aroha@example.org",
+    dueDays: 30,
+    xeroInvoiceId: "xero-inv-uuid",
+    xeroInvoiceNumber: "INV-0300",
+    xeroInvoiceUrl: "https://in.xero.com/secret-link",
+    emailSentAt: "2026-06-02T00:00:00.000Z",
+    lastErrorCode: "XERO_DOWN",
+    lastErrorMessage: "Xero was unavailable",
+    confirmedAt: "2026-06-01T00:00:00.000Z",
+    createdAt: "2026-06-01T00:00:00.000Z",
+    coverage: [{ memberId: "member-7", memberName: "Aroha Ngata", releasedAt: "2026-06-03T00:00:00.000Z", subscription: { status: "UNPAID" } }],
+  };
+  const EXCEPTION = {
+    id: "exc-1",
+    fingerprint: "fp-old",
+    seasonYear: 2026,
+    source: "ANNUAL_BATCH",
+    status: "OPEN",
+    code: "NO_FEE",
+    message: "No fee for this type",
+    memberId: "member-8",
+    familyGroupId: "family-2",
+    membershipTypeId: "type-2",
+    context: { rawSetting: "exception-context-secret" },
+    firstSeenAt: "2026-05-01T00:00:00.000Z",
+    lastSeenAt: "2026-06-01T00:00:00.000Z",
+  };
+  const WITHHELD = /aroha@example\.org|xero-inv-uuid|secret-link|charge-idem-key|exception-context-secret|"member-9"/;
+
+  function stubPanel() {
+    h.buildSubscriptionBillingPreview.mockResolvedValue(PREVIEW);
+    h.prisma.membershipSubscriptionCharge.findMany.mockResolvedValue([CHARGE]);
+    h.prisma.membershipBillingException.findMany.mockResolvedValue([EXCEPTION]);
+    h.prisma.membershipSubscriptionBillingSettings.findUnique.mockResolvedValue({
+      invoiceDueDays: 30,
+      familyBillingMode: "BILL_MEMBERS_INDIVIDUALLY",
+    });
+  }
+
+  it("get_subscription_billing answers with the preview, charges and exceptions, never contact details or Xero ids", async () => {
+    stubPanel();
+    const { connection, browser } = await expectActionContract({
+      actionId: "get_subscription_billing",
+      handler: getSubscriptionBilling,
+      args: { seasonYear: 2026, decisionDate: "2026-07-01" },
+    });
+    expect(JSON.stringify(connection)).not.toMatch(WITHHELD);
+    expect(connection).toMatchObject({ preview: { confirmationToken: TOKEN } });
+    expect(browser).toMatchObject({ preview: PREVIEW, charges: [CHARGE], exceptions: [EXCEPTION] });
+    expect(h.buildSubscriptionBillingPreview).toHaveBeenCalledWith(
+      expect.objectContaining({ seasonYear: 2026, decisionDate: new Date("2026-07-01T00:00:00.000Z") }),
+    );
+  });
+
+  it("refresh_subscription_billing closes stale problems for the season and day the app named", async () => {
+    stubPanel();
+    h.reconcileSubscriptionBillingExceptions.mockResolvedValue({ resolvedCount: 2 });
+    const { connection, browser } = await expectActionContract({
+      actionId: "refresh_subscription_billing",
+      handler: runSubscriptionBilling,
+      args: { seasonYear: 2026, decisionDate: "2026-07-01" },
+    });
+    expect(JSON.stringify(connection)).not.toMatch(WITHHELD);
+    expect(connection).toMatchObject({ success: true, reconciledCount: 2 });
+    expect(browser).toMatchObject({ success: true, reconciledCount: 2, preview: PREVIEW });
+    expect(h.reconcileSubscriptionBillingExceptions).toHaveBeenCalledWith({
+      seasonYear: 2026,
+      decisionDate: new Date("2026-07-01T00:00:00.000Z"),
+      yearEndMonth: 3,
+    });
+  });
+
+  it("confirm_subscription_billing_batch confirms the preview the officer reviewed, by its token", async () => {
+    h.buildSubscriptionBillingPreview.mockResolvedValue(PREVIEW);
+    h.confirmSubscriptionBillingPreview.mockResolvedValue({ chargeIds: ["charge-1"], exceptionCount: 1 });
+    h.enqueueMembershipSubscriptionChargeOperation.mockResolvedValue({ queueOperationId: "op-1", message: "Subscription invoice queued." });
+    const { connection, browser } = await expectActionContract({
+      actionId: "confirm_subscription_billing_batch",
+      handler: runSubscriptionBilling,
+      args: { seasonYear: 2026, decisionDate: "2026-07-01", confirmationToken: TOKEN, confirmed: true },
+    });
+    expect(connection).toEqual({
+      success: true,
+      message: "1 immutable charge created; 1 exception recorded.",
+      chargeIds: ["charge-1"],
+      exceptionCount: 1,
+      queued: [{ queueOperationId: "op-1", message: "Subscription invoice queued." }],
+    });
+    expect(browser).toEqual(connection);
+    // The catalogue fixes the variant: the app cannot turn a confirm into a settings change.
+    expect(h.confirmSubscriptionBillingPreview).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedConfirmationToken: TOKEN, source: "ANNUAL_BATCH", confirmedByMemberId: "treasurer-1" }),
+    );
+    expect(findMcpAction("confirm_subscription_billing_batch")!.kind).toBe("destructive");
+  });
+
+  it("retry_subscription_charge queues the named charge's invoice work", async () => {
+    h.enqueueMembershipSubscriptionChargeOperation.mockResolvedValue({ queueOperationId: "op-2", message: "Subscription invoice queued." });
+    const { connection, browser } = await expectActionContract({
+      actionId: "retry_subscription_charge",
+      handler: runSubscriptionBilling,
+      args: { chargeId: "charge-1" },
+    });
+    expect(connection).toEqual({ success: true, queueOperationId: "op-2", message: "Subscription invoice queued." });
+    expect(browser).toEqual(connection);
+    expect(h.enqueueMembershipSubscriptionChargeOperation).toHaveBeenCalledWith("charge-1", { createdByMemberId: "treasurer-1" });
+  });
+
+  it("close_paid_subscription_charge closes the named charge with the officer's reason", async () => {
+    h.closeAlreadyPaidSubscriptionCharge.mockResolvedValue({ closed: true, message: "Charge closed as paid." });
+    const { connection, browser } = await expectActionContract({
+      actionId: "close_paid_subscription_charge",
+      handler: runSubscriptionBilling,
+      args: { chargeId: "charge-1", reason: "Paid in cash" },
+    });
+    expect(connection).toEqual({ success: true, closed: true, message: "Charge closed as paid." });
+    expect(browser).toEqual(connection);
+    expect(h.closeAlreadyPaidSubscriptionCharge).toHaveBeenCalledWith({
+      chargeId: "charge-1",
+      reason: "Paid in cash",
+      actorMemberId: "treasurer-1",
+    });
+  });
+
+  it("mark_family_invoiced and unmark_family_invoiced set and release the named family's marker", async () => {
+    h.prisma.familyGroup.findUnique.mockResolvedValue({ id: "family-1" });
+    h.prisma.$transaction.mockImplementation(async (run: (tx: typeof h.prisma) => Promise<unknown>) => run(h.prisma));
+    h.prisma.familyGroupSeasonInvoiceMarker.findFirst.mockResolvedValue(null);
+    h.prisma.familyGroupSeasonInvoiceMarker.create.mockResolvedValue({ id: "marker-1" });
+    const marked = await expectActionContract({
+      actionId: "mark_family_invoiced",
+      handler: runSubscriptionBilling,
+      args: { seasonYear: 2026, familyGroupId: "family-1", note: "Invoiced by hand" },
+    });
+    expect(marked.connection).toEqual({ success: true, message: "Family marked as already invoiced for this season." });
+    expect(h.prisma.familyGroupSeasonInvoiceMarker.create).toHaveBeenCalledWith({
+      data: { familyGroupId: "family-1", seasonYear: 2026, note: "Invoiced by hand", markedByMemberId: "treasurer-1" },
+    });
+
+    h.prisma.familyGroupSeasonInvoiceMarker.updateMany.mockResolvedValue({ count: 1 });
+    const unmarked = await expectActionContract({
+      actionId: "unmark_family_invoiced",
+      handler: runSubscriptionBilling,
+      args: { seasonYear: 2026, familyGroupId: "family-1" },
+    });
+    expect(unmarked.connection).toEqual({ success: true, message: "Family marker removed; it can be billed again." });
+    expect(unmarked.browser).toEqual(unmarked.connection);
+    expect(h.prisma.familyGroupSeasonInvoiceMarker.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { familyGroupId: "family-1", seasonYear: 2026, releasedAt: null } }),
+    );
+  });
+
+  it("offers no action that changes the club's billing settings", () => {
+    const settingsActions = MCP_ACTIONS.filter(
+      (action) => action.path === "/api/admin/subscription-billing" && action.fixedBody?.action === "UPDATE_SETTINGS",
+    );
+    expect(settingsActions).toEqual([]);
   });
 });

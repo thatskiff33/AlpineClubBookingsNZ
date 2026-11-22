@@ -35,12 +35,27 @@ import {
   OPENING_CREDIT_BATCHES_CONNECTION_SHAPE,
   PAYMENT_INVOICE_GENERATED_CONNECTION_SHAPE,
   REFUND_REQUESTS_CONNECTION_SHAPE,
+  SUBSCRIPTION_BILLING_ANNUAL_BATCH_CONFIRMED_CONNECTION_SHAPE,
+  SUBSCRIPTION_BILLING_CHARGE_CLOSED_CONNECTION_SHAPE,
+  SUBSCRIPTION_BILLING_CHARGE_RETRIED_CONNECTION_SHAPE,
+  SUBSCRIPTION_BILLING_CONNECTION_SHAPE,
+  SUBSCRIPTION_BILLING_FAMILY_MARKER_CONNECTION_SHAPE,
+  SUBSCRIPTION_BILLING_REFRESHED_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/finance-money";
 import {
   manualBookingPaymentBodySchema,
   manualSubscriptionPaymentBodySchema,
 } from "@/lib/manual-payment-request-schemas";
 import { recordIdParamsSchema } from "@/lib/route-id-params";
+import {
+  closeAlreadyPaidFields,
+  confirmAnnualBatchFields,
+  markFamilyInvoicedFields,
+  refreshPreviewFields,
+  retryChargeFields,
+  subscriptionBillingQuerySchema,
+  unmarkFamilyInvoicedFields,
+} from "@/lib/subscription-billing-request-schemas";
 
 import type { McpAction } from "../catalogue";
 
@@ -214,6 +229,96 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     body: manualBookingPaymentBodySchema,
     kind: "destructive",
     returns: MANUAL_BOOKING_PAYMENT_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "get_subscription_billing",
+    title: "Preview subscription billing",
+    summary:
+      "The season's subscription billing preview: what confirming the annual batch would invoice, to whom and for how much (with each fee's lines, proration and the members it covers), who is exempt or already invoiced, the problems that stop a member being billed, the charges already raised and their Xero invoice state, and the due-days and family billing settings. `seasonYear` is the season's starting year and `decisionDate` (`YYYY-MM-DD`, default today) the day proration is worked out from. Amounts are integer cents. Reading it changes nothing; `preview.confirmationToken` is what `confirm_subscription_billing_batch` needs.",
+    method: "GET",
+    path: "/api/admin/subscription-billing",
+    query: subscriptionBillingQuerySchema,
+    kind: "read",
+    returns: SUBSCRIPTION_BILLING_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "refresh_subscription_billing",
+    title: "Refresh the subscription billing preview",
+    summary:
+      "Rebuilds the season's billing preview and closes the recorded billing problems the fresh preview no longer finds, then answers with the refreshed panel (as `get_subscription_billing`) and how many problems closed. `seasonYear` is the season's starting year and `decisionDate` a day, `YYYY-MM-DD`. Raises no invoice; repeating it is harmless.",
+    method: "POST",
+    path: "/api/admin/subscription-billing",
+    body: z.object(refreshPreviewFields),
+    fixedBody: { action: "REFRESH_PREVIEW" },
+    kind: "write",
+    returns: SUBSCRIPTION_BILLING_REFRESHED_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "confirm_subscription_billing_batch",
+    title: "Confirm the annual subscription invoices",
+    summary:
+      "Raises the season's subscription charges exactly as previewed and queues their Xero invoices to be created and emailed to members. Send the `seasonYear` and `decisionDate` (`YYYY-MM-DD`) the preview was built with and its `confirmationToken` from `get_subscription_billing`; it is refused if anything changed since, so preview again. `confirmed` must be `true`, sent only after the officer has reviewed the preview and confirms. Charges cannot be withdrawn from the app once raised, and invoices reach members. Refused while Xero invoicing is switched off.",
+    method: "POST",
+    path: "/api/admin/subscription-billing",
+    body: z.object(confirmAnnualBatchFields),
+    fixedBody: { action: "CONFIRM_ANNUAL_BATCH" },
+    kind: "destructive",
+    returns: SUBSCRIPTION_BILLING_ANNUAL_BATCH_CONFIRMED_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "retry_subscription_charge",
+    title: "Retry a subscription charge's invoice",
+    summary:
+      "Queues the Xero invoice work again for one subscription charge whose invoice failed or was never raised. `chargeId` is the charge (from `get_subscription_billing`). Answers with the queued operation, or says no work was needed; repeating it is harmless. Refused while Xero invoicing is switched off.",
+    method: "POST",
+    path: "/api/admin/subscription-billing",
+    body: z.object(retryChargeFields),
+    fixedBody: { action: "RETRY_CHARGE" },
+    kind: "write",
+    returns: SUBSCRIPTION_BILLING_CHARGE_RETRIED_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "close_paid_subscription_charge",
+    title: "Close a subscription charge already paid",
+    summary:
+      "Closes one subscription charge held in conflict because every subscription it covers is already paid, so no invoice is raised for it. `chargeId` is the charge (from `get_subscription_billing`); `reason` (required, up to 500 characters) is recorded with it. A closed charge cannot be reopened from the app; closing one already closed changes nothing.",
+    method: "POST",
+    path: "/api/admin/subscription-billing",
+    body: z.object(closeAlreadyPaidFields),
+    fixedBody: { action: "CLOSE_ALREADY_PAID" },
+    kind: "destructive",
+    returns: SUBSCRIPTION_BILLING_CHARGE_CLOSED_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "mark_family_invoiced",
+    title: "Mark a family as already invoiced",
+    summary:
+      "Records that one family group has already been invoiced for the season some other way, so the annual batch raises no family charge for it. `seasonYear` is the season's starting year, `familyGroupId` the family and `note` (optional, up to 500 characters) why. Undone with `unmark_family_invoiced`; marking a family already marked changes nothing.",
+    method: "POST",
+    path: "/api/admin/subscription-billing",
+    body: z.object(markFamilyInvoicedFields),
+    fixedBody: { action: "MARK_FAMILY_INVOICED" },
+    kind: "write",
+    returns: SUBSCRIPTION_BILLING_FAMILY_MARKER_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "unmark_family_invoiced",
+    title: "Remove a family's already-invoiced mark",
+    summary:
+      "Removes the already-invoiced mark from one family group for the season, so the annual batch bills the family again. `seasonYear` is the season's starting year and `familyGroupId` the family. Undone with `mark_family_invoiced`; a family not marked changes nothing.",
+    method: "POST",
+    path: "/api/admin/subscription-billing",
+    body: z.object(unmarkFamilyInvoicedFields),
+    fixedBody: { action: "UNMARK_FAMILY_INVOICED" },
+    kind: "write",
+    returns: SUBSCRIPTION_BILLING_FAMILY_MARKER_CONNECTION_SHAPE,
     core: false,
   },
 ];
