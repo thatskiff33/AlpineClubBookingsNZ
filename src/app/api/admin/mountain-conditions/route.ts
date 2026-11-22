@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
-import { parseJsonRequestBody } from "@/lib/api-json";
+import { invalidJsonBodyResponse, parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -262,7 +262,7 @@ export async function POST(request: NextRequest) {
     const text = await request.text();
     body = text ? JSON.parse(text) : null;
   } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    return invalidJsonBodyResponse({ error: "Invalid JSON" });
   }
 
   const isPreview = Boolean(
