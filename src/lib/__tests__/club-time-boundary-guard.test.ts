@@ -199,9 +199,18 @@ async function resolveEffectiveEnvironmentZoneExemptFiles(
   const exempt = new Set<string>();
   for (const absolute of files) {
     const file = toPosix(path.relative(ROOT, absolute));
+    // The config turns `no-restricted-syntax` off for `src/**/__tests__/**` by
+    // design (its own test boundary), so those helpers are not production code.
+    if (/^src\/(?:.*\/)?__tests__\//.test(file)) continue;
     const resolved = await resolveRestrictedSyntax(linter, ROOT, file);
     const present = new Set(resolved.selectors);
-    if (CLUB_TIME_GUARD_ARMS.environmentZone.some((arm) => !present.has(arm))) {
+    // Exempt when an arm is missing, OR when the rule resolves to anything but
+    // error: a later block that sets only a severity (`"off"`) keeps the earlier
+    // options, so every arm would still be listed while the guard is off.
+    if (
+      resolved.severity !== 2 ||
+      CLUB_TIME_GUARD_ARMS.environmentZone.some((arm) => !present.has(arm))
+    ) {
       exempt.add(file);
     }
   }
@@ -501,14 +510,16 @@ describe("the environment-zone allowlist is a ratchet", () => {
   });
 
   it("names a real file for every file the config excuses", () => {
-    // Read from the CONFIG's exempt set rather than from the reasons list, so a
-    // file excused by a block of its own is checked too — the staleness leg below
-    // records what that distinction already cost.
+    // Read from the exemption RECORD (derived from `SRC_RESTRICTION_EXEMPTIONS`,
+    // so a block of its own is included), not from the set walked off the disk:
+    // a walked file exists by construction, so that set could never fail here. A
+    // record entry that names a deleted file or a glob fails here, with its name;
+    // the equality leg above ties the record to what ESLint really applies.
     //
     // An exemption naming a file that no longer exists is one nobody is using and
     // nobody can see is unused — and it would silently cover a NEW file created
     // at that path later.
-    const missing = [...effectiveEnvironmentZoneExemptFiles].filter(
+    const missing = [...ENVIRONMENT_ZONE_EXEMPT_FILES].filter(
       (file) => !fs.existsSync(path.join(ROOT, file)),
     );
     expect(missing).toEqual([]);
@@ -553,7 +564,7 @@ describe("the environment-zone allowlist is a ratchet", () => {
     // it, so postmortems are densest in exactly the files that no longer commit
     // the defect — which makes a raw-text guard here strictly worse than no
     // guard, since it reads as green while excusing the wrong set.
-    const stale = [...effectiveEnvironmentZoneExemptFiles].filter((file) => {
+    const stale = [...ENVIRONMENT_ZONE_EXEMPT_FILES].filter((file) => {
       const full = path.join(ROOT, file);
       // A glob cannot be read, so it cannot be checked. Fail closed rather than
       // skip it: an exemption this leg cannot measure is exactly the shape it
