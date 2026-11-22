@@ -21,6 +21,12 @@ import { balancedBrackets } from "../../__tests__/support/balanced-brackets";
 const ROOT = process.cwd();
 const KERNEL = path.join(ROOT, "src", "lib", "club-time");
 const LODGE_DISPLAY = path.join(ROOT, "src", "components", "lodge-display");
+/*
+  A case that reads and comment-strips every production file under `src/` runs
+  synchronously for seconds, and longer on a loaded CI runner. Vitest's 5,000 ms
+  default is not a budget for that scan, so those cases state their own (#5439).
+*/
+const CENSUS_TIMEOUT_MS = 90_000;
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -345,11 +351,14 @@ describe("the stay window is not an occupancy decision", () => {
       "src/lib/club-time/index.ts",
       "src/lib/club-time/bound.ts",
     ]);
-    // A cheap `includes` first over ~1,400 files, comment-stripping only what
-    // survives it: stripping the whole tree costs seconds, and this case shares
-    // a five-second budget with the rest of the file.
-    const candidates = walk(path.join(ROOT, "src"))
-      .map((file) => ({ rel: rel(file), raw: readFileSync(file, "utf8") }))
+    // Read the tree once for both directions below. A cheap `includes` first
+    // over ~1,400 files, comment-stripping only what survives it: stripping the
+    // whole tree costs seconds.
+    const sources = walk(path.join(ROOT, "src")).map((file) => ({
+      rel: rel(file),
+      raw: readFileSync(file, "utf8"),
+    }));
+    const candidates = sources
       .filter(
         (file) => !OWN_MODULES.has(file.rel) && file.raw.includes("stayWindow"),
       );
@@ -378,8 +387,7 @@ describe("the stay window is not an occupancy decision", () => {
       than a list somebody has to remember to extend.
     */
     const OCCUPANCY_INVARIANTS = /INV-DATE-003|INV-DATE-020/;
-    const occupancyModules = walk(path.join(ROOT, "src"))
-      .map((file) => ({ rel: rel(file), raw: readFileSync(file, "utf8") }))
+    const occupancyModules = sources
       // The kernel's own two modules cite them to say they are NOT that.
       .filter((file) => !file.rel.startsWith("src/lib/club-time/"))
       .filter((file) => OCCUPANCY_INVARIANTS.test(file.raw));
@@ -402,7 +410,7 @@ describe("the stay window is not an occupancy decision", () => {
         "INSTANTS. It is not, and must never become, the way a bed, a night or a presence " +
         "is decided — those stay on the date-only half-open [checkIn, checkOut) range.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 describe("the lobby wall no longer reasons from UTC midnight", () => {
@@ -661,7 +669,7 @@ describe("INV-CONFIG-006 / #3566: no date formatter outside the shared machinery
         "validation probe or an ISO extractor that renders nothing goes on " +
         `DATE_FORMATTER_EXEMPTIONS with its exact count and reason. Offenders: ${offenders.join(", ") || "(none)"}`,
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("holds every exemption to its EXACT count, so nothing rides in beside it", () => {
     for (const [relative, { hits, reason }] of DATE_FORMATTER_EXEMPTIONS) {
