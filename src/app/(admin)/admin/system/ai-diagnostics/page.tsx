@@ -63,7 +63,9 @@ import {
 } from "@/lib/ai-diagnostics-config";
 import { readinessForAdmin } from "@/lib/diagnostics-readiness-tiers";
 
+import { AiDiagnosticsDisclosure } from "@/components/admin/ai-diagnostics-disclosure";
 import { AiSpendCurrencyCard } from "@/components/admin/ai-spend-currency-card";
+import { AI_DIAGNOSTICS_DISCLOSURE } from "@/lib/ai-diagnostics-disclosure";
 
 import { DiagnosticsBudgetCard } from "./_components/diagnostics-budget-card";
 
@@ -185,6 +187,26 @@ export default async function DiagnosticsPage() {
             read. Try again shortly.
           </p>
         )}
+      </section>
+
+      <section
+        aria-labelledby="diagnostics-disclosure-heading"
+        className="rounded-lg border border-border p-4"
+      >
+        <h2
+          id="diagnostics-disclosure-heading"
+          className="text-base font-semibold"
+        >
+          {AI_DIAGNOSTICS_DISCLOSURE.heading}
+        </h2>
+        {/* THE PROVIDER DISCLOSURE (ADR-006 §2, #5243), the same statement the
+            Modules page asks an administrator to tick before switching this on.
+            Shown to every administrator who reaches this page, in both
+            readiness tiers: where club data goes is not an operational internal,
+            and clubs switched on before the tick existed see it here. */}
+        <div className="mt-3">
+          <AiDiagnosticsDisclosure hideHeading />
+        </div>
       </section>
 
       <section

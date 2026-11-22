@@ -171,7 +171,7 @@ Journey: When enabled, open Order food from the dashboard, choose the lodge (onl
 
 Screen: `/admin/ai-diagnostics`.
 
-Shows: Diagnostic access, provisioning and deployment information.
+Shows: Access, provisioning, deployment and "Where your data goes".
 
 Journey: Inspect diagnostic access and follow the deployment guide to provision it.
 
