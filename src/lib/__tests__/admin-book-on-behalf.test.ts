@@ -488,32 +488,30 @@ describe("Admin Book on Behalf", () => {
     (mockedPrisma.member.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
       legacyIncompleteTargetMember,
     ]);
-    (mockedPrisma.booking.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
-      {
-        id: "full-booking",
-        checkIn: new Date(checkIn),
-        checkOut: new Date(checkOut),
-        guests: Array.from({ length: 29 }, (_, index) => ({ id: `occupied-${index}` })),
-      },
-    ]);
+    (mockedPrisma.booking.findMany as ReturnType<typeof vi.fn>).mockImplementation(
+      async (args: { where?: { status?: unknown; noEmails?: unknown } }) =>
+        // #5402: the waitlist position read finds an empty queue.
+        args.where?.status === "WAITLISTED" && args.where.noEmails === false
+          ? []
+          : [
+              {
+                id: "full-booking",
+                checkIn: new Date(checkIn),
+                checkOut: new Date(checkOut),
+                guests: Array.from({ length: 29 }, (_, index) => ({ id: `occupied-${index}` })),
+              },
+            ],
+    );
     (mockedPrisma.booking.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
     (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockedPrisma.booking.create as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: "waitlist-legacy",
       memberId: "target-m1",
+      lodgeId: "lodge-1",
       checkIn: new Date(checkIn),
       checkOut: new Date(checkOut),
       createdAt: new Date(),
       status: "WAITLISTED",
-      guests: [{ id: "g1" }],
-    });
-    (mockedPrisma.booking.update as ReturnType<typeof vi.fn>).mockResolvedValue({
-      id: "waitlist-legacy",
-      memberId: "target-m1",
-      checkIn: new Date(checkIn),
-      checkOut: new Date(checkOut),
-      status: "WAITLISTED",
-      waitlistPosition: 1,
       finalPriceCents: 5000,
       guests: [{ id: "g1" }],
     });
