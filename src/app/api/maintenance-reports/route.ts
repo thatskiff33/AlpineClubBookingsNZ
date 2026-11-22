@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import { sendAdminMaintenanceReportAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import {
@@ -209,8 +210,7 @@ export async function POST(request: NextRequest) {
       answerCount: created.answerCount,
       hasPhoto: created.hasPhoto,
     }),
-    ipAddress:
-      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown",
+    ipAddress: getClientIp(request),
   });
 
   // AFTER the transaction, and never awaited into the response: a slow mail

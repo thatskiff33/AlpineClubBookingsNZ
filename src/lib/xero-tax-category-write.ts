@@ -3,6 +3,7 @@ import "server-only";
 import { buildStructuredAuditLogCreateArgs, getAuditRequestContext } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { readXeroConnection } from "@/lib/xero-connection";
+import { exemptClearRefusalWhileOpeningCreditsMapped } from "@/lib/xero-opening-credits-exempt-guards";
 import { xeroTaxCategoryRateProblem, type MappedXeroTaxCategory } from "@/lib/xero-tax-categories";
 import { readXeroTaxRates } from "@/lib/xero-tax-rates";
 
@@ -24,6 +25,18 @@ import { readXeroTaxRates } from "@/lib/xero-tax-rates";
  * reconnect to another organisation between the Xero read and the write cannot
  * stamp a code with the wrong tenant. Serializable aborts the loser of two
  * saves; the route answers that, P2002 and P2028 a retryable 503.
+ *
+ * EXEMPT IS NOT CLEARED WHILE IT IS IN USE (#4988). While the Opening Credits
+ * account is mapped and the club is, or is scheduled to be, GST-registered,
+ * clearing Exempt is refused with a message telling the officer to unmap that
+ * account first: the reverse of the account-mapping save's own refusal
+ * (`xero-opening-credits-exempt-guards.ts`). A mapping chosen in another Xero
+ * organisation than the one connected now is not in use and clears; while Xero
+ * is disconnected no mapping can be told to be that, so the refusal stands
+ * (`DELETE` has no connection check of its own). Read before the transaction,
+ * like the rate list. The account-mapping save is not Serializable, so a clear and
+ * a mapping that race can both land; the sender's refusal, held by the outbox,
+ * covers that.
  */
 
 export type XeroTaxCategoryWriteRefusal =
@@ -31,7 +44,8 @@ export type XeroTaxCategoryWriteRefusal =
   | { refused: "xero-unreadable" }
   | { refused: "xero-code"; message: string }
   | { refused: "unchanged" }
-  | { refused: "not-found" };
+  | { refused: "not-found" }
+  | { refused: "in-use"; message: string };
 
 export type XeroTaxCategoryWriteOutcome = { changed: true } | XeroTaxCategoryWriteRefusal;
 
@@ -110,10 +124,12 @@ export async function clearXeroTaxCategory({
   actingMemberId: string;
   request: Request;
 }): Promise<XeroTaxCategoryWriteOutcome> {
+  const inUse = category === "EXEMPT" ? await exemptClearRefusalWhileOpeningCreditsMapped() : null;
   return prisma.$transaction(
     async (tx) => {
       const existing = await tx.xeroTaxCategoryMapping.findUnique({ where: { category }, select: { taxType: true } });
       if (!existing) return { refused: "not-found" as const };
+      if (inUse) return { refused: "in-use" as const, message: inUse };
       await tx.xeroTaxCategoryMapping.delete({ where: { category } });
       await tx.auditLog.create(
         buildStructuredAuditLogCreateArgs({

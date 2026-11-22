@@ -946,26 +946,28 @@ or alerts.
   `readQueuedOutboxRequestFor`. It never routes on another queue type.
 - **One guarded write.** Every give-back, Retry requeue and kept-capture
   requeue writes PENDING through `returnOutboxRowToPending`. A still-queued
-  request stays (a handler's checkpoint); over an execution request the queued
-  request the dispatch claimed is laid back, keeping only stored keys that
-  leave its reading unchanged, replacing a claimed value only with an
+  request stays (a handler's checkpoint); over an execution request the
+  dispatch's claimed queued request is laid back, keeping only stored keys
+  that leave its reading unchanged, replacing a claimed value only with an
   execution record, in one compare-and-set on the stored request; with
-  neither, nothing is written, and the row fails or Retry answers 409. WAITING_PAYMENT releases flip only never-dispatched rows.
-  `xero-pending-writer-census.test.ts` names every writer.
+  neither, nothing is written: the row fails or Retry answers 409.
+- **Two more writers, on never-dispatched rows.** WAITING_PAYMENT releases,
+  and the supplementary-invoice revive (CANCELLED to PENDING), which refuses a
+  request not reading as queued for its column.
 - **Stuck rows are not sent from a guess.** The scan leaves out a PENDING row
-  whose request names no queue type (`NAMES_NO_QUEUE_TYPE`), so it never holds
-  up the rows behind it; the run counts it (`unclaimableRequest`) and the cron
-  run warns. The owner's `pnpm run xero:stuck-queued-report --release` fails
-  exactly the listed rows still as listed (`QUEUED_REQUEST_RELEASED`), keeping
-  request, response, Xero ids and keys. A refund note's Retry then bills only
-  what is still uncovered.
+  whose request names no queue type (`NAMES_NO_QUEUE_TYPE`), so nothing waits
+  behind it; the run counts it (`unclaimableRequest`) and the cron run warns.
+  The owner's `pnpm run xero:stuck-queued-report --release` fails exactly the
+  rows still as listed (`QUEUED_REQUEST_RELEASED`), keeping request, response,
+  Xero ids and keys. A refund note's Retry bills only what is still
+  uncovered.
 - **No new lock.** Each write is a status- and claim-guarded compare-and-set
-  on the row (`INV-LOCK-001`); no new key or order (`INV-LOCK-002`); no new
-  site (`INV-LOCK-003`).
+  (`INV-LOCK-001`), with no new key, order (`INV-LOCK-002`) or site
+  (`INV-LOCK-003`).
 
 Pinned by `xero-outbox-fail-fast.test.ts`, `xero-operation-retry.test.ts`,
-`xero-pending-writer-census.test.ts`, `xero-cron-runner.test.ts` and, against
-a real database, `xero-cooldown-giveback-queued-request.realdb.test.ts`,
+`xero-pending-writer-census.test.ts` (every writer), `xero-cron-runner.test.ts`
+and, on PostgreSQL, `xero-cooldown-giveback-queued-request.realdb.test.ts`,
 `xero-pending-request-transitions.realdb.test.ts`,
 `xero-stuck-queued-request.realdb.test.ts`,
 `xero-released-refund-current-cap.realdb.test.ts` and

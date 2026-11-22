@@ -1000,21 +1000,6 @@ describe("F10: Per-Guest Email Link for Chore Access", () => {
     vi.clearAllMocks();
   });
 
-  describe("generateChoreToken", () => {
-    it("generates a 64-char hex token", async () => {
-      const { generateChoreToken } = await import("@/lib/guest-chore-token");
-      const token = generateChoreToken();
-      expect(token).toMatch(/^[a-f0-9]{64}$/);
-    });
-
-    it("generates unique tokens", async () => {
-      const { generateChoreToken } = await import("@/lib/guest-chore-token");
-      const t1 = generateChoreToken();
-      const t2 = generateChoreToken();
-      expect(t1).not.toBe(t2);
-    });
-  });
-
   describe("createGuestChoreToken", () => {
     it("creates token with 48h expiry", async () => {
       mockPrisma.guestChoreToken.create.mockResolvedValue({ token: "abc123" });

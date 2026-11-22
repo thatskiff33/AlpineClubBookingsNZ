@@ -1,3 +1,4 @@
+import logger from "@/lib/logger";
 import {
   bookingPromoCodeAdjustments,
   bookingPromoRedemptions,
@@ -26,10 +27,11 @@ import type { BookingDetailRecord } from "./load-booking-detail";
 import type { BookingDetailViewer } from "./booking-detail-viewer";
 import type { BookingDetailConsent } from "./booking-detail-consent";
 import type { BookingDetailEditAccess } from "./booking-detail-edit-access";
-import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { loadEffectiveModuleFlagsStrict } from "@/lib/module-settings";
 import type { BookingAmountOwed } from "@/lib/booking-payment-state";
+import { bookingInvoiceSummary } from "@/lib/booking-invoice-summary";
 import { resolveBookingInvoiceAccount } from "./booking-invoice-account";
-import { resolveBookingInvoiceOffer } from "./booking-invoice-download";
+import { BookingInvoiceSettingsUnavailableError, resolveBookingInvoiceOffer } from "./booking-invoice-download";
 
 /**
  * WHAT THE EDIT PANEL IS HANDED (#2958): the `BookingEditorData` payload — the
@@ -359,16 +361,40 @@ export async function buildBookingDetailEditorData({
  * hands the editor one object. It is the same answer
  * `GET /api/bookings/[id]/invoice` serves, added as a conditional spread (absent
  * when nothing is offered, on `noEmails`' reasoning above). The module flags are
- * the render's memoised read (`loadEffectiveModuleFlags` is `cache()`d). With an
- * invoice on offer, its account lines (`resolveBookingInvoiceAccount`) ride too.
+ * read strictly (`loadEffectiveModuleFlagsStrict`): a failed read offers nothing,
+ * never the generated document a forgiving "every module off" would; so is the
+ * tax schedule the generated document's offer reads
+ * (`BookingInvoiceSettingsUnavailableError`). With an
+ * invoice on offer, its account lines ride too: for Xero's invoice through
+ * `resolveBookingInvoiceAccount`; for the app's generated one (Xero off) the
+ * same summary with no Xero notice, so the card and the PDF show one set of
+ * figures.
  */
 async function withBookingInvoiceOffer(
   editorData: BookingEditorData,
   input: Pick<Parameters<typeof resolveBookingInvoiceOffer>[0], "booking" | "viewer">,
   amountOwed: BookingAmountOwed,
 ): Promise<BookingEditorData> {
-  const invoiceOffer = await resolveBookingInvoiceOffer({ ...input, modules: await loadEffectiveModuleFlags() });
+  let modules: Awaited<ReturnType<typeof loadEffectiveModuleFlagsStrict>>;
+  try {
+    modules = await loadEffectiveModuleFlagsStrict();
+  } catch {
+    return editorData;
+  }
+  let invoiceOffer: Awaited<ReturnType<typeof resolveBookingInvoiceOffer>>;
+  try {
+    invoiceOffer = await resolveBookingInvoiceOffer({ ...input, modules });
+  } catch (error) {
+    if (error instanceof BookingInvoiceSettingsUnavailableError) {
+      logger.warn({ err: error, bookingId: input.booking.id }, "Booking invoice offer withheld: the club's settings could not be read");
+      return editorData;
+    }
+    throw error;
+  }
   if (invoiceOffer.kind === "NONE") return editorData;
+  if (invoiceOffer.kind === "GENERATED") {
+    return { ...editorData, invoiceOffer, invoiceAccount: { summary: bookingInvoiceSummary(input.booking, amountOwed), invoiceUpdateNotice: null } };
+  }
   if (invoiceOffer.kind !== "XERO_INVOICE") return { ...editorData, invoiceOffer };
   return { ...editorData, invoiceOffer, invoiceAccount: await resolveBookingInvoiceAccount(input.booking, amountOwed) };
 }

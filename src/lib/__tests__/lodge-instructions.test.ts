@@ -121,6 +121,10 @@ import { GET as kioskGET } from "@/app/api/lodge/instructions/route";
 import { getSanitizedLodgeInstructions } from "@/lib/lodge-instructions";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { hutLeaderAssignmentTemplate } from "@/lib/email-templates/chores";
+import {
+  expectStoredHeadingOneDemoted,
+  storedInstructionWithH1,
+} from "./support/stored-heading-one";
 
 /*
  * The zone the assignment fixtures below are built in (#3123). The route derives
@@ -503,6 +507,39 @@ describe("sanitiser round-trip", () => {
       documents: { key: string; contentHtml: string }[];
     };
     expect(body.documents.find((doc) => doc.key === "OPEN")?.contentHtml).toBe(stored);
+  });
+
+  // #5345: the case above proves the reader. These two prove that each route
+  // still answers through it, so neither can start serving the stored HTML.
+  it("the member reader route returns an author's h1 demoted (#5345)", async () => {
+    mocks.auth.mockResolvedValue(adminSession);
+    mocks.lodgeInstructionFindMany.mockResolvedValue([storedInstructionWithH1()]);
+
+    const response = await readerGET(readerRequest());
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { documents: { key: string; contentHtml: string }[] };
+    expectStoredHeadingOneDemoted(
+      body.documents.find((doc) => doc.key === "OPEN")?.contentHtml ?? "",
+    );
+  });
+
+  it("the kiosk route returns an author's h1 demoted (#5345)", async () => {
+    mocks.checkLodgeAuth.mockResolvedValue({
+      session: adminSession,
+      tier: "admin",
+      error: null,
+      status: null,
+    });
+    mocks.lodgeInstructionFindMany.mockResolvedValue([storedInstructionWithH1()]);
+
+    const response = await kioskGET(
+      new NextRequest("http://localhost/api/lodge/instructions?date=2026-06-11"),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { documents: { key: string; contentHtml: string }[] };
+    expectStoredHeadingOneDemoted(
+      body.documents.find((doc) => doc.key === "OPEN")?.contentHtml ?? "",
+    );
   });
 
   it("stores an author's h1 as written", async () => {

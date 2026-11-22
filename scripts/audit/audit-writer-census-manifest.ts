@@ -1319,6 +1319,11 @@ export const OFFICER_DRIVEN_MEMBER_VISIBLE_WRITERS_2755: Readonly<
     "security",
 
   // ─── The named exceptions off those surfaces ────────────────────────────────
+  // A family group the member import (`src/app/api/admin/members/import/route.ts`) creates from
+  // its Family Key column (#4988), written by the route's helper module: the same act as
+  // `src/app/api/admin/family-groups/route.ts::POST#0`, which files `family`, reached from the
+  // import. Its members already see that create; they see this one the same way.
+  "src/lib/member-import-type-family.ts::createImportFamilyGroups#0": "family",
   // The member's own photo, changed by an officer on their behalf (#2581).
   "src/app/api/members/[id]/photo/route.ts::POST#0": "account",
   "src/app/api/members/[id]/photo/route.ts::DELETE#0": "account",
