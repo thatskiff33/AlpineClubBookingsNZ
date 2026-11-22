@@ -32,7 +32,7 @@ describe("API JSON parsing", () => {
   });
 
   describe("caller-chosen error text", () => {
-    it.each(["Invalid JSON", "Invalid JSON payload", "Invalid JSON.", "Invalid JSON content"])(
+    it.each(["Invalid JSON", "Invalid JSON payload", "Invalid JSON."] as const)(
       "answers exactly { error: %j } with no details field",
       async (error) => {
         const result = await parseJsonRequestBody(post("{not json"), { error });
@@ -48,20 +48,23 @@ describe("API JSON parsing", () => {
       },
     );
 
-    it("includes details only when the caller supplies them", async () => {
-      const result = await parseJsonRequestBody(post("{not json"), {
-        error: "Invalid JSON",
-        details: { body: ["Request body must be valid JSON"] },
-      });
+    it("never copies extra properties of an options object into the body", async () => {
+      // Held in a variable so TypeScript does not reject the extra fields.
+      const held = {
+        error: "Invalid JSON payload" as const,
+        details: { body: ["x"] },
+        extra: 1,
+      };
+      const result = await parseJsonRequestBody(post("{not json"), held);
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
-        await expect(result.response.json()).resolves.toEqual({
-          error: "Invalid JSON",
-          details: { body: ["Request body must be valid JSON"] },
-        });
+        await expect(result.response.text()).resolves.toBe(
+          JSON.stringify({ error: "Invalid JSON payload" }),
+        );
       }
     });
+
 
     it("does not change the answer for a valid body", async () => {
       const result = await parseJsonRequestBody(post('{"a":1}'), {
