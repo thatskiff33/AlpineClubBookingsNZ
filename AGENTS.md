@@ -287,9 +287,9 @@ implement → review → fix → verify-fix → validate → PR → CI-green →
    ([`EPIC_PLAYBOOK.md`](docs/agents/EPIC_PLAYBOOK.md)).
 4. **Merge** with a merge commit; once eligible and waiting only on CI, arm
    `gh pr merge <n> --auto --merge`. The linked issue closes only then.
-5. **Close out** the issue in plain English: what shipped, the PR, findings
-   and fixes, follow-ups by number, whoever merged. Every follow-up named is
-   filed before merge.
+5. **Close out** the issue in plain English, whoever merged: what shipped, the
+   PR, findings and fixes, follow-ups by number. Every follow-up named is filed
+   before merge.
 6. **Clean up:** delete the branch, tear down the lane's Docker
    (`pnpm run stale-containers`), confirm `main` push CI stays green.
 
