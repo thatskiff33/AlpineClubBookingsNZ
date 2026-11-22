@@ -275,8 +275,13 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       }
     });
 
+    /** #5240 review: a forced race's raised transaction budget, put back after its case. */
+    let restoreTransactionBudget: (() => void) | null = null;
+
     afterEach(() => {
       resetStripeRaceHooks();
+      restoreTransactionBudget?.();
+      restoreTransactionBudget = null;
     });
 
     afterAll(async () => {
@@ -553,18 +558,15 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
 
     /** Until `n` backends wait behind any of `pids` (the holder, or a waiter already queued behind it). */
     async function untilQueued(pids: number[], n: number): Promise<number[]> {
-      for (let attempt = 0; attempt < 400; attempt += 1) {
-        const rows = await prisma.$queryRaw<Array<{ pid: number }>>`
-          SELECT pid FROM pg_catalog.pg_stat_activity
-          WHERE datname = current_database() AND pg_blocking_pids(pid) && ${pids}::int[]`;
-        if (rows.length >= n) return rows.map((row) => row.pid);
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      }
-      throw new Error(`never saw ${n} backend(s) queued behind ${pids.join(", ")}`);
+      const { untilBlockedBy } = await import("./support/race-lock-waits");
+      return untilBlockedBy(prisma, pids, n);
     }
 
     /** The interrupted capture, a cron run an hour past its flag, and the officers' "Kept card payment" copies so far. */
     async function forcedRaceSetup(savedCardIntent: string) {
+      // #5240 review: the writers queue on a held row, so the lock decides the race, never Prisma's 5 s default.
+      const { raiseRaceTransactionBudget } = await import("./support/race-lock-waits");
+      restoreTransactionBudget = raiseRaceTransactionBudget(prisma);
       stripeMakesRefunds();
       const flagKey = await interruptedSavedCardCaptureOnPaidBooking(savedCardIntent);
       const { lastAlertedAt } = await prisma.alertCooldown.findUniqueOrThrow({ where: { key: flagKey } });
