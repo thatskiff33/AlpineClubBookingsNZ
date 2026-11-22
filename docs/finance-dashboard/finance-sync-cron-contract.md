@@ -6,7 +6,7 @@ It is intentionally narrow. The cron layer owns schedule metadata, in-process ov
 
 ## Registration Boundary
 
-- `src/instrumentation.ts` registers the daily finance sync job exactly once when the Node.js server starts.
+- `src/instrumentation.node.ts` registers the daily finance sync job exactly once when the Node.js server starts.
 - `src/lib/finance-sync-cron.ts` owns the schedule constants, Sentry monitor check-ins, overlap-safe runner, and `CronJobRun` recording for the finance sync cron.
 - `src/lib/finance-sync-service.ts` remains the durable workflow boundary for `FinanceSyncRun` creation and snapshot persistence.
 
