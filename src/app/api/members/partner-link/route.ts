@@ -18,7 +18,7 @@ import {
   partnerLinkRequestSchema,
   partnerLinkRespondSchema,
 } from "@/lib/partner-link-request-schemas";
-import { connectionJson } from "@/lib/mcp-connection-request";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 import {
   PARTNER_LINK_MESSAGE_CONNECTION_SHAPE,
   PARTNER_LINK_REQUEST_CONNECTION_SHAPE,
@@ -99,6 +99,25 @@ export async function POST(req: NextRequest) {
         { error: "You can only select members of your own family group. Use their email instead." },
         { status: 404 }
       );
+    }
+
+    // ALP-795: a family member with no login of their own cannot confirm, so
+    // declaring them forms the partnership at once. That is the member's own
+    // declaration, made on the website, never by an AI app connection.
+    if (arrivesAsMcpConnection(req)) {
+      const target = await prisma.member.findUnique({
+        where: { id: parsed.data.memberId },
+        select: { canLogin: true },
+      });
+      if (target && !target.canLogin) {
+        return NextResponse.json(
+          {
+            error:
+              "Declaring a family member without their own login as your partner confirms it at once, so it is done on the website.",
+          },
+          { status: 403 }
+        );
+      }
     }
   }
 

@@ -469,7 +469,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     id: "request_family_child",
     title: "Ask to add a child to my family group",
     summary:
-      "Asks the club to add an infant, child or youth (under 18 at the start of the season) to one of the signed-in member's family groups. `dateOfBirth` is `YYYY-MM-DD`. An officer reviews the request. Only an adult in the group can ask.",
+      "Asks the club to add an infant, child or youth (anyone not in the club's adult age group, see `get_age_groups`) to one of the signed-in member's family groups. `dateOfBirth` is `YYYY-MM-DD`. An officer reviews the request. Only an adult in the group can ask.",
     method: "POST",
     path: "/api/members/family/request-child",
     body: familyChildRequestSchema,
@@ -565,7 +565,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     id: "request_partner_link",
     title: "Declare my partner",
     summary:
-      "Declares the signed-in member's partner: by `email` (a registered adult with a login, who confirms from their own profile) or by `memberId` (a member of the signed-in member's own family group). Send exactly one. A request by email answers the same whether or not one was created, and never says why.",
+      "Asks another member to confirm they are the signed-in member's partner: by `email` (a registered adult with a login) or by `memberId` (an adult with a login in the signed-in member's own family group). Send exactly one. They confirm from their own profile. Once a request by email is accepted, the reply is the same whether or not a request was created. A family member without a login of their own is declared on the website, because that confirms the partnership at once.",
     method: "POST",
     path: "/api/members/partner-link",
     body: partnerLinkRequestSchema,

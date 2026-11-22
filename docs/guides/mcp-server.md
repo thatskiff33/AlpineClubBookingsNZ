@@ -236,17 +236,20 @@ against them, whatever officer roles they hold.
 | `search_members_for_guest` | Members whose name starts with what was typed, at most ten: id, name and age group. Only while the club has name search on | read | `GET /api/members/guest-candidates/search` |
 | `find_member_by_email` | The member, or household, with exactly this email: id, name and age group | read (a `POST` that changes nothing) | `POST /api/members/guest-candidates/resolve` |
 | `get_my_partner_link` | The member's partner, pending partner requests, one-step candidates and any unclaimed emailed invitation (its id and expiry, not the address) | read | `GET /api/members/partner-link` |
-| `request_partner_link` | Declares a partner by email or by family member id. A request by email answers the same whatever happened | write | `POST /api/members/partner-link` |
+| `request_partner_link` | Asks a partner with a login, by email or family member id, to confirm. A family member without a login is declared on the website, because that confirms the partnership at once | write | `POST /api/members/partner-link` |
 | `end_partner_link` | Withdraws a pending request, ends a confirmed partnership (the other person is told) or cancels an unclaimed invitation | destructive | `DELETE /api/members/partner-link` |
 | `get_membership_cancellation_options` | Whose memberships the member may ask to cancel, the club's warning and rejoining text, and their requests so far. No email addresses | read | `GET /api/member/membership-cancellation-requests` |
 
 The guest lookups keep every control the website has: the club's module and
-name-search switches, the per-member and daily limits (counted per
+name-search switches, the per-member and daily limits (shared with the
+member's own use of the website; the per-address backstop counts per
 connection), and an audit row for every search and lookup. An app is sent
 exactly what the website's own guest picker shows. Accepting a family
 invitation, confirming a partnership and asking for memberships to be
 cancelled are the member's own decisions, made on the website, as is
-confirming a cancellation from the emailed link.
+confirming a cancellation from the emailed link. So is declaring a family
+member without a login as a partner, which confirms the partnership at once:
+`request_partner_link` refuses it from a connection.
 
 ## What stays on the website, and why
 
@@ -333,8 +336,8 @@ acceptable.
 Everything an action returns goes to the company that runs the app: only the
 fields each action names, never the rest of what the website's screen uses.
 Every action sends the connected person's own records and those of their
-family groups, except `get_lodge_roster`, the guest lookups and the club
-information below:
+family groups, except `get_lodge_roster`, the guest lookups, the people
+behind partner requests and invitations, and the club information below:
 
 - `who_am_i`: their name and email address, whether they are an officer, the
   club's website, the app's name and the connection's level.

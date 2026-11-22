@@ -44,7 +44,8 @@ import { MEMBER_GUEST_CANDIDATES_CONNECTION_SHAPE } from "@/lib/connection-shape
  * request semantics.
  *
  * Also the AI app action `search_members_for_guest` (ALP-795), with the same
- * gate, limits (keyed on the connection) and audit row. A connection is sent
+ * gate, limits (per member, shared with the browser; the address backstop
+ * counts per connection) and audit row. A connection is sent
  * the candidate envelope's allow-listed fields only: never a contact detail
  * or a date of birth.
  */

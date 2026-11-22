@@ -31,7 +31,7 @@ const h = vi.hoisted(() => ({
   },
   cancelOwnPartnerInviteToken: vi.fn(),
   cancellationOverview: vi.fn(),
-  prisma: { familyGroupMember: { findFirst: vi.fn() } },
+  prisma: { familyGroupMember: { findFirst: vi.fn() }, member: { findUnique: vi.fn() } },
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
@@ -86,7 +86,10 @@ import {
   POST as postPartnerLink,
 } from "@/app/api/members/partner-link/route";
 import { expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
+import { NextRequest } from "next/server";
+
 import { findMcpAction } from "@/lib/mcp/catalogue";
+import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
 
 const MEMBER_ID = "officer-1";
 
@@ -235,13 +238,17 @@ describe("get_my_partner_link", () => {
 });
 
 describe("request_partner_link", () => {
-  it("declares a family member as the signed-in member's partner", async () => {
+  beforeEach(() => {
     h.prisma.familyGroupMember.findFirst.mockResolvedValue({ familyGroupId: "fg-1" });
+  });
+
+  it("asks a family member with a login to confirm, for the signed-in member", async () => {
+    h.prisma.member.findUnique.mockResolvedValue({ canLogin: true });
     h.partner.requestPartnerLink.mockResolvedValue({
       ok: true,
       linkId: "link-5",
-      status: "CONFIRMED",
-      message: "Partner recorded.",
+      status: "PENDING",
+      message: "Partner request sent.",
     });
     const { connection, browser } = await expectActionContract({
       actionId: "request_partner_link",
@@ -254,6 +261,28 @@ describe("request_partner_link", () => {
       targetEmail: undefined,
       targetMemberId: "member-4",
     });
+  });
+
+  it("refuses a connection the one-step partnership with a family member who has no login", async () => {
+    // That forms a confirmed partnership at once: the member's own declaration, made on the website.
+    h.prisma.member.findUnique.mockResolvedValue({ canLogin: false });
+    h.partner.requestPartnerLink.mockResolvedValue({ ok: true, linkId: "link-6", status: "CONFIRMED", message: "Done." });
+    const send = (viaConnection: boolean) =>
+      postPartnerLink(
+        new NextRequest("https://club.example.test/api/members/partner-link", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(viaConnection ? { [MCP_PRINCIPAL_HEADER]: "contract-test-principal" } : {}),
+          },
+          body: JSON.stringify({ memberId: "member-5" }),
+        }),
+      );
+    expect((await send(true)).status).toBe(403);
+    expect(h.partner.requestPartnerLink).not.toHaveBeenCalled();
+    // The website's one-step declaration is unchanged.
+    expect((await send(false)).status).toBe(201);
+    expect(h.partner.requestPartnerLink).toHaveBeenCalledTimes(1);
   });
 });
 
