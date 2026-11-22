@@ -30,6 +30,7 @@ import {
 import { clubFormatValues } from "@/lib/club-format-server";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 import { AI_DIAGNOSTICS_DISCLOSURE_VERSION } from "@/lib/ai-diagnostics-disclosure";
+import { isPrismaRecordNotFoundError } from "@/lib/prisma-errors";
 
 const moduleSettingsSchema = z
   .object(
@@ -133,10 +134,12 @@ export async function PUT(request: Request) {
 
   // AI Diagnostics sends excerpts of club data to its provider outside New
   // Zealand, so switching it on needs the administrator to have acknowledged the
-  // CURRENT disclosure (ADR-006 §2, #5243). Any save that would turn it on is
-  // checked, whichever screen sent it: a screen that saves the whole module set
-  // after a stale read cannot switch it on unseen. Switching it off, or saving
-  // while it is already on, needs no acknowledgement.
+  // CURRENT disclosure (ADR-006 §2, #5243). Any save that would turn it on, as
+  // judged against the row read above, is checked, whichever screen sent it.
+  // Switching it off, or saving while it is already on, needs no acknowledgement.
+  // That judgement holds only if the row has not changed since the read: the
+  // write below is conditional on it, so a stale whole-set save cannot switch
+  // Diagnostics back on after someone else switched it off.
   const enablesAiDiagnostics = !before.aiDiagnostics && after.aiDiagnostics;
   const acknowledgedVersion =
     parsed.data.aiDiagnosticsDisclosureAcknowledgedVersion;
@@ -153,21 +156,41 @@ export async function PUT(request: Request) {
     );
   }
 
-  const write = prisma.clubModuleSettings.upsert({
-    where: { id: CLUB_MODULE_SETTINGS_ID },
-    create: {
-      id: CLUB_MODULE_SETTINGS_ID,
-      ...after,
-      updatedByMemberId: session.user.id,
-    },
-    update: {
-      ...after,
-      updatedByMemberId: session.user.id,
-    },
-    select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
-  });
+  // An existing row is written only if its aiDiagnostics value is still the one
+  // the gate judged (#5243): Postgres re-checks the condition after any
+  // concurrent writer commits, so a lost race matches no row, Prisma throws
+  // P2025, and the transaction below rolls back with its audit rows. With no
+  // row yet, the gate judged against "off", so a racing first save can only
+  // ever switch Diagnostics off, never on unseen; the upsert keeps that case.
+  const write = existing
+    ? prisma.clubModuleSettings.update({
+        where: {
+          id: CLUB_MODULE_SETTINGS_ID,
+          aiDiagnostics: before.aiDiagnostics,
+        },
+        data: {
+          ...after,
+          updatedByMemberId: session.user.id,
+        },
+        select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
+      })
+    : prisma.clubModuleSettings.upsert({
+        where: { id: CLUB_MODULE_SETTINGS_ID },
+        create: {
+          id: CLUB_MODULE_SETTINGS_ID,
+          ...after,
+          updatedByMemberId: session.user.id,
+        },
+        update: {
+          ...after,
+          updatedByMemberId: session.user.id,
+        },
+        select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
+      });
 
-  const record =
+  let record;
+  try {
+    record =
     changes.length > 0
       ? (
           await prisma.$transaction([
@@ -220,6 +243,16 @@ export async function PUT(request: Request) {
           ])
         )[0]
       : await write;
+  } catch (error) {
+    if (!isPrismaRecordNotFoundError(error)) throw error;
+    return NextResponse.json(
+      {
+        error:
+          "Someone else changed the module settings while you were saving. Reload the page and try again.",
+      },
+      { status: 409 },
+    );
+  }
 
   // Full-route clear as well as the tag clear (#2352 F3): the module flags are
   // rendered INTO the public layout (the analytics banner, the nav), so under

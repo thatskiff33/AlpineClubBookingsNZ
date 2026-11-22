@@ -84,6 +84,11 @@ export function isPrismaUniqueConstraintError(error: unknown) {
   return hasPrismaErrorCode(error, "P2002");
 }
 
+/** `P2025`: an `update`/`delete` whose `where` matched no row. */
+export function isPrismaRecordNotFoundError(error: unknown) {
+  return hasPrismaErrorCode(error, "P2025");
+}
+
 /**
  * Lowercase, drop the backticks and double quotes the shapes below carry, and
  * put a composite list on one separator. Shape 2 hands over a field ARRAY

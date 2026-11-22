@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
   findUnique: vi.fn(),
   upsert: vi.fn(),
+  update: vi.fn(),
   transaction: vi.fn(),
   auditCreate: vi.fn(),
   revalidatePublicSite: vi.fn(),
@@ -16,7 +17,11 @@ vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock("@/lib/google-config", () => ({ getGoogleSetupState: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    clubModuleSettings: { findUnique: mocks.findUnique, upsert: mocks.upsert },
+    clubModuleSettings: {
+      findUnique: mocks.findUnique,
+      upsert: mocks.upsert,
+      update: mocks.update,
+    },
     auditLog: { create: mocks.auditCreate },
     $transaction: mocks.transaction,
   },
@@ -64,6 +69,7 @@ beforeEach(() => {
   });
   mocks.findUnique.mockResolvedValue({ ...DEFAULT_MODULE_SETTINGS });
   mocks.upsert.mockReturnValue("upsert-promise");
+  mocks.update.mockReturnValue("update-promise");
   mocks.auditCreate.mockImplementation((args: unknown) => args);
   mocks.transaction.mockImplementation(async (operations: unknown[]) => [
     { ...DEFAULT_MODULE_SETTINGS, aiDiagnostics: true },
@@ -79,6 +85,7 @@ describe("PUT /api/admin/modules — AI Diagnostics disclosure gate", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).error).toMatch(/where AI Diagnostics sends data/);
     expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.auditCreate).not.toHaveBeenCalled();
   });
@@ -146,5 +153,39 @@ describe("PUT /api/admin/modules — AI Diagnostics disclosure gate", () => {
     const res = await PUT(putRequest(enabled, 1.5));
     expect(res.status).toBe(400);
     expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it("writes an existing row only while aiDiagnostics is still the value the gate judged", async () => {
+    mocks.findUnique.mockResolvedValue({ ...enabled });
+    await PUT(putRequest({ ...enabled, magicLink: true }));
+    expect(mocks.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "default", aiDiagnostics: true },
+      }),
+    );
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses with 409 when someone switched Diagnostics off between this save's read and its write", async () => {
+    // This save read Diagnostics ON and sends it ON (a stale whole-set save from
+    // another screen). Meanwhile an administrator switched it off, so the guarded
+    // write matches no row: Prisma throws P2025 and the transaction rolls back.
+    mocks.findUnique.mockResolvedValue({ ...enabled });
+    mocks.transaction.mockRejectedValue(
+      Object.assign(new Error("Record to update not found."), { code: "P2025" }),
+    );
+    const res = await PUT(putRequest({ ...enabled, magicLink: true }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/Someone else changed the module settings/);
+    expect(mocks.revalidatePublicSite).not.toHaveBeenCalled();
+  });
+
+  it("rethrows any other write failure rather than calling it a race", async () => {
+    mocks.findUnique.mockResolvedValue({ ...enabled });
+    mocks.transaction.mockRejectedValue(
+      Object.assign(new Error("boom"), { code: "P1001" }),
+    );
+    await expect(PUT(putRequest({ ...enabled, magicLink: true }))).rejects.toThrow("boom");
   });
 });
