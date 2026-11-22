@@ -5,10 +5,18 @@ import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { REVIEWED_REQUEST_TYPES } from "@/lib/admin-family-group-requests-service";
+import {
+  ADMIN_FAMILY_GROUP_MAX_MEMBERS,
+  ADMIN_FAMILY_GROUP_NAME_MAX_LENGTH,
+  createFamilyGroupWithMembers,
+} from "@/lib/admin-family-group-create";
 
 const createFamilyGroupSchema = z.object({
-  name: z.string().min(1, "Name is required").max(200),
-  memberIds: z.array(z.string()).min(1, "At least one member is required").max(10),
+  name: z.string().min(1, "Name is required").max(ADMIN_FAMILY_GROUP_NAME_MAX_LENGTH),
+  memberIds: z
+    .array(z.string())
+    .min(1, "At least one member is required")
+    .max(ADMIN_FAMILY_GROUP_MAX_MEMBERS),
 });
 
 /**
@@ -129,16 +137,9 @@ export async function POST(req: NextRequest) {
   }
 
   const group = await prisma.$transaction(async (tx) => {
-    const created = await tx.familyGroup.create({
-      data: { name: name.trim() },
-    });
-
-    await tx.familyGroupMember.createMany({
-      data: uniqueIds.map((mid) => ({
-        familyGroupId: created.id,
-        memberId: mid,
-      })),
-      skipDuplicates: true,
+    const created = await createFamilyGroupWithMembers(tx, {
+      name,
+      memberIds: uniqueIds,
     });
 
     return tx.familyGroup.findUnique({

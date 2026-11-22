@@ -6,11 +6,11 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
+import { shallowChangedFields } from "@/lib/audit-changed-fields";
 import {
   normalizeSubscriptionCategoryText,
   serializeSubscriptionCategory,
   subscriptionCategoryAuditActionForUpdate,
-  subscriptionCategoryChangedFields,
   subscriptionCategorySelect,
 } from "@/lib/subscription-categories";
 import { prisma } from "@/lib/prisma";
@@ -141,7 +141,7 @@ export async function PATCH(
         outcome: "success",
         summary: auditAction.summary,
         metadata: {
-          changedFields: subscriptionCategoryChangedFields(existing, data as Record<string, unknown>),
+          changedFields: shallowChangedFields(existing, data as Record<string, unknown>),
           previousSubscriptionCategory: serializeSubscriptionCategory(existing),
           newSubscriptionCategory: serializeSubscriptionCategory(subscriptionCategory),
         },
