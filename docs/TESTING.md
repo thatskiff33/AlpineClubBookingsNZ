@@ -1709,6 +1709,10 @@ option. When several cases scan the same tree, read it once (a `beforeAll` under
 the same budget, or a cached helper) rather than once per case. Never loosen an
 assertion or add a retry to make the scan fit.
 
+A walk at module or `describe` scope runs while Vitest collects the file, which
+has no timeout, so it needs no budget; the cases that then read the walked
+files still do.
+
 ## Census tests and the merge hazard
 
 A third convention that is load-bearing rather than stylistic, for the same
