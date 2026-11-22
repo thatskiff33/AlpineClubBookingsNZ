@@ -60,6 +60,9 @@ function unsharedMoneyInputs(file: string, source: string): string[] {
   return hits;
 }
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 describe("one shared money box (INV-SSOT-001, #3414)", () => {
   it("has no raw decimal money box or legacy money-props spread in production JSX", () => {
     const root = process.cwd();
@@ -80,7 +83,7 @@ describe("one shared money box (INV-SSOT-001, #3414)", () => {
       ),
     );
     expect(hits).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("catches a reintroduced spread on an input, including the quote price box", () => {
     expect(
