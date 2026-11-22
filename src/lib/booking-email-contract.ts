@@ -48,6 +48,17 @@ export type BookingOwnerEmailSource = {
 export type BookingEmailSourceContext = BookingOwnerEmailSource | "none";
 
 /**
+ * A bump notice's booking and the bump's event key (#5407). The key makes the
+ * notice's EmailLog row durable (`email:<template>:<key>`), so the
+ * confirm-pending cron can send it again after an interruption and the member
+ * still has exactly one row per bump: a second send finds the row and sends
+ * nothing (`already_recorded`).
+ */
+export type BumpNoticeEmailSource = BookingOwnerEmailSource & {
+  idempotencyKey: string;
+};
+
+/**
  * The recipient identity for a message addressed to whoever owns a booking.
  *
  * NULL IS NOT AN ERROR HERE, IT IS THE SCHOOL (#3369, stage 4 of programme

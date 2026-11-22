@@ -21,6 +21,7 @@ import {
   planBundleMediaTarget,
   recreateBundleMedia,
 } from "@/lib/config-transfer/media";
+import { IMAGE_NOT_CLEAN_MESSAGE } from "@/lib/image-metadata";
 import { SITE_CONTENT_KEYS } from "@/lib/page-content";
 import { SiteContentKey } from "@prisma/client";
 import type { ReadDb, TxDb } from "@/lib/config-transfer/import-types";
@@ -1052,21 +1053,27 @@ describe("bundled media metadata stripping (#2242)", () => {
     expect(data.byteSize).toBeLessThan(bundled.length);
   });
 
-  it("FAILS OPEN and still imports an image whose strip could not be confirmed", async () => {
-    // Matching the image-library upload path (and deliberately unlike the
-    // member-photo route): an operator restoring a configuration bundle must not
-    // have the import blocked by one unparseable decorative image.
+  it("stops the restore at its dry run, naming an image it cannot confirm clean (#5244)", async () => {
+    // Fail-closed like every image path: the plan error names the file and
+    // blocks apply; resolve reports it as not carried; apply skips it.
     const original = exifJpeg(false); // no primary EOI → strip unconfirmed
-    const create = vi.fn().mockResolvedValue({ id: "new-2" });
-    const tx = {
-      mediaImage: { findMany: vi.fn().mockResolvedValue([]), create },
-    } as unknown as TxDb;
+    const findMany = vi.fn().mockResolvedValue([]);
+    const db = { mediaImage: { findMany } } as unknown as ReadDb;
 
+    const plan = await planBundleMedia(db, mediaFiles(original));
+
+    expect(plan.items).toEqual([]);
+    expect(plan.errors).toEqual([`media/photo.jpg: ${IMAGE_NOT_CLEAN_MESSAGE}`]);
+    expect(await planBundleMediaTarget(db, mediaFiles(original), "old1")).toEqual({
+      carried: false,
+      existingId: null,
+    });
+
+    const create = vi.fn();
+    const tx = { mediaImage: { findMany, create } } as unknown as TxDb;
     const map = await recreateBundleMedia(tx, mediaFiles(original), "actor-1");
-
-    expect(map.get("old1")).toBe("new-2");
-    const stored = Buffer.from(create.mock.calls[0][0].data.data as Uint8Array);
-    expect(stored.equals(original)).toBe(true);
+    expect(map.has("old1")).toBe(false);
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("plans create-vs-reuse against the STORED (stripped) bytes", async () => {

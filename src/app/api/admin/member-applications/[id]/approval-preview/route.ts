@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { buildApprovalMappingPreview } from "@/lib/member-application-mapping";
 import { personDecisionsSchema } from "@/lib/member-application-decisions";
 import { isFullAdmin } from "@/lib/access-roles";
@@ -42,12 +43,11 @@ export async function POST(
     );
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {

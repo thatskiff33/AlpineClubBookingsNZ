@@ -89,6 +89,18 @@ export const SYSTEM_HUB = defineHub({
       moved: true,
     },
     {
+      // ALP-653: who may connect an AI app, and every connection in the club.
+      id: "ai-connections",
+      label: "AI app connections",
+      oldPath: "/admin/ai-connections",
+      area: "support",
+      flags: ["mcpServer"],
+      keywords: [
+        "mcp", "claude", "chatgpt", "connector", "connected apps", "ai", "oauth",
+      ],
+      moved: true,
+    },
+    {
       id: "backups",
       label: "Database Backups",
       oldPath: "/admin/backups",

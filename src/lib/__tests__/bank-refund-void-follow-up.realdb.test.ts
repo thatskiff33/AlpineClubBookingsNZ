@@ -1234,6 +1234,10 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
 
     it("MUTATION (#4488): a voided note of a completed card refund shortfall is a card refund's bank record too - it goes to a person with nothing to pick, and is never undone", async () => {
       // The refunded-total floor trusts a completed shortfall's amount (`INV-PAY-141`), so #4162 must never take it back.
+      // A deliberate fixture (#5344): the shortfall is this suite's inserted COMPLETED task (`handBackNoted`) under a
+      // shortfall's occurrence key, not one built by the real cancel and completion. The case is about how the void
+      // follow-up reads the record's kind; the real cancel, close and completion are driven in
+      // `card-refund-reversal-shortfall-floor.realdb.test.ts` (`support/card-shortfall-late-refund-example.ts`).
       await paidBankTransfer();
       const shortfall = await handBackNoted(`${P}-short`, PAID_CENTS, { names: "paidAnotherWayTaskId", perDelta: true, occurrenceKey: `cancel-card-shortfall:${BOOKING_ID}` });
       const linkId = await voidInXero(`${P}-short`, PAID_CENTS);

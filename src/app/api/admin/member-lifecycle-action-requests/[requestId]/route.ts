@@ -63,12 +63,8 @@ export async function PATCH(
           code: XERO_CONTACT_CREATE_BLOCKS_DELETION_CODE,
           // #2623 T7: the operator needs to know WHICH operation refused and
           // where to clear it, not just that something Xero-shaped did.
-          ...(err.operationId
-            ? {
-                xeroOperationId: err.operationId,
-                remedy: XERO_CONTACT_OPERATION_RESOLVE_REMEDY,
-              }
-            : {}),
+          xeroOperationId: err.operationId,
+          remedy: XERO_CONTACT_OPERATION_RESOLVE_REMEDY,
         },
         { status: err.statusCode },
       );

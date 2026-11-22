@@ -8,7 +8,7 @@ import {
   type SlotDraft,
 } from "./template-slots";
 
-// Slot seeding/reseeding for the Template authoring editor (issue #111). These
+// Slot seeding/reseeding for the Template authoring editor (issue hoppers99/AlpineClubBookingsNZ#111). These
 // are the pure helpers behind "pre-populate a new template's slots with the real
 // default, editable from there" and the per-slot "Reset to default" control.
 
@@ -48,7 +48,7 @@ const rotatorAreas: AreaDefinition[] = [
   },
 ];
 
-describe("buildSlots — seeding a new template from layout defaults (issue #111)", () => {
+describe("buildSlots — seeding a new template from layout defaults (issue hoppers99/AlpineClubBookingsNZ#111)", () => {
   it("seeds each static/conditional slot from the area's defaultContent, not empty", () => {
     const slots = buildSlots(everydayAreas);
     expect(slots.map((s) => s.slotKey)).toEqual(["board", "chores", "notice"]);
@@ -101,7 +101,7 @@ describe("buildSlots — seeding a new template from layout defaults (issue #111
     });
   });
 
-  it("seeds rotator children empty and gives them no default (out of scope for #111)", () => {
+  it("seeds rotator children empty and gives them no default (out of scope for hoppers99/AlpineClubBookingsNZ#111)", () => {
     const slots = buildSlots(rotatorAreas);
     expect(slots.map((s) => s.slotKey)).toEqual(["main/welcome", "main/notice"]);
     for (const slot of slots) {
@@ -113,7 +113,7 @@ describe("buildSlots — seeding a new template from layout defaults (issue #111
   });
 });
 
-describe("reseedSlotFromDefault — the per-slot reset control (issue #111)", () => {
+describe("reseedSlotFromDefault — the per-slot reset control (issue hoppers99/AlpineClubBookingsNZ#111)", () => {
   function editedSlot(defaultContent: SlotDraft["defaultContent"]): SlotDraft {
     // A slot the author has typed HTML into, that still remembers its default.
     return {

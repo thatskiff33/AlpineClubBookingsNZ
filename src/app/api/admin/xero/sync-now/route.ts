@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
@@ -24,10 +25,11 @@ export async function POST(request: Request) {
   if (!guard.ok) return guard.response;
   const limit = await checkRateLimit(limiter, guard.session.user.id);
   if (!limit.success) return rateLimitedResponse(limit);
-  let body: unknown;
-  try { body = await request.json(); } catch {
-    return NextResponse.json({ error: "Invalid JSON." }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON.",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = requestSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Choose a member, booking or whole-club sync." }, { status: 400 });
   const scope = parsed.data;

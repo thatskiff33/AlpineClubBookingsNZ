@@ -78,8 +78,9 @@ For what an officer sees and does on each screen, use the
 | `access-roles` | support | `ARCHITECTURE.md` (access roles / definitions) | [guide](guides/access-roles.md) | 4 |
 | `age-tier-settings` | bookings | `ARCHITECTURE.md`, `AUTHORITATIVE_FEES.md` | [guide](guides/age-tier-settings.md) | 1 |
 | `ai-assistant` | support | [`guides/ai-help.md`](guides/ai-help.md) (usage panel and spend cap; the page is hidden while the module is off) | [guide](guides/ai-help.md) | — (AI help module #2211, off by default; postdates #2050) |
+| `ai-connections` | support | [`guides/mcp-server.md`](guides/mcp-server.md), [`invariants/mcp-connections.md`](invariants/mcp-connections.md) (`INV-MCP`), [`STATE_MACHINES.md`](STATE_MACHINES.md#ai-app-connection-lifecycle); served at `/admin/system/ai-connections`, hidden while the module is off | [guide](guides/mcp-server.md) | — (AI app connections module, ALP-653, off by default; postdates #2050) |
 | `ai-diagnostics` | overview (page); support (API) | [architecture](ai-diagnostics/architecture.md), [deployment](ai-diagnostics/deployment.md), [ux](ai-diagnostics/ux.md), [e2e-matrix](ai-diagnostics/e2e-matrix.md), [hub](ai-diagnostics/README.md) | [deployment/operator guide](ai-diagnostics/deployment.md) | — (AID module, off by default; outside #2050) |
-| `alpine-server` | finance | [`guides/integrations.md`](guides/integrations.md), `DEPLOYMENT.md` (cron endpoint), `SECURITY-ATTACK-SURFACE.md` (provider list), `STATE_MACHINES.md` (version pause, #49; the `version` read route is finance view) | [guide](guides/integrations.md) | — (Alpine Central Server module, off by default) |
+| `alpine-server` | finance | [`guides/integrations.md`](guides/integrations.md), `DEPLOYMENT.md` (cron endpoint), `SECURITY-ATTACK-SURFACE.md` (provider list), `STATE_MACHINES.md` (version pause, triyder/AlpineClubBookingsNZ#49; the `version` read route is finance view) | [guide](guides/integrations.md) | — (Alpine Central Server module, off by default) |
 | `appearance` | content | — | [guide](guides/appearance.md) (incl. `appearance/identity`) | 4 |
 | `audit-log` | support | `AUDIT_RETENTION_ARCHIVE_RUNBOOK.md` | [guide](guides/audit-log.md) | 4 |
 | `background-jobs` | support | `ARCHITECTURE.md` (Cron Jobs) | [guide](guides/background-jobs.md) | 4 |
@@ -140,7 +141,7 @@ For what an officer sees and does on each screen, use the
 | `payments` | finance | `ARCHITECTURE.md` (Stripe), `finance-dashboard/README.md` | [guide](guides/payments.md) | 1 |
 | `privacy-retention` | support (settings); membership:view additionally for application/member previews; bookings:edit additionally for the after-stay dietary period and switch | [retention schedule](PRIVACY_RETENTION.md) | [retention schedule and controls](PRIVACY_RETENTION.md) | — (#4457, #4916) |
 | `promo-codes` | bookings | `ARCHITECTURE.md` (promo codes / redemptions) | [guide](guides/promo-codes.md) | 1 |
-| `refund-requests` | finance | `CANCELLATIONS.md`, `ARCHITECTURE.md` (refund recovery) | [guide](guides/refund-requests.md) | 2 |
+| `refund-requests` | finance | `CANCELLATIONS.md`, `ARCHITECTURE.md` (refund recovery), `INV-PAY-162` (opening credits) | [guide](guides/refund-requests.md) | 2 |
 | `reports` | finance | `finance-dashboard/README.md` | [guide](guides/reports.md) | 1 |
 | `rooms-beds` | lodge | `CAPACITY_MODEL.md`, `ARCHITECTURE.md` (bed inventory) | [guide](guides/rooms-beds.md) | 3 |
 | `roster` | lodge | `ARCHITECTURE.md` (roster/chores) | [guide](guides/roster.md) | 3 |
@@ -159,11 +160,11 @@ For what an officer sees and does on each screen, use the
 | `video-meetings` | finance | [`guides/calendar.md`](guides/calendar.md) ("Video meetings (MiroTalk)"), `SECURITY-ATTACK-SURFACE.md` (MiroTalk meeting tokens) | [guide](guides/calendar.md) | — (MAD #2940, epic #2725; postdates #2050) |
 | `waitlist` | bookings | `ARCHITECTURE.md` (waitlist), `E2E_PLAYWRIGHT.md` | [guide](guides/waitlist.md) | 1 |
 | `work-parties` | lodge | `SECURITY-ATTACK-SURFACE.md` (member route `/dashboard/work-parties/[id]` and `/api/work-parties`, #5148), [`guides/calendar.md`](guides/calendar.md) (linked calendar entries) | [guide](guides/work-parties.md) | 3 |
-| `xero` | finance | `xero/ARCHITECTURE.md`, `XERO_MEMBER_GROUPING_RUNBOOK.md` | [guide](guides/xero.md) | 2 |
+| `xero` | finance | `xero/ARCHITECTURE.md` (including the unallocated payments queue, `xero/unallocated-payments`, #5204: finance view to read, finance edit to refresh), `XERO_MEMBER_GROUPING_RUNBOOK.md` | [guide](guides/xero.md) | 2 |
 
 ## Summary
 
-- **85** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`, `membership`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
+- **86** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`, `membership`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
 - **2** areas are already served by a **feature hub** (`display` → lobby-display,
   `lodges` → multi-lodge). #2050 should extend, not duplicate, those hubs.
 - **13** areas have **no reference coverage** beyond their operator guide

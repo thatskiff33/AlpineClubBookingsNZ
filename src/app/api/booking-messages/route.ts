@@ -1,8 +1,9 @@
-import { NextResponse } from "next/server";
 import {
   buildBookingMessageGlobalData,
   loadPublicBookingMessages,
 } from "@/lib/booking-message-settings";
+import { BOOKING_MESSAGES_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * The effective booking-message bodies, plus the club-level values their merge
@@ -17,10 +18,10 @@ import {
  * CLUB_LODGE_NAME with it. All four values are already public — the club name,
  * its default lodge, the public URL and the support address.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const [messages, tokens] = await Promise.all([
     loadPublicBookingMessages(),
     buildBookingMessageGlobalData(),
   ]);
-  return NextResponse.json({ messages, tokens });
+  return connectionJson(request, { messages, tokens }, BOOKING_MESSAGES_CONNECTION_SHAPE);
 }

@@ -22,7 +22,10 @@ reference; a finance officer records the receipt. With Xero connected, its
 receipt can enter through the same journal command. Bank reconciliation,
 sending accounting statements and invoices, GST returns, expenses, payroll and
 profit-and-loss stay in Xero. The app still supplies its booking confirmations,
-payment instructions and member money views.
+payment instructions and member money views. Later owner decision (#5066,
+15 Nov 2026): only while the club's Xero module is off, the booking page also
+offers a booking invoice the app generates from the booking; with Xero on, the
+invoice is Xero's own.
 
 This extends #3527/#3532; it does not discard their posted history. The 27 Oct
 scope decision supersedes D-3532-4's bookings-only limit, while subscription
@@ -826,7 +829,9 @@ Every original triage scenario remains an executable acceptance requirement,
 even if a narrow fix has since shipped. This table is the complete 33-row list
 from [#4461's test-list comment](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4461#issuecomment-6415525566),
 which [#4451](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4451)
-identifies as “removed by the ledger switch”. A rule makes the erroneous
+identifies as “removed by the ledger switch”, plus
+[#4488](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4488), added
+later (owner, 28 Oct and 11 Nov 2026). A rule makes the erroneous
 representation impossible only when its writer, constraints, source links and
 rendering are active and its test passes; this design closes no bug by itself.
 
@@ -865,6 +870,7 @@ rendering are active and its test passes; this design closes no bug by itself.
 | #4444 | Card refunded display retains earlier edit credit after any later Xero event | R12/R23: compatibility display sums distinct cash and application components; later snapshot cannot overwrite another source's posting |
 | #4447 | Removing an allocation lowers its contribution to refunded display | R23: exact application reversal; independent cash-return component remains unchanged |
 | #4449 | Cancel racing bank settle sees invoice-correction contribution | R04/R07/R23: common locking/claim transaction commits source application, projection and settlement together; cancel re-reads after locking |
+| #4488 | Card refund shortfall paid back by bank survives the lost card refund failing late | R05/R12/R13/R14, on a 30000-cent booking paid 20000 by card (A) and 10000 by bank (B): the shortfall's 10000 debt is raised at the cancel and paid by its R14 from B's receipt, the dead card refund's 20000 debt by its Paid another way close on A, so 30000 goes back by bank; the late 20000 refund's R12 posts unapplied and its R13 reverses it once, reopening neither debt, and the card capture funds no further refund (`member-money-card-shortfall-late-refund.realdb.test.ts`) |
 
 ## 10. Decisions
 
@@ -949,7 +955,10 @@ zero-net receivable pair on the survivor sized as the paragraph below says. Post
 debtors remain immutable. Receipt writers take only the Payment row and read
 the owner once per call without locking Booking; the next receipt posting moves
 any merged-debtor residue explicitly, keyed to its source event, one merge hop
-at a time. No Payment lock is added to merge.
+at a time. No Payment lock is added to merge. A refund debt's whole reversal (an
+appeal's `release_claim`, a kept late capture, a part to check's dismissal) moves
+its merged-debtor residue the same way, to the owner read under the booking row
+(#5191).
 
 A successor is only ever posted for the current owner, from the chain's one
 live tip, with the face the chain still has to collect: the live charge less

@@ -9,7 +9,7 @@ import {
 import type { ClubDateFormat } from "@/lib/club-time";
 import { useClubFormat } from "@/components/club-format-provider";
 
-// Tonight's rooms (issue #115; visual reference: origin five-panel mock O2 in
+// Tonight's rooms (issue hoppers99/AlpineClubBookingsNZ#115; visual reference: origin five-panel mock O2 in
 // Grads/lobby-display/origin-five-panel.html). A grid of room cards for a
 // SINGLE night — window.start ("tonight"). Each card lists the guests sleeping
 // in that room tonight with their stay span and an arrive / stay / depart dot;

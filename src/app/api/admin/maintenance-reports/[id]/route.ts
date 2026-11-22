@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import logger from "@/lib/logger";
 import {
   MAINTENANCE_REPORT_DETAIL_SELECT,
@@ -9,6 +10,7 @@ import {
 } from "@/lib/maintenance-report-admin";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 /**
  * One maintenance report: read it (including the photo), move its status, or
@@ -27,10 +29,6 @@ const actionSchema = z.discriminatedUnion("action", [
     reason: z.string().trim().max(300).optional(),
   }),
 ]);
-
-function clientIp(request: NextRequest) {
-  return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-}
 
 async function loadDetail(id: string) {
   return prisma.maintenanceReport.findUnique({
@@ -68,7 +66,7 @@ export async function GET(
     entityType: "MaintenanceReport",
     entityId: id,
     details: JSON.stringify({ photoOpened: Boolean(mapped.photo.dataUrl) }),
-    ipAddress: clientIp(request),
+    ipAddress: getClientIp(request),
     outcome: "success",
   });
 
@@ -86,12 +84,11 @@ export async function PATCH(
 
   const { id } = await params;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = actionSchema.safeParse(body);
   if (!parsed.success) {
@@ -138,7 +135,7 @@ export async function PATCH(
           to: parsed.data.status,
           hasNote: Boolean(parsed.data.note),
         }),
-        ipAddress: clientIp(request),
+        ipAddress: getClientIp(request),
         outcome: "success",
       });
     } else {
@@ -166,7 +163,7 @@ export async function PATCH(
           entityType: "MaintenanceReport",
           entityId: id,
           details: parsed.data.reason || "Deleted by admin",
-          ipAddress: clientIp(request),
+          ipAddress: getClientIp(request),
           severity: "important",
           outcome: "success",
         });

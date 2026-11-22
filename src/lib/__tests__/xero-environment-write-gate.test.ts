@@ -319,9 +319,15 @@ describe("every operation name this repository passes to callXeroApi", () => {
       "getItems",
       "getOnlineInvoice",
       "getOrganisations",
+      // #5204: the unallocated-payments queue reads overpayments and prepayments,
+      // listed and re-read by id.
+      "getOverpayment",
+      "getOverpayments",
       "getPayment",
       // #4531: the deleted-payment link backfill lists Xero's DELETED payments.
       "getPayments",
+      "getPrepayment",
+      "getPrepayments",
       "getReportBalanceSheet",
       "getReportBankSummary",
       "getReportProfitAndLoss",

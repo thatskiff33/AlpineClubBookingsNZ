@@ -6,10 +6,12 @@ import {
   isOrganisationMember,
   resolveAccessRoleTokens,
 } from "@/lib/access-roles";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
+import { shallowChangedFields } from "@/lib/audit-changed-fields";
 import {
   MEMBERSHIP_TYPE_BOOKING_BEHAVIORS,
   MEMBERSHIP_TYPE_AGE_TIERS,
@@ -79,13 +81,6 @@ const patchSchema = z
   })
   .strict();
 
-function changedFields(
-  before: Record<string, unknown>,
-  after: Record<string, unknown>,
-) {
-  return Object.keys(after).filter((key) => before[key] !== after[key]);
-}
-
 function auditActionForUpdate(
   before: { isActive: boolean },
   data: { isActive?: boolean },
@@ -128,12 +123,11 @@ export async function PATCH(
     );
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
@@ -362,7 +356,7 @@ export async function PATCH(
         outcome: "success",
         summary: auditAction.summary,
         metadata: {
-          changedFields: changedFields(existing, {
+          changedFields: shallowChangedFields(existing, {
             ...(data as Record<string, unknown>),
             ...(parsed.data.allowedAgeTiers !== undefined
               ? { allowedAgeTiers }

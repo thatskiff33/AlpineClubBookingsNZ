@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { sendEmail } from "@/lib/email";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { escapeHtml } from "@/lib/email-templates/escape";
@@ -52,12 +53,11 @@ export async function POST(request: Request) {
   const rateLimited = await applyRateLimit(rateLimiters.contact, request);
   if (rateLimited) return rateLimited;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   try {
     const result = contactSchema.safeParse(body);

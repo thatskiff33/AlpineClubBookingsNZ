@@ -371,7 +371,6 @@ async function main() {
       },
     ],
     extra: {
-      waitlistPosition: 1,
       waitlistOfferedAt: new Date(),
       // Far-future expiry so the in-process expiry cron never reverts it.
       waitlistOfferExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
@@ -401,7 +400,6 @@ async function main() {
       },
     ],
     extra: {
-      waitlistPosition: 2,
       waitlistOfferedAt: new Date(),
       waitlistOfferExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     },

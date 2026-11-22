@@ -37,8 +37,8 @@ import { stripComments } from "./support/strip-comments";
  * where hand-written SQL is MOST likely — Prisma cannot express a bulk
  * correlated update, so a one-off repair CLI is exactly where somebody reaches
  * for `$queryRaw`, and `scripts/` holds the money-adjacent backfills
- * (`backfill-orphaned-applied-credits.ts`, `backfill-cancel-flattened-payments`,
- * `backfill-finance-monthly-facts`, `xero-booking-repair`). A guard that stopped
+ * (`backfill-orphaned-applied-credits.ts`, `backfill-finance-monthly-facts`,
+ * `xero-booking-repair`). A guard that stopped
  * at `src/` would leave the surface with the highest chance of the #2289 failure
  * mode entirely unwatched while CONTRIBUTING.md promised otherwise.
  *

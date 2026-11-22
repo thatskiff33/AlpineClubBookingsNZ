@@ -1204,12 +1204,13 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   UNCHANGED and conserves: the 100% restore + `finalPrice − allocated`
   clearing note void the invoice while returning the credit LOCALLY. After a
   cancel of an allocated-credit booking the restored credit is local-only (the
-  cancelled invoice consumed its funding note); the local ledger is the source
-  of truth and Xero catches up on the next use, via the mint-fresh branch. A new
+  cancelled invoice consumed its funding note); the local ledger is authoritative
+  and Xero catches up on next use, via the mint-fresh branch. A new
   manual grant carries the note queued at approval, and spend allocates it. Only a
   noteless legacy `ADMIN_ADJUSTMENT` is still minted, to
   `goodwillWriteOffs` (falling back to `hutFeeRefunds` while unset, `INV-INT-021`).
-  Every other minted share, restored credit included, stays on `hutFeeRefunds`.
+  Opening credit mints to `openingCredits` (`INV-PAY-162`); other shares stay
+  on `hutFeeRefunds`.
 
 ## INV-PAY-127
 
@@ -4473,9 +4474,10 @@ edit's card refund debt).
   Stripe is not asked. Xero records a refund not made through Stripe.
 - **One read decides it.** `readRefundableCardIntentId`
   (`src/lib/refundable-card-intent.ts`) answers the settlement
-  (`editRefundHasCardToReturnTo`, in `applyPaymentAdjustments`, under the
-  door's locks) and the debt's writer (`enqueueLedgerRefundRecovery`), so the
-  two cannot disagree about a payment neither has changed.
+  (`editReductionRefundsToCard`, in `applyPaymentAdjustments` under the
+  door's locks, and the quote's `refundByBankTransfer` label) and the debt's
+  writer (`enqueueLedgerRefundRecovery`), so they cannot disagree about a
+  payment none has changed.
 - **A reserve that cannot write its debt rolls the edit back.**
   `reserveBookingModificationCardRefund` lets no edit stand on
   `NoRefundPaymentIntentError`: a refund payable is posted only with its
@@ -4528,4 +4530,40 @@ settlement body), **`INV-PAY-040`** (the manual capacity refusal),
   yet") until #5008; reversing a batch and the refund-as-credit choice are
   #5005 children B and D.
 - Proven by `booking-import-parse.test.ts`, `booking-import-plan.test.ts`,
+  `booking-import-plan-decisions.test.ts`, `booking-import-write.test.ts`,
   `zero-price-payment-call-sites.test.ts` and `booking-import.realdb.test.ts`.
+
+## INV-PAY-162
+
+**Related:** **`INV-MONEY-035`** (credit rows are insert-only),
+**`INV-LOCK-002`** (sorted member keys), **`INV-PAY-023`** (a lot with no
+Xero note mints one when spent), **`INV-CONFIG-008`** (the Exempt line).
+
+- **Opening credit posts once, from one approval** (#4988): a moving-in
+  club's balances, in one CSV. Preview writes nothing: it matches each row to
+  one current member, refuses a member named twice or the posting admin
+  (two-person control), totals the cents, and offers a batch key only when no
+  row is in error. A member holding credit from an unreversed batch is in
+  error, rechecked under the locks, so a corrected file never credits twice.
+- **The key is the claim.** It hashes what the file posts (member, cents,
+  description, sorted). Confirm re-previews and refuses unless key and total
+  still match; the `OpeningCreditBatch` row's unique key then claims it: a
+  second confirm posts nothing.
+- **One transaction**: the batch row, one `ADMIN_ADJUSTMENT` credit per member
+  under that member's `lockMemberCreditLedger` (sorted ids), and one `payment`
+  audit row with the total. No email, Xero document or Stripe call.
+- **When spent in Xero** (owner, 16-17 Nov 2026), the minted line is coded to
+  the optional `openingCredits` liability mapping as an Exempt line
+  (`INV-CONFIG-008`), never merged into an income line. Unmapped, it is coded
+  and taxed as `hutFeeRefunds` verbatim (`INV-INT-021`), the note
+  byte-identical; never goodwill.
+- **Reversal is whole-batch**, only while every credit is wholly free: its lot
+  untouched, the balance covering it, its members' negative-row count
+  unchanged since posting (counted under the locks, not timestamps), and no
+  Xero-noted credit consumed. It claims the batch with a `reversedAt`-guarded
+  `updateMany`, then posts one negative row per credit. One spent credit
+  refuses it, writing nothing. A reversed batch's credits are no longer lots
+  (`creditLotWhere`).
+- Proven by `opening-credit-csv.test.ts`, `opening-credit-batch.test.ts`,
+  `opening-credit-routes.test.ts`, `goodwill-write-off-account.test.ts` and
+  `opening-credit-batch.realdb.test.ts`.

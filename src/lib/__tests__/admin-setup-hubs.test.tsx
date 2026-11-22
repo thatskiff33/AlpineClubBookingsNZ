@@ -91,7 +91,7 @@ describe("admin setup hub pages", () => {
     expect(html).toContain("Subscription Lockout");
   });
 
-  it("renders the Lobby Display hub cards (fork issue #109)", async () => {
+  it("renders the Lobby Display hub cards (fork issue hoppers99/AlpineClubBookingsNZ#109)", async () => {
     const html = await renderPage(DisplayHubPage);
 
     expect(html).toContain("Lobby Display");

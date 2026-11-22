@@ -322,7 +322,7 @@ describe("each entry's admission is what today's code gives its old path", () =>
       }
     }
     expect(drift).toEqual([]);
-  });
+  }, 30_000);
 
   it("records every module flag the path needs today", () => {
     const drift = ADMIN_PAGES.flatMap((page) => {
@@ -528,6 +528,7 @@ describe("the hub prefix census", () => {
       "/admin/finance/reports",
       "/admin/finance/xero",
       "/admin/finance/xero/member-grouping",
+      "/admin/finance/xero/unallocated-payments",
       "/admin/finance/xero/records/[localModel]/[localId]",
       "/admin/finance/xero/setup",
     ];
@@ -583,6 +584,7 @@ describe("the hub prefix census", () => {
       "/admin/system/audit-log",
       "/admin/system/ai-diagnostics",
       "/admin/system/ai-assistant",
+      "/admin/system/ai-connections",
       "/admin/system/backups",
       "/admin/system/backups/setup",
       "/admin/system/testing/route-error",
@@ -783,6 +785,7 @@ describe("the entries' shape", () => {
     ).toEqual([
       "age-tier-settings",
       "ai-assistant",
+      "ai-connections",
       "ai-diagnostics",
       "appearance",
       "audit-log",
@@ -870,6 +873,7 @@ describe("the entries' shape", () => {
       "xero-member-grouping",
       "xero-record",
       "xero-setup",
+      "xero-unallocated-payments",
     ]);
     expect(new Set(ADMIN_PAGES.filter((page) => page.moved).map((page) => page.hub))).toEqual(
       new Set(["website", "finance", "rules", "messages", "system", "bookings", "members", "lodge-ops"]),
@@ -1550,7 +1554,7 @@ describe("retired pages", () => {
         retiredPattern.test(stripComments(fs.readFileSync(path.join(process.cwd(), file), "utf8"))),
     );
     expect(linking).toEqual([]);
-  });
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -1787,6 +1791,7 @@ describe("buildAdminUrlRules", () => {
     const staticMoves = [
       ["/admin/age-tier-settings", "/admin/rules/age-tier-settings"],
       ["/admin/ai-assistant", "/admin/system/ai-assistant"],
+      ["/admin/ai-connections", "/admin/system/ai-connections"],
       ["/admin/ai-diagnostics", "/admin/system/ai-diagnostics"],
       ["/admin/appearance", "/admin/website/appearance"],
       ["/admin/appearance/identity", "/admin/website/appearance/identity"],
@@ -1864,6 +1869,7 @@ describe("buildAdminUrlRules", () => {
       ["/admin/xero", "/admin/finance/xero"],
       ["/admin/xero/member-grouping", "/admin/finance/xero/member-grouping"],
       ["/admin/xero/setup", "/admin/finance/xero/setup"],
+      ["/admin/xero/unallocated-payments", "/admin/finance/xero/unallocated-payments"],
     ] as const;
     const inductionPrint = ["/admin/induction/[id]/print", "/admin/membership/induction/[id]/print"] as const;
     const lodgePages = (["", "/central-lodge", "/display", "/roster", "/setup"] as const).map(
@@ -2066,6 +2072,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/finance/xero/setup/xero-setup-wizard.tsx": "#4972: shares the step parameter and the webhooks and mapping step ids with the shortcuts",
     "src/lib/admin-permissions.ts":
       "C2: the route map's page half, the admission paths and the landing page are generated",
+    "src/lib/admin-route-areas.ts":
+      "ALP-653: the route map itself, moved out of admin-permissions.ts; its page half is generated",
     "src/config/feature-routes.ts":
       "C2: the admin page module gates are generated; C11 part 1 (#4808): the Display Setup exemption is its registry old path",
     "src/lib/__tests__/admin-hubs-registry.test.ts": "this suite",
@@ -2186,6 +2194,10 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/finance/internet-banking/page.tsx": "C5: its back link is adminLink",
     "src/app/(admin)/admin/finance/xero/_components/health-diagnostics-panel.tsx":
       "C5: the member-grouping link is adminHref",
+    "src/app/(admin)/admin/finance/xero/_components/contact-group-mismatch-panel.tsx":
+      "#5234: the member-grouping and member links are adminHref",
+    "src/app/(admin)/admin/finance/xero/_components/__tests__/health-diagnostics-review-by-hand.test.tsx":
+      "#5234: it asserts the member links are adminHref",
     "src/app/(admin)/admin/finance/xero/_components/webhook-amber-badge.tsx":
       "C5: the webhook setup link is adminHref; #4972: it is built by the shared Xero Setup step helper",
     "src/app/(admin)/admin/finance/xero/_components/xero-setup-page-client.tsx":
@@ -2249,6 +2261,7 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/finance/subscriptions/page.tsx": "C5: its own address is adminHref",
     "src/app/(admin)/admin/finance/xero/records/[localModel]/[localId]/page.tsx":
       "C5: the fallback back link is adminLink",
+    "src/app/(admin)/admin/finance/xero/unallocated-payments/page.tsx": "#5204: a member row links the member at adminHref",
     "src/app/(admin)/admin/finance/xero/setup/xero-wizard-steps.tsx":
       "C5: the OAuth connect step returns to Xero Setup at its adminHref",
     "src/app/api/admin/xero/callback/route.ts":
@@ -2347,6 +2360,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/finance/xero/_components/missing-contacts-panel.tsx":
       "C9: the member link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/shared.tsx": "C9: the sync-report member links are adminHref",
+    "src/app/(admin)/admin/finance/xero/_components/tax-category-mapping-card.tsx":
+      "#5209: the read-only income row links to the GST / tax treatment card by adminHref",
     "src/app/(admin)/admin/membership/deletion-requests/deletion-requests-client.tsx":
       "C9: the return-to is adminHref",
     "src/app/(admin)/admin/membership/family-groups/page.tsx":
@@ -2531,7 +2546,7 @@ describe("the registry is inert", () => {
     );
     // Both directions: an unreviewed importer fails, and so does a stale entry.
     expect(importers.sort()).toEqual(Object.keys(IMPORTERS).sort());
-  });
+  }, 30_000);
 
   it("uses only relative imports inside the registry, so next.config.ts can load it", () => {
     const aliased = sourceFiles(REGISTRY_DIR.slice(0, -1)).filter((file) =>

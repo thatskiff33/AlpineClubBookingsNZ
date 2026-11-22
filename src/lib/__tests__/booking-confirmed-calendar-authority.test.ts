@@ -106,7 +106,7 @@ describe("booking-confirmed calendar links follow the booking-link authority", (
     );
     expect(html).toContain("Add this stay to your calendar");
     expect(html).toContain(`/api/booking-calendar/${BOOKING_ID}`);
-    // Fork #41: the three links render as self-hosted icons whose alt text
+    // triyder/AlpineClubBookingsNZ#41: the three links render as self-hosted icons whose alt text
     // keeps them readable when a mail client blocks remote images.
     expect(html).toContain('/branding/calendar/ics.png');
     expect(html).toContain('alt="Google Calendar"');

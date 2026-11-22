@@ -239,11 +239,6 @@ export function isCapacityHoldingBookingStatus(status: string) {
   return (CAPACITY_HOLDING_BOOKING_STATUSES as readonly string[]).includes(status);
 }
 
-// test seam
-export function isOperationalStayBookingStatus(status: string) {
-  return (OPERATIONAL_STAY_BOOKING_STATUSES as readonly string[]).includes(status);
-}
-
 /**
  * Per-booking analogue of `capacityHoldingBookingFilter()` (the DB-query form
  * below): does THIS booking consume lodge capacity? (issue #1254). A booking

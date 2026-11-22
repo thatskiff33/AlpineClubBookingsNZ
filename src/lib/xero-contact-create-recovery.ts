@@ -132,14 +132,13 @@ export class XeroContactCreateBlocksDeletionError extends Error {
   /**
    * The exact operation the refusal is about, so the caller can name it instead
    * of leaving the operator to guess which screen holds the remedy (#2623 T7).
-   * Optional only so older/mocked construction sites keep compiling.
    */
-  readonly operationId?: string;
+  readonly operationId: string;
 
-  constructor(operationId?: string) {
+  constructor(operationId: string) {
     super(XERO_CONTACT_CREATE_BLOCKS_DELETION_MESSAGE);
     this.name = "XeroContactCreateBlocksDeletionError";
-    if (operationId) this.operationId = operationId;
+    this.operationId = operationId;
   }
 }
 
@@ -166,13 +165,19 @@ export type MemberContactChangeBlocker = {
  */
 const CONTACT_CREATE_RECOVERY_CLOSE_SCAN_LIMIT = 20;
 
-const contactCreateIdentityWhere = (memberId: string) => ({
+// The member's unresolved outbound CONTACT operations, of any type. The create
+// readers narrow it to CREATE; the change blocker reads CREATE and UPDATE.
+const memberContactIdentityWhere = (memberId: string) => ({
   direction: "OUTBOUND",
   entityType: "CONTACT",
-  operationType: "CREATE",
   localModel: "Member",
   localId: memberId,
   manuallyResolvedAt: null,
+}) satisfies Prisma.XeroSyncOperationWhereInput;
+
+const contactCreateIdentityWhere = (memberId: string) => ({
+  ...memberContactIdentityWhere(memberId),
+  operationType: "CREATE",
 }) satisfies Prisma.XeroSyncOperationWhereInput;
 
 const providerCreatedPayloadWhere = (phase: string) => [
@@ -563,11 +568,7 @@ export function memberContactChangeMergeBlockerWhere(
   memberId: string,
 ): Prisma.XeroSyncOperationWhereInput {
   return {
-    direction: "OUTBOUND",
-    entityType: "CONTACT",
-    localModel: "Member",
-    localId: memberId,
-    manuallyResolvedAt: null,
+    ...memberContactIdentityWhere(memberId),
     OR: [
       {
         operationType: "UPDATE",
@@ -644,29 +645,6 @@ export async function hasUnresolvedMemberContactCreateRecovery(
   return (
     operation !== null &&
     isProviderCreatedLocalLinkFailurePayload(operation.responsePayload)
-  );
-}
-
-export async function hasMemberContactCreateMergeBlocker(
-  memberId: string,
-  db: ContactCreateRecoveryDb = prisma,
-): Promise<boolean> {
-  const operation = await db.xeroSyncOperation.findFirst({
-    where: memberContactCreateMergeBlockerWhere(memberId),
-    select: {
-      id: true,
-      status: true,
-      lastErrorCode: true,
-      responsePayload: true,
-    },
-  });
-  return (
-    operation !== null &&
-    (operation.status === "RUNNING" ||
-      (operation.status === "FAILED" &&
-        operation.lastErrorCode ===
-          XERO_CONTACT_CREATE_STALE_RUNNING_ERROR_CODE) ||
-      isProviderCreatedLocalLinkFailurePayload(operation.responsePayload))
   );
 }
 
@@ -794,19 +772,10 @@ export async function closeProviderCreatedContactRecoveryForLinkedContact(
 /**
  * Account deletion calls this only after its standing fan-out has taken the
  * target Member FOR UPDATE. The blocker read therefore shares one snapshot and
- * one transaction with anonymisation: a committed create reservation refuses
- * deletion, while a deletion holding the row prevents a later KEY SHARE
+ * one transaction with anonymisation: a committed create or update reservation
+ * refuses deletion, while a deletion holding the row prevents a later KEY SHARE
  * reservation from passing its authoritative member re-read.
  */
-export async function assertNoMemberContactCreateBlockerForDeletion(
-  memberId: string,
-  db: ContactCreateRecoveryDb,
-): Promise<void> {
-  if (await hasMemberContactCreateMergeBlocker(memberId, db)) {
-    throw new XeroContactCreateBlocksDeletionError();
-  }
-}
-
 export async function assertNoMemberContactChangeBlockerForDeletion(
   memberId: string,
   db: ContactCreateRecoveryDb,

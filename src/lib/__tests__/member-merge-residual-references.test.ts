@@ -45,6 +45,8 @@ const EXCLUDED: Record<string, RegExp> = {
   // The duplicate's passkeys and their challenges, dropped with it (#4617).
   "WebAuthnCredential.member": /cascade/,
   "WebAuthnChallenge.member": /cascade/,
+  // The duplicate's AI app connections, dropped with it (INV-MCP-005).
+  "McpGrant.member": /cascade/,
   "PartnerInviteToken.createdBy": /cascade/,
   "SchoolMemberClassification.member": /cascade/,
 };

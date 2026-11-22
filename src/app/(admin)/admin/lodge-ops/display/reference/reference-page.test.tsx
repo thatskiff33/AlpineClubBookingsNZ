@@ -11,7 +11,7 @@ import { listDisplayConditions } from "@/lib/lodge-display/conditions";
 import { listDisplayCssTokens } from "@/lib/lodge-display/css-tokens";
 import { BUILT_IN_DISPLAY_TEMPLATES } from "@/lib/lodge-display/built-in-seeds";
 
-// LTV-034 (#80): the reference page is read-only presentation over three
+// LTV-034 (hoppers99/AlpineClubBookingsNZ#80): the reference page is read-only presentation over three
 // client-safe registries. This is the light cross-registry sweep (mirroring the
 // module-registry integrity idiom): every module, condition, and CSS token in
 // the registries must appear on the page, so adding one to a registry surfaces

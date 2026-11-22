@@ -221,9 +221,9 @@ export function formatMissingPaidUpAdultRefusal(): string {
  *
  * The extra sentence exists because the bare refusal, arriving in answer to
  * "confirm my offer", reads as though the member lost the offer AND their spot.
- * They lost neither: both paths revert the entry to WAITLISTED and neither touches
- * `waitlistPosition`, so the claim is literally true rather than reassuring
- * padding. Worded like the two minimum-stay waitlist refusals it sits beside —
+ * They lost neither: both paths revert the entry to WAITLISTED and keep its
+ * `createdAt`, the join time its place in the queue is read from (#5402), so the
+ * claim is literally true rather than reassuring padding. Worded like the two minimum-stay waitlist refusals it sits beside —
  * one short second-person sentence, appended last, saying where the member now is.
  *
  * SCOPED TO THOSE TWO PATHS, and shared between them so they cannot drift. A

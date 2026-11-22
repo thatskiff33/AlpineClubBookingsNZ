@@ -1,3 +1,4 @@
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { exactContains } from "@/lib/prisma-exact-prefix";
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
@@ -103,12 +104,11 @@ export async function POST(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {

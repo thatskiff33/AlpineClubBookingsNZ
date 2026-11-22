@@ -102,7 +102,7 @@ const ROOT = process.cwd();
  * here.
  */
 const CANONICAL_ENCODERS = new Set([
-  // `@/lib/date-only` — the compatibility adapters CT-6 (#2991) retires.
+  // `@/lib/date-only` — the compatibility adapters #2991 (CT-6) closed with, kept as reviewed adapters.
   "formatDateOnly",
   "formatMonthOnly",
   "dateOnlyFromIsoString",

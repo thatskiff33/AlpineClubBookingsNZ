@@ -1,12 +1,20 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Radio } from "@/components/ui/radio";
 import { promoChangeNotAppliedHeading } from "@/lib/promo-change-not-applied";
 import { formatCents } from "@/lib/utils";
+import {
+  EDIT_REFUND_CREDIT_CHOICE_LABEL,
+  combineEditRefundRoutes,
+  editRefundChoiceLabel,
+  editRefundRouteOf,
+  type EditRefundRoute,
+} from "@/lib/edit-refund-route";
 import { disputedRefundSentence, organiserBilledSentence } from "@/lib/booking-modified-email-copy";
 import { heldForDisputeSettlementCents } from "@/lib/edit-dispute-held-settlement";
 import type { PromoAction } from "@/components/edit-booking/hooks/use-promo-selection";
-import type { PromoInfo, QuoteResult } from "@/components/edit-booking/types";
+import type { PromoInfo, QuoteResult, SettlementOptions } from "@/components/edit-booking/types";
 import { useClubFormat } from "@/components/club-format-provider";
 
 /**
@@ -42,6 +50,7 @@ export function PriceSummaryCard({
   settlementMethod,
   onConfirmOverCapacityChange,
   onSettlementMethodChange,
+  linkedMoveRefundRoute = null,
 }: {
   quote: QuoteResult | null;
   quoteLoading: boolean;
@@ -60,13 +69,19 @@ export function PriceSummaryCard({
   settlementMethod: "card" | "credit" | null;
   onConfirmOverCapacityChange: (checked: boolean) => void;
   onSettlementMethodChange: (method: "card" | "credit") => void;
+  /**
+   * #5303 review: set while a linked move needing the card-or-credit choice is
+   * active. The panel then hides the linked "Return method" control, so this
+   * radio answers for every booking and is labelled by their combined route.
+   */
+  linkedMoveRefundRoute?: EditRefundRoute | null;
 }) {
   const format = useClubFormat();
   return (
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle>Price Summary</CardTitle>
+          <CardTitle headingLevel={2}>Price Summary</CardTitle>
           {quoteLoading && quote && (
             <span className="text-sm font-normal text-muted-foreground">Updating…</span>
           )}
@@ -426,46 +441,12 @@ export function PriceSummaryCard({
                     )}
                   </p>
                 ) : quote.settlementOptions.requiresSettlementMethod ? (
-                  <div className="space-y-2">
-                    <label className="flex cursor-pointer items-start gap-2">
-                      <input
-                        type="radio"
-                        name="settlementMethod"
-                        value="card"
-                        checked={settlementMethod === "card"}
-                        onChange={() => onSettlementMethodChange("card")}
-                        className="mt-1"
-                      />
-                      <span>
-                        Refund to original card:{" "}
-                        <span className="font-medium">
-                          {formatCents(quote.settlementOptions.cardRefundAmountCents, format)}
-                        </span>{" "}
-                        <span className="text-muted-foreground">
-                          ({quote.settlementOptions.cardRefundPercentage}%)
-                        </span>
-                      </span>
-                    </label>
-                    <label className="flex cursor-pointer items-start gap-2">
-                      <input
-                        type="radio"
-                        name="settlementMethod"
-                        value="credit"
-                        checked={settlementMethod === "credit"}
-                        onChange={() => onSettlementMethodChange("credit")}
-                        className="mt-1"
-                      />
-                      <span>
-                        Hold as account credit:{" "}
-                        <span className="font-medium">
-                          {formatCents(quote.settlementOptions.accountCreditAmountCents, format)}
-                        </span>{" "}
-                        <span className="text-muted-foreground">
-                          ({quote.settlementOptions.accountCreditPercentage}%)
-                        </span>
-                      </span>
-                    </label>
-                  </div>
+                  <SettlementChoiceRadios
+                    options={quote.settlementOptions}
+                    linkedMoveRefundRoute={linkedMoveRefundRoute}
+                    settlementMethod={settlementMethod}
+                    onSettlementMethodChange={onSettlementMethodChange}
+                  />
                 ) : (
                   <p className="text-muted-foreground">
                     No refund or account credit is available for this reduction under the current policy.
@@ -510,5 +491,63 @@ export function PriceSummaryCard({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * The member's card-or-credit choice for a reduction. The refund option names
+ * the route the save takes (#5303): this booking's own, combined with a linked
+ * move's while one needing the choice is active, because this one radio then
+ * answers for every booking.
+ */
+function SettlementChoiceRadios({
+  options,
+  linkedMoveRefundRoute,
+  settlementMethod,
+  onSettlementMethodChange,
+}: {
+  options: SettlementOptions;
+  linkedMoveRefundRoute: EditRefundRoute | null;
+  settlementMethod: "card" | "credit" | null;
+  onSettlementMethodChange: (method: "card" | "credit") => void;
+}) {
+  const format = useClubFormat();
+  const refundRoute = combineEditRefundRoutes([
+    editRefundRouteOf([options.refundByBankTransfer ?? false]),
+    ...(linkedMoveRefundRoute ? [linkedMoveRefundRoute] : []),
+  ]);
+  const choices = [
+    {
+      method: "card" as const,
+      label: editRefundChoiceLabel(refundRoute),
+      cents: options.cardRefundAmountCents,
+      percentage: options.cardRefundPercentage,
+    },
+    {
+      method: "credit" as const,
+      label: EDIT_REFUND_CREDIT_CHOICE_LABEL,
+      cents: options.accountCreditAmountCents,
+      percentage: options.accountCreditPercentage,
+    },
+  ];
+  return (
+    <div className="space-y-2">
+      {choices.map((choice) => (
+        <label key={choice.method} className="flex cursor-pointer items-start gap-2">
+          <Radio
+            name="settlementMethod"
+            value={choice.method}
+            checked={settlementMethod === choice.method}
+            onChange={() => onSettlementMethodChange(choice.method)}
+            className="mt-1"
+          />
+          <span>
+            {choice.label}:{" "}
+            <span className="font-medium">{formatCents(choice.cents, format)}</span>{" "}
+            <span className="text-muted-foreground">({choice.percentage}%)</span>
+          </span>
+        </label>
+      ))}
+    </div>
   );
 }

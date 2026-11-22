@@ -31,6 +31,10 @@
  * from a deletion plus a new function, and the remedy (split it while you are
  * there, or keep the name) is cheap.
  *
+ * A deployment fork syncing down may name a trusted upstream commit (#5196);
+ * the rule for what it vouches for lives in `budget-upstream-ref.ts`, shared
+ * with the file-size ratchet, and only its same-path functions are matched.
+ *
  * Reads `git` and the working tree only: no network, no build, no database.
  */
 import { readFileSync } from "node:fs";
@@ -41,12 +45,16 @@ import {
   type AllowanceProblem,
   type FunctionAllowance,
 } from "./file-size-allowances";
+import type { UpstreamTrust } from "./budget-upstream-ref";
 import {
   baseContentOf,
   type ComputedFinding,
   changedFilesWithBasePaths,
   deletedFilesSinceBase,
+  isUpstreamFragment,
   resolveBaseRef,
+  type TrustedUpstreamSummary,
+  upstreamUnusableFinding,
 } from "./file-size-base";
 import { measureFunctions, type FunctionSpan } from "./function-length";
 
@@ -67,6 +75,7 @@ const ALLOWANCE_FORMAT_HINT =
 
 export type FunctionFindingKind =
   | "base-unresolvable"
+  | "upstream-unusable"
   | "new-over-limit"
   | "crossed-limit"
   | "grown-beyond-base"
@@ -86,6 +95,8 @@ export type FunctionRatchetResult = {
   /** Production files whose functions this run measured. */
   checkedFiles: number;
   allowancesApplied: FunctionAllowance[];
+  /** As for the file-size ratchet: absent without trust, or when it was ignored (#5196). */
+  trustedUpstream?: TrustedUpstreamSummary;
 };
 
 type Measured = FunctionSpan & { file: string };
@@ -107,8 +118,12 @@ function readWorkingTree(root: string, file: string): string | null {
   }
 }
 
-/** Where a function's base length was found, when it was found somewhere. */
-type Previous = { lines: number; from: string | null };
+/**
+ * Where a function's base length was found, when it was found somewhere:
+ * `from` is the base path it moved from, `upstream` the trusted upstream
+ * commit whose longer length it carries (#5196).
+ */
+type Previous = { lines: number; from: string | null; upstream?: string };
 
 /** Judge every function in the files this change touched. */
 export function evaluateFunctionLengthRatchet(input: {
@@ -118,6 +133,8 @@ export function evaluateFunctionLengthRatchet(input: {
   limit?: number;
   allowances?: ReadonlyArray<FunctionAllowance>;
   allowanceProblems?: ReadonlyArray<AllowanceProblem>;
+  /** As for the file-size ratchet (#5196); ignored when it resolved to `HEAD`. */
+  upstream?: UpstreamTrust;
 }): FunctionRatchetResult {
   const limit = input.limit ?? FUNCTION_LENGTH_LIMIT;
   const budget = `function, <= ${limit} lines`;
@@ -159,6 +176,12 @@ export function evaluateFunctionLengthRatchet(input: {
         "a pass it has no evidence for",
     });
     return { findings, baseSha: null, checkedFiles: 0, allowancesApplied: [] };
+  }
+
+  const upstream = input.upstream?.kind === "ignored-head" ? undefined : input.upstream;
+  if (upstream?.kind === "unusable") {
+    findings.push({ ...upstreamUnusableFinding(upstream.error), kind: "upstream-unusable" });
+    return { findings, baseSha: base.sha, checkedFiles: 0, allowancesApplied: [] };
   }
 
   const changed = diff.changed;
@@ -209,7 +232,7 @@ export function evaluateFunctionLengthRatchet(input: {
     unmatchedByName.set(fn.name, (unmatchedByName.get(fn.name) ?? 0) + 1);
   }
 
-  const previousOf = (fn: Measured & { basePath: string | null }): Previous | null => {
+  const baseMatchOf = (fn: Measured & { basePath: string | null }): Previous | null => {
     if (fn.basePath !== null) {
       const same = baseByKey.get(keyOf(fn.basePath, fn.name));
       if (same) {
@@ -224,8 +247,38 @@ export function evaluateFunctionLengthRatchet(input: {
     return null;
   };
 
-  // Allowances live only in the change that introduces them, as for files.
-  const live = (input.allowances ?? []).filter((a) => inDiff.has(a.source));
+  // The trusted upstream's functions, by the same `<file>#<name>` key, for the
+  // paths that commit brought in. Same path only, as for files (#5196).
+  const upstreamByKey = new Map<string, Measured>();
+  if (upstream?.kind === "trusted") {
+    for (const { file } of changed) {
+      if (!input.isProductionFile(file)) continue;
+      for (const fn of measureText(file, upstream.contentAt(file)?.toString("utf8") ?? null)) {
+        upstreamByKey.set(keyOf(file, fn.name), fn);
+      }
+    }
+  }
+
+  // The longer of the base match and upstream's, including when the base has
+  // no match at all: upstream already judged that function.
+  const previousOf = (fn: Measured & { basePath: string | null }): Previous | null => {
+    const fromBase = baseMatchOf(fn);
+    const theirs = upstreamByKey.get(keyOf(fn.file, fn.name));
+    if (!theirs || upstream?.kind !== "trusted") return fromBase;
+    if (fromBase !== null && fromBase.lines >= theirs.lines) return fromBase;
+    return { lines: theirs.lines, from: null, upstream: upstream.sha };
+  };
+
+  // Allowances live only in the change that introduces them, as for files,
+  // and a fragment upstream merged is not this change's (#5196).
+  const ignoredFragments = new Set<string>();
+  const live = (input.allowances ?? []).filter((a) => {
+    if (!inDiff.has(a.source)) return false;
+    if (!isUpstreamFragment(input.root, upstream, a.source)) return true;
+    ignoredFragments.add(a.source);
+    return false;
+  });
+  let lifted = 0;
   const allowanceFor = new Map<string, FunctionAllowance>();
   for (const allowance of live) {
     const first = allowanceFor.get(allowance.key);
@@ -252,6 +305,10 @@ export function evaluateFunctionLengthRatchet(input: {
     const key = keyOf(fn.file, fn.name);
     const where = `${fn.lines} lines (lines ${fn.startLine}-${fn.endLine})`;
     const previous = previousOf(fn);
+    if (previous?.upstream) lifted += 1;
+    const onBase = previous?.upstream
+      ? `on trusted upstream ${previous.upstream.slice(0, 12)}`
+      : "on the base ref";
     const allowance = allowanceFor.get(key);
 
     if (previous === null || previous.lines <= limit) {
@@ -262,7 +319,7 @@ export function evaluateFunctionLengthRatchet(input: {
         kind: allowance ? "allowance-not-permitted" : isNew ? "new-over-limit" : "crossed-limit",
         file: key,
         budget,
-        previous: isNew ? null : `${previous.lines} lines on the base ref`,
+        previous: isNew ? null : `${previous.lines} lines ${onBase}`,
         current: `${where}, over by ${fn.lines - limit}`,
         problem: allowance
           ? `an allowance cannot carry a ${isNew ? "NEW function" : "function over the limit for the first time"}`
@@ -303,7 +360,7 @@ export function evaluateFunctionLengthRatchet(input: {
       kind: "grown-beyond-base",
       file: key,
       budget,
-      previous: `${previous.lines} lines on the base ref${movedNote}`,
+      previous: `${previous.lines} lines ${onBase}${movedNote}`,
       current: `${where}, +${fn.lines - previous.lines}`,
       problem: "an already-over-limit function grew",
       action:
@@ -329,7 +386,22 @@ export function evaluateFunctionLengthRatchet(input: {
     });
   }
 
-  return { findings, baseSha: base.sha, checkedFiles, allowancesApplied };
+  return {
+    findings,
+    baseSha: base.sha,
+    checkedFiles,
+    allowancesApplied,
+    ...(upstream?.kind === "trusted"
+      ? {
+          trustedUpstream: {
+            sha: upstream.sha,
+            subject: upstream.subject,
+            lifted,
+            ignoredFragments: ignoredFragments.size,
+          },
+        }
+      : {}),
+  };
 }
 
 /** Every function over the limit in the given files, longest first. */

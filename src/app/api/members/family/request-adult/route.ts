@@ -15,6 +15,7 @@ import logger from "@/lib/logger";
 import { sendAdminFamilyGroupRequestAlert } from "@/lib/email";
 import { nameField } from "@/lib/zod-helpers";
 import { dateOfBirthStringSchema } from "@/lib/date-only-schema";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const requestAdultSchema = z.object({
   familyGroupId: z.string().min(1, "Family group ID required"),
@@ -41,12 +42,9 @@ export async function POST(req: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.familyGroupJoinRequest, req);
   if (rateLimited) return rateLimited;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = requestAdultSchema.safeParse(body);
   if (!parsed.success) {

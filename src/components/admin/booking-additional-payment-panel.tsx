@@ -102,7 +102,7 @@ export async function BookingAdditionalPaymentPanel({
       data-testid="additional-payment-outstanding"
     >
       <CardHeader>
-        <CardTitle className="text-warning-11">
+        <CardTitle headingLevel={2} className="text-warning-11">
           Additional payment outstanding
         </CardTitle>
       </CardHeader>

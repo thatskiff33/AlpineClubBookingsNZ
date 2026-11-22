@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { auth } from "@/lib/auth";
 import { confirmNomination } from "@/lib/nomination";
 import { MembershipApplicationError } from "@/lib/member-application-fields";
@@ -25,12 +26,11 @@ export async function POST(req: NextRequest) {
     return inactiveResponse;
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = nominateSchema.safeParse(body);
   if (!parsed.success) {

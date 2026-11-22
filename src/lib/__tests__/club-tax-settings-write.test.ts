@@ -16,7 +16,12 @@ const h = vi.hoisted(() => {
   };
   return {
     tx,
-    prisma: { $transaction: vi.fn(async (callback: (client: unknown) => unknown, _options?: unknown) => callback(tx)) },
+    prisma: {
+      $transaction: vi.fn(async (callback: (client: unknown) => unknown, _options?: unknown) => callback(tx)),
+      // #4988: Opening Credits mapped, Exempt not, for the case that proves a registration is still scheduled.
+      xeroAccountMapping: { findUnique: vi.fn(async () => ({ code: "2100" })) },
+      xeroTaxCategoryMapping: { findMany: vi.fn(async () => []) },
+    },
     readXeroTaxRates: vi.fn(),
   };
 });
@@ -37,8 +42,8 @@ const request = new Request("https://club.example.com/api/admin/club-tax", { met
 const date = (value: string) => requireCalendarDate(value);
 const instant = (value: string) => new Date(`${value}T00:00:00.000Z`);
 const RATES: XeroTaxRateOption[] = [
-  { taxType: "OUTPUT2", name: "15% GST on Income", rateBasisPoints: 1500, active: true, revenue: true },
-  { taxType: "TAX009", name: "17% GST on Income", rateBasisPoints: 1700, active: true, revenue: true },
+  { taxType: "OUTPUT2", name: "15% GST on Income", rateBasisPoints: 1500, active: true, revenue: true, expenses: false },
+  { taxType: "TAX009", name: "17% GST on Income", rateBasisPoints: 1700, active: true, revenue: true, expenses: false },
 ];
 const row = (id: string, effectiveFrom: string, overrides: Record<string, unknown> = {}) => ({
   id,
@@ -169,6 +174,19 @@ describe("scheduleClubTaxChange", () => {
     ).resolves.toEqual({ refused: "already-scheduled" });
     expect(h.tx.clubTaxSettings.create).not.toHaveBeenCalled();
     expect(h.tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#4988): schedules a registration while Opening Credits is mapped and Exempt is unusable", async () => {
+    // Owner decision, 22 Nov 2026 (issue #4988, comment 7070628422): allow, and warn
+    // through the Xero health check and the queue hold instead of refusing.
+    schedule(row("unregistered", "2026-01-01", { gstRegistered: false, taxRateBasisPoints: 0, xeroTaxType: null }));
+    const outcome = await scheduleClubTaxChange({
+      change: { gstRegistered: true, taxRateBasisPoints: 1500, xeroTaxType: "OUTPUT2", effectiveFrom: date("2026-08-01") },
+      actingMemberId: ACTOR,
+      request,
+    });
+    expect(outcome).toMatchObject({ changed: true });
+    expect(h.tx.clubTaxSettings.create).toHaveBeenCalledTimes(1);
   });
 
   it("refuses a period repeating the one it would follow", async () => {
