@@ -9,7 +9,7 @@ import { isOrganisationAccount } from "@/lib/organisation-account";
 import { prisma } from "@/lib/prisma";
 
 /**
- * Who may do what with food orders (fork #121). The ONE access module every
+ * Who may do what with food orders (fork triyder/AlpineClubBookingsNZ#121). The ONE access module every
  * food-order page, API route and UI control uses (INV-SSOT): a control is shown
  * from the flags the server computed here, never from a rule of its own.
  *

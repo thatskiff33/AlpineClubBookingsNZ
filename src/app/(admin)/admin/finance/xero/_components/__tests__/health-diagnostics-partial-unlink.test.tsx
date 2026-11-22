@@ -46,7 +46,7 @@ const healthResponse = {
     lastCronStartedAt: null,
   },
   missingInvoices: { count: 0 },
-  contactGroupMismatches: { count: 0, cacheReady: true },
+  contactGroupMismatches: { count: 0, resyncCount: 0, reviewByHandCount: 0, cacheReady: true },
   contactLinkMismatches: { count: 0, cacheReady: true },
   apiBudget: {
     status: "healthy",

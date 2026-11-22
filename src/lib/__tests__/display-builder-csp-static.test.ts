@@ -310,7 +310,7 @@ describe("routes with a scoped CSP relaxation are entered by a HARD navigation (
   });
 });
 
-describe("Visual builder renders no authored markup itself (#161, #2246)", () => {
+describe("Visual builder renders no authored markup itself (hoppers99/AlpineClubBookingsNZ#161, #2246)", () => {
   /*
    * WHY THIS TEST EXISTS.
    *
@@ -325,7 +325,7 @@ describe("Visual builder renders no authored markup itself (#161, #2246)", () =>
    * The moment the builder gains an in-canvas WYSIWYG preview (dangerouslySet-
    * InnerHTML, an iframe `srcDoc`, an `innerHTML` assignment, or an injected
    * <style> block of authored CSS), authored markup runs in an admin document
-   * with `img-src https:` — reinstating the issue #161 image-beacon
+   * with `img-src https:` — reinstating the issue hoppers99/AlpineClubBookingsNZ#161 image-beacon
    * exfiltration channel with no other test failing. If this assertion starts
    * failing, the fix is not to delete it: either keep the preview inside the
    * sandboxed frame, or add the builder to TIGHT_IMG_SRC_PATHS and re-review.

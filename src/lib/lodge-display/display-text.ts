@@ -5,7 +5,7 @@ import {
 } from "@/lib/club-time";
 import type { DisplayState } from "../lodge-display-state";
 
-// Token resolution for display-authored copy (fork issue #31; value-token
+// Token resolution for display-authored copy (fork issue hoppers99/AlpineClubBookingsNZ#31; value-token
 // resolution inside authored HTML added in LTV-028, ADR-003 §4).
 //
 // The grammar is the display's OWN token set — deliberately NOT the site-wide
@@ -30,7 +30,7 @@ import type { DisplayState } from "../lodge-display-state";
 // EXTENSION POINT (ADR-003 §4, deferred): module-contributed VALUE tokens would
 // slot in here as a second alternative in PLACEHOLDER_PATTERN plus a branch in
 // resolveToken — one grammar, still closed to the display's own token set. Not
-// built in v1 (see #74 "Do NOT build").
+// built in v1 (see hoppers99/AlpineClubBookingsNZ#74 "Do NOT build").
 
 const PLACEHOLDER_PATTERN = /\{\{\s*(config:([a-z0-9][a-z0-9-]{0,63})|lodge-name|display-date)\s*\}\}/gi;
 
@@ -120,7 +120,7 @@ function escapeHtmlValue(value: string): string {
     .replace(/\}/g, "&#125;");
 }
 
-// URL-scheme guard for resolved values (issue #176, ADR-003 §4). Value-token
+// URL-scheme guard for resolved values (issue hoppers99/AlpineClubBookingsNZ#176, ADR-003 §4). Value-token
 // resolution runs AFTER the CMS sanitiser (see layout-render.ts), so the
 // sanitiser's scheme allowlist never sees a resolved value: a config value like
 // `javascript:alert(1)` or `data:text/html,…` resolved at the START of an
@@ -133,20 +133,20 @@ function escapeHtmlValue(value: string): string {
 // display token path and touches only attributes whose AUTHORED value carried a
 // token. Literal authored URLs keep the sanitiser's own verdict (a blanket
 // re-parse would re-decide them and wrongly strip the display's legitimately-
-// allowed `data:` <img> srcs — issue #161); CMS/page-content behaviour is
+// allowed `data:` <img> srcs — issue hoppers99/AlpineClubBookingsNZ#161); CMS/page-content behaviour is
 // untouched.
 //
 //   • Phase 1 (token-level, fast path): while resolving, when a token OPENS a
 //     URL attribute value its resolved value runs through neutraliseUrlScheme,
 //     so a single token bringing its own `javascript:`/`data:` scheme is killed
 //     at injection. This covers the common single-token case cheaply.
-//   • Phase 2 (attribute-level, composition-closing — issue #186): phase 1 only
+//   • Phase 2 (attribute-level, composition-closing — issue hoppers99/AlpineClubBookingsNZ#186): phase 1 only
 //     inspects the OPENING token, so a scheme split across adjacent tokens
 //     (`href="{{a}}{{b}}"`, a=`javascript`, b=`:alert(1)`) reconstitutes
 //     `javascript:` from two individually-innocent halves and slips past it.
 //     After full resolution, re-check the COMPLETE final value of every
 //     token-bearing href/src attribute (only those — literal attributes are left
-//     alone, preserving #161) and collapse the whole value to `#` when its
+//     alone, preserving hoppers99/AlpineClubBookingsNZ#161) and collapse the whole value to `#` when its
 //     scheme is disallowed.
 
 /** True when the html up to `offset` ends with a URL-bearing attribute opener
@@ -187,7 +187,7 @@ function neutraliseUrlScheme(value: string): string {
     : "#";
 }
 
-// Phase 2 — composition-closing attribute scheme pass (issue #186). Matches a
+// Phase 2 — composition-closing attribute scheme pass (issue hoppers99/AlpineClubBookingsNZ#186). Matches a
 // URL-bearing attribute and captures its value in double-quoted, single-quoted,
 // or unquoted form. Used twice: once over the AUTHORED template (to record which
 // href/src attributes were token-bearing) and once over the RESOLVED output (to
@@ -218,7 +218,7 @@ function tokenBearingUrlAttributeFlags(template: string): boolean[] {
  * whose authored counterpart was token-bearing, run the COMPLETE final value
  * through neutraliseUrlScheme — collapsing the whole value to `#` when its
  * scheme is disallowed. Literal (no-token) attributes are returned untouched so
- * the display's allowed `data:` <img> srcs survive (issue #161). */
+ * the display's allowed `data:` <img> srcs survive (issue hoppers99/AlpineClubBookingsNZ#161). */
 function neutraliseTokenBearingUrlAttributes(
   resolved: string,
   tokenBearing: boolean[]
@@ -246,7 +246,7 @@ function neutraliseTokenBearingUrlAttributes(
  * layout-render.ts): the sanitiser trusts the authored template, and escaping
  * the injected value is what keeps a config value from being markup.
  *
- * URL schemes are guarded in two phases (issue #176, #186): phase 1 neutralises
+ * URL schemes are guarded in two phases (issue hoppers99/AlpineClubBookingsNZ#176, hoppers99/AlpineClubBookingsNZ#186): phase 1 neutralises
  * a resolved value that OPENS a URL attribute (`href="{{config:link}}"`) at
  * injection time; phase 2 then re-checks the COMPLETE value of every
  * token-bearing href/src attribute after resolution, closing a scheme split
@@ -261,7 +261,7 @@ export function resolveDisplayHtml(
 ): string {
   // Snapshot which href/src attributes were token-bearing BEFORE resolution, so
   // phase 2 can positionally re-check exactly those (and leave literal `data:`
-  // srcs — issue #161 — untouched).
+  // srcs — issue hoppers99/AlpineClubBookingsNZ#161 — untouched).
   const tokenBearing = tokenBearingUrlAttributeFlags(template);
 
   // Phase 1 — token-level guard (fast path): neutralise the scheme of a value

@@ -34,6 +34,7 @@ vi.mock("@/lib/prisma", async () => {
 
 vi.mock("@/lib/auth", () => ({ auth: mockAuth }));
 
+import { ApiRefusalError, wordedForbiddenRefusal } from "@/lib/api-error-message";
 import {
   requireActiveSession,
   requireActiveSessionUser,
@@ -192,6 +193,55 @@ describe("requireAdmin", () => {
     if (!result.ok) {
       expect(result.response.status).toBe(403);
     }
+  });
+
+  // #5347: the browser swaps only the guard's bare refusal for a screen's own
+  // permission sentence (`wordedForbiddenRefusal`), and keeps every worded
+  // 403. The bare word is spelled once in `session-guards.ts` and once in
+  // `api-error-message.ts`. This reads the body the guard really sends, so a
+  // reworded guard cannot quietly turn the bare refusal into a "worded" one.
+  it("answers a denied admin with a body the browser reads as the bare refusal", async () => {
+    mockAuth.mockResolvedValue({
+      user: {
+        id: "readonly-admin-1",
+        role: "USER",
+        accessRoles: [{ role: "ADMIN_READONLY" }],
+      },
+    });
+    mockFindUnique.mockResolvedValue({
+      active: true,
+      forcePasswordChange: false,
+      role: "USER",
+      financeAccessLevel: "NONE",
+      accessRoles: [{ role: "ADMIN_READONLY" }],
+    });
+
+    const denied = await requireAdmin({
+      permission: { area: "bookings", level: "edit" },
+    });
+
+    expect(denied.ok).toBe(false);
+    if (denied.ok) return;
+    expect(denied.response.status).toBe(403);
+    expect(wordedForbiddenRefusal(await denied.response.json())).toBeNull();
+
+    // The contrast, from the same guard: a 403 it words itself is kept.
+    mockFindUnique.mockResolvedValue({
+      active: false,
+      forcePasswordChange: false,
+      role: "USER",
+      financeAccessLevel: "NONE",
+      accessRoles: [{ role: "ADMIN_READONLY" }],
+    });
+    const deactivated = await requireAdmin({
+      permission: { area: "bookings", level: "edit" },
+    });
+    expect(deactivated.ok).toBe(false);
+    if (deactivated.ok) return;
+    expect(deactivated.response.status).toBe(403);
+    expect(
+      wordedForbiddenRefusal(await deactivated.response.json()),
+    ).toBeInstanceOf(ApiRefusalError);
   });
 
   it("rejects inactive admins through the active-session check", async () => {

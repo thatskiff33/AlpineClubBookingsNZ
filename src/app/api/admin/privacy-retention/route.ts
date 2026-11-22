@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { getPrivacyRetentionPreview } from "@/lib/privacy-retention";
 import {
   getPrivacyRetentionSettings, savePrivacyRetentionSettings,
@@ -59,12 +60,11 @@ export async function PUT(request: Request) {
   });
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = privacyRetentionSettingsSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid retention settings", details: parsed.error.flatten() }, { status: 400 });

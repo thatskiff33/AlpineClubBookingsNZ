@@ -13,11 +13,11 @@ import { storedDateOnly } from "@/lib/stored-calendar-day";
 // drop-down, which is why the name column is unique.
 //
 // THE FIELD LISTS BELOW ARE THE ONE PLACE A LODGE'S DATA COLUMNS ARE NAMED
-// (`INV-SSOT-001`, #50). The admin select, the serializer, the admin create and
+// (`INV-SSOT-001`, triyder/AlpineClubBookingsNZ#50). The admin select, the serializer, the admin create and
 // PATCH schemas, the central-server upload projection, the pull schema, the
 // download merge and its "differs" comparison all derive from them, so a column
 // added here is carried by every one of those, and a column added anywhere else
-// is carried by none. Before #50 the sync named the five original columns by
+// is carried by none. Before triyder/AlpineClubBookingsNZ#50 the sync named the five original columns by
 // hand in four places and the admin panel kept a hand-copied type; this is the
 // fix for that drift, so do not add a second copy. `OTHER_LODGE_BOUNDS` is the
 // same rule for the lengths: the zod shapes and the panel's inputs both read it.
@@ -61,7 +61,7 @@ export const OTHER_LODGE_ROOM_TYPES = [
   "DORMITORY",
 ] as const satisfies readonly OtherLodgeRoomType[];
 
-/** The `@db.Date` season starts and ends (#75): calendar dates, never instants (`INV-DATE-026`). */
+/** The `@db.Date` season starts and ends (triyder/AlpineClubBookingsNZ#75): calendar dates, never instants (`INV-DATE-026`). */
 export const OTHER_LODGE_DATE_FIELDS = [
   "winterSeasonStart",
   "winterSeasonEnd",
@@ -70,8 +70,8 @@ export const OTHER_LODGE_DATE_FIELDS = [
 ] as const;
 
 /**
- * The non-member rates (server API 2.2, #61): per person per night, NZD incl.
- * GST, a winter and a summer rate for each age group (#77). Stored and
+ * The non-member rates (server API 2.2, triyder/AlpineClubBookingsNZ#61): per person per night, NZD incl.
+ * GST, a winter and a summer rate for each age group (triyder/AlpineClubBookingsNZ#77). Stored and
  * handled here as INTEGER CENTS (INV-MONEY-001); the central server carries
  * dollars, and `@/lib/servernz-rate` is the only place the two meet. Display
  * only — nothing is charged from them.
@@ -111,9 +111,9 @@ export type OtherLodgeDataField = (typeof OTHER_LODGE_DATA_FIELDS)[number];
  * would be stored and uploaded by nothing and editable nowhere, silently. The
  * generated `OtherLodge` type is scalar-only (relations such as `amenities` are
  * not on it), so the only columns excused are the identity and timestamp ones
- * — `centralId` (#64) is identity too: the central server's key for the row,
+ * — `centralId` (triyder/AlpineClubBookingsNZ#64) is identity too: the central server's key for the row,
  * written by the download merge, never edited or uploaded as data — and
- * `hiddenAt` (#58) is lifecycle, and `ratesFromFees` (#77) a local setting.
+ * `hiddenAt` (triyder/AlpineClubBookingsNZ#58) is lifecycle, and `ratesFromFees` (triyder/AlpineClubBookingsNZ#77) a local setting.
  * When the check fails, the annotation names the unlisted column.
  */
 type UnlistedOtherLodgeColumn = Exclude<
@@ -162,13 +162,13 @@ export const otherLodgeAmenitiesSelect = {
 } as const;
 
 /**
- * The lodges this site offers (#58): not hidden. A hidden lodge — deleted on
+ * The lodges this site offers (triyder/AlpineClubBookingsNZ#58): not hidden. A hidden lodge — deleted on
  * the central server, or hidden by an administrator — keeps its row for the
  * bookings and requests that name it, and is left out of every list and
  * drop-down that offers a lodge to choose.
  */
 export const visibleOtherLodgeWhere = { hiddenAt: null } satisfies Prisma.OtherLodgeWhereInput;
-// Where a lodge is chosen from a list, its label (#69: names may repeat).
+// Where a lodge is chosen from a list, its label (triyder/AlpineClubBookingsNZ#69: names may repeat).
 import { otherLodgeChoiceLabel } from "@/lib/other-lodge-choice-label";
 export { otherLodgeChoiceLabel, otherLodgeNameWithLocation, withOtherLodgeChoiceLabels } from "@/lib/other-lodge-choice-label";
 /** Which lodges a drop-down offers: the visible ones, plus `keepId` (the one a
@@ -177,10 +177,10 @@ export const otherLodgeChoicesWhere = (keepId: string | null): Prisma.OtherLodge
   keepId ? { OR: [visibleOtherLodgeWhere, { id: keepId }] } : visibleOtherLodgeWhere;
 
 /**
- * The ONE rule for "the central server does not list this lodge" (#64): once
+ * The ONE rule for "the central server does not list this lodge" (triyder/AlpineClubBookingsNZ#64): once
  * a whole-registry download has keyed the registry (`otherLodgesKeyedAt`), a
  * row still without a central id. Read by the admin list (the panel's mark)
- * and by the Hide route (#58), so the two cannot disagree.
+ * and by the Hide route (triyder/AlpineClubBookingsNZ#58), so the two cannot disagree.
  */
 export function isNotOnCentralServer(
   lodge: { centralId: string | null },
@@ -298,7 +298,7 @@ export function normalizeOtherLodgeText(value: string | null | undefined) {
 // One shape for the admin create and PATCH routes AND for the rows the central
 // server sends: the remote is held to exactly the bounds the club's own officer
 // is held to, no looser and no tighter (see `servernz-api.ts` for why). The
-// rates differ only in form (#61): cents here and on the admin route, dollars
+// rates differ only in form (triyder/AlpineClubBookingsNZ#61): cents here and on the admin route, dollars
 // on the wire, so the pull takes `otherLodgeCommonDataShape` and adds the
 // server's dollar rates from `@/lib/servernz-rate`, held to the same bound.
 
@@ -408,7 +408,7 @@ export const otherLodgeCommonDataShape = {
   roomType: z.enum(OTHER_LODGE_ROOM_TYPES).nullable().optional(),
   // Held to http(s) only, because the PULL shares this shape: a lodge the
   // server already holds with an odd address still arrives (shown as text).
-  // The admin edit is held to the stricter rule (#55, its PATCH route).
+  // The admin edit is held to the stricter rule (triyder/AlpineClubBookingsNZ#55, its PATCH route).
   siteUrl: z.preprocess(
     blankToNull,
     boundedText(OTHER_LODGE_BOUNDS.siteUrl)
@@ -486,7 +486,7 @@ export function otherLodgeDataDiffers(
   });
 }
 
-// ── Ownership (#52) ────────────────────────────────────────────────────────
+// ── Ownership (triyder/AlpineClubBookingsNZ#52) ────────────────────────────────────────────────────────
 //
 // Which lodges are THIS club's own is decided on the central server, mapped to
 // the API key this site uses, and handed back on every pull as `ownLodges`
@@ -494,7 +494,7 @@ export function otherLodgeDataDiffers(
 // `ServerNzSettings.otherLodgesOwnedLodges` and everything that asks "may this
 // lodge be changed here?" asks `ownsOtherLodge` below — the admin PATCH route,
 // the upload projection, the committee officer sync and the panel's buttons —
-// so there is one answer (INV-SSOT-001). BY CENTRAL ID (#69): two lodges may
+// so there is one answer (INV-SSOT-001). BY CENTRAL ID (triyder/AlpineClubBookingsNZ#69): two lodges may
 // share a name, so a name cannot say which one is ours.
 
 /** Upper bound on the owned list, so a hostile server cannot stream forever. */
@@ -502,16 +502,16 @@ export const OWNED_OTHER_LODGE_NAMES_MAX = 100;
 
 /**
  * The owned lodges with their permanent central ids (server API 2.2 `ownLodges`,
- * #62), bounded in count. The id is the central server's lodge id: the stable
+ * triyder/AlpineClubBookingsNZ#62), bounded in count. The id is the central server's lodge id: the stable
  * key this site matches its own lodges by, because a name can be changed and
- * two lodges may share one (#69). Three states, see `OwnedOtherLodges`.
+ * two lodges may share one (triyder/AlpineClubBookingsNZ#69). Three states, see `OwnedOtherLodges`.
  */
 export const OWNED_CENTRAL_LODGE_ID_MAX = 64;
 
 /**
  * A central server lodge id as this site accepts one, wherever it arrives: in
- * the pull's `ownLodges` (#62) and on each pulled lodge, where it keys the
- * local row (#64). Non-empty, within the columns' bound, no padding, no NUL.
+ * the pull's `ownLodges` (triyder/AlpineClubBookingsNZ#62) and on each pulled lodge, where it keys the
+ * local row (triyder/AlpineClubBookingsNZ#64). Non-empty, within the columns' bound, no padding, no NUL.
  */
 export const centralLodgeIdSchema = z
   .string()
@@ -548,7 +548,7 @@ export type OwnedOtherLodgeNames = string[] | null;
 type OwnershipKey = { centralId: string | null };
 
 /**
- * True when this lodge's name may be changed here (#64): it is the club's own
+ * True when this lodge's name may be changed here (triyder/AlpineClubBookingsNZ#64): it is the club's own
  * AND keyed by its central id, so the upload can send the id and the server
  * renames its lodge rather than creating a second one. The one rule, read by
  * the admin serializer (the panel's field) and the PATCH route.
@@ -559,7 +559,7 @@ export function canRenameOtherLodge(owned: OwnedOtherLodges, lodge: OwnershipKey
 
 /**
  * True when the central server has said this lodge is the club's own: its
- * central id is in the owned list. BY ID ONLY (#69): a row not yet keyed by a
+ * central id is in the owned list. BY ID ONLY (triyder/AlpineClubBookingsNZ#69): a row not yet keyed by a
  * central id is never ours, because another row of the same name may be — the
  * download keys it first. A name is never consulted.
  */
@@ -577,7 +577,7 @@ export function ownedOtherLodgeEditLabel(
   owned: ReadonlyArray<{ name: string; location: string | null }>,
   lodge: { name: string; location: string | null },
 ): string {
-  // Two of ours may share a name (#69): the location tells the buttons apart.
+  // Two of ours may share a name (triyder/AlpineClubBookingsNZ#69): the location tells the buttons apart.
   return owned.length === 1 ? "Edit my Lodge" : `Edit ${otherLodgeChoiceLabel(lodge, owned)}`;
 }
 
@@ -591,19 +591,19 @@ export const OTHER_LODGE_NOT_OWNED_CODE = "OTHER_LODGE_NOT_OWNED";
 /**
  * A lodge as the ADMIN list carries it: every serialized field, but the
  * booking officer's PHONE only for a lodge this club owns — another club's
- * officer's number is not sent to the browser at all (#52). `owned` is the
+ * officer's number is not sent to the browser at all (triyder/AlpineClubBookingsNZ#52). `owned` is the
  * route's answer from `ownsOtherLodge`, so the panel never re-derives it.
  */
 export type AdminOtherLodge = Omit<SerializedOtherLodge, "bookingOfficerPhone"> & {
   bookingOfficerPhone?: string | null;
   owned: boolean;
-  /** Owned AND keyed by a central id, so a new name renames it there (#64). */
+  /** Owned AND keyed by a central id, so a new name renames it there (triyder/AlpineClubBookingsNZ#64). */
   renamable: boolean;
-  /** Owned only (#77): rates and dates from the Fees page, and why they cannot be, if so. */
+  /** Owned only (triyder/AlpineClubBookingsNZ#77): rates and dates from the Fees page, and why they cannot be, if so. */
   ratesFromFees?: boolean;
   feesProblem?: string;
   /**
-   * Set only for a row the central server no longer has (#64): unkeyed after
+   * Set only for a row the central server no longer has (triyder/AlpineClubBookingsNZ#64): unkeyed after
    * the registry was keyed. What still cites it, for the owner to assess.
    */
   notOnCentralServer?: OtherLodgeReferences;
@@ -617,7 +617,7 @@ export interface OtherLodgeReferences {
 
 /**
  * The admin list response: the rows, the owned list in its three states, and
- * whether syncing with the central server is paused for version (#49) - the
+ * whether syncing with the central server is paused for version (triyder/AlpineClubBookingsNZ#49) - the
  * panel shows a note linking to setup while it is. Read from the stored
  * answer; this route never contacts the server.
  */

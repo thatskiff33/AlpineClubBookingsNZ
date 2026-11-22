@@ -11,7 +11,8 @@ import {
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
 import { formatUnpaidSubscriptionRateReason } from "@/lib/policies/subscription-lockout-pricing";
 import { servingMcpConnection } from "@/lib/mcp-connection-request";
-import { subscriptionStatusForConnection } from "@/lib/member-self-read";
+import { projectForConnection } from "@/lib/connection-projection";
+import { SUBSCRIPTION_STATUS_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 export async function GET() {
   const session = await auth();
@@ -117,6 +118,8 @@ export async function GET() {
   };
   // ALP-653: an AI app connection is sent only the named fields (no invoice
   // links); the website's answer is unchanged.
-  if (await servingMcpConnection()) return NextResponse.json(subscriptionStatusForConnection(body));
+  if (await servingMcpConnection()) {
+    return NextResponse.json(projectForConnection(body, SUBSCRIPTION_STATUS_CONNECTION_SHAPE));
+  }
   return NextResponse.json(body);
 }

@@ -717,7 +717,7 @@ describe("GET /api/booking-requests/settings", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    // The label is what the drop-down shows (#69: the location is added when
+    // The label is what the drop-down shows (triyder/AlpineClubBookingsNZ#69: the location is added when
     // two lodges share a name); the location itself is not sent.
     expect(body.otherLodges).toEqual([
       { id: "other-1", name: "Aorangi Ski Club", label: "Aorangi Ski Club" },

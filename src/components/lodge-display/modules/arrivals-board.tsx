@@ -16,7 +16,7 @@ import { formatArrivalTime } from "@/lib/arrival-time";
 import type { ClubDateFormat } from "@/lib/club-time";
 import { useClubFormat } from "@/components/club-format-provider";
 
-// The everyday bar board (fork issues #30/#56; visual reference:
+// The everyday bar board (fork issues hoppers99/AlpineClubBookingsNZ#30/#56; visual reference:
 // docs/lobby-display/mockups/everyday-bar-board.html). Pure function of the
 // privacy-reduced DisplayState payload: room rows (or per-booking rows when
 // allocation is off), one bar per CONTIGUOUS RUN of the nights a booking row
@@ -118,7 +118,7 @@ export function computeBarSegments(
 
 /**
  * Compute a bar's grid placement within the visible window. stayEnd is the
- * CHECK-OUT date, so the bar's last occupied night is stayEnd - 1 (issue #56
+ * CHECK-OUT date, so the bar's last occupied night is stayEnd - 1 (issue hoppers99/AlpineClubBookingsNZ#56
  * — bars span nights, matching the mock). Exported for direct unit testing —
  * the maths is where clipping bugs live.
  *

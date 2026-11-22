@@ -13,8 +13,8 @@ import { logAudit, getAuditRequestContext } from "@/lib/audit";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { lockRosterDates } from "@/lib/roster-lock";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const bodySchema = z.object({
   bookingGuestId: z.string().min(1),
@@ -64,17 +64,11 @@ export async function PUT(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (!dateOnlyStringSchema.safeParse(dateStr).success) {
-    return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
-  }
   const date = parseDateOnly(dateStr);
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {

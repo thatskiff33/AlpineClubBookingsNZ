@@ -236,6 +236,10 @@ export const EMPTYABLE_OVERRIDE_TOKENS: Record<string, readonly string[]> = {
   // own cannot be shown truthfully), so any override line built around it alone
   // renders a bare label.
   "checkin-reminder": ["guestLastName"],
+  // #5403: both lodge-naming officer alerts supply `lodgeName ?? ""`, empty
+  // where `bookingListLodgeLabel` hides the lodge (a one-lodge club).
+  "admin-capacity-warning": ["lodgeName"],
+  "admin-booking-bumped": ["lodgeName"],
 };
 
 export function extractTokens(value: string): string[] {

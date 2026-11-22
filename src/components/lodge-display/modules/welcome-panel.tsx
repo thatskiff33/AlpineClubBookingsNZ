@@ -8,7 +8,7 @@ import {
 import { shortDay } from "./status-helpers";
 import { useClubFormat } from "@/components/club-format-provider";
 
-// The rotating welcome panel (fork issues #30/#58; visual reference:
+// The rotating welcome panel (fork issues hoppers99/AlpineClubBookingsNZ#30/#58; visual reference:
 // docs/lobby-display/mockups/approved/whole-lodge-rotating.html panel B): a
 // warm counterpart to the operational boards. Greets the current whole-lodge
 // group by its (privacy-reduced) label with the mock's info tiles — group

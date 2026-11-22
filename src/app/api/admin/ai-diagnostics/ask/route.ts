@@ -9,6 +9,7 @@ import {
   readDiagnosticsModuleFlag,
 } from "@/lib/ai-diagnostics-config";
 import { isDiagnosticsMeteringHealthy } from "@/lib/ai-diagnostics-usage";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { reportAiError } from "@/lib/observability-bridge";
 import {
   applyRateLimit,
@@ -279,12 +280,11 @@ export async function POST(request: Request) {
   if (moduleEnabled !== true) return moduleOffResponse();
 
   // 4. BODY.
-  let json: unknown;
-  try {
-    json = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const json = jsonBody.body;
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {
     return NextResponse.json(

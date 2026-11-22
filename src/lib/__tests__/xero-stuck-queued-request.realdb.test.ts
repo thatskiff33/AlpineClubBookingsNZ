@@ -10,7 +10,8 @@
  *   the one write a give-back made before #5228 (`strandAsBeforeTheFix`): the
  *   real handler saves its execution request, then the row is put back on
  *   PENDING exactly as that give-back wrote it.
- * - REAL: the refund-note enqueue, the outbox worker, the report and release
+ * - REAL: the refund-note enqueue (and, #5368, the booking invoice's and the
+ *   group settlement invoice's), the outbox worker, the report and release
  *   (`xero-stuck-queued-request.ts`) and its command line, and the officer's
  *   Retry - queued by `enqueueXeroSyncOperationRetry` and drained by
  *   `processQueuedXeroOperationRetries`, as the Retry button and the cron run
@@ -25,12 +26,16 @@ import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { cleanHistories, historyNames, seedHistoryFixtures } from "./support/booking-ledger-history";
-import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { GROUP_CHILD_CENTS } from "./support/booking-ledger-group-history";
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
+import type { SuiteEnvironmentRoleDeclaration } from "./helpers/environment-role";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import {
+  drainOfficerRetries,
   fakeXero,
+  officerRetry,
   paidCardBooking,
+  queuedGroupSettlementInvoice,
   queueRefundNote,
   recordCardRefund,
   runOutboxRow,
@@ -61,6 +66,7 @@ async function reported() {
 }
 
 let sequence = 0;
+let role: SuiteEnvironmentRoleDeclaration | undefined;
 
 (RUN ? describe : describe.skip)(
   "Xero outbox rows stuck without a queued request are listed, released for an officer and retried - real PostgreSQL (#5228)",
@@ -85,6 +91,8 @@ let sequence = 0;
     });
 
     afterEach(async () => {
+      role?.restore();
+      role = undefined;
       vi.restoreAllMocks();
       vi.setSystemTime(new Date(FROZEN_TEST_CLOCK_BASE_ISO));
       await prisma.xeroObjectLink.deleteMany({ where: { localId: { startsWith: PREFIX } } });
@@ -176,13 +184,65 @@ let sequence = 0;
       expect(await readRow(noteRow)).toEqual(released);
 
       // The officer's Retry, queued and drained as the button and the cron run it.
-      const { enqueueXeroSyncOperationRetry, processQueuedXeroOperationRetries } = await import("@/lib/xero-operation-queue");
-      await enqueueXeroSyncOperationRetry(noteRow, { createdByMemberId: names.officerId });
-      expect(await processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).toMatchObject({ succeeded: 1, failed: 0 });
+      expect(await officerRetry(noteRow, names.officerId)).toMatchObject({ succeeded: 1, failed: 0 });
       expect(sent).toEqual([{ operation: "createCreditNotes", cents: 5_000 }]);
       // And a second drain, or the outbox, sends nothing more.
-      expect(await processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).toMatchObject({ succeeded: 0 });
+      expect(await drainOfficerRetries()).toMatchObject({ succeeded: 0 });
       expect(sent).toHaveLength(1);
+    });
+
+    // #5368: release, then an officer's Retry, for an invoice row of two more queue types. The Retry's route differs by
+    // type and each is pinned as it is: a booking invoice is created by the retry itself; a group settlement invoice
+    // goes back to the outbox with a request it can claim, and the next pass creates it.
+    // The joining fee row is left out pending #5419: its Retry does not use the amount the row was queued with.
+
+    /**
+     * Strand `operationId` at its invoice create as a pre-#5228 give-back did, release it, and have an officer Retry
+     * it. `sentBy` says which run creates the one invoice.
+     */
+    async function releasedThenRetriedOnce(operationId: string, expected: { queueType: string; cents: number; sentBy: "the retry" | "the next outbox pass"; queued?: Record<string, unknown> }) {
+      await strandAsBeforeTheFix(prisma, operationId, refuse, "createInvoices", PREFIX);
+      expect(sent).toEqual([]);
+      const before = await readRow(operationId);
+      const report = (await reported()).filter((row) => row.id === operationId);
+      expect(report).toEqual([expect.objectContaining({ id: operationId, queueType: expected.queueType })]);
+
+      expect(await stuck.releaseStuckQueuedRequestRows(prisma, report, RELEASED_AT)).toEqual({ released: [operationId], skipped: [] });
+      expect(await readRow(operationId)).toEqual({ ...before, status: "FAILED", completedAt: RELEASED_AT, lastErrorCode: "QUEUED_REQUEST_RELEASED" });
+      expect(sent).toEqual([]);
+
+      expect(await officerRetry(operationId, names.officerId)).toMatchObject({ succeeded: 1, failed: 0 });
+      const oneInvoice = [{ operation: "createInvoices", cents: expected.cents }];
+      if (expected.sentBy === "the next outbox pass") {
+        // Queued again, not sent: PENDING, unclaimed, holding the queued request in place of the execution request.
+        expect(sent).toEqual([]);
+        const queued = await readRow(operationId);
+        expect(queued).toMatchObject({ status: "PENDING", startedAt: null, completedAt: null, lastErrorCode: null });
+        expect(queued.requestPayload).toEqual(expected.queued);
+        expect(await runOutboxRow(prisma, operationId, PREFIX)).toMatchObject({ processed: 1, succeeded: 1, failed: 0 });
+      }
+      expect(sent).toEqual(oneInvoice);
+      expect(await readRow(operationId)).toMatchObject({ status: "SUCCEEDED", xeroObjectId: expect.any(String), lastErrorCode: null });
+
+      // And a second drain, or the outbox, sends nothing more.
+      expect(await drainOfficerRetries()).toMatchObject({ succeeded: 0 });
+      expect(await runOutboxRow(prisma, operationId, PREFIX)).toMatchObject({ found: 0, processed: 0 });
+      expect(sent).toEqual(oneInvoice);
+      expect(await reported()).toEqual([]);
+    }
+
+    it("a stuck booking invoice row is released, and an officer's Retry sends the invoice once", async () => {
+      const { invoiceRow } = await paidCardBooking(prisma, names, `${PREFIX}b${++sequence}`, PRICE);
+      await releasedThenRetriedOnce(invoiceRow, { queueType: "BOOKING_INVOICE", cents: PRICE, sentBy: "the retry" });
+    });
+
+    it("a stuck group settlement invoice row is released, an officer's Retry queues it again with a request the outbox can claim, and the next pass sends the invoice once", async () => {
+      const { g, groupRow, role: declared } = await queuedGroupSettlementInvoice(prisma, names, PREFIX, `g${++sequence}`);
+      role = declared;
+      await releasedThenRetriedOnce(groupRow, {
+        queueType: "GROUP_SETTLEMENT_INVOICE", cents: GROUP_CHILD_CENTS * 2, sentBy: "the next outbox pass",
+        queued: { queueType: "GROUP_SETTLEMENT_INVOICE", settlementId: g.settlement },
+      });
     });
 
     it("MUTATION: release skips, and leaves exactly as it is, a reported row that a run claimed, that was resolved, or whose request changed since the report", async () => {

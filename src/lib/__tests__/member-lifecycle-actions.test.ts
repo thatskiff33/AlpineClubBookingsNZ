@@ -180,7 +180,6 @@ vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
 
 
 import {
-  getAdminMemberArchiveLifecycleRequests,
   getAdminMemberLifecycleRequests,
   createMemberArchiveRequest,
   createMemberDeleteRequest,
@@ -1240,7 +1239,8 @@ describe("member archive lifecycle actions", () => {
       .mockResolvedValueOnce(1)
       .mockResolvedValueOnce(3);
 
-    const result = await getAdminMemberArchiveLifecycleRequests({
+    const result = await getAdminMemberLifecycleRequests({
+      action: "ARCHIVE",
       status: "REQUESTED",
       page: 1,
       pageSize: 25,
@@ -1781,13 +1781,13 @@ describe("admin member lifecycle request list (#1938)", () => {
     );
   });
 
-  it("keeps the ARCHIVE wrapper querying ARCHIVE for back-compat", async () => {
+  it("lists pending ARCHIVE requests oldest first", async () => {
     mockPrisma.memberLifecycleActionRequest.findMany.mockResolvedValueOnce([]);
     mockPrisma.memberLifecycleActionRequest.count
       .mockResolvedValueOnce(0)
       .mockResolvedValueOnce(0);
 
-    await getAdminMemberArchiveLifecycleRequests({ status: "REQUESTED" });
+    await getAdminMemberLifecycleRequests({ action: "ARCHIVE", status: "REQUESTED" });
 
     expect(
       mockPrisma.memberLifecycleActionRequest.findMany,

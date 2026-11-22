@@ -969,6 +969,12 @@ describe("#3369: an `organisation` selection names a relation that exists", () =
 const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   "src/app/api/admin/payments/manual-refund-tasks/route.ts::organisation: { select: { name: true, email: true } },#0",
   "src/lib/bed-allocation-removal.ts::organisation: { select: { name: true, email: true } },#0",
+  // #5407: `BUMP_NOTICE_BOOKING_SELECT`, what the bump-notice sweep reads
+  // again. Verified by hand: written through
+  // `Prisma.validator<Prisma.BookingSelect>()`, read back through
+  // `Prisma.BookingGetPayload<{ select: typeof … }>`, and passed as `select` to
+  // `booking.findUnique`; Booking declares `organisation`.
+  "src/lib/booking-bump-notice-owed.ts::organisation: { select: { name: true, email: true } },#0",
   // #3750: the change-request decision route's `includeRequestDetail`, moved
   // out of the route file to keep it in budget. Verified by hand: it is passed
   // as `include` to `bookingChangeRequest.findUnique`, and `organisation` sits
@@ -986,6 +992,12 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // `booking.findUniqueOrThrow`/`findMany` selects, and Booking declares
   // `organisation`.
   "src/lib/booking-owner-name.ts::organisation: { select: { name: true, email: true } },#0",
+  // #5398: the two hold-conflict readers' select, written once as
+  // `HOLD_CONFLICT_BOOKING_SELECT` (both copies were rooted `booking.findMany`
+  // selects before). Verified by hand: written `satisfies Prisma.BookingSelect`,
+  // read back through `Prisma.BookingGetPayload<{ select: typeof … }>`, passed as
+  // `select` to both `booking.findMany` calls; Booking declares `organisation`.
+  "src/lib/capacity.ts::organisation: { select: { name: true, email: true } },#0",
   "src/lib/cron-additional-payment-reminders.ts::organisation: { select: { name: true, email: true } },#0",
   "src/lib/cron-confirm-pending.ts::organisation: { select: { name: true, email: true } },#0",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts::organisation: { select: { name: true, email: true } },#0",

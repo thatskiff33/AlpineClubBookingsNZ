@@ -155,6 +155,37 @@ folders, the club logo or a member photo may still carry hidden details until
 it is uploaded again; [`image-manager.md`](guides/image-manager.md#cleaning-an-older-image)
 says how.
 
+**A photo stored sideways needs its original file.** JPEG, PNG and WebP
+photos were already cleaned before #5244, and that earlier cleaning removed a
+photo's rotation setting with the rest of its EXIF, so a phone portrait could
+be stored sideways. The stored copy no longer has the setting, so uploading
+that copy again leaves it sideways; uploading the original file keeps the
+setting, and the photo shows upright.
+
+**Uploading an image again does not reach older copies.** A library image
+uploaded again is stored as a new image: the older one stays in the app, still
+served at its old link, until it is deleted from the picker. An Image Manager
+image, the club logo and a member photo are replaced. Older copies of these
+kinds stay as they were either way:
+
+- **Copies in browsers.** A browser that has already downloaded an image can go
+  on showing its own copy. Library images and the club logo are served to be
+  kept for up to a year under their link; uploading one again gives it a new
+  link, so a page pointed at the new copy fetches the cleaned file. Image
+  Manager images keep their link, and are served to be checked again after five
+  minutes. Publicly shown member photos are served the same way; the committee
+  page's link to a photo changes when the photo is replaced, so the page fetches
+  the new one. A member photo that is not shown publicly is served with an
+  instruction not to keep it.
+- **Copies in backups.** A [database backup](guides/backups.md) holds library
+  images, club logos and member photos as they were when it was taken, until it
+  is pruned or deleted. Image Manager images are files on the server's disk,
+  not in the database, so the database backup never holds them; any copy the
+  host keeps of that folder is outside the app.
+- **Copies in configuration exports.** A configuration export made earlier
+  holds the library images and club logo it carried, as they were when it was
+  made. A restore cleans them as it loads them.
+
 ## Model schedule
 
 | Prisma model | Purpose / personal data | Retention period or retained purpose | End action |
@@ -302,6 +333,7 @@ says how.
 | `MemberCredit` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `MemberCreditNoteAllocation` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `AdminCreditAdjustmentRequest` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `OpeningCreditBatch` | Opening-credit batch: the posting and reversing officer, totals and the reversal reason (#4988) | Kept with the credit rows it tags, for reconciliation and evidence; no new automatic deletion | Keep |
 | `XeroCashCredit` | Snapshot of a Xero contact's unallocated overpayment or prepayment, for the finance queue and backed credit | Kept with financial records while credit may name it; refreshed from Xero, never deleted automatically | Keep |
 | `MemberCreditCashAllocation` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `MemberCreditCashReturn` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
@@ -320,7 +352,7 @@ says how.
 | `MaintenanceReport` | Reporter / contact, fault description, answers and supporting evidence | Photo / IP hash: stamped expiry from maintenance settings; report / answers retained for maintenance history | Anonymise expired photo / IP fields; keep report and answers |
 | `MaintenanceReportAnswer` | Reporter / contact, fault description, answers and supporting evidence | Photo / IP hash: stamped expiry from maintenance settings; report / answers retained for maintenance history | Anonymise expired photo / IP fields; keep report and answers |
 | `FoodOrderSettings` | Club configuration (food officer email) and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
-| `FoodOrder` | Ordering member, needed-by date, note, receiving and pricing officers, recorded price (fork #121) | Retained as the club's food-cost history; a deleted member's orders keep their cost with the member link cleared | Keep; member link set null when the member is deleted |
+| `FoodOrder` | Ordering member, needed-by date, note, receiving and pricing officers, recorded price (fork triyder/AlpineClubBookingsNZ#121) | Retained as the club's food-cost history; a deleted member's orders keep their cost with the member link cleared | Keep; member link set null when the member is deleted |
 | `FoodOrderItem` | The ordering member's item descriptions and quantities, and who received each item and when | Retained with its order | Keep with the order |
 | `LodgeMaintenanceReportToken` | Report access token and creating / rotating officer | While token / report intake administration requires it; rotation revokes old access | Keep |
 | `EnvironmentSafetySettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |

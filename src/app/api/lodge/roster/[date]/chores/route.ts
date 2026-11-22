@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 /**
  * GET /api/lodge/roster/[date]/chores
@@ -25,10 +24,6 @@ export async function GET(
 
   if (tier !== "admin" && tier !== "hut-leader") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  if (!dateOnlyStringSchema.safeParse(dateStr).success) {
-    return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }
 
   let lodgeId: string;

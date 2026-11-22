@@ -310,16 +310,17 @@ const HAND_WRITTEN_FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     // The name is deliberately NOT "/roster": "/lodge/roster" is the kiosk
     // chore roster and a prefix rule on "/roster" would read as covering it.
     //
-    // There is no API prefix to list because the roster is rendered entirely
-    // on the server and exposes no endpoint of its own. The per-lodge name
-    // detail is edited through the existing lodge admin route, which belongs
-    // to the Lodges area rather than to this module — an admin must still be
-    // able to see and change the setting while the roster is switched off.
+    // The page is rendered entirely on the server. Its one endpoint,
+    // "/api/lodge-roster", is the AI app read (ALP-718): the page's own loader,
+    // names and nights only. The per-lodge name detail is edited through the
+    // existing lodge admin route, which belongs to the Lodges area rather than
+    // to this module — an admin must still be able to see and change the
+    // setting while the roster is switched off.
     flag: "memberLodgeRoster",
-    prefixes: ["/lodge-roster"],
+    prefixes: ["/lodge-roster", "/api/lodge-roster"],
   },
   {
-    // Food orders (fork #121, owner decision 14). The module is the only switch:
+    // Food orders (fork triyder/AlpineClubBookingsNZ#121, owner decision 14). The module is the only switch:
     // with it off the member order page, the history page, their API and the
     // admin settings API all 404. "/food-order" and "/food-orders" are listed
     // separately because a prefix matches only itself and its children, never a

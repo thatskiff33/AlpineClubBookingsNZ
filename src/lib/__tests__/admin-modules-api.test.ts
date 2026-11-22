@@ -444,10 +444,9 @@ describe("Admin modules API", () => {
       select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
     });
     // The PUT handler's pre-write read must use the explicit column select
-    // (#153) so it stays blue/green-safe for a later DROP of a retired column,
-    // matching the invariant #150 established for the other reads. The
-    // upsert's implicit RETURNING needs the same select (#175) — Prisma
-    // names every column on a write, too.
+    // (hoppers99/AlpineClubBookingsNZ#153), as hoppers99/AlpineClubBookingsNZ#150 established for the other reads, and the upsert's
+    // implicit RETURNING needs the same select (hoppers99/AlpineClubBookingsNZ#175). Neither reaches the
+    // upsert's INSERT column list, so neither makes a DROP safe (INV-OPS-005).
     expect(mocks.clubModuleSettingsFindUnique).toHaveBeenCalledWith({
       where: { id: "default" },
       select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,

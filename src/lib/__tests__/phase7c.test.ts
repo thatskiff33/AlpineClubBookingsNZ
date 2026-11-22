@@ -135,6 +135,19 @@ describe("F9: PUT /api/lodge/roster/[date] - chore completion", () => {
     );
   });
 
+  it("refuses a malformed path date with 400 Invalid date format before any lookup or write", async () => {
+    // #5394: checkLodgeAuth is the only date guard on this handler now.
+    const { PUT } = await import("@/app/api/lodge/roster/[date]/route");
+    const req = makeRequest({ action: "complete", assignmentId: "assign-1" }) as any;
+
+    const res = await PUT(req, makeParams("not-a-date"));
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid date format" });
+    expect(mockPrisma.choreAssignment.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.choreAssignment.update).not.toHaveBeenCalled();
+  });
+
   it("clears completedAt and completedVia on uncomplete action", async () => {
     const { logAudit } = await import("@/lib/audit");
     mockPrisma.choreAssignment.findFirst.mockResolvedValue({
@@ -336,6 +349,8 @@ describe("F9: GET /api/lodge/roster/[date] - completedAt/completedVia", () => {
     const res = await GET(req, makeParams("2026-02-30"));
 
     expect(res.status).toBe(400);
+    // #5394: the route no longer re-checks the date; checkLodgeAuth's refusal is the answer.
+    expect(await res.json()).toEqual({ error: "Invalid date format" });
     expect(mockPrisma.choreAssignment.findMany).not.toHaveBeenCalled();
   });
 });
@@ -362,8 +377,8 @@ describe("F9: PUT /api/lodge/guests/[date]/arrive", () => {
   });
 
   it("refuses a day that does not exist (2026-02-30) before any lookup or write", async () => {
-    // `checkLodgeAuth` refuses a non-day first too, so this pins the endpoint's
-    // contract end to end: a 400 and no query or write, whichever guard answers.
+    // `checkLodgeAuth` is the one guard that refuses a non-day (#5394), so this
+    // pins the endpoint's contract end to end: a 400 and no query or write.
     const { PUT } = await import("@/app/api/lodge/guests/[date]/arrive/route");
     const req = new Request("http://localhost/api/lodge/guests/2026-02-30/arrive", {
       method: "PUT",
@@ -552,8 +567,8 @@ describe("F9: PUT /api/lodge/guests/[date]/depart", () => {
   });
 
   it("refuses a day that does not exist (2026-02-30) before any lookup or write", async () => {
-    // `checkLodgeAuth` refuses a non-day first too, so this pins the endpoint's
-    // contract end to end: a 400 and no query or write, whichever guard answers.
+    // `checkLodgeAuth` is the one guard that refuses a non-day (#5394), so this
+    // pins the endpoint's contract end to end: a 400 and no query or write.
     const { PUT } = await import("@/app/api/lodge/guests/[date]/depart/route");
     const req = new Request("http://localhost/api/lodge/guests/2026-02-30/depart", {
       method: "PUT",
@@ -829,6 +844,7 @@ describe("F9: GET /api/lodge/guests/[date] - arrivedAt/departedAt", () => {
     const res = await GET(req, makeParams("2026-02-30"));
 
     expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid date format" });
     expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
   });
 
@@ -877,8 +893,8 @@ describe("F6: GET /api/lodge/roster/[date]/chores", () => {
 
   it("refuses a day that does not exist (2026-02-30) before querying", async () => {
     // An admin, so the 400 can only come from the date: the tier check runs first.
-    // `checkLodgeAuth` refuses a non-day first too, so this pins the endpoint's
-    // contract end to end: a 400 and no query, whichever guard answers.
+    // `checkLodgeAuth` is the one guard that refuses a non-day (#5394), so this
+    // pins the endpoint's contract end to end: a 400 and no query.
     mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.member.findUnique.mockResolvedValue({
       id: "session-member",
@@ -960,8 +976,8 @@ describe("F6: POST /api/lodge/roster/[date]/generate", () => {
   });
 
   it("refuses a day that does not exist (2026-02-30) before querying", async () => {
-    // `checkLodgeAuth` refuses a non-day first too, so this pins the endpoint's
-    // contract end to end: a 400 and no query or write, whichever guard answers.
+    // `checkLodgeAuth` is the one guard that refuses a non-day (#5394), so this
+    // pins the endpoint's contract end to end: a 400 and no query or write.
     const { POST } = await import("@/app/api/lodge/roster/[date]/generate/route");
     const req = new Request("http://localhost/api/lodge/roster/2026-02-30/generate", {
       method: "POST",
@@ -1106,8 +1122,8 @@ describe("F6: POST /api/lodge/roster/[date]/confirm", () => {
   });
 
   it("refuses a day that does not exist (2026-02-30) before any write", async () => {
-    // `checkLodgeAuth` refuses a non-day first too, so this pins the endpoint's
-    // contract end to end: a 400 and no query or write, whichever guard answers.
+    // `checkLodgeAuth` is the one guard that refuses a non-day (#5394), so this
+    // pins the endpoint's contract end to end: a 400 and no query or write.
     const { POST } = await import("@/app/api/lodge/roster/[date]/confirm/route");
     const req = new Request("http://localhost/api/lodge/roster/2026-02-30/confirm", {
       method: "POST",
@@ -1308,8 +1324,8 @@ describe("F6: GET /api/lodge/roster/[date]/frequency-info", () => {
   });
 
   it("refuses a day that does not exist (2026-02-30) before querying", async () => {
-    // `checkLodgeAuth` refuses a non-day first too, so this pins the endpoint's
-    // contract end to end: a 400 and no query or write, whichever guard answers.
+    // `checkLodgeAuth` is the one guard that refuses a non-day (#5394), so this
+    // pins the endpoint's contract end to end: a 400 and no query or write.
     const { GET } = await import(
       "@/app/api/lodge/roster/[date]/frequency-info/route"
     );

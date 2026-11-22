@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   createAuditLog: vi.fn(),
   getAuditRequestContext: vi.fn(),
   getSanitizedLodgeInstructions: vi.fn(),
+  lodgeInstructionFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/lodge-pin-session", () => ({
@@ -33,8 +34,16 @@ vi.mock("@/lib/audit", () => ({
 vi.mock("@/lib/lodge-instructions", () => ({
   getSanitizedLodgeInstructions: mocks.getSanitizedLodgeInstructions,
 }));
+// Read only by the one case that lets the real reader run (#5345).
+vi.mock("@/lib/prisma", () => ({
+  prisma: { lodgeInstruction: { findMany: mocks.lodgeInstructionFindMany } },
+}));
 
 import { POST } from "@/app/api/lodge/instructions/preview/route";
+import {
+  expectStoredHeadingOneDemoted,
+  storedInstructionWithH1,
+} from "./support/stored-heading-one";
 
 const DOCS = [
   { key: "OPEN", title: "Opening the Lodge", description: "", contentHtml: "<p>Turn on the gas</p>", updatedAt: null },
@@ -76,6 +85,28 @@ describe("POST /api/lodge/instructions/preview (#1642)", () => {
     expect(mocks.clearLodgePinFailures).toHaveBeenCalledWith("1.2.3.4");
     // Nothing but documents in the payload.
     expect(Object.keys(body)).toEqual(["documents"]);
+  });
+
+  it("returns an author's h1 demoted, through the real reader (#5345)", async () => {
+    // Every other case stubs the reader. This one runs the real one over a
+    // stored row, so the route cannot start serving the stored HTML unnoticed.
+    const reader = (await vi.importActual(
+      "@/lib/lodge-instructions",
+    )) as typeof import("@/lib/lodge-instructions");
+    mocks.getSanitizedLodgeInstructions.mockImplementation(reader.getSanitizedLodgeInstructions);
+    mocks.lodgeInstructionFindMany.mockResolvedValue([storedInstructionWithH1()]);
+    mocks.verifyHutLeaderPinForAssignment.mockResolvedValue({
+      id: "assign-1",
+      memberId: "mem-1",
+      lodgeId: "lodge-b",
+    });
+
+    const res = await POST(req({ assignmentId: "assign-1", pin: "123456" }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { documents: { key: string; contentHtml: string }[] };
+    expectStoredHeadingOneDemoted(
+      body.documents.find((doc) => doc.key === "OPEN")?.contentHtml ?? "",
+    );
   });
 
   it("rejects a wrong PIN with 401 and records an IP failure", async () => {

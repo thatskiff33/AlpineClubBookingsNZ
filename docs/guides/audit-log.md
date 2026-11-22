@@ -10,6 +10,14 @@ actor who did it, the member it affected, the outcome, and (when present) the
 request ID, IP, and retention class. Find it at **Admin → Monitoring & Support → Audit Log**
 (`/admin/audit-log`).
 
+For an entry made by a visitor's request, the IP is the address the proxy
+nearest the app saw, the same one the rate limits count, not one the visitor can
+choose by sending their own forwarding header (#5399). That holds only when the
+club's proxies are set up as
+[`DEPLOYMENT.md`](../../DEPLOYMENT.md#public-rate-limits-and-proxy-headers)
+describes. Other entries can hold something else there: a scheduled job's tag,
+or nothing at all.
+
 The audit log is read-only — you can filter, search, expand a row for its full
 detail, and drill through to the member or record it references, but you cannot
 edit or delete an entry. Retention and optional archival are governed by the

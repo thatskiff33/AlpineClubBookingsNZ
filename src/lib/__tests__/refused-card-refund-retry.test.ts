@@ -30,7 +30,7 @@ import {
   keyAfterStripeRefusals,
   type RefundAttempt,
   sliceAfterRecordedRefusals,
-  planAfterRefusals,
+  planAfterAttempt,
   refundPlanOrRetryRefusals,
   refusedRefundAlertMessage,
   refusedRefundCents,
@@ -109,14 +109,16 @@ describe("the plan after a refusal", () => {
   const a = { paymentTransactionId: "txn_a", amountCents: 1000 };
   const b = { paymentTransactionId: "txn_b", amountCents: 500 };
 
-  it("moves only the refused slice; the made one keeps its key, so a replay is answered, never made twice", () => {
-    expect(planAfterRefusals([a, b], [b])).toEqual([a, { ...b, stripeKeySuffix: "refused1" }]);
+  const refusal = (slice: typeof a) => ({ status: "failed", slice, refundId: "re_refused" });
+
+  it("moves only the refused slice; the unanswered one keeps its key, so a replay is answered, never made twice", () => {
+    expect(planAfterAttempt([a, b], [refusal(b)])).toEqual([a, { ...b, stripeKeySuffix: "refused1" }]);
   });
 
   it("matches a slice by its whole key: the same transaction and amount under another generation is a different request", () => {
     const moved = { ...b, stripeKeySuffix: "refused1" };
-    expect(planAfterRefusals([moved], [b])).toEqual([moved]);
-    expect(planAfterRefusals([moved], [moved])).toEqual([{ ...b, stripeKeySuffix: "refused2" }]);
+    expect(planAfterAttempt([moved], [refusal(b)])).toEqual([moved]);
+    expect(planAfterAttempt([moved], [refusal(moved)])).toEqual([{ ...b, stripeKeySuffix: "refused2" }]);
   });
 });
 

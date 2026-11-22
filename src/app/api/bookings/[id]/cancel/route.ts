@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import {
   SameOwnerCoverageOverrideRequiredError,
@@ -18,7 +19,8 @@ import {
   hasAdminAreaAccess,
 } from "@/lib/admin-permissions";
 import { clubFormatValues } from "@/lib/club-format-server";
-import { arrivesAsMcpConnection } from "@/lib/mcp-connection-request";
+import { arrivesAsMcpConnection, connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
+import { CANCEL_BOOKING_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 import {
   TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
   transactionContendedResponse,
@@ -47,20 +49,10 @@ export async function POST(
       return inactiveResponse;
     }
 
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      return NextResponse.json(
-        {
-          error: "Invalid JSON",
-          details: { body: ["Request body must be valid JSON"] },
-        },
-        { status: 400 }
-      );
-    }
+    const json = await parseJsonRequestBody(request);
+    if (!json.ok) return json.response;
 
-    const parsed = cancelBookingMutationSchema.safeParse(body);
+    const parsed = cancelBookingMutationSchema.safeParse(json.body);
     if (!parsed.success) {
       return NextResponse.json(
         { error: "Invalid input", details: parsed.error.flatten() },
@@ -75,14 +67,21 @@ export async function POST(
     // cancellation email.
     // ALP-653 (INV-MCP-006): stage 1's `cancel_my_booking` cancels the
     // member's OWN booking. An AI app connection never carries an officer's
-    // authority here, so for it the Full Admin role and the Booking Officer
-    // flag are both off and the service applies the member rules: owner
-    // only, the started-stay block and the member door. Officer booking
-    // actions are a later stage (ALP-719).
-    const viaConnection = arrivesAsMcpConnection(request);
+    // authority here (`memberOnlySessionUser`), so for it the Full Admin role
+    // and the Booking Officer flag are both off and the service applies the
+    // member rules: owner only, the started-stay block and the member door.
+    // Nor may it send an officer's hosting-coverage override (ALP-718).
+    // Officer booking actions are a later stage (ALP-719).
+    const actor = memberOnlySessionUser(request, session.user);
+    if (arrivesAsMcpConnection(request) && parsed.data.hostingCoverageOverride !== undefined) {
+      return NextResponse.json(
+        { error: "Admin override is not available for this account" },
+        { status: 403 }
+      );
+    }
     if (
       parsed.data.notifyMember !== undefined &&
-      (viaConnection || bookingManagementAuthorizationRole(session.user) !== "ADMIN")
+      bookingManagementAuthorizationRole(actor) !== "ADMIN"
     ) {
       return NextResponse.json(
         { error: "Admin override is not available for this account" },
@@ -96,7 +95,7 @@ export async function POST(
     const result = await cancelBooking(
       parsedParams.data.id,
       session.user.id,
-      viaConnection ? "USER" : authorizationRoleFromAccessRoles(session.user),
+      authorizationRoleFromAccessRoles(actor),
       getClientIp(request),
       format,
       parsed.data.refundMethod,
@@ -109,8 +108,7 @@ export async function POST(
         // ONLY widens the internal authorization gate, never the refund
         // computation (which keys off booking state + policy tier only).
         hasBookingsEditAccess:
-          !viaConnection &&
-          hasAdminAreaAccess(session.user, {
+          hasAdminAreaAccess(actor, {
             area: "bookings",
             level: "edit",
           }),
@@ -136,7 +134,7 @@ export async function POST(
     );
 
     if (result.status === 200) {
-      return NextResponse.json(result.data);
+      return connectionJson(request, result.data, CANCEL_BOOKING_CONNECTION_SHAPE);
     }
     return NextResponse.json(
       { error: result.error },
