@@ -115,6 +115,9 @@ importers:
       html2canvas:
         specifier: ^1.4.1
         version: 1.4.1
+      jsdom:
+        specifier: ^31.0.0
+        version: 31.0.0(@noble/hashes@2.4.0)
       jspdf:
         specifier: ^4.2.1
         version: 4.2.1
@@ -263,9 +266,6 @@ importers:
       fast-check:
         specifier: ^4.10.2
         version: 4.10.2
-      jsdom:
-        specifier: ^31.0.0
-        version: 31.0.0(@noble/hashes@2.4.0)
       knip:
         specifier: ^6.44.2
         version: 6.44.2
