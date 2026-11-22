@@ -586,10 +586,16 @@ refuse what would strand the line
 ([`xero-opening-credits-exempt-guards.ts`](../../src/lib/xero-opening-credits-exempt-guards.ts)):
 Opening Credits on an account another role uses, Opening Credits mapped before
 Exempt while a registered period applies or is scheduled, and Exempt cleared
-while Opening Credits is mapped. A registration scheduled while Opening Credits
-is mapped and Exempt is unusable is allowed (owner decision, 22 Nov 2026, on
-#4988): `readXeroTaxHealth` warns of that state, and the hold keeps each spent
-opening credit waiting. The one writer,
+while Opening Credits is mapped. The clear is refused while Xero is
+disconnected too: only a row the connected tenant does not own is known to be
+unused, and disconnecting deletes the connection row. A registration scheduled
+while Opening Credits is mapped and Exempt is unusable is allowed (owner
+decision, 22 Nov 2026, on #4988): `readXeroTaxHealth` warns of that state, and
+the hold keeps each spent opening credit waiting. The account-mapping save's
+check and its writes are not one transaction (#5391), so two saves, or a save
+beside a config import, can still store a shared Opening Credits account;
+`readXeroTaxHealth` reports it by running the save's own rule,
+`openingCreditsAccountConflicts`, over the stored rows. The one writer,
 [`xero-tax-category-write.ts`](../../src/lib/xero-tax-category-write.ts)
 (Full Admin, `PUT`/`DELETE /api/admin/xero/tax-categories`), reads Xero's rates
 fresh before a Serializable single-table transaction with its audit row and no
