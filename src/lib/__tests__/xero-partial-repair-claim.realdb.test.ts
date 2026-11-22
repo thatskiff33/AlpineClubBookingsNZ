@@ -146,16 +146,13 @@ let retry: typeof import("@/lib/xero-operation-retry");
         async (tx) => {
           await tx.$queryRaw`SELECT id FROM "XeroSyncOperation" WHERE id = ${OPERATION_ID} FOR UPDATE`;
           retried = Promise.allSettled(runRetries.map((run) => run()));
-          const started = process.hrtime.bigint();
-          for (;;) {
+          await waitUntil(async () => {
             const waiting = await prisma.$queryRaw<Array<{ n: bigint }>>`
               SELECT count(*)::bigint AS n FROM pg_stat_activity
               WHERE datname = current_database() AND wait_event_type = 'Lock'
                 AND query ILIKE '%UPDATE%XeroSyncOperation%'`;
-            if (Number(waiting[0]?.n ?? 0) >= runRetries.length) break;
-            if (realElapsedMs(started) > 10_000) throw new Error("The retries never reached their claims.");
-            await new Promise((resolve) => setTimeout(resolve, 20));
-          }
+            return Number(waiting[0]?.n ?? 0) >= runRetries.length;
+          }, "The retries never reached their claims.");
           if (officerWrite) await officerWrite(tx);
         },
         { timeout: 20_000 },
@@ -179,16 +176,12 @@ let retry: typeof import("@/lib/xero-operation-retry");
 
     /** Wait until the repair's claim is on the row (RUNNING, marked), then make it stale. */
     async function claimThenStrand() {
-      const started = process.hrtime.bigint();
-      for (;;) {
+      await waitUntil(async () => {
         const row = await readRow();
-        if (row.status === "RUNNING") {
-          expect(row.lastErrorCode).toBe("PARTIAL_REPAIR_RUNNING");
-          break;
-        }
-        if (realElapsedMs(started) > 10_000) throw new Error("The repair never claimed the row.");
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+        if (row.status !== "RUNNING") return false;
+        expect(row.lastErrorCode).toBe("PARTIAL_REPAIR_RUNNING");
+        return true;
+      }, "The repair never claimed the row.");
       // The process "dies" here: nothing completes the claim, and 20 minutes pass.
       await prisma.xeroSyncOperation.update({
         where: { id: OPERATION_ID },

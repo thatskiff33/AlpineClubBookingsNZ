@@ -15,8 +15,12 @@ const mocks = vi.hoisted(() => ({
   mappings: vi.fn(),
 }));
 const openingCreditsRow = vi.hoisted(() => vi.fn());
-// #4988: the health check asks whether the Opening Credits account is mapped.
-vi.mock("@/lib/prisma", () => ({ prisma: { xeroAccountMapping: { findUnique: openingCreditsRow } } }));
+const accountMappingRows = vi.hoisted(() => vi.fn());
+// #4988: the health check asks whether the Opening Credits account is mapped,
+// and reads every stored account mapping to see whether another shares its account.
+vi.mock("@/lib/prisma", () => ({
+  prisma: { xeroAccountMapping: { findUnique: openingCreditsRow, findMany: accountMappingRows } },
+}));
 vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/club-time-zone-runtime", () => ({ readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland" }));
 vi.mock("@/lib/club-tax-settings", async (importOriginal) => ({
@@ -87,6 +91,8 @@ describe("readXeroTaxHealth", () => {
     mocks.mappings.mockResolvedValue({ tenantId: "tenant-connected", rows: [] });
     openingCreditsRow.mockReset();
     openingCreditsRow.mockResolvedValue(null);
+    accountMappingRows.mockReset();
+    accountMappingRows.mockResolvedValue([]);
   });
 
   it("is clean when Xero agrees with the period in force today", async () => {
@@ -154,7 +160,7 @@ describe("readXeroTaxHealth", () => {
 
   describe("Opening Credits mapped while Exempt has no usable rate (#4988, #5375 item 3)", () => {
     const OPENING_CREDITS_PROBLEM =
-      "Opening Credits is mapped and the club is, or is scheduled to be, GST-registered, but the Exempt tax category has no usable Xero tax rate, so spent opening credits wait, or will wait, in the Xero queue. A Full Admin maps Exempt to a 0% rate on the Xero setup screen, or unmaps the Opening Credits account under Account Mappings.";
+      "Opening Credits is mapped and the club is, or is scheduled to be, GST-registered, but the Exempt tax category has no usable Xero tax rate, so spent opening credits wait, or will wait, in the Xero queue. On a card booking, the booking's Xero invoice operation fails instead; retry it from the Xero Operations list once Exempt is mapped. A Full Admin maps Exempt to a 0% rate on the Xero setup screen, or unmaps the Opening Credits account under Account Mappings.";
     const exemptRate = rate({ taxType: "EXEMPTOUTPUT", name: "Exempt", rateBasisPoints: 0 });
 
     beforeEach(() => {
@@ -213,6 +219,74 @@ describe("readXeroTaxHealth", () => {
       expect((await readXeroTaxHealth()).problems).toEqual([]);
       mocks.mappings.mockResolvedValue({ tenantId: null, rows: [] });
       expect((await readXeroTaxHealth()).problems).toEqual([]);
+    });
+  });
+
+  describe("Opening Credits stored on the Xero account another mapping uses (#4988, #5391)", () => {
+    // The mapping screen's own rule and remedy (`xero-opening-credits-mapping-save.test.ts` pins the refusal),
+    // with the health line's ending: here nothing was refused, the mappings are saved.
+    const SHARED_ACCOUNT_PROBLEM =
+      "Opening Credits cannot use the same Xero account as Hut Fee Refunds. Choose an account for Opening Credits that no other mapping uses, or change the other mapping first. The saved account mappings share that account now; change one of them under Account Mappings.";
+    const shared = [
+      { key: "hutFeesIncome", code: "201" },
+      { key: "hutFeeRefunds", code: "2100" },
+      { key: "openingCredits", code: "2100" },
+    ];
+
+    beforeEach(() => {
+      accountMappingRows.mockResolvedValue(shared);
+    });
+
+    it("MUTATION: is a health problem once the stored mappings share the Opening Credits account, naming the other role", async () => {
+      expect((await readXeroTaxHealth()).problems).toEqual([SHARED_ACCOUNT_PROBLEM]);
+      expect(accountMappingRows).toHaveBeenCalledWith({ select: { key: true, code: true } });
+    });
+
+    it("never says a save was refused: the mappings it reports are stored", async () => {
+      const [problem] = (await readXeroTaxHealth()).problems;
+      expect(problem).not.toMatch(/No account mapping was saved/);
+    });
+
+    it("counts a role that only has its application default, compared without case or spaces", async () => {
+      // No stored row for Hut Fees Income or Hut Fee Refunds: both sit on their default account, 200.
+      accountMappingRows.mockResolvedValue([{ key: "openingCredits", code: " 200 " }]);
+      expect((await readXeroTaxHealth()).problems).toEqual([
+        expect.stringMatching(/^Opening Credits cannot use the same Xero account as .*Hut Fee Refunds.*\. Choose an account/),
+      ]);
+    });
+
+    it("is reported for a club that is not GST-registered too, as the save is refused for one", async () => {
+      mocks.schedule.mockResolvedValue([unregistered]);
+      mocks.organisation.mockResolvedValue({ paysTax: false });
+      expect((await readXeroTaxHealth()).problems).toEqual([SHARED_ACCOUNT_PROBLEM]);
+    });
+
+    it("is reported after the Exempt line when both apply", async () => {
+      openingCreditsRow.mockResolvedValue({ code: "2100" });
+      expect((await readXeroTaxHealth()).problems).toEqual([
+        expect.stringMatching(/^Opening Credits is mapped and the club is, or is scheduled to be, GST-registered/),
+        SHARED_ACCOUNT_PROBLEM,
+      ]);
+    });
+
+    it("is clean while Opening Credits has an account to itself, or none", async () => {
+      accountMappingRows.mockResolvedValue([
+        { key: "hutFeesIncome", code: "201" },
+        { key: "hutFeeRefunds", code: "202" },
+        { key: "openingCredits", code: "2100" },
+      ]);
+      await expect(readXeroTaxHealth()).resolves.toEqual({ checked: true, problems: [] });
+      accountMappingRows.mockResolvedValue([
+        { key: "hutFeeRefunds", code: "2100" },
+        { key: "openingCredits", code: null },
+      ]);
+      await expect(readXeroTaxHealth()).resolves.toEqual({ checked: true, problems: [] });
+    });
+
+    it("MUTATION: says nothing while Xero is not connected, and does not read the account mappings", async () => {
+      mocks.mappings.mockResolvedValue({ tenantId: null, rows: [] });
+      expect((await readXeroTaxHealth()).problems).toEqual([]);
+      expect(accountMappingRows).not.toHaveBeenCalled();
     });
   });
 
