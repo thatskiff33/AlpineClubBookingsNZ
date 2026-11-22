@@ -372,7 +372,8 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > reference: restore the default subject, or add `{{bookingReference}}` to
 > yours. Since #5407 the Daily digest counts each alert once however many
 > officers receive it, and no longer folds alerts that share a subject, so a
-> saved subject does not change any digest count. The built-in wording
+> saved subject does not change any digest count while the officers receiving
+> the alert stay the same. The built-in wording
 > gives the reason (`{{reason}}`), which also says when the member had asked
 > for the whole booking to be cancelled if their guests could not come.
 >
@@ -395,9 +396,12 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > **Booking Update**, or **Booking Cancelled** when the booking was cancelled
 > because its guests could not come) and the officers' **Admin Booking Bumped**
 > alert are then sent by a later run of the same job, so a recovered notice arrives
-> a few hours late. The member never receives it twice. Very rarely the
-> officers may receive their alert twice, when the interruption falls just
-> after it was sent. Nothing about the wording changed.
+> a few hours late. The same happens when the officers' alert could not be
+> recorded for any of them, for example while the email settings cannot be
+> read. The member never receives it twice. Very rarely the officers may
+> receive their alert twice: when the interruption falls just after it was
+> sent, or when sending it takes longer than an hour. Nothing about the
+> wording changed.
 
 ## Settings reference
 

@@ -7,7 +7,8 @@
   Expect the Payment failures and Xero errors numbers in particular to go up:
   those alerts always have the same subject, so they were the most
   undercounted. Nothing about when the alerts themselves are sent changed, and
-  a subject your club saved for an alert no longer affects the count.
+  a subject your club saved for an alert does not change any count while the
+  officers receiving that alert stay the same.
 - **A bumped member and the officers are told even if the job is interrupted
   (#5407).** When the pending-booking job releases a booking because its dates
   filled up, it emails the member and alerts the officers. If the job was
@@ -16,6 +17,8 @@
   notices as owed when it releases the booking, and a later run sends any that
   did not go out.
 
-  A recovered notice arrives a few hours late. The member never receives it
-  twice. Very rarely the officers may receive their alert twice, when the
-  interruption falls just after it was sent.
+  A recovered notice arrives a few hours late. The officers' alert is also
+  sent again later if it could not be recorded for any of them. The member
+  never receives it twice. Very rarely the officers may receive their alert
+  twice: when the interruption falls just after it was sent, or when sending
+  it takes longer than an hour.

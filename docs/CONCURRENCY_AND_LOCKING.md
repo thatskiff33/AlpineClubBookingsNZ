@@ -6170,7 +6170,8 @@ composition.
 The confirm-pending cron's capacity bump (`resolveHoldWindowUnderLock`) also
 records its two notices as owed (#5407, `recordBumpNoticesOwed`): two
 `AlertCooldown` upserts on primary keys derived from the booking and the bump
-time, after the guarded `PENDING -> CANCELLED` claim and inside the same
+time, stamped with that time and handed back so the delivery claims with the
+same value, after the guarded `PENDING -> CANCELLED` claim and inside the same
 transaction, under the `lock(1)` and lodge lock it already holds. They add no
 advisory key, no change of order, no read, and no provider call or settings
 query (`INV-INT-003`); a plain upsert, never a caught unique-key error, so the
@@ -6179,7 +6180,11 @@ base client with no advisory key: each notice's claim is an `updateMany` on
 its marker guarded by the marker's stamp (`claimOwedAlert`). Of the post-commit
 delivery and the sweeps of overlapping runs, only one caller holds a marker at a
 time, and a lost claim sends nothing; the clear deletes only a marker still
-stamped with its own claim.
+stamped with its own claim. A claim is a stamp, not a lease: a send still
+running an hour after its claim, or a large clock difference between two app
+instances, lets a sweep claim the marker again. The member is still sent one
+email (the same event key); the officers may get their alert twice, the same
+outcome as a crash between a send and its clear.
 
 Officer approval of a held generic request pre-reads only the held booking's immutable concrete
 `lodgeId`, then takes global -> that lodge -> the held booking's row (#4857,
