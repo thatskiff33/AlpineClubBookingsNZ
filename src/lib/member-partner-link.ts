@@ -981,6 +981,62 @@ export async function respondToPartnerLink(params: {
 }
 
 /**
+ * The one delete + stale-share sweep transaction both dissolve doors run
+ * (#1756, #5398): a dissolved CONFIRMED link must not leave the pair sharing a
+ * double bed on future nights, so the pair's future isSecondOccupant
+ * allocations are swept back to the awaiting-allocation queue in the same
+ * transaction (audited against both bookings inside the sweep; the caller
+ * alerts admins post-commit). The delete is status-guarded: a link that changed
+ * since the caller read it deletes nothing, and the caller answers 409.
+ * Whether the link was CONFIRMED, which decides the lock step and the sweep, is
+ * read here from the link itself, never passed in, and returned for the caller.
+ */
+async function deletePartnerLinkAndSweepShares(
+  link: { id: string; status: string; memberAId: string; memberBId: string },
+): Promise<{
+  deletedCount: number;
+  sweptShares: SweptPartnerSharedAllocation[];
+  wasConfirmed: boolean;
+}> {
+  const wasConfirmed = link.status === PARTNER_LINK_CONFIRMED;
+  // #3123 / INV-LOCK-004 — the club's day, resolved before this transaction
+  // opens and passed into both the lock prefix and the sweep. Resolving the
+  // club's persisted timezone is a `clubTimeSettings.findUnique`, and inside
+  // this transaction that would take a second pooled connection while the
+  // global cohort key, every affected lodge key and both member keys are
+  // held. One value also means the lodge set that was LOCKED and the rows the
+  // sweep JUDGES are derived from the same day.
+  const clubTodayForSweep = await clubTodayDateOnlyInstant();
+  const outcome = await prisma.$transaction(async (tx) => {
+    if (wasConfirmed) {
+      await acquireFuturePartnerSharedAllocationLocks(
+        tx,
+        [link.memberAId, link.memberBId],
+        clubTodayForSweep,
+      );
+    }
+    await lockPartnerMembers(tx, [link.memberAId, link.memberBId]);
+    const deleted = await tx.memberPartnerLink.deleteMany({
+      where: { id: link.id, status: link.status },
+    });
+    if (deleted.count === 0) {
+      return { deletedCount: 0, sweptShares: [] as SweptPartnerSharedAllocation[] };
+    }
+    const swept = wasConfirmed
+      ? await sweepFuturePartnerSharedAllocationsWithLocksHeld({
+          memberId: link.memberAId,
+          partnerMemberId: link.memberBId,
+          reason: "partner_link_dissolved",
+          db: tx,
+          today: clubTodayForSweep,
+        })
+      : [];
+    return { deletedCount: deleted.count, sweptShares: swept };
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
+  return { ...outcome, wasConfirmed };
+}
+
+/**
  * Remove a link the acting member is part of: withdraw their own PENDING
  * request, or dissolve a CONFIRMED partnership (either partner may do this
  * unilaterally; the other partner is emailed). Hard delete + audit.
@@ -1014,45 +1070,9 @@ export async function removeOwnPartnerLink(params: {
   const self = link.memberAId === params.memberId ? link.memberA : link.memberB;
   const other = link.memberAId === params.memberId ? link.memberB : link.memberA;
 
-  // Delete + stale-share sweep commit together (#1756): a dissolved CONFIRMED
-  // link must not leave the pair sharing a double bed on future nights, so the
-  // pair's future isSecondOccupant allocations are swept back to the
-  // awaiting-allocation queue in the same transaction (audited against both
-  // bookings inside the sweep; admins alerted post-commit).
-    // #3123 / INV-LOCK-004 — the club's day, resolved before this transaction
-    // opens and passed into both the lock prefix and the sweep. Resolving the
-    // club's persisted timezone is a `clubTimeSettings.findUnique`, and inside
-    // this transaction that would take a second pooled connection while the
-    // global cohort key, every affected lodge key and both member keys are
-    // held. One value also means the lodge set that was LOCKED and the rows the
-    // sweep JUDGES are derived from the same day.
-  const clubTodayForSweep = await clubTodayDateOnlyInstant();
-  const { deletedCount, sweptShares } = await prisma.$transaction(async (tx) => {
-    if (wasConfirmed) {
-      await acquireFuturePartnerSharedAllocationLocks(
-        tx,
-        [link.memberAId, link.memberBId],
-        clubTodayForSweep,
-      );
-    }
-    await lockPartnerMembers(tx, [link.memberAId, link.memberBId]);
-    const deleted = await tx.memberPartnerLink.deleteMany({
-      where: { id: link.id, status: link.status },
-    });
-    if (deleted.count === 0) {
-      return { deletedCount: 0, sweptShares: [] as SweptPartnerSharedAllocation[] };
-    }
-    const swept = wasConfirmed
-      ? await sweepFuturePartnerSharedAllocationsWithLocksHeld({
-          memberId: link.memberAId,
-          partnerMemberId: link.memberBId,
-          reason: "partner_link_dissolved",
-          db: tx,
-          today: clubTodayForSweep,
-        })
-      : [];
-    return { deletedCount: deleted.count, sweptShares: swept };
-  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
+  // Delete + stale-share sweep commit together (#1756); see
+  // deletePartnerLinkAndSweepShares.
+  const { deletedCount, sweptShares } = await deletePartnerLinkAndSweepShares(link);
   if (deletedCount === 0) {
     return { ok: false, status: 409, error: "Partner link not found or already changed." };
   }
@@ -1344,44 +1364,10 @@ export async function adminRemovePartnerLink(params: {
     return { ok: false, status: 404, error: "Partner link not found." };
   }
 
-  const wasConfirmed = link.status === PARTNER_LINK_CONFIRMED;
   // Same delete + stale-share sweep transaction as removeOwnPartnerLink
   // (#1756): the admin dissolve must also clear the pair's future shared
   // double-bed placements.
-    // #3123 / INV-LOCK-004 — the club's day, resolved before this transaction
-    // opens and passed into both the lock prefix and the sweep. Resolving the
-    // club's persisted timezone is a `clubTimeSettings.findUnique`, and inside
-    // this transaction that would take a second pooled connection while the
-    // global cohort key, every affected lodge key and both member keys are
-    // held. One value also means the lodge set that was LOCKED and the rows the
-    // sweep JUDGES are derived from the same day.
-  const clubTodayForSweep = await clubTodayDateOnlyInstant();
-  const { deletedCount, sweptShares } = await prisma.$transaction(async (tx) => {
-    if (wasConfirmed) {
-      await acquireFuturePartnerSharedAllocationLocks(
-        tx,
-        [link.memberAId, link.memberBId],
-        clubTodayForSweep,
-      );
-    }
-    await lockPartnerMembers(tx, [link.memberAId, link.memberBId]);
-    const deleted = await tx.memberPartnerLink.deleteMany({
-      where: { id: link.id, status: link.status },
-    });
-    if (deleted.count === 0) {
-      return { deletedCount: 0, sweptShares: [] as SweptPartnerSharedAllocation[] };
-    }
-    const swept = wasConfirmed
-      ? await sweepFuturePartnerSharedAllocationsWithLocksHeld({
-          memberId: link.memberAId,
-          partnerMemberId: link.memberBId,
-          reason: "partner_link_dissolved",
-          db: tx,
-          today: clubTodayForSweep,
-        })
-      : [];
-    return { deletedCount: deleted.count, sweptShares: swept };
-  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
+  const { deletedCount, sweptShares, wasConfirmed } = await deletePartnerLinkAndSweepShares(link);
   if (deletedCount === 0) {
     return { ok: false, status: 409, error: "Partner link not found or already changed." };
   }
