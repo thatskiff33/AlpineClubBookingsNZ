@@ -988,11 +988,17 @@ export async function respondToPartnerLink(params: {
  * transaction (audited against both bookings inside the sweep; the caller
  * alerts admins post-commit). The delete is status-guarded: a link that changed
  * since the caller read it deletes nothing, and the caller answers 409.
+ * Whether the link was CONFIRMED, which decides the lock step and the sweep, is
+ * read here from the link itself, never passed in, and returned for the caller.
  */
 async function deletePartnerLinkAndSweepShares(
   link: { id: string; status: string; memberAId: string; memberBId: string },
-  wasConfirmed: boolean,
-): Promise<{ deletedCount: number; sweptShares: SweptPartnerSharedAllocation[] }> {
+): Promise<{
+  deletedCount: number;
+  sweptShares: SweptPartnerSharedAllocation[];
+  wasConfirmed: boolean;
+}> {
+  const wasConfirmed = link.status === PARTNER_LINK_CONFIRMED;
   // #3123 / INV-LOCK-004 — the club's day, resolved before this transaction
   // opens and passed into both the lock prefix and the sweep. Resolving the
   // club's persisted timezone is a `clubTimeSettings.findUnique`, and inside
@@ -1001,7 +1007,7 @@ async function deletePartnerLinkAndSweepShares(
   // held. One value also means the lodge set that was LOCKED and the rows the
   // sweep JUDGES are derived from the same day.
   const clubTodayForSweep = await clubTodayDateOnlyInstant();
-  return prisma.$transaction(async (tx) => {
+  const outcome = await prisma.$transaction(async (tx) => {
     if (wasConfirmed) {
       await acquireFuturePartnerSharedAllocationLocks(
         tx,
@@ -1027,6 +1033,7 @@ async function deletePartnerLinkAndSweepShares(
       : [];
     return { deletedCount: deleted.count, sweptShares: swept };
   }, LOCK1_HOLDER_TRANSACTION_BUDGET);
+  return { ...outcome, wasConfirmed };
 }
 
 /**
@@ -1065,7 +1072,7 @@ export async function removeOwnPartnerLink(params: {
 
   // Delete + stale-share sweep commit together (#1756); see
   // deletePartnerLinkAndSweepShares.
-  const { deletedCount, sweptShares } = await deletePartnerLinkAndSweepShares(link, wasConfirmed);
+  const { deletedCount, sweptShares } = await deletePartnerLinkAndSweepShares(link);
   if (deletedCount === 0) {
     return { ok: false, status: 409, error: "Partner link not found or already changed." };
   }
@@ -1357,11 +1364,10 @@ export async function adminRemovePartnerLink(params: {
     return { ok: false, status: 404, error: "Partner link not found." };
   }
 
-  const wasConfirmed = link.status === PARTNER_LINK_CONFIRMED;
   // Same delete + stale-share sweep transaction as removeOwnPartnerLink
   // (#1756): the admin dissolve must also clear the pair's future shared
   // double-bed placements.
-  const { deletedCount, sweptShares } = await deletePartnerLinkAndSweepShares(link, wasConfirmed);
+  const { deletedCount, sweptShares, wasConfirmed } = await deletePartnerLinkAndSweepShares(link);
   if (deletedCount === 0) {
     return { ok: false, status: 409, error: "Partner link not found or already changed." };
   }
