@@ -3,6 +3,11 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import {
+  deployFragmentProblems,
+  isDeployFragmentName,
+} from "../../../scripts/lib/deploy-fragments.mjs";
+
 /**
  * `changelog.d/README.md` step 2 states the fragment format in one sentence: "one
  * or more top-level `- ` bullets in the house style below. Nothing else — no
@@ -27,10 +32,15 @@ const FRAGMENT_DIR = "changelog.d";
 /** The no-entry marker lives in the pull request body, never in a fragment. */
 const FRAGMENT_PATTERN = /\.md$/;
 
+/**
+ * Changelog entries only. An after-deploy step (`*.deploy.md`, #5379) has its
+ * own fixed headings and is checked against its own format below.
+ */
 function fragmentNames(): string[] {
   return readdirSync(FRAGMENT_DIR)
     .filter((name) => FRAGMENT_PATTERN.test(name))
     .filter((name) => name !== "README.md")
+    .filter((name) => !isDeployFragmentName(name))
     .sort();
 }
 
@@ -75,6 +85,30 @@ describe("changelog fragment shape (#3112)", () => {
       offenders,
       `A fragment's first line must be a top-level "- " bullet, per ` +
         `changelog.d/README.md. Offending fragment(s): ${offenders.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  /*
+    #5379: an after-deploy step is only read at a release cut too, and a
+    malformed one refuses that cut. The `verify` gate checks the ones a pull
+    request writes; this checks every one on disk, so one that reached the
+    tree another way (an edit during a merge, a hand-made commit) fails here
+    rather than on release day.
+  */
+  it("keeps every after-deploy step fragment well formed", () => {
+    const offenders = readdirSync(FRAGMENT_DIR)
+      .filter((name) => isDeployFragmentName(name))
+      .map((name) => ({
+        name,
+        problems: deployFragmentProblems(name, readFileSync(join(FRAGMENT_DIR, name), "utf8")),
+      }))
+      .filter(({ problems }) => problems.length > 0)
+      .map(({ name, problems }) => `${name}: ${problems.join("; ")}`);
+
+    expect(
+      offenders,
+      `Malformed after-deploy step fragment(s); changelog.d/README.md, ` +
+        `"After-deploy steps", gives the format:\n${offenders.join("\n")}`,
     ).toEqual([]);
   });
 });

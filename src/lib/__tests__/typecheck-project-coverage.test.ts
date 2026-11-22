@@ -85,6 +85,9 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/ci/pr-body-file.test.mjs",
   "scripts/ci/check-pr-changelog-fragment.test.mjs",
   "scripts/ci/check-pr-concurrency-declaration.test.mjs",
+  // #5379: the after-deploy step gate runs under bare node before install in
+  // `verify`, like the changelog gate beside it.
+  "scripts/ci/check-pr-deploy-fragment.test.mjs",
   // #4463: the plan-deviation and soft size gates run under bare node before
   // the install, like the two PR-body gates above.
   "scripts/ci/check-pr-plan-deviation.test.mjs",
@@ -122,6 +125,8 @@ const JAVASCRIPT_VITEST_TESTS = [
   // surfaces (cut-release.mjs alone has 17) other lanes change, so it stays
   // JavaScript beside their suites rather than needing a declaration for each.
   "scripts/lib/github-heading-anchor.test.mjs",
+  // #5379: the after-deploy fragment format, read by that gate and `release:cut`.
+  "scripts/lib/deploy-fragments.test.mjs",
   "scripts/release/compile-changelog.test.mjs",
   // #4465: `release:cut` drives the `.mjs` compiler under bare node, so its
   // suite stays JavaScript beside the compiler's.
@@ -198,6 +203,11 @@ const DECLARED_JAVASCRIPT_MODULES = [
     module: "scripts/ci/summarise-playwright-flaky.mjs",
     declaration: "scripts/ci/summarise-playwright-flaky.d.mts",
     load: () => import("../../../scripts/ci/summarise-playwright-flaky.mjs"),
+  },
+  {
+    module: "scripts/lib/deploy-fragments.mjs",
+    declaration: "scripts/lib/deploy-fragments.d.mts",
+    load: () => import("../../../scripts/lib/deploy-fragments.mjs"),
   },
   {
     module: "scripts/lib/budget-base-ref.mjs",
