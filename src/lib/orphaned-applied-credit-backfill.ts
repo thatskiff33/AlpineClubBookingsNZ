@@ -320,8 +320,7 @@ export async function healOrphanedAppliedCredits(options?: {
 }
 
 /**
- * Format a scan or heal result for the operator report, mirroring
- * formatFlattenedCancelPaymentReport.
+ * Format a scan or heal result for the operator report.
  */
 export function formatOrphanedAppliedCreditReport(
   result: {

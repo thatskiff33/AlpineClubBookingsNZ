@@ -397,12 +397,8 @@ const CENTS_DISPLAY_RESTRICTIONS = [
  * shipped; keeping the array separate is what makes the mistake unavailable
  * rather than merely noticed.
  *
- * It has no file-wide exemption. The rounding-drift report has one reviewed
- * dual-format annotation; its exact file overrides only the c-suffix arm with
- * a selector that excludes that function's direct return (see below).
+ * It has no file-wide exemption and no per-file override.
  */
-const CENTS_IN_PROSE_C_SUFFIX_SELECTOR =
-  'TemplateLiteral:not(TaggedTemplateExpression > TemplateLiteral) > TemplateElement[value.raw=/^c(?![-\\w])/i]';
 const CENTS_IN_PROSE_RESTRICTIONS = [
   {
     selector:
@@ -410,7 +406,8 @@ const CENTS_IN_PROSE_RESTRICTIONS = [
     message: CENTS_IN_PROSE_MESSAGE,
   },
   {
-    selector: CENTS_IN_PROSE_C_SUFFIX_SELECTOR,
+    selector:
+      'TemplateLiteral:not(TaggedTemplateExpression > TemplateLiteral) > TemplateElement[value.raw=/^c(?![-\\w])/i]',
     message: CENTS_IN_PROSE_MESSAGE,
   },
 ];
