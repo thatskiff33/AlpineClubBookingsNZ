@@ -1484,6 +1484,21 @@ const alert = await screen.findByRole("alert");
 await waitFor(() => expect(alert).toHaveTextContent("Payment Error"));
 ```
 
+### Wait for the loaded state, not a container that is also the loading state
+
+The same one-turn margin catches a wait for a container that a component
+renders both while it loads and after. `ManualRefundTaskQueue` shows its
+`manual-refund-task-queue` card while `tasks === null`, so
+`waitFor(() => screen.getByTestId("manual-refund-task-queue"))` passes on its
+first check, and the rows the next line reads exist only if the fetch landed
+inside Testing Library's single drain. A loaded runner lost that race on `main`
+(#5357) and on a pull request (#5430), each time with the card holding only
+"Loading…". Wait for the loading state to end instead. For this queue, call
+`waitForManualRefundQueueLoaded()` from
+`src/lib/__tests__/support/manual-refund-task-queue-loaded.ts` straight after
+`render`. It first checks that "Loading…" is on screen, so it cannot pass
+without waiting if that copy changes.
+
 ### Do not make the component's effect a layout effect
 
 It looks like the tidy fix — focus in the same commit as the message, no window
