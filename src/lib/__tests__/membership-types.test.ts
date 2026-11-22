@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import path from "path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   BUILT_IN_MEMBERSHIP_TYPES,
   DEFAULT_MEMBERSHIP_TYPE_AGE_TIERS,
@@ -8,6 +8,7 @@ import {
   backfillCurrentSeasonMembershipAssignments,
   buildUniqueMembershipTypeKey,
   defaultMembershipTypeKeyForRole,
+  defaultMembershipTypeNameForRole,
   effectiveSubscriptionBehavior,
   ensureBuiltInMembershipTypes,
   isSubscriptionNotRequiredForMembershipType,
@@ -17,6 +18,7 @@ import {
   validateMembershipTypeRuleConfiguration,
 } from "@/lib/membership-types";
 import { ROLE_VALUES } from "@/lib/member-roles";
+import type { Role } from "@prisma/client";
 
 function readRepoFile(relativePath: string) {
   // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
@@ -177,12 +179,21 @@ describe("built-in membership type seed helpers", () => {
 
   it("keeps role-to-type defaults separate from access role semantics", () => {
     expect(defaultMembershipTypeKeyForRole("USER")).toBe("FULL");
-    expect(defaultMembershipTypeKeyForRole("MEMBER")).toBe("FULL");
     // #2149: operational roles fall back to their own NOT_REQUIRED types.
     expect(defaultMembershipTypeKeyForRole("ADMIN")).toBe("ADMIN");
     expect(defaultMembershipTypeKeyForRole("LODGE")).toBe("LODGE");
     expect(defaultMembershipTypeKeyForRole("SCHOOL")).toBe("SCHOOL");
     expect(defaultMembershipTypeKeyForRole("NON_MEMBER")).toBe("NON_MEMBER");
+  });
+
+  it("accepts only a Role, so an unknown string cannot fall through to the billable FULL type (#5407)", () => {
+    // Type-level: `pnpm run typecheck` checks these. Widening any of the three
+    // back to `Role | string` fails them.
+    expectTypeOf(defaultMembershipTypeKeyForRole).parameter(0).toEqualTypeOf<Role>();
+    expectTypeOf(defaultMembershipTypeNameForRole).parameter(0).toEqualTypeOf<Role>();
+    expectTypeOf(effectiveSubscriptionBehavior).parameter(1).toEqualTypeOf<Role>();
+    // @ts-expect-error a membership-type key is not a Role
+    expect(defaultMembershipTypeKeyForRole("MEMBER")).toBe("FULL");
   });
 
   describe("shared subscription-required derivation (#2149)", () => {

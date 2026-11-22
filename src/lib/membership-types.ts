@@ -405,8 +405,15 @@ export async function buildUniqueMembershipTypeKey(
     Boolean(await db.membershipType.findUnique({ where: { key }, select: { id: true } })));
 }
 
+/**
+ * The built-in type a role falls back to when a member has no season
+ * assignment. Takes `Role` only (#5407): `USER` and any unlisted value fall
+ * through to the billable `FULL`, so an arbitrary string here could put a
+ * member on a type that owes a subscription. A caller holding a wider value
+ * narrows it at its own boundary (`isRole`, `isNonMemberRole`).
+ */
 export function defaultMembershipTypeKeyForRole(
-  role: Role | string,
+  role: Role,
 ): BuiltInMembershipTypeKey {
   if (role === "SCHOOL") {
     return "SCHOOL";
@@ -459,7 +466,7 @@ export function storedRoleDefaultMembershipTypeWhere(keys: string[]) {
  * caller is a client component that already holds the club's types.
  */
 export function defaultMembershipTypeNameForRole(
-  role: Role | string,
+  role: Role,
   liveTypes?: ReadonlyArray<{ key: string; name: string }>,
 ): string {
   const key = defaultMembershipTypeKeyForRole(role);
@@ -480,7 +487,7 @@ export function defaultMembershipTypeNameForRole(
  */
 export function effectiveSubscriptionBehavior(
   assignmentBehavior: MembershipTypeSubscriptionBehavior | null | undefined,
-  role: Role | string,
+  role: Role,
 ): MembershipTypeSubscriptionBehavior {
   if (assignmentBehavior) {
     return assignmentBehavior;
