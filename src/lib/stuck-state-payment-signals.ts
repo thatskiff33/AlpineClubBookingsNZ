@@ -9,7 +9,7 @@ import type { PaymentRecoveryOperationType, Prisma } from "@prisma/client";
 import { BOOKING_OWNER_NAME_SELECT, bookingOwnerName } from "@/lib/booking-owner-name";
 import { formatBookingReference } from "@/lib/booking-reference";
 import { groupSettlementReapDeadline } from "@/lib/cron-group-settlement-reaper";
-import { SETTLEMENT_MARKER_EVENT_REASONS } from "@/lib/manual-settlement-reversal-event";
+import { NOT_A_SETTLEMENT_MARKER_WHERE } from "@/lib/manual-settlement-reversal-event";
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS, PAYMENT_RECOVERY_EXHAUSTED_WHERE } from "@/lib/payment-recovery-constants";
 
 export const PAYMENT_PROCESSING_STALE_MINUTES = 30;
@@ -178,20 +178,13 @@ function cancelledRefundUnrecordedWhere(now: Date) {
       // twin of booking-narrative's isManualSettlementMarkerEvent
       // exclusion, keyed on the markers' constant `reason` strings (the
       // snapshot discriminator is not expressible in this relation
-      // filter). The OR keeps a NULL-reason genuine cancel event counted —
-      // a bare notIn would drop NULL rows under SQL three-valued logic.
+      // filter); `NOT_A_SETTLEMENT_MARKER_WHERE` keeps a NULL-reason
+      // genuine cancel event counted.
       // #2008's duplicate-capture marker does NOT share this shape (it is
       // a REFUNDED event), so it needs no exclusion here.
       none: {
         type: "CANCELLED",
-        OR: [
-          { reason: null },
-          {
-            reason: {
-              notIn: [...SETTLEMENT_MARKER_EVENT_REASONS],
-            },
-          },
-        ],
+        ...NOT_A_SETTLEMENT_MARKER_WHERE,
       },
     },
   } satisfies Prisma.BookingWhereInput;

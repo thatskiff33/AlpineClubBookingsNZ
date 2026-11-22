@@ -13,6 +13,7 @@ import { loadLoginSecuritySettings } from "@/lib/login-security-settings";
 import { buildPasswordSchema } from "@/lib/password-policy";
 import { breachedPasswordRefusal, screenChosenPassword } from "@/lib/breached-password";
 import { clearPasswordAttempts } from "@/lib/login-throttle";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 // The password field is validated against the club's configured login-security
 // policy (min length + optional character classes; hard 128 ceiling always).
@@ -27,12 +28,11 @@ export async function POST(req: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.resetPassword, req);
   if (rateLimited) return rateLimited;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   try {
     const { policy } = await loadLoginSecuritySettings();

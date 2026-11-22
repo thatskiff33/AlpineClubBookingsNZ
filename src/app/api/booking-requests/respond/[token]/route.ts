@@ -9,6 +9,7 @@ import {
 } from "@/lib/booking-request-quotes";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const responseSchema = z.object({
   action: z.enum(["ACCEPT", "CANCEL", "MODIFY", "QUERY"]),
@@ -55,12 +56,11 @@ export async function POST(
     return invalidQuoteResponse();
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = responseSchema.safeParse(body);
   if (!parsed.success) {

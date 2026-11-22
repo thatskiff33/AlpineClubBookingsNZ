@@ -814,7 +814,7 @@ must reach its handler with the same arguments as the payload it was queued
 with. The retry is pinned by `xero-operation-retry.test.ts` and, against a real
 database, `xero-subscription-invoice-retry.realdb.test.ts`.
 
-## Alpine Central Server API version (#49)
+## Alpine Central Server API version (triyder/AlpineClubBookingsNZ#49)
 
 ### INV-INT-027
 

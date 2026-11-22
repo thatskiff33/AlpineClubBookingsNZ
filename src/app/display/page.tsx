@@ -5,7 +5,7 @@ import { clubTimeZone } from "@/lib/club-time/server";
 import { DisplayScreen } from "./display-screen";
 import "./display.css";
 
-// The lobby TV display page (fork issue #32, epic #25): a full-screen,
+// The lobby TV display page (fork issue hoppers99/AlpineClubBookingsNZ#32, epic hoppers99/AlpineClubBookingsNZ#25): a full-screen,
 // read-only, non-interactive surface. Auth is the display-token cookie
 // (ADR-001) — an unpaired browser sees only a pairing code. The lobbyDisplay
 // module flag gates this whole route at the proxy (404 when off).
@@ -15,7 +15,7 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-// Must render per-request (fork issue #54): the CSP is nonce-only in
+// Must render per-request (fork issue hoppers99/AlpineClubBookingsNZ#54): the CSP is nonce-only in
 // production and Next stamps the nonce into its inline bootstrap scripts
 // only during dynamic rendering. A statically prerendered /display ships
 // unnonced inline scripts, the browser blocks them, and this client-shell
@@ -36,7 +36,7 @@ export const dynamic = "force-dynamic";
   pattern everywhere else. `/display` sits outside both route-group chrome
   components on purpose: it is an unattended kiosk that shares none of the
   application's shell, and its sibling `error.tsx` is held at ZERO data
-  dependencies (issue #176, ADR-003 §5) precisely so a wall screen can never
+  dependencies (issue hoppers99/AlpineClubBookingsNZ#176, ADR-003 §5) precisely so a wall screen can never
   throw from its own fallback. A provider mounted here would not cover that error
   boundary anyway — Next renders one outside the layout whose subtree threw — so
   it would make two of the three `/display` surfaces zoned and leave the third

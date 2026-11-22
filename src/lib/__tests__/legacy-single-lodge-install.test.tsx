@@ -1,15 +1,15 @@
 // @vitest-environment jsdom
 
-// #160 — Backward-compat (#123 / ADR-005): a genuine legacy-install simulation.
+// hoppers99/AlpineClubBookingsNZ#160 — Backward-compat (hoppers99/AlpineClubBookingsNZ#123 / ADR-005): a genuine legacy-install simulation.
 //
-// Epic #123 promised existing single-lodge installs keep working transparently
+// Epic hoppers99/AlpineClubBookingsNZ#123 promised existing single-lodge installs keep working transparently
 // once multi-lodge became always-on core (ADR-005). The only prior guard was
 // the near-tautological route-gating test in feature-routes.test.ts, which
 // never exercised real legacy state. This suite seeds an actual pre-removal
 // single-lodge install and drives the surfaces that must stay unchanged:
 //
 //   1. A persisted ClubModuleSettings row still physically carrying the retired
-//      `multiLodge` flag (the pre-#128 state). The live schema keeps the column
+//      `multiLodge` flag (the state before hoppers99/AlpineClubBookingsNZ#128). The live schema keeps the column
 //      vestigial and `@ignore`d (see ADR-005 "Schema safety",
 //      hoppers99/AlpineClubBookingsNZ#139 and #5396), and every read goes
 //      through CLUB_MODULE_SETTINGS_COLUMN_SELECT, which does NOT name it — so
@@ -23,7 +23,7 @@
 // module-settings load path tolerates the stale row; and a booking-path
 // capacity read resolves identically to the documented single-lodge behaviour
 // (docs/CAPACITY_MODEL.md scenario table). Every ClubModuleSettings read is
-// asserted to use the explicit column select, composing with the #153 static
+// asserted to use the explicit column select, composing with the hoppers99/AlpineClubBookingsNZ#153 static
 // guard (club-module-settings-select-guard.test.ts) which stays green.
 //
 // TEST-ONLY: no production code is changed by this issue.
@@ -80,7 +80,7 @@ const LEGACY_LODGES = [
 
 // The persisted ClubModuleSettings singleton as a PRE-REMOVAL install still
 // holds it: every live module column at its default, PLUS the retired
-// `multiLodge` flag still physically set (the state before #128 stopped
+// `multiLodge` flag still physically set (the state before hoppers99/AlpineClubBookingsNZ#128 stopped
 // reading/writing it). `multiLodge` is intentionally not a MODULE_KEY, so the
 // normalise/load path must ignore it without error, and the column select must
 // never name it.
@@ -181,7 +181,7 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("legacy install: module-settings load path tolerates the stale row", () => {
-  it("the column select never names the retired multiLodge column (#153 invariant)", () => {
+  it("the column select never names the retired multiLodge column (hoppers99/AlpineClubBookingsNZ#153 invariant)", () => {
     expect("multiLodge" in CLUB_MODULE_SETTINGS_COLUMN_SELECT).toBe(false);
   });
 
@@ -241,7 +241,7 @@ describe("legacy install: admin sidebar shows the single Lodges entry", () => {
     // and unique regardless of the (now retired) multiLodge flag.
     expect(labels.filter((label) => label === "Lodges")).toEqual(["Lodges"]);
     // The lodge-scoped editors are reached as Configure cards under the hub,
-    // not as standalone sidebar entries (#130).
+    // not as standalone sidebar entries (hoppers99/AlpineClubBookingsNZ#130).
     expect(labels).not.toContain("Chores");
     expect(labels).not.toContain("Lockers");
     expect(labels).not.toContain("Hut Fees & Seasons");

@@ -13,7 +13,7 @@ import { requireAdmin } from "@/lib/session-guards";
 
 /**
  * GET|PUT /api/admin/lodges/[id]/central-lodge — which lodge in the Alpine
- * Central Server's registry THIS lodge is (#62, owner decision D5).
+ * Central Server's registry THIS lodge is (triyder/AlpineClubBookingsNZ#62, owner decision D5).
  *
  * The central server asks this site how many beds are free at one of the
  * lodges it says the club owns, naming it by its permanent central id. This

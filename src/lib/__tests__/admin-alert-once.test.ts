@@ -279,3 +279,38 @@ describe("sendAdminAlertOnceEver reads what the alert's email rows did", () => {
     expect(takeOnceEverClaim()).toBeNull();
   });
 });
+
+/**
+ * #5407 review: when every copy failed before its EmailLog row existed,
+ * `sendToAdmins` now reports the alert undelivered rather than queued for the
+ * retry cron, which has nothing to replay. The once-ever claim is then held a
+ * day and the next run tries again, where it used to be kept and the alert
+ * lost.
+ */
+describe("sendAdminAlertOnceEver when every copy failed before its row (#5407)", () => {
+  const EVERY_COPY_LOST_BEFORE_ITS_ROW = {
+    deliveryAllowed: true,
+    recipients: 2,
+    sent: 0,
+    queuedForRetry: 0,
+    notDelivered: 2,
+    failedBeforeLogged: 2,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.claimAlertCooldown.mockResolvedValue(true);
+  });
+
+  it("holds the claim a day rather than keeping it for good", async () => {
+    const send = vi.fn(async () => EVERY_COPY_LOST_BEFORE_ITS_ROW);
+
+    // Not kept for good: deferred, so the claim is back a day later.
+    await expect(sendAdminAlertOnceEver({ key: "once:5407", label: "test alert", context: {}, send })).resolves.toBe(false);
+
+    expect(mocks.deferAlertCooldown).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "once:5407", retryAfterMs: 86_400_000 }),
+    );
+    expect(mocks.releaseAlertCooldown).not.toHaveBeenCalled();
+  });
+});

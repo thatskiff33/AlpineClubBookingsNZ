@@ -25,15 +25,16 @@
  * that a stored day becomes a `CalendarDate` at the boundary and stays one
  * (`docs/CLUB_TIME_KERNEL.md`). Putting this in `src/lib/club-time/**` would
  * make the round trip look like the recommended shape, which it is not — it is a
- * bridge for call sites whose comparisons are still written in `Date`s, and CT-6
- * (#2991) is where those comparisons become calendar-date comparisons and this
- * module goes away.
+ * bridge for call sites whose comparisons are still written in `Date`s. #2991
+ * (CT-6) closed without converting them, so this module stays until those
+ * comparisons become calendar-date comparisons.
  *
  * ## Why it is here rather than in `date-only.ts`
  *
- * That module is the legacy adapter CT-6 deletes, and it reads `APP_TIME_ZONE`.
- * Adding a new helper to it would put six more files onto the module CT-4's last
- * group is trying to leave, for no gain.
+ * That module is the legacy adapter #2991 (CT-6) closed with, kept as a reviewed
+ * adapter whose zone parameters are all required. Adding a new helper to it
+ * would put six more files onto the module CT-4's last group was trying to
+ * leave, for no gain.
  *
  * ## The defect the six copies were fixing
  *

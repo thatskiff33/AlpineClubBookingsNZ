@@ -84,12 +84,12 @@ export const BED_ALLOCATION_SETTINGS_FILE = "bed-allocation-settings.json";
 
 const LODGE_FIELDS = [
   "slug", "name", "active", "travelNote", "doorCode", "isDefault",
-  // Lobby display settings (fork epic #25 / issue #50): the per-lodge
+  // Lobby display settings (fork epic hoppers99/AlpineClubBookingsNZ#25 / issue hoppers99/AlpineClubBookingsNZ#50): the per-lodge
   // {{config:<key>}} glob, the name-granularity override, and the committee
   // notice travel with the lodge descriptor.
   "displayConfig", "displayNameGranularity", "displayNotice",
   // Whether opted-in adult guest phone numbers may show on the public lobby
-  // display (#137 / #37). Travels with the lodge descriptor like the other
+  // display (hoppers99/AlpineClubBookingsNZ#137 / hoppers99/AlpineClubBookingsNZ#37). Travels with the lodge descriptor like the other
   // per-lodge display settings.
   "showGuestPhonesOnScreens",
   // Not a Lodge column: see ./lodge-capacity.ts (#3407).
@@ -556,7 +556,7 @@ function parseLodgeFolder(
   const lodge = batch.lodges.get(slug) ?? null;
   const lodgeId = lodge?.id ?? null;
 
-  // Display settings validation (issue #50): invalid values are errors (which
+  // Display settings validation (issue hoppers99/AlpineClubBookingsNZ#50): invalid values are errors (which
   // block apply) and the offending key is dropped so no partial write occurs.
   if ("displayNameGranularity" in descriptor && descriptor.displayNameGranularity !== null) {
     const value = asStr(descriptor.displayNameGranularity);

@@ -86,7 +86,7 @@ export type BatchModificationTransactionResult =
           confirmOverCapacity: boolean;
         })
       | null;
-    /** Fork #119: set only on an officer's work-party correction, for the audit. */
+    /** Fork triyder/AlpineClubBookingsNZ#119: set only on an officer's work-party correction, for the audit. */
     officerWorkPartyCorrection: OfficerWorkPartyCorrection | null;
     notifyMember: boolean;
     capacityOverridden: boolean;

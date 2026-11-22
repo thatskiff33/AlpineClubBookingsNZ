@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
@@ -73,12 +74,9 @@ export async function PUT(
   if (!guard.ok) return guard.response;
   const { id } = await params;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const parsedJson = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!parsedJson.ok) return parsedJson.response;
+  const body = parsedJson.body;
 
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) {
@@ -163,12 +161,9 @@ export async function PATCH(
   if (!guard.ok) return guard.response;
   const { id } = await params;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {

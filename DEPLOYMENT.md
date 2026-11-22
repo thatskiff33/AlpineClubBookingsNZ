@@ -819,13 +819,18 @@ echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u <owner> --password-stdin
 
 Do not store that token in the repository or `.env`.
 
-Every push to `main` gets a CI run of its own that runs to completion; a later
-merge never cancels or replaces it (`INV-OPS-021`). So a `main` commit has
-images exactly when its run's `Publish GHCR images` job succeeded — not merely
-because it is on `main`. A run whose `Publish GHCR images` job did not succeed
-(skipped after a failed gate, failed, or cancelled by hand) published nothing;
-re-run it with `gh run rerun <run-id>`. `pnpm run release:cut publish`
-asks GitHub for that job's result and will not tag a commit without images.
+A `main` commit has images exactly when its CI run's `Publish GHCR images`
+job succeeded, not merely because it is on `main`. A newer merge may replace
+`main`'s queued run, so an intermediate `main` commit can have no run and no
+images; a run that has started always finishes, and the newest `main` commit
+normally gets one (a manual re-run can replace its pending run; `INV-OPS-021`,
+#5356). A run whose `Publish GHCR images` job did not succeed (replaced while
+queued, skipped after a failed gate, failed, or cancelled by hand) published
+nothing; re-run it with `gh run rerun <run-id>`. A re-run joins `main`'s queue
+and replaces whatever is pending there, so start it only when nothing is
+pending on `main` (`gh run list --workflow ci.yml --branch main --status pending`).
+`pnpm run release:cut publish` tags `origin/main` by default, asks GitHub for
+that job's result, and will not tag a commit without images.
 
 ### Supply chain
 
@@ -835,9 +840,9 @@ workflow and composite-action references, including `docker://` actions.
 External images in the Dockerfile and Compose files keep readable tags and pin
 the multi-architecture index digest. Dependabot proposes Action and Docker
 updates for review. The pnpm minimum release age matches the npm Dependabot
-cooldown: seven days (`10080` minutes).
-The already-locked `nodemailer@10.2.1` has an exact-version exception so frozen
-installs work during rollout; remove it after the next Nodemailer update.
+cooldown: seven days (`10080` minutes). No version is exempt from it: the
+exact-version exception made during rollout, for the already-locked
+`nodemailer@10.2.1`, was removed once `main` had moved to a later Nodemailer.
 
 Both published images include a BuildKit SBOM and maximum build provenance,
 plus a GitHub build provenance attestation tied to the pushed image digest.

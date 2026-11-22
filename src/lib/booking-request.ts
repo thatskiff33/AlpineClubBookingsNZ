@@ -410,9 +410,9 @@ export async function getPublicBookingRequestLodges(
 
 /**
  * The external / partner lodges a requester may say they belong to (#2749).
- * id, name and the label to show (#69: with the location when names repeat). It backs a public form
+ * id, name and the label to show (triyder/AlpineClubBookingsNZ#69: with the location when names repeat). It backs a public form
  * drop-down. Always returned (even for one entry); a blank selection means "not a member of another lodge".
- * Hidden lodges are not offered, bar the `keepId` a record already names (#58).
+ * Hidden lodges are not offered, bar the `keepId` a record already names (triyder/AlpineClubBookingsNZ#58).
  */
 export async function getPublicOtherLodges(
   db: Pick<typeof prisma, "otherLodge"> = prisma, keepId: string | null = null
@@ -2977,7 +2977,7 @@ export function serializeBookingRequestForAdmin(
         : (request.lodge?.name ?? null),
     // Other/partner lodge the requester said they belong to (#2749). Null
     // otherLodgeId means "No"; otherLodgeName is present only when the caller
-    // included the otherLodge relation, with its location when that was read (#69: names may repeat).
+    // included the otherLodge relation, with its location when that was read (triyder/AlpineClubBookingsNZ#69: names may repeat).
     otherLodgeId: request.otherLodgeId,
     otherLodgeName: request.otherLodge ? otherLodgeNameWithLocation(request.otherLodge) : null,
     // Whole-lodge exclusivity (ADR-001). Emitted so the admin queue can badge

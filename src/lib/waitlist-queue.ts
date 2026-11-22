@@ -37,13 +37,14 @@ export const WAITLIST_QUEUE_ORDER_BY: Prisma.BookingOrderByWithRelationInput[] =
  *
  * #2258: an entry with the "No emails" switch on is NOT a candidate. Making an
  * offer stamps `waitlistOfferExpiresAt` and starts the offer clock; the offer
- * email goes out after commit. If that email were withheld, the entry would hold
- * a bed for the whole offer window with the member never told, then lapse via
+ * email goes out after commit. If that email were withheld, the offer would run
+ * its whole window with the member never told, then lapse via
  * `expireStaleOffers()`, and the admin board would show it as an undeliverable
- * offer email. Excluding the entry means the clock never starts: the place goes
- * to the next candidate, and the entry rejoins at its original join time when
- * the switch is cleared. It is not counted in anyone's position meanwhile
- * (owner decision, 22 Nov 2026, #5402; `INV-LOCKOUT-060`).
+ * offer email. (An offer holds no capacity, `INV-CAP-011`; the harm is the
+ * offer nobody can answer.) Excluding the entry means the clock never starts: the
+ * place goes to the next candidate, and the entry rejoins at its original join
+ * time when the switch is cleared. It is not counted in anyone's position
+ * meanwhile (owner decision, 22 Nov 2026, #5402; `INV-LOCKOUT-060`).
  */
 export function waitlistCandidateWhere(range: {
   checkIn: Date;
@@ -167,6 +168,98 @@ export function orderWaitlistOpportunities<T extends WaitlistQueueEntry>(
           compareOrdinal(a.candidate.id, b.candidate.id),
       )
     : [...own, ...cross];
+}
+
+/**
+ * One offer that lapsed (#5410): the booking, its join time (to order the
+ * passes, `compareWaitlistJoinOrder`), and the lodge whose place it was offered
+ * (`waitlistOfferedLodgeId` for a cross-lodge offer, else its own).
+ */
+export type WaitlistLapseKey = {
+  id: string;
+  createdAt: Date;
+  offeredLodgeId: string;
+};
+
+/**
+ * What `expireStaleOffers` hands one offer pass: the lapse whose place the pass
+ * re-offers, and every lapse of the same run (`key` included).
+ */
+export type WaitlistLapse = {
+  key: WaitlistLapseKey;
+  run: readonly WaitlistLapseKey[];
+};
+
+/**
+ * The order an offer pass walks: `orderWaitlistOpportunities`, then, for a pass
+ * that re-offers a lapsed place, `rotateWaitlistOpportunitiesAfterLapse`. Every
+ * caller but `expireStaleOffers` passes no lapse and walks the plain order.
+ */
+export function orderWaitlistOffers<T extends WaitlistQueueEntry>(
+  opportunities: {
+    own: readonly WaitlistOpportunity<T>[];
+    cross: readonly WaitlistOpportunity<T>[];
+  },
+  crossLodgeOrder: WaitlistCrossLodgeOrder | null,
+  lapse?: WaitlistLapse,
+): WaitlistOpportunity<T>[] {
+  return rotateWaitlistOpportunitiesAfterLapse(
+    orderWaitlistOpportunities(opportunities, crossLodgeOrder),
+    crossLodgeOrder,
+    lapse,
+  );
+}
+
+/**
+ * #5410 (`INV-CAP-042`): the walk for a pass that re-offers a lapsed place.
+ * It starts just after the lapsed opportunity, runs to the end, wraps to the
+ * front and reaches the lapsed opportunity last, so everyone else who fits is
+ * considered first and a queue of one is still re-offered. Any opportunity of
+ * another booking whose offer lapsed in the same run, at any lodge, is moved to
+ * just before it: those members have just had their turn too, so two lapsing
+ * together cannot pass the places between them while the queue behind waits.
+ *
+ * The lapsed opportunity itself is matched by booking and offered lodge, so a
+ * cross-lodge lapse moves only the opportunity at the offered lodge in its own
+ * pass. Under `OWN_LODGE_FIRST` each part (own-lodge, then cross-lodge) is
+ * rotated on its own, but the lapsed opportunities go after BOTH parts: a
+ * member who just lapsed is behind everyone who has not had the offer, opt-ins
+ * from other lodges included (owner decision, 23 Nov 2026, #5410). Under
+ * `MERGED` the list is one part. A key that matches nothing rotates nothing,
+ * but the run's other lapses still move to the end; with none, the order is
+ * unchanged. Never applied by the position reader: positions (`INV-CAP-041`) do
+ * not change when an offer lapses.
+ */
+function rotateWaitlistOpportunitiesAfterLapse<T extends WaitlistQueueEntry>(
+  ordered: readonly WaitlistOpportunity<T>[],
+  crossLodgeOrder: WaitlistCrossLodgeOrder | null,
+  lapse?: WaitlistLapse,
+): WaitlistOpportunity<T>[] {
+  if (!lapse) return [...ordered];
+  const matches = (opportunity: WaitlistOpportunity<T>, key: WaitlistLapseKey) =>
+    opportunity.candidate.id === key.id && opportunity.offerLodgeId === key.offeredLodgeId;
+  const isPivot = (opportunity: WaitlistOpportunity<T>) => matches(opportunity, lapse.key);
+  // By booking alone (owner decision, 23 Nov 2026): a member whose offer lapsed
+  // in this run is last for every place the run re-offers, at any lodge. The
+  // pivot's own booking is left out, so its other opportunity stays in place.
+  const isOtherLapse = (opportunity: WaitlistOpportunity<T>) =>
+    opportunity.candidate.id !== lapse.key.id &&
+    lapse.run.some((key) => key.id === opportunity.candidate.id);
+  const parts =
+    crossLodgeOrder === "MERGED"
+      ? [ordered]
+      : [ordered.filter((o) => !o.cross), ordered.filter((o) => o.cross)];
+  const walk = parts.flatMap((part) => {
+    const at = part.findIndex(isPivot);
+    return at === -1 ? part : [...part.slice(at + 1), ...part.slice(0, at + 1)];
+  });
+  // The lapses leave their part for the end of the whole walk (owner decision,
+  // 23 Nov 2026): "own lodge first" does not protect a member who just lapsed.
+  return [
+    ...walk.filter((o) => !isPivot(o) && !isOtherLapse(o)),
+    ...walk.filter(isOtherLapse),
+    ...walk.filter(isPivot),
+  ];
 }
 
 /** What the position reader needs to place a booking in its lodge's queue. */

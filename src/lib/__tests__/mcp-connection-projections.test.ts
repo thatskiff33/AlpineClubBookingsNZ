@@ -58,7 +58,8 @@ import { GET as getDrafts } from "@/app/api/bookings/drafts/route";
 import { GET as getCreditBalance } from "@/app/api/member/credit-balance/route";
 import { GET as getSubscriptionStatus } from "@/app/api/member/subscription-status/route";
 import { GET as getFamily } from "@/app/api/members/family/route";
-import { subscriptionStatusForConnection } from "@/lib/member-self-read";
+import { projectForConnection } from "@/lib/connection-projection";
+import { SUBSCRIPTION_STATUS_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 /** Every key anywhere in a JSON value, so a withheld field cannot hide in a nested object. */
 function allKeys(value: unknown, keys = new Set<string>()): Set<string> {
@@ -219,7 +220,7 @@ describe("GET /api/member/subscription-status", () => {
   });
 
   it("sends only named fields, so a field the website gains later does not reach a connection", () => {
-    expect(subscriptionStatusForConnection({ status: "PAID", invoiceUrl: "https://x", someNewField: "secret" })).toEqual({
+    expect(projectForConnection({ status: "PAID", invoiceUrl: "https://x", someNewField: "secret" }, SUBSCRIPTION_STATUS_CONNECTION_SHAPE)).toEqual({
       status: "PAID",
     });
   });

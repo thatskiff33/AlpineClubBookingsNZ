@@ -303,7 +303,7 @@ const REQUIRED_TOKEN_ALTERNATIVES: Partial<
 };
 
 const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
-  // Fork #121: an override that dropped the item list would send an empty order.
+  // Fork triyder/AlpineClubBookingsNZ#121: an override that dropped the item list would send an empty order.
   "food-order-placed": ["itemsText"],
   "booking-confirmed": [
     "CLUB_LODGE_TRAVEL_NOTE",
@@ -2222,7 +2222,7 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "summary",
   "answersText",
   "maintenanceReportUrl",
-  // Fork #121: the food-order email's tokens; none carries a bearer token or secret.
+  // Fork triyder/AlpineClubBookingsNZ#121: the food-order email's tokens; none carries a bearer token or secret.
   "officerLabel",
   "neededBy",
   "orderedBy",

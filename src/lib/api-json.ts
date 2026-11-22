@@ -1,27 +1,53 @@
 import { NextResponse } from "next/server";
 
 /**
- * The one 400 answer for a request body that is not valid JSON. Routes that
- * read the body their own way (for example accepting an empty body) still
- * answer with this, so the wording has one definition.
+ * The wordings an invalid-JSON 400 may carry besides the default. Each is a
+ * route's own text from before the shared reader existed, kept so that route
+ * answers with the same bytes. A new route does not add one: it uses the
+ * default.
  */
-export function invalidJsonBodyResponse(): NextResponse {
+type InvalidJsonWording =
+  | "Invalid JSON"
+  | "Invalid JSON payload"
+  | "Invalid JSON."
+  | "That post could not be read.";
+
+export type InvalidJsonBodyOptions = { error: InvalidJsonWording };
+
+/**
+ * The 400 answer for a request body that is not valid JSON: the default body
+ * with its `details`, or, when a route passes its own wording from the closed
+ * list, exactly `{ error }`, byte-identical to the inline copy it replaced.
+ * Three routes that read `text()` to accept an empty body and parse it
+ * themselves (members joining-fee preview, members xero-push and
+ * admin/mountain-conditions POST) answer an unparseable body through here, so
+ * the answer is still defined once.
+ */
+export function invalidJsonBodyResponse(
+  options?: InvalidJsonBodyOptions,
+): NextResponse {
   return NextResponse.json(
-    {
-      error: "Invalid JSON",
-      details: { body: ["Request body must be valid JSON"] },
-    },
+    options
+      ? // Built explicitly so an options object carrying extra fields cannot leak them.
+        { error: options.error }
+      : {
+          error: "Invalid JSON",
+          details: { body: ["Request body must be valid JSON"] },
+        },
     { status: 400 },
   );
 }
 
-export async function parseJsonRequestBody(request: Request): Promise<
+export async function parseJsonRequestBody(
+  request: Request,
+  options?: InvalidJsonBodyOptions,
+): Promise<
   | { ok: true; body: unknown }
   | { ok: false; response: NextResponse }
 > {
   try {
     return { ok: true, body: await request.json() };
   } catch {
-    return { ok: false, response: invalidJsonBodyResponse() };
+    return { ok: false, response: invalidJsonBodyResponse(options) };
   }
 }

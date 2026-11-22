@@ -39,7 +39,7 @@ import {
 import { useDisplayState, type DisplayPayload } from "./use-display-state";
 import { DisplayClubTimeProvider, HeaderClock, readPreviewState, useDisplayClubTime } from "./display-header-clock";
 
-// The lobby display screen (fork issue #32): full-screen, non-interactive,
+// The lobby display screen (fork issue hoppers99/AlpineClubBookingsNZ#32): full-screen, non-interactive,
 // driven entirely by the display-state payload + resolved template. States:
 // pairing (show the code, poll claim), active (render regions, rotate
 // eligible panels), stale (keep the last good render, badge it).
@@ -172,7 +172,7 @@ function Region({
 
   if (panels.length === 0) return <div className={`display-region display-region-${region.key}`} />;
 
-  // "stack" (issue #56): every eligible panel at once — the sidebar-card
+  // "stack" (issue hoppers99/AlpineClubBookingsNZ#56): every eligible panel at once — the sidebar-card
   // treatment; "rotate" (default): one panel at a time on the region timer.
   if (!rotates) {
     return (
@@ -240,7 +240,7 @@ function ModuleMount({ name, state }: { name: string; state: DisplayState }) {
 
 /**
  * Fill a container with server-sanitised html and return the inert marker
- * elements to portal Area/module components into (LTV-041, issue #96).
+ * elements to portal Area/module components into (LTV-041, issue hoppers99/AlpineClubBookingsNZ#96).
  *
  * The html is written IMPERATIVELY (`root.innerHTML = html`), NOT via React's
  * `dangerouslySetInnerHTML`: React refuses to mount a portal into a DOM node it
@@ -404,7 +404,7 @@ class AreaErrorBoundary extends Component<
 /**
  * The editable body: the whole (server-sanitised, value-resolved) bodyHtml set as
  * ONE innerHTML block, with each `<div data-display-area>` marker portalling its
- * Area (LTV-041, issue #96). Rendering the body whole — instead of splitting it
+ * Area (LTV-041, issue hoppers99/AlpineClubBookingsNZ#96). Rendering the body whole — instead of splitting it
  * into sibling fragments — is what lets an area sit INSIDE an authored container
  * (`<div class="two-plus-one"><div class="main-col">{{area:main}}</div>…`): the
  * grid keeps its children, the areas mount inside them. Each Area stays wrapped
@@ -456,7 +456,7 @@ function LayoutScreen({
   );
   const authoredFooter = layoutRender.footerHtml;
 
-  // Three ordered <style> tags — theme → layout → overrides (LTV-029, #75). The
+  // Three ordered <style> tags — theme → layout → overrides (LTV-029, hoppers99/AlpineClubBookingsNZ#75). The
   // club-theme variables are non-authored and unscoped (they define `--brand-*`
   // on :root); the layout default and template overrides are already sanitised
   // AND selector-scoped to `.display-authored-root` server-side, so they only
@@ -577,7 +577,7 @@ class LayoutErrorBoundary extends Component<
   }
 }
 
-/** The last-resort board (issue #176, ADR-003 §5 "Unattended surface"): the
+/** The last-resort board (issue hoppers99/AlpineClubBookingsNZ#176, ADR-003 §5 "Unattended surface"): the
  * fallback when even the FallbackBoard or the legacy ActiveScreen throws. It has
  * ZERO data dependencies — no payload, no template, no modules — so it can never
  * itself throw, and it keeps the wall on the branded dark shell rather than a
@@ -666,7 +666,7 @@ function DisplayScreenBody() {
   // built-ins as v2 rows (devices now bind them by templateId → LayoutScreen), so
   // this ActiveScreen path serves only a device with NO binding, plus it and the
   // Region renderer remain the zero-DB engine the FallbackBoard leans on.
-  // Unattended-safety contract (issue #176, ADR-003 §5): a throwing module/board
+  // Unattended-safety contract (issue hoppers99/AlpineClubBookingsNZ#176, ADR-003 §5): a throwing module/board
   // must NEVER blank the wall, so EVERY render branch is wrapped. The authored
   // branch degrades to the known-good FallbackBoard (its own boundary, as
   // before). The legacy ActiveScreen and the already-degraded FallbackBoard
