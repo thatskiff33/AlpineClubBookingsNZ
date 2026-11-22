@@ -95,15 +95,15 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 ## INV-PAY-043
 
 - **The settlement is recorded, never guessed** (#4211, owner decision 17 Oct
-  2026): the winning PAID claim (`payment-settler.ts`) writes
+  2026): the winning PAID claim (`payment-settler`) writes
   `Payment.settledByTransactionId` (a bank receipt's PRIMARY row only when
-  exactly one holds money), and the manual reversal clears it.
+  exactly one holds money); the manual reversal clears it.
 - **The recorded settler is never refunded.** Its redelivery is
   `already_paid` whatever else holds money, COMPLETED too (#4285).
 - **Every other card capture arriving on a PAID or COMPLETED booking is
   refunded** while the settler still holds net cash nothing else owns: a third
   capture, or a stray on a cash- or Xero-settled booking (#2262). Its alert
-  and refund history name the settlement.
+  and refund history name the settlement when a card settles it.
 - **What the superseded machinery holds** (an unsucceeded operation, or a
   succeeded refund failed later that open rows owe back in full, #4227) is
   never the settlement and, unless a dead cancel's, never refunded on top
@@ -113,20 +113,20 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - **No record, no automatic refund.** Paid before this release or by the
   old colour while another capture holds money, or a recorded settler no
   longer holding money, regardless: the arriving capture is kept
-  (`duplicate_capture_kept`, no second confirmation or invoice) and an
+  (`duplicate_capture_kept`, no second confirmation or invoice); an
   unmuteable alert asks for a check, daily per capture. An owned duplicate
   re-sends its refund.
 - **Limit:** PAID transitions no transaction settles (zero cash, full credit,
   $0 auto-pay, group settlement) never write it; a lone capture is
   kept and alerted unless a replay, retried until delivered or moot (#4285).
-  An unsettled saved-card capture is new money, judged as on arrival,
-  logged after 7 days (#5240, `STATE_MACHINES`).
+  Unsettled saved-card captures: new money, judged as arriving, or
+  alerted by day 7 if paid (#5240, `STATE_MACHINES`).
 - **One home**: `duplicate-capture-guard.ts`, sharing the Xero conflict's
   readings (#4283).
 - Decided under `lock(1)`, enqueued before Stripe, one operation per
   (booking, intent).
-- Proven by `issue-1992-duplicate-capture-refund`; on PostgreSQL by
-  `third-duplicate-capture` and `completed-redelivery`.
+- Proven by `issue-1992-duplicate-capture-refund`; on PostgreSQL,
+  `third-duplicate-capture`, `completed-redelivery`.
 
 ## INV-PAY-138
 

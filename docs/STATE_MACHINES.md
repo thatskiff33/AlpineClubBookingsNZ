@@ -2001,13 +2001,17 @@ it settles the booking, and that write records a "not yet settled" flag
 capture new money whatever its row's status, so a capture whose caller stopped
 or threw before the settle is still kept and alerted on its next arrival on a
 booking paid another way. A flag nothing consumes is checked by the same cron
-task an hour on: cleared for a capture gone, holding no money, or recorded as
-the settler. On a PAID or COMPLETED booking the guard judges it as its arrival
-would; only where that arrival would keep it and tell the admins `new-capture`
-does the flag become that owed alert, sent in that run. Any other verdict does
-not depend on the flag (for example another card is the settlement, so the arrival refunds
-it), so the flag waits for the webhook, as it does on an unpaid booking. A
-waiting flag is never re-stamped; at seven days the error is logged for a person
+task an hour on, in a transaction that reads the payment's recorded settler and
+claims the flag by its delete: cleared for a capture gone, holding no money, or
+recorded as the settler. On a PAID or COMPLETED booking the guard judges it as
+its arrival would. Kept and told, for any reason: the flag becomes the owed
+alert, sent in that run. Kept silently (the superseded or duplicate-capture
+machinery owns it): the flag is cleared. Refunded, because another card is the
+settlement: the flag waits for the webhook, which refunds it, so nobody is told
+"kept" about money then refunded; at seven days Stripe's retries are over, so
+it becomes the owed alert instead, as does a capture no longer `SUCCEEDED`. A
+flag on any other booking waits for its webhook. A waiting flag is never
+re-stamped; at seven days on any other booking the error is logged for a person
 to check, and only then is the flag cleared, so a crash between the two repeats
 the log rather than losing it. Every due flag is read on each run, a page at a
 time, so waiting flags never hide a newer one, and a failure of this step as a
