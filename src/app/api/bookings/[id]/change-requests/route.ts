@@ -17,7 +17,6 @@ import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { checkRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
-import { z } from "zod";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import {
   memberBookingChangeRequestSelect,
@@ -35,7 +34,7 @@ import {
   CHANGE_REQUEST_DEPENDANT_TYPED_MESSAGE,
 } from "@/lib/booking-change-request-guests";
 import {
-  changeRequestDeltaSchema,
+  changeRequestCreateSchema,
   unknownChangeRequestGuestRefusal,
   validateChangeRequestDatesAndNights,
 } from "@/lib/booking-change-request-input";
@@ -44,14 +43,24 @@ import {
   checkOwnDependantIdentityForParty,
   claimedMemberPathIds,
 } from "@/lib/booking-dependant-identity";
-import { changeRequestPromoChangeSchema } from "@/lib/booking-change-request-promo";
 import { finishedStayPromoCorrectionRequestResponse } from "@/lib/booking-change-request-promo-submit";
+import {
+  BOOKING_CHANGE_REQUEST_CONNECTION_SHAPE,
+  BOOKING_CHANGE_REQUEST_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes";
+import {
+  arrivesAsMcpConnection,
+  connectionJson,
+  memberOnlySessionUser,
+} from "@/lib/mcp-connection-request";
 
-const createChangeRequestSchema = changeRequestDeltaSchema.extend({
-  reason: z.string().max(2000).optional(),
-  // #4533: an officer's promo correction on a finished stay (Edit Booking).
-  promoChange: changeRequestPromoChangeSchema.optional(),
-});
+/*
+ * ALP-794: also the AI app actions `request_booking_change` (POST) and
+ * `list_booking_change_requests` (GET). Both act as the member only: the
+ * officer role below is read from the member-only user, so a connection never
+ * files on another member's booking, raises an officer's promo correction
+ * (#4533), or is judged by the officer's edit policy.
+ */
 
 function normalizeReason(value: string | undefined) {
   const trimmed = value?.trim();
@@ -147,7 +156,7 @@ export async function POST(
   // Issue #1313 (option A2): a Booking Officer (bookings:edit) resolves to ADMIN,
   // gaining the same authority and admin-on-behalf edit policy as a Full Admin;
   // member/read-only stay USER.
-  const actorRole = bookingManagementAuthorizationRole(session.user);
+  const actorRole = bookingManagementAuthorizationRole(memberOnlySessionUser(req, session.user));
   const isAdmin = actorRole === "ADMIN";
 
   const { id: bookingId } = await params;
@@ -197,7 +206,7 @@ export async function POST(
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = createChangeRequestSchema.safeParse(body);
+  const parsed = changeRequestCreateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: changeRequestValidationMessage(parsed.error), details: parsed.error.flatten() },
@@ -467,13 +476,13 @@ export async function POST(
   // Re-projected as well as selected, for the same reason the GET is: the select
   // is the guard that matters in production, and the whitelist copy is what still
   // holds if this query is ever an `include:` again.
-  return NextResponse.json(projectMemberBookingChangeRequest(changeRequest), {
+  return connectionJson(req, projectMemberBookingChangeRequest(changeRequest), BOOKING_CHANGE_REQUEST_CONNECTION_SHAPE, {
     status: 201,
   });
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth();
@@ -485,7 +494,7 @@ export async function GET(
   // Issue #1313 (option A2): owner, Full Admin, or Booking Officer (bookings:edit)
   // may list a booking's change requests.
   const isAdmin =
-    bookingManagementAuthorizationRole(session.user) === "ADMIN";
+    bookingManagementAuthorizationRole(memberOnlySessionUser(req, session.user)) === "ADMIN";
 
   const { id: bookingId } = await params;
   const booking = await prisma.booking.findUnique({
@@ -540,6 +549,12 @@ export async function GET(
   });
 
   // Projected again on the way out (see the manifest module): the select is the
-  // guarantee, this is the backstop for the day somebody rewrites the query.
-  return NextResponse.json(requests.map(projectMemberBookingChangeRequest));
+  // guarantee, this is the backstop for the day somebody rewrites the query. A
+  // connection's answer is `{ changeRequests }`, an object its allow-list can
+  // project; the website's is the bare list, unchanged.
+  const projected = requests.map(projectMemberBookingChangeRequest);
+  if (arrivesAsMcpConnection(req)) {
+    return connectionJson(req, { changeRequests: projected }, BOOKING_CHANGE_REQUEST_LIST_CONNECTION_SHAPE);
+  }
+  return NextResponse.json(projected);
 }

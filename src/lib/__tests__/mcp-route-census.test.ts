@@ -32,7 +32,15 @@ const HTTP_METHODS: ReadonlySet<string> = new Set(STEP_UP_HTTP_METHODS);
  * nothing, which a reviewer checked against the route. A view-only connection
  * runs them and no audit row is written, so adding one here is a decision.
  */
-const PREVIEW_ROUTE_KEYS: readonly string[] = [];
+const PREVIEW_ROUTE_KEYS: readonly string[] = [
+  // ALP-794: prices and checks, which read and write nothing but, on a
+  // refused cross-family guest, the member-guest probe throttle and its audit
+  // row (#2388), the same as the website's own call.
+  "POST src/app/api/bookings/quote/route.ts",
+  "POST src/app/api/bookings/[id]/modify-quote/route.ts",
+  "POST src/app/api/bookings/[id]/change-requests/quote/route.ts",
+  "POST src/app/api/promo-codes/validate/route.ts",
+];
 
 /** The HTTP methods a route file exports, however it spells the export. */
 function exportedMethods(file: string): string[] {

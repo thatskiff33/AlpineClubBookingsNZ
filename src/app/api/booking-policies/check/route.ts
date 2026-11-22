@@ -5,22 +5,15 @@ import {
   validateMinimumStay,
   formatViolationsDetail,
 } from "@/lib/booking-policies"
-import { z } from "zod"
-import { parsedDateOnlySchema } from "@/lib/date-only-schema"
+import { bookingPolicyCheckQuerySchema } from "@/lib/booking-stay-check-query"
+import { BOOKING_RULES_CONNECTION_SHAPE } from "@/lib/connection-shapes"
+import { connectionJson } from "@/lib/mcp-connection-request"
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges"
 import { prisma } from "@/lib/prisma"
 import { loadCancellationPolicy } from "@/lib/cancellation"
 import { describeCancellationSchedule } from "@/lib/cancellation-schedule"
 import { clubFormat } from "@/lib/club-format-server"
 import logger from "@/lib/logger"
-
-const bookingPolicyCheckQuerySchema = z.object({
-  checkIn: parsedDateOnlySchema,
-  checkOut: parsedDateOnlySchema,
-  // Lodge being booked (multi-lodge phase 8): minimum-stay overrides resolve
-  // per lodge. Omitted = the club's default lodge.
-  lodgeId: z.string().min(1).nullish(),
-})
 
 export async function GET(request: NextRequest) {
   const guard = await requireActiveSession()
@@ -62,13 +55,14 @@ export async function GET(request: NextRequest) {
   const result = await validateMinimumStay(checkIn, checkOut, effectiveLodgeId)
   const review = aggregatePolicyExceptionViolations(result.violations)
 
-  return NextResponse.json({
+  // Also the AI app action `check_booking_rules` (ALP-794).
+  return connectionJson(request, {
     valid: result.valid,
     violations: review.violations,
     exceptionReview: review,
     message: result.valid ? null : formatViolationsDetail(result.violations),
     cancellationSchedule: await loadCancellationScheduleRows(checkIn, effectiveLodgeId),
-  })
+  }, BOOKING_RULES_CONNECTION_SHAPE)
 }
 
 /**

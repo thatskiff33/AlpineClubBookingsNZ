@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { auth } from "@/lib/auth";
@@ -10,10 +9,16 @@ import {
 } from "@/lib/requested-room-write";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
+import { requestedRoomUpdateSchema } from "@/lib/booking-detail-edit-schemas";
+import { REQUESTED_ROOM_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 
-const requestedRoomSchema = z
-  .object({ requestedRoomId: z.string().min(1) })
-  .strict();
+/*
+ * The member's requested room. Also the AI app actions `set_my_requested_room`
+ * and `clear_my_requested_room` (ALP-794): `actorIsAdmin` reads the
+ * member-only user, so a connection never gets a Full Admin's reach to
+ * another member's booking or past an approved bed allocation.
+ */
 
 async function requireRoomRequestsEnabled() {
   const modules = await loadEffectiveModuleFlags();
@@ -57,7 +62,7 @@ export async function PUT(
   const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
-  const parsed = requestedRoomSchema.safeParse(body);
+  const parsed = requestedRoomUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -70,18 +75,18 @@ export async function PUT(
     const updated = await writeRequestedRoom({
       bookingId: id,
       actorMemberId: session.user.id,
-      actorIsAdmin: hasAdminAccess(session.user),
+      actorIsAdmin: hasAdminAccess(memberOnlySessionUser(req, session.user)),
       requestedRoomId: parsed.data.requestedRoomId,
       auditActorLabel: "Member",
     });
-    return NextResponse.json(updated);
+    return connectionJson(req, updated, REQUESTED_ROOM_CONNECTION_SHAPE);
   } catch (error) {
     return errorResponse(error, id);
   }
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await auth();
@@ -98,11 +103,11 @@ export async function DELETE(
     const updated = await writeRequestedRoom({
       bookingId: id,
       actorMemberId: session.user.id,
-      actorIsAdmin: hasAdminAccess(session.user),
+      actorIsAdmin: hasAdminAccess(memberOnlySessionUser(req, session.user)),
       requestedRoomId: null,
       auditActorLabel: "Member",
     });
-    return NextResponse.json(updated);
+    return connectionJson(req, updated, REQUESTED_ROOM_CONNECTION_SHAPE);
   } catch (error) {
     return errorResponse(error, id);
   }

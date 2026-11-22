@@ -169,6 +169,8 @@ import { overCapacityNights } from "@/lib/over-capacity-confirmation";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
+import { BOOKING_CHANGE_QUOTE_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 import {
   findBookingMemberNightConflicts,
   getBookingMemberNightConflictResponse,
@@ -325,7 +327,11 @@ export async function POST(
   // every isAdmin branch below (skip member-night authorization, locked-period,
   // unpaid-subscription, and minimum-stay checks) applies to them identically to
   // a Full Admin. Full Admin already resolves to ADMIN; member/read-only stay USER.
-  const actorRole = bookingManagementAuthorizationRole(session.user);
+  //
+  // ALP-794: also the AI app preview `quote_booking_change`, which changes
+  // nothing and acts as the member only, so its role is read from the
+  // member-only user and none of those officer branches open for it.
+  const actorRole = bookingManagementAuthorizationRole(memberOnlySessionUser(request, session.user));
   const isAdmin = actorRole === "ADMIN";
 
   const { id: bookingId } = await params;
@@ -843,7 +849,7 @@ export async function POST(
     const refused = await dependantIdentityResponse([], new Set());
     if (refused) return refused;
     const unchangedFigures = unchangedPriceQuotedFigures(booking.finalPriceCents);
-    return NextResponse.json({
+    return connectionJson(request, {
       availableCreditCents,
       newTotalPriceCents: booking.totalPriceCents,
       newDiscountCents: booking.discountCents,
@@ -873,7 +879,7 @@ export async function POST(
               },
             ]
           : [],
-    });
+    }, BOOKING_CHANGE_QUOTE_CONNECTION_SHAPE);
   }
 
   // "+ Add Member Guest" (epic #2305, MG2 #2307). A PREVIEW: it writes no rows, so
@@ -2302,7 +2308,7 @@ export async function POST(
     db: prisma,
   });
 
-  return NextResponse.json({
+  return connectionJson(request, {
     // #4924 (`INV-MOD-062`): the figures the panel sends back on Save, where the
     // save refuses 409 `EDIT_PRICE_CHANGED` if its own differ. The same values
     // as the fields below; `netChargeCents` is before the unpaid-ask offset.
@@ -2357,5 +2363,5 @@ export async function POST(
       ? { overCapacityConfirmRequired: true }
       : {}),
     ...capacityRefusalFields,
-  });
+  }, BOOKING_CHANGE_QUOTE_CONNECTION_SHAPE);
 }

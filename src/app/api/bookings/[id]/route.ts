@@ -11,6 +11,8 @@ import { getClientIp } from "@/lib/rate-limit";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
+import { DRAFT_DELETED_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
 
 const deleteBookingBodySchema = z
   .object({
@@ -39,6 +41,11 @@ async function readDeleteBody(request: NextRequest) {
  *
  * Added for AI app connections (ALP-653), so it is absent while that module is
  * off (`INV-MCP-001`). DELETE below is older and is not.
+ *
+ * DELETE is also the AI app action `delete_my_draft_booking` (ALP-794). Its
+ * role is read from the member-only user, so a connection deletes only the
+ * member's own draft: a cancelled booking's soft delete is an officer's
+ * (`deleteBooking`).
  */
 export async function GET(
   _request: NextRequest,
@@ -107,14 +114,14 @@ export async function DELETE(
       bookingId: parsedParams.data.id,
       actor: {
         memberId: session.user.id,
-        role: authorizationRoleFromAccessRoles(session.user),
+        role: authorizationRoleFromAccessRoles(memberOnlySessionUser(request, session.user)),
         ipAddress: getClientIp(request),
       },
       reason: parsedBody.data.reason,
     });
 
     if (result.status === 200) {
-      return NextResponse.json(result.data);
+      return connectionJson(request, result.data, DRAFT_DELETED_CONNECTION_SHAPE);
     }
 
     return NextResponse.json(

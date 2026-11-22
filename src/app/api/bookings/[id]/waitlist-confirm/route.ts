@@ -40,6 +40,8 @@ import { clubFormatValues } from "@/lib/club-format-server";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { WAITLIST_OFFER_ACCEPTED_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * #2623 T4 — budgets for the compensating offer release.
@@ -82,8 +84,23 @@ function contendedStatus(error: unknown): 503 | 500 {
   return isTransactionContention(error) ? 503 : 500;
 }
 
+/**
+ * A successful accept. Also the AI app action `accept_waitlist_offer`
+ * (ALP-794), whose answer carries the `id` of the booking the member now pays
+ * for (the new one on a cross-lodge offer), so the app can send them to it.
+ * The website's answer is unchanged. Only the booking's own member may accept
+ * (`confirmWaitlistOffer`): there is no officer branch to narrow.
+ */
+function acceptedAnswer(request: NextRequest, bookingId: string, body: Record<string, unknown>) {
+  return connectionJson(
+    request,
+    arrivesAsMcpConnection(request) ? { id: bookingId, ...body } : body,
+    WAITLIST_OFFER_ACCEPTED_CONNECTION_SHAPE,
+  );
+}
+
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth();
@@ -183,7 +200,7 @@ export async function POST(
       where: { id: result.newBookingId },
       select: { finalPriceCents: true, status: true },
     });
-    return NextResponse.json({
+    return acceptedAnswer(request, result.newBookingId, {
       success: true,
       status: result.newStatus,
       newBookingId: result.newBookingId,
@@ -554,7 +571,7 @@ export async function POST(
         )
       );
 
-    return NextResponse.json({
+    return acceptedAnswer(request, bookingId, {
       success: true,
       status: "PAID",
       requiresPayment: false,
@@ -578,7 +595,7 @@ export async function POST(
     ).catch((err) => logger.error({ err }, "Failed to send pending email after waitlist confirm"));
   }
 
-  return NextResponse.json({
+  return acceptedAnswer(request, bookingId, {
     success: true,
     status: result.newStatus,
     requiresPayment: result.newStatus === BookingStatus.PAYMENT_PENDING && booking.finalPriceCents > 0,

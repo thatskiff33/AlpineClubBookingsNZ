@@ -68,6 +68,9 @@ vi.mock("@/lib/booking-exception-request-service", async (importOriginal) => {
 });
 
 import { POST, GET } from "@/app/api/bookings/exception-requests/route";
+
+/** The browser's list request, as the App Router hands it to the handler. */
+const listRequest = () => new Request("http://localhost/api/bookings/exception-requests");
 import { PATCH } from "@/app/api/bookings/exception-requests/[id]/route";
 import {
   NoEligiblePolicyExceptionError,
@@ -283,7 +286,7 @@ describe("GET /api/bookings/exception-requests (member's own list)", () => {
   it("returns the member's own requests from BOTH tables, newest first", async () => {
     mocks.nbFindMany.mockResolvedValue([newBookingRow()]);
     mocks.bcrFindMany.mockResolvedValue([modificationRow()]);
-    const res = await GET();
+    const res = await GET(listRequest());
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toHaveLength(2);
@@ -301,7 +304,7 @@ describe("GET /api/bookings/exception-requests (member's own list)", () => {
   });
 
   it("never selects the officer's internal note, on either table", async () => {
-    await GET();
+    await GET(listRequest());
     for (const call of [
       mocks.nbFindMany.mock.calls[0][0],
       mocks.bcrFindMany.mock.calls[0][0],
@@ -325,7 +328,7 @@ describe("GET /api/bookings/exception-requests (member's own list)", () => {
         internalNotes: "This member asks every single season.",
       }),
     ]);
-    const res = await GET();
+    const res = await GET(listRequest());
     const body = await res.json();
     expect(JSON.stringify(body)).not.toContain("every single season");
     expect(body[0]).not.toHaveProperty("internalNotes");
@@ -337,7 +340,7 @@ describe("GET /api/bookings/exception-requests (member's own list)", () => {
     mocks.bcrFindMany.mockResolvedValue([
       modificationRow({ _count: { reservationNights: 0 } }),
     ]);
-    const res = await GET();
+    const res = await GET(listRequest());
     const body = (await res.json()) as Array<{ id: string; capacityHeld: boolean }>;
     // A new-booking request holds nothing, ever; a modification that reserved no
     // night (a pure shrink) holds nothing either.
@@ -347,7 +350,7 @@ describe("GET /api/bookings/exception-requests (member's own list)", () => {
     mocks.bcrFindMany.mockResolvedValue([
       modificationRow({ _count: { reservationNights: 3 } }),
     ]);
-    const held = (await (await GET()).json()) as Array<{
+    const held = (await (await GET(listRequest())).json()) as Array<{
       id: string;
       capacityHeld: boolean;
     }>;
@@ -361,7 +364,7 @@ describe("GET /api/bookings/exception-requests (member's own list)", () => {
         lastConflictAt: new Date("2026-07-05T00:00:00Z"),
       }),
     ]);
-    const body = (await (await GET()).json()) as Array<{
+    const body = (await (await GET(listRequest())).json()) as Array<{
       status: string;
       canWithdraw: boolean;
     }>;
@@ -374,7 +377,7 @@ describe("GET /api/bookings/exception-requests (member's own list)", () => {
     mocks.bcrFindMany.mockResolvedValue([
       modificationRow({ status: "REJECTED", adminNotes: "Not this weekend." }),
     ]);
-    const body = (await (await GET()).json()) as Array<{
+    const body = (await (await GET(listRequest())).json()) as Array<{
       status: string;
       canWithdraw: boolean;
       canReplace: boolean;

@@ -29,8 +29,6 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
   "needs-browser":
     "Needs the member's browser: card entry, a file, or a link sent to them by email.",
   infrastructure: "Health checks, deploy hooks and test-only helpers.",
-  // Declared here, first applied by ALP-794 to the booking edits that change
-  // what a booking costs.
   "moves-money":
     "Takes, moves or refunds money, or changes what a booking costs, which the member confirms on the website.",
   declaration:
@@ -45,11 +43,11 @@ export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_R
 
 /**
  * The task that will bring each remaining group of routes into the catalogue.
- * The member keys are the four follow-ons ALP-718 split its member routes
- * into; the rest are the officer areas.
+ * The member keys are the follow-ons ALP-718 split its member routes into
+ * that are still to land (ALP-794, bookings, has); the rest are the officer
+ * areas.
  */
 export const MCP_NOT_YET_TASKS = {
-  memberBookings: "ALP-794",
   memberFamilyAndMembership: "ALP-795",
   memberLodgeLife: "ALP-796",
   memberGroupsAndWholeLodge: "ALP-797",
@@ -63,7 +61,6 @@ export const MCP_NOT_YET_TASKS = {
 } as const satisfies Record<AdminPermissionArea | MemberNotYetGroup, string>;
 
 type MemberNotYetGroup =
-  | "memberBookings"
   | "memberFamilyAndMembership"
   | "memberLodgeLife"
   | "memberGroupsAndWholeLodge";
@@ -132,12 +129,27 @@ const PERMANENT_ROUTES: ReadonlyArray<{
   readonly reason: Exclude<McpPermanentExclusionReason, "fresh-proof">;
   readonly routes: readonly string[];
 }> = [
+  // Booking edits that can take, move or refund money (ALP-794): the AI app
+  // quotes them (`quote_booking_change`) and sends the member to the website.
+  {
+    reason: "moves-money",
+    routes: [
+      "PUT /api/bookings/[id]/modify",
+      "PUT /api/bookings/[id]/modify-dates",
+      "POST /api/bookings/[id]/guests",
+      "DELETE /api/bookings/[id]/guests/[guestId]",
+      "POST /api/bookings/[id]/confirm-draft",
+      "POST /api/bookings/[id]/send-guest-payment-link",
+    ],
+  },
   {
     reason: "declaration",
     routes: [
       "POST /api/notices/[id]/acknowledge",
       "POST /api/member/onboarding/confirm",
       "POST /api/member/request-deletion",
+      // A member guest agreeing to be on someone else's booking (INV-GUEST).
+      "POST /api/bookings/[id]/guests/[guestId]/consent",
     ],
   },
   {
@@ -148,14 +160,26 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "GET /api/member/onboarding",
       "GET /api/skifield-conditions",
       "GET /api/privacy/replay",
+      // The booking wizard's guest promo chips: which of the guests' own codes
+      // the booker may use (#3492). An app checks codes with `check_promo_code`.
+      "POST /api/promo-codes/guest-codes",
     ],
   },
   // Door codes and emergency access: never sent to an AI provider.
   { reason: "access-secrets", routes: ["GET /api/lodge-instructions"] },
   { reason: "site-helper", routes: ["POST /api/help/chat"] },
   { reason: "public-visitor", routes: ["POST /api/contact", "POST /api/applications"] },
-  // The nominee confirms through a link emailed to them.
-  { reason: "needs-browser", routes: ["POST /api/applications/nominate"] },
+  {
+    reason: "needs-browser",
+    routes: [
+      // The nominee confirms through a link emailed to them.
+      "POST /api/applications/nominate",
+      // Files: the invoice and credit note PDFs, and the booking's calendar entry.
+      "GET /api/bookings/[id]/invoice",
+      "GET /api/bookings/[id]/invoice/credit-notes/[creditNoteId]",
+      "GET /api/booking-calendar/[id]",
+    ],
+  },
 ];
 
 /**
@@ -164,13 +188,6 @@ const PERMANENT_ROUTES: ReadonlyArray<{
  * someone decides about it.
  */
 const MEMBER_NOT_YET_PREFIXES: Readonly<Record<MemberNotYetGroup, readonly string[]>> = {
-  memberBookings: [
-    "/api/availability/check",
-    "/api/booking-calendar",
-    "/api/booking-policies",
-    "/api/bookings",
-    "/api/promo-codes",
-  ],
   memberFamilyAndMembership: [
     "/api/member/membership-cancellation-requests",
     "/api/members",

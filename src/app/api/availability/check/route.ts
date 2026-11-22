@@ -5,15 +5,10 @@ import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { isMemberEligibleToBookLodge } from "@/lib/lodge-access";
 import { getDefaultLodgeId } from "@/lib/lodges";
-import { z } from "zod";
 import { formatDateOnly } from "@/lib/date-only";
-import { parsedDateOnlySchema } from "@/lib/date-only-schema";
-
-const availabilityCheckQuerySchema = z.object({
-  checkIn: parsedDateOnlySchema,
-  checkOut: parsedDateOnlySchema,
-  lodgeId: z.string().min(1).optional(),
-});
+import { availabilityCheckQuerySchema } from "@/lib/booking-stay-check-query";
+import { STAY_AVAILABILITY_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -82,7 +77,9 @@ export async function GET(request: NextRequest) {
     getLodgeCapacity(lodgeId),
   ]);
 
-  return NextResponse.json({
+  // Also the AI app action `check_stay_availability` (ALP-794), which is sent
+  // the same figures through its allow-list.
+  return connectionJson(request, {
     // The SELECTED lodge's effective capacity (#2930). Sent explicitly because
     // every client of this route needs the denominator and the alternative is
     // the club-identity figure, which is one lodge's number used for all of
@@ -107,5 +104,5 @@ export async function GET(request: NextRequest) {
       occupiedBeds: n.occupiedBeds,
       availableBeds: n.availableBeds,
     })),
-  });
+  }, STAY_AVAILABILITY_CONNECTION_SHAPE);
 }
