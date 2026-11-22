@@ -83,7 +83,10 @@ import { partnerLinkDeleteQuerySchema, partnerLinkRequestSchema } from "@/lib/pa
 import type { StepUpHttpMethod } from "@/lib/step-up-routes";
 
 /**
- * `read` changes nothing. `write` changes something the member can undo.
+ * `read` changes none of the member's own data. A read may still touch shared
+ * housekeeping: the rate-limit counter its route applies, or a public cache
+ * (`get_skifield_report` refreshes the ski field report's). `write` changes
+ * something the member can undo.
  * `destructive` cannot be undone from the app. A view-only connection runs
  * `read` actions only.
  */
