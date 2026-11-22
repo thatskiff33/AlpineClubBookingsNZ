@@ -9,6 +9,7 @@ import {
   pickMemberPhoneValues,
   POSTAL_ADDRESS_FIELDS,
   STREET_ADDRESS_FIELDS,
+  type MemberAddressField,
 } from "@/lib/member-address";
 
 // Discover Member write payloads, following local aliases, spreads, conditional
@@ -215,9 +216,12 @@ describe("Member deactivation writers record the departure in the same write (#4
   // fixed column list, and that list names no lifecycle field.
   it("the pickers carry no lifecycle field", () => {
     const lifecycle = { active: false, cancelledAt: new Date(0), leavingDate: new Date(0) };
+    const address = Object.fromEntries(
+      [...STREET_ADDRESS_FIELDS, ...POSTAL_ADDRESS_FIELDS].map((field) => [field, "x"]),
+    ) as Record<MemberAddressField, string>;
     const source = {
       ...lifecycle,
-      ...Object.fromEntries([...STREET_ADDRESS_FIELDS, ...POSTAL_ADDRESS_FIELDS].map((field) => [field, "x"])),
+      ...address,
       phoneCountryCode: "64",
       phoneAreaCode: "27",
       phoneNumber: "123",
