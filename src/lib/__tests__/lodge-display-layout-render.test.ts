@@ -138,10 +138,10 @@ describe("buildLayoutRender — LTV-028 value-token resolution", () => {
   });
 });
 
-// Issue #161 (ADR-003 residual): the display img-src CSP is now 'self' data:,
+// Issue hoppers99/AlpineClubBookingsNZ#161 (ADR-003 residual): the display img-src CSP is now 'self' data:,
 // so an <img> pointed at an external host — including one saved BEFORE this
 // change — must render with its src stripped, not throw and blank the board.
-describe("buildLayoutRender — display img-src restriction (issue #161)", () => {
+describe("buildLayoutRender — display img-src restriction (issue hoppers99/AlpineClubBookingsNZ#161)", () => {
   it("strips an external <img> src from every authored html surface without throwing", () => {
     const render = buildLayoutRender(
       input({
@@ -188,9 +188,9 @@ describe("buildLayoutRender — display img-src restriction (issue #161)", () =>
   });
 });
 
-// Issue #176: a resolved token value that opens an authored href/src must not
+// Issue hoppers99/AlpineClubBookingsNZ#176: a resolved token value that opens an authored href/src must not
 // smuggle a dangerous scheme past the sanitiser (which ran BEFORE resolution).
-describe("buildLayoutRender — URL-scheme guard for resolved tokens (issue #176)", () => {
+describe("buildLayoutRender — URL-scheme guard for resolved tokens (issue hoppers99/AlpineClubBookingsNZ#176)", () => {
   it("neutralises a javascript: config value resolved into an authored href", () => {
     const render = buildLayoutRender(
       input({
@@ -218,7 +218,7 @@ describe("buildLayoutRender — URL-scheme guard for resolved tokens (issue #176
   });
 });
 
-describe("buildLayoutRender — LTV-041 marker replacement (issue #96)", () => {
+describe("buildLayoutRender — LTV-041 marker replacement (issue hoppers99/AlpineClubBookingsNZ#96)", () => {
   it("keeps an area marker INSIDE an authored container (nesting preserved)", () => {
     // The 2+1 case: two placeholders nested two containers deep. The marker must
     // land inside .main-col / .side-col, not break out to a sibling.

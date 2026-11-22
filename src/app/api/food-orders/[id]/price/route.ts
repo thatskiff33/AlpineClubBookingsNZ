@@ -16,7 +16,7 @@ import { requireActiveSession } from "@/lib/session-guards";
 import { parseJsonRequestBody } from "@/lib/api-json";
 
 /**
- * Record or change a food order's price (fork #121, owner decisions 8, 11, 12).
+ * Record or change a food order's price (fork triyder/AlpineClubBookingsNZ#121, owner decisions 8, 11, 12).
  *
  * The SAME rule as confirming receipt (`canManageFoodOrder`), and allowed on a
  * closed order too. The amount is integer cents, at least 0

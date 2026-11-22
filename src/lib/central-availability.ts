@@ -6,7 +6,7 @@ import { eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
 export const CENTRAL_AVAILABILITY_MAX_NIGHTS = 30;
 export const CENTRAL_AVAILABILITY_MAX_DAYS_AHEAD = 730;
 
-/** One night's free beds as the central server is told them (#79). */
+/** One night's free beds as the central server is told them (triyder/AlpineClubBookingsNZ#79). */
 export interface CentralNightAvailability {
   /** The night, `YYYY-MM-DD`. */
   date: string;
@@ -16,13 +16,13 @@ export interface CentralNightAvailability {
 export interface CentralStayAvailability {
   /** The fewest free beds on any night: the most guests the whole stay can take. */
   freeBeds: number;
-  /** Every night of the stay, in order (#79: the central server's bed planner). */
+  /** Every night of the stay, in order (triyder/AlpineClubBookingsNZ#79: the central server's bed planner). */
   nights: CentralNightAvailability[];
 }
 
 /**
  * Free beds for a stay, as the Alpine Central Server's public lodge search is
- * told them (#62, owner decision D2; night by night since #79, owner decision
+ * told them (triyder/AlpineClubBookingsNZ#62, owner decision D2; night by night since triyder/AlpineClubBookingsNZ#79, owner decision
  * 17 Oct 2026): THE MEMBER CALENDAR'S OWN NUMBER for each night, and the
  * smallest of them — the most guests the whole stay can take. Counts only:
  * what every member already sees on the calendar, nothing about who.

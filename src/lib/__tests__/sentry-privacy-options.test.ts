@@ -265,9 +265,12 @@ describe("Sentry never carries the breached-password range prefix (#4610)", () =
   });
 
   it("replaces the server init's default NodeFetch integration with the ignoring one", () => {
-    const source = readFileSync(path.join(ROOT, "sentry.server.config.ts"), "utf8");
+    // The server init takes its integrations from one builder (#5262).
+    const init = readFileSync(path.join(ROOT, "sentry.server.config.ts"), "utf8");
+    expect(init).toMatch(/\n  integrations: buildServerSentryIntegrations,\n/);
+    const source = readFileSync(path.join(ROOT, "src/lib/sentry-server-integrations.ts"), "utf8");
     expect(source).toMatch(
-      /integrations: \[\n\s*Sentry\.nativeNodeFetchIntegration\(\{ ignoreOutgoingRequests: isBreachedPasswordRangeUrl \}\),\n\s*\],/,
+      /\n\s*Sentry\.nativeNodeFetchIntegration\(\{ ignoreOutgoingRequests: isBreachedPasswordRangeUrl \}\),\n/,
     );
     // One instance only: a second would be dropped or override this one.
     expect(source.match(/nativeNodeFetchIntegration\(/g)).toHaveLength(1);

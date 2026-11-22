@@ -25,14 +25,14 @@ import {
 // areas inside a rail container div in the layout body (nesting works since
 // LTV-041/#96); whole-lodge and singles keep their rotation as rotator areas.
 //
-// SEED CONTRACT (code-managed scaffolding — owner decision A, issue #111):
+// SEED CONTRACT (code-managed scaffolding — owner decision A, issue hoppers99/AlpineClubBookingsNZ#111):
 // `ensureBuiltInDisplays` upserts each Layout/Template by its unique `key` and
 // REFRESHES its definition from code on every re-seed, so improvements to the
 // shipped designs reach existing installs. Built-ins are not edited in place —
 // an admin who wants a variant DUPLICATES a built-in into a new (non-`builtin-`)
 // row and customises that. Only the reserved `builtin-*` keys are touched here.
 // Devices bind to these seeded rows by `templateId`; the legacy device
-// `templateKey` column and its one-shot migration were removed in #86 (LTV-040)
+// `templateKey` column and its one-shot migration were removed in hoppers99/AlpineClubBookingsNZ#86 (LTV-040)
 // before the feature shipped. Every step is idempotent: a second run creates
 // nothing.
 //
@@ -128,7 +128,7 @@ const EVERYDAY_LAYOUT: BuiltInLayoutSeed = {
   bodyHtml: EVERYDAY_BODY,
   defaultCss: EVERYDAY_CSS,
   // Each static/conditional area declares the module it is built to show as its
-  // `defaultContent` (issue #111): the Template authoring editor seeds a NEW
+  // `defaultContent` (issue hoppers99/AlpineClubBookingsNZ#111): the Template authoring editor seeds a NEW
   // template's slots from these, so an author starts from the REAL default rather
   // than an empty box. These mirror EVERYDAY_TEMPLATE.slotContent exactly.
   // Rotator-child defaults (whole-lodge / singles-house) are a FOLLOW-UP —
@@ -646,10 +646,10 @@ export const BUILT_IN_DISPLAY_TEMPLATES: BuiltInTemplateSeed[] = [
 
 // The reserved built-in keys. `ensureBuiltInDisplays` upserts the Layout/Template
 // rows keyed here and REFRESHES their definitions from code on every re-seed
-// (owner decision A, issue #111), so an in-place admin edit to a row with one of
+// (owner decision A, issue hoppers99/AlpineClubBookingsNZ#111), so an in-place admin edit to a row with one of
 // these keys is overwritten on the next re-seed/upgrade. The authoring editors
 // use these to warn before an in-place built-in edit and to offer "duplicate to
-// customise" (fork issue #156). Detection is by KEY because the seed matches on
+// customise" (fork issue hoppers99/AlpineClubBookingsNZ#156). Detection is by KEY because the seed matches on
 // key — the deterministic `builtin-*` id is only assigned on a fresh create, so a
 // row pre-created under a different id but the reserved key is still a built-in.
 export const BUILT_IN_DISPLAY_LAYOUT_KEYS: readonly string[] =
@@ -700,10 +700,10 @@ export interface EnsureBuiltInDisplaysClient {
 
 /**
  * Seed the built-in Layouts + Templates, refreshing them from code (LTV-038;
- * refresh policy = owner decision A, issue #111). Idempotent: re-running upserts
+ * refresh policy = owner decision A, issue hoppers99/AlpineClubBookingsNZ#111). Idempotent: re-running upserts
  * each by `key` and rewrites its definition to match code, so a re-seed (or the
  * prisma seed on deploy) propagates design improvements — e.g. the per-area
- * `defaultContent` new templates seed from (#111) — to installs that seeded the
+ * `defaultContent` new templates seed from (hoppers99/AlpineClubBookingsNZ#111) — to installs that seeded the
  * built-ins earlier. Built-ins are code-managed scaffolding: to customise, an
  * admin DUPLICATES a built-in into a new (non-`builtin-`) row and edits that;
  * editing a built-in in place is overwritten on the next re-seed. Devices bind
@@ -712,7 +712,7 @@ export interface EnsureBuiltInDisplaysClient {
 export async function ensureBuiltInDisplays(
   prisma: EnsureBuiltInDisplaysClient
 ): Promise<void> {
-  // Built-ins are code-managed scaffolding (owner decision A, issue #111): each
+  // Built-ins are code-managed scaffolding (owner decision A, issue hoppers99/AlpineClubBookingsNZ#111): each
   // re-seed REFRESHES the built-in's definition from code so improvements to the
   // shipped designs (e.g. new per-area defaults) reach existing installs. An
   // admin who wants a variant DUPLICATES a built-in into a new row rather than

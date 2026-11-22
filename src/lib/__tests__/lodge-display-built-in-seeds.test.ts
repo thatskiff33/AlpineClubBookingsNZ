@@ -12,7 +12,7 @@ import { DISPLAY_MODULE_NAMES } from "@/lib/lodge-display/template-registry";
 // LTV-038: the three built-ins seeded as v2 Layout + Template rows. These tests
 // cover the SEED CONTRACT (create-if-missing, admin-safe, idempotent), without a
 // database — a structural mock captures the upsert shapes. The legacy device
-// `templateKey`→`templateId` migration was removed in #86 (LTV-040) along with
+// `templateKey`→`templateId` migration was removed in hoppers99/AlpineClubBookingsNZ#86 (LTV-040) along with
 // the device column. The layout-render VALIDITY of the seeded definitions (they
 // build cleanly through the real server assembler) is asserted in
 // lodge-display-layout-render.test.ts's LTV-038 block.
@@ -104,7 +104,7 @@ describe("built-in display seeds — definitions", () => {
     }
   });
 
-  it("carries per-area defaultContent on the everyday-board static/conditional areas (issue #111)", () => {
+  it("carries per-area defaultContent on the everyday-board static/conditional areas (issue hoppers99/AlpineClubBookingsNZ#111)", () => {
     const everyday = BUILT_IN_DISPLAY_LAYOUTS.find(
       (l) => l.key === "everyday-board"
     )!;
@@ -132,7 +132,7 @@ describe("built-in display seeds — definitions", () => {
   it("leaves rotator built-ins' children without defaultContent (a documented follow-up)", () => {
     // whole-lodge / singles-house are rotator layouts; the validator rejects
     // defaultContent on a rotator area, and DisplayAreaChild has no such field
-    // yet, so their child slots still seed empty (issue #111 follow-up).
+    // yet, so their child slots still seed empty (issue hoppers99/AlpineClubBookingsNZ#111 follow-up).
     for (const key of ["whole-lodge", "singles-house"]) {
       const layout = BUILT_IN_DISPLAY_LAYOUTS.find((l) => l.key === key)!;
       for (const area of layout.areas) {
@@ -161,7 +161,7 @@ describe("built-in display seeds — definitions", () => {
 describe("ensureBuiltInDisplays — seed contract", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("upserts each layout and template refreshing its definition from code (owner decision A, #111)", async () => {
+  it("upserts each layout and template refreshing its definition from code (owner decision A, hoppers99/AlpineClubBookingsNZ#111)", async () => {
     const { client, layoutUpserts, templateUpserts } = makeClient();
     await ensureBuiltInDisplays(client);
 
@@ -207,7 +207,7 @@ describe("ensureBuiltInDisplays — seed contract", () => {
   });
 });
 
-describe("built-in key detection (#156)", () => {
+describe("built-in key detection (hoppers99/AlpineClubBookingsNZ#156)", () => {
   // The authoring editors warn + confirm before an in-place built-in edit; the
   // signal is the reserved KEY, because `ensureBuiltInDisplays` matches on key
   // (the deterministic `builtin-*` id is only for a fresh create).
