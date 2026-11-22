@@ -226,7 +226,7 @@ export function orderWaitlistOffers<T extends WaitlistQueueEntry>(
  * the order as it is. Never applied by the position reader: positions
  * (`INV-CAP-041`) do not change when an offer lapses.
  */
-export function rotateWaitlistOpportunitiesAfterLapse<T extends WaitlistQueueEntry>(
+function rotateWaitlistOpportunitiesAfterLapse<T extends WaitlistQueueEntry>(
   ordered: readonly WaitlistOpportunity<T>[],
   crossLodgeOrder: WaitlistCrossLodgeOrder | null,
   lapse?: WaitlistLapse,
