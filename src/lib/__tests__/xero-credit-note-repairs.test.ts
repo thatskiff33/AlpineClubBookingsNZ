@@ -722,10 +722,13 @@ describe("a modification note's allocations are summed per note, each allocation
       invoiceLinks = [];
       const findLinks = mocks.xeroObjectLinkFindMany.getMockImplementation()!;
       // The payment's own refund-note row for the note being synced, its amount unreadable.
+      const ownRow = { localId: "pay-1", xeroObjectId: "cn-current", active: true, metadata: { status: "AUTHORISED" } };
       mocks.xeroObjectLinkFindMany.mockImplementation(async (args: { where: { role?: unknown; xeroObjectId?: string } }) =>
-        args.where.role === "REFUND_CREDIT_NOTE" && args.where.xeroObjectId === "cn-current"
-          ? [{ localId: "pay-1", xeroObjectId: "cn-current", active: true, metadata: { status: "AUTHORISED" } }]
-          : findLinks(args),
+        args.where.role === "REFUND_CREDIT_NOTE" && args.where.xeroObjectId === "cn-current" ? [ownRow] : findLinks(args),
+      );
+      // #4288: with that row the write is decided under the Payment row lock, re-reading it there.
+      mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback({ $executeRaw: vi.fn(async () => 1), xeroObjectLink: { findMany: vi.fn(async () => [ownRow]) }, payment: { updateMany: mocks.paymentUpdateMany } }),
       );
 
       await repairRefundedPaymentBusinessState({
