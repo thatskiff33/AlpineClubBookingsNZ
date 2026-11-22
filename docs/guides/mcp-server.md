@@ -304,8 +304,8 @@ stop an AI model being misled. What limits the damage:
   all, and a draft booking holds no beds and takes no money;
 - the actions that reach other people (a message-board post, a food order, a
   maintenance report) tell the app to confirm with the member first, post
-  on this club's board only, and count against the website's own limits for
-  each, per connection;
+  on this club's board only, and count against the member's own limit for
+  each, shared with the website; the looser connection backstop also applies;
 - every call of a change action writes an audit row (`INV-MCP-008`).
 
 Calls that only read are **not** audited, and neither are connections ended by
@@ -431,8 +431,11 @@ provider already received. The club's register row is `ai-apps` in
 - An app may make 120 requests a minute per connection; the rest of the rate
   limits are in [`SECURITY.md`](../SECURITY.md#ai-app-connections-alp-653).
 - The site's own limits on the routes an action reaches (for example 20 new
-  bookings an hour) count per connection too, not per address, so members
-  using the same AI app do not use up each other's allowance.
+  bookings an hour) count per connection, not per address, so members using
+  the same AI app do not use up each other's allowance. A route limited per
+  member (`applyMemberScopedRateLimit`, such as a message-board post, a food
+  order or a maintenance report) counts against the member's own limit,
+  shared with the website; its looser backstop counts per connection.
 
 ## The roadmap
 
