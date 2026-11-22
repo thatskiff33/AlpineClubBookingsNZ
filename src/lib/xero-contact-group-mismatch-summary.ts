@@ -11,6 +11,14 @@
  * kinds, so each words the total from here and the three surfaces agree.
  */
 
+/**
+ * How many flagged contacts the mismatch panel lists and a Refresh re-fetches
+ * from Xero. The panel sends it on every GET and POST, and the route defaults
+ * a POST with no limit to it, so a Refresh never re-fetches the whole flagged
+ * population (#5234).
+ */
+export const CONTACT_GROUP_MISMATCH_LIMIT = 200;
+
 export interface ContactGroupMismatchCounts {
   /** Mismatches the re-sync repairs. */
   resyncCount: number;

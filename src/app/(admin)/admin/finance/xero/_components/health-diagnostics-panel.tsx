@@ -39,7 +39,7 @@ import type {
   XeroHealthSnapshot,
 } from "./types"
 import { adminHref } from "@/lib/admin-hubs";
-import { describeContactGroupMismatchTotal } from "@/lib/xero-contact-group-mismatch-summary";
+import { CONTACT_GROUP_MISMATCH_LIMIT, describeContactGroupMismatchTotal } from "@/lib/xero-contact-group-mismatch-summary";
 import { ContactGroupMismatchPanel } from "./contact-group-mismatch-panel"
 
 type Props = {
@@ -130,7 +130,7 @@ export function HealthAndDiagnosticsPanels({
     setLoadingGroupMismatches(true)
     setGroupError("")
     try {
-      setGroupMismatches(await fetchJson<ContactGroupMismatchResponse>("/api/admin/xero/contact-group-mismatches?limit=200", undefined, "Failed to fetch contact group mismatches"))
+      setGroupMismatches(await fetchJson<ContactGroupMismatchResponse>(`/api/admin/xero/contact-group-mismatches?limit=${CONTACT_GROUP_MISMATCH_LIMIT}`, undefined, "Failed to fetch contact group mismatches"))
     } catch (err) {
       setGroupError(err instanceof Error ? err.message : "Failed to load Xero contact group mismatches")
     } finally {
@@ -156,7 +156,7 @@ export function HealthAndDiagnosticsPanels({
     setResyncingGroupMismatches(true)
     setGroupError("")
     try {
-      setGroupMismatches(await postJson<ContactGroupMismatchResponse>("/api/admin/xero/contact-group-mismatches", { limit: 200 }, "Failed to re-sync the flagged contacts from Xero"))
+      setGroupMismatches(await postJson<ContactGroupMismatchResponse>("/api/admin/xero/contact-group-mismatches", { limit: CONTACT_GROUP_MISMATCH_LIMIT }, "Failed to re-sync the flagged contacts from Xero"))
     } catch (err) {
       setGroupError(err instanceof Error ? err.message : "Failed to re-sync the flagged contacts from Xero")
     } finally {
@@ -271,7 +271,7 @@ export function HealthAndDiagnosticsPanels({
             ),
             groupMismatches
               ? fetchJson<ContactGroupMismatchResponse>(
-                  "/api/admin/xero/contact-group-mismatches?limit=200",
+                  `/api/admin/xero/contact-group-mismatches?limit=${CONTACT_GROUP_MISMATCH_LIMIT}`,
                   undefined,
                   "Failed to refresh contact group mismatches",
                 )
