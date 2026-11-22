@@ -2837,17 +2837,19 @@ Failed or empty configuration leaves reporting and replay off. Errors before
 that fetch completes are not reported. Replay still needs the separate club
 privacy opt-in; its default remains off.
 
-**The server sends no session data (#5262).** Server events carry the
-installed version as their Sentry `release` (see `APP_VERSION`), for tagging
-only. Sentry's session tracking, which it uses for release health and
-crash-free rates, is switched off on the server:
+**Neither the server nor the browser sends session data (#5262).** Server and
+browser events carry the installed version as their Sentry `release` (see
+`APP_VERSION`), for tagging only. Sentry's session tracking, which it uses for
+release health and crash-free rates, is switched off on both. On the server,
 `src/lib/sentry-server-integrations.ts` turns off the per-request counting in
-the SDK's `Http` integration and drops its `ProcessSession` integration, so
-Sentry gets no session data from the server for those figures. Before this
-change, a server with `SENTRY_DSN` set sent Sentry a count of requests by
-outcome for each minute, with the release and environment, and one session
-record for the server process if an error was reported before its first
-request. Error events and performance traces are unchanged. Nothing to set.
+the SDK's `Http` integration and drops its `ProcessSession` integration. In the
+browser, `src/instrumentation-client.ts` drops the SDK's `BrowserSession`
+integration. The edge SDK has no session tracking. Sentry therefore gets no
+session data for those figures. Before this change, a server with `SENTRY_DSN`
+set sent Sentry a count of requests by outcome for each minute, with the
+release and environment, and one session record for the server process if an
+error was reported before its first request. Error events and performance
+traces are unchanged. Nothing to set.
 
 **Upgrade action:** before deploying the first release with runtime browser
 Sentry, set `NEXT_PUBLIC_SENTRY_DSN` in `.env` if browser reports are wanted.

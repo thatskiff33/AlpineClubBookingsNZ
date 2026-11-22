@@ -131,9 +131,10 @@ access settings as part of that disclosure. Ordinary error reporting and
 session replay are separate decisions; enabling error reporting does not
 constitute the club's Replay opt-in.
 
-Sentry's session tracking is a third thing, and the server has it off (#5262):
-it sends Sentry no count of requests and no session record for the server
-process. Error events and performance traces, tagged with the installed
+Sentry's session tracking is a third thing, and it is off on the server and in
+the browser (#5262): the server sends Sentry no count of requests and no session
+record for the server process, and the browser sends no session record for a
+page load. Error events and performance traces, tagged with the installed
 version, are unaffected. [CONFIGURATION.md](../CONFIGURATION.md#sentry) says
 what was sent before.
 
