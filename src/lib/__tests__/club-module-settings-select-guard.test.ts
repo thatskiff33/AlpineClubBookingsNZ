@@ -5,12 +5,12 @@ import { MODULE_KEYS } from "@/config/modules";
 import { blankLiterals, stripComments } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
 
-// hoppers99/AlpineClubBookingsNZ#153 / hoppers99/AlpineClubBookingsNZ#150 / hoppers99/AlpineClubBookingsNZ#175 guard: every read AND write of the ClubModuleSettings
-// singleton must use an explicit column `select`
+// The guard from issues 153, 150 and 175 of hoppers99/AlpineClubBookingsNZ: every
+// read AND write of the ClubModuleSettings singleton must use an explicit column `select`
 // (CLUB_MODULE_SETTINGS_COLUMN_SELECT in src/config/modules.ts). A bare
 // findUnique/findMany/upsert/create/update has no select, so Prisma names
 // every column the client knows in its SELECT, or in a write's implicit
-// RETURNING (hoppers99/AlpineClubBookingsNZ#175). The former multiLodge flag was the trigger
+// RETURNING (issue 175 of that fork). The former multiLodge flag was the trigger
 // (hoppers99/AlpineClubBookingsNZ#139). The select does not reach an INSERT's
 // column list, so it never makes a DROP safe on its own (INV-OPS-005); the
 // guard stays for reads, RETURNING and the single-source rule below.
@@ -45,6 +45,14 @@ import { balancedBrackets } from "./support/balanced-brackets";
 // DEFAULT_MODULE_SETTINGS-shaped maps of mixed booleans.
 
 const SRC_DIR = path.join(process.cwd(), "src");
+
+// Every directory that can hold a writer of the singleton. The guard used to scan
+// only `src/`, so `e2e/setup/enable-e2e-modules.ts` wrote the row with a bare
+// upsert it could not see (#5407). Today that file is the only writer outside
+// `src/`; `scripts/` and `prisma/` are listed so the next one is covered.
+const GUARDED_ROOTS = ["src", "e2e", "scripts", "prisma"]
+  .map((dir) => path.join(process.cwd(), dir))
+  .filter((dir) => fs.existsSync(dir));
 
 // Every delegate method that projects columns — through a SELECT, or through
 // the implicit RETURNING of a write. deleteMany/updateMany/count/aggregate/
@@ -127,13 +135,14 @@ interface ProjectingCall {
 }
 
 /**
- * Every projecting ClubModuleSettings call under src/, with its argument text.
+ * Every projecting ClubModuleSettings call under src/, e2e/, scripts/ and
+ * prisma/, with its argument text.
  * Comments are stripped BEFORE the scan and `stripComments` preserves newlines,
  * so the reported line numbers still point at the raw file.
  */
 function projectingCalls(): ProjectingCall[] {
   const calls: ProjectingCall[] = [];
-  for (const file of walk(SRC_DIR)) {
+  for (const file of GUARDED_ROOTS.flatMap((root) => walk(root))) {
     const code = stripComments(fs.readFileSync(file, "utf8"));
     if (!code.includes("clubModuleSettings")) continue;
     // Calls are found over masked text: one named in a string is not a call.
@@ -239,7 +248,15 @@ describe("ClubModuleSettings reads use an explicit column select", () => {
     expect(calls.length).toBeGreaterThan(0);
   });
 
-  it("has no bare clubModuleSettings projecting call anywhere in src/", () => {
+  it("sees the writer outside src/ that it used to miss", () => {
+    // The E2E bootstrap is the one writer outside src/. If it moves, the roots
+    // above are the thing to revisit, not this assertion to delete.
+    expect(calls.some((call) => call.file === "e2e/setup/enable-e2e-modules.ts")).toBe(
+      true,
+    );
+  });
+
+  it("has no bare clubModuleSettings projecting call anywhere in src/, e2e/, scripts/ or prisma/", () => {
     const offenders = calls
       .filter((call) => !/\bselect\s*:/.test(call.args))
       .map((call) => call.location);
