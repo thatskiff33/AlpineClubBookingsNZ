@@ -15,3 +15,7 @@
   The email-change confirmation and resent email-verification emails now state
   the expiry their stored link actually has, rather than working it out again a
   moment later.
+
+  The blue-green deploy's cron-registration check now recognises the Xero
+  membership refresh line the app logs, so a deploy with the daily Xero
+  membership refresh turned on no longer fails that check.

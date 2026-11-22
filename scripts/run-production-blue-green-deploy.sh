@@ -3503,7 +3503,7 @@ verify_cron_registration() {
   assert_logs_contain_any \
     "$logs" \
     "Xero membership refresh registration" \
-    "Scheduled Xero membership refresh" \
+    "Scheduled Xero membership safety-net refresh" \
     "Xero membership refresh disabled by XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH"
 }
 
