@@ -1,6 +1,7 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Radio } from "@/components/ui/radio";
 import { promoChangeNotAppliedHeading } from "@/lib/promo-change-not-applied";
 import { formatCents } from "@/lib/utils";
 import {
@@ -533,8 +534,7 @@ function SettlementChoiceRadios({
     <div className="space-y-2">
       {choices.map((choice) => (
         <label key={choice.method} className="flex cursor-pointer items-start gap-2">
-          <input
-            type="radio"
+          <Radio
             name="settlementMethod"
             value={choice.method}
             checked={settlementMethod === choice.method}

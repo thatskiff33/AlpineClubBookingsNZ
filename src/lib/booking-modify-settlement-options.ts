@@ -121,6 +121,8 @@ export async function editRefundHasCardToReturnTo(
   db: Pick<Prisma.TransactionClient, "payment">,
   booking: Pick<LoadedBookingForModify, "payment" | "organiserSettled" | "parentBookingId">,
 ): Promise<boolean> {
+  // Defensive: the only production caller, `editReductionRefundsToCard`, already
+  // gates on `hasSettledCardPayment`, which requires a Stripe payment.
   if (booking.payment?.source !== PaymentSource.STRIPE) return false;
   return paidByOrganiserCard(booking) || paymentHasRefundableCardIntent(db, booking.payment);
 }
