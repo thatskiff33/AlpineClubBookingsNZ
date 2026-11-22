@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { getAuditRequestContext } from "@/lib/audit";
 import { enrolmentSessionIssuedAt } from "@/lib/two-factor-api";
 import { verifyPasskeyRegistration } from "@/lib/webauthn";
 
 import { guardPasskeyRequest, passkeyJsonError, registrationAllowed } from "../../guard";
-import { parseJsonRequestBody } from "@/lib/api-json";
 
 const bodySchema = z
   .object({

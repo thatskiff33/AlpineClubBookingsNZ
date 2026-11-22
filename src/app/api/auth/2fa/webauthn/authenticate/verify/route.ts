@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { recordTwoFactorFailure } from "@/lib/two-factor";
 import { markTwoFactorSessionVerified } from "@/lib/two-factor-api";
 import { verifyPasskeyAssertion } from "@/lib/webauthn";
 
 import { authenticationAllowed, guardPasskeyRequest, passkeyJsonError } from "../../guard";
-import { parseJsonRequestBody } from "@/lib/api-json";
 
 const bodySchema = z.object({ response: z.unknown() }).strict();
 
