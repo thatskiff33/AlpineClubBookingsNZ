@@ -118,7 +118,8 @@ paid. A card refund reads "A refund of $X has been processed to your original
 payment method." once the card refund has gone through; until then — when the
 card refund failed, timed out or was not made — it reads "A refund of $X is on
 its way to your original payment method." (#4070). A refund on a booking
-paid by internet banking or in cash reads "The club will refund $X to you by
+paid by internet banking or in cash, or by a card payment Stripe holds no
+record of (#5212), reads "The club will refund $X to you by
 bank transfer." — it is promised, not reported, because a treasurer still has
 to send it from the **Money to settle** card (see the [payments guide](payments.md#pay-back-a-refund-for-a-cash-booking))
 (#3827). On a group booking the organiser paid for by card, the refund goes to
@@ -140,6 +141,27 @@ booking the club asks by card it reads "An additional payment of $X is
 required.", also while the card request waits to be retried; on a booking paid
 by internet banking it names an Internet Banking payment against the Xero
 invoice; any other amount still to pay is named without a method (#4052).
+
+`{{paymentNote}}` on the **Your Request Was Approved** message (an approved
+booking-rule exception that created a new booking) says what is left to pay, and
+it is worked out from the money the club has actually received for that booking,
+never from the booking's status (#4069). It is one of five lines:
+
+| What the records show | The line |
+| --- | --- |
+| Money is still owed and the booking holds its beds | "There is $X to pay on this booking. Your beds are held for now; open it from your account to pay or to see the payment details." |
+| Money is still owed and the beds are not held yet | "There is $X to pay on this booking. Open it from your account to pay now — the beds are not held until it is paid." |
+| The booking is covered (by a payment, account credit, or both) | Nothing: the line is left out |
+| A group organiser pays for this stay | "Your group organiser pays for this stay." |
+| The records cannot prove what is owed, or could not be read | "To see whether anything is still to pay on this booking, open it from your account or contact the club." |
+
+$X is what the booking costs, less account credit applied to it, less the money
+the club still holds for it — a payment still pending, a refund already made or
+owed, and a card charge that was replaced and is being refunded do not count as
+held. The raw `{{amount}}` token behind the line is that same figure, `$0.00`
+once the booking is covered, and **empty** on the last two rows: an override
+that prints `{{amount}}` on its own should keep `{{paymentNote}}` beside it, or
+it will show a blank where nobody can vouch for a figure.
 
 `{{refundSentence}}` on the **Refund Appeal Approved** message works the same
 way. A card refund reads "A refund of $X will be processed to your original
@@ -340,6 +362,47 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > and the leftover row is reported at the top of this page as a stale override
 > needing cleanup. Re-apply your wording to whichever of the two you want to
 > change.
+
+> **Upgrade note (#5403).** The officers' **Admin Booking Bumped** alert is sent
+> again. The pending-booking job sends it, once per booking, when it releases a
+> pending booking at its hold deadline because there is no longer room for its
+> party. Its subject names the member, the stay dates and the booking reference
+> (`{{bookingReference}}`), so officers can tell two bumps for the same member
+> apart. A subject your club saved on an earlier version has no booking
+> reference: restore the default subject, or add `{{bookingReference}}` to
+> yours. Since #5407 the Daily digest counts each alert once however many
+> officers receive it, and no longer folds alerts that share a subject, so a
+> saved subject does not change any digest count while the officers receiving
+> the alert stay the same. The built-in wording
+> gives the reason (`{{reason}}`), which also says when the member had asked
+> for the whole booking to be cancelled if their guests could not come.
+>
+> The built-in email also adds a Lodge line when the club has more than one
+> active lodge, or when the booking's lodge has been archived, as the capacity
+> warning does. That line is not part of the editable wording the editor shows,
+> so a saved copy of your own does not include it: a club with more than one
+> lodge should add `{{lodgeName}}` on a line of its own. It is empty in a
+> one-lodge club, which is why it should not sit after a label.
+>
+> The alert no longer offers `{{triggeringMemberName}}`, because the job has no
+> triggering booking to name. If a saved copy still uses that token, a warning
+> at the top of this page names the template and the token, and the template
+> itself says your saved copy uses a token it no longer supplies: swap it for
+> the chips now shown and save, or restore the default.
+
+> **Upgrade note (#5407).** A bump's notices are no longer lost if the
+> pending-booking job is interrupted, for example by a restart, between
+> releasing the booking and sending them. The member's email (subject
+> **Booking Update**, or **Booking Cancelled** when the booking was cancelled
+> because its guests could not come) and the officers' **Admin Booking Bumped**
+> alert are then sent by a later run of the same job, so a recovered notice arrives
+> a few hours late. When the officers' alert could not be recorded for any
+> of them (for example when writing the email log failed and sending then
+> failed too, or the message could not be built from a saved template), it is
+> tried again a day later. The member never receives it twice. Very rarely the officers may
+> receive their alert twice: when the interruption falls just after it was
+> sent, or when sending it takes longer than an hour. Nothing about the
+> wording changed.
 
 ## Settings reference
 

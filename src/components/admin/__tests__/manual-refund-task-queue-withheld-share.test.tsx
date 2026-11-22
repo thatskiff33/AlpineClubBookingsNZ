@@ -5,7 +5,6 @@ import {
   cleanup,
   render,
   screen,
-  waitFor,
 } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -19,6 +18,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
 }));
 
 import { ManualRefundTaskQueue } from "@/components/admin/manual-refund-task-queue";
+import { waitForManualRefundQueueLoaded } from "@/lib/__tests__/support/manual-refund-task-queue-loaded";
 
 /**
  * #3213 (epic #2797) — what the finance queue says about an amount the club may
@@ -63,8 +63,6 @@ const HAND_BACK_TASK = {
   reason: "Cancelled after a cash payment",
   createdAt: "2026-06-20T00:00:00Z",
   memberName: "Ada Lovelace",
-  reviewEvidence: null,
-  reviewEvidenceUnreadable: false,
   ...STAY,
 };
 
@@ -79,8 +77,6 @@ const WITHHELD_SHARE_TASK = {
     "A share of this booking change was settled while its Xero invoice was being sent.",
   createdAt: "2026-06-21T00:00:00Z",
   memberName: "Grace Hopper",
-  reviewEvidence: null,
-  reviewEvidenceUnreadable: false,
   ...STAY,
 };
 
@@ -110,9 +106,7 @@ function stubLoad(body: unknown) {
 async function renderQueue(body: unknown) {
   stubLoad(body);
   render(<ManualRefundTaskQueue />);
-  await waitFor(() =>
-    expect(screen.getByTestId("manual-refund-task-queue")).toBeInTheDocument(),
-  );
+  await waitForManualRefundQueueLoaded();
   return screen.getByTestId("manual-refund-task-queue");
 }
 

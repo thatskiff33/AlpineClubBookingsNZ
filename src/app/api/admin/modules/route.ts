@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -20,7 +21,7 @@ import { revalidatePublicSite } from "@/lib/public-content-revalidation";
 import {
   // The upsert below keeps its own `select`: it is a WRITE, and the shared read
   // helper cannot serve it — but its RETURNING must still name only the live
-  // columns (#175), so it spreads the canonical constant rather than a literal.
+  // columns (hoppers99/AlpineClubBookingsNZ#175), so it spreads the canonical constant rather than a literal.
   CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   MODULE_KEYS,
   readClubModuleSettingsRecord,
@@ -78,14 +79,13 @@ export async function PUT(request: Request) {
   }
   const session = guard.session;
 
-  let body: unknown;
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) {

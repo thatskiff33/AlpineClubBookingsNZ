@@ -566,9 +566,9 @@ describe("requireAuthoritativeMatch (#2939)", () => {
 describe("#4374: contact completions send deferred alerts after commit", () => {
   beforeEach(setUpFunnelDoubles);
 
-  it.each(["create", "update"])("flushes a %s completion's alert only after the enclosing commit", async (kind) => {
+  // #5394: create and update share one completer, completeMemberContactOperation.
+  it("flushes a contact completion's alert only after the enclosing commit", async () => {
     const { completeMemberContactOperation } = await import("@/lib/xero-contact-create-recovery");
-    const { completeMemberContactUpdateOperation } = await import("@/lib/xero-contacts");
     const { xeroClaim } = await import("./helpers/xero-claim");
     let committed = false;
     const deferredPostCommit = vi.fn(async () => { expect(committed).toBe(true); });
@@ -580,14 +580,12 @@ describe("#4374: contact completions send deferred alerts after commit", () => {
       committed = true;
       return result;
     });
-    const complete = kind === "create" ? completeMemberContactOperation : completeMemberContactUpdateOperation;
-    await complete("member-1", "contact-new", xeroClaim("op-1"), {});
+    await completeMemberContactOperation("member-1", "contact-new", xeroClaim("op-1"), {});
     expect(deferredPostCommit).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["create", "update"])("does not flush a %s completion's alert when commit fails", async (kind) => {
+  it("does not flush a contact completion's alert when commit fails", async () => {
     const { completeMemberContactOperation } = await import("@/lib/xero-contact-create-recovery");
-    const { completeMemberContactUpdateOperation } = await import("@/lib/xero-contacts");
     const { xeroClaim } = await import("./helpers/xero-claim");
     const deferredPostCommit = vi.fn();
     mocks.completeXeroSyncOperation.mockResolvedValue({ deferredPostCommit });
@@ -596,8 +594,7 @@ describe("#4374: contact completions send deferred alerts after commit", () => {
       await fn({ $executeRaw: mocks.txExecuteRaw, member: { findUnique: mocks.txMemberFindUnique } });
       throw new Error("commit failed");
     });
-    const complete = kind === "create" ? completeMemberContactOperation : completeMemberContactUpdateOperation;
-    await expect(complete("member-1", "contact-new", xeroClaim("op-1"), {})).rejects.toThrow("commit failed");
+    await expect(completeMemberContactOperation("member-1", "contact-new", xeroClaim("op-1"), {})).rejects.toThrow("commit failed");
     expect(deferredPostCommit).not.toHaveBeenCalled();
   });
 });

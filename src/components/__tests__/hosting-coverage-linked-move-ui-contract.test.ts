@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { HostingCoverageLinkedMovePrompt } from "@/components/hosting-coverage-linked-move-prompt";
+import { LinkedMoveSettlementMethod } from "@/components/edit-booking/linked-move-settlement-method";
 import type { HostingCoverageLinkedMovePromptData } from "@/lib/hosting-coverage-linked-move-client";
 
 /**
@@ -51,11 +52,13 @@ function promptData(
     ],
     combinedAmountDueCents: 3_500,
     combinedRefundCents: 0,
+    combinedFreedCreditCents: 0,
     combinedChangeFeeCents: 2_000,
     combinedPolicyRetainedCents: 0,
     combinedOrganiserRefundCents: 0,
     combinedOrganiserBankTransferRefundCents: 0,
     settlementMethodRequired: false,
+    refundRoute: "CARD",
     settlementMethodChosen: false,
     bothChangeFeesCharged: true,
     ...overrides,
@@ -194,9 +197,10 @@ describe("the linked-move offer's UI contract (#3232, INV-HOST-050)", () => {
     expect(moveBoth).toHaveAccessibleName(/\$4\.00 by bank transfer goes back to the group organiser rather than to you/);
     expect(moveBoth).toHaveAccessibleName(/the one choice covers every booking you paid for/);
     // The edit panel's Return-method note says the same where an organiser's refund is in the move.
-    const panel = source("src/components/edit-booking-panel.tsx");
-    expect(panel).toContain("the same choice covers every booking you paid for. A group organiser's refund goes back to them.");
-    expect(panel).toContain("activeLinkedMoveState?.prompt.combinedOrganiserRefundCents");
+    render(createElement(LinkedMoveSettlementMethod, { prompt: promptData({ combinedOrganiserRefundCents: 400 }), method: null, disabled: false, onChange: vi.fn() }));
+    expect(screen.getByTestId("linked-move-settlement-method").textContent).toContain(
+      "the same choice covers every booking you paid for. A group organiser's refund goes back to them.",
+    );
   });
 
   it("disables both arms while the save is in flight, and neither becomes checked", () => {

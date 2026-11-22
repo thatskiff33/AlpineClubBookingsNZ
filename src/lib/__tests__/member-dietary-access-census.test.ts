@@ -146,6 +146,8 @@ const DIETARY_REACH: Readonly<Record<string, CensusEntry>> = {
   "src/components/member-dietary-requirements-field.tsx":
     "the one input, shared by self and admin screens",
   "src/app/api/profile/route.ts": "self writer (profile and onboarding)",
+  "src/lib/member-profile-update-schema.ts":
+    "the self writer's body schema; the AI app subset leaves the field out (ALP-718)",
   "src/app/(authenticated)/profile/page.tsx": "self reader, ON only",
   "src/app/(authenticated)/profile/profile-details-card.tsx":
     "passes the self value to the form",
@@ -169,6 +171,9 @@ const DIETARY_REACH: Readonly<Record<string, CensusEntry>> = {
   "src/lib/member-csv-import.ts": "member CSV import parser",
   "src/app/api/admin/members/import/route.ts":
     "member CSV import writer, ON and membership:edit only",
+  // #4988: moved from the route, for its size ceiling; it reads and writes nothing.
+  "src/lib/member-import-request-schema.ts":
+    "member CSV import request shape; the route alone decides whether the column applies",
   "src/lib/member-merge-field-rules.ts": "fill-if-blank merge rule",
   "src/lib/member-merge-field-kinds.ts": "merge screen value kind",
   // #4915: moved from the door, for its size budget; it reads nothing.
@@ -262,6 +267,7 @@ const BOOKING_WRITES_IMPORTERS: Readonly<Record<string, CensusEntry>> = {
     reason: "W2 policy-exception approval seeding read",
     ...WRITE_SIDE,
   },
+  "src/lib/booking-import/write.ts": { reason: "W20 imported paid booking (#5005)", ...WRITE_SIDE },
   "src/lib/booking-modify-plan.ts": { reason: "W11/W12 resolver, W15 fill", ...WRITE_SIDE },
   "src/lib/booking-request-quotes.ts": { reason: "W6 held booking", ...WRITE_SIDE },
   "src/lib/booking-request-shared.ts": { reason: "the pipeline create shaper", ...WRITE_SIDE },
@@ -885,6 +891,7 @@ const BOOKING_GUEST_CREATE_SITES: Readonly<Record<string, string>> = {
   "src/lib/school-pending-adult-resolution.ts": "#3413 accepted pending adult becomes a named non-member",
   "src/app/api/bookings/[id]/guests/route.ts": "W10 add a guest",
   "src/lib/booking-modify-plan.ts": "W11 in-progress add, W12 modification add",
+  "src/lib/booking-import/write.ts": "W20 imported paid booking (#5005)",
 };
 
 /**

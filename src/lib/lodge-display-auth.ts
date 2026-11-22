@@ -5,7 +5,7 @@ import { isCalendarDate } from "./club-time";
 import { prisma } from "./prisma";
 import { requireAuthSecret } from "./runtime-config";
 
-// Lobby display device auth (fork issue #27, ADR-001): a deliberately
+// Lobby display device auth (fork issue hoppers99/AlpineClubBookingsNZ#27, ADR-001): a deliberately
 // weakest-privileged, sessionless credential. checkDisplayAuth() resolves
 // tokenHash → device → lodgeId and nothing else — it never maps to a Member
 // and shares no code path with checkLodgeAuth/KioskTier, so the display token
@@ -294,7 +294,7 @@ export interface DisplayAuthResult {
  * The display-surface guard. Authorises ONLY the display page shell, the
  * display-state API, and the heartbeat — resolved purely from the hashed
  * token to its device and the device's lodge FK. Rejections never update
- * lastSeenAt (issue #27 AC6).
+ * lastSeenAt (issue hoppers99/AlpineClubBookingsNZ#27 AC6).
  */
 export async function checkDisplayAuth(
   request: NextRequest

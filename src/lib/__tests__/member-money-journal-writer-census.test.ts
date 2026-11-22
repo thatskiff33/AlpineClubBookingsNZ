@@ -125,10 +125,15 @@ const DOORS: Record<string, string> = {
   // #4628 (M3c): through `postPendingBookingJournal`, from the lines the confirmation would post.
   "src/lib/booking-ledger-pending-charge.ts": "R01 at a bank-transfer binding; R02/R04 for a charge still pending",
   // #4525 (M13): an export manifest, not a journal row, through the same door.
-  "src/lib/xero-booking-invoices.ts": "M13: the primary invoice's export manifest, after its link",
-  "src/lib/xero-supplementary-invoices.ts": "M13: the supplementary invoice's export manifest, after its operation completes",
+  "src/lib/xero-booking-invoices.ts": "M13: the primary invoice's export manifest, after its link, and its Stripe payment's capture receipt",
+  "src/lib/xero-supplementary-invoices.ts": "M13: the supplementary invoice's export manifest, after its operation completes, and its Stripe payment's capture receipt",
   "src/lib/xero-credit-notes.ts": "M13: a refund note's export manifest, after it is recorded",
   "src/lib/xero-refund-note-settlement.ts": "M13: a refund note payment's export manifest, after it is sent",
+  // #4525 (M13): each capture sender's receipt manifest, after it stores a Xero payment id.
+  "src/lib/additional-capture-receipt-send.ts": "M13: a change capture's receipt legs, each leg's capture receipt",
+  "src/lib/xero-kept-late-capture-invoice.ts": "M13: a kept late capture's payment, its capture receipt",
+  "src/lib/capture-receipt-senders.ts": "M13: the primary invoice's Stripe payment (raised or replayed) and a PARTIAL repair's payment, their capture receipts",
+  "src/lib/xero-card-refund-reversal-invoice.ts": "M13: a failed-later refund reversal invoice's export manifest, after its operation completes",
 };
 /**
  * M3b (#4627): the doors' callers, which resolve the posting context BEFORE
@@ -179,6 +184,8 @@ const CONTEXT_RESOLVERS: readonly string[] = [
   "src/lib/edit-review-cleanup.ts",
   "src/lib/edit-review-cleanup-headline.ts",
   "scripts/edit-review-cleanup.ts",
+  // #5005: the paid-booking import resolves the context before each booking's transaction; its settle and $0 confirmation post through the existing doors.
+  "src/lib/booking-import/write.ts",
 ];
 /** Anything a context resolver may say about the journal: the `./doors` entry, the resolvers and the context type. */
 const RESOLVER_VOCABULARY = /["']@\/lib\/member-money\/doors["']|\bresolveBookingMoneyPostingContext\b|\bresolveBookingDoorClock\b|\bMemberMoneyPostingContext\b|\bBookingJournalContext\b/g;
@@ -187,8 +194,8 @@ const BOUNDARY = "src/lib/member-money/";
 const WRITER = "src/lib/member-money/internal/store.ts";
 /** The command's entry points: nothing outside the boundary calls them; M3b's doors go through `./doors`. */
 const POSTING_COMMAND = /\b(postMemberMoneyEvent|reverseMemberMoneyJournal|writeMemberMoneyBatch)\b/;
-/** M3b's door entry points (#4627), M3c's pending charge (#4628), M4's hand-back and kept capture (#4516), and M13's invoice and refund-note manifests (#4525). */
-const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn|postHandBackObligation|postHandBackPayment|postKeptCapture|reverseKeptCapture|planPrimaryInvoiceManifest|recordPrimaryInvoiceManifest|recordPrimaryInvoiceUpdateManifest|recordSupplementaryInvoiceManifest|recordRefundNoteManifest|recordRefundNotePaymentManifest)\b/;
+/** M3b's door entry points (#4627), M3c's pending charge (#4628), M4's hand-back and kept capture (#4516), and M13's invoice, refund-note, capture-receipt and failed-later reversal manifests (#4525). */
+const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn|postHandBackObligation|postHandBackPayment|postKeptCapture|reverseKeptCapture|planPrimaryInvoiceManifest|recordPrimaryInvoiceManifest|recordPrimaryInvoiceUpdateManifest|recordSupplementaryInvoiceManifest|recordRefundNoteManifest|recordRefundNotePaymentManifest|recordCaptureReceiptManifest|recordFailedLaterRefundReversalManifest)\b/;
 const DELEGATE_WRITE = /\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/;
 /**
  * Every name that reaches a journal row through Prisma: each relation's

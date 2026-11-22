@@ -25,6 +25,16 @@ WAITLISTED -> WAITLIST_OFFERED -> CONFIRMED/PAID or WAITLISTED/CANCELLED
 AWAITING_REVIEW -> PENDING or PAYMENT_PENDING (officer approval after quote acceptance, the only writer of this transition, #3415) or CONFIRMED/PAID or CANCELLED
 ```
 
+A status is the booking's lifecycle, never proof of payment (#4069,
+`INV-PAY-159`). `CONFIRMED` can owe a whole bank transfer: the bed-holding
+Internet Banking switch, a saved-card claim mid-charge, or an approved
+whole-lodge request with no `Payment` row. `PAID` with a `PARTIALLY_REFUNDED`
+payment can be fully covered at a lower price. Whether a booking is covered is
+read from its cash records by `readBookingCashCover`
+(`src/lib/booking-cash-evidence.ts`), which can also answer that the records
+cannot prove it. The decisions that still read status are listed in
+[`design/paid-from-cash.md`](design/paid-from-cash.md).
+
 `AWAITING_REVIEW -> CANCELLED` is an officer's or the system's arc (review
 reject, request decline, hold release), never a member self-cancel: the
 member-facing cancel doors read `MEMBER_CANCELLABLE_BOOKING_STATUSES`, which
@@ -3259,6 +3269,39 @@ published assignment appears on public committee surfaces
 contactable published assignment can receive server-routed contact form mail through the role email alias, or the linked member email when the role email is blank
 ```
 
+## Food Order Lifecycle
+
+Fork triyder/AlpineClubBookingsNZ#121 (`src/lib/food-orders.ts`, guide [Food Orders](guides/food-orders.md)).
+
+```text
+member places an order -> OPEN, every item unreceived (order, items and audit
+  row in one transaction; the food officer email is queued only after it commits)
+items received (one or more, OPEN only), in ONE transaction:
+  1. take the order row: updateMany WHERE id AND status = 'OPEN' (touch
+     updatedAt); count 0 -> 409 "already received", nothing written. This row
+     lock serialises concurrent receipts on one order.
+  2. mark the chosen items still unreceived (receivedAt, receivedById); none
+     left to mark -> 409, rolled back
+  3. audit food_order.items_received (items marked, count remaining)
+  4. if no item remains unreceived: OPEN -> RECEIVED by updateMany WHERE
+     status = 'OPEN', receivedAt/receivedById = this moment and person, audit
+     food_order.received
+  partly received stays OPEN ("2 of 5 items received")
+item received and order RECEIVED are terminal: no unticking, no reopening
+price (either status): updateMany WHERE priceCents = the amount the caller's
+  screen showed; a mismatch answers 409 and writes nothing; each change audits
+  the old and new cents; the price moves no money
+```
+
+Who may make either transition is `canManageFoodOrder`: a hut leader whose
+access window covers today at that order's lodge, or Lodge Operations edit (a
+committee role alone does not; owner decision on PR #5143, 15 Nov 2026). No
+advisory lock is taken: the order shares no row or key with any booking,
+capacity or settlement writer. The receipt and price races are checked against
+real PostgreSQL by `food-order-races.realdb.test.ts`: two concurrent final
+ticks close the order once, and two price saves from one screen leave one
+winner and one conflict.
+
 ## Refund And Credit Lifecycle
 
 Known credit types: `CANCELLATION_REFUND`,
@@ -3315,11 +3358,42 @@ The exclusion is not retroactive: a switch turned on while an offer is already
 live does not retract it, and the offer commits before its email is sent, so a
 flip in between leaves a live offer with a withheld send. An entry in
 `WAITLIST_OFFERED` whose offer is still unexpired therefore reports
-`suppressed_live_offer` with `needsOperatorAction: true` (a held bed the member
-was never told about); one whose offer has already lapsed reports the benign
+`suppressed_live_offer` with `needsOperatorAction: true` (a live offer the member
+was never told about; an offer holds no capacity, `INV-CAP-011`, though it can
+hold a bed allocation, `INV-CAP-006`); one whose offer has
+already lapsed reports the benign
 `suppressed`. A silenced entry still in `WAITLISTED` has no EmailLog row at all
-and is marked on the board from the flag; it keeps its queue place and still
-counts toward other members' positions.
+and is marked on the board from the flag. It shows no position and is not
+counted in anyone else's while silenced; it keeps its `createdAt`, so clearing
+the switch puts it back in its original place (`INV-LOCKOUT-060`).
+
+A waitlist position is never stored on a transition (#5402, `INV-CAP-041`). It
+is read from the live queue whenever it is shown, so every transition out of
+`WAITLISTED` (cancel, offer, force-confirm, the past-date cron) moves the entries
+behind it up without writing anything to them. An offered entry is already out
+of the count, so its accept (same-lodge, or the cross-lodge
+`WAITLIST_OFFERED -> CANCELLED` replacement) changes no one's number, and a
+revert to `WAITLISTED` (an expired offer, a capacity-lost or failed confirm,
+return-to-waitlist) puts the entry back at its original join time. Exits still
+write `waitlistPosition: null` until that column is dropped.
+
+**An expired offer's place goes on down the queue (#5410, `INV-CAP-042`).**
+`expireStaleOffers` reverts each stale `WAITLIST_OFFERED` entry to `WAITLISTED`,
+then makes one offer pass per lapsed offer, in join order. That pass starts just
+after the lapsed entry's place, wraps to the front, and reaches the lapsed entry
+last, with any opportunity of another booking whose offer lapsed in the same
+run, at any lodge, just before it. Under
+`OWN_LODGE_FIRST` the lapses go after the cross-lodge opt-ins as well (owner
+decision, 23 Nov 2026), the one exception to own lodge first. So the
+same run offers the place to the next party that fits, the lapsed entry keeps its
+original place and number, and a queue of one is offered again. Offers that
+lapse in turn walk the place down the queue and wrap to the front only after
+everyone has had a turn. Nothing is stored: every other offer pass (a
+cancellation, a date change, a payment-pending expiry, a group settlement, a
+return to the waitlist) walks the plain order, so it can offer a still-free place
+to a member who let it lapse earlier. In that one re-offer, a member ahead of
+the lapsed one who has not yet had the offer is considered after those behind
+it; they keep their place.
 
 ## Bed Allocation Lifecycle
 
@@ -4182,6 +4256,50 @@ template and booking change. Only the retry worker sends it, after its normal
 same email row; failure to persist that row leaves the invoice operation
 retryable. This avoids a synchronous send racing email recovery.
 
+The confirm-pending cron's bump notices (#5407) are owed before any row
+exists. The bump's transaction writes one `AlertCooldown` marker for the
+member's email (`booking-bumped` or `booking-guests-cancelled`) and one for the
+officers' `admin-booking-bumped` alert, each stamped with the moment of the bump.
+After the commit each marker is claimed by a stamp-guarded update, its notice
+sent at once, and the marker cleared when the notice is settled. A send that
+throws, or a job that stops first, leaves the marker. An officers' alert that
+reached nobody because every failed copy has no `EmailLog` row (it failed
+before the row was written, or its row write failed) leaves it too, held a day
+rather than an hour, as the once-only alerts are, so a lasting fault writes one
+undeliverable-alert escalation a day, not one an hour. A copy that failed
+after its row was written is the retry cron's, and no officer to tell is
+final. A later run of the same cron claims each marker whose stamp, the bump
+or its last attempt, is at least an hour old (a day, after an attempt that
+reached nobody), and sends it again (`booking-bump-notice-owed.ts`). It clears
+without sending when the booking is gone, is no longer cancelled, or has a
+`CANCELLED`, `MEMBER_PAID` or `NON_MEMBER_CONFIRMED` booking event after the
+bump (it was reinstated and moved on; the bump itself writes only `BUMPED`),
+or when the marker is more than seven days old, which it logs as an error. A
+settlement marker, a `CANCELLED` event that cancels nothing, does not count
+(`NOT_A_SETTLEMENT_MARKER_WHERE`). Most cancel and confirmation events are
+narrative, written best effort after their own commits; a few decision
+records commit with what they describe. A lost narrative event still leaves
+the booking told it was bumped, so this narrows the reinstated case rather
+than closing it.
+
+The member's email carries an id derived from the template, booking and bump
+time, so however often it is sent it has one row, and a provider failure
+leaves that row `FAILED` for the retry cron. The officers' alert has one row
+per officer and no such id, so it can arrive twice: after a crash between its
+send and the clear, or when a send is still running an hour after its claim
+(or two app instances' clocks differ by about that much) and a sweep claims the
+marker again. The member is still sent one email in both cases. A crash during
+the provider call itself leaves the member's row `QUEUED`, which nothing
+replays.
+
+```text
+bump commits + markers -> claim -> send settled -> marker cleared
+bump commits + markers -> claim -> send throws -> marker kept -> later run (an hour on) claims -> send -> cleared
+bump commits + markers -> claim -> officers' copies all lack a row -> marker held a day -> later run claims -> send -> cleared
+bump commits + markers -> job stops -> later run claims -> booking still CANCELLED, nothing since -> send -> cleared
+later run claims -> booking gone, reinstated, cancelled or confirmed since, or marker over 7 days old -> cleared, nothing sent
+```
+
 A message whose retry belongs entirely to something else keeps no body
 (`NON_RETRYABLE_EMAIL_LOG_TEMPLATES`), so its `FAILED` row is never replayed.
 
@@ -4324,6 +4442,15 @@ two callers on one row (the hand-off above) each record their own outcome of
   reset row's `startedAt`, so a stalled first run's late failure can still
   replace that retry's own failure (an error refreshed, the row FAILED either way)
 worker claims operation -> provider call -> success or retryable failure
+  the claim is built from the row's immutable queueType column, and the stored
+  request is read only as a queued request for it (#5228, INV-INT-041); a
+  PENDING row whose request names no queue type is left out of the scan
+  (never fills a batch), counted unclaimableRequest, the cron run warns
+pre-HTTP refusal (outage cooldown, daily limit, environment gate) -> the
+  claim's RUNNING, or the handler's self-failed FAILED, row -> PENDING, its
+  request the stored one if still a queued request, else the queued request
+  the dispatch claimed, in one compare-and-set (#2423, #5228); none to leave,
+  or the row changed -> it fails as any error does
 success -> SUCCEEDED clears lastErrorCode and lastErrorMessage, so an earlier
   wait's or failure's code is not shown on it (#4049); PARTIAL keeps them
 worker finds the operation must wait (busy) -> RUNNING -> PENDING: returns
@@ -4365,7 +4492,10 @@ supplementary invoice WAITING_PAYMENT on a card ask's intent (INV-PAY-104;
   -> the pay door closed and nothing carries it -> CANCELLED,
      STALE_WAITING_PAYMENT (the reaper; a capture of that same intent
      revives it, and a treasurer's keep does that inside its claim for the
-     row on the anchor it holds; while a supersede's cancel of that intent is still in
+     row on the anchor it holds, queuing an unpaid row's receipt there, or,
+     where the capture does not cover it -> CANCELLED,
+     STALE_WAITING_PAYMENT_CAPTURED in that same claim, the officer told
+     after it commits, #5220; while a supersede's cancel of that intent is still in
      flight the reaper keeps it, and the cancel's last step moves it, #4665)
 inbound webhook/event recorded -> reconciliation worker processes event
   PROCESSING left by a dead worker past the webhook lease -> RECEIVED
@@ -4524,14 +4654,18 @@ mark non-replayable on FAILED/PARTIAL only, status-guarded: a retry that
 queued retry (REQUEUE) of an operation marked not replayable -> CANCELLED,
   skipped "not-replayable"; nothing ran
 stale RUNNING (> 15 min) -> FAILED by an officer's Mark failed (one row) or
-  Reset stale running (all), code ORPHANED_STALE_RUNNING; then retryable
+  Reset stale running (all), code ORPHANED_STALE_RUNNING; then retryable;
+  never PENDING, so an execution request a dead run saved is never left there
+  (#5228)
   a PARTIAL repair's claim (code PARTIAL_REPAIR_RUNNING) -> PARTIAL instead,
   payload kept, code ORPHANED_STALE_RUNNING; Retry repairs it again (#4256)
 retry of an outbox-run row (group invoice and its VOIDs, kept late capture,
   membership subscription invoice, a change capture's receipt) -> the SAME row back to PENDING, same
   correlation key, status-guarded; the outbox claim runs it. Refused (409, no
   write) when a sibling for the same document was resolved in Xero after the
-  row was queued, which the outbox would cancel unsent (#3994). A subscription
+  row was queued, which the outbox would cancel unsent (#3994), and (#5228)
+  when the request it would leave is not a queued request for the row's
+  column: the row stays FAILED or PARTIAL for an officer. A subscription
   invoice is also refused when its charge already has a Xero invoice or needs
   none (#3971)
   the organiser adjustment, the applied-credit allocation and deallocation and
@@ -4547,6 +4681,11 @@ retry of an outbox-run row (group invoice and its VOIDs, kept late capture,
   for the queued run, and a PARTIAL's Xero object is audited per delivery and
   alerted once, not recorded; a queued group invoice whose settlement already
   points at an invoice closes SUCCEEDED on it (#4710), never left RUNNING
+PENDING, never claimed, unresolved, request naming no queue type (left by a
+  give-back before #5228) -> FAILED, code QUEUED_REQUEST_RELEASED, by the
+  owner's `pnpm run xero:stuck-queued-report --release`, only while still as
+  listed; request, response, Xero ids and keys kept; then Retry, which sizes a
+  refund note on today's cover
 primary booking invoice create saves its link -> worth gap check (#3980,
   INV-PAY-136), and again on its "invoice already exists" replay
   a second save of the same invoice stores nothing -> re-check from the first's
@@ -4726,6 +4865,7 @@ credit-sync pass already ran this interval (skipped: true)                     -
 credit-note mirror with nothing to read (skipped: true)                        -> SKIPPED
 batch worked, some rows passed over (skipped: <count>)                        -> SUCCESS
 outbox rows refused before any call (cooldownDeferred > 0)                    -> SUCCESS + warning
+outbox rows holding no request it can send (unclaimableRequest > 0, #5228)    -> SUCCESS + warning
 outbox or replay rows failed (failed > 0)                                     -> SUCCESS + warning
 heal or void follow-up with a failed note                                      -> FAILURE
 ```
@@ -4739,7 +4879,7 @@ as `cooldownDeferred` and the run carries a `warning`, shown amber. A failed
 row warns the same way and points at Xero Operations. To verify:
 `xero-cron-runner.test.ts`, `xero-outbox-fail-fast.test.ts`.
 
-### Alpine Central Server version pause (#49)
+### Alpine Central Server version pause (triyder/AlpineClubBookingsNZ#49)
 
 ```text
 alpine-server-other-lodges-sync (03:00) -> module on -> base URL set
@@ -5515,6 +5655,70 @@ refreshes (`auth-session-max-age.test.ts`, #4611);
 and that every refusal renders a visible friendly message via the
 `/login?error=…` wiring.
 
+## AI app connection lifecycle
+
+A member's approval of one AI app (`McpGrant`, ALP-653, `INV-MCP-004`). Module
+`mcpServer`, default off. The connection carries the approving browser
+sign-in's `sessionIssuedAt` and two-factor result, and is used only while it is
+ACTIVE and still allowed (`INV-MCP-002`, `INV-MCP-005`). Statuses: `ACTIVE`,
+`REVOKED`, `EXPIRED`; both end states are final, and reconnecting creates a new
+connection.
+
+```text
+member presses Allow on /connect/authorize -> ACTIVE + one single-use code (5 minutes)
+  same transaction: the member's earlier ACTIVE connection to the same app -> REVOKED (replaced)
+  same transaction: the member's ACTIVE connections with no token and no unexpired code -> EXPIRED (never-completed)
+app exchanges the code (PKCE verifier) -> ACTIVE, listed: one access token (1 hour) + one refresh token
+app renews with a refresh token -> ACTIVE: that refresh token used, a new pair issued
+ACTIVE -> REVOKED (member-revoked): member disconnects on Profile -> Connected AI apps
+ACTIVE -> REVOKED (admin-revoked): officer disconnects on Admin -> Help & system -> AI app connections
+ACTIVE -> REVOKED (app-revoked): app presents either token to /api/mcp/oauth/revoke
+ACTIVE -> REVOKED (code-reuse): a used code is presented again, or the code's usedAt claim is lost
+ACTIVE -> REVOKED (refresh-reuse): a used refresh token is presented again, or its usedAt claim is lost
+ACTIVE -> EXPIRED (session-ended): on use or token issue, the session refresh ends the approving sign-in
+  (password changed, login disabled, maximum session age passed, member gone)
+member deleted or merged away -> the member's connections are deleted with the row (no status written)
+module off -> no transition: requests answer 404 and the connection stays ACTIVE
+club policy refuses the holder (officers off, members off, unverified, kiosk) -> no transition: each use is refused until it allows them again
+```
+
+Every end goes through `endMcpGrants` in `src/lib/mcp/grants.ts`: it reads the
+ACTIVE rows its filter selects, then claims them with a status-guarded
+`updateMany` on `status: "ACTIVE"` that writes the end status, `endedReason`
+and `endedAt`, and deletes the connections' tokens and codes whoever won. The
+reason alone decides the status (`MCP_GRANT_END_REASONS` →
+`END_STATUS_BY_REASON`):
+
+| Reason | Status | Written by |
+| --- | --- | --- |
+| `member-revoked` | REVOKED | `DELETE /api/member/mcp-grants/[id]` |
+| `admin-revoked` | REVOKED | `DELETE /api/admin/mcp/grants/[id]` |
+| `app-revoked` | REVOKED | `POST /api/mcp/oauth/revoke` |
+| `replaced` | REVOKED | approval of the same app by the same member |
+| `refresh-reuse` | REVOKED | `POST /api/mcp/oauth/token`, `refresh_token` grant |
+| `code-reuse` | REVOKED | `POST /api/mcp/oauth/token`, `authorization_code` grant |
+| `session-ended` | EXPIRED | `resolveMcpGrantUse`, on `/api/mcp` or a token issue |
+| `never-completed` | EXPIRED | the member's next approval, for one whose code was never collected |
+
+**A lost claim changes nothing.** `endMcpGrants` returns how many rows it
+ended; zero means each was already over. The member and officer disconnect
+routes answer that as 404 and write no audit row, so two disconnects leave one
+row. Ends the system or the app causes write no audit row in any case
+(`INV-MCP-008`); `endedReason` is the record. The code and refresh-token claims
+are separate status-guarded `updateMany`s on `usedAt: null`; losing one is
+treated as reuse and ends the connection.
+
+A connection the app never collected stays ACTIVE but is not listed (the
+lists show ACTIVE connections with at least one token) until the member's next
+approval ends it `never-completed`; its code is unusable after five minutes.
+
+To verify: the `mcp-*.test.ts` suites in `src/lib/__tests__/` —
+`mcp-oauth.test.ts` (a lost code claim ends the connection, a refused use does
+not spend the code, refresh rotation and reuse, revocation ends the whole
+connection), `mcp-principal.test.ts` (a missing connection or an ended sign-in
+reads as signed out), `mcp-endpoint.test.ts` (a connection that may no longer
+be used answers 401) and `mcp-module-off.test.ts` (module off answers 404).
+
 ## Analytics Consent Lifecycle
 
 Client-side state machine for GA4 consent (issue #975, reshaped by #2573). The
@@ -5578,3 +5782,24 @@ admin edits the banner -> updatedAt changes -> dismissal invalidated, banner re-
 To verify: the admin page's current/upcoming/past split, the inclusive
 date-only comparison in NZ time, and dismissal invalidation keyed on
 `updatedAt`.
+
+## Paid-booking import batch lifecycle (#5005 child A)
+
+The [import engine](design/booking-import.md) records each booking separately,
+so a stopped batch resumes without creating a second booking. It has no route
+or screen yet.
+
+| Entity | From | To | Guard and effect |
+| --- | --- | --- | --- |
+| Batch | absent | OPEN | Fresh preview digest matches; unique lodge/content batch key, actor and reconciliation totals recorded. |
+| Row | absent | PENDING or REFUSED | Preview result recorded once per batch/reference. No uploaded file is stored. |
+| Row | PENDING | IMPORTED | Under global, lodge and member-night locks, repeat all checks; status-guarded claim; booking, cash settlement (or free confirmation), ledger, journal and events commit together. |
+| Row | PENDING | REFUSED | A failed under-lock check rolls back the booking; a PENDING-guarded write records the reason. |
+| Batch | OPEN | COMPLETED | No PENDING rows remain; guarded update records completion once. |
+
+IMPORTED and REFUSED rows are terminal for this engine. Repeated confirms find
+the same batch and skip decided rows. A new file may retry a refused reference;
+the partial unique index excludes only IMPORTED rows. REVERSED values and actor
+columns reserve the schema for child B; no reversal transition is implemented
+here. Confirm refuses an already REVERSED batch. Children C, D and E add access,
+refund-as-credit and part-paid support respectively.

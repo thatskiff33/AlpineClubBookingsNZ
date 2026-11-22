@@ -17,7 +17,7 @@ import {
   loadCancellationPolicy,
   type CancellationPolicyDb,
 } from "@/lib/cancellation";
-import { hasCapturedPayment, isSettledBookingStatus } from "@/lib/booking-payment-state";
+import { hasCapturedPayment, isSettledBookingStatus, type BookingPaymentState } from "@/lib/booking-payment-state";
 import {
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
@@ -31,7 +31,8 @@ import {
 } from "@/lib/edit-refund-hand-back";
 import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import type { OwnershipReader } from "@/lib/superseded-intent-ownership";
-import { paidByOrganiser, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
+import { paidByOrganiser, paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
+import { paymentHasRefundableCardIntent } from "@/lib/refundable-card-intent";
 import { paymentDisputedCaptureCents, type CaptureDisputeHold } from "@/lib/stripe-dispute-hold";
 import { heldForDisputeSettlementCents } from "@/lib/edit-dispute-held-settlement";
 
@@ -57,6 +58,15 @@ export type BookingModificationSettlementOptions = {
    * is true, false means the organiser's card.
    */
   organiserRefundByBankTransfer: boolean;
+  /**
+   * #5303: the member's own refund (the card arm) is a bank transfer the
+   * treasurer sends - an Internet Banking payment, or (#5212, `INV-PAY-160`) a
+   * card payment Stripe holds no record of - so the quote never promises the
+   * card. The settlement's own answer (`editReductionRefundsToCard`) read for
+   * the quote. Always false where `returnsToOrganiser` is true, which has its
+   * own flag above.
+   */
+  refundByBankTransfer: boolean;
   /**
    * #5061 follow-up (`INV-PAY-154`): an OPEN or LOST Stripe dispute holds the
    * member's card payment (`editReductionDisputeHold`), so the reduction is
@@ -93,6 +103,65 @@ export async function editReductionDisputeHold(
   if (!payment || payment.source !== PaymentSource.STRIPE || paidByOrganiser(booking)) return NO_DISPUTE_HOLD;
   if (!isSettledBookingStatus(booking.status) || !hasCapturedPayment(payment)) return NO_DISPUTE_HOLD;
   return paymentDisputedCaptureCents(db, payment);
+}
+
+/**
+ * #5212 (`INV-PAY-160`): does a reduction on this booking have a card to go
+ * back to? Only where it was paid through Stripe and Stripe holds a record of
+ * the payment - otherwise the refund is the treasurer's to send by bank
+ * transfer, as an Internet Banking payment's is, and no card refund is
+ * promised or owed. The settlement and the quote's label
+ * (`refundByBankTransfer`, #5303) both ask it through
+ * `editReductionRefundsToCard`. A joiner the
+ * organiser paid for by card is answered by the organiser's combined payment,
+ * which holds the intent; the joiner's mirror never has one of its own. Read
+ * under the door's locks, beside the dispute hold.
+ */
+export async function editRefundHasCardToReturnTo(
+  db: Pick<Prisma.TransactionClient, "payment">,
+  booking: Pick<LoadedBookingForModify, "payment" | "organiserSettled" | "parentBookingId">,
+): Promise<boolean> {
+  // Defensive: the only production caller, `editReductionRefundsToCard`, already
+  // gates on `hasSettledCardPayment`, which requires a Stripe payment.
+  if (booking.payment?.source !== PaymentSource.STRIPE) return false;
+  return paidByOrganiserCard(booking) || paymentHasRefundableCardIntent(db, booking.payment);
+}
+
+/**
+ * What `calculateFullReductionSettlementOptions` takes from its caller, read
+ * under the caller's locks: the dispute hold (#5061 follow-up, `INV-PAY-154`)
+ * and whether the refund has a card to go back to (#5303, `INV-PAY-160`).
+ */
+export async function fullReductionLockedReads(
+  db: EditDisputeHoldDb & Pick<Prisma.TransactionClient, "payment">,
+  booking: Pick<LoadedBookingForModify, "status" | "payment" | "organiserSettled" | "parentBookingId">,
+): Promise<{ refundHeldForDispute: boolean; hasCardToReturnTo: boolean }> {
+  return {
+    refundHeldForDispute: (await editReductionDisputeHold(db, booking)).cents > 0,
+    hasCardToReturnTo: await editReductionRefundsToCard(db, booking),
+  };
+}
+
+/** Paid by card: a settled booking holding captured Stripe money. `applyPaymentAdjustments` reads it for an
+ * increase; a reduction also needs a card to return to (`editReductionRefundsToCard`). */
+export function hasSettledCardPayment(booking: { status: string; payment: (BookingPaymentState & { source: string }) | null | undefined }): boolean {
+  const { status, payment } = booking;
+  return isSettledBookingStatus(status) && hasCapturedPayment(payment) && payment?.source === PaymentSource.STRIPE;
+}
+
+/**
+ * #5212 (`INV-PAY-160`): does a REDUCTION on this booking go back to its card?
+ * Paid by card (`hasSettledCardPayment`) with a card to return to
+ * (`editRefundHasCardToReturnTo`); otherwise a refund is the bank-transfer
+ * hand-back. The one answer `applyPaymentAdjustments` settles a reduction by,
+ * read under the door's locks; the batch result carries it as
+ * `reductionRefundsToCard`, which "Add to work party" names its refund by (#5149).
+ */
+export async function editReductionRefundsToCard(
+  db: Pick<Prisma.TransactionClient, "payment">,
+  booking: Pick<LoadedBookingForModify, "status" | "payment" | "organiserSettled" | "parentBookingId">,
+): Promise<boolean> {
+  return hasSettledCardPayment(booking) && (await editRefundHasCardToReturnTo(db, booking));
 }
 
 /** One cash cap for the quote and save, after unpaid asks have been netted. */
@@ -207,6 +276,7 @@ export async function calculateModificationSettlementOptions({
       requiresSettlementMethod: false,
       returnsToOrganiser: true,
       organiserRefundByBankTransfer: paidByOrganiserInternetBanking(booking),
+      refundByBankTransfer: false,
       refundHeldForDispute: false,
     };
   }
@@ -223,6 +293,7 @@ export async function calculateModificationSettlementOptions({
       !refundHeldForDispute && (cardRefundAmountCents > 0 || creditRefundAmountCents > 0),
     returnsToOrganiser: false,
     organiserRefundByBankTransfer: false,
+    refundByBankTransfer: !(await editReductionRefundsToCard(db, booking)),
     refundHeldForDispute,
   };
 }
@@ -263,6 +334,7 @@ export function calculateFullReductionSettlementOptions({
   refundableCashCents,
   todayAtClub,
   refundHeldForDispute,
+  hasCardToReturnTo,
 }: {
   booking: Pick<
     LoadedBookingForModify,
@@ -272,8 +344,10 @@ export function calculateFullReductionSettlementOptions({
   /** The edit's cash basis (`refundableCashForModification`), read by the caller. */
   refundableCashCents: number;
   todayAtClub: CalendarDate;
-  /** #5061 follow-up: `editReductionDisputeHold` above zero, read by the caller under its locks (`INV-PAY-154`). */
+  /** #5061 follow-up: `editReductionDisputeHold` above zero (`INV-PAY-154`); see `fullReductionLockedReads`. */
   refundHeldForDispute: boolean;
+  /** #5303: `editReductionRefundsToCard`, else the refund is a bank transfer; see `fullReductionLockedReads`. */
+  hasCardToReturnTo: boolean;
 }): BookingModificationSettlementOptions | null {
   const basisAmountCents = settlementBasisCents(booking, netChargeCents, refundableCashCents);
   if (basisAmountCents === null) return null;
@@ -293,6 +367,7 @@ export function calculateFullReductionSettlementOptions({
       requiresSettlementMethod: false,
       returnsToOrganiser: true,
       organiserRefundByBankTransfer: paidByOrganiserInternetBanking(booking),
+      refundByBankTransfer: false,
       refundHeldForDispute: false,
     };
   }
@@ -306,6 +381,7 @@ export function calculateFullReductionSettlementOptions({
     requiresSettlementMethod: !refundHeldForDispute,
     returnsToOrganiser: false,
     organiserRefundByBankTransfer: false,
+    refundByBankTransfer: !hasCardToReturnTo,
     refundHeldForDispute,
   };
 }

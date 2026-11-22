@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DisplayState } from "@/lib/lodge-display-state";
 import { DISPLAY_CONDITION_NAMES } from "@/lib/lodge-display/conditions";
 
-// LTV-034 (#80): the live conditions status endpoint behind the Conditions
+// LTV-034 (hoppers99/AlpineClubBookingsNZ#80): the live conditions status endpoint behind the Conditions
 // reference. Read-only, admin-guarded, GET-only; it builds a lodge's
 // DisplayState and evaluates EVERY registry condition against it. These tests
 // pin the guard, the "every condition returns a boolean" contract, and lodge

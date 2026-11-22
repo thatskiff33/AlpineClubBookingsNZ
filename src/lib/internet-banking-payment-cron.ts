@@ -13,7 +13,7 @@ import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-al
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import { recordBookingEvent } from "@/lib/booking-events";
-import { paymentHasCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
+import { paymentHasCaptureEvidence } from "@/lib/payment-capture-evidence";
 import { sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
 import { bookingStayHasStarted } from "@/lib/booking-edit-policy";
 import { clubTodayForStartedStay } from "@/lib/club-today-for-started-stay";

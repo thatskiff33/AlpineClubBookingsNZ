@@ -26,6 +26,7 @@ import { z } from "zod";
 import logger from "@/lib/logger";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import { BookingStatus } from "@prisma/client";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import {
@@ -391,7 +392,7 @@ export async function POST(request: NextRequest) {
           previousRange,
         });
       }, { bookingId, lodgeId });
-      return outcome.ok ? outcome.value : { released: false };
+      return outcome.ok; // `false` (#4993): still CONFIRMED for the cron's recovery (#5279)
     };
     claimReleaser = async () => {
       await releaseChargeClaim();
@@ -499,26 +500,24 @@ export async function POST(request: NextRequest) {
           amountCents: paymentIntent.amount,
           source: isAuthorizedCron ? "cron" : "admin",
         }),
-        ipAddress:
-          request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-          "unknown",
+        ipAddress: getClientIp(request),
       });
     } else {
       // The intent exists but did not capture (3DS challenge outstanding, still
       // processing, or — on a replay — an earlier attempt that has since died).
       // Record what Stripe answered on the attempt row inside the locked
       // release, forward only, then hand the claim back if it is still ours:
-      // the booking returns to PENDING with its hold restored, and the webhook
-      // — or the next attempt — resolves it.
-      await releaseChargeClaim({
+      // PENDING with its hold restored (or, if the release lost, CONFIRMED until
+      // the cron's recovery, #5279), and the webhook or next attempt resolves it.
+      const claimReleased = await releaseChargeClaim({
         attemptRowId: claim.attempt.attemptRowId,
         paymentIntent,
       });
       claimReleaser = null;
-      const account = describeUnsettledPaymentIntent(paymentIntent.status);
+      const account = describeUnsettledPaymentIntent(paymentIntent.status, { claimReleased });
       logger.warn(
-        { bookingId, piStatus: paymentIntent.status, memberId: bookingOwner(booking).memberId },
-        "Off-session charge did not capture — booking returned to PENDING (#3267)"
+        { bookingId, piStatus: paymentIntent.status, claimReleased, memberId: bookingOwner(booking).memberId },
+        "Off-session charge did not capture; `claimReleased` says whether the booking went back to PENDING (#3267, #5279)"
       );
       // Alert admins so they can contact the member to complete payment
       // manually — with the amount that was actually asked for (the post-lock
@@ -660,9 +659,7 @@ export async function POST(request: NextRequest) {
               ? error.message
               : "Failed to charge saved payment method",
         }),
-        ipAddress:
-            request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-            "unknown",
+        ipAddress: getClientIp(request),
       });
     }
 

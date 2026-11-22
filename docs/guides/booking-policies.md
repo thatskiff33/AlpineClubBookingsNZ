@@ -348,8 +348,10 @@ the thing they were actually trying to do:
 
 - **Move both bookings.** They move together, on **one combined figure the member
   accepts once** — both bookings repriced for the new nights, both change fees,
-  and a single card-or-credit choice covering both. Either both move or neither
-  does; there is no state where one moved and the other did not.
+  and a single card-or-credit choice covering both. What the member is told
+  comes back includes any account credit a lower price frees on a booking not
+  yet paid, so it matches what their credit balance gains. Either both move or
+  neither does; there is no state where one moved and the other did not.
 - **Move only this booking.** The change goes ahead, the member is told in plain
   words on the screen that the other booking will be left without adult
   supervision, and it arrives in your queue exactly as an officer override would —

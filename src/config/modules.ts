@@ -40,6 +40,8 @@ export const MODULE_KEYS = [
   "memberLodgeRoster",
   "alpineCentralServer",
   "commsPortal",
+  "mcpServer",
+  "foodOrders",
 ] as const;
 
 export type ModuleKey = (typeof MODULE_KEYS)[number];
@@ -47,14 +49,11 @@ export type ModuleSettingsValues = Record<ModuleKey, boolean>;
 
 /**
  * Prisma `select` for every read of the ClubModuleSettings singleton — the live
- * module columns (derived from MODULE_KEYS) plus the two audit fields. Deriving
- * it from MODULE_KEYS matters for blue/green safety: a bare
- * `findUnique({ where })` has no `select`, so Prisma names EVERY column in its
- * schema — including retired-but-not-yet-dropped columns like the former
- * `multiLodge` flag. Selecting only the live module columns means the generated
- * SQL never references such a column, so a later contract migration that DROPs
- * it (#139) is safe from this release onward: this release's client does not
- * read it. Any read of ClubModuleSettings must use this select.
+ * module columns (derived from MODULE_KEYS) plus the two audit fields. A bare
+ * `findUnique({ where })` has no `select`, so Prisma names EVERY column the
+ * client knows. This select keeps a retired column out of reads and a write's
+ * RETURNING, not out of an INSERT, so it never makes a DROP safe on its own
+ * (INV-OPS-005). Any read of ClubModuleSettings must use this select.
  */
 export const CLUB_MODULE_SETTINGS_COLUMN_SELECT = {
   ...(Object.fromEntries(MODULE_KEYS.map((key) => [key, true])) as Record<
@@ -193,11 +192,20 @@ export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
   // post from this module publishes member-written content to other clubs.
   // An upgrade must not start doing that because nobody opted out (#2993).
   commsPortal: false,
+  // Default OFF, inverting the general ON rule above on purpose: switching it
+  // on lets a member connect an AI app that then reads their club data and
+  // sends it to that app's provider. A club has to choose that (ALP-653).
+  mcpServer: false,
   // Default OFF, inverting the general ON rule above on purpose: switching the
   // roster on shows one member's stay pattern — which lodge, which nights — to
   // every other member who can book that lodge. An upgrade must not start
   // doing that because nobody opted out (#2942).
   memberLodgeRoster: false,
+  // Default OFF, inverting the general ON rule above on purpose (fork triyder/AlpineClubBookingsNZ#121,
+  // owner decision 14): an order goes to the food officer's email address, and
+  // until the committee has entered one in the Food Orders settings there is
+  // nobody to send it to.
+  foodOrders: false,
 };
 
 /**
@@ -533,6 +541,18 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       "When off, the member board and its admin screens return Not Found. Existing posts are kept and reappear when it is switched back on.",
     ],
   },
+  mcpServer: {
+    key: "mcpServer",
+    label: "AI app connections (MCP)",
+    description:
+      "Let a signed-in person connect an approved AI app, such as Claude or ChatGPT, to their own account. The app acts as that person, with that person's permissions only. SENDS DATA OUTSIDE THE CLUB: whatever the person asks about is sent to the AI app's provider. Off unless you turn it on.",
+    dependencies: [
+      "Choose who may connect, the most a connection may do, and which apps are approved under Admin → Help & system → AI app connections. Connections start view-only.",
+      "An officer's connection can read other members' details, so officers have their own switch, off by default. Cover this in the club's privacy notice before switching it on.",
+      "Actions that need a fresh sign-in proof stay on the website, and card details are never entered through an AI app.",
+      "When off, the connection endpoints and screens return Not Found and every connected app stops working. Existing connections are kept and work again when it is switched back on.",
+    ],
+  },
   memberLodgeRoster: {
     key: "memberLodgeRoster",
     label: "Member lodge roster",
@@ -543,6 +563,18 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       "A booking that includes a child never names anyone in it: it shows a family or group label instead, at every setting.",
       "Nights under a whole-lodge hold are shown as \"Reserved for a private booking\", without naming or counting the party. The booking calendar still shows them as full.",
       "When off, the roster page returns Not Found and no roster data is read.",
+    ],
+  },
+  // Fork triyder/AlpineClubBookingsNZ#121.
+  foodOrders: {
+    key: "foodOrders",
+    label: "Food orders",
+    description:
+      "Members order food for a lodge stay from a card on their dashboard. Each order is emailed to your food officer, and a hut leader or Lodge Operations admin marks it received when it arrives. The price can be recorded for the club's history; nothing is charged.",
+    dependencies: [
+      "Enter the food officer's email address under Admin → Lodge → Food Orders before members can order. Until then the order page says ordering is not set up.",
+      "Hut leaders at that lodge and Lodge Operations edit admins tick items received as they arrive (the order closes on the last) and record its price. The price is a record only: it is never charged, invoiced or sent to Xero.",
+      "When off, the order and history pages and their APIs return Not Found, and the dashboard card and settings page are hidden. Existing orders are kept.",
     ],
   },
 };

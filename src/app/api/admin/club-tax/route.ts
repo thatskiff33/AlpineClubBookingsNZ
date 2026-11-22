@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { countBookingsKeepingTreatmentFrom, readClubTaxAdminState } from "@/lib/club-tax-admin-state";
 import { MAX_TAX_RATE_BASIS_POINTS } from "@/lib/club-tax-settings";
 import {
@@ -10,6 +11,7 @@ import {
 } from "@/lib/club-tax-settings-write";
 import { parseCalendarDate } from "@/lib/club-time";
 import logger from "@/lib/logger";
+import { isSingletonUpsertContention } from "@/lib/prisma-errors";
 import { requireAdmin } from "@/lib/session-guards";
 
 /**
@@ -30,20 +32,17 @@ import { requireAdmin } from "@/lib/session-guards";
  * are `club-tax-settings-write.ts`, the one writer.
  */
 
-/**
+/*
  * Retryable failures, answered 503: P2028 (transaction API error) and P2034
  * (the serialisation failure Serializable provokes in the loser of two saves).
  * P2002 joins them because the only unique keys the writer can hit are the
  * period's start date, which it checks inside the same Serializable
  * transaction, and its random id: a collision is a concurrent save of the same
  * date that slipped past, and retrying is safe because the loser wrote nothing.
+ *
+ * The set and the predicate are `isSingletonUpsertContention`
+ * (`@/lib/prisma-errors`); this comment is why `P2002` is safe for this writer.
  */
-const TRANSACTION_CONTENTION_CODES = new Set(["P2002", "P2028", "P2034"]);
-
-function isTransactionContentionError(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === "string" && TRANSACTION_CONTENTION_CODES.has(code);
-}
 
 const calendarDate = z.string().max(10).transform((value, context) => {
   const date = parseCalendarDate(value);
@@ -114,21 +113,15 @@ function refusalResponse(refusal: ClubTaxWriteRefusal) {
   }
 }
 
-async function readBody(request: Request): Promise<unknown> {
-  try {
-    return await request.json();
-  } catch {
-    return undefined;
-  }
-}
-
 async function answerWrite(run: () => Promise<Awaited<ReturnType<typeof scheduleClubTaxChange>>>) {
   try {
     const outcome = await run();
     if ("refused" in outcome) return refusalResponse(outcome);
     return NextResponse.json({ changed: true, state: await readClubTaxAdminState() });
   } catch (error) {
-    if (!isTransactionContentionError(error)) throw error;
+    // P2002 counts as contention for this writer; the reason is the
+    // "Retryable failures" comment near the top of this file.
+    if (!isSingletonUpsertContention(error)) throw error;
     logger.warn({ err: error }, "Club tax treatment save hit write contention");
     return NextResponse.json({ error: "Another update is in progress — try again shortly." }, { status: 503 });
   }
@@ -138,8 +131,9 @@ export async function PUT(request: Request) {
   const guard = await requireAdmin({ permission: false });
   if (!guard.ok) return guard.response;
 
-  const body = await readBody(request);
-  if (body === undefined) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  const jsonBody = await parseJsonRequestBody(request, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = scheduleSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   if (parsed.data.confirmed !== true) return NextResponse.json({ error: UNCONFIRMED_MESSAGE }, { status: 400 });
@@ -155,8 +149,9 @@ export async function DELETE(request: Request) {
   const guard = await requireAdmin({ permission: false });
   if (!guard.ok) return guard.response;
 
-  const body = await readBody(request);
-  if (body === undefined) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  const jsonBody = await parseJsonRequestBody(request, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = cancelSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   if (parsed.data.confirmed !== true) {

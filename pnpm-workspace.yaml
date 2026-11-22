@@ -10,21 +10,18 @@ nodeLinker: isolated
 
 # Match the npm cooldown in .github/dependabot.yml: 7 days in minutes.
 minimumReleaseAge: 10080
-# Each exclusion below names one exact version and has its own note; remove an
-# entry by its own note, never the whole list.
-# - nodemailer@10.2.1: grandfather only the version already locked on main when
-#   this policy landed (#4455). Published 22 Oct 2026, it otherwise blocks frozen
-#   installs on 28 Oct. Future versions still wait seven days; remove this entry
-#   after the next Nodemailer update.
-minimumReleaseAgeExclude:
-  - nodemailer@10.2.1
+# No version is excluded from that wait today. The one exclusion this policy
+# landed with (#4455), nodemailer@10.2.1, was removed once main had moved to a
+# later Nodemailer, as its note said. If one is ever needed again
+# (`minimumReleaseAgeExclude`), it names one exact version and carries its own
+# note saying when it goes.
 
 # The single home of the version range for these two direct dependencies
 # (pnpm's "catalog"). package.json names both as `catalog:`, and the nodemailer
 # overrides below point here too, so each range is written exactly once; bump
 # it here.
 catalog:
-  nodemailer: ^10.4.0
+  nodemailer: ^10.5.0
   sharp: ^0.35.5
 
 # The former npm `overrides` block, translated one entry for one entry, less
@@ -58,6 +55,7 @@ overrides:
   ajv>fast-uri: ^3.1.9
   typed-rest-client>qs: ^6.16.1
   "minimatch@>=7.0.0 <11.0.1": ^11.0.5
+  "@prisma/config>effect": ^3.22.1
 
 # Dependencies allowed to run install scripts, pinned to the exact version that
 # was reviewed. pnpm runs none by default and fails the install on any build it
@@ -91,11 +89,3 @@ verifyDepsBeforeRun: error
 # (docs/agents/CODEX_WORKFLOW.md, "Require an isolated dependency tree"). This
 # is pnpm 11's default for a project; it is written down so nobody turns it on.
 enableGlobalVirtualStore: false
-
-# Reviewed patches pnpm applies at install, each to one exact package@version
-# (#5252: picomatch's unfixed GHSA-fc5q-39xc-vjpf). Each one is bound by a
-# record in dependency-mitigations.d/, which says why it exists and when it
-# retires; the lockfile records each patch's hash.
-patchedDependencies:
-  picomatch@2.3.2: patches/picomatch@2.3.2.patch
-  picomatch@4.0.7: patches/picomatch@4.0.7.patch

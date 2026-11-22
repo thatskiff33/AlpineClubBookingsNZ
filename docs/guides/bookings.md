@@ -284,9 +284,9 @@ with a message to contact the club, and nothing is changed.
 A guest whose stored total is below zero, which the system cannot store, would
 refuse the change with a message to contact the club; nothing is changed.
 
-A booking changed before this way of pricing came in may still have a review open
-in **Refunds & Adjustments**. Until it is settled, a further price change to that
-booking is refused with a message pointing there; settle it as described in
+A booking changed before this way of pricing came in was held for an officer
+review instead. Those reviews have all been settled or closed and the review
+screens were retired; see
 [Payments & Refunds](payments.md#decide-a-booking-change-the-system-would-not-price).
 
 ### Read the results table
@@ -478,7 +478,9 @@ system sending that member *anything* about it.
      do accept — so follow it up yourself.
    - **the booking is still waitlisted** (no offer made yet). While emails are
      off it is skipped when beds are handed out, so no offer is made at all.
-     It keeps its place in the queue and holds nobody else up. Nothing about
+     It shows no waitlist position and is not counted in anyone else's, so
+     the members behind it move up; turning the switch off puts it back in its
+     original place. Nothing about
      this appears in the withheld list later, because there is no offer to
      withhold — this dialog is the only place you are told.
 4. Click **Yes — I will tell the member myself**. Nothing is saved until you
@@ -555,6 +557,8 @@ are its filters and columns.
 | Lodge | Filter by lodge | All lodges | Only shown when more than one active lodge exists |
 | Reset | Restore search, filters, sort, and page | — | Keeps the selected lodge; disabled at the dataset defaults |
 | + Create Booking | Open the Book on Behalf wizard | — | Disabled for view-only bookings roles |
+| Booking page → Admin tools → Add to work party | Give a member the working-bee discount they forgot to tick: the booking is repriced and anything paid above the new total comes back in full, as club credit or, on a paid booking, a refund if you choose (to the card, or by bank transfer for Internet Banking, as on an ordinary change); a group organiser's payment goes back to the organiser | Shown only with the Work Parties module on | Needs bookings **edit**. No change fee. Never on your own or your family's booking (or a joiner's in a group you organise and pay for); another officer must. See [Work Parties](work-parties.md#add-an-existing-booking-to-a-work-party) |
+| Booking page → Admin tools → Remove from work party | Take a booking off a work party it was added to by mistake: the booking is repriced without the discount and the difference is owed on the booking | Shown instead of Add on a booking that is on a work party | Needs bookings **edit**. No change fee. Credit already given and refunds already paid are left alone. See [Work Parties](work-parties.md#remove-a-booking-from-a-work-party) |
 | Booking page → Admin tools → Cash / off-Xero payment | Record a payment made in cash or by a bank transfer that never reached Xero, or reverse one | — | Needs finance **edit** (not bookings edit). Never contacts Xero. Asks whether the money also covers any extra still owing from a later change. See the [Payments guide](payments.md) |
 
 **Booking status chips** (shared with the rest of the app): Draft, Pending,

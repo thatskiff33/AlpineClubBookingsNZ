@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { Prisma } from "@prisma/client";
 import { stripeSdkError } from "./support/stripe-sdk-error";
+import { SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE } from "@/lib/saved-card-charge-claim";
 
 const {
   mockAuth,
@@ -448,6 +449,16 @@ describe("POST /api/payments/charge-saved-method", () => {
     );
     // A captured charge never releases the claim.
     expect(releaseCall()).toBeUndefined();
+  });
+
+  it("#5399: records the address the proxy saw, not the caller's first claim", async () => {
+    mockChargePaymentMethod.mockResolvedValue({ id: "pi_success_1", status: "succeeded", amount: 12500 });
+
+    const response = await POST(makeRequest({ "x-forwarded-for": "203.0.113.250, 198.51.100.42" }));
+
+    expect(response.status).toBe(200);
+    expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({ ipAddress: "198.51.100.42" }));
+    expect(mockLogAudit).not.toHaveBeenCalledWith(expect.objectContaining({ ipAddress: "203.0.113.250" }));
   });
 
   it("#4357: charges the booking's worth - its price plus a change fee recorded on its payment - as the cron does", async () => {
@@ -1310,7 +1321,15 @@ describe("POST /api/payments/charge-saved-method", () => {
 
       expect(response.status).toBe(409);
       expect(response.headers.get("Retry-After")).toBeNull();
-      expect(await response.json()).toMatchObject({ success: false, paymentIntentId: "pi_3ds_contended" });
+      // The retry landed, so the booking IS pending and today's wording stands
+      // (#5279). Pinned as text (#5346): comparing against the function that
+      // words it would pass whatever it said.
+      expect(await response.json()).toMatchObject({
+        success: false,
+        paymentIntentId: "pi_3ds_contended",
+        error:
+          "The saved card needs the cardholder to complete authentication (3D Secure), which cannot be done automatically; the booking stays pending until they do, or until the member saves a different card.",
+      });
       const releases = mockPrismaTransaction.mock.calls.slice(1);
       expect(releases).toHaveLength(2);
       for (const [, options] of releases) expect(options).toEqual({ maxWait: 5_000, timeout: 10_000 });
@@ -1334,7 +1353,13 @@ describe("POST /api/payments/charge-saved-method", () => {
 
       expect(response.status).toBe(409);
       expect(response.headers.get("Retry-After")).toBeNull();
-      expect(JSON.stringify(await response.json())).not.toContain(TRANSACTION_CONTENDED_CODE);
+      const body = await response.json();
+      expect(JSON.stringify(body)).not.toContain(TRANSACTION_CONTENDED_CODE);
+      // #5279: the booking is still CONFIRMED, so it is not called pending; the
+      // answer says the job's recovery returns it automatically.
+      expect(body.error).not.toMatch(/stays pending/);
+      expect(body.error).toContain(SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE);
+      expect(SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE).toMatch(/returns it to pending automatically/);
       expect(mockPrismaTransaction).toHaveBeenCalledTimes(3);
       expect(releaseCall()).toBeUndefined();
       expect(mockCreateAuditLog).toHaveBeenCalledWith(

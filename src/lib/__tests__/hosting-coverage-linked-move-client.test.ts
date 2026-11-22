@@ -87,6 +87,14 @@ describe("reading the linked-move offer (#3232)", () => {
     expect(prompt?.linkedBookings[0]?.proposedCheckIn).toBe("2026-08-20");
   });
 
+  it("#5303: reads where the one choice's refund goes, the card when an older server omits it", () => {
+    expect(readHostingCoverageLinkedMovePrompt(body({ refundRoute: "BANK_TRANSFER" }))?.refundRoute).toBe("BANK_TRANSFER");
+    expect(readHostingCoverageLinkedMovePrompt(body({ refundRoute: "CARD_AND_BANK_TRANSFER" }))?.refundRoute).toBe("CARD_AND_BANK_TRANSFER");
+    expect(readHostingCoverageLinkedMovePrompt(body())?.refundRoute).toBe("CARD");
+    // A value the panel cannot word is not an offer it can render honestly.
+    expect(readHostingCoverageLinkedMovePrompt(body({ refundRoute: "CHEQUE" }))).toBeNull();
+  });
+
   it("reads the not-enough-beds form, which is an offer with one arm", () => {
     // The owner's "cannot" arm still has to render: the member is told plainly and
     // offered the warn-and-continue path. Refusing to read it would show them the
@@ -179,11 +187,13 @@ describe("what the offer says about the money (#3232)", () => {
     return {
       combinedAmountDueCents: 0,
       combinedRefundCents: 0,
+      combinedFreedCreditCents: 0,
       combinedChangeFeeCents: 0,
       combinedPolicyRetainedCents: 0,
       combinedOrganiserRefundCents: 0,
       combinedOrganiserBankTransferRefundCents: 0,
       settlementMethodRequired: false,
+      refundRoute: "CARD",
       settlementMethodChosen: false,
       bothChangeFeesCharged: true,
       linkedCount: 1,
@@ -305,6 +315,35 @@ describe("what the offer says about the money (#3232)", () => {
       CLUB_FORMAT_TEST,
     );
     expect(alreadyChosen).not.toMatch(/You will be asked once/);
+  });
+
+  it("fork triyder/AlpineClubBookingsNZ#132: names the freed applied credit inside the one total, and keeps it out of the card-or-credit choice", () => {
+    // All of it freed credit: the total is still the one figure, the share is
+    // named, and the card-or-credit sentence cannot describe it.
+    const freedOnly = formatLinkedMoveMoneySentence(
+      money({ combinedRefundCents: 900, combinedFreedCreditCents: 900, settlementMethodRequired: true }),
+      CLUB_FORMAT_TEST,
+    );
+    expect(freedOnly).toContain("$9.00 would come back to you across both bookings, of which $9.00 is returned to your account credit.");
+    expect(freedOnly).not.toContain("You will be asked once whether that comes back to your card");
+    expect(freedOnly).toContain("Money does come back on this move");
+    // Part settlement: the choice covers the settlement's share, and the freed share is named.
+    const mixed = formatLinkedMoveMoneySentence(
+      money({ combinedRefundCents: 900, combinedFreedCreditCents: 300, combinedAmountDueCents: 200, settlementMethodRequired: true }),
+      CLUB_FORMAT_TEST,
+    );
+    expect(mixed).toContain("$9.00 would come back to you, of which $3.00 is returned to your account credit, across both bookings.");
+    // #5149 N2: the choice is over the rest, after the freed share named above.
+    expect(mixed).toContain("You will be asked once whether the rest comes back to your card");
+    // No freed credit: the wording is as before.
+    expect(formatLinkedMoveMoneySentence(money({ combinedRefundCents: 900 }), CLUB_FORMAT_TEST)).not.toContain("of which");
+  });
+
+  it("reads a freed-credit share off the offer, absent meaning none", () => {
+    const withShare = readHostingCoverageLinkedMovePrompt(body({ combinedRefundCents: 900, combinedFreedCreditCents: 300 }));
+    expect(withShare?.combinedFreedCreditCents).toBe(300);
+    expect(readHostingCoverageLinkedMovePrompt(body())?.combinedFreedCreditCents).toBe(0);
+    expect(readHostingCoverageLinkedMovePrompt(body({ combinedFreedCreditCents: 1.5 }))).toBeNull();
   });
 
   it("does not say 'nothing to come back' over a question about where it goes", () => {

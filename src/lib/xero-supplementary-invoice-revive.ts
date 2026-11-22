@@ -9,6 +9,7 @@ import type { Prisma } from "@prisma/client";
 import { anchorCaptureHasReceipt } from "@/lib/additional-capture-receipt-link";
 import { asRecord } from "@/lib/xero-json";
 import { OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES } from "@/lib/xero-operation-outbox";
+import { readQueuedOutboxRequestFor, XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import {
   SUPPLEMENTARY_INVOICE_CREATE_WHERE,
   supplementaryInvoicesNamingIntentWhere,
@@ -32,14 +33,11 @@ export type RetiredInvoiceRevival =
 /**
  * THE RETIRED-ROW STEP, one body for both callers (`INV-SSOT`). The caller
  * holds `lockSupplementaryInvoiceAnchor` on `anchorId` for the whole call.
- * No email and no provider call: the release sends the officer alert after
- * this returns `refused`.
- *
- * `stampRefusal` is false for the keep. A refusal (the capture does not cover
- * the invoice, the change is already linked, or another invoice is queued)
- * then writes nothing, so the after-commit release still stamps
- * `STALE_WAITING_PAYMENT_CAPTURED` and emails the officer together. A covering
- * invoice, and a revival with its older rows stamped covered, do commit.
+ * No email and no provider call: a caller that gets `refused` won the
+ * `STALE_WAITING_PAYMENT_CAPTURED` claim, and it alone sends the officer
+ * alert, after its transaction commits (#5220: the keep stamps inside its own
+ * transaction too, so the stamp commits with the decision and the email
+ * follows it).
  */
 export async function reviveRetiredSupplementaryInvoice(
   tx: Prisma.TransactionClient,
@@ -50,7 +48,6 @@ export async function reviveRetiredSupplementaryInvoice(
     paymentIntentId,
     transaction,
     bookingId,
-    stampRefusal,
   }: {
     operation: {
       id: string;
@@ -64,7 +61,6 @@ export async function reviveRetiredSupplementaryInvoice(
     transaction: CapturedTransaction;
     /** The capture's booking, for its receipt check (#3953); null with no capture. */
     bookingId: string | null;
-    stampRefusal: boolean;
   },
 ): Promise<RetiredInvoiceRevival> {
   const retiredIds = [operation.id, ...supersededIds];
@@ -108,7 +104,11 @@ export async function reviveRetiredSupplementaryInvoice(
     where: { ...supplementaryInvoicesNamingIntentWhere(paymentIntentId), id: { notIn: retiredIds } },
     select: { requestPayload: true },
   });
-  let refusal: IssueRefusal | null = captureRefusalFor(transaction, operation.requestPayload, billedByOthers(others));
+  // #5228 (`INV-INT-025`): revived only with a request the outbox can claim
+  // under the row's column, which the revive's own write matches below.
+  let refusal: IssueRefusal | null = readQueuedOutboxRequestFor(XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE, operation.requestPayload)
+    ? captureRefusalFor(transaction, operation.requestPayload, billedByOthers(others))
+    : "unreadable-invoice";
   if (!refusal) {
     const existingLink = await tx.xeroObjectLink.findFirst({
       where: {
@@ -136,10 +136,6 @@ export async function reviveRetiredSupplementaryInvoice(
       if (outstanding) refusal = "another-invoice-queued";
     }
   }
-
-  // The keep leaves a refusal for the after-commit release, stamp and alert
-  // together. Nothing is written, including the older rows' covered stamps.
-  if (refusal && !stampRefusal) return { outcome: "refused", reason: refusal };
 
   await stampCovered(
     supersededIds,
@@ -177,6 +173,7 @@ export async function reviveRetiredSupplementaryInvoice(
     }));
   const revived = await tx.xeroSyncOperation.updateMany({
     where: {
+      ...SUPPLEMENTARY_INVOICE_CREATE_WHERE,
       id: operation.id,
       status: "CANCELLED",
       lastErrorCode: STALE_WAITING_PAYMENT_ERROR_CODE,

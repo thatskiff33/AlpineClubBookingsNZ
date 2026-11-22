@@ -14,7 +14,7 @@ import { isBuiltInDisplayLayoutKey } from "@/lib/lodge-display/built-in-seeds";
 // (not this route), so this guard does not affect them.
 const BUILT_IN_READ_ONLY = "Built-in boards are read-only — duplicate to customise";
 
-// Admin lobby-display LAYOUT read / update / delete (fork issue #78, LTV-032):
+// Admin lobby-display LAYOUT read / update / delete (fork issue hoppers99/AlpineClubBookingsNZ#78, LTV-032):
 //  • GET    — the full authored row (feeds the editor).
 //  • PUT    — update every authored field, re-validated by the save contract;
 //             the key is IMMUTABLE after creation (template bindings and seeds

@@ -77,10 +77,10 @@ offered to them at all:
 | New bookings | Bookings | A new booking is created or confirmed |
 | Payment failures | Finance | A booking payment fails; an expired internet banking hold needs attention because money may be paid against its invoice or Xero cannot read it (#3643); an expired hold is left for reconciliation by hand because its stay has started (#3663); a paid group's unpaid joiners were switched to paying for themselves mid-stay and the treasurer must collect by hand (#3672); or a card payment that went through after its booking was cancelled is held for a treasurer's approval (*Late payment held for approval*, once per payment; if nobody could receive it, the payments cron tries it again a day later while the item is still waiting, #3635) |
 | Pending deadlines | Bookings | Bookings approach their pending deadline (digest) |
-| Bookings bumped | Bookings | A pending booking is bumped by another booking |
+| Bookings bumped | Bookings | The pending-booking job releases a pending booking at its hold deadline because there is no longer room for its party, including a booking cancelled because its guests could not be confirmed (once per booking; counted in the Daily digest). If the job is interrupted before the alert goes out, or it could not be recorded for any officer, a later run sends it, so very rarely it arrives late or twice (#5407) |
 | Xero sync errors | Finance | Xero contact or invoice sync fails, or a refund the app does not yet note in Xero needs crediting by hand (#3949, until #4292), or a Xero call succeeds after its operation was resolved by hand, including a refund credit note the app did not record (#4374, #4426), or an organiser adjustment's credit note the app did not record after its job was reset (#4655), or one the app stopped allocating or paying against after its job was reset and resolved by hand (#4680), or a Xero object a stalled job made after it was reset and queued again, withdrawn or ended by another attempt, which only partly succeeded and was not recorded (#4686) |
 | Capacity warnings | Bookings | Occupancy is nearing full capacity |
-| Daily digest | Admin Overview | A daily summary of the previous 24 hours of admin alerts |
+| Daily digest | Admin Overview | A daily summary of the previous 24 hours of admin alerts. Each alert counts once however many officers receive it, and two alerts with the same subject count as two (#5407) |
 | Waitlist offers | Bookings | A waitlist spot is offered to a member |
 | Member requests | Membership | A member submits a family-group / linking request |
 | Booking change requests | Bookings | A member requests a change to a locked booking, or asks for a booking-policy exception |
@@ -91,6 +91,12 @@ offered to them at all:
 | Member delete requests | Membership | A hard-delete of a member is requested (two-admin rule) |
 | Maintenance reports | Lodge Operations | Somebody reports a physical fault at a lodge |
 | Central server version | Lodge Operations | Every day, inside the Daily digest, while syncing with the Alpine Central Server is paused because the server is on a different software version from this site. This is the one entry that reaches two audiences: the digest's own readers get it inside their digest, and a Lodge Operations editor who does not receive the digest gets a separate message, *Admin Server Version Paused* under [Email Messages](email-messages.md), carrying **only** this entry — never the digest's alert counts — with its own wording and its own delivery rule. Somebody in both groups gets one email, the digest |
+
+The food-order email (`food-order-placed`, fork triyder/AlpineClubBookingsNZ#121) is not in this grid
+either: it goes to the one address in the [Food Orders](food-orders.md)
+settings, not to an admin role, so it has no checkbox here. It can be muted
+under [Delivery Rules](notification-rules.md) like any other non-locked
+operational email.
 
 ### Always-on alerts
 

@@ -6,7 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EditBookingPanel } from "@/components/edit-booking-panel";
+import { BookingInvoiceControl } from "@/components/download-invoice-button";
+import { BookingInvoiceAccountCard } from "@/components/booking-invoice-account-card";
+import type { BookingInvoiceAccount, BookingInvoiceOffer } from "@/lib/booking-invoice-access";
 import { bookingOwner } from "@/lib/booking-owner";
+import { WORKING_BEE_DISCOUNT_LABEL } from "@/lib/working-bee-discount-label";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { useClubTime } from "@/components/club-time-provider";
@@ -184,6 +188,13 @@ export interface BookingEditorData {
    * the RSC wire.
    */
   otherLodgeRateEligibleGuestIds?: string[];
+  /**
+   * #5066: the page's `resolveBookingInvoiceOffer` answer — the route's own
+   * rule. Absent (a conditional spread) when nothing is offered.
+   */
+  invoiceOffer?: BookingInvoiceOffer;
+  /** #5066: the invoice's account lines, present only beside a `XERO_INVOICE` or `GENERATED` offer. */
+  invoiceAccount?: BookingInvoiceAccount;
 }
 
 
@@ -204,7 +215,7 @@ function PromoAdjustmentRow({
     <div className={`flex justify-between ${amountCents > 0 ? "text-warning-11" : "text-success-11"}`}>
       <span>
         {promo?.workPartyEventName
-          ? "Working bee discount"
+          ? WORKING_BEE_DISCOUNT_LABEL
           : "Promo adjustment"}
         {promo?.workPartyEventName ? (
           <span className="ml-1 text-xs">
@@ -312,12 +323,13 @@ export function BookingEditor({
         <CardHeader>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <CardTitle>Stay Details</CardTitle>
+              <CardTitle headingLevel={2}>Stay Details</CardTitle>
               {canOpenEditor && (
                 <Button variant="outline" onClick={() => setEditing(true)}>
                   Edit Booking
                 </Button>
               )}
+              <BookingInvoiceControl bookingId={booking.id} offer={booking.invoiceOffer ?? { kind: "NONE" }} />
             </div>
             <Badge variant="secondary" className={bookingStatusClass(booking.status)}>
               {bookingStatusLabel(booking.status)}
@@ -378,7 +390,7 @@ export function BookingEditor({
       {/* Guests */}
       <Card>
         <CardHeader>
-          <CardTitle>Guests</CardTitle>
+          <CardTitle headingLevel={2}>Guests</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="divide-y">
@@ -432,7 +444,7 @@ export function BookingEditor({
       {/* Payment */}
       <Card>
         <CardHeader>
-          <CardTitle>Payment</CardTitle>
+          <CardTitle headingLevel={2}>Payment</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
           <div className="flex justify-between">
@@ -461,6 +473,14 @@ export function BookingEditor({
           </div>
         </CardContent>
       </Card>
+
+      {(booking.invoiceOffer?.kind === "XERO_INVOICE" || booking.invoiceOffer?.kind === "GENERATED") && booking.invoiceAccount && (
+        <BookingInvoiceAccountCard
+          bookingId={booking.id}
+          creditNotes={booking.invoiceOffer.kind === "XERO_INVOICE" ? booking.invoiceOffer.creditNotes : []}
+          account={booking.invoiceAccount}
+        />
+      )}
     </div>
   );
 }

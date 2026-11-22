@@ -113,6 +113,17 @@ export function cardRefundSliceFailedRefundIds(
 }
 
 /**
+ * #4525 (Ledger M13): every refund Stripe failed later that a whole row is sent
+ * for - the one its key names, and each slice's (`cardRefundSliceFailedRefundIds`).
+ * A failed-later reversal invoice's manifest names its R13 from this.
+ */
+export function cardRefundRowFailedRefundIds(operation: { idempotencyKey: string; allocationPlan?: unknown }): string[] {
+  const byKey = cardRefundFailedLaterRefundId(operation.idempotencyKey);
+  const slices = parseRefundAllocationPlan(operation.allocationPlan ?? null) ?? [];
+  return [...new Set([...(byKey ? [byKey] : []), ...slices.flatMap((slice) => cardRefundSliceFailedRefundIds(operation, slice))])];
+}
+
+/**
  * #4104 review (CM), #4312 round 8 (`INV-SSOT`): whether a Stripe refund
  * carries exactly the metadata this row's runner sends
  * (`cardRefundOperationRefundMetadata`), with optional per-slice evidence

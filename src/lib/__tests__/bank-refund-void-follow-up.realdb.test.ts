@@ -1232,6 +1232,26 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
       expect(await followUp.followUpVoidedBankRefundNote(linkId)).toMatchObject({ outcome: "handled" });
     });
 
+    it("MUTATION (#4488): a voided note of a completed card refund shortfall is a card refund's bank record too - it goes to a person with nothing to pick, and is never undone", async () => {
+      // The refunded-total floor trusts a completed shortfall's amount (`INV-PAY-141`), so #4162 must never take it back.
+      // A deliberate fixture (#5344): the shortfall is this suite's inserted COMPLETED task (`handBackNoted`) under a
+      // shortfall's occurrence key, not one built by the real cancel and completion. The case is about how the void
+      // follow-up reads the record's kind; the real cancel, close and completion are driven in
+      // `card-refund-reversal-shortfall-floor.realdb.test.ts` (`support/card-shortfall-late-refund-example.ts`).
+      await paidBankTransfer();
+      const shortfall = await handBackNoted(`${P}-short`, PAID_CENTS, { names: "paidAnotherWayTaskId", perDelta: true, occurrenceKey: `cancel-card-shortfall:${BOOKING_ID}` });
+      const linkId = await voidInXero(`${P}-short`, PAID_CENTS);
+      const before = await money();
+      expect(await followUp.followUpVoidedBankRefundNote(linkId)).toMatchObject({ outcome: "unmatched" });
+      expect(await money()).toEqual(before);
+      expect(await followUpTasks()).toEqual([]);
+      const listed = (await scan.listBankRefundVoidsForAPerson(prisma as never)).filter((item) => item.paymentId === PAYMENT_ID);
+      expect(listed).toEqual([expect.objectContaining({ reason: "paid-another-way", pickableLines: [] })]);
+      const shortfallLine = (await prisma.bookingLedgerLine.findFirstOrThrow({ where: { bookingId: BOOKING_ID, postingKey: `handback:${shortfall}` }, select: { id: true } })).id;
+      await expect(withWrites(() => followUp.pickRefundForUnmatchedVoid({ linkId, lineId: shortfallLine, actingMemberId: OFFICER_ID }))).rejects.toMatchObject({ status: 409 });
+      expect(await money()).toEqual(before);
+    });
+
     it("the read-only count sorts one fixture per bucket", async () => {
       const { countBankRefundVoids } = await import("@/lib/bank-refund-void-count");
       const fixture = async (index: number) => {

@@ -202,8 +202,12 @@ type Money = {
    * (#3232 fix round). Defaults to false.
    */
   requiresSettlementMethod?: boolean;
+  /** #5303: the write says this booking's refund is a bank transfer (`reductionRefundsToCard` false). Defaults to false. */
+  refundByBankTransfer?: boolean;
   /** What the cancellation policy kept of this booking's reduction. */
   policyRetainedAmountCents?: number;
+  /** F20 (#1887): an unpaid booking's applied credit freed by the lower price. Defaults to 0. */
+  refundedExcessCreditCents?: number;
 };
 
 const PRIMARY_MONEY: Money = {
@@ -249,7 +253,9 @@ function batchResult(
     accountCreditAmountCents: money.accountCreditAmountCents,
     // #3809: none of these bookings was paid with account credit.
     appliedCreditGivenBackCents: 0,
+    refundedExcessCreditCents: money.refundedExcessCreditCents ?? 0,
     requiresSettlementMethod: money.requiresSettlementMethod === true,
+    reductionRefundsToCard: money.refundByBankTransfer !== true,
     settlementMethod: null,
     additionalPaymentClientSecret: null,
     stripeRefundId: null,
@@ -797,6 +803,30 @@ describe("what the member is charged, once, for both (#3232 D2)", () => {
     expect(quote.settlementMethodRequired).toBe(true);
   });
 
+  it("counts an unpaid booking's freed applied credit in what comes back (fork triyder/AlpineClubBookingsNZ#132)", async () => {
+    // The dependent is still pending with account credit applied, and its lower
+    // price frees $15.00 of that credit back to the member's balance. The owner
+    // decided the one "comes back" figure includes it, so the offer matches the
+    // balance change; no settlement arm runs for it, so no choice is asked.
+    h.modifyBookingBatch.mockImplementation(async (call: BatchArgs) => {
+      h.events.push(`edit:${call.bookingId}`);
+      const money =
+        call.bookingId === PRIMARY
+          ? { ...PRIMARY_MONEY, additionalAmountCents: 0, refundAmountCents: 900 }
+          : {
+              ...DEPENDENT_MONEY,
+              refundAmountCents: 0,
+              accountCreditAmountCents: 0,
+              refundedExcessCreditCents: 1_500,
+            };
+      return batchResult(call.bookingId, money, MOVED, call.waiveChangeFee === true);
+    });
+
+    const { quote, message } = await raiseOffer();
+    expect(quote.combinedRefundCents).toBe(2_400);
+    expect(message).toContain("$24.00 would come back to you");
+  });
+
   it("charges both change fees by default, including when the club has never chosen", async () => {
     h.bookingDefaultsFindUnique.mockResolvedValue(null);
 
@@ -1209,6 +1239,52 @@ describe("a dependent that needs a refund-or-credit choice (#3232)", () => {
     // Once on the apply attempt; the re-quote assumes the card option and so gets
     // its figures rather than throwing again.
     expect(attempts).toBe(1);
+  });
+
+  /**
+   * #5303: the one Return-method choice names where its refund really goes. Each
+   * booking's route is its write's own `reductionRefundsToCard` (the settlement's
+   * `editReductionRefundsToCard`), so an Internet Banking dependent, or a card one
+   * Stripe holds no record of, is never offered as a refund to the card.
+   */
+  it("#5303: a dependent the treasurer refunds by bank transfer is offered as a bank transfer", async () => {
+    h.moneyFor = (bookingId: string) =>
+      bookingId === PRIMARY ? PRIMARY_MONEY : { ...DEPENDENT_MONEY, refundByBankTransfer: true };
+
+    const offer = await raiseOffer();
+
+    expect(offer.quote.refundRoute).toBe("BANK_TRANSFER");
+    expect(offer.message).toContain("comes back by bank transfer or as account credit");
+    expect(offer.message).not.toContain("to your card");
+  });
+
+  it("#5303 control: a dependent Stripe can refund is still offered the card", async () => {
+    const offer = await raiseOffer();
+
+    expect(offer.quote.refundRoute).toBe("CARD");
+    expect(offer.message).toContain("comes back to your card or as account credit");
+  });
+
+  it("#5303: one choice over a card refund and a bank-transfer refund says both", async () => {
+    // A primary whose own reduction goes to the card, beside a dependent's bank transfer.
+    h.moneyFor = (bookingId: string) =>
+      bookingId === PRIMARY
+        ? { ...DEPENDENT_MONEY, priceDiffCents: -500, refundAmountCents: 100 }
+        : { ...DEPENDENT_MONEY, refundByBankTransfer: true };
+
+    const offer = await raiseOffer();
+
+    expect(offer.quote.refundRoute).toBe("CARD_AND_BANK_TRANSFER");
+  });
+
+  it("#5303: a booking that asks no choice does not colour the route", async () => {
+    // The primary's increase owes no refund, so its route is not the choice's.
+    h.moneyFor = (bookingId: string) =>
+      bookingId === PRIMARY ? { ...PRIMARY_MONEY, refundByBankTransfer: true } : DEPENDENT_MONEY;
+
+    const offer = await raiseOffer();
+
+    expect(offer.quote.refundRoute).toBe("CARD");
   });
 });
 

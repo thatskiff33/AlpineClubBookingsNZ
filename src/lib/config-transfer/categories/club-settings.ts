@@ -1,4 +1,6 @@
+export { DEFAULTS_INTENTIONALLY_PARTIAL, COMMON_EXCLUDED_COLUMNS, excludedColumnsFor } from "./singleton-exclusions";
 import { privacyHostingSchema, PRIVACY_HOSTING_DEFAULTS, PRIVACY_HOSTING_TEXT_REFUSAL } from "@/lib/privacy-hosting";
+import { CLUB_INVOICE_SUPPLIER_IMPORT_CONSTRAINTS } from "@/lib/club-invoice-supplier-fields";
 import { strToU8, strFromU8 } from "fflate";
 import { Prisma } from "@prisma/client";
 
@@ -84,7 +86,7 @@ interface SingletonFieldConstraint {
   validate?: (value: unknown) => string | null;
 }
 
-interface SingletonSpec {
+export interface SingletonSpec {
   entity: string;
   /** Prisma delegate name, e.g. "bookingDefaults". */
   delegate: string;
@@ -103,9 +105,8 @@ interface SingletonSpec {
   excluded?: Record<string, string>;
   /**
    * Explicit Prisma `select` for reads of this singleton. Only set where a
-   * shared select already exists (e.g. CLUB_MODULE_SETTINGS_COLUMN_SELECT) to
-   * keep a retired-but-not-yet-dropped column out of the generated SQL — see
-   * the doc comment on that constant. Other singletons keep a bare read.
+   * shared select exists (CLUB_MODULE_SETTINGS_COLUMN_SELECT); it narrows the
+   * SELECT and RETURNING, not an upsert's INSERT (INV-OPS-005). Others: none.
    */
   select?: Record<string, boolean>;
   /**
@@ -146,45 +147,6 @@ interface SingletonSpec {
    * so the loop below still gets to refuse it.
    */
   reconcile?: (incoming: Record<string, unknown>) => Record<string, unknown>;
-}
-
-/**
- * The singletons whose `defaults()` legitimately covers none (or only some) of
- * their fields. Both are made entirely of nullable OVERRIDE columns resolved
- * through the deployment's `config/club.json` / environment fallback chain, so
- * "never saved" means "no override" — exactly what their admin GETs synthesise
- * — and the fallback values belong to the install rather than to the club's
- * portable configuration. Guarded by a test so a genuinely under-specified new
- * singleton cannot join them silently.
- */
-export const DEFAULTS_INTENTIONALLY_PARTIAL = new Set([
-  "club-identity-settings",
-  "email-message-setting",
-]);
-
-/**
- * Columns present on (most) singletons that are never portable club
- * configuration: the fixed singleton primary key, the audit FK to the member
- * who last saved on the SOURCE install (that id need not exist on the target),
- * and the row timestamps. They are excluded from every export by omission from
- * `fields`; enumerated here so the reverse drift guard (#2178) treats the
- * omission as a deliberate decision rather than an oversight. Kept as one shared
- * set so the exclusion mechanism stays uniform across all 12 singletons. A model
- * that lacks one of these columns (e.g. BookingDefaults has no timestamps) is
- * unaffected: the guard only requires columns ⊆ fields ∪ excluded, never the
- * reverse, so this can be a tolerant superset.
- */
-export const COMMON_EXCLUDED_COLUMNS: Record<string, string> = {
-  id: 'singleton primary key (always "default") — identity, not configuration',
-  updatedByMemberId:
-    "audit FK to the source install's member; the id need not exist on the target",
-  createdAt: "row creation timestamp — instance-local bookkeeping",
-  updatedAt: "row mutation timestamp — instance-local bookkeeping",
-};
-
-/** Full column-exclusion set for a singleton: the shared columns plus its own. */
-export function excludedColumnsFor(spec: SingletonSpec): Record<string, string> {
-  return { ...COMMON_EXCLUDED_COLUMNS, ...spec.excluded };
 }
 
 // #4932: the admin form's (and the database CHECK's) 1–30 day bound.
@@ -271,6 +233,9 @@ export const SINGLETONS: SingletonSpec[] = [
       // nothing leaves the building. The retention window that deletes posts is
       // equally non-travelling -- see ClubPostSettings in MODEL_LEVEL_EXCLUSIONS.
       "commsPortal",
+      // foodOrders SHOULD-TRAVEL (fork triyder/AlpineClubBookingsNZ#121): a capability flag; the officer address
+      // (FoodOrderSettings) is instance-local, so a target with none takes no orders.
+      "foodOrders",
     ],
     excluded: {
       multiPromoCodes:
@@ -292,9 +257,8 @@ export const SINGLETONS: SingletonSpec[] = [
         "travelling and reasoned that not inheriting the source's dial was " +
         "the safe direction; it is the opposite, because the fallback is the " +
         "most permissive value rather than the least",
-      multiLodge:
-        "retired-but-not-yet-dropped flag; kept out of every read via " +
-        "CLUB_MODULE_SETTINGS_COLUMN_SELECT and awaiting a contract DROP (#139)",
+      // No entry for the retired multiLodge column: `@ignore`d (#5396), so this
+      // category cannot see it (drop: hoppers99/AlpineClubBookingsNZ#139).
       // OWNER JUDGEMENT (#2178): the two auth-provider sign-in toggles do not
       // travel today, unlike EVERY other module flag (incl. twoFactor,
       // analytics, xeroIntegration) which does. (This read "the other 19
@@ -332,6 +296,15 @@ export const SINGLETONS: SingletonSpec[] = [
       // would advertise an outward data-sharing arrangement the target club has
       // not entered into. A fresh import keeps the target's own value (default
       // OFF) and its admin turns it on after being issued a key.
+      // AI app connections (ALP-653): NON-TRAVELLING. Switching it on opens a
+      // new way into this deployment's live data and sends that data to
+      // outside AI providers, so it is a per-install security and privacy
+      // decision like magicLink/googleLogin. Its settings (McpSettings) and
+      // every connection stay behind as well.
+      mcpServer:
+        "opens an authenticated machine door onto this deployment's live data " +
+        "and sends it to outside AI providers; a per-install security and " +
+        "privacy decision, not portable club config (ALP-653)",
       alpineCentralServer:
         "outward data-sharing integration gated on a deployment-local encrypted " +
         "ServerNZ API key and per-install central-server base URL (both " +
@@ -519,11 +492,9 @@ export const SINGLETONS: SingletonSpec[] = [
       lodgeId:
         "soft-link FK for the phase-7 per-lodge conversion, unused by runtime " +
         "reads today; a source lodge id is not portable across installs",
-      assignSchoolTeachersAsHutLeaders:
-        "retired by #3819: #3416's club-wide switch, replaced by the per-lodge " +
-        "school hut-leader ticks that travel in each lodge.json; a later contract " +
-        "release drops the column. An older bundle's value is not written here: " +
-        "the lodge-config importer maps it onto every imported lodge's teacher tick",
+      // No entry for the retired assignSchoolTeachersAsHutLeaders (#3819):
+      // `@ignore`d (#5396), so this category cannot see it. An older bundle's
+      // value is mapped onto each lodge's teacher tick by the lodge importer.
     },
     defaults: () => DEFAULT_BOOKING_REQUEST_SETTINGS,
   },
@@ -597,16 +568,15 @@ export const SINGLETONS: SingletonSpec[] = [
     defaults: () => DEFAULT_INTERNET_BANKING_PAYMENT_SETTINGS,
   },
   {
-    // DB-first club identity (E3 #1929). Singleton row id="default"; all fields
-    // nullable and served through the runtime fallback chain, so exporting/
-    // importing them moves only the admin-set overrides.
+    // DB-first club identity (E3 #1929; legalName/postalAddress: #5066's invoice supplier). Singleton row
+    // id="default"; all fields nullable overrides of the runtime fallback chain, so only admin-set ones move.
     entity: "club-identity-settings",
     delegate: "clubIdentitySettings",
-    fields: ["name", "shortName", "hutLeaderLabel", "facebookUrl"],
+    fields: ["name", "shortName", "hutLeaderLabel", "facebookUrl", "legalName", "postalAddress"],
     // No override saved = every column null, which is what the admin GET
     // synthesises. See DEFAULTS_INTENTIONALLY_PARTIAL.
-    // No `constraints`: every column is nullable (String?), so null is a
-    // legitimate value — nothing to require (#2200 nullability audit).
+    // Null is always allowed (#2200); the #5066 supplier fields take the admin save's rules.
+    constraints: CLUB_INVOICE_SUPPLIER_IMPORT_CONSTRAINTS,
     defaults: () => ({}),
   },
   {

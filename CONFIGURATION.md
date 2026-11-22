@@ -1930,7 +1930,7 @@ action; scoped admins cannot merge.
 | `APP_RUNTIME_ROLE`                 | Runtime label used by health/status reporting, usually set by Compose (`web-blue`, `web-green`, `cron-leader`, `staging`). Names which container **slot** this is. **Never read to decide whether this installation is production** — that is `APP_ENVIRONMENT_ROLE` above (`INV-CONFIG-003`). |
 | `NODE_ENV`                         | Runtime mode set by Node/Next.                                                                       |
 | `NEXT_RUNTIME`                     | Runtime marker set by Next.js instrumentation.                                                       |
-| `APP_VERSION`                      | **Not a runtime variable; do not set it (#4985).** The app's version is stamped at build time from `package.json` by `next.config.ts`, so changing it means building a new image. Health checks, **System Health**, config-transfer exports, support-evidence packs and server Sentry events all report it. It replaces the version variable npm and pnpm set only when they launch a script, which the production image (`node server.js`) never had, so health checks and server Sentry events reported "0.1.0" and exports and evidence packs reported "unknown". |
+| `APP_VERSION`                      | **Not a runtime variable; do not set it (#4985).** The app's version is stamped at build time from `package.json` by `next.config.ts`, so changing it means building a new image. Health checks, **System Health**, config-transfer exports, support-evidence packs and Sentry events from the server and members' browsers (#5262) all report it, as the Sentry `release`; the edge layer's Sentry setting carries it too and takes effect once an edge route exists (none runs on the edge today). The version is stamped at build time rather than sent at runtime (owner decision of 22 Nov 2026 on #5262), because a browser tab should report the code it is actually running. The version is public, so stamping it into the browser bundle exposes nothing secret; only the browser's Sentry DSN is read at runtime (#4982), so one image reports the same version wherever it runs. Tagging only: browser Sentry's session tracking (`BrowserSession`) is switched off, so a release adds no per-page-load session report. It replaces the version variable npm and pnpm set only when they launch a script, which the production image (`node server.js`) never had, so health checks and server Sentry events reported "0.1.0" and exports and evidence packs reported "unknown". |
 
 ## Environment Role
 
@@ -2599,6 +2599,22 @@ its list of processors. Suggested wording:
 > store the text of your question. Please don't include personal or sensitive
 > details in AI help questions."_
 
+## AI app connections
+
+> See the [AI app connections guide](docs/guides/mcp-server.md) for what the
+> `mcpServer` module does, its settings and its risks.
+
+The feature has no secret or setting of its own in the environment: who may
+connect, the most a connection may do and the approved AI apps are edited at
+**Admin → Help & system → AI app connections** and stored in `McpSettings`.
+It reads three existing variables:
+
+| Variable | How AI app connections use it |
+| --- | --- |
+| `NEXTAUTH_URL` | The connector address members give their AI app (`<origin>/api/mcp`), the OAuth issuer and every discovery URL. It must be the public origin. |
+| `AUTH_SECRET` / `NEXTAUTH_SECRET` | Derives, under its own label, the key that signs the internal `x-mcp-principal` header. Rotating it only invalidates headers in flight (they last 30 seconds); connections survive. |
+| `PORT` | The port each action is sent to on `127.0.0.1` (`src/lib/mcp/loopback.ts`); 3000 when unset or invalid. The Docker image sets `PORT=3000` and `HOSTNAME="0.0.0.0"`. A server that does not listen on loopback, or on that port, cannot run any action. |
+
 ## Operational Xero
 
 **Xero credentials are DB-only (#2079).** The Xero OAuth client id/secret, the
@@ -2672,6 +2688,12 @@ from. There is no environment variable.
   after the club's today, so no document already rendered changes, and is
   refused when Xero's own tax-rate list does not carry the chosen code,
   active and usable on revenue, at the chosen rate.
+- **Tax categories.** Sales tax on expenses, Exempt and Zero rated map to
+  the connected Xero organisation's own tax rates (`XeroTaxCategoryMapping`,
+  `INV-CONFIG-008`, #5209), set by a Full Admin on the Xero setup screen;
+  Sales tax on income is the schedule above. There is no environment
+  variable and nothing to do on upgrade: an unmapped category changes no
+  document until a line uses it.
 - **Charges are recorded.** Since M3b (#4627), the journal records each
   booking door's charge lines under the schedule above. A journal refusal
   stops the booking or payment change rather than being ignored
@@ -2814,6 +2836,21 @@ from `/api/observability/browser-config` before initializing browser reporting.
 Failed or empty configuration leaves reporting and replay off. Errors before
 that fetch completes are not reported. Replay still needs the separate club
 privacy opt-in; its default remains off.
+
+**Neither the server nor the browser sends session data (#5262).** Server and
+browser events carry the installed version as their Sentry `release` (see
+`APP_VERSION`), for tagging only. Sentry's session tracking, which it uses for
+release health and crash-free rates, is switched off on both. On the server,
+`src/lib/sentry-server-integrations.ts` turns off the per-request counting in
+the SDK's `Http` integration and drops its `ProcessSession` integration. In the
+browser, `src/instrumentation-client.ts` drops the SDK's `BrowserSession`
+integration. The edge SDK has no session tracking. Sentry therefore gets no
+session data for those figures. Before this change, a server with `SENTRY_DSN`
+set sent Sentry a count of requests by outcome for each minute, with the
+release and environment, and session updates for the server process when an
+error was reported before its first request, or when it exited without
+serving one. Error events and performance
+traces are unchanged. Nothing to set.
 
 **Upgrade action:** before deploying the first release with runtime browser
 Sentry, set `NEXT_PUBLIC_SENTRY_DSN` in `.env` if browser reports are wanted.
@@ -2974,9 +3011,10 @@ Public forks should keep live provider credentials out of GitHub Actions. Use
 Stripe test mode, Xero demo tenants, SES sandbox credentials, and non-production
 databases for validation.
 
-The status board reads one repository variable (Settings, then Secrets and
-variables, then Actions):
+The status board and the budget gate each read one repository variable
+(Settings, then Secrets and variables, then Actions):
 
 | Variable | Description |
 | --- | --- |
+| `QUALITY_BUDGET_UPSTREAM_REPO` | Optional, and for a deployment fork only: leave it unset in this repository. The `owner/repo` on github.com the fork syncs down from, such as `thatskiff33/AlpineClubBookingsNZ`. When set, CI's file-size budget step fetches that repository's `main` and trusts it, so a sync-down is not refused for upstream's own reviewed code (#5196); see [Syncing a fork from upstream](docs/MAINTENANCE.md#syncing-a-fork-from-upstream). The upstream must be public; the fetch needs no extra credentials. A malformed value or a failed fetch fails the step. |
 | `STATUS_BOARD_ISSUE` | Optional. The number of the issue whose body `.github/workflows/status-board.yml` overwrites hourly with the generated lane status board (#4464). Only the repository owner can set it; see [status board setup](docs/agents/COORDINATION.md#the-status-board). While unset, the job warns and writes nothing. It refuses an issue that is a pull request or whose body is neither empty nor an earlier board. |

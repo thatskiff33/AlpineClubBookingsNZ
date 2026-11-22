@@ -7,7 +7,7 @@ import AdminDisplayPreviewPage from "./page";
 // LTV-036 (ADR-003 §5): the sandboxed preview host. It mints a grant, then
 // frames /display with `sandbox="allow-scripts"` — WITHOUT allow-same-origin,
 // so the framed authored HTML/CSS runs at an opaque origin and can never reach
-// the admin session. The lodge is labelled, never a silent default (#64).
+// the admin session. The lodge is labelled, never a silent default (hoppers99/AlpineClubBookingsNZ#64).
 
 beforeEach(() => {
   window.history.pushState(

@@ -1,3 +1,4 @@
+import logger from "@/lib/logger";
 import {
   bookingPromoCodeAdjustments,
   bookingPromoRedemptions,
@@ -26,6 +27,11 @@ import type { BookingDetailRecord } from "./load-booking-detail";
 import type { BookingDetailViewer } from "./booking-detail-viewer";
 import type { BookingDetailConsent } from "./booking-detail-consent";
 import type { BookingDetailEditAccess } from "./booking-detail-edit-access";
+import { loadEffectiveModuleFlagsStrict } from "@/lib/module-settings";
+import type { BookingAmountOwed } from "@/lib/booking-payment-state";
+import { bookingInvoiceSummary } from "@/lib/booking-invoice-summary";
+import { resolveBookingInvoiceAccount } from "./booking-invoice-account";
+import { BookingInvoiceSettingsUnavailableError, resolveBookingInvoiceOffer } from "./booking-invoice-download";
 
 /**
  * WHAT THE EDIT PANEL IS HANDED (#2958): the `BookingEditorData` payload — the
@@ -46,7 +52,7 @@ export async function buildBookingDetailEditorData({
   viewer,
   consent,
   access,
-  appliedCreditCents,
+  amountOwed,
 }: {
   session: NonNullable<Awaited<ReturnType<typeof auth>>>;
   booking: BookingDetailRecord;
@@ -55,8 +61,8 @@ export async function buildBookingDetailEditorData({
   viewer: BookingDetailViewer;
   consent: BookingDetailConsent;
   access: BookingDetailEditAccess;
-  /** #3991: the page's one ledger read of applied credit (`history.amountOwed`). */
-  appliedCreditCents: number;
+  /** #3991: the page's one read of what is owed and the ledger's applied credit (`history.amountOwed`). */
+  amountOwed: BookingAmountOwed;
 }): Promise<BookingEditorData> {
   const { viewerAuthorizationRole } = viewer;
   const { consentBadgeAudience, consentResponderNameById } = consent;
@@ -92,7 +98,7 @@ export async function buildBookingDetailEditorData({
             )
           : 0,
         electionCents: booking.creditElectionCents,
-        appliedCents: appliedCreditCents,
+        appliedCents: amountOwed.appliedCreditCents,
       }
     : null;
 
@@ -276,7 +282,7 @@ export async function buildBookingDetailEditorData({
     otherLodgeId: booking.otherLodgeId,
     ...(viewerAuthorizationRole === "ADMIN"
       ? {
-          // The lodge this booking already names stays offered even when hidden (#58).
+          // The lodge this booking already names stays offered even when hidden (triyder/AlpineClubBookingsNZ#58).
           otherLodges: await getPublicOtherLodges(prisma, booking.otherLodgeId),
           // #2978: which guests may be ticked. Resolved server-side because the
           // answer needs membership types and the unpaid-subscription set, and
@@ -318,11 +324,13 @@ export async function buildBookingDetailEditorData({
     editPolicy: {
       // This is the member (non-override) policy, so mode is never
       // "admin-override" here — nor "finished-stay-correction" (#3750), which
-      // only the change-request executor asks for; the ternary only narrows the
-      // widened union.
+      // only the change-request executor asks for, nor "work-party-correction"
+      // (fork triyder/AlpineClubBookingsNZ#127), which only the work-party correction asks for; the ternary only
+      // narrows the widened union.
       mode:
         editPolicy.mode === "admin-override" ||
-        editPolicy.mode === "finished-stay-correction"
+        editPolicy.mode === "finished-stay-correction" ||
+        editPolicy.mode === "work-party-correction"
           ? null
           : editPolicy.mode,
       today: formatDateOnly(editPolicy.today),
@@ -345,7 +353,50 @@ export async function buildBookingDetailEditorData({
     // #2266: promo lodge restrictions validate against THIS booking's lodge.
     lodgeId: booking.lodgeId,
   };
-  return editorData;
+  return withBookingInvoiceOffer(editorData, { booking, viewer }, amountOwed);
+}
+
+/**
+ * #5066: the booking's invoice offer rides the edit panel's payload, so the page
+ * hands the editor one object. It is the same answer
+ * `GET /api/bookings/[id]/invoice` serves, added as a conditional spread (absent
+ * when nothing is offered, on `noEmails`' reasoning above). The module flags are
+ * read strictly (`loadEffectiveModuleFlagsStrict`): a failed read offers nothing,
+ * never the generated document a forgiving "every module off" would; so is the
+ * tax schedule the generated document's offer reads
+ * (`BookingInvoiceSettingsUnavailableError`). With an
+ * invoice on offer, its account lines ride too: for Xero's invoice through
+ * `resolveBookingInvoiceAccount`; for the app's generated one (Xero off) the
+ * same summary with no Xero notice, so the card and the PDF show one set of
+ * figures.
+ */
+async function withBookingInvoiceOffer(
+  editorData: BookingEditorData,
+  input: Pick<Parameters<typeof resolveBookingInvoiceOffer>[0], "booking" | "viewer">,
+  amountOwed: BookingAmountOwed,
+): Promise<BookingEditorData> {
+  let modules: Awaited<ReturnType<typeof loadEffectiveModuleFlagsStrict>>;
+  try {
+    modules = await loadEffectiveModuleFlagsStrict();
+  } catch {
+    return editorData;
+  }
+  let invoiceOffer: Awaited<ReturnType<typeof resolveBookingInvoiceOffer>>;
+  try {
+    invoiceOffer = await resolveBookingInvoiceOffer({ ...input, modules });
+  } catch (error) {
+    if (error instanceof BookingInvoiceSettingsUnavailableError) {
+      logger.warn({ err: error, bookingId: input.booking.id }, "Booking invoice offer withheld: the club's settings could not be read");
+      return editorData;
+    }
+    throw error;
+  }
+  if (invoiceOffer.kind === "NONE") return editorData;
+  if (invoiceOffer.kind === "GENERATED") {
+    return { ...editorData, invoiceOffer, invoiceAccount: { summary: bookingInvoiceSummary(input.booking, amountOwed), invoiceUpdateNotice: null } };
+  }
+  if (invoiceOffer.kind !== "XERO_INVOICE") return { ...editorData, invoiceOffer };
+  return { ...editorData, invoiceOffer, invoiceAccount: await resolveBookingInvoiceAccount(input.booking, amountOwed) };
 }
 
 type DetailPromoCode = {

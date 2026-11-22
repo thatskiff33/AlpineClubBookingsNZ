@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { sendFamilyGroupInviteAcceptedEmail } from "@/lib/email";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 /**
  * GET /api/members/family/invitations
@@ -56,12 +57,9 @@ export async function PUT(req: NextRequest) {
     return inactiveResponse;
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = respondSchema.safeParse(body);
   if (!parsed.success) {

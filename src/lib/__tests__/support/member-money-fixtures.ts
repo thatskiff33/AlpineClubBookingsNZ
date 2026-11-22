@@ -27,6 +27,7 @@ import type { MemberMoneyEventKey } from "@/lib/member-money/internal/keys";
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "../helpers/clock";
 import { CLUB_FORMAT_TEST } from "./club-format-fixture";
 import { assertSafeRaceDbUrl } from "./race-db-url";
+import { runEveryTeardownStep } from "./teardown-steps";
 
 export const MEMBER_MONEY_JOURNAL_MIGRATION = "prisma/migrations/20261127010000_member_money_journal/migration.sql";
 
@@ -118,8 +119,20 @@ export interface MemberMoneyScratchDatabase {
   owner: Client;
   /** A URL for the scratch database as the INSERT/SELECT-only application role. */
   appUrl: string;
+  /**
+   * Ends the owner connection, drops the database and each role, and ends the
+   * admin connection, attempting every step even after one fails; it logs and
+   * then throws what it could not do (#5349).
+   */
   drop(): Promise<void>;
 }
+
+/**
+ * The hook timeout for a suite that creates and drops a member-money scratch
+ * database: `drop()` force-drops the database and then each role, which a loaded
+ * runner can stretch past vitest's 10-second hook default (#5283).
+ */
+export const MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS = 30_000;
 
 /**
  * A disposable database on the race server holding the journal migration, the
@@ -141,12 +154,12 @@ export async function createMemberMoneyScratchDatabase(
   ownerUrl.pathname = `/${name}`;
   const owner = new Client({ connectionString: ownerUrl.toString() });
   let connected = false;
-  const drop = async () => {
-    if (connected) await owner.end();
-    await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
-    for (const role of Object.values(roles)) await admin.query(`DROP ROLE IF EXISTS "${role}"`);
-    await admin.end();
-  };
+  const drop = () => runEveryTeardownStep(`member-money scratch ${name}`, [
+    { what: "end the owner connection", run: () => (connected ? owner.end() : undefined) },
+    { what: `drop database "${name}"`, run: () => admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`) },
+    ...Object.values(roles).map((role) => ({ what: `drop role "${role}"`, run: () => admin.query(`DROP ROLE IF EXISTS "${role}"`) })),
+    { what: "end the admin connection", run: () => admin.end() },
+  ]);
   try {
     await admin.query(`CREATE DATABASE "${name}"`);
     await owner.connect();
@@ -163,6 +176,7 @@ export async function createMemberMoneyScratchDatabase(
     await owner.query(readFileSync("prisma/migrations/20261221030000_member_money_export_manifest/migration.sql", "utf8"));
     await owner.query(readFileSync("prisma/migrations/20261222050000_member_money_export_supplementary/migration.sql", "utf8"));
     await owner.query(readFileSync("prisma/migrations/20261223010000_member_money_refund_note_manifest/migration.sql", "utf8"));
+    await owner.query(readFileSync("prisma/migrations/20261223050000_member_money_capture_receipt_manifest/migration.sql", "utf8"));
     const statements = buildDatabaseRolesSql({
       databaseName: name,
       migrator: { roleName: roles.migrator, password: "m".repeat(28) },
@@ -178,8 +192,9 @@ export async function createMemberMoneyScratchDatabase(
       throw error;
     }
   } catch (error) {
-    // Nothing a half-built scratch database made may outlive the failure.
-    await drop();
+    // Nothing a half-built scratch database made may outlive the failure. A
+    // clean-up failure is logged by drop() and must not hide the set-up error.
+    await drop().catch(() => {});
     throw error;
   }
   const appUrl = new URL(ownerUrl);

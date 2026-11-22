@@ -6,8 +6,8 @@ Prefixes defined in this file: **`INV-OPS`** — raw SQL result shapes, raw SQL
 construction and row locking, the client/server bundle boundary, production
 deployment including the worked windowed column drop, changing what values
 already stored in a column mean, what may be used as test input, which money
-seams a test may mock (`INV-OPS-015`), and which CI runs must finish and what a
-release may tag (`INV-OPS-021`) — and
+seams a test may mock (`INV-OPS-015`), and which CI runs a newer merge may
+replace and what a release may tag (`INV-OPS-021`) — and
 **`INV-LOCK`** (#2722), the two-tier advisory-lock protocol: which tier a writer
 takes, the order it takes them in, and the registration every global site
 carries. `INV-LOCK` sits here because advisory locking is the sibling of the row
@@ -661,6 +661,13 @@ about at all. Removing the field outright now does the same thing permanently:
 generated client has no such field to put in a `SELECT`, an `INSERT` column
 list, a `RETURNING` or a `WHERE`.
 
+The rule for every retired column follows. An explicit `select` narrows a read
+and a write's `RETURNING`, never an `INSERT`'s column list, so it does not make
+a drop safe. A contract `DROP COLUMN` is old-code compatible only once a release
+that marks the field `@ignore` is the draining colour (#5396 applies this to
+`ClubModuleSettings.multiLodge`, `NotificationPreference.bookingWaitlist` and
+`BookingRequestSettings.assignSchoolTeachersAsHutLeaders`).
+
 ## INV-OPS-006
 
 How that is enforced, measured in the rehearsal rather than asserted, because
@@ -873,30 +880,35 @@ installation.
 
 ## INV-OPS-021
 
-Every push run of `ci.yml`, `e2e.yml` and `money-coverage.yml` runs to
-completion. A newer push never cancels it or replaces it while pending. Each
-push run's concurrency group is keyed on its branch and commit, because GitHub
-replaces an older pending run in a shared group even with
-`cancel-in-progress: false`.
-Pull-request runs keep one group per ref and cancel superseded runs. This holds
-for `epic/**` pushes too, which use the same `github.event.before` gates.
+A newer push to `main` may replace its queued run of `ci.yml`, `e2e.yml`,
+`money-coverage.yml` and `docs-link-check.yml`, never one that has started.
+Pushes to `main` share one concurrency group per workflow with
+`cancel-in-progress: false`: GitHub keeps one running and one pending run and
+drops the older pending one, so the newest `main` commit gets its full set
+unless a manual re-run of an older commit replaces its pending run. Pushes to
+`epic/**` keep a group per commit. Pull-request runs keep one group per ref and
+cancel superseded runs.
+
+The push-only gates (doc index, file-size ratchet, migration-safety ledger)
+judge a push to `main` from the last judged `main` commit: the head of the
+newest earlier finished `ci.yml` push run on `main`, for an ancestor of HEAD,
+whose gate steps ran, so a merge whose run was dropped is judged with the next.
+It fails closed when no such run exists or GitHub cannot say.
 
 A release tags only a commit whose `ci.yml` push run on `main` had a
 successful `Publish GHCR images` job. `release:cut publish` asks GitHub for
-that job's result, not git history, on the commit it would tag (on a resume,
-the tagged commit). It refuses before any tag or release when the job did not
-succeed, when no run exists, or when GitHub's answer cannot be read — so its
-token needs Actions read access.
+that job's result on the commit it would tag (on a resume, the tagged commit)
+and refuses before any tag or release unless GitHub says that job succeeded.
+A dropped intermediate commit has no images; the default, `origin/main`,
+normally has a successful run; `release:cut publish` refuses otherwise.
 
-- Why: one shared group cancelled about half of `main`'s runs on a busy day
-  (#4989). A cancelled run publishes no images, so a release tag on it could not
-  be deployed. The push-only gates (file-size ratchet, migration-safety ledger,
-  doc index) never judged its change. And a red `main` could not be traced to
-  the merge that caused it. Being on `main`'s first-parent chain proved none of
-  this.
-- Enforced by `scripts/ci/main-push-runs-complete.test.ts`, which evaluates
-  each workflow's group for a push and a pull request, and by the
-  `requirePublishedImages` cases in `scripts/release/cut-release.test.mjs`.
+- Why: queuing a full CI run (about 48 minutes) per merge held every open
+  pull request behind `main` (#5356, owner decision 22 Nov 2026, replacing
+  #4989's every-push-run-completes rule). A dropped run publishes no images
+  and judges nothing, hence the last-judged base and the release check.
+- Enforced by `scripts/ci/main-push-superseded-runs.test.ts`,
+  `scripts/ci/resolve-main-push-base.test.ts` and the `requirePublishedImages`
+  cases in `scripts/release/cut-release.test.mjs`.
 
 ## INV-OPS-022
 

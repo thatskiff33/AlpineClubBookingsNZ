@@ -23,6 +23,7 @@ import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { HUT_LEADER_PIN_PATTERN } from "@/lib/hut-leader-pin";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const bodySchema = z.object({
   pin: z.string().regex(HUT_LEADER_PIN_PATTERN),
@@ -91,12 +92,9 @@ async function handlePost(req: NextRequest) {
     return limited;
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {

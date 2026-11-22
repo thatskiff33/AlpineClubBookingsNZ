@@ -26,7 +26,7 @@ export function AdminOverrideCard({
   return (
     <Card className="border-warning-6">
       <CardHeader>
-        <CardTitle>Admin override</CardTitle>
+        <CardTitle headingLevel={2}>Admin override</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <label className="flex items-start gap-2 text-sm">

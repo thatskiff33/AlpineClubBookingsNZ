@@ -14,7 +14,7 @@ alongside a club's lodge configuration.
 > (`ensureBuiltInDisplays`), so a fresh install already has them as ordinary v2
 > Layout + Template rows on **Admin → Display Layouts / Templates** — no bundle
 > import needed. The bundles below are *additional* starter sets. A re-seed
-> **refreshes** each built-in from code (owner decision A, issue #111): shipped
+> **refreshes** each built-in from code (owner decision A, issue hoppers99/AlpineClubBookingsNZ#111): shipped
 > design improvements reach existing installs, and an in-place admin edit to a
 > `builtin-` row is overwritten — customise by **duplicating** a built-in into a
 > new (non-`builtin-`) row.

@@ -7,7 +7,7 @@ import {
   scopeDisplayCss,
 } from "@/lib/lodge-display/css-tokens";
 
-// LTV-029 (#75): authored-CSS hardening for the unattended lobby wall. This is
+// LTV-029 (hoppers99/AlpineClubBookingsNZ#75): authored-CSS hardening for the unattended lobby wall. This is
 // a client-safe, pure module — no server-only mock needed. The sanitiser
 // neutralises the exfiltration/injection vectors ADR-003 names; the scoper
 // prefixes every selector so a template can never restyle the page chrome.

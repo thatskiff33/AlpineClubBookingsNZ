@@ -1075,21 +1075,90 @@ describe("N-07: sendAdminBookingBumpedAlert", () => {
     mockPrisma.emailLog.update.mockResolvedValue({});
   });
 
-  it("sends bumped alert to admins with triggering member", async () => {
+  const bumpedAlert = {
+    bumpedMemberName: "Jane Doe",
+    bookingReference: "CKB1A2B3",
+    lodgeName: "Ruapehu Lodge",
+    checkIn: new Date("2026-04-10"),
+    checkOut: new Date("2026-04-12"),
+    guestCount: 2,
+    reason: "These dates filled up before the provisional guests were confirmed.",
+  };
+
+  it("sends the bumped alert to admins, naming the member, lodge and reason", async () => {
     const { sendAdminBookingBumpedAlert } = await import("../email");
-    await sendAdminBookingBumpedAlert({
-      bumpedMemberName: "Jane Doe",
-      checkIn: new Date("2026-04-10"),
-      checkOut: new Date("2026-04-12"),
-      guestCount: 2,
-      triggeringMemberName: "John Smith",
-    });
+    await sendAdminBookingBumpedAlert(bumpedAlert);
 
     expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
+        to: "support@example.org",
+        subject: expect.stringMatching(/^Booking Bumped: Jane Doe, .*2026 to .*2026 \(CKB1A2B3\)$/),
         templateName: "admin-booking-bumped",
       }),
     });
+    const html = mockTransporter.sendMail.mock.calls[0][0].html as string;
+    expect(html).toContain("Jane Doe");
+    expect(html).toContain("Ruapehu Lodge");
+    expect(html).toContain("CKB1A2B3");
+    expect(html).toContain(bumpedAlert.reason);
+  });
+
+  // #5403: the recipients are the `adminBookingBumped` preference's rule, the
+  // one every admin booking alert uses — the switch, and `bookings: edit`.
+  it("reaches only bookings editors who have the setting on", async () => {
+    mockPrisma.member.findMany.mockResolvedValue([
+      adminRecipient("enabled@example.org", { adminBookingBumped: true }),
+      adminRecipient("disabled@example.org", { adminBookingBumped: false }),
+      adminRecipient("default@example.org"),
+      {
+        email: "booking.officer@example.org",
+        canLogin: true,
+        accessRoles: [
+          { role: "ADMIN_BOOKINGS", roleDefinitionId: null, roleDefinition: null },
+        ],
+        notificationPreference: null,
+      },
+      {
+        email: "membership.officer@example.org",
+        canLogin: true,
+        accessRoles: [
+          { role: "ADMIN_MEMBERSHIP", roleDefinitionId: null, roleDefinition: null },
+        ],
+        notificationPreference: null,
+      },
+      {
+        email: "readonly@example.org",
+        canLogin: true,
+        accessRoles: [
+          { role: "ADMIN_READONLY", roleDefinitionId: null, roleDefinition: null },
+        ],
+        notificationPreference: null,
+      },
+    ]);
+
+    const { sendAdminBookingBumpedAlert } = await import("../email");
+    await sendAdminBookingBumpedAlert(bumpedAlert);
+
+    const recipients = mockPrisma.emailLog.create.mock.calls
+      .map((call) => call[0].data.to as string)
+      .sort();
+    expect(recipients).toEqual([
+      "booking.officer@example.org",
+      "default@example.org",
+      "enabled@example.org",
+    ]);
+  });
+
+  it("sends to nobody when every bookings editor has the setting off", async () => {
+    mockPrisma.member.findMany.mockResolvedValue([
+      adminRecipient("disabled@example.org", { adminBookingBumped: false }),
+    ]);
+
+    const { sendAdminBookingBumpedAlert } = await import("../email");
+    await sendAdminBookingBumpedAlert(bumpedAlert);
+
+    expect(mockTransporter.sendMail).not.toHaveBeenCalled();
+    expect(mockPrisma.emailLog.create).not.toHaveBeenCalled();
   });
 });
 
@@ -1181,18 +1250,27 @@ describe("Email templates - Phase 6a", () => {
     expect(html).toContain("20h");
   });
 
-  it("adminBookingBumpedTemplate shows triggering member", async () => {
+  it("adminBookingBumpedTemplate shows the lodge and reason, escaped", async () => {
     const { adminBookingBumpedTemplate } = await import("@/lib/email-templates/admin-booking");
-    const html = adminBookingBumpedTemplate({
-      bumpedMemberName: "Jane Doe",
+    const { bookingBumpReason } = await import("@/lib/booking-bump-reason");
+    const bumped = {
+      bumpedMemberName: "Jane <b>Doe</b>",
+      bookingReference: "CKB1A2B3",
+      lodgeName: "Ruapehu & Co Lodge" as string | null,
       checkIn: new Date("2026-04-10"),
       checkOut: new Date("2026-04-12"),
       guestCount: 2,
-      triggeringMemberName: "John Smith",
-    });
+      reason: bookingBumpReason(true),
+    };
+    const html = adminBookingBumpedTemplate(bumped);
 
-    expect(html).toContain("Jane Doe");
-    expect(html).toContain("John Smith");
-    expect(html).toContain("Triggered By");
+    expect(html).toContain("Jane &lt;b&gt;Doe&lt;/b&gt;");
+    expect(html).toContain("Ruapehu &amp; Co Lodge");
+    expect(html).toContain("asked for the whole booking to be cancelled");
+    // The cron has no triggering booking to name (#5403).
+    expect(html).not.toContain("Triggered By");
+    // No lodge row when ADR-002 hides it (`bookingListLodgeLabel`).
+    expect(adminBookingBumpedTemplate({ ...bumped, lodgeName: null })).not.toContain(">Lodge<");
+    expect(html).toContain(">Lodge<");
   });
 });

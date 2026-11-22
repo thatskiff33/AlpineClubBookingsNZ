@@ -84,7 +84,7 @@ the row, not open work. Open findings now live in labelled GitHub issues
 
 | Route or surface | Auth mechanism | Actor | Data touched | External calls | Rate, signature, or boundary controls | Logging and audit | Residual risk or follow-up |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `src/proxy.ts` global proxy, pre-setup gate, and module gates | No session auth. Applies CSP/security headers to page requests and selected API matcher paths; returns 404 for disabled module routes; returns 503 + the "Site setup in progress" screen for every public-website path until `ClubTheme.completedAt` is set (#2420, "The Pre-Setup Gate" below). | Anonymous and authenticated browser traffic. | Module settings via `loadEffectiveModuleFlags()`; setup state, club name and contact address via `setup-gate.ts` (memoised 15s, read only while setup is incomplete). | None. | CSP nonce, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, module route blocking, pre-setup 503 gate (fails closed, `no-store`, `Retry-After`). | No per-request audit. | API matcher is selective, not global for every API path. Keep route-level auth as the enforcement boundary. The setup gate never covers `/api/*`, the admin area, or the login flows — an operator must be able to finish setup. Since #2404 the matcher RUNS on asset-shaped URLs (`/foo.png`, `/favicon.ico`, `/wp-content/uploads/x.jpg`), so those carry a policy and meet the gate like any other address; only `/api`, `/_next/static/` and `/_next/image` stay excluded. A miss under `_next/static` is terminated without a document by the `afterFiles` rewrites, whose own `default-src 'none'` is then the policy that ships; a miss under `/api` is answered as JSON by `api/[[...unmatched]]`, and no rewrite rule may touch `/api` at all (module-state parity — see "Static-Asset URLs And The Nonce-Only CSP"). #2404 also removed the prefetch exemption outright, so no request header — `Purpose: prefetch`, `Next-Router-Prefetch`, `RSC`, in any combination — takes a URL outside the proxy. The gate still declines to CLAIM asset-shaped paths (a 503 holding screen is a document), so a URL of that shape which reaches a render is ungated by design; the shared public chrome (`src/components/website/website-chrome.tsx`, composed by both public route groups) and the public metadata guard cover it. |
+| `src/proxy.ts` global proxy, pre-setup gate, and module gates | No session auth. Applies CSP/security headers to page requests and selected API matcher paths; returns 404 for disabled module routes; returns 503 + the "Site setup in progress" screen for every public-website path until `ClubTheme.completedAt` is set (#2420, "The Pre-Setup Gate" below). | Anonymous and authenticated browser traffic. | Module settings via `loadEffectiveModuleFlags()`; setup state, club name and contact address via `setup-gate.ts` (memoised 15s; each refresh reads `ClubTheme.completedAt`, and the club name and contact address only while setup is incomplete). | None. | CSP nonce, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, module route blocking, pre-setup 503 gate (fails closed, `no-store`, `Retry-After`). | No per-request audit. | API matcher is selective, not global for every API path. Keep route-level auth as the enforcement boundary. The setup gate never covers `/api/*`, the admin area, or the login flows — an operator must be able to finish setup. Since #2404 the matcher RUNS on asset-shaped URLs (`/foo.png`, `/favicon.ico`, `/wp-content/uploads/x.jpg`), so those carry a policy and meet the gate like any other address; only `/api`, `/_next/static/` and `/_next/image` stay excluded. A miss under `_next/static` is terminated without a document by the `afterFiles` rewrites, whose own `default-src 'none'` is then the policy that ships; a miss under `/api` is answered as JSON by `api/[[...unmatched]]`, and no rewrite rule may touch `/api` at all (module-state parity — see "Static-Asset URLs And The Nonce-Only CSP"). #2404 also removed the prefetch exemption outright, so no request header — `Purpose: prefetch`, `Next-Router-Prefetch`, `RSC`, in any combination — takes a URL outside the proxy. The gate still declines to CLAIM asset-shaped paths (a 503 holding screen is a document), so a URL of that shape which reaches a render is ungated by design; the shared public chrome (`src/components/website/website-chrome.tsx`, composed by both public route groups) and the public metadata guard cover it. |
 | `/api/health`, `/api/health/ready` | Public. | Load balancers, operators, anonymous callers. | DB reachability, runtime version/uptime, config readiness. Public responses omit provider error detail. | DB query only. | No rate limit. No secrets in response. | Logger debug/error only. | Anonymous callers can observe availability. #615 can decide whether to add light rate limiting or cache headers. |
 | `/api/age-tier-settings`, `/api/committee` | Public read endpoints. | Anonymous website users. | Public age-tier/rate settings and published committee assignment presentation fields; and, **only when `PublicContentSettings.committeePhotoDisplay != NONE`**, per-published-member photo metadata (member id + `photoUpdatedAt` version) so the roster can build the scoped `/api/members/[id]/photo` URL. | None. | No rate limit. Committee query selects active, published assignment fields only; member email is not selected or returned, phone is returned only when show-phone is enabled, and contact keys are returned only for contactable assignments. Photo metadata (incl. member id) is emitted **only** when the club has opted the roster into photos — with `committeePhotoDisplay = NONE` (the default), no member id or photo pointer is returned. | None beyond DB errors if thrown. | Public committee names and optional phone numbers are intentional once an admin publishes the assignment; email remains server-only. Committee-photo bytes are served (and gated) by the scoped `/api/members/[id]/photo` endpoint, which applies the SAME `committeePhotoDisplay != NONE` condition to its anonymous branch (#2242) — so "Don't show photos" takes the bytes off the public internet, not just the roster metadata. |
 | `/api/address-autocomplete/search`, `/api/address-autocomplete/details/[id]` | Public server-side proxy to Addy, gated by the `addressAutocomplete` Admin Module. | Anonymous website users. | Search terms, address suggestion ids, Addy result payloads. | Addy API via `src/lib/addy-api.ts`. | Module-route/proxy gate returns 404 while disabled, Zod query validation, `rateLimiters.addressAutocomplete` at 90/min/IP. Secrets stay server-side. | Minimal error responses, no audit. | Upstream-cost and enumeration surface remains public only when the module is enabled; manual address entry remains the fallback. |
@@ -97,7 +97,7 @@ the row, not open work. Open findings now live in labelled GitHub issues
 | `/api/applications/nominate` | Authenticated active member plus nomination token. | Existing member acting as nominator. | Application nomination token/status and member id. | Email/application workflow side effects in nomination service. | Auth.js session, active-account guard, Zod token validation. | Logger on unexpected errors. | Token is body-provided and session-bound by service logic. #614 should include token ownership/regression coverage if not already covered. |
 | `/api/availability`, `/api/availability/check`, `/api/booking-policies/check`, `/api/promo-codes/available`, `/api/promo-codes/validate`, `/api/promo-codes/guest-codes` | Authenticated active member. | Signed-in member. | Capacity, booking policies, promo definitions, age-tier data. | None directly. | Active-session checks; availability and promo validation use `rateLimiters.bookingQuery`; the guest-code lookup (#3492) uses the member-scoped `rateLimiters.promoGuestCodeLookup` and writes a `privacy` audit row. Zod validation on policy and promo inputs. On the multi-lodge availability/pricing reads (`/api/availability`, `/api/availability/check`, `/api/bookings/quote`, `/api/bookings/rooms`) the resolved lodge is passed through `isMemberEligibleToBookLodge` (mirroring the booking create path) so a `BOOKING_RESTRICTION`ed member gets `403` instead of reading a forbidden lodge's availability/pricing; admin on-behalf quotes bypass it as the audited override. Since #2664 (create side) `/api/bookings/rooms` has no production caller for its no-`lodgeId` cross-lodge listing mode: the booking wizard was the last remaining client (the requested-room editor was the other, closed by the same issue's read-side fix — see the `/api/bookings/[id]/**` row below) and it now always names its lodge, so nothing reaches that mode during the pre-selection window on every mount, nor stickily whenever a reply landed after the one that superseded it. Worth recording precisely, because it was previously described too kindly: the mode's filter was `Room.active` plus the member's `BOOKING_RESTRICTION` set and **not** the lodge's own `active` flag, so an unrestricted member's listing returned archived lodges' room names too. #2727 closed that — the unscoped listing now also filters on `Lodge.active`, for a default-open member and for a restricted member whose eligible set contains a since-archived lodge, so a discovery read never offers a property the club has taken out of service. The named-lodge mode is unchanged (still `403` for a barred member, still answering for an explicitly named archived lodge), and the unscoped mode is still served rather than retired. Since #2678 this is a RULE rather than a description: `INV-INT-016` (`docs/invariants/integrations.md`) records that the mode is retained for FORKED and EXTERNAL consumers — it is the pre-multi-lodge signature and their booking wizards still call it that way — that no client in `src/` may use it, because internal reuse of the unscoped mode is what produced the #2664 wrong-lodge pickers, and (since #2727) that the archived-lodge exclusion is part of what retaining it means. A guard test sweeps `src/` for a call omitting `lodgeId`, and `src/app/api/bookings/rooms/__tests__/rooms-route-lodge-scope.test.ts` exercises both branches, since no internal caller does. | Logger on errors. | These are not anonymous in current code despite being booking-discovery shaped. #613 should keep member-read helpers distinct as this family grows. (Season CRUD now lives solely under `/api/admin/seasons`; the duplicate member-open `/api/seasons` route was removed in #1252.) |
 | `/api/bookings`, `/api/bookings/quote`, `/api/bookings/drafts` | Authenticated active member. | Signed-in member creating, quoting, or reading draft bookings. | Booking, booking guest, capacity, cancellation, credit, promo, waitlist, payment-target data. | Email sends and Xero outbox queueing through booking services for some transitions. | Auth.js session, active-account guard, booking create/query rate limiters, Zod/date validation in services. | Logger and service-level audit/email side effects. | High-value business logic. #617 should review booking integrity and money/credit invariants. |
-| `/api/bookings/[id]/**`, including cancel, modify, guests, payment confirmation, refund request, waitlist confirmation, notes, arrival time, and payment secret routes | Authenticated active member with route/service ownership checks. | Booking owner/member, sometimes admin through service rules. | Booking ownership, guest records, payment transactions, Stripe IDs/client secrets, cancellation/refund/change-request data, notes. | Stripe PaymentIntent/SetupIntent confirmation or retrieval, Xero invoice/credit-note outbox, email notifications. | Auth.js session, active-account guard, rate limits on cancel/change flows, service-level owner checks, Zod/date validation. | Audit logs for payment/guest/refund/change operations where implemented; logger on failures. Since #2621 the expected-arrival-time `PUT`/`DELETE` also audit (`booking.expected_arrival_time.set` / `.cleared`, category `booking`, with `entityType`/`entityId`), naming the booking's OWNER as subject and the caller as actor, with an `onBehalf` flag for an officer acting under #1313 option A2. The old value is captured inside the same transaction as the write, so concurrent saves chain honestly rather than both claiming the same predecessor, and the clear carries the value it destroyed — which is the only surviving record of it. Both are written after the update commits, so a refused value, a stale booking or a permission refusal records nothing. Since #2664 the requested-room picker's option list is also booking-scoped (`GET /api/bookings/[id]/requested-room/options`): it resolves the booking, applies the same owner-or-Full-Admin-or-`bookings:edit` predicate, and lists only that booking's lodge's ACTIVE rooms, with the lodge taken from `Booking.lodgeId` server-side — no caller-supplied `lodgeId` is read, and member booking eligibility (`isMemberEligibleToBookLodge`) is deliberately not consulted, because the authority is the booking rather than the caller's ability to book that lodge. It replaced an unscoped `/api/bookings/rooms` read that both leaked other lodges' room inventory into the picker and filtered a Booking Officer's choices by their own personal booking restrictions. A soft-deleted booking answers `404` here to EVERY role — no Full Admin exemption, unlike the booking page, because the picker this feeds is hard-disabled on a deleted booking for every role — and that check sits after the authorisation check so an unauthorised caller gets `403` either way rather than a deleted-or-live oracle. Two exposures are disclosed rather than closed: a member restricted away from a lodge AFTER taking a booking there can still read that booking's room names, which is deliberate because `writeRequestedRoom` never consults `assertMemberMayBookLodge` and so that member may still change the room (refusing the read while permitting the write is the defect this route removed); and the `404`-before-`403` ordering confirms a booking id exists to an authenticated caller, which is byte-identical to every neighbour in `/api/bookings/[id]/**` and only ever confirms a cuid the caller already holds. Since #2674 that same shape is the house rule for this row, written down as `INV-ADDPAY-031` (`docs/invariants/additional-payment-chasing.md`) rather than restated per route, and three more methods now follow it: `arrival-time` `PUT`/`DELETE` and `refund-request` `POST` each answer `404` to EVERY role including Full Admin, placed AFTER the authorisation check. `send-guest-payment-link` `POST` already consulted `deletedAt` but consulted it FIRST, so an unauthorised caller got `403` on a live booking and `404` on a deleted one — a deleted-or-live oracle on any id whose existence they could otherwise establish; it was reordered by the same issue, which is why "this route checks `deletedAt`" is not on its own evidence that it follows the rule. `exception-requests/[requestId]` `PATCH` has no authorisation step in front of its claim, so it refuses through a `booking: { deletedAt: null }` filter ON the guarded `updateMany` instead: a deleted booking loses the claim and produces the same bare `409`, no audit and no reservation release as a wrong-owner or wrong-status loss, so it is indistinguishable from either. A verified sweep of all 27 exported methods on this prefix is recorded under `INV-ADDPAY-030`, re-measured by #2700 to **11 refusing on `deletedAt` directly / 15 refusing incidentally / 1 deliberately writing anyway / 0 unguarded reads**. #2700 closed the last three of those, settling what `INV-ADDPAY-032` and `INV-ADDPAY-033` had tracked as open decisions (both are now superseded stubs). Three consequences matter for this row. First, `guests/[guestId]/consent` `POST` (`INV-ADDPAY-035`) now refuses a soft-deleted booking for every role on BOTH arms, recording nothing and emailing nobody; the guard is asserted twice — once unlocked, once inside the transaction under `pg_advisory_xact_lock(1)` — because `softDeleteCancelledBooking` takes the same key, so a deletion committing between the two reads is still seen. Second, that refusal and the two reads `change-requests` `GET` and `refund-request` `GET` answer a **deliberately informative** body — "cancelled or removed" — rather than `INV-ADDPAY-031`'s byte-identical not-found body (`INV-ADDPAY-034`). That is a named carve-out from the BODY half of the house rule and from that half only: the ORDERING half has no exception anywhere, every one of the three sits after its authorisation check, and a caller with no claim still receives `403` whose answer does not move with the booking's deletion state — so nothing is disclosed to anyone not already entitled to the record, and the message names neither the actor who deleted it nor the booking owner. Note `refund-request` therefore carries BOTH bodies: its `POST` keeps `Booking not found` from #2674 and its `GET` carries the shared sentence, which is asserted rather than accidental. Both halves of the carve-out are enforced by a source sweep rather than left to review: `src/lib/__tests__/deleted-booking-refusal-callers.test.ts` fails on a FOURTH importer of the shared sentence and asserts per surface that the guard sits below that surface's own authorisation refusal — the specific regression being that an informative body is now normalised here, so importing the constant is easy and inheriting the ordering decision by import is the easy mistake. Worth stating plainly for anyone weighing the carve-out's cost: today no FRESH navigation reaches any of the three bodies. The booking page `notFound()`s a non-admin on a deleted booking, the delegate consent page resolves `NOT_FOUND` above both its target and delegate branches, the refund-appeal button is not rendered on a deleted booking, and `change-requests` `GET` has no client in `src/` or `e2e/` at all. The reader is a client that loaded the booking before the deletion and acted after it — the same race the rest of this row covers — or a direct API caller. Widening it to the email journey the decision described would mean changing the delegate page's uniform `NOT_FOUND`, itself a privacy property with its own Playwright assertion, and is an owner decision rather than a tidy-up. Third, `confirm-modification-payment` `POST` (`INV-ADDPAY-036`) is the one method here that consults `deletedAt` and deliberately writes anyway: Stripe has already captured, so refusing would leave captured money with no ledger row, and instead the payment is recorded and an OPEN `ManualRefundTask` is raised for a human — never an automatic refund from that path. The booking-deletion path now also cancels the booking's in-flight PaymentIntents after its transaction commits (provider call outside the lock, never throwing, ledger marked FAILED only when Stripe confirms the cancel), which makes that race rare rather than impossible. A refund can still occur from the older #1350 webhook path, which auto-refunds any additional capture on a `CANCELLED` booking and therefore covers deleted ones; when it does, it closes the raised task as `DISMISSED` so an operator cannot complete it and write a second refund allocation for one refund. Since #4030 `change-requests/quote` `POST` estimates the guests a locked-period request adds: same owner-or-officer predicate, deleted booking `404` after it with the ordinary body, throttled per member by `bookingQuery` after that check (`429` + `Retry-After`), nothing written, and it never resolves a MEMBER guest's rate — pricing a caller-supplied `memberId` would answer whether that person is a paid-up member, so member guests come back unpriced (`INV-REQ-011`); since #4203 it counts the editor's added and removed guests toward the group discount without pricing them, and refuses (`400`) a removal or stay range naming a guest not on that booking, as submission does. | IDOR and money-state risk. #614 should include representative owner-boundary tests; #617 should review transaction invariants. |
+| `/api/bookings/[id]/**`, including cancel, modify, guests, payment confirmation, refund request, waitlist confirmation, notes, arrival time, and payment secret routes | Authenticated active member with route/service ownership checks. | Booking owner/member, sometimes admin through service rules. | Booking ownership, guest records, payment transactions, Stripe IDs/client secrets, cancellation/refund/change-request data, notes. | Stripe PaymentIntent/SetupIntent confirmation or retrieval, Xero invoice/credit-note outbox, email notifications. | Auth.js session, active-account guard, rate limits on cancel/change flows, service-level owner checks, Zod/date validation. | Audit logs for payment/guest/refund/change operations where implemented; logger on failures. Since #2621 the expected-arrival-time `PUT`/`DELETE` also audit (`booking.expected_arrival_time.set` / `.cleared`, category `booking`, with `entityType`/`entityId`), naming the booking's OWNER as subject and the caller as actor, with an `onBehalf` flag for an officer acting under #1313 option A2. The old value is captured inside the same transaction as the write, so concurrent saves chain honestly rather than both claiming the same predecessor, and the clear carries the value it destroyed — which is the only surviving record of it. Both are written after the update commits, so a refused value, a stale booking or a permission refusal records nothing. Since #2664 the requested-room picker's option list is also booking-scoped (`GET /api/bookings/[id]/requested-room/options`): it resolves the booking, applies the same owner-or-Full-Admin-or-`bookings:edit` predicate, and lists only that booking's lodge's ACTIVE rooms, with the lodge taken from `Booking.lodgeId` server-side — no caller-supplied `lodgeId` is read, and member booking eligibility (`isMemberEligibleToBookLodge`) is deliberately not consulted, because the authority is the booking rather than the caller's ability to book that lodge. It replaced an unscoped `/api/bookings/rooms` read that both leaked other lodges' room inventory into the picker and filtered a Booking Officer's choices by their own personal booking restrictions. A soft-deleted booking answers `404` here to EVERY role — no Full Admin exemption, unlike the booking page, because the picker this feeds is hard-disabled on a deleted booking for every role — and that check sits after the authorisation check so an unauthorised caller gets `403` either way rather than a deleted-or-live oracle. Two exposures are disclosed rather than closed: a member restricted away from a lodge AFTER taking a booking there can still read that booking's room names, which is deliberate because `writeRequestedRoom` never consults `assertMemberMayBookLodge` and so that member may still change the room (refusing the read while permitting the write is the defect this route removed); and the `404`-before-`403` ordering confirms a booking id exists to an authenticated caller, which is byte-identical to every neighbour in `/api/bookings/[id]/**` and only ever confirms a cuid the caller already holds. Since #2674 that same shape is the house rule for this row, written down as `INV-ADDPAY-031` (`docs/invariants/additional-payment-chasing.md`) rather than restated per route, and three more methods now follow it: `arrival-time` `PUT`/`DELETE` and `refund-request` `POST` each answer `404` to EVERY role including Full Admin, placed AFTER the authorisation check. `send-guest-payment-link` `POST` already consulted `deletedAt` but consulted it FIRST, so an unauthorised caller got `403` on a live booking and `404` on a deleted one — a deleted-or-live oracle on any id whose existence they could otherwise establish; it was reordered by the same issue, which is why "this route checks `deletedAt`" is not on its own evidence that it follows the rule. `exception-requests/[requestId]` `PATCH` has no authorisation step in front of its claim, so it refuses through a `booking: { deletedAt: null }` filter ON the guarded `updateMany` instead: a deleted booking loses the claim and produces the same bare `409`, no audit and no reservation release as a wrong-owner or wrong-status loss, so it is indistinguishable from either. A verified sweep of all 27 exported methods on this prefix is recorded under `INV-ADDPAY-030`, re-measured by #2700 to **11 refusing on `deletedAt` directly / 15 refusing incidentally / 1 deliberately writing anyway / 0 unguarded reads**. #2700 closed the last three of those, settling what `INV-ADDPAY-032` and `INV-ADDPAY-033` had tracked as open decisions (both are now superseded stubs). Three consequences matter for this row. First, `guests/[guestId]/consent` `POST` (`INV-ADDPAY-035`) now refuses a soft-deleted booking for every role on BOTH arms, recording nothing and emailing nobody; the guard is asserted twice — once unlocked, once inside the transaction under `pg_advisory_xact_lock(1)` — because `softDeleteCancelledBooking` takes the same key, so a deletion committing between the two reads is still seen. Second, that refusal and the two reads `change-requests` `GET` and `refund-request` `GET` answer a **deliberately informative** body — "cancelled or removed" — rather than `INV-ADDPAY-031`'s byte-identical not-found body (`INV-ADDPAY-034`). That is a named carve-out from the BODY half of the house rule and from that half only: the ORDERING half has no exception anywhere, every one of the three sits after its authorisation check, and a caller with no claim still receives `403` whose answer does not move with the booking's deletion state — so nothing is disclosed to anyone not already entitled to the record, and the message names neither the actor who deleted it nor the booking owner. Note `refund-request` therefore carries BOTH bodies: its `POST` keeps `Booking not found` from #2674 and its `GET` carries the shared sentence, which is asserted rather than accidental. Both halves of the carve-out are enforced by a source sweep rather than left to review: `src/lib/__tests__/deleted-booking-refusal-callers.test.ts` fails on a FOURTH importer of the shared sentence and asserts per surface that the guard sits below that surface's own authorisation refusal — the specific regression being that an informative body is now normalised here, so importing the constant is easy and inheriting the ordering decision by import is the easy mistake. Worth stating plainly for anyone weighing the carve-out's cost: today no FRESH navigation reaches any of the three bodies. The booking page `notFound()`s a non-admin on a deleted booking, the delegate consent page resolves `NOT_FOUND` above both its target and delegate branches, the refund-appeal button is not rendered on a deleted booking, and `change-requests` `GET` has no client in `src/` or `e2e/` at all. The reader is a client that loaded the booking before the deletion and acted after it — the same race the rest of this row covers — or a direct API caller. Widening it to the email journey the decision described would mean changing the delegate page's uniform `NOT_FOUND`, itself a privacy property with its own Playwright assertion, and is an owner decision rather than a tidy-up. Third, `confirm-modification-payment` `POST` (`INV-ADDPAY-036`) is the one method here that consults `deletedAt` and deliberately writes anyway: Stripe has already captured, so refusing would leave captured money with no ledger row, and instead the payment is recorded and an OPEN `ManualRefundTask` is raised for a human — never an automatic refund from that path. The booking-deletion path now also cancels the booking's in-flight PaymentIntents after its transaction commits (provider call outside the lock, never throwing, ledger marked FAILED only when Stripe confirms the cancel), which makes that race rare rather than impossible. A refund can still occur from the older #1350 webhook path, which auto-refunds any additional capture on a `CANCELLED` booking and therefore covers deleted ones; when it does, it closes the raised task as `DISMISSED` so an operator cannot complete it and write a second refund allocation for one refund. Since #4030 `change-requests/quote` `POST` estimates the guests a locked-period request adds: same owner-or-officer predicate, deleted booking `404` after it with the ordinary body, throttled per member by `bookingQuery` after that check (`429` + `Retry-After`), nothing written, and it never resolves a MEMBER guest's rate — pricing a caller-supplied `memberId` would answer whether that person is a paid-up member, so member guests come back unpriced (`INV-REQ-011`); since #4203 it counts the editor's added and removed guests toward the group discount without pricing them, and refuses (`400`) a removal or stay range naming a guest not on that booking, as submission does. Since #5066 `invoice` `GET` downloads the booking's primary Xero invoice as Xero's own PDF, and `invoice/credit-notes/[creditNoteId]` `GET` one Xero credit note raised against the booking: active-session checked and throttled by their own shared budgets in `booking-invoice-rate-limits.ts`, since each download is a live Xero read — 10 per member per hour, checked first (it binds an officer working through many bookings too), then 20 per booking per hour across viewers, charged only once the caller is authorised and the document is on offer, so holding another member's booking id cannot spend that booking's allowance. The invoice route takes no invoice id from the caller; the credit-note route serves only an id in the booking's own list (`readBookingCreditNotes`: credit-note links on the booking, its payment and its modifications, the refund-note columns, and the owner's credit allocated to it), so it cannot fetch an arbitrary credit note. Both serve only what the booking page offers (`resolveBookingInvoiceOffer`) — the page's `canSeeOwnerCredit` audience (never a linked guest), the Xero module on, not cancelled or bumped (so never a deleted booking, which is always cancelled), not an organiser-paid internet-banking place, and no additional ask or supplementary-invoice evidence on the booking — with every refusal, a foreign credit-note id included, the same `404`. One metered `callXeroApi` read (no retries, no breaker arming) runs outside any transaction (`503` when Xero is not connected, `502` when the read fails); the response is `private, no-store` with a sanitised, club-prefixed filename, and each successful download writes a `booking`-category audit row (`booking.invoice.downloaded` or `booking.credit_note.downloaded`) after the read, withholding the PDF if that row cannot be written. With the Xero module off (#5066 slice 2) the same `invoice` `GET` serves the app's own PDF instead (`generatedBookingInvoiceOnOffer`, one rule for the button and the route): the same audience, budgets and `404` for every refusal; only payment-owed, paid, completed or awaiting-review bookings, never an organiser-paid place, an unpriced night or lines that do not add up, and never beside Xero documents (a primary invoice id, supplementary-invoice evidence or a held credit note), an additional ask, or for a booking whose tax anchor falls in a GST-registered period the club recorded (owner decision, 20 Nov 2026; #5291), which get an ask-the-club line instead; no provider call and no credit notes. The module flags and the tax schedule are read strictly, so a failed read is a `503` and never treated as Xero off or as no recorded status. It is rendered in-process from the booking page's own read with no caller input beyond the booking id, prints no bank details, GST wording or invoice number, and writes the same audit row with `source: "GENERATED"` and the document's date, total and balance. | IDOR and money-state risk. #614 should include representative owner-boundary tests; #617 should review transaction invariants. |
 | `/api/payments/options`, `/api/payments/charge-saved-method`, `/api/payments/create-payment-intent`, `/api/payments/create-setup-intent` | Authenticated active member. | Signed-in member discovering payment options, paying for booking, or saving payment method. | Payment method availability, payment, payment transaction, booking, Stripe customer/payment method/client secret references. | Stripe API for Stripe paths; Xero-backed Internet Banking availability is reported but settlement stays in Xero reconciliation. | Auth.js session, active-account guard, booking/payment service checks, module-state gates for Internet Banking. | Audit/logging around payment reconciliation and failure paths. | Client secret exposure is intentional to the owning member only. Internet Banking bookings must stay out of Stripe-only mutation paths; #617 should verify ownership checks and cents-only money handling. |
 | `/api/profile`, `/api/notifications/preferences`, `/api/member/**` | Authenticated active member. | Signed-in member. | Member PII, address/phone/email preferences, audit log, credit balance, subscription status, onboarding, data export, deletion request, membership cancellation request/confirmation. | Email send, Xero contact/group update, export generation where invoked. | Auth.js session, active-account guard, rate limits for data export, deletion request, and cancellation request/confirmation. | Audit log for profile/security/data-export/deletion/cancellation operations; logger for Xero/email failures. | Member PII and lifecycle state. #614 should cover inactive/forced-password boundaries; #617 should review lifecycle integrity. |
 | `/api/members/[id]/photo` GET (serve) | Data-layer authorisation, not a session-guard marker. Anonymous **iff** the target member is active, holds an active, published `CommitteeAssignment`, AND the club's `committeePhotoDisplay` is not `NONE`; every other request falls through to the SAME shared session guards this file's POST/DELETE use — `requireActiveSessionUser` for the owning member, `requireAdmin({ membership: view })` for an admin — so the serve path cannot skip the force-password-change or two-factor gates (#2242). | Anonymous website visitor (committee case), owning member, or membership admin. | One `MediaImage` blob (`kind = MEMBER_PHOTO`) plus the target member's photo pointer and committee-published status. Member photos never surface through the public `/api/images/[id]` content path (that route returns 404 for any non-`CONTENT` row — enforced, not just documented) or the content picker (`kind = CONTENT` filter). | None. | Documented mixed-method public GET in `api-route-security.ts` with an explicit `conditionalAuth` declaration (the boundary is mixed WITHIN the method), enforced both ways by `api-route-boundaries.test.ts` — a silent guard fails, and so does a declaration with no guard. Committee-public responses use `Cache-Control: public, max-age=300, must-revalidate` + an **opaque digest ETag** (never the raw `MediaImage` id; short window bounds cache-leak past un-publication); private responses use `private, no-store` + `Vary: Cookie`. `Content-Disposition: inline`, `X-Content-Type-Options: nosniff`, and a locked-down CSP on every response; content-type restricted to JPEG/PNG/WebP at upload (no SVG). | Non-mutating; no per-fetch audit. | Prefers 404 over 403 so a private photo's existence is never confirmed — a guard refusal is mapped onto that same 404, never surfaced as its own 401/403, so a real member id and a nonexistent one are indistinguishable to an unauthorised caller. Cache-leak window bounded to 300s if committee membership is revoked or roster photos are switched off. |
@@ -144,6 +144,14 @@ the row, not open work. Open findings now live in labelled GitHub issues
 | `/api/webhooks/ses-sns` | AWS SNS signature verification. No session auth by design. | AWS SNS for SES feedback. | Processed webhook ids, email suppression/failure records, webhook logs. | SNS certificate verification, SES feedback ingestion. | Bounded JSON envelope validation, SNS signature verification, and `SES_SNS_TOPIC_ARN` allowlisting unless a non-production unsafe override is set. | `recordWebhookLog()`, logger; duplicate event ids are idempotent. | `SES_SNS_TOPIC_ARN` must stay configured for deployed environments; unsafe missing-topic override is local-only. |
 | `/api/webhooks/servernz-posts` | HMAC over `timestamp.body` with the Alpine Central Server push secret from the encrypted `IntegrationCredential` store, five-minute window, constant-time compare. No session auth by design. | The Alpine Central Server. | Nothing from the body: a verified push only schedules the authenticated message-board pull. | The pull inside `runMirrorSync`, after the response. | Module off answers 200 `ignored` (so the server stops retrying); no stored secret answers 401, and a server address move or API-key replacement removes the stored secret in its own transaction, so pushes signed with it stop verifying (within the 45-second credential cache of any other running process) and the next sync registers again (#4470); a registration whose connection was replaced in flight stores nothing; bounded 16 KiB body; a body that is not a JSON object is refused 400 BEFORE the signature, so a captured free-beds question cannot ring the doorbell. | Logger. | `INV-INT-030`. |
 | `/api/webhooks/servernz-availability` | HMAC over `timestamp.text` with the same push secret, where the text is route-specific (`availability`, lodge, from, to), five-minute window, constant-time compare, judged BEFORE the query is parsed. No session auth by design. | The Alpine Central Server's public lodge search. | Free beds per night and their minimum for one linked lodge; never a guest, member or booking. | None: a read. | Rate-limited first; `alpineCentralServer` module off, `otherLodgesEnabled` off, an unknown, unowned, unlinked or inactive lodge are all the same 404; the stay is capped at 30 nights and 365 days ahead. No stored secret answers 401: a server address move or API-key replacement removes it (#4470), so the old server can no longer ask once the 45-second credential cache of any other running process expires, and the new server can ask once this site has registered with it again. | Logger. | `INV-INT-030`; counts only, by design. |
+| `/.well-known/oauth-protected-resource/api/mcp`, `/.well-known/oauth-authorization-server` (ALP-653) | Public GET, no session. 404 while the `mcpServer` module is off (proxy rule plus the handler's own check, `INV-MCP-001`). | Any AI app, anonymous. | None: OAuth discovery metadata built from `NEXTAUTH_URL` (RFC 9728 and RFC 8414). | None. | Module gate; `Cache-Control: public, max-age=300`. | None. | Must reach the app through the reverse proxy; the shipped `Caddyfile` passes every path except `/images/*` through unchanged. |
+| `/api/mcp` POST (ALP-653) | Bearer access token (hashed lookup, one hour, `INV-MCP-003`) for an ACTIVE connection that `resolveMcpGrantUse` still allows (`INV-MCP-002`). No cookie is read; a browser `Origin` other than the site's own is refused 403 before the token is looked at. No GET. | AI app acting for one member. | Through each action's own route only: the dispatcher sends a loopback request carrying the 30-second signed `x-mcp-principal` header, and `auth()` builds the member's session from the connection (`INV-MCP-005`, `INV-MCP-007`). Writes `McpGrant.lastUsedAt` at most every five minutes. | Loopback HTTP to `127.0.0.1:$PORT`. | `mcpUnauthenticated` (60 a minute per address) only for a missing or invalid token; `mcpCall` (120 a minute per connection) otherwise. Permanent exclusions and view-only scope refused before dispatch; 25-second action timeout; 100,000-character result cap. | `MCP_ACTION_CALLED` (`security`) for every `write` or `destructive` call, never its arguments or result (`INV-MCP-008`); `read` calls are not audited. | Member-typed text the app reads can try to steer it (prompt injection); an officer's connection sends other members' data to the officer's AI provider. See [the guide](guides/mcp-server.md#risks-and-limits). |
+| `/api/mcp/oauth/register` POST (ALP-653) | Public by necessity (RFC 7591): an app registers before any member signs in. Grants nothing. | Any AI app, anonymous. | Writes one `McpClient` (name, redirect addresses); deletes never-approved clients older than a day. | None. | `mcpClientRegister` (20 an hour per address); one to five redirect addresses, each `https` on an approved host or `http` loopback (`INV-MCP-003`). | None. | The client name is self-asserted; the approval screen shows the redirect host as the checkable fact. |
+| `/api/mcp/oauth/token`, `/api/mcp/oauth/revoke` POST (ALP-653) | No session, no client secret. Token: the PKCE S256 verifier for a five-minute single-use code, or a single-use rotating refresh token. Revoke: either token. | AI app. | `McpAuthCode`, `McpToken` (hashes only), `McpGrant` status. | None. | `mcpToken` (60 per 10 minutes per address). Code or refresh reuse ends the connection; use is re-checked before the credential is spent; revoke answers the same for a known and an unknown token. | Connection status and `endedReason`; no audit row for these ends (`INV-MCP-008`). | — |
+| `/api/member/mcp-grants` GET/POST, `/api/member/mcp-grants/[id]` DELETE, page `/connect/authorize` (ALP-653) | Auth.js session via `requireActiveSession()` (the page: the signed-in layout). Any request carrying `x-mcp-principal` is refused 403 (`mcpConnectionMayNotManage`). | Signed-in member. | The member's own connections; POST writes an `McpGrant` and a code after re-running the approval check on the current session (`INV-MCP-002`). | None. | `mcpApprove` (20 an hour per member) on POST; kiosk, unverified-email and club-policy refusals; another member's connection answers 404. | `MCP_CONNECTION_APPROVED`, `MCP_CONNECTION_REVOKED`. | — |
+| `GET /api/notices/[id]`, `GET /api/lodge-roster` (ALP-718) | Auth.js session via `requireActiveSession()`, or an AI app connection through `auth()` (`INV-MCP-005`). 404 while the `mcpServer` module is off (handler check, `INV-MCP-001`) or while `memberNotices` / `memberLodgeRoster` is off (proxy rule plus handler check). | Signed-in member or their AI app. | One notice through `getNoticeForMember` (audience re-checked; out of audience answers 404 alike), body as plain text; the roster through `buildMemberLodgeRoster`, names and nights only (`INV-PRIV-017`). Both answer only the allow-listed fields (`projectForConnection`). No writes. | None. | `api` limiter (100 a minute) keyed on the connection, or on the address for a browser. No parameter widens the roster window or names another member. | None (reads). | The roster sends other members' names to the member's AI provider, as the page already shows them to the member. |
+| Member routes that are AI app actions (ALP-653, ALP-718) | The route's own guards, unchanged. A request carrying `x-mcp-principal` decides with `memberOnlySessionUser` (no officer role or permission) and is answered through `connectionJson`, which keeps only the action's `returns` fields (`INV-MCP-006`). | AI app acting for one member. | As for a browser, on the member's own records. | As for a browser. | Officer override flags and on-behalf targets from a connection refused 403. | The route's own rows, plus `MCP_ACTION_CALLED` for a change (`INV-MCP-008`). | A field a route's answer gains later is withheld from connections until added to its shape. |
+| `/api/admin/mcp/settings` GET/PUT, `/api/admin/mcp/grants` GET, `/api/admin/mcp/grants/[id]` DELETE (ALP-653) | Admin session via `requireAdmin()`: `support` view to read, `support` edit to save or disconnect; PUT also calls `requireRecentAuth()` (on the fresh-proof list, `INV-AUTH-010`). A connection is refused 403. | Admin with support permission. | `McpSettings`; every live connection with member name, app and dates. | None. | Strict Zod schema; hosts normalised and capped at 50; an invalid host refuses the whole save. | `MCP_SETTINGS_UPDATED` with previous and new values, in the save's transaction; `MCP_CONNECTION_REVOKED` for an officer disconnect. | Widening `officersMayConnect` or `maxScope` applies to every connection on its next request. |
 | GitHub Actions, Dockerfile, Compose, deployment scripts | CI/deployment boundary, not app-session auth. | Maintainer, GitHub Actions, deploy operator. | Repository, package lock, Docker images, GHCR packages, environment variables, migrations. | npm, Docker, GHCR, Semgrep, gitleaks, Trivy, CodeQL if enabled by repo settings. | CI gates: audit, lint, tests, production build in CI only, Semgrep, gitleaks, Docker image security. Compose uses read-only app container, tmpfs cache, no-new-privileges, resource limits. | GitHub logs and deploy logs. | #619 should review workflow permissions, package publishing, secret scopes, image provenance, and deploy env contracts. |
 
 ## External Integration Review (#616)
@@ -295,6 +303,14 @@ These family rules are enforced by automated tests (issue #1132):
 - `src/app/api/health/route.ts`
 - `src/app/api/health/ready/route.ts`
 - `src/app/api/webhooks/**/route.ts`
+- `src/app/api/mcp/route.ts`, `src/app/api/mcp/oauth/{register,token,revoke}/route.ts`
+  (ALP-653) — the AI app endpoint and its OAuth endpoints. No cookie session:
+  a bearer token, a PKCE verifier or a refresh token is the credential, each
+  checked against a connection that is still ACTIVE and still allowed
+  (`INV-MCP-002`, `INV-MCP-003`). Each tool call then meets the target route's
+  own guards over loopback (`INV-MCP-007`). Listed in
+  `explicitPublicApiRoutes` in `src/lib/api-route-security.ts`. The two
+  `src/app/.well-known/oauth-*` discovery routes sit outside `src/app/api`.
 
 ### Authenticated Member Routes
 
@@ -305,9 +321,27 @@ These family rules are enforced by automated tests (issue #1132):
 - `src/app/api/booking-policies/check/route.ts`
 - `src/app/api/bookings/**/route.ts`
 - `src/app/api/chores/roster/[date]/print/route.ts`
+- `src/app/api/food-orders/**/route.ts` — fork triyder/AlpineClubBookingsNZ#121, module-gated
+  (`foodOrders`, off by default; 404 in the proxy and again in every handler).
+  An active session that is not an organisation account. `POST` places an order
+  (member-scoped rate limit, items and needed-by date validated, stored before
+  the officer email is queued); `history` returns the caller's own orders, or
+  every order for committee or Lodge Operations view, and the orders at their
+  own lodges for a current hut leader (`foodOrderVisibility`);
+  `[id]/received` (strict body `{ itemIds }`, 1-50 distinct items of that
+  order, else 400 with nothing written) and `[id]/price` are decided by one rule,
+  `canManageFoodOrder` (a hut leader at that order's lodge today, or Lodge
+  Operations edit). `POST` and the form's lodge list follow booking
+  eligibility (`getEligibleLodgeIdsForMember`). An order the caller may not see answers 404 rather
+  than 403, so ids are not confirmed, and `history?order=<id>` returns a null
+  `linkedOrder` for it, the same as for a missing id. A price change must carry
+  the price the caller saw (`expectedCents`), so a stale screen is refused. The
+  price is a record only and moves no money.
 - `src/app/api/issue-reports/route.ts`
 - `src/app/api/lodges/route.ts`
 - `src/app/api/member/**/route.ts`
+  — including `member/mcp-grants/**` (ALP-653), which also refuses any request
+  arriving as an AI app connection (`INV-MCP-002`).
 - `src/app/api/members/family/**/route.ts`
 - `src/app/api/members/guest-candidates/**/route.ts` — **a deliberate PII
   surface, see the Sensitive Data Inventory below.** The exact-email resolve
@@ -325,6 +359,28 @@ These family rules are enforced by automated tests (issue #1132):
   booking exists, the booker's family; answered by guest reference, never member
   id, with only code and benefit; a booking the caller does not own answers as
   a missing one; per-member rate limit and a `privacy` audit row per lookup.
+- `src/app/api/work-parties/**/route.ts` — module-gated (`workParties`; 404 in
+  the proxy). `active` lists the open work parties overlapping a stay for the
+  booking form. `[id]` (#5148) returns one open work party for the member
+  page `/dashboard/work-parties/[id]` and the "Join Work Party" prefill: members only
+  (`canViewWorkParties`: the `USER` access role and not an organisation
+  account), with the module re-checked in the handler; every other signed-in
+  caller, and an inactive or unknown id, gets the same 404, so ids are not
+  confirmed (signed out is 401). It never returns the work party's internal
+  promo code. Booking rate limit. Members-only covers the card, page and Join
+  button (owner decision 7) and a work party's calendar entries (title,
+  lodge, description; owner decision, 20 Nov 2026): `whereVisibleCalendarEvent`
+  takes the viewer as a required argument and admits linked entries only for
+  `canViewWorkParties`, while the Work parties module is on and the work party
+  is open, in the calendar list API and the dashboard Events card. The one
+  exception is `active`, which lists open work parties to any active session
+  for the booking form. The member page is under `/dashboard`
+  (owner decision, 15 Nov 2026); the proxy gates `/dashboard/work-parties` on
+  the module, and the page re-checks the module and `canViewWorkParties`
+  itself, so the app reserves no top-level `/work-parties` word. Work-party writes need only Lodge edit, and since #5148
+  they also write those calendar entries without the calendar's own create
+  gate; the content is limited to the work party's own fields under a fixed
+  "Work party:" title.
 
 ### Lodge And Kiosk Routes
 
@@ -333,6 +389,38 @@ These family rules are enforced by automated tests (issue #1132):
 ### Admin Routes
 
 - `src/app/api/admin/**/route.ts`
+  - `admin/bookings/[id]/work-party` (fork triyder/AlpineClubBookingsNZ#119): bookings view to list the
+    work parties a booking could join, bookings edit to preview or apply
+    adding it to one. The only door to a work party's internal promo code on
+    an existing booking: the code is admitted by a service argument
+    (`officerWorkPartyCorrection`) that no request body can carry, and a census
+    pins its one caller (and the service refuses it without an officer, a
+    caller transaction and a promo-only change). It moves money only through
+    the canonical booking edit's own settlement (triyder/AlpineClubBookingsNZ#129): account credit by
+    default, a refund only when the officer chooses it where the edit itself
+    offers one — to the card, or the edit's bank-transfer hand-back for
+    Internet Banking (any other method is refused, 409) — and an organiser-paid
+    joiner's money back to the organiser by the pipeline's organiser
+    disposition. It adds no refund path, calls no provider itself, and refuses
+    any refund the offered options did not mean. It never changes the acting
+    officer's own or family's booking (the member-guest family boundary, over
+    the owner and, for an organiser-pays joiner, the organiser, settled or not; owner
+    decision 3 of 18 Nov 2026 on #5149), whatever the money does: the list
+    greys it out for the signed-in officer, and the service refuses it again
+    under its locks, on Add and Remove alike. It applies only the figures the
+    officer was shown, settlement method included, and answers 404 while the
+    Work Parties module is off. Its POST is on the step-up list
+    (`INV-AUTH-010`): the canonical edit it calls reaches the refund
+    operations, so it asks for a fresh proof before reading the body.
+    Fork triyder/AlpineClubBookingsNZ#130: `action: "remove"` takes the
+    booking off the work party it carries through the same service argument
+    and edit; the price rises and the difference is owed on the booking. A
+    removal carries no settlement method (400 if sent) and refuses, 409, any
+    money it would hand back. Its checked figures include an increase invoiced
+    to the group organiser, so a stale preview cannot save it. Fork triyder/AlpineClubBookingsNZ#127: on a started stay the argument also
+    asks the edit policy to price the whole stay (an officer-only mode no body
+    can reach), so the promotion re-runs over nights already slept; every
+    other in-progress edit still refuses a promo change.
 
 Admin route subfamilies are:
 
@@ -359,6 +447,9 @@ Admin route subfamilies are:
 - Lodge/chores/committee/hut leaders/roster/issues: `admin/lodge`,
   `admin/chores/**`, `admin/committee/**`, `admin/hut-leaders/**`,
   `admin/roster/**`, `admin/issue-reports/**`
+- Food orders settings (fork triyder/AlpineClubBookingsNZ#121, `foodOrders` module, Lodge Operations
+  view/edit): `admin/food-orders/settings` — the food officer email, checked
+  only as an email address, and the officer label
 - Multi-lodge management (always-on since ADR-005 / #128 removed the
   `multiLodge` flag; `requireAdmin()` is the sole boundary): `admin/lodges/**`,
   `admin/members/[id]/lodge-access`. `admin/lodges/**` also hosts the guided
@@ -372,6 +463,9 @@ Admin route subfamilies are:
   `finance:view`, native to the route map's default area; `PUT`/`DELETE` are
   Full Admin only, stricter than the map (`REVIEWED_PERMISSION_DIVERGENCES`,
   same shape as `club-format`'s write side)
+- The club's tax category mapping to Xero tax rates:
+  `admin/xero/tax-categories` (#5209) — `GET` is `finance:view`; `PUT`/`DELETE`
+  are Full Admin only, stricter than the map, the `club-tax` shape
 
 ### Finance Routes
 
@@ -450,20 +544,20 @@ for recipients, data flows and enablement; they do not keep recipient lists.
   the connection's answers (owned list, version, every sync cursor) and
   removes `push_secret` and `push_registered_url` in the same transaction; moving the address does the
   same and removes the key too (#4436, #4470). What the key authorises leaving the club is every column
-  of the club's OWN `OtherLodge` rows plus their amenity lists (#50, #52):
+  of the club's OWN `OtherLodge` rows plus their amenity lists (triyder/AlpineClubBookingsNZ#50, triyder/AlpineClubBookingsNZ#52):
   since the fourteen detail columns were added, that includes a site URL, a
   booking path, a cancellation period, two season dates and nine yes/no
   facilities alongside the booking officer's contact details, and nothing about
-  members. Since #64 (server API 2.3) each such row also carries its central
+  members. Since triyder/AlpineClubBookingsNZ#64 (server API 2.3) each such row also carries its central
   lodge `id`, and a changed name RENAMES that lodge on the central server and so
   at every other club — limited, by the server, to lodges this club owns.
-  Since #58 (API 2.4) a pull's `deletedLodges` can HIDE any local Other lodges
+  Since triyder/AlpineClubBookingsNZ#58 (API 2.4) a pull's `deletedLodges` can HIDE any local Other lodges
   row by its central id, the club's own included, and clears any club lodge's
   Central lodge link to it. Hiding is never undone but removes nothing: the
   row stays on the bookings and requests that name it. The list is bounded
   (100,000) and each entry validated, and a download that hides anything
   writes one audit row naming the lodges. Which rows are the club's own is the server's answer
-  (`ownLodges` on every pull, by central id since #69: two lodges may share a
+  (`ownLodges` on every pull, by central id since triyder/AlpineClubBookingsNZ#69: two lodges may share a
   name), stored on the settings row and applied by the one `ownsOtherLodge`
   rule to the upload, the admin edit route, the committee officer sync and the
   panel. A row not yet keyed by a central id is never owned (two lodges may
@@ -1479,7 +1573,8 @@ the Tokoroa fork's review and fixed in #2242.
   carry metadata — which silenced that warning for exactly the types that are
   never stripped; it now returns `ok: false` with the original bytes.
 
-Notes on the fail-open choice and its cost:
+Notes on the fail-open choice and its cost (the fail-open half is superseded:
+see [Hidden Image Data On Every Type](#hidden-image-data-on-every-type---2026-11-22)):
 
 - The asymmetry is deliberate. `stripJpegMetadata` is known to reject some
   spec-legal JPEG fill-byte sequences (T.81 §B.1.1.2). On a member photo —
@@ -1539,6 +1634,63 @@ Notes on the fail-open choice and its cost:
   not), exactly as it did before this change. What that timing could distinguish
   is committee-publication status, which the public roster already publishes by
   name.
+
+## Hidden Image Data On Every Type - 2026-11-22
+
+Issue #5244 closed the two gaps the 2026-08-01 review above left: three allowed
+types had no cleaner, and four of the five storing paths stored an unconfirmed
+image anyway.
+
+- **Every allowed type now has a cleaner**, each lossless and byte-identical on
+  a second pass, and each a keep-list rather than a deny-list, so a metadata
+  block nobody has named (Content Credentials, a vendor chunk) is dropped
+  anyway: JPEG keeps only structural segments, a rebuilt JFIF without its
+  thumbnail, Adobe and ICC, and refuses reserved markers; PNG and WebP keep
+  only the chunks that draw the picture (WebP animation frames are walked
+  too) and refuse an unknown critical PNG chunk; all three keep an
+  orientation-only EXIF (dropping it turned phone portraits sideways);
+  GIF keeps only image, graphic-control and looping (`NETSCAPE2.0`) blocks,
+  rebuilt from their defined fields so nothing rides in extra sub-blocks;
+  a still AVIF has every non-picture item (`Exif`, XMP `mime`), property
+  (except `colr`, which is kept and can hold an ICC profile) and top-level
+  box retyped `free` and zeroed in place, with every `mdat`/`idat`
+  byte outside a picture item's extents zeroed, data-reference location
+  strings zeroed and unknown file-type brands replaced; SVG is rebuilt by
+  `sanitize-html` from an allow-list of drawing elements and attributes, with
+  `script`, `metadata`, `title`, `desc` and `foreignObject` removed with their
+  contents, references narrowed to `#id`, and embedded raster images cleaned
+  and re-embedded.
+- **Every path fails closed.** `cleanImageForStorage` replaced
+  `storableImageBytes`: an image that cannot be confirmed clean is refused with
+  one plain message (`IMAGE_NOT_CLEAN_MESSAGE`), never stored and logged. The
+  image library answers 400, the image manager refuses that file and keeps the
+  batch, a configuration restore stops at its dry run with an error naming the
+  file, and a site-style save with an unconfirmable inline logo answers 400. The
+  fill-byte false refusal that once justified failing open is fixed. An animated
+  AVIF is refused with its own message. The image manager also refuses bytes
+  that sniff as no image, or as SVG, whatever the declared type.
+- **SVG fails closed on reach, not just on parse**: CSS `@import`,
+  `image-set()`, a CSS escape, an unterminated CSS comment, a `url()` that is
+  not `#id`, markup nested in a `<style>`, an embedded image that cannot be
+  cleaned, bytes that are not UTF-8, output without an `<svg` root in the SVG
+  namespace, or output
+  that does not rebuild to itself all refuse the file. Each `<style>` body is
+  checked whole after the rebuild, because the parser hands its text over in
+  pieces split at character references, comments and CDATA; the `url()` scan is
+  linear, so an upload cannot stall the server with unclosed `url(` runs.
+  Text inside the drawing's own `text` elements is kept, even where it is
+  hidden or only referenced from `defs`.
+- **An inline logo already stored is not re-cleaned** on a site-style save that
+  sends it back unchanged, so a legacy logo neither blocks a colour change nor
+  is rewritten.
+- **`/api/images/[id]` adds `sandbox` to its CSP**:
+  `default-src 'none'; style-src 'unsafe-inline'; sandbox`, with `nosniff` and
+  `Content-Disposition: inline` as before. Opened directly as a document, an SVG
+  gets a unique opaque origin, so markup that slipped past the rebuild can
+  neither run nor reach the site's cookies or storage.
+- **Images stored before #5244 are not altered** (owner decision, 20 Nov 2026):
+  no backfill runs over `MediaImage` rows, `public/images` or stored logos.
+  `docs/guides/image-manager.md` tells an admin how to replace one.
 
 ## Per-Route CSP Relaxation And Soft Navigation - 2026-07-26
 
@@ -1974,9 +2126,12 @@ Fixed at the root: that function now reports `readFailed` separately, and the
 shared public chrome (`src/components/website/website-chrome.tsx`, which held this
 branch as `(website)/layout.tsx` until the D1 narrowing extracted it) paints the
 holding screen only on a POSITIVE answer. The
-asymmetry with the proxy gate, which still fails closed on the same input, is
-deliberate and is the general rule worth keeping — **503 is a true statement
+asymmetry with the proxy gate, which fails closed on the same input on a cold
+start, is deliberate and is the general rule worth keeping — **503 is a true statement
 about an unreadable database; a 200 that describes the club is not.**
+Since #5264 the gate fails closed only until it has seen setup complete: after
+that, a database read that fails, throws or times out keeps serving the stale
+"complete" answer, by design, so a blip cannot close a live club's website.
 
 ## Prerendered Pages And The Nonce-Only CSP - 2026-07-31
 
@@ -1992,7 +2147,7 @@ them, using the very header the same response carries. The page renders but neve
 hydrates.
 
 This is a standing invariant, not a one-off bug. It has now been hit twice: the
-lobby TV display (fork #54) and the global 404 (#2356).
+lobby TV display (fork hoppers99/AlpineClubBookingsNZ#54) and the global 404 (#2356).
 
 - **Measured on a real build, before the fix.** `.next/server/app/_not-found.html`
   carried 24 `<script>` tags: 17 with `src=` (fine under `script-src 'self'`) and
@@ -2314,15 +2469,24 @@ address — real page, typo, and bot probe alike — which is the configuration 
   incomplete, the fully rendered document — is memoised for 15 seconds behind a
   single-flight promise, matching the TTL of the tagged cache the layout reads
   the same `ClubTheme` row through. Once setup is complete the cached answer is a
-  bare boolean and the club identity and contact address are never read at all.
+  bare boolean, each refresh reads `completedAt` alone (`readSetupCompletion`),
+  and the theme, club identity and contact address are never read at all. An
+  expired answer is served while one background refresh runs, so no visitor
+  waits for the read (#5264: the refresh used to load the whole theme and build
+  its CSS, stalling a page every 15 seconds); only a cold start waits.
   The proxy is bundled separately from route handlers, so the `revalidateTag`
   the site-style save issues cannot reach this memo; the TTL is the propagation
-  bound, and it is why the site opens within 15 seconds of the save rather than
-  instantly.
-- **Fails CLOSED.** A failed `ClubTheme` read leaves `isComplete` false, so a
-  database outage is answered with the holding screen and a 503 — which is what
-  503 literally means. Failing open would restore the 200-for-every-address
-  defect under exactly the conditions that make it hardest to notice. Note the
+  bound, and it is why the site opens on the second request after the 15
+  seconds rather than instantly.
+- **Fails CLOSED.** A cold start whose `ClubTheme` read fails or throws answers
+  with the holding screen and a 503 — which is what 503 literally means.
+  Failing open would restore the 200-for-every-address defect under exactly the
+  conditions that make it hardest to notice. **One deliberate exception
+  (#5264):** once the gate has seen setup complete, a refresh whose read fails,
+  throws or times out (5 seconds, `SETUP_STATE_READ_TIMEOUT_MS`) keeps serving
+  the stale "complete" answer, by design, rather than closing a live club's
+  website for a database blip — the same launch-state reasoning as finding F4. A refresh that
+  reads a POSITIVE "not complete" still closes the site. Note the
   deliberate asymmetry with the render-time fallback in
   `src/components/website/website-chrome.tsx` — `(website)/layout.tsx` until the D1
   narrowing extracted it, and now the one copy shared by both public route groups —
@@ -4302,5 +4466,7 @@ global); the G5 observability gap is partially closed by design.
   changes.
 - **D2 — `getClientIp` trusting `x-real-ip`: ratified.** Removing it breaks
   non-Caddy deploys; the "Caddy always fronts" deployment invariant stands. The
-  rate-limiter degraded mode (issue #1142) is documented above.
+  rate-limiter degraded mode (issue #1142) is documented above. Since #5399 it
+  is the only reader of `X-Forwarded-For` and `X-Real-IP`: audit rows record the
+  same address as the rate-limit key, and a lint arm refuses any other read.
 

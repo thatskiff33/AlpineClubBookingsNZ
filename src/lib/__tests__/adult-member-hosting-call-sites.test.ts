@@ -557,6 +557,7 @@ describe("canonical Group Trip identity (#3037, epic #2943)", () => {
       "src/app/api/bookings/route.ts",
       "src/lib/adult-member-hosting-proposed.ts",
       "src/lib/booking-exception-request-service.ts",
+      "src/lib/booking-import/plan.ts",
       "src/lib/group-booking.ts",
     ]);
 
@@ -572,6 +573,10 @@ describe("canonical Group Trip identity (#3037, epic #2943)", () => {
       readRepoCode("src/app/api/bookings/route.ts"),
       suppliedRule,
     ).toContain("groupBookingId: null,");
+    // An imported booking joins no Group Trip either (#5005).
+    expect(readRepoCode("src/lib/booking-import/plan.ts"), suppliedRule).toContain(
+      "groupBookingId: null,",
+    );
 
     // The member join hands over the container it already resolved from the
     // redeemed join code, never a body field.

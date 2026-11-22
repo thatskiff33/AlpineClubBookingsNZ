@@ -58,7 +58,9 @@ date-only lodge nights, interpreted in the club time zone.
 2. The charts show **Occupancy Rate**, **Booked Revenue by Day/Week/Month** (the
    granularity is chosen automatically from the range length), **Booking Trends
    (by week)**, **Member vs Non-Member Guests**, and **Booking Status
-   Breakdown**.
+   Breakdown**. The charts' date labels, and the revenue period column in the
+   CSV, are written in the club's date format
+   ([Club Currency & Locale](club-format.md)).
 
 ### Export
 

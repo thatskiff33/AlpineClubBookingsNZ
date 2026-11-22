@@ -49,7 +49,6 @@ export function BookingAdminToolsSection({
     withheldEmailGroups,
     noEmailsState,
     manualPaymentState,
-    storedNightPriceOffers,
     showReturnToWaitlist,
     exclusiveHoldConflicts,
     stripeDisputes,
@@ -93,6 +92,9 @@ export function BookingAdminToolsSection({
           providerMismatches={providerMismatches}
           financialReviewWarnings={financialReviewWarnings}
           features={modules}
+          currentWorkParty={
+            booking.promoRedemptions.find((row) => row.promoCode.workPartyEvent)?.promoCode.workPartyEvent ?? null
+          }
           capacityHold={{
             hasAdminCapacityHold: Boolean(booking.adminCapacityHoldAt),
             adminCapacityHoldAt:
@@ -127,7 +129,6 @@ export function BookingAdminToolsSection({
           }}
           noEmails={isDeleted ? undefined : (noEmailsState ?? undefined)}
           manualPayment={manualPaymentState ?? undefined}
-          storedNightPriceOffers={storedNightPriceOffers}
           // #2649: the stranded zero-dollar waitlist confirm. Derived above,
           // where the provenance check that makes the banner's claim true can
           // be awaited; the route re-checks every condition under its locks.

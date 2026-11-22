@@ -228,7 +228,7 @@ describe("POST /api/admin/integrations/credentials", () => {
     expect(mocks.withXeroVerifyReset).not.toHaveBeenCalled();
   });
 
-  it("forgets the owned-lodge list when the Alpine Central Server key is replaced (#52)", async () => {
+  it("forgets the owned-lodge list when the Alpine Central Server key is replaced (triyder/AlpineClubBookingsNZ#52)", async () => {
     asFullAdmin();
     mocks.setIntegrationCredential.mockResolvedValue({
       provider: "servernz",
@@ -239,7 +239,7 @@ describe("POST /api/admin/integrations/credentials", () => {
     });
     const res = await POST(makeRequest({ provider: "servernz", key: "api_key", value: "acs_replacement", expectedBaseUrl: SHOWN_URL }));
     expect(res.status).toBe(200);
-    // #49: and the server's last reported version with it, in one write.
+    // triyder/AlpineClubBookingsNZ#49: and the server's last reported version with it, in one write.
     expect(mocks.forgetServerConnectionAnswers).toHaveBeenCalledTimes(1);
     expect(mocks.forgetServerConnectionAnswers).toHaveBeenCalledWith(mocks.tx);
     expect(mocks.setIntegrationCredential).toHaveBeenCalledWith(expect.objectContaining({ tx: mocks.tx }));
