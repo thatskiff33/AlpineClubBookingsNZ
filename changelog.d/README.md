@@ -68,13 +68,15 @@ routing row are for.
 Write a relative link the way it works from this directory, so it is correct
 where you write it: `[the guide](../docs/guides/club-time.md)`. When the
 compiler copies the fragment into `CHANGELOG.md` at the repository root, it
-rewrites each relative link — both targets of an image used as a link,
-`[![alt](../img.png)](../docs/A.md)`, included — to resolve from there instead
+rewrites each relative link to resolve from there instead
 (`docs/guides/club-time.md`), so `docs:linkcheck` passes both before and after
-a release (#5214). Absolute URLs, `#anchor` links and links shown inside code
-are left alone. A link that climbs out of the repository (`../../x.md`) has no
-root-relative form; `changelog-fragment-shape` refuses it, and so does the
-compiler.
+a release (#5214). That covers a link whose text wraps onto the next line,
+both targets of an image used as a link (`[![alt](../img.png)](../docs/A.md)`)
+or of a link inside an image's alt text, and reference definitions, including
+`[ref]: <../docs/a file.md>`. Absolute URLs, `#anchor` links and links shown
+inside code are left alone. A link that climbs out of the repository
+(`../../x.md`) has no root-relative form; `changelog-fragment-shape` refuses
+it, and so does the compiler.
 
 ## Patch or minor: the `.feature.md` suffix
 
@@ -189,8 +191,12 @@ update does not exist, so refresh `origin/main` before running it.
 Straight after a release, this directory and `size-allowances.d/` hold only
 their `README.md`. That is their normal state, so a check that reads either
 directory must pass when it is empty: assert that it read the right directory,
-never that it found a fragment. #5214 ran every such check with both
-directories emptied and all of them passed.
+never that it found a fragment. `changelog-fragment-shape` tests this itself:
+its rules pass on a directory holding only a `README.md` and still flag a bad
+fragment in a populated one. The other checks that read either directory from
+disk (`late-capture-decision-provenance`, `cli-server-only-reach-census`,
+`additive-artifact-fragments`, `agent-workflow-contract`) were run once by hand
+for #5214 with both directories emptied, and passed.
 
 A version that already has a section is refused — except with `--append`,
 which adds the fragments (and any direct `## Unreleased` entries) to the end of
