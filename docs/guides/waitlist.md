@@ -62,8 +62,9 @@ which by definition that booking is not. See
    number, and in the same run the place is offered to the next party behind it
    that fits. The member whose offer lapsed is considered last for that place,
    so a lone entry is offered it again. Anyone else whose offer lapsed in the
-   same run is considered just before them, after everyone who has not just had
-   a turn. That holds even where your club serves the lodge's own queue first:
+   same run is considered just before them, at whichever lodge, after everyone
+   who has not just had a turn. That holds even where your club serves the
+   lodge's own queue first:
    members from other lodges who opted into this one and have not had the
    offer come before the lodge's own member who just let it lapse. If offers
    keep lapsing, the place moves on down the queue and only comes back to the
@@ -71,10 +72,9 @@ which by definition that booking is not. See
 
    Things to know:
 
-   - Serving the lodge's own queue first gives way only in that re-offer. Every
-     other offer still goes to the lodge's own waiting members before anyone
-     from another lodge.
-
+   - Serving the lodge's own queue first gives way only in the re-offers of
+     that run. Every other offer still goes to the lodge's own waiting members
+     before anyone from another lodge.
    - Nothing marks the entry, so when a different place frees on the same
      nights (a cancellation, say), it is considered in its usual place and can
      be offered that one.
@@ -86,9 +86,10 @@ which by definition that booking is not. See
      never more out than before they lapsed, offers do not take a bed from the
      lodge's capacity until accepted, and anyone who accepts after the beds have
      gone is told so and stays on the waitlist.
-   - If one re-offer fails, the others still go out, the failure is logged, and
-     the waitlist job reports that run as failed. That place is not offered
-     again until something else frees a place on those nights.
+   - If one re-offer fails, for whatever reason, the others still go out, the
+     failure is logged, and the waitlist job reports that run as failed with
+     its counts, even if the job had to retry part of the run. That place is
+     not offered again until something else frees a place on those nights.
    - The waitlist job runs one copy at a time. If two copies ever ran at the
      same moment, each would know only the offers it expired, so two members
      whose offers lapsed together could be offered each other's places for one

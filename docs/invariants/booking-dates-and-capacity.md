@@ -1718,9 +1718,10 @@ capacity or double-booking violation.
   22 Nov 2026). `expireStaleOffers` makes one offer pass per lapsed offer, in
   join order, handing it that lapse and every other lapse of the same run. The
   pass walks `orderWaitlistOffers`: the `INV-CAP-041` order, started just after
-  the lapsed opportunity and wrapped to the front, with the run's other lapses
-  next and the lapsed opportunity last, so two members who lapse together
-  cannot pass the places between them. A queue of one is re-offered.
+  the lapsed opportunity and wrapped to the front, then any opportunity of
+  another booking that lapsed in the run, then the lapsed opportunity, so two
+  members who lapse together cannot pass the places between them. A queue of
+  one is re-offered.
 - **Only the opportunity at the offered lodge moves.** Under `OWN_LODGE_FIRST`
   each part rotates separately, but the lapses go after both: a member who just
   lapsed is behind every opt-in too (owner decision, 23 Nov 2026).
@@ -1735,7 +1736,7 @@ capacity or double-booking violation.
   only their own lapses, so two members can be offered each other's places for
   one round; production runs one cron instance.
 - **No lock changed.** Each pass takes the same locks in its own transaction
-  (`INV-LOCK-001`, `INV-LOCK-002`); a pass that throws is logged and the rest
+  (`INV-LOCK-001`, `INV-LOCK-002`); a pass that fails is counted and the rest
   run.
 - Guards: `waitlist-queue.test.ts`, `waitlist.test.ts`,
   `cross-lodge-waitlist-processor.test.ts`,

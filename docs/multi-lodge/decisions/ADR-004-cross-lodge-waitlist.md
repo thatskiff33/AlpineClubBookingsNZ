@@ -142,14 +142,15 @@ Two behaviours were pinned down during implementation:
   everyone else who was.
 - **A stated exception to `OWN_LODGE_FIRST`: a lapsed offer goes behind the
   opt-ins** (#5410, owner decision 23 Nov 2026). Each part still rotates on its
-  own, but the lapsed opportunity, and any other that lapsed in the same run,
-  goes after the cross-lodge part as well as the own-lodge one. So if a lodge's
+  own, but the lapsed opportunity, and any opportunity of another booking whose
+  offer lapsed in the same run, goes after the cross-lodge part as well as the
+  own-lodge one. So if a lodge's
   own member lets an offer lapse and an opt-in from another lodge that fits is
   waiting, the opt-in is offered the place before that member is offered it
   again. The reason: the member has just had their turn, and "own lodge first"
   is there so nobody is overtaken in the queue they joined, not to hand the same
-  place straight back to someone who did not take it. It applies to that
-  re-offer only; every other pass walks own lodge first as before.
+  place straight back to someone who did not take it. It applies to the
+  re-offers of that run only; every other pass walks own lodge first as before.
 - **Confirm rejects a duplicate stay at the offered lodge.** If Phase 3
   (cancel the waitlist entry) failed on an earlier confirm, the entry is
   stranded in `WAITLIST_OFFERED` with a booking already created at the

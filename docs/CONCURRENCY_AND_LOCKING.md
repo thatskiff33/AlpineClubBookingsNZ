@@ -222,11 +222,14 @@ keys one at a time, after the revert commits, so two sweeps running at the same
 moment each know only their own lapses: for one round, two members who lapsed
 can be offered each other's places, and the next sweep that expires those
 offers sees both. Production runs one cron instance, and within it
-`isWaitlistCronRunning` stops a run overlapping the one before. (c) A pass that throws (its pre-transaction
-reads included) is logged and counted and the remaining passes still run; the
-cron then fails the run after its other steps, with a message its
-transaction-start retry does not match, because the reverts are committed and a
-retried sweep would find nothing left to re-offer.
+`isWaitlistCronRunning` stops a run overlapping the one before. (c) A pass that
+fails, by throwing before its transaction or by its transaction failing
+(`processWaitlistForDates` returns `failed: true`), is logged and counted and
+the remaining passes still run. The cron adds the count to a tally kept across
+its transaction-start retry attempts, recorded before its next step, and throws
+`WaitlistReofferFailedError` only after the retry loop, so a retried attempt
+cannot lose the failure and the failure itself is never retried: the reverts are
+committed, and a retried sweep would find nothing left to re-offer.
 
 ### Tier 2 — global booking-status / money serialisation
 
