@@ -468,10 +468,13 @@ export async function cleanHistories(prisma: PrismaClient, prefix: string): Prom
   // #3854's group histories (`booking-ledger-group-history.ts`): their settlements and groups.
   const settlements = await prisma.groupBookingSettlement.findMany({ where: { id: { startsWith: prefix } }, select: { id: true } });
   const settlementIds = settlements.map((settlement) => settlement.id);
+  // #5185: a task's own Xero work (a kept late capture's invoice) is keyed to the task, not its booking.
+  const tasks = await prisma.manualRefundTask.findMany({ where, select: { id: true } });
+  const taskIds = tasks.map((task) => task.id);
   await releaseBookingJournalForTeardown(prisma, ids);
   await prisma.bookingLedgerLine.deleteMany({ where: { ...where, reversesLineId: { not: null } } });
   await prisma.bookingLedgerLine.deleteMany({ where });
-  await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [...ids, ...paymentIds, ...settlementIds] } } });
+  await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [...ids, ...paymentIds, ...settlementIds, ...taskIds] } } });
   await prisma.groupBookingSettlement.deleteMany({ where: { id: { in: settlementIds } } });
   await prisma.groupBooking.deleteMany({ where: { id: { startsWith: prefix } } });
   await prisma.bedAllocation.deleteMany({ where });
