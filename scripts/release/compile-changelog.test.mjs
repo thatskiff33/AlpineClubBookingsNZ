@@ -802,6 +802,113 @@ describe("compile-changelog", () => {
     );
   });
 
+  it("rewrites a link whose text or target wraps onto the next line (#5214)", () => {
+    const body = [
+      "- See the [hut leader",
+      "  guide](../docs/g.md#x), the [badge",
+      "  ![alt](../img/a.png)](",
+      "  ../docs/A.md) and a `[wrapped",
+      "  example](../docs/B.md)` in code.",
+    ].join("\n");
+    expect(rebaseFragmentLinks(body, "x.md")).toBe(
+      [
+        "- See the [hut leader",
+        "  guide](docs/g.md#x), the [badge",
+        "  ![alt](img/a.png)](",
+        "  docs/A.md) and a `[wrapped",
+        "  example](../docs/B.md)` in code.",
+      ].join("\n"),
+    );
+    // A blank line ends the paragraph, so brackets either side are not one link.
+    expect(rebaseFragmentLinks("- [not\n\n  a link](../docs/A.md)", "x.md")).toBe("- [not\n\n  a link](../docs/A.md)");
+  });
+
+  it("refuses a wrapped link that points outside the repository (#5214)", () => {
+    expect(() => rebaseFragmentLinks("- See [the\n  outside](../../x.md).", "w.md")).toThrow(
+      /changelog\.d\/w\.md links "\.\.\/\.\.\/x\.md", which points outside the repository/,
+    );
+  });
+
+  it("rebases a link nested in an image's alt text without corrupting either target (#5214)", () => {
+    expect(rebaseFragmentLinks("- ![see [x](../docs/y.md)](../img/a.png)", "x.md")).toBe(
+      "- ![see [x](docs/y.md)](img/a.png)",
+    );
+  });
+
+  it("rebases an angle-bracket reference definition, spaces and next-line targets included (#5214)", () => {
+    const body = [
+      "- See [ref] and [other].",
+      "",
+      "  [ref]: <../docs/y.md>",
+      "  [spaced]: <../docs/my file.md#a>",
+      "  [other]:",
+      "    ../docs/z.md \"Title\"",
+    ].join("\n");
+    expect(rebaseFragmentLinks(body, "x.md")).toBe(
+      [
+        "- See [ref] and [other].",
+        "",
+        "  [ref]: <docs/y.md>",
+        "  [spaced]: <docs/my file.md#a>",
+        "  [other]:",
+        "    docs/z.md \"Title\"",
+      ].join("\n"),
+    );
+    expect(() => rebaseFragmentLinks("  [out]: <../../x.md>", "x.md")).toThrow(/points outside the repository/);
+  });
+
+  it("rebases fragments but leaves legacy Unreleased entries as written (#5214)", () => {
+    // A legacy entry was written in CHANGELOG.md itself, so its links already
+    // resolve from the root; rebasing it would break them.
+    const root = makeRepo({
+      changelog: changelogWith("- **Legacy (#2400).** See [root](docs/A.md) and [up](../outside.md)."),
+      fragments: { "5214-new.md": "- **Fragment (#5214).** See [it](../docs/A.md).\n" },
+    });
+
+    compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog() });
+
+    expect(releaseSection(read(root), "0.14.0").body).toBe(
+      "- **Legacy (#2400).** See [root](docs/A.md) and [up](../outside.md).\n" +
+        "- **Fragment (#5214).** See [it](docs/A.md).",
+    );
+  });
+
+  it("rebases late fragments under --append and leaves the prepared section's links alone (#5214)", () => {
+    const prepared = [
+      "# Changelog",
+      "",
+      "## Unreleased",
+      "",
+      NOTE,
+      "",
+      "## 0.13.3 - 2026-10-31",
+      "",
+      "- **Prepared (#4400).** See [root](docs/A.md).",
+      "",
+      HISTORY,
+    ].join("\n");
+    const root = makeRepo({
+      changelog: prepared,
+      fragments: { "4500-late.md": "- **Late (#4500).** See [the\n  guide](../docs/B.md#x).\n" },
+    });
+
+    compileChangelog({ repoRoot: root, version: "0.13.3", date: "2026-11-02", append: true, log: silentLog() });
+
+    expect(releaseSection(read(root), "0.13.3").body).toBe(
+      "- **Prepared (#4400).** See [root](docs/A.md).\n- **Late (#4500).** See [the\n  guide](docs/B.md#x).",
+    );
+
+    const escaping = makeRepo({
+      changelog: prepared,
+      fragments: { "4501-bad.md": "- **Bad (#4501).** See [it](../../x.md).\n" },
+    });
+    expect(() =>
+      compileChangelog({ repoRoot: escaping, version: "0.13.3", date: "2026-11-02", append: true, log: silentLog() }),
+    ).toThrow(/points outside the repository/);
+    expect(read(escaping)).toBe(prepared);
+    expect(fragmentFiles(escaping)).toEqual(["4501-bad.md"]);
+  });
+
   it("refuses a fragment link that points outside the repository, before writing anything (#5214)", () => {
     const changelog = changelogWith("");
     const root = makeRepo({

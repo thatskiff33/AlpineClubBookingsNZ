@@ -80,7 +80,7 @@
  */
 import { scanMarkdownBlocks, scannableLines, markdownProseLines, literalAuditLines } from "../lib/markdown-blocks.mjs";
 export { SETEXT_HEADING_UNDERLINE_PATTERN, scanMarkdownFenceLines, scannableLines, fencedLines, literalAuditLines } from "../lib/markdown-blocks.mjs";
-import { inlineLinkTargets, REF_DEF } from "../lib/markdown-links.mjs";
+import { inlineLinkTargets, refDefTargets } from "../lib/markdown-links.mjs";
 import { userGuideScreenshotNames } from "../lib/user-guide-screenshots.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -419,9 +419,7 @@ export function markdownLinkTargets(fromPath, text) {
   const targets = [];
   for (const { text: scannable } of markdownProseLines(text)) {
     const raw = [];
-    for (const { target } of inlineLinkTargets(scannable)) raw.push(target);
-    const refMatch = scannable.match(REF_DEF);
-    if (refMatch) raw.push(refMatch[2]);
+    for (const { target } of [...inlineLinkTargets(scannable), ...refDefTargets(scannable)]) raw.push(target);
 
     for (let target of raw) {
       if (target.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(target)) continue;

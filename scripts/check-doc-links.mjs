@@ -33,7 +33,7 @@ import process from "node:process";
 
 import { githubHeadingAnchor } from "./lib/github-heading-anchor.mjs";
 import { isMainModule } from "./lib/is-main-module.mjs";
-import { FENCE_TOGGLE, inlineLinkTargets, REF_DEF } from "./lib/markdown-links.mjs";
+import { FENCE_TOGGLE, inlineLinkTargets, refDefTargets } from "./lib/markdown-links.mjs";
 
 const REPO_ROOT = path.resolve(path.join(import.meta.dirname, ".."));
 
@@ -120,7 +120,7 @@ export function collectAnchors(mdPath) {
 
   let inFence = false;
   for (const line of lines) {
-    if (/^\s*(```|~~~)/.test(line)) {
+    if (FENCE_TOGGLE.test(line)) {
       inFence = !inFence;
       continue;
     }
@@ -164,9 +164,7 @@ export function checkFile(mdPath, anchorsByFile, problems) {
     // `![alt](images/x.png)` in a style guide — is not treated as a real link.
     const scannable = line.replace(/`[^`]*`/g, " ");
 
-    const targets = inlineLinkTargets(scannable).map(({ target }) => target);
-    const refMatch = scannable.match(REF_DEF);
-    if (refMatch) targets.push(refMatch[2]);
+    const targets = [...inlineLinkTargets(scannable), ...refDefTargets(scannable)].map(({ target }) => target);
 
     for (const raw of targets) {
       if (isExternal(raw)) continue;

@@ -6,7 +6,7 @@
  */
 import path from "node:path";
 
-import { FENCE_TOGGLE, inlineLinkTargets, REF_DEF } from "../lib/markdown-links.mjs";
+import { inlineLinkTargets, maskCode, refDefTargets } from "../lib/markdown-links.mjs";
 
 /** Directory holding one Markdown fragment per merged PR. */
 export const FRAGMENTS_DIRNAME = "changelog.d";
@@ -42,32 +42,19 @@ export function rebaseFragmentLink(target, fragmentName = "(fragment)") {
 
 /**
  * Rewrite every relative link in a fragment body so it resolves from the
- * repository root (`rebaseFragmentLink`). Link syntax inside fenced blocks and
- * inline code spans is an example, not a link, and is left alone.
+ * repository root (`rebaseFragmentLink`). The whole body is parsed at once, so
+ * a link whose text wraps onto the next line is rewritten too, and refused if
+ * it escapes the repository. Link syntax inside fenced blocks and inline code
+ * spans is an example, not a link, and is left alone.
  */
 export function rebaseFragmentLinks(body, fragmentName) {
-  let inFence = false;
-  return body
-    .split("\n")
-    .map((line) => {
-      if (FENCE_TOGGLE.test(line)) {
-        inFence = !inFence;
-        return line;
-      }
-      if (inFence) return line;
-      // Blank out inline code spans (same length, so offsets still match the
-      // real line) and splice each rebased target back into the real line.
-      const masked = line.replace(/`[^`]*`/g, (span) => " ".repeat(span.length));
-      const edits = inlineLinkTargets(masked);
-      const ref = masked.match(REF_DEF);
-      if (ref) edits.push({ start: ref.index + ref[1].length, target: ref[2] });
-      // Splice from the end so earlier offsets stay valid; an image nested in
-      // a link has its own target, so both are rebased.
-      let out = line;
-      for (const { start, target } of edits.sort((a, b) => b.start - a.start)) {
-        out = out.slice(0, start) + rebaseFragmentLink(target, fragmentName) + out.slice(start + target.length);
-      }
-      return out;
-    })
-    .join("\n");
+  // Offsets in the masked copy are offsets in `body`, so each rebased target
+  // is spliced into the real text; from the end, so earlier offsets hold.
+  const masked = maskCode(body);
+  const edits = [...inlineLinkTargets(masked), ...refDefTargets(masked)];
+  let out = body;
+  for (const { start, target } of edits.sort((a, b) => b.start - a.start)) {
+    out = out.slice(0, start) + rebaseFragmentLink(target, fragmentName) + out.slice(start + target.length);
+  }
+  return out;
 }

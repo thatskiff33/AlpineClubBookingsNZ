@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { inlineLinkTargets } from "./markdown-links.mjs";
+import { inlineLinkTargets, maskCode, refDefTargets } from "./markdown-links.mjs";
 
 const targets = (line) => inlineLinkTargets(line).map(({ target }) => target);
 
@@ -21,5 +21,47 @@ describe("inlineLinkTargets (#5214)", () => {
       "y.md#h",
     ]);
     expect(targets("no links [here] or ![there]")).toEqual([]);
+  });
+
+  it("finds a link whose text wraps, but not one split by a blank line", () => {
+    expect(targets("[hut leader\n  guide](../docs/g.md#x)")).toEqual(["../docs/g.md#x"]);
+    expect(targets("[a](\n  b.md)")).toEqual(["b.md"]);
+    expect(targets("[a\n\n  b](c.md)")).toEqual([]);
+  });
+
+  it("gives a link nested in an image's alt text and the image distinct offsets", () => {
+    const text = "![see [x](../docs/y.md)](../img/a.png)";
+    expect(inlineLinkTargets(text)).toEqual([
+      { start: text.indexOf("../docs/y.md"), target: "../docs/y.md" },
+      { start: text.indexOf("../img/a.png"), target: "../img/a.png" },
+    ]);
+  });
+
+  it("treats an escaped bracket as text", () => {
+    expect(targets("\\[not](a.md) [yes](b.md)")).toEqual(["b.md"]);
+  });
+});
+
+describe("refDefTargets (#5214)", () => {
+  it("reads plain, angle-bracket and next-line definitions at their offsets", () => {
+    const text = "[a]: x.md\n  [b]: <my file.md> \"t\"\n[c]:\n   y.md\nnot [d]: z.md";
+    expect(refDefTargets(text)).toEqual([
+      { start: text.indexOf("x.md"), target: "x.md" },
+      { start: text.indexOf("<my file.md>"), target: "<my file.md>" },
+      { start: text.indexOf("y.md"), target: "y.md" },
+    ]);
+  });
+});
+
+describe("maskCode (#5214)", () => {
+  it("blanks fences and code spans without moving any offset", () => {
+    const text = "a `[x](y)` b\n```\n[z](w)\n```\n[k](v)";
+    const masked = maskCode(text);
+    expect(masked).toHaveLength(text.length);
+    expect(masked.split("\n").map((line) => line.length)).toEqual(text.split("\n").map((line) => line.length));
+    expect(inlineLinkTargets(masked).map(({ target }) => target)).toEqual(["v"]);
+    // A code span may wrap, but a blank line ends it.
+    expect(maskCode("`[a\n](b)` [c](d)")).toBe("   \n      [c](d)");
+    expect(maskCode("`x\n\n[c](d)`")).toBe("`x\n\n[c](d)`");
   });
 });
