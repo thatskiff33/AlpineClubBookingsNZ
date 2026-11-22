@@ -71,30 +71,6 @@ const directJsonReadAllowlist: Record<
   string,
   { reason: string; routes: string[] }
 > = {
-  uncaught: {
-    reason:
-      "The read has no try/catch of its own, or only an outer catch-all that logs and answers 500, so a body that is not valid JSON is answered with a 500 today. Converting it changes the status from 500 to 400 (#5407 item 26).",
-    routes: [
-      "src/app/api/admin/age-tier-settings/route.ts",
-      "src/app/api/admin/booking-change-requests/[id]/route.ts",
-      "src/app/api/admin/booking-policies/cancellation/route.ts",
-      "src/app/api/admin/booking-policies/group-discount/route.ts",
-      "src/app/api/admin/chores/[id]/route.ts",
-      "src/app/api/admin/chores/route.ts",
-      "src/app/api/admin/lodge/route.ts",
-      "src/app/api/admin/members/[id]/credits/[requestId]/route.ts",
-      "src/app/api/admin/members/[id]/credits/route.ts",
-      "src/app/api/admin/refund-requests/[id]/route.ts",
-      "src/app/api/admin/seasons/[id]/route.ts",
-      "src/app/api/admin/seasons/route.ts",
-      "src/app/api/auth/change-password/route.ts",
-      "src/app/api/bookings/[id]/confirm-modification-payment/route.ts",
-      "src/app/api/bookings/[id]/confirm-payment/route.ts",
-      "src/app/api/bookings/[id]/refund-request/route.ts",
-      "src/app/api/payments/charge-saved-method/route.ts",
-      "src/app/api/payments/create-setup-intent/route.ts",
-    ],
-  },
   oneAnswer: {
     reason:
       "The JSON fault and the schema fault get the same answer, in most routes because one try wraps the read and the parse, in admin/menu-role through one shared invalid() answer. The status or wording is often not the shared reader's, and a shared reader would split the two faults, which changes a response (#5407 item 27).",

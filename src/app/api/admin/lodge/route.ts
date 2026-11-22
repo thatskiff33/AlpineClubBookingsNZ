@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
@@ -273,7 +274,9 @@ export async function PUT(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  const body = await request.json();
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
@@ -416,7 +419,9 @@ export async function POST(request: NextRequest) {
   }
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  const body = await request.json();
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
