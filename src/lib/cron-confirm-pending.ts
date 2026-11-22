@@ -7,7 +7,7 @@ import { BookingEventType, BookingStatus, PaymentSource, PaymentStatus, PaymentT
 import { OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 import { bookingOwner } from "@/lib/booking-owner";
-import { alertOfficersOfBump } from "@/lib/booking-bump-alert";
+import { deliverBumpNotice, drainOwedBumpNotices, recordBumpNoticesOwed, type OwedBumpNoticeSweepResult } from "@/lib/booking-bump-notice-owed";
 import { bookingBumpReason } from "@/lib/booking-bump-reason";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
@@ -68,9 +68,7 @@ import {
   sendAdminPaymentFailureAlert,
   sendAdminSplitSettlementCancelledAlert,
   sendAdminSplitSettlementUnpaidAlert,
-  sendBookingBumpedEmail,
   sendBookingConfirmedEmail,
-  sendBookingGuestsCancelledEmail,
   sendBookingRequestPaymentExpiredEmail,
   sendSplitGuestPaymentLinkEmail,
   sendSplitGuestPortionCancelledEmail,
@@ -223,7 +221,8 @@ type PendingBooking = Prisma.BookingGetPayload<{
 
 type HoldResolution =
   | { type: "already_processed" }
-  | { type: "bumped"; booking: PendingBooking; flagged: boolean }
+  // #5407: `bumpedAt` keys the notices the transaction recorded as owed.
+  | { type: "bumped"; booking: PendingBooking; flagged: boolean; bumpedAt: Date }
   | { type: "confirmed_zero"; booking: PendingBooking }
   | {
       type: "extended_request_hold";
@@ -323,6 +322,8 @@ export interface CronConfirmResult {
   // members-only amount to settle here. Always empty.
   partialBumpedBookingIds: string[];
   failedBookingIds: string[];
+  // #5407: what this run's sweep did with bump notices still owed.
+  owedBumpNotices: OwedBumpNoticeSweepResult;
 }
 
 /**
@@ -422,47 +423,6 @@ async function sendConfirmationEmail(booking: PendingBooking, format: ClubFormat
     logger.error(
       { err: emailErr, bookingId: booking.id, job: "confirmPendingBookings" },
       "Failed to send confirmation email"
-    );
-  }
-}
-
-async function sendBumpedEmail(booking: PendingBooking, flagged: boolean) {
-  try {
-    if (flagged) {
-      await sendBookingGuestsCancelledEmail(
-        { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
-        bookingOwner(booking).member.email,
-        bookingOwner(booking).member.firstName,
-        booking.checkIn,
-        booking.checkOut,
-        booking.lodgeId
-      );
-    } else {
-      await sendBookingBumpedEmail(
-        { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
-        bookingOwner(booking).member.email,
-        bookingOwner(booking).member.firstName,
-        booking.checkIn,
-        booking.checkOut,
-        booking.guests.length,
-        booking.lodgeId,
-        // #2430: the only send site of this template, and it reaches two
-        // recipient classes. A club member (their own pending booking, or a
-        // split guest child) can sign in and rebook; the non-login
-        // NON_MEMBER/SCHOOL contact who owns a booking converted from a public
-        // booking request (#707) — or any non-login contact an admin booked for
-        // — cannot, so the notice points them at the club contact page instead
-        // of the members-only booking flow.
-        // #3369: an organisation never signs in, so the notice points a school
-        // at the club contact page — the same branch the non-login school
-        // contact already took.
-        bookingOwner(booking).member.canLogin ?? false
-      );
-    }
-  } catch (emailErr) {
-    logger.error(
-      { err: emailErr, bookingId: booking.id, job: "confirmPendingBookings" },
-      "Failed to send bumped email"
     );
   }
 }
@@ -592,11 +552,15 @@ async function resolveHoldWindowUnderLock(
       // #3611: nothing was paid, so nothing is kept; the stay's ledger lines are
       // reversed if a reversed mark-paid left it confirmed there (lock(1) above).
       await postCancellationLedgerLines({ store: tx, journal, bookingId: booking.id, lodgeId: booking.lodgeId, keptCents: 0, site: "confirm-pending:capacity-bump" });
+      // #5407: the member's and the officers' notices are owed from this
+      // commit until sent (`booking-bump-notice-owed.ts`).
+      await recordBumpNoticesOwed(tx, { bookingId: booking.id, bumpedAt: now, flagged: booking.cancelIfGuestsBumped });
 
       return {
         type: "bumped",
         booking,
         flagged: booking.cancelIfGuestsBumped,
+        bumpedAt: now,
       };
     }
 
@@ -1149,7 +1113,10 @@ async function cancelSupersededLinkIntentsBestEffort(
  * For each PENDING booking where nonMemberHoldUntil <= now():
  * 1. Re-check bed availability under the booking advisory lock.
  * 2. If beds are unavailable, cancel the provisional booking, revoke payment
- *    links, and send the appropriate no-charge bump/cancellation email.
+ *    links, and send the appropriate no-charge bump/cancellation email and
+ *    the officers' alert. Both are recorded as owed in the cancel's own
+ *    transaction and swept by a later run if this one stops before sending
+ *    them (#5407, `booking-bump-notice-owed.ts`).
  * 3. If beds are available and a saved payment method exists, claim capacity,
  *    charge off-session, then move to PAID and queue the booking's Xero invoice.
  * 4. If the booking is request-origin and has no saved card, keep the #707
@@ -1173,6 +1140,8 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
   // #4993: first hand stale saved-card claims back to PENDING, with their hold
   // at the claim time, so the pass below selects and replays them this run.
   const recovery = await recoverStaleSavedCardClaims(now);
+  // #5407: and send the bump notices an earlier run left owed.
+  const owedBumpNotices = await drainOwedBumpNotices(now);
 
   // Find all PENDING bookings past their hold deadline, including split
   // non-member child bookings (#738). Process oldest first so older provisional
@@ -1192,6 +1161,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
     cancelledBookingIds: [],
     partialBumpedBookingIds: [],
     failedBookingIds: [...recovery.failedBookingIds],
+    owedBumpNotices,
   };
 
   for (const candidate of pendingBookings) {
@@ -1228,9 +1198,9 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           reason: bookingBumpReason(resolution.flagged),
           snapshot: { flagged: resolution.flagged },
         });
-        await sendBumpedEmail(resolution.booking, resolution.flagged);
+        await deliverBumpNotice("member", resolution.booking, resolution.flagged, resolution.bumpedAt);
         triggerWaitlistProcessing(resolution.booking, format);
-        await alertOfficersOfBump(resolution.booking, resolution.flagged);
+        await deliverBumpNotice("officers", resolution.booking, resolution.flagged, resolution.bumpedAt);
         continue;
       }
 

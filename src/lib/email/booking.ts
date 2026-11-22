@@ -70,7 +70,7 @@ import { supersededRefundOwingSentence } from "@/lib/superseded-additional-refun
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { sendEmail } from "./core";
+import { sendEmail, type EmailSendOutcome } from "./core";
 import {
   bookingOwnerEmailContext,
   type BookingOwnerEmailSource,
@@ -751,9 +751,20 @@ export async function sendBookingPolicyExceptionRefusedEmail(params: {
   });
 }
 
+/**
+ * A bump notice's booking and the bump's event key (#5407). The key makes the
+ * notice's EmailLog row durable (`email:<template>:<key>`), so the
+ * confirm-pending cron can send it again after an interruption and the member
+ * still has exactly one row per bump: a second send finds the row and sends
+ * nothing (`already_recorded`).
+ */
+export type BumpNoticeEmailSource = BookingOwnerEmailSource & {
+  idempotencyKey: string;
+};
+
 export async function sendBookingBumpedEmail(
-  // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.
-  bookingContext: BookingOwnerEmailSource,
+  // Booking this message belongs to (#2258), and the bump's key (#5407).
+  bookingContext: BumpNoticeEmailSource,
   email: string,
   firstName: string,
   checkIn: Date,
@@ -773,9 +784,9 @@ export async function sendBookingBumpedEmail(
   // let a future send site mail a login-less contact a members-only link
   // without anyone noticing (#2430 review).
   recipientCanBookOnline: boolean,
-) {
+): Promise<EmailSendOutcome> {
   const rebook = bookingBumpedRebookAction(recipientCanBookOnline);
-  await sendEmail({
+  return sendEmail({
     to: email,
     subject: `Booking Update - ${EMAIL_DEFAULT_LODGE_NAME}`,
     // Both halves of the #2430 / #2473 overlap are load-bearing and compose:
@@ -807,20 +818,21 @@ export async function sendBookingBumpedEmail(
       rebookPath: rebook.path,
     },
     lodgeId,
+    idempotencyKey: bookingContext.idempotencyKey,
   });
 }
 
 export async function sendBookingGuestsCancelledEmail(
-  // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.
-  bookingContext: BookingOwnerEmailSource,
+  // Booking this message belongs to (#2258), and the bump's key (#5407).
+  bookingContext: BumpNoticeEmailSource,
   email: string,
   firstName: string,
   checkIn: Date,
   checkOut: Date,
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
   lodgeId?: string | null,
-) {
-  await sendEmail({
+): Promise<EmailSendOutcome> {
+  return sendEmail({
     to: email,
     subject: `Booking Cancelled - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: await renderEmailHtml(() => bookingGuestsCancelledTemplate(firstName, checkIn, checkOut)),
@@ -832,6 +844,7 @@ export async function sendBookingGuestsCancelledEmail(
       checkOut: emailCalendarDay(checkOut),
     },
     lodgeId,
+    idempotencyKey: bookingContext.idempotencyKey,
   });
 }
 

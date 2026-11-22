@@ -37,17 +37,23 @@ async function bumpedBookingLodgeName(lodgeId: string): Promise<string | null> {
 
 /**
  * #5403: tell the Booking Officers the confirm-pending cron bumped a pending
- * booking. The cron calls this only after its bump transaction committed and
- * only for the run that won the status claim, so it is once per bump exactly
- * as the member's own email is: a rerun finds the booking CANCELLED and never
- * gets here. Sent for both variants, as the pre-#738 alert was for every
+ * booking. Sent for both variants, as the pre-#738 alert was for every
  * whole-booking bump; the reason line tells them apart. Recipients are
- * `sendToAdmins`'s rule for the `adminBookingBumped` preference. A failure is
- * logged and swallowed so it can never undo the bump, the member's email or
- * the rest of the run; a failed transport leaves the usual FAILED row for the
- * email retry cron.
+ * `sendToAdmins`'s rule for the `adminBookingBumped` preference.
+ *
+ * #5407: called by `booking-bump-notice-owed.ts`, which holds the bump's owed
+ * marker. Right after the bump commits it sends this once; if the job stopped
+ * or this threw first, the marker makes a later run of the same job send it.
+ * So officers receive it at least once, and very rarely twice: a crash after
+ * the send and before the marker is cleared repeats it on a later run.
+ *
+ * Never throws: a failure is logged and reported as `false` so it can never
+ * undo the bump, the member's email or the rest of the run, and the caller
+ * keeps the marker. `true` means the send returned, whatever each recipient's
+ * outcome; a failed transport leaves the usual FAILED row for the email retry
+ * cron, so the marker is cleared rather than sending the alert again.
  */
-export async function alertOfficersOfBump(booking: BumpedBooking, flagged: boolean): Promise<void> {
+export async function alertOfficersOfBump(booking: BumpedBooking, flagged: boolean): Promise<boolean> {
   try {
     await sendAdminBookingBumpedAlert({
       bumpedMemberName: bookingOwnerName(booking),
@@ -58,7 +64,9 @@ export async function alertOfficersOfBump(booking: BumpedBooking, flagged: boole
       guestCount: booking.guests.length,
       reason: bookingBumpReason(flagged),
     });
+    return true;
   } catch (err) {
     logger.error({ err, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to send admin booking-bumped alert");
+    return false;
   }
 }

@@ -13,12 +13,15 @@ import {
   ALERT_NOBODY_ELIGIBLE_RETRY_MS,
   ALERT_ONCE_EVER_WINDOW_MS,
   claimAlertCooldown,
+  claimOwedAlert,
   deferAlertCooldown,
   listOwedAlertKeys,
   markAlertOwed,
   noteOwedAlertAttempt,
   releaseAlertCooldown,
+  settleOwedAlert,
 } from "@/lib/alert-cooldown";
+import { createAlertCooldownStore } from "./support/alert-cooldown-store";
 
 type Where = { key: string; lastAlertedAt?: Date | { lt: Date } };
 
@@ -187,5 +190,56 @@ describe("owed alert markers (#3635 F1)", () => {
     // Fifteen minutes later is the next run, and the marker is already due.
     await expect(list(store, at(15 * 60 * 1000))).resolves.toEqual([OWED]);
     await expect(list(store, T0)).resolves.toEqual([OWED]);
+  });
+});
+
+describe("owed alert claims (#5407)", () => {
+  const OWED = "booking-bump-officers-owed:b1:0:b";
+  const WAIT = 60 * 60 * 1000;
+
+  function owedStore() {
+    const { rows, delegate } = createAlertCooldownStore();
+    rows.set(OWED, T0);
+    return { rows, delegate, store: { alertCooldown: delegate } as never };
+  }
+
+  it("lets exactly one of two callers claim a due marker", async () => {
+    const { store, rows } = owedStore();
+    const now = at(WAIT);
+    const claims = await Promise.all([
+      claimOwedAlert({ key: OWED, stampedNoLaterThan: at(0), now, store }),
+      claimOwedAlert({ key: OWED, stampedNoLaterThan: at(0), now, store }),
+    ]);
+    expect(claims.filter(Boolean)).toEqual([now]);
+    expect(rows.get(OWED)).toEqual(now);
+  });
+
+  it("stamps the claim strictly later than its bound, even on a frozen clock", async () => {
+    const { store, rows } = owedStore();
+    const claimedAt = await claimOwedAlert({ key: OWED, stampedNoLaterThan: T0, now: T0, store });
+    expect(claimedAt).toEqual(at(1));
+    expect(rows.get(OWED)).toEqual(at(1));
+    // A second caller with the same bound now loses.
+    await expect(claimOwedAlert({ key: OWED, stampedNoLaterThan: T0, now: T0, store })).resolves.toBeNull();
+  });
+
+  it("does not claim a marker stamped after the bound, or one that is gone", async () => {
+    const { store } = owedStore();
+    await expect(claimOwedAlert({ key: OWED, stampedNoLaterThan: at(-1), now: at(WAIT), store })).resolves.toBeNull();
+    await expect(claimOwedAlert({ key: "missing", stampedNoLaterThan: at(WAIT), now: at(WAIT), store })).resolves.toBeNull();
+  });
+
+  it("clears only its own claim when given one", async () => {
+    const { store, rows, delegate } = owedStore();
+    const mine = await claimOwedAlert({ key: OWED, stampedNoLaterThan: T0, now: at(WAIT), store });
+    // Someone else claimed after mine (my send outlived the wait).
+    rows.set(OWED, at(3 * WAIT));
+    await settleOwedAlert({ key: OWED, claimedAt: mine!, store });
+    expect(rows.get(OWED)).toEqual(at(3 * WAIT));
+    expect(delegate.deleteMany).toHaveBeenLastCalledWith({ where: { key: OWED, lastAlertedAt: mine } });
+    // Without a claim it clears whatever stands, as before.
+    await settleOwedAlert({ key: OWED, store });
+    expect(rows.has(OWED)).toBe(false);
+    expect(delegate.deleteMany).toHaveBeenLastCalledWith({ where: { key: OWED } });
   });
 });
