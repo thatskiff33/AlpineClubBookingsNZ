@@ -94,8 +94,8 @@ describe("resolveMainPushBase", () => {
   });
 
   it("ignores newer runs, its own commit's other runs, and commits that are not ancestors", async () => {
-    const { fetchImpl } = fakeApi([[run(52, sha("g")), run(51, sha("f")), run(49, sha("f")), run(48, sha("x")), run(47, sha("c"))]]);
-    const result = await resolveMainPushBase(request({ fetchImpl, isAncestor: (commit) => commit !== sha("x") }));
+    const { fetchImpl } = fakeApi([[run(52, sha("9")), run(51, sha("f")), run(49, sha("f")), run(48, sha("8")), run(47, sha("c"))]]);
+    const result = await resolveMainPushBase(request({ fetchImpl, isAncestor: (commit) => commit !== sha("8") }));
     expect(result.sha).toBe(sha("c"));
   });
 
@@ -114,6 +114,8 @@ describe("resolveMainPushBase", () => {
     await expect(resolveMainPushBase(request({ fetchImpl: fakeApi([], {}, { status: 403 }).fetchImpl }))).rejects.toThrow(/HTTP 403/);
     const garbled = async () => ({ ok: true, status: 200, json: async () => ({ workflow_runs: [{ id: "1" }] }) });
     await expect(resolveMainPushBase(request({ fetchImpl: garbled }))).rejects.toThrow(/shape/);
+    const notACommit = fakeApi([[{ ...run(49, sha("e")), head_sha: "--output=x" }]]).fetchImpl;
+    await expect(resolveMainPushBase(request({ fetchImpl: notACommit }))).rejects.toThrow(/shape/);
     const offline = async () => {
       throw new Error("network down");
     };

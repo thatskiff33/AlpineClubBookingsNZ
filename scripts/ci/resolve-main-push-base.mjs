@@ -41,6 +41,8 @@ import { isMainModule } from "../lib/is-main-module.mjs";
 
 const MAIN_REF = "refs/heads/main";
 const PAGE_SIZE = 100;
+/** A full commit id: the only `head_sha` this passes to git or writes to `$GITHUB_OUTPUT`. */
+const COMMIT_SHA = /^[0-9a-f]{40}$/;
 /** Ten pages is a thousand `main` runs: far past any real run of cancellations. */
 const MAX_PAGES = 10;
 /** A completed run with one of these conclusions never ran its gates, so it is not worth asking about its steps. */
@@ -76,7 +78,7 @@ async function runsPage(context, page) {
   const runs = body?.workflow_runs;
   const readable =
     Array.isArray(runs) &&
-    runs.every((run) => Number.isInteger(run?.id) && Number.isInteger(run.run_number) && typeof run.head_sha === "string" && typeof run.status === "string");
+    runs.every((run) => Number.isInteger(run?.id) && Number.isInteger(run.run_number) && COMMIT_SHA.test(run.head_sha ?? "") && typeof run.status === "string");
   if (!readable) throw new MainPushBaseError(`GitHub answered ${what} in a shape this script does not read`);
   return runs;
 }
