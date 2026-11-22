@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { AgeTier, type MembershipFeeBillingBasis, type Prisma } from "@prisma/client";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import {
   FeeScheduleValidationError,
@@ -412,10 +413,9 @@ export async function GET() {
 export async function POST(request: Request) {
   const guard = await requireAdmin({ permission: { area: "finance", level: "edit" } });
   if (!guard.ok) return guard.response;
-  let body: unknown;
-  try { body = await request.json(); } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = mutationSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });

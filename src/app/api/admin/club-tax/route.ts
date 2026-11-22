@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { countBookingsKeepingTreatmentFrom, readClubTaxAdminState } from "@/lib/club-tax-admin-state";
 import { MAX_TAX_RATE_BASIS_POINTS } from "@/lib/club-tax-settings";
 import {
@@ -112,14 +113,6 @@ function refusalResponse(refusal: ClubTaxWriteRefusal) {
   }
 }
 
-async function readBody(request: Request): Promise<unknown> {
-  try {
-    return await request.json();
-  } catch {
-    return undefined;
-  }
-}
-
 async function answerWrite(run: () => Promise<Awaited<ReturnType<typeof scheduleClubTaxChange>>>) {
   try {
     const outcome = await run();
@@ -138,8 +131,9 @@ export async function PUT(request: Request) {
   const guard = await requireAdmin({ permission: false });
   if (!guard.ok) return guard.response;
 
-  const body = await readBody(request);
-  if (body === undefined) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  const jsonBody = await parseJsonRequestBody(request, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = scheduleSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   if (parsed.data.confirmed !== true) return NextResponse.json({ error: UNCONFIRMED_MESSAGE }, { status: 400 });
@@ -155,8 +149,9 @@ export async function DELETE(request: Request) {
   const guard = await requireAdmin({ permission: false });
   if (!guard.ok) return guard.response;
 
-  const body = await readBody(request);
-  if (body === undefined) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  const jsonBody = await parseJsonRequestBody(request, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = cancelSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   if (parsed.data.confirmed !== true) {

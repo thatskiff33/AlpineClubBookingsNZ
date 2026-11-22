@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import logger from "@/lib/logger";
 import { isSingletonUpsertContention } from "@/lib/prisma-errors";
 import { requireAdmin } from "@/lib/session-guards";
@@ -59,14 +60,6 @@ function refusalResponse(refusal: XeroTaxCategoryWriteRefusal) {
   }
 }
 
-async function readBody(request: Request): Promise<unknown> {
-  try {
-    return await request.json();
-  } catch {
-    return undefined;
-  }
-}
-
 async function answerWrite(run: () => Promise<XeroTaxCategoryWriteOutcome>) {
   try {
     const outcome = await run();
@@ -89,8 +82,9 @@ export async function PUT(request: Request) {
   const guard = await requireAdmin({ permission: false });
   if (!guard.ok) return guard.response;
 
-  const body = await readBody(request);
-  if (body === undefined) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  const jsonBody = await parseJsonRequestBody(request, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = mapSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid request" }, { status: 400 });
 
@@ -101,8 +95,9 @@ export async function DELETE(request: Request) {
   const guard = await requireAdmin({ permission: false });
   if (!guard.ok) return guard.response;
 
-  const body = await readBody(request);
-  if (body === undefined) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  const jsonBody = await parseJsonRequestBody(request, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = clearSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid request" }, { status: 400 });
 

@@ -1,6 +1,7 @@
 import { revalidateAdminPage } from "@/lib/admin-page-revalidation";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import { DEFAULT_FAMILY_BILLING_MODE, FAMILY_BILLING_MODES } from "@/lib/authoritative-fees";
 import { dateOnlyInstantOf } from "@/lib/club-time";
@@ -18,10 +19,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { enqueueMembershipSubscriptionChargeOperation } from "@/lib/xero-subscription-invoices";
-import {
-  assertSubscriptionInvoicingEnabled,
-  isXeroInvoicingEnabled,
-} from "@/lib/xero-invoicing-guard";
+import { assertSubscriptionInvoicingEnabled, isXeroInvoicingEnabled } from "@/lib/xero-invoicing-guard";
 import { XERO_SWITCHED_OFF_DURING_CONFIRM_MESSAGE, XeroInvoicingOffError } from "@/lib/xero-invoicing-off";
 import {
   closeAlreadyPaidSubscriptionCharge,
@@ -174,8 +172,9 @@ export async function GET(request: NextRequest) {
 export async function POST(request: Request) {
   const guard = await requireAdmin({ permission: { area: "finance", level: "edit" } });
   if (!guard.ok) return guard.response;
-  let body: unknown;
-  try { body = await request.json(); } catch { return NextResponse.json({ error: "Invalid JSON." }, { status: 400 }); }
+  const jsonBody = await parseJsonRequestBody(request, { error: "Invalid JSON." });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = mutationSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid subscription billing action.", details: parsed.error.flatten() }, { status: 400 });
   try {

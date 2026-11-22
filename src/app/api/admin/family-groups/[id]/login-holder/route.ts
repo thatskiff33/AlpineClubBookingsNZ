@@ -10,6 +10,7 @@ import {
   PRIVILEGED_TARGET_GUARD_MESSAGE,
 } from "@/lib/admin-account-guards";
 import { LOGIN_HOLDER_SIGN_OUT_NOTICE } from "@/lib/admin-family-group-ui-helpers";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import { getEffectiveEmail } from "@/lib/member-utils";
 import {
@@ -75,12 +76,9 @@ export async function POST(
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = loginHolderSchema.safeParse(body);
   if (!parsed.success) {
