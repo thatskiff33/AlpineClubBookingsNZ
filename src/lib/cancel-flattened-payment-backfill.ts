@@ -15,26 +15,11 @@
 import { PaymentSource, PaymentStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { applyRefundStatus } from "@/lib/payment-transactions";
-import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
-import { paymentShowsCaptureEvidence } from "@/lib/booking-payment-state";
+import { paymentHasCaptureEvidence, type CaptureEvidencePayment } from "@/lib/payment-capture-evidence";
 
 // The full client, not a nested TransactionClient: the apply path opens its own
 // $transaction, so it must not run inside another one.
 type BackfillStore = typeof prisma;
-
-// Minimal shape needed to reproduce the #1489 capture discriminator and the
-// repair-pass synthesis. Kept independent of the heavier bookingRepairSelect.
-export interface FlattenedCandidatePayment {
-  id: string;
-  bookingId: string;
-  source: PaymentSource;
-  status: PaymentStatus;
-  amountCents: number;
-  refundedAmountCents: number;
-  transactions: Array<{ status: PaymentStatus }>;
-  /** #3949: whose payment it is - an Internet Banking organiser child's settle mirror is its capture. */
-  booking: { organiserSettled: boolean; parentBookingId: string | null };
-}
 
 export interface FlattenedPaymentRestoration {
   paymentId: string;
@@ -45,24 +30,6 @@ export interface FlattenedPaymentRestoration {
   restoredStatus: PaymentStatus;
   amountCents: number;
   refundedAmountCents: number;
-}
-
-/**
- * The same capture evidence booking-cancel.ts `paymentHasCaptureEvidence`
- * (#1473/#1491) asks: ledger truth first — any PaymentTransaction row holding a
- * captured status — else the STRIPE-only refund mirror for pre-ledger rows, so
- * a never-captured IB payment whose mirror the inbound reconcile folded stays
- * FAILED after cancel. The ledger half is `isCapturedTransactionStatus` and the
- * combination is `paymentShowsCaptureEvidence` (#3630, #3372); this one reads
- * the ledger rows already loaded rather than querying for them.
- */
-export function paymentHasCaptureEvidence(
-  payment: FlattenedCandidatePayment
-): boolean {
-  const hasCapturedLedgerRow = payment.transactions.some((transaction) =>
-    isCapturedTransactionStatus(transaction.status)
-  );
-  return paymentShowsCaptureEvidence(payment, hasCapturedLedgerRow, payment.booking);
 }
 
 /**
@@ -86,7 +53,7 @@ export function paymentHasCaptureEvidence(
  * what the repair pass reads today.
  */
 export function deriveFlattenedPaymentRestoration(
-  payment: FlattenedCandidatePayment
+  payment: CaptureEvidencePayment
 ): FlattenedPaymentRestoration | null {
   if (payment.status !== PaymentStatus.FAILED) {
     return null;
