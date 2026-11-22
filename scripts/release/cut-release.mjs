@@ -49,6 +49,7 @@ import process from "node:process";
 import { spawnSync } from "node:child_process";
 
 import { ALLOWANCE_DIR } from "../lib/allowance-dir.mjs";
+import { CI_WORKFLOW_FILE } from "../lib/ci-workflow.mjs";
 import { githubHeadingAnchor } from "../lib/github-heading-anchor.mjs";
 import {
   classifyUnreleased,
@@ -110,9 +111,6 @@ export const FEATURE_FRAGMENT_SUFFIX = ".feature.md";
  * body that links to the section in CHANGELOG.md at the tag instead.
  */
 export const MAX_RELEASE_NOTES_CHARS = 120_000;
-
-/** The workflow whose `main` push runs publish the GHCR images a release tag deploys. */
-export const CI_WORKFLOW_FILE = "ci.yml";
 
 /** That workflow's publishing job, by the display name GitHub's jobs API reports. */
 export const PUBLISH_IMAGES_JOB_NAME = "Publish GHCR images";
@@ -850,8 +848,10 @@ function requireFirstParent(firstParent, sha) {
  * The `main` push run of `CI_WORKFLOW_FILE` for `sha` whose
  * `PUBLISH_IMAGES_JOB_NAME` job succeeded: the only evidence that the images a
  * deploy of its tag pulls exist (INV-OPS-021). A cancelled, failed or
- * unfinished run published nothing, so this asks GitHub rather than trusting
- * the first-parent chain. Any answer it cannot read refuses, never passes.
+ * unfinished run published nothing, and since #5356 a newer merge may replace
+ * an intermediate commit's queued run, so this asks GitHub rather than
+ * trusting the first-parent chain. Any answer it cannot read refuses, never
+ * passes.
  */
 function requirePublishedImages(cmd, repo, sha) {
   const short = sha.slice(0, 12);
@@ -913,7 +913,9 @@ function requirePublishedImages(cmd, repo, sha) {
       (found.length > 0 ? `Found: ${found.join("; ")}.` : "GitHub has no such run for it."),
     found.length > 0
       ? `Nothing was created. Wait for the run to finish, or re-run it if it was cancelled or failed: ` +
-          `gh run rerun ${runs[0].id} --repo ${repo.slug}. Publish once "${PUBLISH_IMAGES_JOB_NAME}" has succeeded.`
+          `gh run rerun ${runs[0].id} --repo ${repo.slug}, started only when nothing is pending on ${MAIN_BRANCH} ` +
+          `(gh run list --workflow ${CI_WORKFLOW_FILE} --branch ${MAIN_BRANCH} --status pending --repo ${repo.slug}), ` +
+          `because a re-run replaces ${MAIN_BRANCH}'s pending run. Publish once "${PUBLISH_IMAGES_JOB_NAME}" has succeeded.`
       : `Nothing was created. Tag a ${MAIN_BRANCH} commit whose ${CI_WORKFLOW_FILE} run published its images.`,
   );
 }
