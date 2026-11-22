@@ -250,13 +250,72 @@ export function classifyCaptureHost(
   return "public-address";
 }
 
-interface EmailTransportOptions {
+interface EmailTransportOptions extends EmailTransportTimeouts {
   host: string;
   port: number;
   secure: boolean;
   auth: {
     user: string;
     pass: string;
+  };
+}
+
+/**
+ * How long one mail transport waits at each stage, in milliseconds (#5407
+ * item 34), under the names nodemailer reads. Every transport here is SMTP
+ * (AWS SES through its SMTP endpoint, a relay, or a capture mailbox), so all
+ * three apply to each of them.
+ *
+ * nodemailer's own defaults are 2 minutes to connect, 30 seconds for the
+ * greeting and 10 minutes of socket inactivity. The bump-notice recovery
+ * assumes a send finishes well inside an hour, so these are set here rather
+ * than left to the library, short enough to fail a stuck send in minutes and
+ * long enough that a healthy server never meets them.
+ */
+export interface EmailTransportTimeouts {
+  /** Waiting for the connection to open. */
+  connectionTimeout: number;
+  /** Waiting for the server's greeting once connected. */
+  greetingTimeout: number;
+  /** Inactivity allowed on the open connection, per wait. */
+  socketTimeout: number;
+}
+
+/**
+ * Each timeout's setting, default and accepted range: the one definition the
+ * parser, `CONFIGURATION.md` and `.env.example` describe.
+ */
+export const EMAIL_TRANSPORT_TIMEOUT_SETTINGS = {
+  connectionTimeout: { env: "EMAIL_SMTP_CONNECTION_TIMEOUT_MS", defaultMs: 30_000 },
+  greetingTimeout: { env: "EMAIL_SMTP_GREETING_TIMEOUT_MS", defaultMs: 30_000 },
+  socketTimeout: { env: "EMAIL_SMTP_SOCKET_TIMEOUT_MS", defaultMs: 120_000 },
+} as const satisfies Record<keyof EmailTransportTimeouts, { env: string; defaultMs: number }>;
+
+/** The accepted range for each timeout setting, in milliseconds. */
+export const EMAIL_TRANSPORT_TIMEOUT_RANGE_MS = { min: 1_000, max: 600_000 } as const;
+
+/**
+ * Read the three timeouts. A value that is not a whole number of milliseconds
+ * inside the accepted range falls back to its default with a warning, rather
+ * than an issue: a mistyped timeout must not stop the club's mail.
+ */
+function readTransportTimeouts(env: EnvMap, warnings: string[]): EmailTransportTimeouts {
+  const read = (option: keyof EmailTransportTimeouts): number => {
+    const { env: name, defaultMs } = EMAIL_TRANSPORT_TIMEOUT_SETTINGS[option];
+    const raw = readEnv(env, name);
+    if (!raw) return defaultMs;
+    const { min, max } = EMAIL_TRANSPORT_TIMEOUT_RANGE_MS;
+    const parsed = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+    if (Number.isSafeInteger(parsed) && parsed >= min && parsed <= max) return parsed;
+    warnings.push(
+      `${name} must be a whole number of milliseconds from ${min} to ${max}; using the default ${defaultMs}`,
+    );
+    return defaultMs;
+  };
+  return {
+    connectionTimeout: read("connectionTimeout"),
+    greetingTimeout: read("greetingTimeout"),
+    socketTimeout: read("socketTimeout"),
   };
 }
 
@@ -360,6 +419,8 @@ export function resolveEmailDeliveryConfigFromEnv(
     issues.push("EMAIL_FROM is missing");
   }
 
+  const timeouts = readTransportTimeouts(env, warnings);
+
   if (mode === "aws-ses") {
     const host =
       readEnv(env, "SMTP_HOST") ?? "email-smtp.ap-southeast-2.amazonaws.com";
@@ -394,6 +455,7 @@ export function resolveEmailDeliveryConfigFromEnv(
               port,
               secure: false,
               auth: { user, pass },
+              ...timeouts,
             }
           : null,
     };
@@ -483,6 +545,7 @@ export function resolveEmailDeliveryConfigFromEnv(
               port,
               secure: false,
               auth: { user, pass },
+              ...timeouts,
             }
           : null,
     };

@@ -92,7 +92,9 @@ export async function getEmailTransporter(clearance: DeliveryClearance) {
     );
   }
 
-  const signature = `${config.mode}:${config.transportOptions.host}:${config.transportOptions.port}:${config.transportOptions.auth.user}`;
+  const { host, port, auth, connectionTimeout, greetingTimeout, socketTimeout } =
+    config.transportOptions;
+  const signature = `${config.mode}:${host}:${port}:${auth.user}:${connectionTimeout}:${greetingTimeout}:${socketTimeout}`;
   if (!cachedTransporter || cachedTransportSignature !== signature) {
     cachedTransporter = nodemailer.createTransport(config.transportOptions);
     cachedTransportSignature = signature;
