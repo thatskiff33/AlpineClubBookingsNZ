@@ -23,11 +23,11 @@ vi.mock("nodemailer", () => ({
   default: { createTransport: mocks.createTransport },
 }));
 
+import { resolveEmailDeliveryConfigFromEnv } from "@/lib/email-delivery";
 import {
   EMAIL_TRANSPORT_TIMEOUT_RANGE_MS,
   EMAIL_TRANSPORT_TIMEOUT_SETTINGS,
-  resolveEmailDeliveryConfigFromEnv,
-} from "@/lib/email-delivery";
+} from "@/lib/email-transport-timeouts";
 import { getEmailTransporter, verifyEmailTransport } from "@/lib/email/internal";
 import { resolveDeliveryPolicy } from "@/lib/environment-delivery-policy";
 import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";

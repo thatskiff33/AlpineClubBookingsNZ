@@ -28,9 +28,9 @@ import nodemailer, {
   type Transporter,
 } from "nodemailer";
 import logger from "@/lib/logger";
+import { EMAIL_TRANSPORT_TIMEOUT_OPTIONS } from "@/lib/email-transport-timeouts";
 import {
   CAPTURE_TRANSPORT_MODE_LABEL,
-  EMAIL_TRANSPORT_TIMEOUT_OPTIONS,
   resolveEmailDeliveryConfig,
   type ImplicitSesDefault,
 } from "@/lib/email-delivery";
