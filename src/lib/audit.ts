@@ -12,6 +12,7 @@ import { prisma } from "./prisma";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import logger from "@/lib/logger";
 import { isAuditCategory, type AuditCategory } from "./audit-categories";
+import { getClientIp } from "./rate-limit-http";
 import type { AuditRetentionClass } from "@/lib/audit-retention-classes";
 import { isDietaryKeyName } from "@/lib/member-dietary-field";
 import {
@@ -887,21 +888,11 @@ export function buildStructuredAuditLogCreateArgs(
 export function getAuditRequestContext(
   request: Request
 ): StructuredAuditEvent["request"] {
-  const forwarded = request.headers.get("x-forwarded-for");
-  const forwardedParts = forwarded
-    ?.split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-  const ipAddress =
-    forwardedParts?.[forwardedParts.length - 1] ??
-    request.headers.get("x-real-ip") ??
-    "unknown";
-
   return {
     id:
       request.headers.get("x-request-id") ??
       request.headers.get("x-correlation-id"),
-    ipAddress,
+    ipAddress: getClientIp(request),
     userAgent: request.headers.get("user-agent"),
   };
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { z } from "zod";
@@ -227,7 +228,7 @@ export async function PATCH(
       // it would be private in one place and not the other.
       internalNoteRecorded: Boolean(parsed.data.internalNotes?.trim()),
     },
-    ipAddress: req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown",
+    ipAddress: getClientIp(req),
   });
 
   const updated = await prisma.bookingChangeRequest.findUnique({

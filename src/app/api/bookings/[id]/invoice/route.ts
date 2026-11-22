@@ -8,12 +8,13 @@ import { checkRateLimit, getClientIp, rateLimitedResponse } from "@/lib/rate-lim
 import { requireActiveSessionUser } from "@/lib/session-guards";
 
 /**
- * GET /api/bookings/[id]/invoice (#5066, slice 1)
+ * GET /api/bookings/[id]/invoice (#5066)
  *
- * Downloads the booking's primary Xero invoice as Xero's own PDF, for exactly
- * the viewers and bookings the booking page offers it to
- * (`resolveBookingInvoiceOffer`); anything else is `404`. Takes no invoice id
- * from the caller. Writes one audit row per successful download.
+ * Downloads the booking's invoice for exactly the viewers and bookings the
+ * booking page offers it to (`resolveBookingInvoiceOffer`); anything else is
+ * `404`. With the club's Xero module on that is the primary Xero invoice as
+ * Xero's own PDF; with it off, the app's generated document (slice 2). Takes no
+ * invoice id from the caller. Writes one audit row per successful download.
  */
 export async function GET(
   request: NextRequest,
@@ -29,10 +30,11 @@ export async function GET(
   });
   if (inactiveResponse) return inactiveResponse;
 
-  // Every download is a live Xero read. The per-member budget comes first; the
-  // per-booking one (shared with the booking's credit notes, so several
-  // officers on one booking cannot multiply the reads) is charged only once the
-  // caller is authorised and the invoice is on offer.
+  // A download is a live Xero read, or a PDF the app renders (Xero off). The
+  // per-member budget comes first; the per-booking one (shared with the
+  // booking's credit notes, so several officers on one booking cannot multiply
+  // the reads) is charged only once the caller is authorised and the invoice
+  // is on offer.
   const memberLimit = await checkRateLimit(BOOKING_INVOICE_DOWNLOAD_MEMBER_LIMIT, session.user.id);
   if (!memberLimit.success) return rateLimitedResponse(memberLimit);
 

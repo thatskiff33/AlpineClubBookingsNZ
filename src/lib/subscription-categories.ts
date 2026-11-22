@@ -16,14 +16,6 @@ export const subscriptionCategorySelect = {
   _count: { select: { assignments: true, fees: true } },
 } satisfies Prisma.SubscriptionCategorySelect;
 
-/** The fields a PATCH actually changed, for the audit row. */
-export function subscriptionCategoryChangedFields(
-  before: Record<string, unknown>,
-  after: Record<string, unknown>,
-) {
-  return Object.keys(after).filter((key) => before[key] !== after[key]);
-}
-
 /** Which audit action a PATCH records: archive, reactivate or plain update. */
 export function subscriptionCategoryAuditActionForUpdate(
   before: { isActive: boolean },

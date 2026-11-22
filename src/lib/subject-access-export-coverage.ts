@@ -204,6 +204,9 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   MemberCredit: "credits",
   MemberCreditNoteAllocation: "credits",
   AdminCreditAdjustmentRequest: "additionalRecords.AdminCreditAdjustmentRequest",
+  // #4988: the subject posted or reversed an opening-credit batch. The credit
+  // rows a batch gave the subject are already in `credits`.
+  OpeningCreditBatch: "additionalRecords.OpeningCreditBatch",
   // #5204: keyed by Xero contact; the rows matched by the member's xeroContactId.
   XeroCashCredit: "additionalRecords.XeroCashCredit",
   MemberCreditCashAllocation: "credits",

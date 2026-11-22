@@ -103,10 +103,3 @@ export function countPlaceholderGuestNames(
 ): number {
   return guests.filter(isPlaceholderGuestName).length;
 }
-
-/** True when at least one guest in the party is still unnamed. */
-export function hasPlaceholderGuestNames(
-  guests: readonly PlaceholderGuestNameCandidate[],
-): boolean {
-  return guests.some(isPlaceholderGuestName);
-}

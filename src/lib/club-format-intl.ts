@@ -60,6 +60,12 @@ const MONEY_SHAPES = {
   cents: { minimumFractionDigits: 2, maximumFractionDigits: 2 },
   /** Whole units with separators, e.g. `$446,675`. */
   dollars: { minimumFractionDigits: 0, maximumFractionDigits: 0 },
+  /**
+   * `cents` with the ISO code for the symbol, e.g. `PLN -1234,50` style
+   * (#5066): for a surface whose font cannot draw the club's currency symbol,
+   * the generated invoice PDF's built-in Helvetica.
+   */
+  centsCode: { minimumFractionDigits: 2, maximumFractionDigits: 2, currencyDisplay: "code" },
 } as const satisfies Record<string, Intl.NumberFormatOptions>;
 
 export type MoneyShape = keyof typeof MONEY_SHAPES;

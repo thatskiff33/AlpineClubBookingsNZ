@@ -13,7 +13,6 @@ import { logAudit, getAuditRequestContext } from "@/lib/audit";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { lockRosterDates } from "@/lib/roster-lock";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const bodySchema = z.object({
@@ -64,9 +63,6 @@ export async function PUT(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (!dateOnlyStringSchema.safeParse(dateStr).success) {
-    return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
-  }
   const date = parseDateOnly(dateStr);
 
   let body: unknown;

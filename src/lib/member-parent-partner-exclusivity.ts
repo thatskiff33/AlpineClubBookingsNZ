@@ -23,12 +23,6 @@ export const MEMBER_PARENT_PARTNER_EXCLUSION_STATE_CONSTRAINT =
 export const MEMBER_PARENT_PARTNER_EXCLUSION_STATE_MESSAGE =
   "member_parent_partner_exclusion_state_invalid";
 
-export type DirectParentMember = {
-  id: string;
-  parentMemberId: string | null;
-  secondaryParentId: string | null;
-};
-
 export const DIRECT_PARENT_MEMBER_SELECT = {
   id: true,
   parentMemberId: true,
@@ -61,19 +55,6 @@ export function memberHasPartnerRelationshipWith(
     member.partnerLinksAsMemberB.some(
       (link) => link.memberAId === otherMemberId,
     )
-  );
-}
-
-/** Pure, orientation-independent direct-parent test for rows already read under lock. */
-export function membersAreDirectParentPair(
-  memberOne: DirectParentMember,
-  memberTwo: DirectParentMember,
-) {
-  return (
-    memberOne.parentMemberId === memberTwo.id ||
-    memberOne.secondaryParentId === memberTwo.id ||
-    memberTwo.parentMemberId === memberOne.id ||
-    memberTwo.secondaryParentId === memberOne.id
   );
 }
 

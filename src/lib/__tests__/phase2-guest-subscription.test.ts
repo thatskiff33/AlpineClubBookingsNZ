@@ -178,7 +178,7 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
 }));
 vi.mock("@/lib/stripe", () => ({ createPaymentIntent: vi.fn(), findOrCreateCustomer: vi.fn(), getPaymentIntent: vi.fn() }));
 vi.mock("@/lib/logger", () => ({ default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
-vi.mock("@/lib/waitlist", () => ({ getWaitlistPosition: vi.fn().mockResolvedValue(1) }));
+vi.mock("@/lib/waitlist", () => ({}));
 vi.mock("@/lib/member-credit", () => ({ getMemberCreditBalance: vi.fn().mockResolvedValue(0), applyCreditToBooking: vi.fn() }));
 vi.mock("@/lib/session-guards", () => ({ requireActiveSessionUser: vi.fn().mockResolvedValue(null) }));
 // The booking-time subscription gates consult the effective module flags

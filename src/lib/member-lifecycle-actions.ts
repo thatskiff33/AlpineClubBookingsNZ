@@ -769,28 +769,6 @@ export async function getAdminMemberLifecycleRequests({
   };
 }
 
-/**
- * Back-compat wrapper: the membership-cancellations page and its tests call the
- * ARCHIVE list by this name. New callers should use
- * getAdminMemberLifecycleRequests with an explicit action.
- */
-export async function getAdminMemberArchiveLifecycleRequests({
-  status = MemberLifecycleActionRequestStatus.REQUESTED,
-  page = 1,
-  pageSize = 25,
-}: {
-  status?: AdminMemberLifecycleActionStatusFilter;
-  page?: number;
-  pageSize?: number;
-}) {
-  return getAdminMemberLifecycleRequests({
-    action: MemberLifecycleAction.ARCHIVE,
-    status,
-    page,
-    pageSize,
-  });
-}
-
 function assertEligibleForDelete(eligibility: MemberDeleteEligibility) {
   if (!eligibility.eligible) {
     throw new MemberLifecycleActionError(

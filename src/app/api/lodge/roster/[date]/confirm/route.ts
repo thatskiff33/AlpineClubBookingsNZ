@@ -8,7 +8,6 @@ import { z } from "zod";
 import logger from "@/lib/logger";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { lockRosterEligibilityMutation } from "@/lib/roster-lock";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const allocationSchema = z.object({
@@ -43,14 +42,8 @@ export async function POST(
   if (tier !== "admin" && tier !== "hut-leader") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!dateOnlyStringSchema.safeParse(dateStr).success) {
-    return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
-  }
 
   const date = parseDateOnly(dateStr);
-  if (isNaN(date.getTime())) {
-    return NextResponse.json({ error: "Invalid date" }, { status: 400 });
-  }
 
   let body: unknown;
   try {

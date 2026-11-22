@@ -20,8 +20,6 @@ import { prisma } from "@/lib/prisma";
 import { normalizeBaseUrl } from "@/lib/servernz-base-url";
 import {
   SERVERNZ_SETTINGS_ID,
-  clearOtherLodgesOwnedNames,
-  clearServerVersionCheck,
   forgetServerConnectionAnswers,
   loadServerNzSettings,
   serverNzDefaultBaseUrl,
@@ -230,12 +228,6 @@ describe("the server's reported API version (#49)", () => {
     });
   });
 
-  it("forgets the answer back to NULL (never asked), not to a mismatch", async () => {
-    await clearServerVersionCheck();
-    const [args] = mocks.upsert.mock.calls[0];
-    expect(args.update).toEqual({ serverVersion: null, serverVersionCheckedAt: null });
-  });
-
   it("forgets the owned list, transfer cursors AND the version in ONE write when the connection ends", async () => {
     // The writer's own write, on the mocked client. Only the connection fence
     // mints this type in production (#4436); `servernz-config.test.ts` covers it.
@@ -261,6 +253,10 @@ describe("the server's reported API version (#49)", () => {
       serverVersion: null,
       serverVersionCheckedAt: null,
     });
+    // toEqual does not tell Prisma.DbNull from Prisma.JsonNull, so pin identity:
+    // DbNull reads back as "never told"; a JSON null would read as unreadable.
+    expect(args.update.otherLodgesOwnedNames).toBe(Prisma.DbNull);
+    expect(args.update.otherLodgesOwnedLodges).toBe(Prisma.DbNull);
   });
 });
 
@@ -326,22 +322,6 @@ describe("the owned lodge list, by central id (#52, #62, #69)", () => {
       select: { otherLodgesOwnedLodges: true },
     });
     expect(mocks.findUnique).not.toHaveBeenCalled();
-  });
-
-  it("forgets the list with a database NULL, never a JSON null, and clears its timestamp", async () => {
-    await clearOtherLodgesOwnedNames();
-    const [args] = mocks.upsert.mock.calls[0];
-    expect(args.where).toEqual({ id: SERVERNZ_SETTINGS_ID });
-    // DbNull reads back as "never told"; a JSON null would read as unreadable.
-    expect(args.update.otherLodgesOwnedLodges).toBe(Prisma.DbNull);
-    expect(args.update.otherLodgesOwnedNames).toBe(Prisma.DbNull);
-    expect(args.update.otherLodgesOwnedNamesAt).toBeNull();
-    // Nothing else on the row is touched.
-    expect(Object.keys(args.update).sort()).toEqual([
-      "otherLodgesOwnedLodges",
-      "otherLodgesOwnedNames",
-      "otherLodgesOwnedNamesAt",
-    ]);
   });
 
   it("stores the list the download carried with its timestamp, and leaves the old name-only list alone", async () => {
