@@ -9,7 +9,7 @@ import { memberMoneyApplicationKeys, memberMoneyEventKeys, type MemberMoneyEvent
 import { MemberMoneyPlanError, type MemberMoneyDebtor, type MemberMoneyEvidence, type MemberMoneyLegPlan, type MemberMoneyPostingContext } from "./plan";
 import { postMemberMoneyEvent, releaseMemberMoneyRefundReservation, reverseMemberMoneyJournal } from "./post";
 import { isStripeKeyOfSenderPrefix } from "../../payment-recovery-keys";
-import { refundFamily, refundFamilyOpenCents, refundFamilyTip, refundObligationChain, stripeKeyOfReservation } from "./refund-family";
+import { refundFamily, refundFamilyOpenCents, refundFamilyTip, refundObligationChain, stripeKeyOfReservation, type RefundBooking } from "./refund-family";
 import { lineDebtor, moveMergedDebtorResidue } from "./booking-receipts";
 
 /**
@@ -186,13 +186,13 @@ async function withdrawRefundObligationPart(tx: Db, context: MemberMoneyPostingC
  * at the completion's start), so taking it here again is a no-op, never a booking row after the Payment row. Under
  * it a member merge's owner move has committed or waits, so the owner read is the one the residue move follows to.
  */
-async function lockedRefundBooking(tx: Db, bookingId: string): Promise<RefundBooking> {
+async function lockedRefundBooking(tx: Db, bookingId: string): Promise<OwnedRefundBooking> {
   const owner = await refundDebtor(tx, bookingId, "booking-row");
   const { lodgeId } = await tx.booking.findUniqueOrThrow({ where: { id: bookingId }, select: { lodgeId: true } });
   return { bookingId, lodgeId, owner };
 }
 
-type RefundBooking = { bookingId: string; lodgeId: string; owner: MemberMoneyDebtor };
+type OwnedRefundBooking = RefundBooking & { owner: MemberMoneyDebtor };
 
 /**
  * The exact mirror of the R05, on the debtor it named. A debtor merged away since leaves that receivable stray, so
@@ -200,7 +200,7 @@ type RefundBooking = { bookingId: string; lodgeId: string; owner: MemberMoneyDeb
  * after this commits nets it in its own snapshot instead, and with no merge nothing moves.
  */
 async function reverseRefundObligation(tx: Db, context: MemberMoneyPostingContext, input: {
-  booking: RefundBooking; live: MemberMoneyEventKey; actorMemberId: string | null; reason: string;
+  booking: OwnedRefundBooking; live: MemberMoneyEventKey; actorMemberId: string | null; reason: string;
 }): Promise<void> {
   const { bookingId, lodgeId, owner } = input.booking;
   // The debt itself first: a reservation reads its debtor unlocked (`refund-reservations.ts`), so an R05 can land on
