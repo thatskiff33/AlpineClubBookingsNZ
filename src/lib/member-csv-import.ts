@@ -32,6 +32,8 @@ export const MEMBER_IMPORT_ADDRESS_MAX_LENGTHS = {
   streetPostalCode: 20,
 } as const;
 
+// The CSV field-definition order (country before postcode), which orders the
+// length errors; deliberately not member-address.ts's column order.
 const MEMBER_IMPORT_ADDRESS_FIELD_KEYS = [
   "streetAddressLine1",
   "streetAddressLine2",
