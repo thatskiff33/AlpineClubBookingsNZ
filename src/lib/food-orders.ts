@@ -18,10 +18,10 @@ import { memberName } from "@/lib/member-serialization";
 import { prisma } from "@/lib/prisma";
 
 /**
- * The food-order service (fork #121): create, close, price and list.
+ * The food-order service (fork triyder/AlpineClubBookingsNZ#121): create, close, price and list.
  *
  * NO MONEY MOVES HERE. `priceCents` is a historical record for forecasting
- * (fork #121 owner decisions 8 and 11). Nothing in this module charges a member, touches a
+ * (fork triyder/AlpineClubBookingsNZ#121 owner decisions 8 and 11). Nothing in this module charges a member, touches a
  * booking, an invoice, the booking ledger, member money or Xero, and nothing
  * here takes an advisory lock: food orders share no row, key or counterpart
  * writer with any booking, capacity or settlement path.

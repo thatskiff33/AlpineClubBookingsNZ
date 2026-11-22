@@ -11,7 +11,7 @@ import { requireAdmin } from "@/lib/session-guards";
 const paramsSchema = z.object({ id: z.string().min(1) });
 
 // POST /api/admin/other-lodges/:id/hide — hide an Other lodges row the central
-// server does not list (#58). The rules are `hideUnlistedOtherLodge`'s; this
+// server does not list (triyder/AlpineClubBookingsNZ#58). The rules are `hideUnlistedOtherLodge`'s; this
 // route guards, audits and answers. The audit row names the lodge by id and
 // name only: a booking officer's contact is never copied into it.
 export async function POST(

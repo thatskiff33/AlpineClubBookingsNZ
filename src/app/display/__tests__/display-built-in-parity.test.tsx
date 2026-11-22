@@ -203,7 +203,7 @@ describe("LTV-038 everyday-board built-in — visual parity", () => {
     expect(notice?.classList.contains("display-notice-empty")).toBe(false);
     expect(screen.getByText(/Committee meeting Friday/)).toBeDefined();
 
-    // Footer chrome (#112): the built-in ships a friendly static footer default
+    // Footer chrome (hoppers99/AlpineClubBookingsNZ#112): the built-in ships a friendly static footer default
     // (no forced wifi/config tokens), rendered in the footer container. The
     // config-driven InfoFooter wifi is only the fallback for an empty footerHtml.
     expect(screen.getByText(/Have a nice day/)).toBeDefined();

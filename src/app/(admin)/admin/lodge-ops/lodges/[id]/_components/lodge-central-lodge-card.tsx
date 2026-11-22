@@ -27,7 +27,7 @@ const LOAD_FALLBACK = "The central lodge link could not be read.";
 const SAVE_FALLBACK = "The link could not be saved.";
 
 /**
- * Which lodge in the Alpine Central Server's registry THIS lodge is (#62).
+ * Which lodge in the Alpine Central Server's registry THIS lodge is (triyder/AlpineClubBookingsNZ#62).
  *
  * The central server's public lodge search asks this site how many beds are
  * free, naming the lodge by its permanent central id. This card is where an
@@ -46,7 +46,7 @@ const SAVE_FALLBACK = "The link could not be saved.";
 interface OwnedLodge {
   id: string;
   name: string;
-  /** The option's text: the name, with the location when names repeat (#69). */
+  /** The option's text: the name, with the location when names repeat (triyder/AlpineClubBookingsNZ#69). */
   label: string;
 }
 

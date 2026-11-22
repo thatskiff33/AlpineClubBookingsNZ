@@ -1,5 +1,5 @@
 // Generates the add-to-calendar icons the booking-confirmed email renders for
-// the {{ical}} block (fork issue #41): three 56px PNGs under
+// the {{ical}} block (triyder/AlpineClubBookingsNZ#41): three 56px PNGs under
 // public/branding/calendar/, rasterised from the SVGs authored inline below.
 //
 //   node scripts/branding/generate-calendar-icons.mjs

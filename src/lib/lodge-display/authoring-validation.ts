@@ -13,7 +13,7 @@ import { MAX_AUTHORED_CSS_CHARS, sanitiseDisplayCss } from "./css-tokens";
 // Save-path validation contract for the lobby-display authoring UIs (LTV-030,
 // ADR-003 "Unattended surface"). A lobby wall has nobody watching, so a Layout
 // or Template must be proven safe BEFORE it is persisted, not at render time.
-// This module is the single shared contract the authoring UIs (#78/#79) call
+// This module is the single shared contract the authoring UIs (hoppers99/AlpineClubBookingsNZ#78/#79) call
 // from their save routes; it owns NO HTTP surface of its own (the UIs bring
 // their routes) and performs NO persistence — it only judges an incoming
 // definition and reports back structurally.
@@ -21,7 +21,7 @@ import { MAX_AUTHORED_CSS_CHARS, sanitiseDisplayCss } from "./css-tokens";
 // The judgement wraps the pieces the render pipeline already trusts at serve
 // time (layout-render.ts): the layout-registry structural validators, the
 // module-embed / token checks inside authored html, the authored-CSS
-// sanitiser, and (issue #161) the display's img-src restriction on authored
+// sanitiser, and (issue hoppers99/AlpineClubBookingsNZ#161) the display's img-src restriction on authored
 // html. It splits its findings two ways (ADR-003 §5 — required, not optional):
 //
 //   • ERROR   — structural invalidity. The definition cannot render safely, so
@@ -141,7 +141,7 @@ function cssSanitisationWarnings(css: string, path: string): ValidationIssue[] {
 }
 
 // ---------------------------------------------------------------------------
-// HTML img-src warning (issue #161, ADR-003 residual)
+// HTML img-src warning (issue hoppers99/AlpineClubBookingsNZ#161, ADR-003 residual)
 // ---------------------------------------------------------------------------
 
 /** An `<img>` src the CMS default sanitiser allows (an absolute `http`/`https`
@@ -244,12 +244,12 @@ export interface LayoutForSave {
 }
 
 /**
- * Judge a Layout before it is saved (#79). Structural failure (bodyHtml/areas
+ * Judge a Layout before it is saved (hoppers99/AlpineClubBookingsNZ#79). Structural failure (bodyHtml/areas
  * disagree, a bad slug, an unknown module embed in a default slot, …) is an
  * ERROR that refuses the save; anything the CSS sanitiser would strip from
  * `defaultCss`, or the display img-src restriction would strip from `bodyHtml`
  * / an area's default content, is a WARNING (serve time re-sanitises, so the
- * wall is safe either way — issue #161).
+ * wall is safe either way — issue hoppers99/AlpineClubBookingsNZ#161).
  */
 export function validateLayoutForSave(input: LayoutForSave): SaveValidationResult {
   const errors: ValidationIssue[] = [];
@@ -277,12 +277,12 @@ export interface TemplateForSave {
 }
 
 /**
- * Judge a Template before it is saved (#78). The Template's slotContent is
+ * Judge a Template before it is saved (hoppers99/AlpineClubBookingsNZ#78). The Template's slotContent is
  * validated against its Layout's areas (an unknown slot key, a bad module, a
  * malformed embed in authored html is an ERROR); the footer html is checked for
  * malformed/unknown module embeds; anything the CSS sanitiser would strip from
  * `cssOverrides`, or the display img-src restriction would strip from a slot's
- * html / the footer html, is a WARNING (issue #161). When the bound Layout
+ * html / the footer html, is a WARNING (issue hoppers99/AlpineClubBookingsNZ#161). When the bound Layout
  * itself is structurally invalid the slot check cannot run, so that surfaces
  * as a `layout` error.
  */

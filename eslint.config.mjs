@@ -757,7 +757,7 @@ const RAW_SQL_RESTRICTIONS = [
 // a template literal — which was live in three files, and which no arm of this
 // rule could see until it was added.
 const DATE_TRUNCATION_MESSAGE =
-  "INV-DATE-019: Do not hand-write an ISO date truncation (#2684). New code goes to @/lib/club-time (CT-2, #2990): clubCalendarDateOf(instant, zone) for a real INSTANT such as `createdAt`, whose UTC day is the PREVIOUS club day all morning (#2697); calendarDateOfDateOnlyInstant(value) for a `@db.Date` column, whose UTC midnight IS the encoding of a club calendar day (INV-DATE-010); clubToday(zone) for today. The @/lib/date-only equivalents (formatDateOnly / formatMonthOnly / formatDateOnlyForTimeZone / getTodayDateOnly) are the compatibility adapters CT-6 retires.";
+  "INV-DATE-019: Do not hand-write an ISO date truncation (#2684). New code goes to @/lib/club-time (CT-2, #2990): clubCalendarDateOf(instant, zone) for a real INSTANT such as `createdAt`, whose UTC day is the PREVIOUS club day all morning (#2697); calendarDateOfDateOnlyInstant(value) for a `@db.Date` column, whose UTC midnight IS the encoding of a club calendar day (INV-DATE-010); clubToday(zone) for today. The @/lib/date-only equivalents (formatDateOnly / formatMonthOnly / formatDateOnlyForTimeZone / getTodayDateOnly) are compatibility adapters that #2991 closed with, kept as reviewed adapters.";
 
 const DATE_SPLIT_MESSAGE =
   "INV-DATE-019: Do not hand-write an ISO date truncation (#2684). Holding a Date? @/lib/club-time (CT-2, #2990): calendarDateOfDateOnlyInstant for a `@db.Date` value (INV-DATE-010) or clubCalendarDateOf(instant, zone) for a real instant. Holding a value already serialised to a string? parseCalendarDate, or dateOnlyFromIsoString from the @/lib/date-only adapter.";
@@ -980,7 +980,7 @@ const NO_HOST_CLOCK_FACE = [
 ].map((selector) => ({ selector, message: HOST_CLOCK_FACE_MESSAGE }));
 
 const ENVIRONMENT_ZONE_MESSAGE =
-  "INV-CONFIG-002: The environment's timezone is not the club's (CT-1, #2989; CT-6, #2991). `TZ` / `NEXT_PUBLIC_TZ` SEED the persisted `ClubTimeSettings.timeZone` row at setup and have no say afterwards, so a business or display decision taken from them follows whichever container the process happens to be in. Server component or route: clubTimeZone() / clubTime() from @/lib/club-time/server, which is request-scoped and memoised. A cron tick or a CLI, which `server-only` refuses: readClubTimeZoneOutsideRequest() from @/lib/club-time-zone-runtime. A client component: receive the zone as data through ClubTimeProvider — the browser never decides it. @/lib/date-only is the last compatibility adapter this issue retires, and it no longer DEFAULTS a zone: #3123 deleted its six `= APP_TIME_ZONE` defaults, so every helper there now demands one from its caller. The rendering adapter beside it, @/lib/nzst-date, is already deleted (#3123). Do not add a caller, and do not build a replacement.";
+  "INV-CONFIG-002: The environment's timezone is not the club's (CT-1, #2989; CT-6, #2991). `TZ` / `NEXT_PUBLIC_TZ` SEED the persisted `ClubTimeSettings.timeZone` row at setup and have no say afterwards, so a business or display decision taken from them follows whichever container the process happens to be in. Server component or route: clubTimeZone() / clubTime() from @/lib/club-time/server, which is request-scoped and memoised. A cron tick or a CLI, which `server-only` refuses: readClubTimeZoneOutsideRequest() from @/lib/club-time-zone-runtime. A client component: receive the zone as data through ClubTimeProvider — the browser never decides it. @/lib/date-only is the last compatibility adapter (#2991 closed with it kept as a reviewed adapter), and it no longer DEFAULTS a zone: #3123 deleted its six `= APP_TIME_ZONE` defaults, so every helper there now demands one from its caller. The rendering adapter beside it, @/lib/nzst-date, is already deleted (#3123). Do not add a caller, and do not build a replacement.";
 
 // `process.env.TZ` and `process.env.NEXT_PUBLIC_TZ`, read anywhere but the two
 // modules whose job is to read them once.
@@ -1214,8 +1214,9 @@ export const DATE_FNS_ADAPTERS = [
  * `club-time-boundary-guard.test.ts` fails on an entry naming a file that no
  * longer exists precisely so the two cannot drift apart.
  *
- * `src/lib/date-only.ts` IS NOT HERE, AND NO LONGER NEEDS TO BE ANYWHERE. It has
- * a block of its own further down, which used to drop this group as well because
+ * `src/lib/date-only.ts` IS NOT HERE, AND NO LONGER NEEDS TO BE ANYWHERE. It still
+ * has a block of its own further down (#2991 closed with the module kept as a
+ * reviewed adapter), which used to drop this group as well because
  * six of its helpers defaulted their `timeZone` to `APP_TIME_ZONE`. #3123 removed
  * those defaults and the import, so that block drops only the ENCODING group now
  * and these arms reach the file like any other. Were it ever to need this group

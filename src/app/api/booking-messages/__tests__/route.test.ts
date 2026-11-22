@@ -52,7 +52,7 @@ describe("GET /api/booking-messages", () => {
     ]);
     mockLoadEmailMessageSettings.mockResolvedValue(emailSettings());
 
-    const body = await (await GET()).json();
+    const body = await (await GET(new Request("https://club.example.test/api/x"))).json();
 
     expect(body.messages["paymentLink.internetBanking.description"]).toBe(
       "Transfer to {{CLUB_LODGE_NAME}} using {{paymentReference}}."

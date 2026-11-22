@@ -146,6 +146,8 @@ const DIETARY_REACH: Readonly<Record<string, CensusEntry>> = {
   "src/components/member-dietary-requirements-field.tsx":
     "the one input, shared by self and admin screens",
   "src/app/api/profile/route.ts": "self writer (profile and onboarding)",
+  "src/lib/member-profile-update-schema.ts":
+    "the self writer's body schema; the AI app subset leaves the field out (ALP-718)",
   "src/app/(authenticated)/profile/page.tsx": "self reader, ON only",
   "src/app/(authenticated)/profile/profile-details-card.tsx":
     "passes the self value to the form",

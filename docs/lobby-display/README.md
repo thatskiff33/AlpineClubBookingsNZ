@@ -165,7 +165,7 @@ Import [`seeds/display-template-pack.bundle.zip`](seeds/README.md) to add these.
 | [`brief.md`](brief.md) | The feature brief: goals, non-goals, settled decisions, open questions, success criteria |
 | [`design.md`](design.md) | Technical design: data model, pairing/auth, display-state API, Layout/Template/Module model (with diagrams + a worked example), testing strategy |
 | [`operating.md`](operating.md) | Runbook to set up a screen (pair, assign a template, per-lodge config) and a developer guide to extending (add a module / condition) |
-| [`phone-visibility.md`](phone-visibility.md) | Member phone-number opt-in (#37): the two-sided consent gate, the staff-kiosk exemption, and where each control lives |
+| [`phone-visibility.md`](phone-visibility.md) | Member phone-number opt-in (hoppers99/AlpineClubBookingsNZ#37): the two-sided consent gate, the staff-kiosk exemption, and where each control lives |
 | [`config-transfer-workflow.md`](config-transfer-workflow.md) | Moving display config between environments as bundles |
 | `decisions/` | ADRs (pairing/auth model; template model + storage; Layout/Template authoring; **the guided visual builder — ADR-004**) — authored with their keystone tasks |
 | [`mockups/`](mockups/) | The full design-exploration catalogue, organised by concept — the review-approved whole-lodge designs are frozen separately in [`mockups/approved/`](mockups/approved/README.md) |

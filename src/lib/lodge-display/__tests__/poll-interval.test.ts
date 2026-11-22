@@ -6,7 +6,7 @@ import {
   DISPLAY_POLL_MIN_SECONDS,
 } from "@/lib/lodge-display/poll-interval";
 
-// LTV-039 (issue #85): the shared poll-cadence clamp used by the state route
+// LTV-039 (issue hoppers99/AlpineClubBookingsNZ#85): the shared poll-cadence clamp used by the state route
 // (read), the devices PATCH route (bounds), and the display client (tick).
 
 describe("clampPollSeconds", () => {

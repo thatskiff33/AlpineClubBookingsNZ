@@ -25,8 +25,8 @@ vi.mock("next-auth/react", () => ({
 
 import AdminDisplayTemplatesPage from "./page";
 
-// Fork issue #156: editing a built-in Template (`everyday-board` etc.) in place
-// is overwritten on the next re-seed/upgrade (#111 refresh-from-code contract).
+// Fork issue hoppers99/AlpineClubBookingsNZ#156: editing a built-in Template (`everyday-board` etc.) in place
+// is overwritten on the next re-seed/upgrade (hoppers99/AlpineClubBookingsNZ#111 refresh-from-code contract).
 // The editor must show a persistent notice with a one-click Duplicate action and
 // require an explicit confirmation before saving an in-place built-in edit.
 

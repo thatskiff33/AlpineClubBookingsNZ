@@ -82,8 +82,8 @@ const LOCAL_HELPER_DECLARATION = new RegExp(
 );
 /**
  * `src/lib/date-only.ts` exports its own, unrelated `formatDateOnly` — the legacy
- * compatibility adapter `date-only-encoding-guard.test.ts` tracks until CT-6
- * retires it. The name is refused everywhere else.
+ * compatibility adapter `date-only-encoding-guard.test.ts` tracks (#2991 closed
+ * with it kept as a reviewed adapter). The name is refused everywhere else.
  */
 const LEGACY_ADAPTER = "src/lib/date-only.ts";
 const HELPER_IMPORT = /\bformatStayDate(?:OrNull)?\b/;

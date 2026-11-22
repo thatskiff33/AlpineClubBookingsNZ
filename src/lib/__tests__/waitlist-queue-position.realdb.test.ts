@@ -7,6 +7,8 @@
  * reader's one query (envelope, `createdAt <=`, the alternate-lodge relation
  * filter, the `(createdAt, id)` order) returns the queue the offer pass reads,
  * and every real way out of the queue leaves the others numbered correctly.
+ * #5410 (`INV-CAP-042`) adds who a lapsed offer's place goes to, run end to end
+ * through `expireStaleOffers`.
  *
  * Dates sit in far-future windows no other suite uses, apart from the past-date
  * cron case, which needs a stay ending on the frozen clock's day (1 July 2026).
@@ -95,6 +97,8 @@ type Entry = {
   noEmails?: boolean;
   alternates?: string[];
   waitlistOfferExpiresAt?: Date;
+  /** A cross-lodge offer's lodge (#5410). */
+  offeredLodgeId?: string;
 };
 
 async function seed(entry: Entry) {
@@ -125,6 +129,8 @@ async function seed(entry: Entry) {
       finalPriceCents: 0,
       waitlistOfferedAt: entry.waitlistOfferExpiresAt ? day("2026-06-28") : null,
       waitlistOfferExpiresAt: entry.waitlistOfferExpiresAt ?? null,
+      waitlistOfferedLodgeId: entry.offeredLodgeId ?? null,
+      waitlistOfferedPriceCents: entry.offeredLodgeId ? 0 : null,
       guests: {
         create: Array.from({ length: entry.guests ?? 2 }, (_, index) => ({
           firstName: "Guest",
@@ -202,6 +208,47 @@ async function status(id: string) {
   return (await prisma.booking.findUniqueOrThrow({ where: { id }, select: { status: true } })).status;
 }
 
+/** Each booking's status, keyed by id. */
+async function statuses(ids: string[]): Promise<Record<string, BookingStatus>> {
+  return Object.fromEntries(await Promise.all(ids.map(async (id) => [id, await status(id)] as const)));
+}
+
+/** Make a booking's live offer stale, as if its window had run out. */
+async function lapse(id: string) {
+  await prisma.booking.update({ where: { id }, data: { waitlistOfferExpiresAt: day("2026-06-30") } });
+}
+
+// #5410: the cross-lodge cases need lodge A to price their nights (November
+// 2031), or the cross-lodge quote refuses every opt-in and they prove nothing.
+// Each case creates the season and deletes it in its own `finally`.
+const CROSS_SEASON = `${PREFIX}season`;
+
+async function createCrossLodgeSeason() {
+  const nonMember = await prisma.membershipType.findUniqueOrThrow({ where: { key: "NON_MEMBER" } });
+  await prisma.season.create({
+    data: {
+      id: CROSS_SEASON,
+      name: "Queue 5410 cross-lodge",
+      type: "WINTER",
+      startDate: day("2031-11-01"),
+      endDate: day("2031-11-30"),
+      active: true,
+      lodgeId: LODGE_A,
+      membershipTypeRates: {
+        create: [
+          { membershipTypeId: nonMember.id, ageTier: "ADULT", pricePerNightCents: 5000 },
+          { membershipTypeId: nonMember.id, ageTier: null, pricePerNightCents: 5000 },
+        ],
+      },
+    },
+  });
+}
+
+async function deleteCrossLodgeSeason() {
+  await prisma.membershipTypeSeasonRate.deleteMany({ where: { seasonId: CROSS_SEASON } });
+  await prisma.season.deleteMany({ where: { id: CROSS_SEASON } });
+}
+
 (RUN ? describe : describe.skip)("waitlist positions read from the live queue (#5402)", () => {
   beforeAll(async () => {
     assertSafeRaceDbUrl(URL, "Waitlist queue position");
@@ -214,6 +261,7 @@ async function status(id: string) {
     ({ GET: adminWaitlistGet } = await import("@/app/api/admin/waitlist/route"));
     email = await import("@/lib/email");
     await cleanBookings();
+    await deleteCrossLodgeSeason(); // left behind only by an interrupted run
     previousCrossLodgeOrder =
       (await prisma.bookingDefaults.findUnique({ where: { id: "default" }, select: { waitlistCrossLodgeOrder: true } }))
         ?.waitlistCrossLodgeOrder ?? null;
@@ -237,6 +285,7 @@ async function status(id: string) {
   afterAll(async () => {
     if (!prisma) return;
     await cleanBookings();
+    await deleteCrossLodgeSeason();
     await prisma.lodgeSettings.deleteMany({ where: { id: { in: [LODGE_A, LODGE_B] } } });
     await prisma.lodge.deleteMany({ where: { id: { in: [LODGE_A, LODGE_B] } } });
     if (previousCrossLodgeOrder === null) {
@@ -326,28 +375,19 @@ async function status(id: string) {
       await expectEverywhere(three, [1, 2, 3]);
     });
 
-    it("an expired offer with a bed free: records what today's code does (evidence for #5410)", async () => {
-      // NOT the behaviour #5402 decides. #5410 asks whether a lapsed offer
-      // should go straight back to the same member. Inferred from the code: the
-      // revert keeps `createdAt`, the re-offer pass reads the queue oldest first,
-      // and a WAITLIST_OFFERED booking holds no capacity, so the same booking is
-      // offered again in the same run. If this case fails, the failure says what
-      // the code actually does, and that is the evidence #5410 needs.
-      const lapsedOfferedAt = day("2026-06-28");
+    it("an expired offer with a bed free goes to the next entry, and the lapsed one keeps its place (#5410)", async () => {
+      // Before #5410 this case pinned the defect: the revert keeps `createdAt`
+      // and an offered booking holds no capacity (`INV-CAP-011`), so the pass
+      // offered the same booking straight back. `INV-CAP-042`: the pass that
+      // re-offers a lapsed place now reaches the lapsed booking last.
       const three = await seedThree("r", { status: "WAITLIST_OFFERED", waitlistOfferExpiresAt: day("2026-06-30") });
-      const [first, second] = three.ids;
+      const [first, second, third] = three.ids;
       await setCapacity(LODGE_A, 2);
       await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
       await setCapacity(LODGE_A, 0);
-      const after = await prisma.booking.findUniqueOrThrow({
-        where: { id: first },
-        select: { status: true, waitlistOfferedAt: true },
-      });
-      expect(after.status, "the lapsed booking was offered straight back").toBe("WAITLIST_OFFERED");
-      // A fresh offer made in this run, not the lapsed one left where it was.
-      expect(after.waitlistOfferedAt?.getTime(), "re-offered in the same run").toBeGreaterThan(
-        lapsedOfferedAt.getTime(),
-      );
+      expect(await status(first), "the lapsed booking is back on the waitlist").toBe("WAITLISTED");
+      expect(await status(second), "the place went to the next entry").toBe("WAITLIST_OFFERED");
+      expect(await status(third)).toBe("WAITLISTED");
       expect(vi.mocked(email.sendWaitlistOfferExpiredEmail)).toHaveBeenCalledWith(
         expect.objectContaining({ bookingId: first }),
         expect.any(String),
@@ -357,9 +397,8 @@ async function status(id: string) {
         1,
         LODGE_A,
       );
-      expect(await status(second)).toBe("WAITLISTED");
-      // Whatever #5410 decides, the numbers shown agree with the queue.
-      await expectEverywhere(three, [null, 1, 2]);
+      // The lapsed booking keeps its number (`INV-CAP-041`); the offered one shows none.
+      await expectEverywhere(three, [1, null, 2]);
     });
 
     it("the past-date cron cancelling the first leaves 1 and 2", async () => {
@@ -389,6 +428,192 @@ async function status(id: string) {
         data: { status: resulting, waitlistPosition: null, waitlistOfferedAt: null, waitlistOfferExpiresAt: null },
       });
       await expectEverywhere(three, [null, 1, 2]);
+    });
+  });
+
+  describe("a lapsed offer's place goes on down the queue (#5410, INV-CAP-042)", () => {
+    // Each case: its own ids and its own two nights in October 2031 (see the
+    // header). Offers hold no capacity (`INV-CAP-011`), so lodge A's two beds
+    // fit every party of two here, however many offers are open.
+    let nextWindow = 0;
+    const seedQueue = async (tag: string, size: number, offered: number[] = [0]) => {
+      const night = 1 + 3 * nextWindow++;
+      const from = `2031-10-${String(night).padStart(2, "0")}`;
+      const to = `2031-10-${String(night + 2).padStart(2, "0")}`;
+      const ids = Array.from({ length: size }, (_, index) => `${PREFIX}${tag}${index + 1}`);
+      for (const [index, id] of ids.entries()) {
+        await seed({
+          id,
+          checkIn: from,
+          checkOut: to,
+          createdAt: joined(index + 1),
+          ...(offered.includes(index) ? { status: "WAITLIST_OFFERED" as const, waitlistOfferExpiresAt: day("2026-06-30") } : {}),
+        });
+      }
+      return { ids, from, to };
+    };
+
+    it("passes the place on down the queue as offers lapse in turn, and wraps to the front last", async () => {
+      const { ids } = await seedQueue("t", 3);
+      const [first, second, third] = ids as [string, string, string];
+      await setCapacity(LODGE_A, 2);
+      await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
+      expect(await statuses(ids)).toEqual({ [first]: "WAITLISTED", [second]: "WAITLIST_OFFERED", [third]: "WAITLISTED" });
+
+      // The second lets it lapse too: the third is reached, not the first.
+      await lapse(second);
+      await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
+      expect(await statuses(ids)).toEqual({ [first]: "WAITLISTED", [second]: "WAITLISTED", [third]: "WAITLIST_OFFERED" });
+      expect(await shown(ids)).toEqual({ [first]: 1, [second]: 2, [third]: null });
+
+      // Everyone has had a turn, so the place wraps round to the first.
+      await lapse(third);
+      await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
+      await setCapacity(LODGE_A, 0);
+      expect(await statuses(ids)).toEqual({ [first]: "WAITLIST_OFFERED", [second]: "WAITLISTED", [third]: "WAITLISTED" });
+      expect(await shown(ids)).toEqual({ [first]: null, [second]: 1, [third]: 2 });
+    });
+
+    it("re-offers a queue of one: there is nobody else to give the place to", async () => {
+      const { ids } = await seedQueue("one", 1);
+      const [only] = ids as [string];
+      await setCapacity(LODGE_A, 2);
+      await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
+      await setCapacity(LODGE_A, 0);
+      const after = await prisma.booking.findUniqueOrThrow({
+        where: { id: only },
+        select: { status: true, waitlistOfferedAt: true },
+      });
+      expect(after.status).toBe("WAITLIST_OFFERED");
+      // A fresh offer made in this run (the seeded lapsed one was stamped 28 June).
+      expect(after.waitlistOfferedAt!.getTime()).toBeGreaterThan(day("2026-06-28").getTime());
+    });
+
+    it("gives two places that lapse in one run to the two entries behind, not back to each other", async () => {
+      const { ids } = await seedQueue("w", 4, [0, 1]);
+      const [first, second, third, fourth] = ids as [string, string, string, string];
+      await setCapacity(LODGE_A, 4);
+      await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
+      await setCapacity(LODGE_A, 0);
+      expect(await statuses(ids)).toEqual({
+        [first]: "WAITLISTED",
+        [second]: "WAITLISTED",
+        [third]: "WAITLIST_OFFERED",
+        [fourth]: "WAITLIST_OFFERED",
+      });
+      expect(await shown(ids)).toEqual({ [first]: 1, [second]: 2, [third]: null, [fourth]: null });
+    });
+
+    it("considers the lapsed entry in plain queue order when a different place frees later", async () => {
+      // "later", not "d": `${PREFIX}d1`..`d3` belong to the date-boundary case.
+      const { ids, from, to } = await seedQueue("later", 3);
+      const [first, second, third] = ids as [string, string, string];
+      await setCapacity(LODGE_A, 2);
+      await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
+      expect(await status(second)).toBe("WAITLIST_OFFERED");
+      // Another place frees on the same nights (a cancellation, say): that pass
+      // carries no lapse, so the first, still first in the queue, is offered it.
+      const { offeredBookingId } = await waitlist.processWaitlistForDates(
+        { checkIn: day(from), checkOut: day(to), lodgeId: LODGE_A },
+        CLUB_FORMAT_TEST,
+      );
+      await setCapacity(LODGE_A, 0);
+      expect(offeredBookingId).toBe(first);
+      expect(await statuses(ids)).toEqual({ [first]: "WAITLIST_OFFERED", [second]: "WAITLIST_OFFERED", [third]: "WAITLISTED" });
+    });
+
+    it("passes a lapsed cross-lodge offer to the next opt-in at the offered lodge", async () => {
+      // Both wait at lodge B (no room) and named lodge A (room, and priced).
+      // The first's offer of lodge A lapses.
+      const [x1, x2] = [`${PREFIX}xl1`, `${PREFIX}xl2`];
+      const nights = { checkIn: "2031-11-10", checkOut: "2031-11-12" };
+      await createCrossLodgeSeason();
+      try {
+        await seed({
+          id: x1, lodgeId: LODGE_B, ...nights, createdAt: joined(1), alternates: [LODGE_A],
+          status: "WAITLIST_OFFERED", waitlistOfferExpiresAt: day("2026-06-30"), offeredLodgeId: LODGE_A,
+        });
+        await seed({ id: x2, lodgeId: LODGE_B, ...nights, createdAt: joined(2), alternates: [LODGE_A] });
+        await setCapacity(LODGE_A, 2);
+        await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
+        const rows = await prisma.booking.findMany({
+          where: { id: { in: [x1, x2] } },
+          select: { id: true, status: true, waitlistOfferedLodgeId: true },
+          orderBy: { id: "asc" },
+        });
+        expect(rows).toEqual([
+          { id: x1, status: "WAITLISTED", waitlistOfferedLodgeId: null },
+          { id: x2, status: "WAITLIST_OFFERED", waitlistOfferedLodgeId: LODGE_A },
+        ]);
+        // The expiry email quotes the first's place at its own lodge, where it is still first.
+        expect(vi.mocked(email.sendWaitlistOfferExpiredEmail)).toHaveBeenCalledWith(
+          expect.objectContaining({ bookingId: x1 }),
+          expect.any(String),
+          expect.any(String),
+          day(nights.checkIn),
+          day(nights.checkOut),
+          1,
+          LODGE_B,
+        );
+        // Not vacuous: a later pass with no lapse offers the first lodge A, so
+        // the quote does price it and only the lapse rule passed it over.
+        const { offeredBookingId } = await waitlist.processWaitlistForDates(
+          { checkIn: day(nights.checkIn), checkOut: day(nights.checkOut), lodgeId: LODGE_A },
+          CLUB_FORMAT_TEST,
+        );
+        expect(offeredBookingId).toBe(x1);
+      } finally {
+        // Bookings do not reference a season, so the season can go now.
+        await setCapacity(LODGE_A, 0);
+        await deleteCrossLodgeSeason();
+      }
+    });
+
+    it("under OWN_LODGE_FIRST, offers the place to a waiting opt-in before the lodge's own member who let it lapse", async () => {
+      // Owner decision, 23 Nov 2026: "own lodge first" does not protect a member
+      // whose offer just lapsed. The only lodge-A entry's offer lapses; an opt-in
+      // from lodge B (no room there) that fits lodge A is waiting behind it.
+      await setCrossLodgeOrder("OWN_LODGE_FIRST");
+      const [own, optIn] = [`${PREFIX}olf1`, `${PREFIX}olfx`];
+      const nights = { checkIn: "2031-11-20", checkOut: "2031-11-22" };
+      await createCrossLodgeSeason();
+      try {
+        await seed({ id: own, ...nights, createdAt: joined(1), status: "WAITLIST_OFFERED", waitlistOfferExpiresAt: day("2026-06-30") });
+        await seed({ id: optIn, lodgeId: LODGE_B, ...nights, createdAt: joined(2), alternates: [LODGE_A] });
+        await setCapacity(LODGE_A, 2);
+        await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
+        const rows = await prisma.booking.findMany({
+          where: { id: { in: [own, optIn] } },
+          select: { id: true, status: true, waitlistOfferedLodgeId: true },
+          orderBy: { id: "asc" },
+        });
+        expect(rows).toEqual([
+          { id: own, status: "WAITLISTED", waitlistOfferedLodgeId: null },
+          { id: optIn, status: "WAITLIST_OFFERED", waitlistOfferedLodgeId: LODGE_A },
+        ]);
+        // The lapsed member keeps its number at its own lodge.
+        expect(await shown([own])).toEqual({ [own]: 1 });
+        expect(vi.mocked(email.sendWaitlistOfferExpiredEmail)).toHaveBeenCalledWith(
+          expect.objectContaining({ bookingId: own }),
+          expect.any(String),
+          expect.any(String),
+          day(nights.checkIn),
+          day(nights.checkOut),
+          1,
+          LODGE_A,
+        );
+        // Not vacuous: a pass with no lapse offers the lodge's own member, so it
+        // could be offered and only the lapse rule put the opt-in ahead (before
+        // the decision, the own-lodge part came first and it was re-offered).
+        const { offeredBookingId } = await waitlist.processWaitlistForDates(
+          { checkIn: day(nights.checkIn), checkOut: day(nights.checkOut), lodgeId: LODGE_A },
+          CLUB_FORMAT_TEST,
+        );
+        expect(offeredBookingId).toBe(own);
+      } finally {
+        await setCapacity(LODGE_A, 0);
+        await deleteCrossLodgeSeason();
+      }
     });
   });
 

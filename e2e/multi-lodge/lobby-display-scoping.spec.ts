@@ -37,7 +37,7 @@ test("a device bound to lodge B renders lodge B's board and never lodge A's cont
   previousModules = await overrideModules(page.request, { lobbyDisplay: true });
 
   // Create a device explicitly bound to lodge B via the lodge picker.
-  // Devices management moved to /admin/display/devices (fork issue #109; the
+  // Devices management moved to /admin/display/devices (fork issue hoppers99/AlpineClubBookingsNZ#109; the
   // /admin/display route is now the Lobby Display hub).
   await page.goto("/admin/display/devices");
   await page.locator("#device-name").fill(deviceName);

@@ -4,14 +4,14 @@ import { prisma } from "@/lib/prisma";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
 
 /**
- * An administrator HIDING an Other lodges row (#58, owner decision): only a row
+ * An administrator HIDING an Other lodges row (triyder/AlpineClubBookingsNZ#58, owner decision): only a row
  * the central server does not list. Hidden, never removed: the row and its data
  * stay, so the bookings and booking requests that name it keep it, and it
  * leaves the Other lodges list and every drop-down. Never undone.
  *
- * #52 removed delete for other clubs' lodges on purpose: the server's registry
+ * triyder/AlpineClubBookingsNZ#52 removed delete for other clubs' lodges on purpose: the server's registry
  * is authoritative, and a lodge it still lists would only come back. Hide is
- * for the rows it does NOT list — duplicates left by a rename before #64, and
+ * for the rows it does NOT list — duplicates left by a rename before triyder/AlpineClubBookingsNZ#64, and
  * lodges deleted there before it told clubs about deletions — by the same rule
  * the panel marks them with (`isNotOnCentralServer`). The write is guarded on
  * the row still being unkeyed and visible, so a download that keyed it

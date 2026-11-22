@@ -33,12 +33,12 @@ export default async function AlpineServerSetupPage() {
           apiKeySet: setupState.apiKeySet,
           apiKeyUpdatedAt: setupState.apiKeyUpdatedAt,
           baseUrl: settings.baseUrl,
-          // #81: offered only while nothing is saved; the Save stores it.
+          // triyder/AlpineClubBookingsNZ#81: offered only while nothing is saved; the Save stores it.
           defaultBaseUrl: settings.baseUrl ? null : serverNzDefaultBaseUrl(),
           otherLodgesEnabled: settings.otherLodgesEnabled,
           otherLodgesLastUploadAt: settings.otherLodgesLastUploadAt,
           otherLodgesLastDownloadAt: settings.otherLodgesLastDownloadAt,
-          // The STORED answer (#49), shown at once; the component then asks
+          // The STORED answer (triyder/AlpineClubBookingsNZ#49), shown at once; the component then asks
           // the server once on entry through the version route.
           serverVersion: settings.serverVersion,
           serverVersionCheckedAt: settings.serverVersionCheckedAt,

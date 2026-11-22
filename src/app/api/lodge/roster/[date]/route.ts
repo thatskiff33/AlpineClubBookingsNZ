@@ -9,6 +9,7 @@ import { logAudit } from "@/lib/audit";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { lockRosterDate } from "@/lib/roster-lock";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const rosterActionSchema = z.discriminatedUnion("action", [
   z.object({
@@ -123,12 +124,9 @@ export async function PUT(
 
   const date = parseDateOnly(dateStr);
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = rosterActionSchema.safeParse(body);
   if (!parsed.success) {

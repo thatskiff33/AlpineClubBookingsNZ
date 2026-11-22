@@ -1,7 +1,7 @@
 /**
  * Is `value` an absolute `http:` or `https:` URL?
  *
- * THE ONE DEFINITION (`INV-SSOT-001`, #50). Before this module the identical
+ * THE ONE DEFINITION (`INV-SSOT-001`, triyder/AlpineClubBookingsNZ#50). Before this module the identical
  * seven-line function existed five times — the club config schema, the club
  * identity route, setup readiness, the runtime-config check and the other-lodges
  * registry — each written out by hand and each one a place the rule could drift.
@@ -29,7 +29,7 @@ export function isHttpUrl(value: string | null | undefined): boolean {
 }
 
 /**
- * The STRICTER rule for an address shown to other people as a link (#55): an
+ * The STRICTER rule for an address shown to other people as a link (triyder/AlpineClubBookingsNZ#55): an
  * Other lodge's booking page, which the Alpine Central Server hands to every
  * club. A copy (another repository) of the central server's `isSafeHttpUrl`
  * in AlpineClubServerNZ `src/lib/other-lodges.ts`, which refuses anything else

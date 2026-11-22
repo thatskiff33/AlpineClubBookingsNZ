@@ -9,7 +9,7 @@ import {
 import type { ClubDateFormat } from "@/lib/club-time";
 import { useClubFormat } from "@/components/club-format-provider";
 
-// Allocation-off status board (issue #115, closes #114; visual reference:
+// Allocation-off status board (issue hoppers99/AlpineClubBookingsNZ#115, closes hoppers99/AlpineClubBookingsNZ#114; visual reference:
 // origin five-panel mock O4 "When rooms aren't assigned"). Three status columns
 // for TONIGHT (window.start): Arriving / Staying / Leaving today — the plain
 // arrivals board grouped by status, with NO room boxes.

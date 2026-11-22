@@ -60,8 +60,8 @@ import {
   buildMemberLodgeRoster,
   DEFAULT_ROSTER_NAME_GRANULARITY,
   MEMBER_ROSTER_BOOKING_SELECT,
-  ROSTER_WINDOW_DAYS,
 } from "@/lib/member-lodge-roster";
+import { ROSTER_WINDOW_DAYS } from "@/lib/lodge-roster-window";
 
 const mockFindCustodianOccupants = findCustodianOccupants as unknown as ReturnType<
   typeof vi.fn
