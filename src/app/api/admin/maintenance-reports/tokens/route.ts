@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { getAppBaseUrl } from "@/lib/app-url";
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import logger from "@/lib/logger";
 import {
   buildMaintenanceReportSignUrl,
@@ -38,10 +39,6 @@ const postSchema = z.object({ lodgeId: z.string().trim().min(1).max(64) }).stric
 const patchSchema = z
   .object({ lodgeId: z.string().trim().min(1).max(64), active: z.boolean() })
   .strict();
-
-function clientIp(request: NextRequest) {
-  return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-}
 
 export async function GET() {
   const admin = await requireAdmin({
@@ -110,7 +107,7 @@ export async function POST(request: NextRequest) {
       // that a sign for this lodge was created or replaced, which is the auditable
       // fact; the secret itself is the thing the audit log must not hold.
       details: JSON.stringify({ lodgeId: lodge.id, rotated: minted.rotated }),
-      ipAddress: clientIp(request),
+      ipAddress: getClientIp(request),
       severity: "important",
       outcome: "success",
     });
@@ -175,7 +172,7 @@ export async function PATCH(request: NextRequest) {
       lodgeId: parsed.data.lodgeId,
       active: parsed.data.active,
     }),
-    ipAddress: clientIp(request),
+    ipAddress: getClientIp(request),
     severity: "important",
     outcome: "success",
   });

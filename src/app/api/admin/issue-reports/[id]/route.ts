@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { IssueReportOrigin } from "@prisma/client";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
@@ -179,8 +180,7 @@ export async function GET(
 
   const access = screenshotAccessFor(report, admin.session.user);
 
-  const ipAddress =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const ipAddress = getClientIp(request);
 
   logAudit({
     action: "issue_report.admin_viewed",
@@ -286,8 +286,7 @@ export async function PATCH(
         memberId: admin.session.user.id,
         targetId: id,
         details: parsed.data.note || "No note",
-        ipAddress:
-          request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown",
+        ipAddress: getClientIp(request),
         category: "privacy",
         outcome: "success",
       });
@@ -304,8 +303,7 @@ export async function PATCH(
         action: "issue_report.reopened",
         memberId: admin.session.user.id,
         targetId: id,
-        ipAddress:
-          request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown",
+        ipAddress: getClientIp(request),
         category: "privacy",
         outcome: "success",
       });
@@ -324,8 +322,7 @@ export async function PATCH(
         memberId: admin.session.user.id,
         targetId: id,
         details: parsed.data.reason || "Deleted by admin",
-        ipAddress:
-          request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown",
+        ipAddress: getClientIp(request),
         category: "privacy",
         severity: "important",
         outcome: "success",

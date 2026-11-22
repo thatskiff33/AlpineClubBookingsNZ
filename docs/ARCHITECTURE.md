@@ -764,8 +764,9 @@ Four rules, and they are all deliberate:
 **The census enforces D1 while the sweep finishes** (#4951,
 `INV-PUB-006`). `src/components/ui/__tests__/card-title-classification-census.test.ts`
 fails when any `CardTitle` under `src/app/(public)`, `src/app/(authenticated)`,
-`src/app/(website-dynamic)`, `src/app/(website)` or in the shared member cards
-it lists omits `headingLevel`, and holds the count of unclassified titles
+`src/app/(website-dynamic)`, `src/app/(website)`, `src/components/website` or
+in the shared member cards it lists omits `headingLevel`, and holds the count
+of unclassified titles
 everywhere else at exactly `UNCLASSIFIED_BASELINE` (253 when #4951 landed, 231
 after the member sweep, #5216). It fails both ways: a new unclassified title
 must be classified rather than raise the number, and a sweep that classifies
@@ -1255,7 +1256,8 @@ told apart) and hand the result to `apiErrorMessageFromBody`; do not spell the
 "unreadable counts as empty" rule again.
 `admin-failed-response-json-census.test.ts` fails on a new bare
 `await res.json()` read of a failed reply under `src/app/(admin)`, and in the
-password policy card (#5323 widens it to all of `src/components/admin`). It does
+admin components its own header names. That header, not this page, says how far
+into `src/components/admin` the census reaches. It does
 not see a `.then((r) => r.json())` chain or an `err.message` shown from a catch,
 so review those by eye. It has no allowance list: an unguarded failure read
 anywhere it scans fails.
@@ -1876,12 +1878,17 @@ input rather than clamping it, so the client value always matches storage. The
 same shortcut against a normalising route would silently diverge. Each card
 keeps its own `save` callback — the
 GET-fresh-then-merge step above, multi-endpoint writes, and per-endpoint failure
-copy all stay local — and throws the hook's `ForbiddenSaveError` for a 403 so it
-maps to the shared `ADMIN_FORBIDDEN_SAVE_REASON` copy. The hook's
-`saveRefusalFromResponse` reads a refused save into that error, or into the
+copy all stay local — and throws what the hook's `saveRefusalFromResponse` returns for a refused save.
+That helper returns a `ForbiddenSaveError`, which maps to the shared
+`ADMIN_FORBIDDEN_SAVE_REASON` copy, or the
 route's own worded 403 ("Two-factor verification required") when it carries
 one: only the bare word "Forbidden" or an unreadable body, such as a proxy's
-HTML page, becomes the shared copy (`wordedForbiddenRefusal`). Any other sentence the
+HTML page, becomes the shared copy (`wordedForbiddenRefusal`).
+A new card uses `saveRefusalFromResponse` and nothing else for a refused save: its callback
+throws what `saveRefusalFromResponse` returns for every non-2xx reply. It does
+not test for a 403 and throw `ForbiddenSaveError` itself, which shows the shared
+copy even when the server sent a more useful sentence; a card that still does
+is not a model to copy (#5347). Any other sentence the
 officer should read is thrown as an `ApiRefusalError`
 (`src/lib/api-error-message.ts`; `apiRefusalFromResponse` reads a route's
 refusal into one). Everything else (a request that never got an answer, an

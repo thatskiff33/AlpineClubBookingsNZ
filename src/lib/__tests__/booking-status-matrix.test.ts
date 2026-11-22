@@ -11,7 +11,6 @@ import {
   bookingStatusLifecycleRank,
   isBookingStatus,
   isCapacityHoldingBookingStatus,
-  isOperationalStayBookingStatus,
   isPaymentOwedBookingStatus,
 } from "@/lib/booking-status";
 
@@ -88,16 +87,12 @@ describe("booking status set matrix (issue #816)", () => {
   it("keeps each predicate consistent with its set across every BookingStatus", () => {
     const capacityHolding = new Set<string>(CAPACITY_HOLDING_BOOKING_STATUSES);
     const paymentOwed = new Set<string>(PAYMENT_OWED_BOOKING_STATUSES);
-    const operationalStay = new Set<string>(OPERATIONAL_STAY_BOOKING_STATUSES);
 
     for (const status of ALL_STATUSES) {
       expect(isCapacityHoldingBookingStatus(status)).toBe(
         capacityHolding.has(status),
       );
       expect(isPaymentOwedBookingStatus(status)).toBe(paymentOwed.has(status));
-      expect(isOperationalStayBookingStatus(status)).toBe(
-        operationalStay.has(status),
-      );
     }
   });
 

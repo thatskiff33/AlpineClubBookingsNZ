@@ -402,8 +402,9 @@ describe("aiDiagnostics is non-travelling (AID-2, #2371)", () => {
 
 // Guard against the #153 regression: every ClubModuleSettings read in this
 // category (export, plan, apply) must use the shared column select so a
-// retired-but-not-yet-dropped column never appears in the generated SQL (see
-// CLUB_MODULE_SETTINGS_COLUMN_SELECT in src/config/modules.ts and #150/#139).
+// retired-but-not-yet-ignored column never appears in a SELECT or RETURNING (see
+// CLUB_MODULE_SETTINGS_COLUMN_SELECT in src/config/modules.ts, #150 and
+// hoppers99/AlpineClubBookingsNZ#139).
 describe("club-module-settings singleton reads use the explicit column select", () => {
   it("declares the shared select on the SINGLETONS spec", () => {
     const spec = SINGLETONS.find((s) => s.entity === "club-module-settings");

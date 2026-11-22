@@ -377,29 +377,6 @@ export async function recordOtherLodgesDownload(
 }
 
 /**
- * Forget which lodges the central server said this club owns (#52): back to
- * "never told", which makes the panel read-only and stops the upload (#69)
- * until the next download records a fresh answer. Called when the
- * connection the list was issued for ends — the API key is removed or
- * replaced, or the server address moves (which removes the key) — because the
- * list is the OLD connection's answer and a different key or server may own
- * different lodges. `Prisma.DbNull` is the database NULL the loader reads as
- * "never told"; a JSON `null` would be a present-but-unreadable value.
- */
-export async function clearOtherLodgesOwnedNames(): Promise<void> {
-  await prisma.serverNzSettings.upsert({
-    where: { id: SERVERNZ_SETTINGS_ID },
-    create: { id: SERVERNZ_SETTINGS_ID },
-    update: {
-      otherLodgesOwnedNames: Prisma.DbNull,
-      otherLodgesOwnedNamesAt: null,
-      // The ids belong to the same connection's answer (#62).
-      otherLodgesOwnedLodges: Prisma.DbNull,
-    },
-  });
-}
-
-/**
  * Record what the central server said its API version is (#49): a canonical
  * `major.minor`, or `SERVER_VERSION_UNKNOWN` when it answered 404. Written
  * AFTER the HTTP call has completed, only through `recordServerVersionIfCurrent`
@@ -427,21 +404,6 @@ export async function recordServerVersionCheck(
 }
 
 /**
- * Forget the server's last reported version (#49): back to "never asked".
- * Called wherever the owned-lodge list is forgotten - the API key is removed
- * or replaced, or the server address moves - because the answer belonged to
- * that connection, and a different server may be on a different version. The
- * next server-bound request, or the next nightly sync, asks again.
- */
-export async function clearServerVersionCheck(): Promise<void> {
-  await prisma.serverNzSettings.upsert({
-    where: { id: SERVERNZ_SETTINGS_ID },
-    create: { id: SERVERNZ_SETTINGS_ID },
-    update: { serverVersion: null, serverVersionCheckedAt: null },
-  });
-}
-
-/**
  * Forget everything the central server told this connection, in ONE write:
  * the owned-lodge list (#52), transfer cursors and last reported version (#49).
  * Called when the connection ends - the key is removed or replaced, or the
@@ -451,7 +413,9 @@ export async function clearServerVersionCheck(): Promise<void> {
  * stale owned list editable under a new key. `db` is a fenced client (#4436):
  * the connection change it belongs to runs in
  * `withServerNzConnectionTransaction`, so the forget commits with the key or
- * address write, never on its own.
+ * address write, never on its own. `Prisma.DbNull` is the database NULL the
+ * loader reads as "never told"; a JSON `null` would be a present-but-unreadable
+ * value.
  */
 export async function forgetServerConnectionAnswers(
   db: ServerNzConnectionTx,

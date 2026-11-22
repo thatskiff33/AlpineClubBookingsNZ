@@ -209,11 +209,25 @@ let resetRateLimits: () => void;
     // The spent document was never written, so the older read could only have created it.
     expect((await rows()).map((row) => row.xeroDocumentId)).toEqual([later.cashCreditID]);
 
-    await clean();
-    await db.member.create({ data: {
-      id: MEMBER, email: "race-5204@example.invalid", passwordHash: "test-only", firstName: "Cash", lastName: "Credit",
-      ageTier: "ADULT", xeroContactId: contact, joinedDate: new Date("2026-01-01T00:00:00.000Z"),
-    } });
+    const startAgain = async () => {
+      await clean();
+      await db.member.create({ data: {
+        id: MEMBER, email: "race-5204@example.invalid", passwordHash: "test-only", firstName: "Cash", lastName: "Credit",
+        ageTier: "ADULT", xeroContactId: contact, joinedDate: new Date("2026-01-01T00:00:00.000Z"),
+      } });
+    };
+
+    // The other commit order (#5359): the older read lands first and writes the spent document as still open;
+    // the newer read then zeroes it and is the snapshot that stands.
+    await startAgain();
+    expect(await cash.applyXeroCashCreditSnapshot(older, olderStart, db)).toMatchObject({ written: 1, zeroed: 0, current: true });
+    expect(await open()).toEqual([[spent.cashCreditID, 10_000]]);
+    expect(await cash.applyXeroCashCreditSnapshot(newer, newerStart, db)).toMatchObject({ written: 1, zeroed: 1, current: true });
+    expect(await open()).toEqual(expected);
+    expect((await rows()).map((row) => [row.xeroDocumentId, row.remainingCents]).sort()).toEqual([[later.cashCreditID, 7_500], [spent.cashCreditID, 0]].sort());
+    expect((await cash.listXeroCashCreditQueue(db)).refreshedAt).toEqual(newerStart);
+
+    await startAgain();
     const outcomes = await Promise.all([
       cash.applyXeroCashCreditSnapshot(older, olderStart, db),
       cash.applyXeroCashCreditSnapshot(newer, newerStart, db),

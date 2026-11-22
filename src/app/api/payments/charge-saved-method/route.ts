@@ -26,6 +26,7 @@ import { z } from "zod";
 import logger from "@/lib/logger";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import { BookingStatus } from "@prisma/client";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import {
@@ -499,9 +500,7 @@ export async function POST(request: NextRequest) {
           amountCents: paymentIntent.amount,
           source: isAuthorizedCron ? "cron" : "admin",
         }),
-        ipAddress:
-          request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-          "unknown",
+        ipAddress: getClientIp(request),
       });
     } else {
       // The intent exists but did not capture (3DS challenge outstanding, still
@@ -660,9 +659,7 @@ export async function POST(request: NextRequest) {
               ? error.message
               : "Failed to charge saved payment method",
         }),
-        ipAddress:
-            request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-            "unknown",
+        ipAddress: getClientIp(request),
       });
     }
 

@@ -25,6 +25,7 @@ import {
   memberMoneyTestContext,
   MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS,
   type MemberMoneyScratchDatabase, MEMBER_MONEY_TEST_TAX_ANCHOR } from "./support/member-money-fixtures";
+import { runEveryTeardownStep } from "./support/teardown-steps";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -90,11 +91,11 @@ const untouchable = new Proxy({}, {
     await app.connect();
   }, MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS);
 
-  afterAll(async () => {
-    await appPrisma?.$disconnect();
-    await app?.end();
-    await scratch?.drop();
-  }, MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS);
+  afterAll(() => runEveryTeardownStep("member-money-posting.realdb", [
+    { what: "disconnect the application Prisma client", run: () => appPrisma?.$disconnect() },
+    { what: "end the application connection", run: () => app?.end() },
+    { what: "drop the scratch database", run: () => scratch?.drop() },
+  ]), MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS);
 
   it("commits a taxed CHARGE with a bridged legacy line, and it verifies", async () => {
     const legacy = "legacy-line-4626";

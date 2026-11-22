@@ -137,6 +137,16 @@ describe("openingCreditsAccountConflicts (#5209, for #4988)", () => {
     expect(openingCreditsAccountConflicts({ openingCreditsCode: "200", mappings })).toEqual(["hutFeeRefunds"]);
   });
 
+  it("MUTATION (#5375 item 2): never reports the Opening Credits key as a conflict with itself", () => {
+    // #4988 made `openingCredits` an account-mapping key, so its own row always matches its own code.
+    const mappings = [{ key: "openingCredits", code: "2100" }, { key: "hutFeeRefunds", code: "202" }];
+    expect(openingCreditsAccountConflicts({ openingCreditsCode: "2100", mappings })).toEqual([]);
+    // A real conflict beside it is still reported, alone.
+    expect(
+      openingCreditsAccountConflicts({ openingCreditsCode: "2100", mappings: [...mappings, { key: "stripeFees", code: "2100" }] }),
+    ).toEqual(["stripeFees"]);
+  });
+
   it("reports nothing when no key shares the code, or there is no code", () => {
     expect(openingCreditsAccountConflicts({ openingCreditsCode: "2999", mappings: [] })).toEqual([]);
     expect(openingCreditsAccountConflicts({ openingCreditsCode: "  ", mappings: [] })).toEqual([]);
