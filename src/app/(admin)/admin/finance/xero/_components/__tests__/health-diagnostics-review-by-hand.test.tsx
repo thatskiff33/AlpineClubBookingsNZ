@@ -161,7 +161,7 @@ describe("the contact-group Refresh line", () => {
       requestedContacts: CONTACT_GROUP_MISMATCH_LIMIT,
       resyncedContacts: CONTACT_GROUP_MISMATCH_LIMIT,
       removedContacts: 0,
-      overLimitContacts: 140,
+      flaggedContacts: 340,
       resyncedAt: "2026-07-01T00:00:00.000Z",
     })
     expect(line).toHaveTextContent(/^Re-synced 200 of 340 flagged contacts from Xero at .+\. Refresh again for the rest\.$/)
@@ -172,14 +172,14 @@ describe("the contact-group Refresh line", () => {
       requestedContacts: CONTACT_GROUP_MISMATCH_LIMIT,
       resyncedContacts: CONTACT_GROUP_MISMATCH_LIMIT,
       removedContacts: 0,
-      overLimitContacts: 0,
+      flaggedContacts: CONTACT_GROUP_MISMATCH_LIMIT,
       resyncedAt: "2026-07-01T00:00:00.000Z",
     })
     expect(line).toHaveTextContent(/^Re-synced 200 of 200 flagged contacts from Xero at [^.]+\.$/)
     expect(line).not.toHaveTextContent("Refresh again")
   })
 
-  // Blue-green: a server from before this fix sends no overLimitContacts.
+  // Blue-green: a server from before this fix sends no flaggedContacts.
   it("keeps the old line when an older server answers", async () => {
     const line = await refreshWith({
       requestedContacts: 3,

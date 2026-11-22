@@ -322,7 +322,7 @@ interface ContactCacheResyncSummary {
   resyncedAt: string
 }
 
-// The group endpoint also says how many flagged entries its limit left out.
+// The group endpoint also says how many distinct contacts are flagged in all.
 interface ContactGroupResyncSummary extends ContactGroupResyncCounts {
   resyncedAt: string
 }

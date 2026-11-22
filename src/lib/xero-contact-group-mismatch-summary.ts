@@ -75,30 +75,32 @@ export interface ContactGroupResyncCounts {
   /** Contacts Xero no longer has; their stale cache rows were removed. */
   removedContacts: number;
   /**
-   * Flagged entries past {@link CONTACT_GROUP_MISMATCH_LIMIT} that this
-   * Refresh left for the next one. An older server omits it (blue-green).
+   * Distinct contacts flagged across both full lists, before the per-kind
+   * {@link CONTACT_GROUP_MISMATCH_LIMIT} cap; more than `requestedContacts`
+   * means this Refresh left some for the next one. Counted like
+   * `requestedContacts`, so members sharing a contact count once. An older
+   * server omits it (blue-green).
    */
-  overLimitContacts?: number;
+  flaggedContacts?: number;
 }
 
 /**
  * The line the group and link mismatch panels show after a Refresh. Past the
  * limit it counts out of the true total and says to Refresh again, so a
  * capped re-sync never reads as done; the link route sends no
- * `overLimitContacts`, so its line never carries the hint.
+ * `flaggedContacts`, so its line never carries the hint.
  * `at` is the club-time the re-sync ran, already formatted.
  */
 export function describeContactResync(resync: ContactGroupResyncCounts, at: string): string {
   if (resync.requestedContacts === 0) {
     return `Nothing was flagged to re-sync; audit recomputed at ${at}.`;
   }
-  const overLimit = resync.overLimitContacts ?? 0;
-  const total = resync.requestedContacts + overLimit;
+  const total = Math.max(resync.flaggedContacts ?? 0, resync.requestedContacts);
   const removed =
     resync.removedContacts > 0
       ? ` (${resync.removedContacts} no longer exist in Xero; their stale cache entries were removed)`
       : "";
-  const rest = overLimit > 0 ? " Refresh again for the rest." : "";
+  const rest = total > resync.requestedContacts ? " Refresh again for the rest." : "";
   return `Re-synced ${resync.resyncedContacts} of ${total} flagged contact${total === 1 ? "" : "s"} from Xero at ${at}${removed}.${rest}`;
 }
 
