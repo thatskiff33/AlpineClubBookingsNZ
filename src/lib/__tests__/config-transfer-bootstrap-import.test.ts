@@ -28,6 +28,8 @@ vi.mock("@/config/club", async () => {
 
 import type { PrismaClient } from "@prisma/client";
 
+import { DEFAULT_MODULE_SETTINGS } from "@/config/modules";
+
 import { createAuditLog } from "@/lib/audit";
 import { runDatabaseBackup } from "@/lib/backup";
 import {
@@ -357,6 +359,59 @@ describe("runConfigBootstrapImport — fresh empty target", () => {
       sha256Hex(bytes),
     );
     expect(markerCall[1]).toBe(h.tx);
+  });
+});
+
+// Way 4 of switching AI Diagnostics on (#5243): the boot auto-import. It runs
+// the same pipeline as the admin import, so a bundle hand-edited to carry the
+// flag still cannot switch Diagnostics on without the Modules acknowledgement.
+describe("runConfigBootstrapImport — never switches AI Diagnostics on (#5243)", () => {
+  it("applies the rest of the module row and leaves the flag out of the write", async () => {
+    const h = harness();
+    const clubModuleSettings = {
+      findUnique: vi.fn(async () => null),
+      upsert: vi.fn(async () => ({})),
+    };
+    Object.assign(h.db, { clubModuleSettings });
+    Object.assign(h.tx, { clubModuleSettings });
+    const bytes = buildBundle({
+      entries: [
+        {
+          path: "club-settings/club-module-settings.json",
+          category: "club-settings",
+          rowCount: 1,
+          bytes: strToU8(
+            JSON.stringify({
+              ...DEFAULT_MODULE_SETTINGS,
+              bedAllocation: !DEFAULT_MODULE_SETTINGS.bedAllocation,
+              aiDiagnostics: true,
+            }),
+          ),
+        },
+      ],
+      appVersion: "0.14.0",
+      prismaMigration: null,
+      includedCategories: ["club-settings"],
+      doorCodesIncluded: false,
+      generatedAt: GENERATED_AT,
+    });
+
+    const result = await runConfigBootstrapImport({
+      db: h.db,
+      path: "/deploy/bundle.zip",
+      log: silentLog,
+      ...fileSeams(() => bytes),
+      applyImpl: applyConfigImport,
+    });
+
+    expect(result.outcome).toBe("applied");
+    expect(clubModuleSettings.upsert).toHaveBeenCalledTimes(1);
+    const args = (clubModuleSettings.upsert.mock.calls[0] as unknown as [
+      { create: Record<string, unknown>; update: Record<string, unknown> },
+    ])[0];
+    expect(args.create.bedAllocation).toBe(!DEFAULT_MODULE_SETTINGS.bedAllocation);
+    expect(args.create).not.toHaveProperty("aiDiagnostics");
+    expect(args.update).not.toHaveProperty("aiDiagnostics");
   });
 });
 
