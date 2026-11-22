@@ -30,8 +30,9 @@ const journalMock = vi.hoisted(() => ({
   postSubscriptionManualReceipt: vi.fn(async () => null),
   reverseSubscriptionManualReceipt: vi.fn(async () => null),
 }));
-vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
-  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+// Only the three doors this writer imports: the real module now loads a Xero
+// module while mocks load, before the Xero proxies below exist.
+vi.mock("@/lib/member-money/doors", () => ({
   resolveSubscriptionMoneyPostingContext: vi.fn(async () => ({ journal: "context" })),
   ...journalMock,
 }));

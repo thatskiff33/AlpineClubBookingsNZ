@@ -100,7 +100,7 @@ const UNREAD_COMPLETIONS: Readonly<Record<string, { writes: number; why: string 
     writes: 1,
     why: "standDown passes its own status parameter, typed as SUCCEEDED or CANCELLED and nothing else",
   },
-  "src/lib/membership-cancellation-xero.ts": {
+  "src/lib/membership-cancellation-uncreditable.ts": {
     writes: 2,
     why: "two skipped completions spread strandedInvoiceLinks, the stranded invoice's Xero object fields or nothing; neither names a status, so SUCCEEDED",
   },
