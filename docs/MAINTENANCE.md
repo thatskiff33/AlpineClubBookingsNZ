@@ -259,7 +259,7 @@ than the last install. Scope an override to its parent (`parent>name`) instead.
 | `browserslist` (`^4.28.7`) | **Security.** Two high advisories against `browserslist <= 4.28.6` — unbounded memory growth with no cache eviction (GHSA-c83g-rgw3-j3cx), and an uncaught crash / prototype write via untrusted `browserslist-stats.json` (GHSA-73wf-gq98-2v4g). Transitive only; nothing declares it directly. A **range**, not a pin, so it keeps floating with future patches. | every package that depends on browserslist (today `webpack` `^4.28.1`, `@babel/helper-compilation-targets` `^4.24.0`, and `update-browserslist-db`'s peer `>= 4.21.0`) *requires* 4.28.7 or later, meaning the lowest version its range accepts is 4.28.7 or higher (e.g. `^4.28.7`). A range that only *includes* 4.28.7 does not count, and `pnpm audit` cannot show this because highest-version resolution clears the advisory with or without the override. |
 | `ajv>fast-uri` (`^3.1.9`) | **Security, in build tooling only.** `fast-uri < 3.1.9` carries four advisories (GHSA-w74x-v6f9-j3xg, GHSA-xhq7-xmqj-769h, GHSA-wjr9-j795-jxcr, GHSA-333x-w4r6-6crp). It arrives only through `ajv@8` under Prisma's dev tooling (`prisma > @prisma/dev > @prisma/streams-local`), which the running application never loads. `ajv@8.20.0` accepts any `fast-uri@^3.0.1`, so the pin does not conflict with its range; remove it when the resolved version is at least 3.1.9 without it (#4326). |
 | `typed-rest-client>qs` (`^6.16.1`) | **Security, in development tooling only.** `qs 6.15.1` carries four moderate advisories (GHSA-q8mj-m7cp-5q26, GHSA-x5fp-wj9c-mxmx, GHSA-4mjr-xmp4-gh2g, GHSA-6pq8-jhm2-2vcw; all fixed by 6.16.1). It arrives only through `@stryker-mutator/core > typed-rest-client@2.3.1`, which pins qs at **exactly** 6.15.1, so this override sits outside the parent's declared range. Checked for #5252: typed-rest-client calls qs only in `Util.getUrlWithParsedQueryParams` (`qs.stringify` with standard options), reached by Stryker's dashboard reporter (not configured here) and `stryker init`; qs's changelog from 6.15.1 to 6.17.1 lists fixes and one new opt-in format, no breaking change; the call returns the same query strings on 6.17.1; and typed-rest-client 3.1.x itself declares `^6.16.1`. Cleared with the overrides that let the #5252 mitigation record apply. | `@stryker-mutator/core` depends on a `typed-rest-client` whose own qs range requires 6.16.1 or later (3.1.x does; Stryker 10.1.1 asks for `~2.3.0`). |
-| `minimatch@>=7.0.0 <11.0.1` (`^11.0.5`) | **Security, in development tooling only.** GHSA-g3hv-75wg-m249 (moderate) covers minimatch `>=7.0.0 <11.0.1` with no 10.x fix. The selector is the advisory's own range, so `minimatch@3.1.5` (under `eslint-plugin-import`, `-jsx-a11y` and `-react`, outside the range and on a different API) is untouched. It moves `eslint@10.14.0` (`^10.2.6`), `@eslint/config-array@0.23.5` (`^10.2.4`), `@typescript-eslint/typescript-estree@8.62.1` (`^10.2.2`) and `@stryker-mutator/core@10.1.1` (`~10.2.4`) **outside their declared ranges** onto the 11.0.5 that `glob` already used. Checked for #5252: 11.0's breaking changes remove `makeRe`, `Minimatch#regexp`, `AST`, `debug` and `matchOne` and change what `Minimatch.set` holds; none of the four parents uses any of them (they call `minimatch()`, `new Minimatch()`, `.match(path[, partial])`, `.negate`, `.pattern` and `.hasMagic()`); a differential of 10.2.6 against 11.0.5 over every glob in the repository's tool configs and every tracked path, in each parent's call shape, found no difference; and eslint, knip, vitest and the production build ran. | Each of those four parents requires 11.0.1 or later. eslint 10.15.0, `@eslint/config-array` 0.23.6 and typescript-eslint 8.73.0 already do, but were younger than the seven-day release age on 18 Nov 2026; Stryker 10.1.1 does not. |
+| `minimatch@>=7.0.0 <11.0.1` (`^11.0.5`) | **Security, in development tooling only.** GHSA-g3hv-75wg-m249 (moderate) covers minimatch `>=7.0.0 <11.0.1` with no 10.x fix. The selector is the advisory's own range, so `minimatch@3.1.5` (under `eslint-plugin-import`, `-jsx-a11y` and `-react`, outside the range and on a different API) is untouched. Today it moves two parents **outside their declared ranges** onto the 11.0.5 that `glob` already used: `@typescript-eslint/typescript-estree@8.62.1` (`^10.2.2`) and `@stryker-mutator/core@10.1.1` (`~10.2.4`). When it was added it also moved `eslint@10.14.0` (`^10.2.6`) and `@eslint/config-array@0.23.5` (`^10.2.4`); since #5414 `main` is on `eslint@10.15.0` and `@eslint/config-array@0.23.6`, which both declare `^11.0.5` themselves, so the override no longer changes what they resolve to (parents and ranges re-read from the lockfile and the installed packages on 22 Nov 2026). Checked for #5252, over the four parents it moved then: 11.0's breaking changes remove `makeRe`, `Minimatch#regexp`, `AST`, `debug` and `matchOne` and change what `Minimatch.set` holds; none of the four parents uses any of them (they call `minimatch()`, `new Minimatch()`, `.match(path[, partial])`, `.negate`, `.pattern` and `.hasMagic()`); a differential of 10.2.6 against 11.0.5 over every glob in the repository's tool configs and every tracked path, in each parent's call shape, found no difference; and eslint, knip, vitest and the production build ran. | Both remaining parents require 11.0.1 or later. typescript-eslint 8.73.0 does (`^11.0.1`), but `main` still resolves 8.62.1; Stryker 10.1.1 does not. |
 | `@prisma/config>effect` (`^3.22.1`) | **Security, in Prisma's configuration tooling.** GHSA-7589-6fvf-x4pw (high, CVE-2026-121707): `effect <=3.22.0` compiles `Schema.TemplateLiteral` templates with two or more string spans to a backtracking regular expression; fixed in 3.22.1. The installed `effect` arrives only through `prisma > @prisma/config`, and `@prisma/config@7.10.1`, the newest 7.x release, pins it at **exactly** 3.20.0, so this override takes `effect` **outside its parent's exact pin** (to 3.22.4). Checked for #5293: `@prisma/config` imports only `Schema.Struct`, `String`, `optional`, `Array`, `Boolean`, `NullOr`, `NonEmptyString`, `Any`, `mutable`, `decodeUnknownEither` and a schema's `make`, plus `Either` and `pipe` from `effect/Function`, never `Schema.TemplateLiteral`, and decodes only this repository's `prisma.config.ts`; Effect's changelog from 3.20.0 to 3.22.4 changes none of them (its one behaviour change, how a serialised `Cause.Fail` is named, is not used: `@prisma/config` throws the `ParseError` itself); the config still loads, an excess key is still refused with Effect's parse message, and Prisma generate, `migrate deploy`, the drift check, `prisma validate`, the data-migration verification suite and four real-database suites passed on PostgreSQL 16. **Not reached by this override:** the `prisma` command-line tool also bundles its own copy of `effect` 3.20.0 inside `build/cli.js`, which neither this override nor `pnpm audit` can reach. It loads `prisma.config.ts` through the installed `@prisma/config` (on 3.22.4), and the security review for #5293 found its bundled copy never builds a `Schema.TemplateLiteral` schema, so the weakness is not reachable through it. It is replaced when Prisma ships a release built on a fixed `effect`. | Prisma ships a release whose `@prisma/config` requires, and whose command-line tool bundles, `effect` 3.22.1 or later (keep `prisma`, `@prisma/client`, `@prisma/config` and `@prisma/adapter-pg` on one version). |
 
 ### The direct-dependency hold register
@@ -1089,6 +1089,9 @@ and by how much in total — run `pnpm run quality:budget --report`, or read the
 from the tree through the same function, so neither can drift from the other or
 from the gate.
 
+A deployment fork syncing down from upstream judges upstream's own changes
+differently; see [Syncing a fork from upstream](#syncing-a-fork-from-upstream).
+
 ### Function-length ratchet
 
 The file-size budget measures whole files, so a 2,000-line function inside a
@@ -1151,6 +1154,78 @@ function's real length, it is one-shot, an unneeded one fails, and it may not
 cover a new function or carry one over 300 for the first time. The hard ceiling
 is a file rule; a function allowance has no upper bound of its own.
 [`size-allowances.d/README.md`](../size-allowances.d/README.md) has the format.
+
+A deployment fork syncing down from upstream: see
+[Syncing a fork from upstream](#syncing-a-fork-from-upstream).
+
+### Syncing a fork from upstream
+
+Both ratchets judge one pull request at a time against its base. A deployment
+fork that syncs down from this repository's `main` moves its base across many
+upstream pull requests at once, so without help the gate refuses code upstream
+already reviewed: a function upstream took over 300 lines before the
+function ratchet existed reads as new, a file upstream moved under a heavy
+rewrite no longer reads as a rename, and every upstream `size-allowances.d/`
+fragment in the range arrives looking live (#5196).
+
+`pnpm run quality:budget --upstream-ref <ref>` names the upstream to trust.
+The rules, all in `scripts/lib/budget-upstream-ref.ts`:
+
+- **The trusted commit is the upstream `main` commit the checkout contains**:
+  the newest commit on `<ref>`'s first-parent history that `HEAD` contains,
+  not wherever upstream has got to since. An upstream tip the fork has not
+  merged adds no trust. First parent only, so a commit from the middle of a
+  merged upstream pull request's branch is never trusted: upstream's `main`
+  never carried it, and its gate never judged it on its own. That rests on
+  one assumption: first-parent history is what upstream's `main` carried only
+  while upstream lands every pull request with a merge commit, as `AGENTS.md`
+  -> "Completion and Merge" requires (step 4, merge with a merge commit). A
+  pull request that upstream fast-forwards or rebase-merges puts its
+  intermediate commits on `main`'s first-parent history, and a fork that
+  merged one of them would have it trusted. The module does not detect that,
+  so the rule is only as good as upstream's keeping to merge commits. If
+  `HEAD` contains no first-parent commit of `<ref>` at all, the run fails.
+- **Only the paths the sync brings in are trusted**: those upstream changed
+  between the fork's last meeting point with it and the trusted commit. Every
+  other path is judged against the fork's base as before.
+- **The longer of the two lengths is the previous length.** For a trusted
+  path, a file or function is judged against the longer of its length on the
+  fork's base and on the trusted commit, matched at the same path. So code
+  left as upstream wrote it passes with no allowance, while growth the fork
+  adds beyond upstream's length is judged as the fork's own and may need its
+  own allowance. A file past its hard ceiling upstream may stay as it is or
+  shrink, never grow.
+- **Upstream's fragments are spent.** A `size-allowances.d/` fragment whose
+  bytes equal the trusted commit's copy is not live, so it neither applies nor
+  fails as unused nor collides with the fork's own fragment for the same path.
+  A fragment the fork wrote or edited is judged as usual. Nothing upstream
+  merged has to be deleted or re-declared by hand.
+- The size-debt line still reports the change against the fork's base, so it
+  includes the debt the sync brings in.
+
+Every run with trust names the trusted commit, its subject, how many files or
+functions were judged against its length and how many fragments were ignored.
+When the trusted commit is `HEAD` itself (a fast-forward sync, or a push of
+one to the fork's `main`), there is no fork change to separate from upstream's,
+so the run prints `Trusted upstream ignored: resolves to HEAD` once and is
+otherwise exactly an ordinary run. An upstream ref that cannot be resolved
+fails the run, and so does `--upstream-ref` with no value.
+
+**In CI**, set the repository variable `QUALITY_BUDGET_UPSTREAM_REPO` to the
+upstream's `owner/repo` on the fork only; leave it unset here.
+`scripts/ci/run-budget-gate.mjs` then fetches that repository's `main`, without
+tags and needing no extra credentials, and passes it as `--upstream-ref`, on pull requests and on
+pushes. A malformed value or a failed fetch fails the step rather than falling
+back to an ordinary run. With the variable unset the step runs exactly
+`pnpm run quality:budget --base "$BUDGET_BASE"`. A private upstream cannot be
+fetched this way.
+
+A sync pull request merges upstream's `main` itself, and is merged with a merge
+commit, never a squash or rebase. The trusted commit has to be an upstream
+`main` commit among the fork's ancestors; a squash or rebase leaves none, so the
+push run on the fork's `main` judges upstream's code as the fork's own and goes
+red, and merging a single upstream pull request's commits trusts only the
+upstream `main` commit beneath them.
 
 ### Quality report
 
