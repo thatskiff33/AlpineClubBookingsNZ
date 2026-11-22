@@ -55,13 +55,9 @@ export async function POST(
   const { id: bookingId } = await params;
   const jsonBody = await parseJsonRequestBody(request);
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body;
-  const parsed = schema.safeParse(body);
+  const parsed = schema.safeParse(jsonBody.body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
 
   const { paymentIntentId } = parsed.data;

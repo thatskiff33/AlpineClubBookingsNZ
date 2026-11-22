@@ -94,10 +94,7 @@ export async function DELETE(
     rawSettlementMethod !== "card" &&
     rawSettlementMethod !== "credit"
   ) {
-    return NextResponse.json(
-      { error: "settlementMethod must be 'card' or 'credit'" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "settlementMethod must be 'card' or 'credit'" }, { status: 400 });
   }
   const settlementMethod = rawSettlementMethod as
     | BookingModificationSettlementMethod

@@ -252,21 +252,13 @@ export async function POST(
   const session = guard.session;
   const { id } = await params;
 
-  let body: {
-    action: "approve" | "reject" | "release";
-    note?: string;
-    notifyMember?: boolean;
-    confirmReleasedApproval?: boolean;
-  };
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
   const jsonBody = await parseJsonRequestBody(request);
   if (!jsonBody.ok) return jsonBody.response;
-  try {
-    body = actionSchema.parse(jsonBody.body);
-  } catch {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
-  }
+  const parsedBody = actionSchema.safeParse(jsonBody.body);
+  if (!parsedBody.success) return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  const body = parsedBody.data;
 
   // ONE request context for every audit row of this decision (#3454 review):
   // the canonical helper's proxy-appended hop, not the client-settable first.

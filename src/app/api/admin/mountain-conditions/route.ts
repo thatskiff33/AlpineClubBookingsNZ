@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
-import {
-  parseJsonRequestBody,
-  parseOptionalJsonRequestBody,
-} from "@/lib/api-json";
+import { parseJsonRequestBody, parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";

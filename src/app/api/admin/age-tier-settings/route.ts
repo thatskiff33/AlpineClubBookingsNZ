@@ -74,13 +74,9 @@ export async function PUT(request: NextRequest) {
   const session = guard.session;
   const jsonBody = await parseJsonRequestBody(request);
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body;
-  const parsed = putSchema.safeParse(body);
+  const parsed = putSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
 
   const settings: AgeTierSettingInput[] = parsed.data.settings.map((setting) => ({

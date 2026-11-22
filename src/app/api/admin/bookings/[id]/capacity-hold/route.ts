@@ -54,11 +54,8 @@ export async function POST(
 
   const jsonBody = await parseOptionalJsonRequestBody(request);
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body ?? {};
-  const parsed = capacityHoldSchema.safeParse(body);
-  const allowOverbook = parsed.success
-    ? Boolean(parsed.data.allowOverbook)
-    : false;
+  const parsed = capacityHoldSchema.safeParse(jsonBody.body ?? {});
+  const allowOverbook = parsed.success ? Boolean(parsed.data.allowOverbook) : false;
   const auditRequest = getAuditRequestContext(request);
 
   try {

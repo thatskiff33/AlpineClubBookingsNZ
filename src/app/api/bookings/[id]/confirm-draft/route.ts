@@ -79,8 +79,7 @@ export async function POST(
 
   // #2576 §7. The only field this route reads off the body: an officer's explicit
   // confirmation and reason for overriding a same-owner coverage refusal. Absent on
-  // every ordinary confirmation: the member's button sends no body at all, and an
-  // empty body is "no override". A malformed one is a 400 (#5407).
+  // every ordinary confirmation (the button sends no body); a malformed one is a 400 (#5407).
   const jsonBody = await parseOptionalJsonRequestBody(request);
   if (!jsonBody.ok) return jsonBody.response;
   const hostingOverride = readHostingCoverageOverride(jsonBody.body ?? null);

@@ -138,13 +138,9 @@ export async function POST(
 
   const jsonBody = await parseJsonRequestBody(req);
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body;
-  const parsed = createSchema.safeParse(body);
+  const parsed = createSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Validation failed", details: parsed.error.flatten() }, { status: 400 });
   }
 
   const { reason, requestedAmountCents } = parsed.data;

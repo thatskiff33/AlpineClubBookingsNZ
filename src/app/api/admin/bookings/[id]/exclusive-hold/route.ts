@@ -63,13 +63,9 @@ export async function POST(
 
   const jsonBody = await parseJsonRequestBody(request);
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body;
-  const parsed = exclusiveHoldSchema.safeParse(body);
+  const parsed = exclusiveHoldSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten().fieldErrors },
-      { status: 422 },
-    );
+    return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten().fieldErrors }, { status: 422 });
   }
   const { hold } = parsed.data;
   const auditRequest = getAuditRequestContext(request);

@@ -197,10 +197,7 @@ export async function PUT(
     }
     if (error instanceof PolicyVersionConflictError) return versionConflict(error)
     if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Validation failed", details: error.issues },
-        { status: 400 },
-      )
+      return NextResponse.json({ error: "Validation failed", details: error.issues }, { status: 400 })
     }
     return NextResponse.json(
       { error: "Failed to update minimum stay policy" },
@@ -276,10 +273,7 @@ export async function DELETE(
     }
     if (error instanceof PolicyVersionConflictError) return versionConflict(error)
     if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Validation failed", details: error.issues },
-        { status: 400 },
-      )
+      return NextResponse.json({ error: "Validation failed", details: error.issues }, { status: 400 })
     }
     return NextResponse.json(
       { error: "Failed to delete minimum stay policy" },

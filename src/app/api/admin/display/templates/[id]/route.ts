@@ -95,14 +95,11 @@ export async function PUT(
   });
   if (!guard.ok) return guard.response;
 
-  let body: z.infer<typeof putSchema>;
   const jsonBody = await parseJsonRequestBody(req);
   if (!jsonBody.ok) return jsonBody.response;
-  try {
-    body = putSchema.parse(jsonBody.body);
-  } catch {
-    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
-  }
+  const parsedBody = putSchema.safeParse(jsonBody.body);
+  if (!parsedBody.success) return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  const body = parsedBody.data;
 
   const { id } = await params;
   const existing = await prisma.displayTemplate.findUnique({

@@ -138,13 +138,9 @@ export async function PATCH(
   if (!recent.ok) return recent.response;
   const jsonBody = await parseJsonRequestBody(req);
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body;
-  const parsed = reviewSchema.safeParse(body);
+  const parsed = reviewSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "Validation failed", details: parsed.error.flatten() }, { status: 400 });
   }
 
   const booking = await prisma.booking.findUnique({

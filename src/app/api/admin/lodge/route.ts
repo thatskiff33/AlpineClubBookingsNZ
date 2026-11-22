@@ -276,13 +276,9 @@ export async function PUT(request: NextRequest) {
   const session = guard.session;
   const jsonBody = await parseJsonRequestBody(request);
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body;
-  const parsed = updateSchema.safeParse(body);
+  const parsed = updateSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
 
   const { email, password, firstName, lastName, lodgeId } = parsed.data;
@@ -421,13 +417,9 @@ export async function POST(request: NextRequest) {
   if (!recent.ok) return recent.response;
   const jsonBody = await parseJsonRequestBody(request);
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body;
-  const parsed = createSchema.safeParse(body);
+  const parsed = createSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
 
   const email = parsed.data.email.toLowerCase();

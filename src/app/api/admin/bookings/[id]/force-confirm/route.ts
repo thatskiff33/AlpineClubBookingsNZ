@@ -58,13 +58,9 @@ export async function POST(
 
   const jsonBody = await parseOptionalJsonRequestBody(request);
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body ?? {};
-  const parsed = forceConfirmSchema.safeParse(body);
+  const parsed = forceConfirmSchema.safeParse(jsonBody.body ?? {});
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
   const allowOverbook = parsed.data.allowOverbook ?? false;
   const notifyMember = parsed.data.notifyMember;

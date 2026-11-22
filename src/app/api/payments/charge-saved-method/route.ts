@@ -132,14 +132,10 @@ export async function POST(request: NextRequest) {
 
     const jsonBody = await parseJsonRequestBody(request);
     if (!jsonBody.ok) return jsonBody.response;
-    const body = jsonBody.body;
-    const parsed = ChargeSavedMethodSchema.safeParse(body);
+    const parsed = ChargeSavedMethodSchema.safeParse(jsonBody.body);
 
     if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid input", details: parsed.error.flatten() },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
     }
 
     const { bookingId } = parsed.data;

@@ -69,10 +69,7 @@ export async function POST(
       body.ownerContactMemberId.trim().length === 0 ||
       body.ownerContactMemberId.length > 64
     ) {
-      return NextResponse.json(
-        { error: "Invalid contact selection" },
-        { status: 422 }
-      );
+      return NextResponse.json({ error: "Invalid contact selection" }, { status: 422 });
     }
     ownerContactMemberId = body.ownerContactMemberId;
   }
