@@ -18,7 +18,8 @@ import {
   partnerLinkRequestSchema,
   partnerLinkRespondSchema,
 } from "@/lib/partner-link-request-schemas";
-import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { refuseOneStepPartnerForConnection } from "@/lib/partner-link-connection-guard";
 import {
   PARTNER_LINK_MESSAGE_CONNECTION_SHAPE,
   PARTNER_LINK_REQUEST_CONNECTION_SHAPE,
@@ -100,25 +101,8 @@ export async function POST(req: NextRequest) {
         { status: 404 }
       );
     }
-
-    // ALP-795: a family member with no login of their own cannot confirm, so
-    // declaring them forms the partnership at once. That is the member's own
-    // declaration, made on the website, never by an AI app connection.
-    if (arrivesAsMcpConnection(req)) {
-      const target = await prisma.member.findUnique({
-        where: { id: parsed.data.memberId },
-        select: { canLogin: true },
-      });
-      if (target && !target.canLogin) {
-        return NextResponse.json(
-          {
-            error:
-              "Declaring a family member without their own login as your partner confirms it at once, so it is done on the website.",
-          },
-          { status: 403 }
-        );
-      }
-    }
+    const refused = await refuseOneStepPartnerForConnection(req, parsed.data.memberId);
+    if (refused) return refused;
   }
 
   const result = await requestPartnerLink({
@@ -137,21 +121,10 @@ export async function POST(req: NextRequest) {
   // identically to an eligible one. The Partner card refetches state rather
   // than reading this body. Family memberId targets keep the richer body —
   // that path is fenced to the requester's own family group above.
-  if (parsed.data.email) {
-    return connectionJson(
-      req,
-      { message: result.message },
-      PARTNER_LINK_REQUEST_CONNECTION_SHAPE,
-      { status: 201 },
-    );
-  }
-
-  return connectionJson(
-    req,
-    { message: result.message, linkId: result.linkId, status: result.status },
-    PARTNER_LINK_REQUEST_CONNECTION_SHAPE,
-    { status: 201 },
-  );
+  const answer = parsed.data.email
+    ? { message: result.message }
+    : { message: result.message, linkId: result.linkId, status: result.status };
+  return connectionJson(req, answer, PARTNER_LINK_REQUEST_CONNECTION_SHAPE, { status: 201 });
 }
 
 /**

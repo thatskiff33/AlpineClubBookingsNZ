@@ -33,10 +33,7 @@ import {
 } from "@/lib/age-tier-enforcement";
 import { reconcileEmailInheritanceForMemberChange } from "@/lib/member-email-inheritance";
 import { parseJsonRequestBody } from "@/lib/api-json";
-import {
-  delegatedFamilyDetailsSchema,
-  familyMemberIdParamsSchema,
-} from "@/lib/family-group-request-schemas";
+import { delegatedFamilyDetailsSchema, familyMemberIdParamsSchema } from "@/lib/family-group-request-schemas";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { FAMILY_MEMBER_DETAILS_CONNECTION_SHAPE } from "@/lib/connection-shapes";
@@ -118,6 +115,7 @@ function serializeStatus(
  * (`src/lib/member-partner-link.ts`), any such adult can, in effect, become the
  * voucher. That is intended under #2284's invariant — but it is why no code may
  * treat this pointer as identifying a single, lead-appointed responsible adult.
+ * Also the AI app action `confirm_family_member_details` (ALP-795).
  */
 export async function PUT(
   req: NextRequest,
@@ -132,17 +130,11 @@ export async function PUT(
     return inactiveResponse;
   }
 
-  // Keyed on the AI app connection for one, on the address for a browser.
   const rateLimited = await applyRateLimit(rateLimiters.api, req);
   if (rateLimited) return rateLimited;
 
   const parsedParams = familyMemberIdParamsSchema.safeParse(await params);
-  if (!parsedParams.success) {
-    return NextResponse.json(
-      { error: "Family member not found" },
-      { status: 404 },
-    );
-  }
+  if (!parsedParams.success) return NextResponse.json({ error: "Family member not found" }, { status: 404 });
   const { memberId } = parsedParams.data;
 
   const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
@@ -395,20 +387,14 @@ export async function PUT(
     }
   }
 
-  // Also the AI app action `confirm_family_member_details` (ALP-795), which
-  // is sent the allow-listed fields only.
-  return connectionJson(
-    req,
-    {
-      member: {
-        id: updated.id,
-        firstName: updated.firstName,
-        lastName: updated.lastName,
-        ageTier: updated.ageTier,
-        canLogin: updated.canLogin,
-      },
-      profileStatus: serializeStatus(updated),
+  return connectionJson(req, {
+    member: {
+      id: updated.id,
+      firstName: updated.firstName,
+      lastName: updated.lastName,
+      ageTier: updated.ageTier,
+      canLogin: updated.canLogin,
     },
-    FAMILY_MEMBER_DETAILS_CONNECTION_SHAPE,
-  );
+    profileStatus: serializeStatus(updated),
+  }, FAMILY_MEMBER_DETAILS_CONNECTION_SHAPE);
 }
