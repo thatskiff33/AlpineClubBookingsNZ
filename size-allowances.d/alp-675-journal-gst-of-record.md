@@ -17,7 +17,7 @@ reason: the same create-side call and pause read as above, inside the one
   Splitting it is #4525's rendering work, not this change's.
 
 file: src/lib/stuck-state-dashboard.ts
-lines: 1096
+lines: 1094
 reason: the Finance dashboard gains its GST-overrides-paused item beside the
   other Xero items, in the one list of dashboard items; its sentence comes
   from the safeguard module.
