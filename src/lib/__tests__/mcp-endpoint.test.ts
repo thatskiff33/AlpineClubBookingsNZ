@@ -27,7 +27,7 @@ vi.mock("@/lib/mcp/dispatch", () => ({
 }));
 
 import * as mcpRoute from "@/app/api/mcp/route";
-import { MCP_ACTIONS } from "@/lib/mcp/catalogue";
+import { MCP_ACTIONS, mcpActionAdminRequirement } from "@/lib/mcp/catalogue";
 
 const { POST } = mcpRoute;
 
@@ -134,7 +134,10 @@ describe("POST /api/mcp: the tools", () => {
       tools: Array<{ name: string; inputSchema: { type: string }; annotations: Record<string, boolean> }>;
     };
     const names = tools.map((tool) => tool.name);
-    const core = MCP_ACTIONS.filter((action) => action.core).map((action) => action.id);
+    // The fixture member holds no admin area, so no officer action is listed.
+    const core = MCP_ACTIONS.filter((action) => action.core && mcpActionAdminRequirement(action) === null).map(
+      (action) => action.id,
+    );
     expect(names).toEqual(["who_am_i", ...core, "find_actions", "describe_action", "run_action"]);
     expect(names).not.toContain("get_my_credit_balance");
 

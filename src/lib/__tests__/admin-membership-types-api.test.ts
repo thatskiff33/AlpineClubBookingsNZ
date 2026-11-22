@@ -230,14 +230,14 @@ describe("Admin membership types API", () => {
   it("prevents non-admin users from reading membership types", async () => {
     mocks.auth.mockResolvedValue(memberSession);
 
-    const response = await getMembershipTypes();
+    const response = await getMembershipTypes(new Request("http://localhost/api/admin/membership-types"));
 
     expect(response.status).toBe(403);
     expect(mocks.membershipTypeFindMany).not.toHaveBeenCalled();
   });
 
   it("returns membership types with assignment counts for admins", async () => {
-    const response = await getMembershipTypes();
+    const response = await getMembershipTypes(new Request("http://localhost/api/admin/membership-types"));
     const body = await response.json();
 
     expect(response.status).toBe(200);

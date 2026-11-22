@@ -22,6 +22,7 @@ import {
   memberLifecycleRequestListQuerySchema,
   membershipCancellationRequestListQuerySchema,
 } from "@/lib/admin-membership-api/requests";
+import { communicationHistoryQuerySchema } from "@/lib/admin-membership-api/notices";
 import { escapeRegExp } from "@/lib/escape-regexp";
 
 import { stripComments } from "./support/strip-comments";
@@ -70,6 +71,10 @@ const SHARED_QUERY_SCHEMAS: Record<string, { name: string; shape: Record<string,
   "/api/admin/deletion-requests": {
     name: "deletionRequestListQuerySchema",
     shape: deletionRequestListQuerySchema.shape,
+  },
+  "/api/admin/communications/history": {
+    name: "communicationHistoryQuerySchema",
+    shape: communicationHistoryQuerySchema.shape,
   },
 };
 
