@@ -277,8 +277,8 @@ describe("the legacy adapter is an adapter, not a second implementation", () => 
       expect(
         source.includes("new Intl.DateTimeFormat"),
         `${adapter} builds its own Intl.DateTimeFormat again. It is a ` +
-          "compatibility adapter over @/lib/club-time (CT-2, #2990) and CT-6 (#2991) " +
-          "deletes it; a formatter here is a second rule system growing back under " +
+          "compatibility adapter over @/lib/club-time (CT-2, #2990) that #2991 (CT-6) " +
+          "closed with, kept as a reviewed adapter; a formatter here is a second rule system growing back under " +
           "the one the epic exists to establish.",
       ).toBe(false);
     }

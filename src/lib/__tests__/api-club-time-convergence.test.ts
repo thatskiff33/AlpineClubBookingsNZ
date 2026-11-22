@@ -35,7 +35,7 @@
  * has not been measured that way at all and no claim is made about it here; the
  * wrappers are shared, so expect a similar picture. Those wrappers — the
  * capacity, pricing, guest-stay, consent and email-template layers among them —
- * are group F's work and CT-6 (#2991) retires the module that remains. Saying so is not a caveat for form's sake:
+ * are group F's work, and #2991 (CT-6) closed with `date-only.ts` kept as a reviewed adapter. Saying so is not a caveat for form's sake:
  * `docs/CLUB_TIME_KERNEL.md` warns specifically against a guard whose headline
  * is "false and green", and a layer-wide claim backed by a file-level scan would
  * be exactly that.
@@ -60,8 +60,8 @@
  *   at all: they are the UTC encoding of a calendar day, which `date-only.ts` is
  *   the sanctioned home for (#2684, `INV-DATE-019`). Nothing about them is
  *   NZ-specific and none of them can be wrong about a club's civil time, so they
- *   are NOT banned here. CT-6 (#2991) retires the module itself; renaming those
- *   call sites ahead of it would also blind
+ *   are NOT banned here. #2991 (CT-6) closed with the module kept; renaming those
+ *   call sites would also blind
  *   `date-only-encoding-guard.test.ts`, whose scanner keys on the encoder names.
  *
  * `startOfDateOnlyForTimeZone` and `endOfDateOnlyForTimeZone` are zone-bearing
