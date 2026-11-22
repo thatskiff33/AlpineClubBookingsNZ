@@ -698,6 +698,44 @@ describe("evaluateComputedRatchet — a fork syncing down from a trusted upstrea
     expect(result.trustedUpstream?.lifted).toBe(0);
   });
 
+  it("judges a merged upstream side commit against the first-parent commit beneath it", () => {
+    // Upstream's pull request branch first takes `mod` past the hard ceiling
+    // of 2100 and adds `draft` past it too, then cuts both back before
+    // merging. A fork that merges only that first commit gets no trust for
+    // either length: upstream's main never carried them.
+    const repo = newRepo();
+    repo.write("src/mod.ts", 600);
+    repo.commit("common");
+    git(repo.root, "branch", "-M", "fork");
+    git(repo.root, "checkout", "--quiet", "-b", "upstream");
+    repo.write("src/mod.ts", 800);
+    const upstreamMain = repo.commit("upstream main");
+    git(repo.root, "checkout", "--quiet", "-b", "upstream-pr");
+    repo.write("src/mod.ts", 2500);
+    repo.write("src/draft.ts", 2500);
+    const sideCommit = repo.commit("pr: first draft");
+    repo.write("src/mod.ts", 800);
+    repo.write("src/draft.ts", 400);
+    repo.commit("pr: cut them back");
+    git(repo.root, "checkout", "--quiet", "upstream");
+    git(repo.root, "merge", "--quiet", "--no-ff", "--no-edit", "upstream-pr");
+    git(repo.root, "checkout", "--quiet", "fork");
+    repo.write("src/fork-only.ts", 10);
+    const base = repo.commit("fork work");
+    git(repo.root, "checkout", "--quiet", "-b", "sync");
+    git(repo.root, "merge", "--quiet", "--no-ff", "--no-edit", sideCommit);
+
+    const result = judgeTree(repo.root, base, "upstream");
+    expect(result.trustedUpstream?.sha).toBe(upstreamMain);
+    // `mod` is judged against the 800 upstream's main carried, not the 2500;
+    // `draft` is on no first-parent commit the fork holds, so it is simply new.
+    expect(kinds(result)).toEqual(["new-over-budget src/draft.ts", "grown-beyond-base src/mod.ts"]);
+    expect(result.findings.find((f) => f.file === "src/mod.ts")?.previous).toBe(
+      `800 LOC on trusted upstream ${upstreamMain.slice(0, 12)}`,
+    );
+    expect(result.findings.find((f) => f.file === "src/draft.ts")?.previous).toBeNull();
+  });
+
   it("fails when the named upstream cannot be resolved", () => {
     const repo = syncFixture();
     const result = judgeTree(repo.root, repo.base, "nope/main");
