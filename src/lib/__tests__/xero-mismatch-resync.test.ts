@@ -171,6 +171,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
         lastRefreshedAt: "2026-07-01T00:00:00.000Z",
         mismatchCount: 1,
         mismatches: [{ memberId: "m1", xeroContactId: "xc-1" }],
+        informationalCount: 0,
         informational: [],
       })
       // Recompute after the resync: the fix made inside Xero has landed in
@@ -180,6 +181,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
         lastRefreshedAt: "2026-07-01T00:00:00.000Z",
         mismatchCount: 0,
         mismatches: [],
+        informationalCount: 0,
         informational: [],
       });
     mockFetchContactsByIds.mockResolvedValue([{ contactID: "xc-1" }]);
@@ -215,6 +217,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
         lastRefreshedAt: "2026-07-01T00:00:00.000Z",
         mismatchCount: 1,
         mismatches: [{ memberId: "m1", xeroContactId: "xc-1" }],
+        informationalCount: 1,
         informational: [{ memberId: "m2", xeroContactId: "xc-org" }],
       })
       .mockResolvedValueOnce({
@@ -222,6 +225,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
         lastRefreshedAt: "2026-07-01T00:00:00.000Z",
         mismatchCount: 0,
         mismatches: [],
+        informationalCount: 0,
         informational: [],
       });
     mockFetchContactsByIds.mockResolvedValue([{ contactID: "xc-1" }, { contactID: "xc-org" }]);
@@ -245,6 +249,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
       lastRefreshedAt: "2026-07-01T00:00:00.000Z",
       mismatchCount: 0,
       mismatches: [],
+      informationalCount: 0,
       informational: [],
     });
     mockFetchContactsByIds.mockResolvedValue([]);
@@ -260,12 +265,46 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
     }
   });
 
+  // The panel counts out of the true total only if the route says how many
+  // flagged entries the limit left out of this Refresh.
+  it("reports the flagged entries the limit left out", async () => {
+    mockGroupSnapshot
+      .mockResolvedValueOnce({
+        cacheReady: true,
+        lastRefreshedAt: "2026-07-01T00:00:00.000Z",
+        mismatchCount: 5,
+        mismatches: [{ memberId: "m1", xeroContactId: "xc-1" }],
+        informationalCount: 3,
+        informational: [{ memberId: "m2", xeroContactId: "xc-org" }],
+      })
+      .mockResolvedValueOnce({
+        cacheReady: true,
+        lastRefreshedAt: "2026-07-01T00:00:00.000Z",
+        mismatchCount: 4,
+        mismatches: [],
+        informationalCount: 2,
+        informational: [],
+      });
+    mockFetchContactsByIds.mockResolvedValue([{ contactID: "xc-1" }, { contactID: "xc-org" }]);
+
+    const res = await resyncGroupMismatches(
+      postRequest("http://localhost/api/admin/xero/contact-group-mismatches", { limit: 1 })
+    );
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).resync).toMatchObject({
+      requestedContacts: 2,
+      overLimitContacts: 6,
+    });
+  });
+
   it("returns 409 without calling Xero when the cache has never been synced", async () => {
     mockGroupSnapshot.mockResolvedValue({
       cacheReady: false,
       lastRefreshedAt: null,
       mismatchCount: 0,
       mismatches: [],
+      informationalCount: 0,
       informational: [],
     });
 
@@ -284,6 +323,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
       lastRefreshedAt: "2026-07-01T00:00:00.000Z",
       mismatchCount: 1,
       mismatches: [{ memberId: "m1", xeroContactId: "xc-1" }],
+      informationalCount: 0,
       informational: [],
     });
     mockFetchContactsByIds.mockRejectedValue(new XeroDailyLimitError(3600));
@@ -302,6 +342,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
       lastRefreshedAt: "2026-07-01T00:00:00.000Z",
       mismatchCount: 1,
       mismatches: [{ memberId: "m1", xeroContactId: "xc-1" }],
+      informationalCount: 0,
       informational: [],
     });
     mockIsXeroConnected.mockResolvedValue(false);

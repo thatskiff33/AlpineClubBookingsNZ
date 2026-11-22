@@ -12,6 +12,7 @@ import { formatAgeTierName } from "@/lib/use-age-tier-options"
 import {
   contactGroupMismatchTotal,
   describeContactGroupMismatchCounts,
+  describeContactGroupResync,
   REVIEW_BY_HAND_REASON,
   reviewByHandFix,
   unexpectedManagedGroupRefs,
@@ -164,9 +165,7 @@ export function ContactGroupMismatchPanel({
               </p>
               {data.resync ? (
                 <p className="text-xs text-success">
-                  {data.resync.requestedContacts === 0
-                    ? `Nothing was flagged to re-sync; audit recomputed at ${clubTime.instantTime(requireInstant(data.resync.resyncedAt))}.`
-                    : `Re-synced ${data.resync.resyncedContacts} of ${data.resync.requestedContacts} flagged contact${data.resync.requestedContacts === 1 ? "" : "s"} from Xero at ${clubTime.instantTime(requireInstant(data.resync.resyncedAt))}${data.resync.removedContacts > 0 ? ` (${data.resync.removedContacts} no longer exist in Xero; their stale cache entries were removed)` : ""}.`}
+                  {describeContactGroupResync(data.resync, clubTime.instantTime(requireInstant(data.resync.resyncedAt)))}
                 </p>
               ) : null}
             </div>

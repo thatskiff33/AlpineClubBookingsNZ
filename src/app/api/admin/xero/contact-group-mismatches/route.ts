@@ -81,8 +81,14 @@ export async function POST(request: NextRequest) {
       ],
       "adminXeroContactGroupMismatchResync"
     );
+    // Entries the limit left out, so the panel counts out of the true total
+    // and says to Refresh again rather than reading as all done.
+    const overLimitContacts =
+      before.mismatchCount -
+      before.mismatches.length +
+      (before.informationalCount - before.informational.length);
     const snapshot = await getXeroMemberGroupingSnapshot(parsed.data);
-    return NextResponse.json({ ...snapshot, resync });
+    return NextResponse.json({ ...snapshot, resync: { ...resync, overLimitContacts } });
   } catch (error) {
     if (error instanceof XeroResyncUnavailableError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

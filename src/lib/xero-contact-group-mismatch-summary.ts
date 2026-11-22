@@ -66,6 +66,40 @@ export function describeContactGroupMismatchTotal(counts: {
   });
 }
 
+/** What a Refresh re-synced, as the mismatch route's POST reports it. */
+export interface ContactGroupResyncCounts {
+  /** Distinct contacts this Refresh asked Xero for (at most the limit per kind). */
+  requestedContacts: number;
+  /** Contacts Xero returned and whose cache rows were rewritten. */
+  resyncedContacts: number;
+  /** Contacts Xero no longer has; their stale cache rows were removed. */
+  removedContacts: number;
+  /**
+   * Flagged entries past {@link CONTACT_GROUP_MISMATCH_LIMIT} that this
+   * Refresh left for the next one. An older server omits it (blue-green).
+   */
+  overLimitContacts?: number;
+}
+
+/**
+ * The panel's line after a Refresh. Past the limit it counts out of the true
+ * total and says to Refresh again, so a capped re-sync never reads as done.
+ * `at` is the club-time the re-sync ran, already formatted.
+ */
+export function describeContactGroupResync(resync: ContactGroupResyncCounts, at: string): string {
+  if (resync.requestedContacts === 0) {
+    return `Nothing was flagged to re-sync; audit recomputed at ${at}.`;
+  }
+  const overLimit = resync.overLimitContacts ?? 0;
+  const total = resync.requestedContacts + overLimit;
+  const removed =
+    resync.removedContacts > 0
+      ? ` (${resync.removedContacts} no longer exist in Xero; their stale cache entries were removed)`
+      : "";
+  const rest = overLimit > 0 ? " Refresh again for the rest." : "";
+  return `Re-synced ${resync.resyncedContacts} of ${total} flagged contact${total === 1 ? "" : "s"} from Xero at ${at}${removed}.${rest}`;
+}
+
 /** Why an information-only entry is left to a person. */
 export const REVIEW_BY_HAND_REASON =
   "Members to review by hand match no grouping rule, so the re-sync never changes them.";
