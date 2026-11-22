@@ -150,9 +150,9 @@ const directJsonReadAllowlist: Record<
       "src/app/api/pay/[token]/payment-intent/route.ts",
     ],
   },
-  extraResponse: {
+  intentionalExtraResponse: {
     reason:
-      "The invalid-JSON 400 carries something the shared reader cannot send: an extra field such as a `code`, or response headers.",
+      "Permanent exception, not pending work. The invalid-JSON 400 carries something on purpose that the shared reader's bare answer cannot. admin/roster/[date]: a machine-readable `code` (ROSTER_JSON_INVALID) beside a roster-specific message, the same shape as that route's sibling answers (ROSTER_PARAMS_INVALID and others); no client reading this code was found, so the reason recorded is consistency with its siblings. lodge-maintenance/[token]: the `no-store` and `noindex` headers its docblock requires on every response of the unauthenticated token door, so a tokenised page is never cached or indexed.",
     routes: [
       "src/app/api/admin/roster/[date]/route.ts",
       "src/app/api/lodge-maintenance/[token]/route.ts",
