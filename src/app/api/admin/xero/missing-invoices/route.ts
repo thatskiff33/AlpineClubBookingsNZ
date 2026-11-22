@@ -1,5 +1,10 @@
-import { after, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { createAuditLog } from "@/lib/audit";
+import {
+  XERO_MISSING_INVOICES_CONNECTION_SHAPE,
+  XERO_MISSING_INVOICES_QUEUED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-xero-contacts";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 import { getMissingXeroInvoiceBookings } from "@/lib/xero-admin-health";
@@ -18,12 +23,12 @@ function scheduleAfterResponse(task: () => Promise<void>) {
   }
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   try {
     const snapshot = await getMissingXeroInvoiceBookings({ limit: 50 });
-    return NextResponse.json(snapshot);
+    return connectionJson(request, snapshot, XERO_MISSING_INVOICES_CONNECTION_SHAPE);
   } catch (error) {
     logger.error({ err: error }, "Failed to load bookings missing Xero invoices");
     return NextResponse.json(
@@ -33,7 +38,7 @@ export async function GET() {
   }
 }
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const session = guard.session;
@@ -41,13 +46,17 @@ export async function POST() {
     const snapshot = await getMissingXeroInvoiceBookings({ limit: 200 });
 
     if (snapshot.count === 0) {
-      return NextResponse.json({
-        ok: true,
-        found: 0,
-        queued: 0,
-        skipped: 0,
-        message: "No missing booking invoices found.",
-      });
+      return connectionJson(
+        request,
+        {
+          ok: true,
+          found: 0,
+          queued: 0,
+          skipped: 0,
+          message: "No missing booking invoices found.",
+        },
+        XERO_MISSING_INVOICES_QUEUED_CONNECTION_SHAPE,
+      );
     }
 
     let queued = 0;
@@ -116,7 +125,8 @@ export async function POST() {
       },
     });
 
-    return NextResponse.json(
+    return connectionJson(
+      request,
       {
         ok: true,
         found: snapshot.count,
@@ -128,6 +138,7 @@ export async function POST() {
             ? `Queued ${queued} missing booking invoice${queued === 1 ? "" : "s"} for background processing.`
             : "No missing booking invoices could be queued.",
       },
+      XERO_MISSING_INVOICES_QUEUED_CONNECTION_SHAPE,
       { status: queued > 0 ? 202 : 200 }
     );
   } catch (error) {

@@ -16,7 +16,13 @@ import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { buildXeroContactUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
-import { z } from "zod";
+import { projectForConnection } from "@/lib/connection-projection";
+import {
+  XERO_MEMBER_PUSHED_CONNECTION_SHAPE,
+  XERO_MEMBER_PUSH_SUGGESTIONS_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-xero-contacts";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
+import { xeroMemberContactPushBodySchema } from "@/lib/xero-member-contact-requests";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
@@ -36,15 +42,6 @@ import {
   XeroContactCreateInProgressError,
   XeroMemberUnavailableError,
 } from "@/lib/xero-contact-create-recovery";
-
-const pushSchema = z.object({
-  createEntranceFeeInvoice: z.boolean().optional().default(false),
-  entranceFeeInvoiceDecision: z.enum(["CREATE", "SKIP"]).optional(),
-  entranceFeeInvoiceSkipReason: z.string().trim().max(500).optional().nullable(),
-  entranceFeeInvoiceAmountCents: z.number().int().positive().max(1_000_000).optional(),
-  entranceFeeInvoiceNarration: z.string().trim().max(500).optional().nullable(),
-  forceCreate: z.boolean().optional().default(false),
-});
 
 function scheduleAfterResponse(task: () => Promise<void>) {
   try {
@@ -115,7 +112,7 @@ export async function POST(
       }
     }
 
-    const parsed = pushSchema.safeParse(body);
+    const parsed = xeroMemberContactPushBodySchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
     }
@@ -139,12 +136,17 @@ export async function POST(
     if (!parsed.data.forceCreate) {
       const suggestedContacts = await findPotentialXeroContactsForMember(id);
       if (suggestedContacts.length > 0) {
+        const refusal = {
+          error:
+            "Potential matching Xero contacts already exist. Link one of those contacts or confirm that you want to create a new contact anyway.",
+          suggestedContacts,
+        };
+        // A refusal reaches an AI app verbatim, so a connection is sent each
+        // suggestion without its email address or deep link (ALP-721).
         return NextResponse.json(
-          {
-            error:
-              "Potential matching Xero contacts already exist. Link one of those contacts or confirm that you want to create a new contact anyway.",
-            suggestedContacts,
-          },
+          arrivesAsMcpConnection(req)
+            ? projectForConnection(refusal, XERO_MEMBER_PUSH_SUGGESTIONS_CONNECTION_SHAPE)
+            : refusal,
           { status: 409 }
         );
       }
@@ -303,7 +305,7 @@ export async function POST(
 
     logger.info({ memberId: id, xeroContactId }, "Pushed member to Xero as new contact");
 
-    return NextResponse.json({
+    return connectionJson(req, {
       xeroContactId,
       // #2314: organisation-scoped, so the admin who just pushed lands in this
       // club's Xero rather than whichever organisation their session last used.
@@ -313,7 +315,7 @@ export async function POST(
       entranceFeeInvoiceQueued,
       entranceFeeInvoiceMessage,
       ...(warning ? { warning } : {}),
-    });
+    }, XERO_MEMBER_PUSHED_CONNECTION_SHAPE);
   } catch (err) {
     const helperPartial =
       err instanceof XeroContactCreatePartialSuccessError ? err : null;
