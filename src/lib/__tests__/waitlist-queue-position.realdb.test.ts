@@ -218,9 +218,31 @@ async function lapse(id: string) {
   await prisma.booking.update({ where: { id }, data: { waitlistOfferExpiresAt: day("2026-06-30") } });
 }
 
-// #5410: the cross-lodge case needs lodge A to price its nights, or the
-// cross-lodge quote refuses every opt-in and the case proves nothing.
+// #5410: the cross-lodge cases need lodge A to price their nights (November
+// 2031), or the cross-lodge quote refuses every opt-in and they prove nothing.
+// Each case creates the season and deletes it in its own `finally`.
 const CROSS_SEASON = `${PREFIX}season`;
+
+async function createCrossLodgeSeason() {
+  const nonMember = await prisma.membershipType.findUniqueOrThrow({ where: { key: "NON_MEMBER" } });
+  await prisma.season.create({
+    data: {
+      id: CROSS_SEASON,
+      name: "Queue 5410 cross-lodge",
+      type: "WINTER",
+      startDate: day("2031-11-01"),
+      endDate: day("2031-11-30"),
+      active: true,
+      lodgeId: LODGE_A,
+      membershipTypeRates: {
+        create: [
+          { membershipTypeId: nonMember.id, ageTier: "ADULT", pricePerNightCents: 5000 },
+          { membershipTypeId: nonMember.id, ageTier: null, pricePerNightCents: 5000 },
+        ],
+      },
+    },
+  });
+}
 
 async function deleteCrossLodgeSeason() {
   await prisma.membershipTypeSeasonRate.deleteMany({ where: { seasonId: CROSS_SEASON } });
@@ -505,24 +527,7 @@ async function deleteCrossLodgeSeason() {
       // The first's offer of lodge A lapses.
       const [x1, x2] = [`${PREFIX}xl1`, `${PREFIX}xl2`];
       const nights = { checkIn: "2031-11-10", checkOut: "2031-11-12" };
-      const nonMember = await prisma.membershipType.findUniqueOrThrow({ where: { key: "NON_MEMBER" } });
-      await prisma.season.create({
-        data: {
-          id: CROSS_SEASON,
-          name: "Queue 5410 cross-lodge",
-          type: "WINTER",
-          startDate: day("2031-11-01"),
-          endDate: day("2031-11-30"),
-          active: true,
-          lodgeId: LODGE_A,
-          membershipTypeRates: {
-            create: [
-              { membershipTypeId: nonMember.id, ageTier: "ADULT", pricePerNightCents: 5000 },
-              { membershipTypeId: nonMember.id, ageTier: null, pricePerNightCents: 5000 },
-            ],
-          },
-        },
-      });
+      await createCrossLodgeSeason();
       try {
         await seed({
           id: x1, lodgeId: LODGE_B, ...nights, createdAt: joined(1), alternates: [LODGE_A],
@@ -559,6 +564,53 @@ async function deleteCrossLodgeSeason() {
         expect(offeredBookingId).toBe(x1);
       } finally {
         // Bookings do not reference a season, so the season can go now.
+        await setCapacity(LODGE_A, 0);
+        await deleteCrossLodgeSeason();
+      }
+    });
+
+    it("under OWN_LODGE_FIRST, offers the place to a waiting opt-in before the lodge's own member who let it lapse", async () => {
+      // Owner decision, 23 Nov 2026: "own lodge first" does not protect a member
+      // whose offer just lapsed. The only lodge-A entry's offer lapses; an opt-in
+      // from lodge B (no room there) that fits lodge A is waiting behind it.
+      await setCrossLodgeOrder("OWN_LODGE_FIRST");
+      const [own, optIn] = [`${PREFIX}olf1`, `${PREFIX}olfx`];
+      const nights = { checkIn: "2031-11-20", checkOut: "2031-11-22" };
+      await createCrossLodgeSeason();
+      try {
+        await seed({ id: own, ...nights, createdAt: joined(1), status: "WAITLIST_OFFERED", waitlistOfferExpiresAt: day("2026-06-30") });
+        await seed({ id: optIn, lodgeId: LODGE_B, ...nights, createdAt: joined(2), alternates: [LODGE_A] });
+        await setCapacity(LODGE_A, 2);
+        await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
+        const rows = await prisma.booking.findMany({
+          where: { id: { in: [own, optIn] } },
+          select: { id: true, status: true, waitlistOfferedLodgeId: true },
+          orderBy: { id: "asc" },
+        });
+        expect(rows).toEqual([
+          { id: own, status: "WAITLISTED", waitlistOfferedLodgeId: null },
+          { id: optIn, status: "WAITLIST_OFFERED", waitlistOfferedLodgeId: LODGE_A },
+        ]);
+        // The lapsed member keeps its number at its own lodge.
+        expect(await shown([own])).toEqual({ [own]: 1 });
+        expect(vi.mocked(email.sendWaitlistOfferExpiredEmail)).toHaveBeenCalledWith(
+          expect.objectContaining({ bookingId: own }),
+          expect.any(String),
+          expect.any(String),
+          day(nights.checkIn),
+          day(nights.checkOut),
+          1,
+          LODGE_A,
+        );
+        // Not vacuous: a pass with no lapse offers the lodge's own member, so it
+        // could be offered and only the lapse rule put the opt-in ahead (before
+        // the decision, the own-lodge part came first and it was re-offered).
+        const { offeredBookingId } = await waitlist.processWaitlistForDates(
+          { checkIn: day(nights.checkIn), checkOut: day(nights.checkOut), lodgeId: LODGE_A },
+          CLUB_FORMAT_TEST,
+        );
+        expect(offeredBookingId).toBe(own);
+      } finally {
         await setCapacity(LODGE_A, 0);
         await deleteCrossLodgeSeason();
       }
