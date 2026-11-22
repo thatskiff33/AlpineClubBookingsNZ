@@ -3,6 +3,7 @@
  * compiler rebases (#5214), defined once so a link the checker validates in a
  * changelog fragment is the same link the compiler rewrites.
  */
+import { scanMarkdownFenceLines } from "./markdown-blocks.mjs";
 
 /**
  * The `(target` that follows a link's or image's closing `]`: spaces and at
@@ -49,12 +50,21 @@ export function inlineLinkTargets(text) {
   return found.sort((a, b) => a.start - b.start);
 }
 
+/** A link title: `"…"`, `'…'` or `(…)`, on the target's line. */
+const TITLE = String.raw`(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\))`;
+
 /**
  * A reference definition, `[label]: target`, at a line start; the target may
- * be `<bracketed, with spaces>` and may sit on the following line. Group 1 is
- * the lead, group 2 the target.
+ * be `<bracketed, with spaces>` and may sit on the following line. The target
+ * must end its line, optionally followed by a title, as CommonMark requires:
+ * otherwise a prose line such as `[Label]: some text`, or a bare `[note]:`
+ * followed by a sentence, would lend a word of prose as the target (#5214).
+ * Group 1 is the lead, group 2 the target.
  */
-const REF_DEF = /^([ \t]*\[[^\]\n]+\]:[ \t]*\n?[ \t]*)(<[^>\n]*>|\S+)/gm;
+const REF_DEF = new RegExp(
+  String.raw`^([ \t]*\[[^\]\n]+\]:[ \t]*\n?[ \t]*)(<[^>\n]*>|\S+)(?=[ \t]*\r?$|[ \t]+${TITLE}[ \t]*\r?$)`,
+  "gm",
+);
 
 /** Every reference-definition target in `text`, as `{ start, target }`. */
 export function refDefTargets(text) {
@@ -73,26 +83,28 @@ const CODE_SPAN = /`(?:[^`\n]|\n(?![ \t]*(?:\n|$)))*`/g;
 /**
  * `text` with fenced blocks and inline code spans blanked to spaces, keeping
  * every line break and offset, so link syntax shown as code is not read as a
- * link and an offset in the result is an offset in `text`.
+ * link and an offset in the result is an offset in `text`. Which lines are
+ * code is decided by the shared block scanner (`scanMarkdownFenceLines`), so
+ * a fence closes only on its own marker and length (#5214): a `~~~` line
+ * inside a backtick fence stays code.
  */
 export function maskCode(text) {
   const blank = (chunk) => chunk.replace(/[^\n]/g, " ");
+  const proseLines = new Set(scanMarkdownFenceLines(text).scannable.map(({ number }) => number));
   const out = [];
   let prose = [];
-  let inFence = false;
   const flushProse = () => {
     if (prose.length > 0) out.push(prose.join("\n").replace(CODE_SPAN, blank));
     prose = [];
   };
-  for (const line of text.split("\n")) {
-    if (FENCE_TOGGLE.test(line) || inFence) {
-      if (FENCE_TOGGLE.test(line)) inFence = !inFence;
+  text.split("\n").forEach((line, index) => {
+    if (proseLines.has(index + 1)) {
+      prose.push(line);
+    } else {
       flushProse();
       out.push(blank(line));
-    } else {
-      prose.push(line);
     }
-  }
+  });
   flushProse();
   return out.join("\n");
 }

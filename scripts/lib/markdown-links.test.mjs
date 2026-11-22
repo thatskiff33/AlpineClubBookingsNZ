@@ -51,6 +51,22 @@ describe("refDefTargets (#5214)", () => {
       { start: text.indexOf("y.md"), target: "y.md" },
     ]);
   });
+
+  it("takes a next-line target only when that line holds the target and at most a title", () => {
+    const text = "[a]:\n  x.md \"t\"\n[b]:\n  <y z.md> (t)\n[c]:\n  w.md 'u'  ";
+    expect(refDefTargets(text).map(({ target }) => target)).toEqual(["x.md", "<y z.md>", "w.md"]);
+    // A bare `[note]:` followed by a sentence lends no word of it as a target.
+    expect(refDefTargets("[note]:\nSee below")).toEqual([]);
+    expect(refDefTargets("[note]:\nsee.md and more")).toEqual([]);
+    expect(refDefTargets("[note]:\n  a.md title-without-quotes")).toEqual([]);
+  });
+
+  it("leaves a prose line shaped like a definition alone", () => {
+    expect(refDefTargets("[Label]: some text here")).toEqual([]);
+    expect(refDefTargets("[Label]: x.md, which explains it")).toEqual([]);
+    // A CRLF line ending still ends the target's line.
+    expect(refDefTargets("[a]: x.md\r\n")).toEqual([{ start: 5, target: "x.md" }]);
+  });
 });
 
 describe("maskCode (#5214)", () => {
@@ -63,5 +79,21 @@ describe("maskCode (#5214)", () => {
     // A code span may wrap, but a blank line ends it.
     expect(maskCode("`[a\n](b)` [c](d)")).toBe("   \n      [c](d)");
     expect(maskCode("`x\n\n[c](d)`")).toBe("`x\n\n[c](d)`");
+  });
+
+  it("closes a fence only on its own marker and length, as the shared block scanner does", () => {
+    const text = [
+      "[before](a.md)",
+      "````md",
+      "~~~",
+      "[example](b.md)",
+      "```",
+      "[still example](c.md)",
+      "````",
+      "[after](d.md)",
+    ].join("\n");
+    const masked = maskCode(text);
+    expect(masked).toHaveLength(text.length);
+    expect(inlineLinkTargets(masked).map(({ target }) => target)).toEqual(["a.md", "d.md"]);
   });
 });

@@ -857,6 +857,16 @@ describe("compile-changelog", () => {
     expect(() => rebaseFragmentLinks("  [out]: <../../x.md>", "x.md")).toThrow(/points outside the repository/);
   });
 
+  it("leaves prose after a bare `[label]:` and definition-shaped prose lines unchanged (#5214)", () => {
+    const body = ["- Notes follow.", "", "  [note]:", "  See below for the details.", "  [Label]: text that is prose, not a link."].join("\n");
+    expect(rebaseFragmentLinks(body, "x.md")).toBe(body);
+  });
+
+  it("leaves links in a backtick fence alone past a `~~~` line inside it (#5214)", () => {
+    const body = ["- Example:", "  ```md", "  ~~~", "  [a](../docs/A.md)", "  ```", "  See [b](../docs/B.md)."].join("\n");
+    expect(rebaseFragmentLinks(body, "x.md")).toBe(body.replace("(../docs/B.md)", "(docs/B.md)"));
+  });
+
   it("rebases fragments but leaves legacy Unreleased entries as written (#5214)", () => {
     // A legacy entry was written in CHANGELOG.md itself, so its links already
     // resolve from the root; rebasing it would break them.
