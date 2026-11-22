@@ -359,8 +359,10 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
   it("decides every lodge-life route (ALP-796), handing its officer powers to the officer stages", () => {
     expect(Object.values(MCP_NOT_YET_TASKS)).not.toContain("ALP-796");
     const officer = (file: string, method: string) => classifyMcpRoute(`src/app/api/${file}/route.ts`, method);
-    expect(officer("calendar/events", "POST")).toEqual({ kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.content}` });
-    expect(officer("calendar/events/[id]/join", "POST")).toEqual({ kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.content}` });
+    expect(officer("calendar/events", "POST")).toEqual({ kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.lodge}` });
+    expect(officer("calendar/events/[id]/join", "POST")).toEqual({ kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.lodge}` });
+    // Lodge edit, the area `canEditCalendarEvents` checks, as for `/admin/calendar`.
+    expect(officer("calendar/events/[id]", "DELETE")).toEqual({ kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.lodge}` });
     expect(officer("food-orders/[id]/price", "PATCH")).toEqual({ kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.lodge}` });
     expect(officer("chores/roster/[date]/print", "GET")).toEqual({ kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.lodge}` });
     // The member's side of the same routes is an action.

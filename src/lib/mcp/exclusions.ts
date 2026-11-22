@@ -204,19 +204,18 @@ const FINANCE_NOT_YET_PREFIXES: readonly string[] = ["/api/finance"];
 
 /**
  * Officer powers on lodge-life routes outside `/api/admin` (ALP-796), by
- * exact method and path: editing the events calendar and minting a meeting's
- * host link go to the content officer stage, pricing and receiving food
- * orders and printing the chore roster to the lodge officer stage. Their
- * member neighbours are actions or permanent exclusions.
+ * exact method and path, all for the lodge officer stage: editing the events
+ * calendar and minting a meeting's host link (Lodge edit,
+ * `hasCalendarManageViaAdmin`, as `/admin/calendar` is a Lodge page), pricing
+ * and receiving food orders and printing the chore roster. Their member
+ * neighbours are actions or permanent exclusions.
  */
 const OFFICER_NOT_YET_ROUTES: Readonly<Partial<Record<AdminPermissionArea, readonly string[]>>> = {
-  content: [
+  lodge: [
     "POST /api/calendar/events",
     "PATCH /api/calendar/events/[id]",
     "DELETE /api/calendar/events/[id]",
     "POST /api/calendar/events/[id]/join",
-  ],
-  lodge: [
     "PATCH /api/food-orders/[id]/price",
     "POST /api/food-orders/[id]/received",
     "GET /api/chores/roster/[date]/print",

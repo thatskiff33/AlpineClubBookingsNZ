@@ -243,7 +243,8 @@ The new route reuses the dashboard card's loader
 (`listUpcomingMemberWorkParties`) and is members only, like the work party
 page. Officer powers on these routes, such as editing events, minting a
 meeting's host link, pricing or receiving food orders and printing the chore
-roster, wait for the officer stages (ALP-723 and ALP-722).
+roster, wait for the Lodge officer stage (ALP-722): the calendar's editing
+rights are Lodge edit, as `/admin/calendar` is a Lodge page.
 
 ## What stays on the website, and why
 
