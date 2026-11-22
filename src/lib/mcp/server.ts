@@ -14,7 +14,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Session } from "next-auth";
 
-import { getAdminRouteRequirement, hasAdminAreaAccess, hasAdminPortalAccess } from "@/lib/admin-permissions";
+import { hasAdminAreaAccess, hasAdminPortalAccess } from "@/lib/admin-permissions";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { getAppVersion } from "@/lib/app-version";
 
@@ -23,6 +23,7 @@ import {
   findMcpWebsiteOnlyAction,
   MCP_ACTIONS,
   MCP_WEBSITE_ONLY_ACTIONS,
+  mcpActionAdminRequirement,
   mcpActionInputJsonSchema,
   type McpAction,
 } from "./catalogue";
@@ -110,11 +111,12 @@ const RUN_ACTION: ToolDescriptor = {
 
 /**
  * Whether this caller could ever run the action: an officer action is hidden
- * from a member without that permission area. The route still decides on the
- * call itself; this only keeps the list honest.
+ * from anyone without its admin area at its level, from the session's
+ * resolved permission matrix. The route still decides on the call itself;
+ * this only keeps the list honest.
  */
 export function mcpCallerMayUse(action: McpAction, session: Session): boolean {
-  const requirement = getAdminRouteRequirement(action.path, action.method);
+  const requirement = mcpActionAdminRequirement(action);
   return requirement === null || hasAdminAreaAccess(session.user, requirement);
 }
 

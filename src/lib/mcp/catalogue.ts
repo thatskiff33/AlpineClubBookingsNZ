@@ -14,8 +14,15 @@
  *
  * `mcp-route-census.test.ts` holds every route method in `src/app/api` to
  * either an entry here or a reasoned exclusion (`exclusions.ts`).
+ *
+ * The member's own actions are listed here. An officer area's actions live in
+ * a module of their own under `catalogue/` and are spread in below; each runs
+ * on a route that admin area gates, with the officer's real permissions
+ * (`mcpActionAdminRequirement`).
  */
 import { z } from "zod";
+
+import { getAdminRouteRequirement, type AdminAccessRequirement } from "@/lib/admin-permissions";
 
 import { availabilityQuerySchema } from "@/lib/availability-query-schema";
 import { bookingIdParamsSchema, cancelBookingMutationSchema } from "@/lib/booking-cancel-schema";
@@ -53,6 +60,8 @@ import { memberNotificationPreferencesConnectionUpdateSchema } from "@/lib/membe
 import { memberProfileConnectionUpdateSchema } from "@/lib/member-profile-update-schema";
 import { noticeIdParamsSchema } from "@/lib/notices-shared";
 import type { StepUpHttpMethod } from "@/lib/step-up-routes";
+
+import { MEMBERSHIP_MCP_ACTIONS } from "./catalogue/membership";
 
 /**
  * `read` changes nothing. `write` changes something the member can undo.
@@ -389,6 +398,8 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     returns: SKIFIELD_REPORT_CONNECTION_SHAPE,
     core: false,
   },
+  // Officer areas (ALP-719 onwards): shown only to an officer holding the area.
+  ...MEMBERSHIP_MCP_ACTIONS,
 ];
 
 export const MCP_WEBSITE_ONLY_ACTIONS: readonly McpWebsiteOnlyAction[] = [
@@ -418,6 +429,18 @@ export const MCP_WEBSITE_ONLY_ACTIONS: readonly McpWebsiteOnlyAction[] = [
 /** `/api/bookings/[id]` → `src/app/api/bookings/[id]/route.ts`. */
 export function mcpActionRouteFile(action: Pick<McpAction, "path">): string {
   return `src/app${action.path}/route.ts`;
+}
+
+/**
+ * The admin area and level an action needs, or null for a member action.
+ * An officer action is offered only to someone holding it (`server.ts`), and
+ * its route runs with the officer's real permissions, so the route's own
+ * guard decides the call exactly as it does for the officer's browser.
+ */
+export function mcpActionAdminRequirement(
+  action: Pick<McpAction, "path" | "method">,
+): AdminAccessRequirement | null {
+  return getAdminRouteRequirement(action.path, action.method);
 }
 
 export function findMcpAction(id: string): McpAction | undefined {

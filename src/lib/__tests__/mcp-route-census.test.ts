@@ -3,11 +3,14 @@ import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
+import { getAdminRouteRequirement } from "@/lib/admin-permissions";
 import {
   MCP_ACTIONS,
   MCP_WEBSITE_ONLY_ACTIONS,
+  mcpActionAdminRequirement,
   mcpActionRouteFile,
 } from "@/lib/mcp/catalogue";
+import { MEMBERSHIP_MCP_ACTIONS } from "@/lib/mcp/catalogue/membership";
 import {
   classifyMcpRoute,
   MCP_NOT_YET_TASKS,
@@ -16,6 +19,7 @@ import {
 } from "@/lib/mcp/exclusions";
 import { fileExists, hasExport, unwrap, walkDir } from "@/lib/step-up-route-census-ast";
 import {
+  adminRouteApiPath,
   STEP_UP_HTTP_METHODS,
   STEP_UP_ROUTES,
   stepUpRouteKey,
@@ -188,6 +192,22 @@ function officerReachOffMemberOnly(file: string, catalogued: ReadonlySet<string>
   return { decided, violations };
 }
 
+/** The exported handler of `method` in a route file, as source text, or null. */
+function handlerSource(file: string, method: string): string | null {
+  const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+  for (const statement of source.statements) {
+    if (ts.isFunctionDeclaration(statement) && hasExport(statement) && statement.name?.text === method) {
+      return statement.getText(source);
+    }
+    if (ts.isVariableStatement(statement) && hasExport(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name) && declaration.name.text === method) return declaration.getText(source);
+      }
+    }
+  }
+  return null;
+}
+
 function allRouteMethods(): Array<{ file: string; method: string }> {
   const files = new Set<string>();
   walkDir("src/app/api", files);
@@ -234,6 +254,32 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     expect(waiting).toEqual([]);
   });
 
+  it("leaves no route waiting on ALP-720, which decided the Membership admin area", () => {
+    expect(Object.values(MCP_NOT_YET_TASKS)).not.toContain("ALP-720");
+    const membership = routeMethods.filter(
+      (route) => getAdminRouteRequirement(adminRouteApiPath(route.file), route.method)?.area === "membership",
+    );
+    expect(membership.length).toBeGreaterThan(100);
+    for (const route of membership) {
+      const result = classifyMcpRoute(route.file, route.method);
+      expect(result.kind, `${route.method} ${route.file}`).not.toBe("unclassified");
+      if (result.kind === "excluded") expect(result.reason, `${route.method} ${route.file}`).not.toMatch(/^not-yet:/);
+    }
+    // The area is finished: a new membership route has to be decided, not deferred.
+    expect(classifyMcpRoute("src/app/api/admin/lockers/brand-new/route.ts", "GET")).toEqual({ kind: "unclassified" });
+  });
+
+  it("runs every Membership action on a route the area gates, answering a connection through its shape", () => {
+    expect(MEMBERSHIP_MCP_ACTIONS.length).toBeGreaterThan(0);
+    for (const action of MEMBERSHIP_MCP_ACTIONS) {
+      expect(mcpActionAdminRequirement(action)?.area, action.id).toBe("membership");
+      // Without the projection the whole website answer, with every field the
+      // screen uses, would reach the AI provider.
+      const handler = handlerSource(mcpActionRouteFile(action), action.method) ?? "";
+      expect(handler.includes("connectionJson("), `${action.id} answers through connectionJson`).toBe(true);
+    }
+  });
+
   it("points every catalogue entry at a route method that exists", () => {
     const stale = MCP_ACTIONS.filter(
       (action) => !routeKeys.has(stepUpRouteKey(mcpActionRouteFile(action), action.method)),
@@ -241,9 +287,11 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     expect(stale).toEqual([]);
   });
 
-  it("decides officer reach in a catalogued route only on the member-only user", () => {
+  it("decides officer reach in a member action's route only on the member-only user", () => {
     const methodsByFile = new Map<string, Set<string>>();
-    for (const action of MCP_ACTIONS) {
+    // An officer action runs with the officer's real permissions on a route its
+    // admin area gates; the test above holds it to that area instead.
+    for (const action of MCP_ACTIONS.filter((entry) => mcpActionAdminRequirement(entry) === null)) {
       const file = mcpActionRouteFile(action);
       methodsByFile.set(file, (methodsByFile.get(file) ?? new Set<string>()).add(action.method));
     }

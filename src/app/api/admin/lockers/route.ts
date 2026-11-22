@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
-import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { parseJsonRequestBody } from "@/lib/api-json";
@@ -10,16 +9,15 @@ import {
   resolveOptionalActiveLodgeId,
 } from "@/lib/lodges";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
-
-const createLockerSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .transform((value) => value.replace(/\s+/g, " "))
-    .pipe(z.string().min(1).max(200)),
-  allocatedToMemberId: z.string().trim().min(1).max(191).nullable().optional(),
-  lodgeId: z.string().min(1).optional(),
-});
+import {
+  createLockerSchema,
+  lockerListQuerySchema,
+} from "@/lib/admin-membership-api/lockers";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  LOCKER_CONNECTION_SHAPE,
+  LOCKER_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-lockers";
 
 async function findDuplicateLockerName(name: string, lodgeId: string) {
   // Per-lodge uniqueness with null tolerance: a null-lodge row is visible
@@ -39,7 +37,8 @@ async function findDuplicateLockerName(name: string, lodgeId: string) {
 
 /**
  * GET /api/admin/lockers
- * Returns lockers and active members for allocation dropdown.
+ * Returns lockers and active members for allocation dropdown. An AI app
+ * connection is sent the lockers only (ALP-720).
  */
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
@@ -51,7 +50,16 @@ export async function GET(request: NextRequest) {
 
   // Null-tolerant filter: rows without a lodgeId (pre-backfill or written by
   // a draining old colour during the expand deploy) show under every lodge.
-  const lodgeId = request.nextUrl.searchParams.get("lodgeId");
+  const query = lockerListQuerySchema.safeParse(
+    Object.fromEntries(request.nextUrl.searchParams),
+  );
+  if (!query.success) {
+    return NextResponse.json(
+      { error: "Invalid query parameters", details: query.error.flatten() },
+      { status: 400 },
+    );
+  }
+  const lodgeId = query.data.lodgeId;
   const [lockers, members] = await Promise.all([
     prisma.locker.findMany({
       where: lodgeId ? lodgeNullTolerantScope(lodgeId) : undefined,
@@ -69,7 +77,7 @@ export async function GET(request: NextRequest) {
     }),
   ]);
 
-  return NextResponse.json({ lockers, members });
+  return connectionJson(request, { lockers, members }, LOCKER_LIST_CONNECTION_SHAPE);
 }
 
 /**
@@ -160,7 +168,7 @@ export async function POST(request: Request) {
       return created;
     });
 
-    return NextResponse.json({ locker }, { status: 201 });
+    return connectionJson(request, { locker }, LOCKER_CONNECTION_SHAPE, { status: 201 });
   } catch (error) {
     if (
       isPrismaUniqueConstraintError(error) ||

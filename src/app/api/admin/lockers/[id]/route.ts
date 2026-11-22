@@ -1,21 +1,16 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
-import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
-
-const updateLockerSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .transform((value) => value.replace(/\s+/g, " "))
-    .pipe(z.string().min(1).max(200))
-    .optional(),
-  allocatedToMemberId: z.string().trim().min(1).max(191).nullable().optional(),
-});
+import { updateLockerSchema } from "@/lib/admin-membership-api/lockers";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  LOCKER_CONNECTION_SHAPE,
+  LOCKER_DELETED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-lockers";
 
 async function findDuplicateLockerName(
   name: string,
@@ -137,7 +132,7 @@ export async function PUT(
       return updated;
     });
 
-    return NextResponse.json({ locker });
+    return connectionJson(request, { locker }, LOCKER_CONNECTION_SHAPE);
   } catch (error) {
     if (
       isPrismaUniqueConstraintError(error) ||
@@ -162,7 +157,7 @@ export async function PUT(
  * Deletes a locker record after recording the previous allocation.
  */
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const guard = await requireAdmin({
@@ -203,5 +198,5 @@ export async function DELETE(
     );
   });
 
-  return NextResponse.json({ success: true });
+  return connectionJson(request, { success: true }, LOCKER_DELETED_CONNECTION_SHAPE);
 }
