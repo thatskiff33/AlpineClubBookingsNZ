@@ -160,28 +160,28 @@ only the rules.
   from `STEP_UP_ROUTES`, never copied), `auth-flow`, `provider`, `cron`,
   `kiosk`, `needs-browser`, `infrastructure`, `moves-money`, `declaration`,
   `public-visitor`, `website-flow`, `access-secrets`, `site-helper`. A member
-  route's reason names its exact method and path. A permanent exclusion beats
-  a catalogue entry.
+  route's reason names its exact method and path.
 - **A `not-yet:` reason names the follow-on task** from `MCP_NOT_YET_TASKS`
-  that brings the route in; that task adds its catalogue entries and
-  removes its rule in one change. A route in an undecided area stays
-  unclassified and fails the census.
+  that brings the route in, adding its entries and removing its rule in
+  one change. A route in an undecided area stays unclassified and fails the
+  census.
 - **The catalogue adds no behaviour or permission.** An action's request
   schemas and its `returns` shape are its route's, imported from
   lib modules ([`connection-shapes.ts`](../../src/lib/connection-shapes.ts)
   for shapes, `INV-SSOT-001`).
-- **A connection is sent only what its action returns.** A route the website
-  also reads answers a request carrying the principal header through
-  `connectionJson` or `projectForConnection`, which keep only the shape's
-  fields, at every depth; a refusal passes unchanged. Only a `POST` the
+- **A connection is sent only what its action returns.** A route answers a
+  connection through `connectionJson` or `projectForConnection`, which keep
+  only the shape's fields, at every depth; a refusal passes unchanged. Only a `POST` the
   census pins as side-effect free may run as a `preview` read.
 - **A connection acts as a member, never as an officer.** A route with an
   officer branch decides with `memberOnlySessionUser`: no officer role,
-  only `USER`/`ORG` access roles, an empty permission matrix. An on-behalf
-  target or officer override flag from a connection is refused. A reused
-  member page keeps its audience (privacy register row `ai-apps`):
-  committee-role notices (`notices.ts`) and the person's own actions in their
-  account history. Officer actions come with ALP-719.
+  only `USER`/`ORG` access roles, an empty permission matrix. Officer reach
+  read from records (committee, hut leader, nominator, Lodge Operations)
+  survives that, so the route refuses it for a connection too
+  (`ownOrdersOnlyFoodOrderViewer`, `!viaConnection`,
+  `arrivesAsMcpConnection(req) ? false`). An on-behalf target or officer
+  override flag from a connection is refused. A reused member page keeps its
+  audience (register row `ai-apps`). Officer actions come with ALP-719.
 
 ## INV-MCP-007
 
