@@ -10,6 +10,8 @@ import {
 import { createCalendarEvent } from "@/lib/calendar-service";
 import {
   calendarEventInputSchema,
+  CALENDAR_EVENT_LIST_DEFAULT_DAYS_AHEAD,
+  CALENDAR_EVENT_LIST_DEFAULT_DAYS_BACK,
   calendarEventListQuerySchema,
   resolveCalendarEventDates,
   serializeCalendarEvent,
@@ -61,10 +63,10 @@ export async function GET(req: NextRequest) {
   const now = Date.now();
   const from =
     parseRangeParam(query.from) ??
-    new Date(now - 90 * 24 * 60 * 60 * 1000);
+    new Date(now - CALENDAR_EVENT_LIST_DEFAULT_DAYS_BACK * 24 * 60 * 60 * 1000);
   let to =
     parseRangeParam(query.to) ??
-    new Date(now + 275 * 24 * 60 * 60 * 1000);
+    new Date(now + CALENDAR_EVENT_LIST_DEFAULT_DAYS_AHEAD * 24 * 60 * 60 * 1000);
   if (to.getTime() - from.getTime() > MAX_RANGE_MS) {
     to = new Date(from.getTime() + MAX_RANGE_MS);
   }

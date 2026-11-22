@@ -34,6 +34,11 @@ export const recurrenceInputSchema = z.object({
  * `INV-SSOT`). A bound that is not a date is ignored and its default used,
  * as the calendar page has always been answered.
  */
+/** The days before now `GET /api/calendar/events` lists when `from` is absent. */
+export const CALENDAR_EVENT_LIST_DEFAULT_DAYS_BACK = 90;
+/** The days after now it lists when `to` is absent. */
+export const CALENDAR_EVENT_LIST_DEFAULT_DAYS_AHEAD = 275;
+
 export const calendarEventListQuerySchema = z.object({
   from: z.string().optional(),
   to: z.string().optional(),

@@ -18,7 +18,11 @@
 import { z } from "zod";
 
 import { availabilityQuerySchema } from "@/lib/availability-query-schema";
-import { calendarEventListQuerySchema } from "@/lib/calendar-events";
+import {
+  CALENDAR_EVENT_LIST_DEFAULT_DAYS_AHEAD,
+  CALENDAR_EVENT_LIST_DEFAULT_DAYS_BACK,
+  calendarEventListQuerySchema,
+} from "@/lib/calendar-events";
 import {
   clubPostConnectionCreateSchema,
   clubPostListQuerySchema,
@@ -421,8 +425,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
   {
     id: "list_club_events",
     title: "List club events",
-    summary:
-      "Events on the club's calendar between `from` and `to` (ISO date-times; by default about three months back to nine months ahead): title, place, details, times, whether it is an online meeting, how it repeats, and the work party an entry belongs to. Joining a meeting happens on the website.",
+    summary: `Events on the club's calendar between \`from\` and \`to\` (ISO date-times; by default ${CALENDAR_EVENT_LIST_DEFAULT_DAYS_BACK} days back to ${CALENDAR_EVENT_LIST_DEFAULT_DAYS_AHEAD} days ahead): title, place, details, times, whether it is an online meeting, how it repeats, and the work party an entry belongs to. Joining a meeting happens on the website.`,
     method: "GET",
     path: "/api/calendar/events",
     query: calendarEventListQuerySchema,
