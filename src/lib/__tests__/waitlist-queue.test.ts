@@ -5,9 +5,12 @@ import {
   getDisplayedWaitlistPositions,
   getWaitlistPositions,
   isWaitlistPositionShown,
+  orderWaitlistOffers,
   orderWaitlistOpportunities,
   splitWaitlistOpportunities,
   waitlistCandidateWhere,
+  type WaitlistLapse,
+  type WaitlistLapseKey,
   type WaitlistQueueEntry,
 } from "@/lib/waitlist-queue";
 
@@ -500,6 +503,162 @@ describe("getWaitlistPositions and the display rule", () => {
           if (a === b) continue;
           expect(shown[a.id]! < shown[b.id]!).toBe(walkIndex(a.id) < walkIndex(b.id));
         }
+      }
+    },
+  );
+});
+
+describe("the walk after a lapsed offer (#5410, INV-CAP-042)", () => {
+  const byJoin = (rows: Row[]) =>
+    [...rows].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1));
+  const keyOf = (r: Row, offeredLodgeId = r.lodgeId): WaitlistLapseKey => ({
+    id: r.id,
+    lodgeId: r.lodgeId,
+    createdAt: r.createdAt,
+    offeredLodgeId,
+  });
+  /** A pass's lapse: `key` is the place being re-offered; `run` every lapse of the run. */
+  const lapseOf = (key: WaitlistLapseKey, run: WaitlistLapseKey[] = [key]): WaitlistLapse => ({ key, run });
+  const split = (rows: Row[], freedLodgeId = "lodge-a") =>
+    splitWaitlistOpportunities(byJoin(rows).map(asEntry), { freedLodgeId, defaultLodgeId: "lodge-a" });
+  const walk = (
+    rows: Row[],
+    mode: WaitlistCrossLodgeOrder | null,
+    lapse?: WaitlistLapse,
+    freedLodgeId = "lodge-a",
+  ) =>
+    orderWaitlistOffers(split(rows, freedLodgeId), mode, lapse).map(
+      (o) => `${o.candidate.id}${o.cross ? ":cross" : ""}`,
+    );
+
+  const four = () => [1, 2, 3, 4].map((n) => row({ id: `c${n}`, minute: n }));
+
+  it.each(["OWN_LODGE_FIRST", "MERGED"] as const)(
+    "walks the plain order when no lapse is passed, the way every other caller does (%s)",
+    (mode) => {
+      for (let seed = 1; seed <= 60; seed += 1) {
+        const rows = randomTable(seed, 12, seed % 2 === 0).filter((r) => r.status === "WAITLISTED" && !r.noEmails);
+        for (const freedLodgeId of LODGES) {
+          const opportunities = split(rows, freedLodgeId);
+          expect(orderWaitlistOffers(opportunities, mode)).toEqual(orderWaitlistOpportunities(opportunities, mode));
+        }
+      }
+    },
+  );
+
+  it.each(["OWN_LODGE_FIRST", "MERGED"] as const)(
+    "starts just after the lapsed place, wraps to the front and reaches the lapsed entry last (%s)",
+    (mode) => {
+      const rows = four();
+      expect(walk(rows, mode, lapseOf(keyOf(rows[0]!)))).toEqual(["c2", "c3", "c4", "c1"]);
+      expect(walk(rows, mode, lapseOf(keyOf(rows[1]!)))).toEqual(["c3", "c4", "c1", "c2"]);
+      // Lapsed at the end of the queue: the walk wraps straight to the front.
+      expect(walk(rows, mode, lapseOf(keyOf(rows[3]!)))).toEqual(["c1", "c2", "c3", "c4"]);
+    },
+  );
+
+  it("re-offers a queue of one: there is nobody else to give the place to", () => {
+    const only = [row({ id: "c1", minute: 1 })];
+    expect(walk(only, null, lapseOf(keyOf(only[0]!)))).toEqual(["c1"]);
+  });
+
+  it("rotates by the queue's own tie-break on an exact join-time tie", () => {
+    // "cb" and "ca" joined at the same instant; the queue puts "ca" first.
+    const rows = [row({ id: "c1", minute: 1 }), row({ id: "cb", minute: 2 }), row({ id: "ca", minute: 2 })];
+    expect(walk(rows, null)).toEqual(["c1", "ca", "cb"]);
+    expect(walk(rows, null, lapseOf(keyOf(rows[2]!)))).toEqual(["cb", "c1", "ca"]);
+    expect(walk(rows, null, lapseOf(keyOf(rows[1]!)))).toEqual(["c1", "ca", "cb"]);
+  });
+
+  it("leaves the order as it is when the lapsed key matches nothing", () => {
+    const rows = four();
+    const gone = keyOf(row({ id: "gone", minute: 2 }));
+    expect(walk(rows, "MERGED", lapseOf(gone))).toEqual(["c1", "c2", "c3", "c4"]);
+    // The right booking at a lodge it was never offered at matches nothing.
+    expect(walk(rows, "MERGED", lapseOf(keyOf(rows[0]!, "lodge-b")))).toEqual(["c1", "c2", "c3", "c4"]);
+  });
+
+  describe("with cross-lodge opportunities at the freed lodge A", () => {
+    // x1 and x2 wait at lodge B and named lodge A; a1 and a2 wait at A.
+    const mixed = () => [
+      row({ id: "x1", minute: 0, lodgeId: "lodge-b", alternates: ["lodge-a"] }),
+      row({ id: "a1", minute: 1 }),
+      row({ id: "x2", minute: 2, lodgeId: "lodge-b", alternates: ["lodge-a"] }),
+      row({ id: "a2", minute: 3 }),
+    ];
+
+    it("under OWN_LODGE_FIRST rotates only the part the lapsed opportunity is in", () => {
+      const rows = mixed();
+      expect(walk(rows, "OWN_LODGE_FIRST")).toEqual(["x1", "a1", "x2", "a2", "x1:cross", "x2:cross"]);
+      // An own-lodge lapse: the own-lodge part rotates; the cross-lodge part follows unchanged.
+      expect(walk(rows, "OWN_LODGE_FIRST", lapseOf(keyOf(rows[1]!)))).toEqual([
+        "x2", "a2", "x1", "a1", "x1:cross", "x2:cross",
+      ]);
+      // A cross-lodge lapse at A: only the cross-lodge part rotates, and x1's
+      // own-lodge opportunity at B keeps its place.
+      expect(walk(rows, "OWN_LODGE_FIRST", lapseOf(keyOf(rows[0]!, "lodge-a")))).toEqual([
+        "x1", "a1", "x2", "a2", "x2:cross", "x1:cross",
+      ]);
+    });
+
+    it("under MERGED rotates the one list, and a cross-lodge lapse moves only the offered lodge's opportunity last", () => {
+      const rows = mixed();
+      expect(walk(rows, "MERGED")).toEqual(["x1", "x1:cross", "a1", "x2", "x2:cross", "a2"]);
+      expect(walk(rows, "MERGED", lapseOf(keyOf(rows[1]!)))).toEqual([
+        "x2", "x2:cross", "a2", "x1", "x1:cross", "a1",
+      ]);
+      // x1's own-lodge opportunity wraps with everyone else who was ahead of
+      // the lapsed place; only the opportunity at A is the lapse.
+      expect(walk(rows, "MERGED", lapseOf(keyOf(rows[0]!, "lodge-a")))).toEqual([
+        "a1", "x2", "x2:cross", "a2", "x1", "x1:cross",
+      ]);
+    });
+  });
+
+  describe("two offers that lapse in one run", () => {
+    it("puts the run's other lapse just before the pass's own, so the queue behind them is reached", () => {
+      const rows = [1, 2, 3, 4, 5].map((n) => row({ id: `c${n}`, minute: n }));
+      const run = [keyOf(rows[0]!), keyOf(rows[1]!)];
+      // c1's place: c2 lapsed too, so c3 is considered first.
+      expect(walk(rows, null, lapseOf(run[0]!, run))).toEqual(["c3", "c4", "c5", "c2", "c1"]);
+      // c2's place, once c3 holds an offer: c4 is next, then the two who lapsed.
+      const withoutC3 = rows.filter((r) => r.id !== "c3");
+      expect(walk(withoutC3, null, lapseOf(run[1]!, run))).toEqual(["c4", "c5", "c1", "c2"]);
+    });
+
+    it("still re-offers the two of them when nobody else is waiting", () => {
+      const rows = [row({ id: "c1", minute: 1 }), row({ id: "c2", minute: 2 })];
+      const run = [keyOf(rows[0]!), keyOf(rows[1]!)];
+      expect(walk(rows, null, lapseOf(run[0]!, run))).toEqual(["c2", "c1"]);
+      // c2 now holds the offer, so only c1 is left for c2's place.
+      expect(walk([rows[0]!], null, lapseOf(run[1]!, run))).toEqual(["c1"]);
+    });
+
+    it("moves another lapse only at the lodge it was offered", () => {
+      // c2's offer that lapsed was a cross-lodge one at lodge B, so its
+      // opportunity at its own lodge A is not moved.
+      const rows = [
+        row({ id: "c1", minute: 1 }),
+        row({ id: "c2", minute: 2, alternates: ["lodge-b"] }),
+        row({ id: "c3", minute: 3 }),
+      ];
+      const run = [keyOf(rows[0]!), keyOf(rows[1]!, "lodge-b")];
+      expect(walk(rows, null, lapseOf(run[0]!, run))).toEqual(["c2", "c3", "c1"]);
+    });
+  });
+
+  it.each(["OWN_LODGE_FIRST", "MERGED"] as const)(
+    "is a reordering of the plain walk, never a filter, with the lapse last in its part (%s)",
+    (mode) => {
+      for (let seed = 1; seed <= 40; seed += 1) {
+        const rows = randomTable(seed, 12, false).filter((r) => r.status === "WAITLISTED" && !r.noEmails);
+        if (rows.length === 0) continue;
+        const lapsed = rows[seed % rows.length]!;
+        const run = [keyOf(lapsed), keyOf(rows[(seed * 7) % rows.length]!)];
+        const rotated = walk(rows, mode, lapseOf(run[0]!, run));
+        expect([...rotated].sort()).toEqual(walk(rows, mode).sort());
+        const part = mode === "MERGED" ? rotated : rotated.filter((label) => !label.endsWith(":cross"));
+        expect(part.at(-1)).toBe(lapsed.id);
       }
     },
   );

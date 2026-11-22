@@ -1833,6 +1833,119 @@ describe("expireStaleOffers", () => {
   });
 });
 
+describe("a lapsed offer's place goes on down the queue (#5410, INV-CAP-042)", () => {
+  function queued(id: string, createdAt: string, nights = { checkIn: new Date("2026-09-10"), checkOut: new Date("2026-09-12") }) {
+    return {
+      id,
+      memberId: `m-${id}`,
+      lodgeId: "lodge-1",
+      ...nights,
+      createdAt: new Date(createdAt),
+      totalPriceCents: 20000,
+      finalPriceCents: 20000,
+      guests: [{ id: `g-${id}`, ageTier: "ADULT", isMember: true, memberId: `m-${id}`, nights: [] }],
+      member: { id: `m-${id}`, email: `${id}@test.com`, firstName: id, lastName: "Queue" },
+      waitlistAlternateLodges: [],
+      promoRedemptions: [],
+    };
+  }
+  function lapsedOffer(id: string, createdAt: string, nights = { checkIn: new Date("2026-09-10"), checkOut: new Date("2026-09-12") }) {
+    return {
+      id,
+      lodgeId: "lodge-1",
+      waitlistOfferedLodgeId: null,
+      ...nights,
+      createdAt: new Date(createdAt),
+      member: { email: `${id}@test.com`, firstName: id },
+    };
+  }
+  /** The offer passes' candidate reads (the position reads `select`, these `include`). */
+  function candidateReads() {
+    return mockTxBookingFindMany.mock.calls
+      .map(([args]) => args as { where: { status?: string; checkIn?: { lt: Date } }; include?: unknown })
+      .filter((args) => args.where?.status === "WAITLISTED" && args.include !== undefined);
+  }
+  /** The bookings offered, in order (the offer-time reprice also updates the booking). */
+  function offeredIds() {
+    return mockTx.booking.update.mock.calls
+      .map(([args]) => args as { where: { id: string }; data: { status?: string } })
+      .filter((args) => args.data.status === "WAITLIST_OFFERED")
+      .map((args) => args.where.id);
+  }
+
+  beforeEach(async () => {
+    const { checkCapacityForGuestRanges } = await import("@/lib/capacity");
+    vi.mocked(checkCapacityForGuestRanges).mockResolvedValue({ available: true, minAvailable: 2, nightDetails: [] });
+    mockTx.booking.update.mockResolvedValue({});
+  });
+
+  it("a pass given no lapse offers the head of the queue; told the head just lapsed, it offers the next", async () => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const queue = [queued("q1", "2026-05-01"), queued("q2", "2026-05-02"), queued("q3", "2026-05-03")];
+    const range = { checkIn: new Date("2026-09-10"), checkOut: new Date("2026-09-12"), lodgeId: "lodge-1" };
+    mockTxBookingFindMany.mockResolvedValueOnce(queue).mockResolvedValue([]);
+    expect((await processWaitlistForDates(range, CLUB_FORMAT_TEST)).offeredBookingId).toBe("q1");
+
+    mockTxBookingFindMany.mockReset();
+    mockTxBookingFindMany.mockResolvedValueOnce(queue).mockResolvedValue([]);
+    const key = { id: "q1", lodgeId: "lodge-1", createdAt: queue[0]!.createdAt, offeredLodgeId: "lodge-1" };
+    const { offeredBookingId } = await processWaitlistForDates(range, CLUB_FORMAT_TEST, { key, run: [key] });
+    expect(offeredBookingId).toBe("q2");
+  });
+
+  it("re-offers the lapsed place to the next person in the same run, keeping the lapsed booking WAITLISTED", async () => {
+    const { expireStaleOffers } = await import("@/lib/waitlist");
+    mockTxBookingFindMany
+      .mockResolvedValueOnce([lapsedOffer("q1", "2026-05-01")]) // the lapsed offers
+      .mockResolvedValueOnce([]) // the expiry emails' position read
+      // The pass's candidate read: q1 is back in its original place.
+      .mockResolvedValueOnce([queued("q1", "2026-05-01"), queued("q2", "2026-05-02")])
+      .mockResolvedValue([]);
+
+    const result = await expireStaleOffers(CLUB_FORMAT_TEST);
+
+    expect(result).toEqual({ expiredCount: 1, reofferedCount: 1 });
+    expect(offeredIds()).toEqual(["q2"]);
+    expect(mockTx.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "q1", status: "WAITLIST_OFFERED" }, data: expect.objectContaining({ status: "WAITLISTED" }) }),
+    );
+  });
+
+  it("makes one pass per lapsed offer in join order, even for two on the same nights at the same lodge", async () => {
+    const { expireStaleOffers } = await import("@/lib/waitlist");
+    // Read newest first, so join order has to come from the sort.
+    mockTxBookingFindMany
+      .mockResolvedValueOnce([lapsedOffer("q2", "2026-05-02"), lapsedOffer("q1", "2026-05-01")])
+      .mockResolvedValueOnce([]) // the expiry emails' position read
+      .mockResolvedValueOnce(["q1", "q2", "q3", "q4"].map((id, i) => queued(id, `2026-05-0${i + 1}`))) // q1's pass
+      .mockResolvedValueOnce([]) // its offer-time position read
+      .mockResolvedValueOnce(["q1", "q2", "q4"].map((id) => queued(id, `2026-05-0${id.slice(1)}`))) // q2's pass
+      .mockResolvedValue([]);
+
+    const result = await expireStaleOffers(CLUB_FORMAT_TEST);
+
+    // Two passes where the old per-range grouping made one. q1's place goes
+    // to q3 (q2 lapsed in the same run, so it comes after q3 and q4), and q2's
+    // to q4: neither member who let an offer lapse is offered straight back.
+    expect(candidateReads()).toHaveLength(2);
+    expect(result).toEqual({ expiredCount: 2, reofferedCount: 2 });
+    expect(offeredIds()).toEqual(["q3", "q4"]);
+  });
+
+  it("orders the passes by join time, not by the order the lapsed offers were read", async () => {
+    const { expireStaleOffers } = await import("@/lib/waitlist");
+    const early = { checkIn: new Date("2026-09-01"), checkOut: new Date("2026-09-03") };
+    const late = { checkIn: new Date("2026-09-20"), checkOut: new Date("2026-09-22") };
+    mockTxBookingFindMany
+      .mockResolvedValueOnce([lapsedOffer("joined-second", "2026-05-02", late), lapsedOffer("joined-first", "2026-05-01", early)])
+      .mockResolvedValue([]);
+
+    await expireStaleOffers(CLUB_FORMAT_TEST);
+
+    expect(candidateReads().map((args) => args.where.checkIn!.lt)).toEqual([early.checkOut, late.checkOut]);
+  });
+});
+
 describe("processWaitlistCron", () => {
   it("retries transient Prisma transaction-start failures", async () => {
     const originalDelay = process.env.WAITLIST_TRANSACTION_RETRY_DELAY_MS;

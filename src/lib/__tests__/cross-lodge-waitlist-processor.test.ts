@@ -174,8 +174,9 @@ describe("processWaitlistForDates cross-lodge pass", () => {
 
   // #2258: a suppressed booking must never enter candidacy. If it did, the
   // offer transaction would stamp waitlistOfferExpiresAt and start the offer
-  // clock, the offer email would then be withheld, and the entry would hold a
-  // bed for the whole window with the member never told — then lapse.
+  // clock, the offer email would then be withheld, and the offer would run its
+  // whole window with the member never told, then lapse. (An offer holds no
+  // bed, INV-CAP-011.)
   it("excludes bookings with the No emails switch from waitlist candidacy", async () => {
     const own = candidate({
       id: "entry-b",
@@ -323,6 +324,47 @@ describe("processWaitlistForDates cross-lodge pass", () => {
       expect.objectContaining({ position: 1 }),
     );
   });
+
+  describe.each(["OWN_LODGE_FIRST", "MERGED"] as const)(
+    "a cross-lodge offer that lapsed (#5410, INV-CAP-042, %s)",
+    (mode) => {
+      // Both wait at lodge A and named lodge B; only lodge B has room.
+      const older = () => candidate({ id: "entry-a", lodgeId: "lodge-a", createdAt: "2026-07-01T10:00:00Z", alternates: ["lodge-b"] });
+      const newer = () => candidate({ id: "entry-c", lodgeId: "lodge-a", createdAt: "2026-07-03T10:00:00Z", alternates: ["lodge-b"] });
+      const freedAtB = { checkIn: CHECK_IN, checkOut: CHECK_OUT, lodgeId: "lodge-b" };
+      const keyFor = (offeredLodgeId: string) => ({
+        id: "entry-a",
+        lodgeId: "lodge-a",
+        createdAt: new Date("2026-07-01T10:00:00Z"),
+        offeredLodgeId,
+      });
+
+      beforeEach(() => {
+        currentTx = makeTx([older(), newer()]);
+        mocks.getWaitlistCrossLodgeOrder.mockResolvedValue(mode);
+        mocks.checkCapacityForGuestRanges.mockImplementation(async (lodgeId: string) => ({
+          available: lodgeId === "lodge-b",
+        }));
+      });
+
+      it("with no lapse passed, offers lodge B to the older entry as before", async () => {
+        expect((await processWaitlistForDates(freedAtB, CLUB_FORMAT_TEST)).offeredBookingId).toBe("entry-a");
+      });
+
+      it("moves the lapsed entry's opportunity at lodge B last, so the next opt-in is offered lodge B", async () => {
+        const key = keyFor("lodge-b");
+        const result = await processWaitlistForDates(freedAtB, CLUB_FORMAT_TEST, { key, run: [key] });
+        expect(result.offeredBookingId).toBe("entry-c");
+        expect(currentTx.booking.update.mock.calls[0][0].data.waitlistOfferedLodgeId).toBe("lodge-b");
+      });
+
+      it("a lapse at the entry's own lodge does not move its opportunity at lodge B", async () => {
+        const key = keyFor("lodge-a");
+        const result = await processWaitlistForDates(freedAtB, CLUB_FORMAT_TEST, { key, run: [key] });
+        expect(result.offeredBookingId).toBe("entry-a");
+      });
+    },
+  );
 
   it("never builds a cross-lodge opportunity for a candidate who did not opt into the freed lodge", async () => {
     const nonOptIn = candidate({

@@ -12,12 +12,14 @@ import {
 } from "@/lib/waitlist-cross-lodge";
 import {
   WAITLIST_QUEUE_ORDER_BY,
+  compareWaitlistJoinOrder,
   getWaitlistCrossLodgeOrder,
   getWaitlistPositionOf,
   getWaitlistPositions,
-  orderWaitlistOpportunities,
+  orderWaitlistOffers,
   splitWaitlistOpportunities,
   waitlistCandidateWhere,
+  type WaitlistLapse,
 } from "@/lib/waitlist-queue";
 import { getNonMemberHoldPolicy } from "./cancellation";
 import {
@@ -357,6 +359,9 @@ async function repriceWaitlistCandidate(
  * lodge's own queue under OWN_LODGE_FIRST, or purely by join order under
  * MERGED. Same-lodge offers behave exactly as before; callers that omit
  * lodgeId get the pre-ADR-004 behaviour against the default lodge.
+ *
+ * `lapse` (#5410, `INV-CAP-042`) is passed only by `expireStaleOffers`, for the
+ * pass that re-offers a lapsed place; every other caller walks the plain order.
  */
 export async function processWaitlistForDates(freedDates: {
   checkIn: Date;
@@ -364,6 +369,7 @@ export async function processWaitlistForDates(freedDates: {
   lodgeId?: string | null;
 },
   format: ClubFormat,
+  lapse?: WaitlistLapse,
 ): Promise<{ offeredBookingId: string | null }> {
   let offeredBookingId: string | null = null;
   type OfferDetails = {
@@ -458,17 +464,15 @@ export async function processWaitlistForDates(freedDates: {
         orderBy: WAITLIST_QUEUE_ORDER_BY,
       });
 
-      // One "opportunity" is a candidate considered at one lodge; the order
-      // they are walked in is `waitlist-queue.ts`'s (#5402). The club's
-      // cross-lodge order is read only when a cross-lodge opportunity exists.
+      // One "opportunity" is a candidate considered at one lodge, walked in
+      // `waitlist-queue.ts`'s order (#5402, rotated after a lapse by #5410);
+      // the cross-lodge order is read only when a cross-lodge one exists.
       const split = splitWaitlistOpportunities(candidates, {
         freedLodgeId,
         defaultLodgeId,
       });
-      const opportunities = orderWaitlistOpportunities(
-        split,
-        split.cross.length === 0 ? null : await getWaitlistCrossLodgeOrder(tx),
-      );
+      const crossOrder = split.cross.length === 0 ? null : await getWaitlistCrossLodgeOrder(tx);
+      const opportunities = orderWaitlistOffers(split, crossOrder, lapse);
 
       for (const { candidate, offerLodgeId, cross } of opportunities) {
         // Check if ALL nights in the candidate's range have capacity
@@ -1217,7 +1221,7 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
   expiredCount: number;
   reofferedCount: number;
 }> {
-  const { staleOffers, affectedRanges } = await prisma.$transaction(async (tx) => {
+  const { staleOffers } = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const candidates = await tx.booking.findMany({
       where: {
@@ -1295,27 +1299,6 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
         ...offer,
         newPosition: newPositions.get(offer.id)!,
       })),
-      affectedRanges: Array.from(
-        new Map(
-          offers.map((offer) => {
-            // The freed spot is at the lodge whose place was being offered
-            // (the offered lodge for a cross-lodge offer, else the entry's
-            // own lodge). Read from the in-memory pre-revert snapshot: the
-            // revert above nulled these fields in the DB, not on this object.
-            const freedLodgeId = offer.waitlistOfferedLodgeId ?? offer.lodgeId;
-            return [
-              // Key by lodge as well as range so two lodges' same-range
-              // expiries do not collapse into one processing call.
-              `${freedLodgeId}_${offer.checkIn.toISOString()}_${offer.checkOut.toISOString()}`,
-              {
-                checkIn: offer.checkIn,
-                checkOut: offer.checkOut,
-                lodgeId: freedLodgeId,
-              },
-            ];
-          })
-        ).values()
-      ),
     };
   }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
@@ -1351,11 +1334,27 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
     });
   }
 
-  for (const range of affectedRanges) {
-    const { offeredBookingId } = await processWaitlistForDates(range, format);
-    if (offeredBookingId) {
-      reofferedCount++;
-    }
+  // #5410 (`INV-CAP-042`): one offer pass per lapsed offer, in join order, each
+  // told whose place lapsed and what else lapsed in this run, so the place goes
+  // on down the queue. The freed place is at the lodge whose place was offered
+  // (the offered lodge for a cross-lodge offer, else the entry's own), read from
+  // the pre-revert snapshot: the revert nulled it in the database, not here.
+  const lapses = staleOffers
+    .map((offer) => ({
+      offer,
+      key: {
+        id: offer.id,
+        lodgeId: offer.lodgeId,
+        createdAt: offer.createdAt,
+        offeredLodgeId: offer.waitlistOfferedLodgeId ?? offer.lodgeId,
+      },
+    }))
+    .sort((a, b) => compareWaitlistJoinOrder(a.key, b.key));
+  const run = lapses.map(({ key }) => key);
+  for (const { offer, key } of lapses) {
+    const freed = { checkIn: offer.checkIn, checkOut: offer.checkOut, lodgeId: key.offeredLodgeId };
+    const { offeredBookingId } = await processWaitlistForDates(freed, format, { key, run });
+    if (offeredBookingId) reofferedCount++;
   }
 
   return { expiredCount: staleOffers.length, reofferedCount };
