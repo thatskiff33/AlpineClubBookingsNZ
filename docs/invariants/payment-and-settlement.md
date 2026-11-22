@@ -4046,7 +4046,8 @@ _Split from `INV-PAY-057` (#3220)._
   a part payment recognised at cancel included, is cash-sized. That receipt
   still includes the corrected amount, so the correction keeps counting and the
   net stays the cash. A recount finds any payment's modification notes by its
-  invoice (#4444): a later note drops none, and none counts twice.
+  invoice (#4444): a later note drops none, and no one note id counts twice
+  (two different notes for one refund still count as two).
   A keep sets the whole refunded total its links record under the `Payment`
   row (`decideLinkedRefundedTotalCents`, floored), never an increment; the
   note's allocation write or removal locks that row first and decides it too,

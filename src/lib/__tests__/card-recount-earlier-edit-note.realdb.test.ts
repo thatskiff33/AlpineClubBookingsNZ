@@ -57,6 +57,7 @@ const FIRST_CENTS = 5_000;
 const SECOND_CENTS = 3_000;
 const FIRST_NOTE = `${P}-cn-1`;
 const SECOND_NOTE = `${P}-cn-2`;
+const OLD_REFUND_NOTE = `${P}-cn-refund`;
 const FIRST_REFUND = "re_race_4444_1";
 const SECOND_REFUND = "re_race_4444_2";
 
@@ -318,6 +319,36 @@ let refundCreatedSeconds = 0;
 
       // #3653 (`INV-PAY-114`): the notes read $80; Stripe recorded $50 for the child.
       expect((await payment()).refundedAmountCents).toBe(FIRST_CENTS);
+    });
+
+    it("(6) old stored shape, #3993 review: one $50 card refund recorded as both the edit's allocated note and a refund note counts twice", async () => {
+      // Before #3993 one card refund of a price cut could leave two notes: the
+      // edit's modification note (here allocated to the invoice) and the refund
+      // note the nightly self-heal raised on the payment for the same refund.
+      await syncCharge([FIRST]);
+      await prisma.xeroObjectLink.create({
+        data: {
+          localModel: "Payment", localId: PAYMENT_ID, xeroObjectType: "CREDIT_NOTE", xeroObjectId: OLD_REFUND_NOTE,
+          xeroObjectNumber: `CN-${OLD_REFUND_NOTE}`, role: "REFUND_CREDIT_NOTE", active: true,
+          metadata: { amountCents: FIRST_CENTS, status: "AUTHORISED", total: FIRST_CENTS / 100 },
+        },
+      });
+      await editNote(EDIT_1, FIRST_NOTE, FIRST_CENTS);
+      await inbound(FIRST_NOTE, FIRST_CENTS);
+      // The edit note's own sync already counts both, on main as here: $50 + $50.
+      expect((await payment()).refundedAmountCents).toBe(2 * FIRST_CENTS);
+
+      await syncCharge([FIRST, SECOND]);
+      await editNote(EDIT_2, SECOND_NOTE, SECOND_CENTS);
+      await inbound(SECOND_NOTE, SECOND_CENTS);
+
+      // A later note's recount reads the links: $50 + $50 + $30. Two note ids,
+      // so the count-once rule does not apply. On main the Stripe sync above had
+      // put the ledger back to $80 and the recount read $50 + $30, so it stayed
+      // $80: this change makes the double count stick. This pins what the
+      // recount writes until the owner picks a rule (#4444).
+      expect(await payment()).toEqual({ refundedAmountCents: 2 * FIRST_CENTS + SECOND_CENTS, status: "PARTIALLY_REFUNDED" });
+      expect(divergenceAlerts).toEqual([]);
     });
 
     it("(5): an allocation Xero removed (its link retired, #4447) is not counted", async () => {
