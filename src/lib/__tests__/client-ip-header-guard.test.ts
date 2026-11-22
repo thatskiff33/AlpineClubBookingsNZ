@@ -56,7 +56,7 @@ describe("#5399: no direct read of the caller's IP headers", () => {
     const mandatory = new Set(
       MANDATORY_SRC_RESTRICTIONS.map((r: { selector: string }) => r.selector),
     );
-    expect(CLIENT_IP_HEADER_ARMS.length).toBe(2);
+    expect(CLIENT_IP_HEADER_ARMS.length).toBe(5);
     for (const selector of CLIENT_IP_HEADER_ARMS) expect(mandatory.has(selector), selector).toBe(true);
     expect([...exemptFiles]).toEqual([HELPER]);
   });
@@ -69,6 +69,15 @@ describe("#5399: no direct read of the caller's IP headers", () => {
       'const H = "x-forwarded-for";\nexport const ip = (r: Request) => r.headers.get(H);',
       'export const ip = (h: Record<string, string>) => h["x-real-ip"];',
       'export const { "x-forwarded-for": ip } = {} as Record<string, string>;',
+      'export const h = { host: "a", "x-forwarded-for": "203.0.113.9" };',
+      // The platform headers, so trusting one is a decision made in the helper.
+      'export const ip = (r: Request) => r.headers.get("CF-Connecting-IP");',
+      'export const ip = (r: Request) => r.headers.get("true-client-ip");',
+      'export const ip = (r: Request) => r.headers.get("x-vercel-forwarded-for");',
+      'export const ip = (r: Request) => r.headers.get("fly-client-ip");',
+      'export const ip = (r: Request) => r.headers.get("Forwarded");',
+      "export const ip = (r: Request) => r.headers.has(`forwarded`);",
+      'export const ip = (h: Record<string, string>) => h["forwarded"];',
     ];
     for (const file of [
       "src/app/api/admin/x/route.ts",
@@ -80,10 +89,13 @@ describe("#5399: no direct read of the caller's IP headers", () => {
     }
   });
 
-  it("leaves a header written onto an outgoing request, and prose, alone", async () => {
+  it("leaves the helper's constant, prose and the word forwarded alone", async () => {
     for (const code of [
-      'export const h = { host: "a", "x-forwarded-for": "203.0.113.9" };',
+      'import { FORWARDED_FOR_HEADER } from "@/lib/rate-limit-http";\nexport const h = { [FORWARDED_FOR_HEADER]: "203.0.113.9" };',
       'export const note = "the x-forwarded-for header";',
+      // An audit census's evidence kind, and a Sentry scrub list's key part.
+      'export const kind = { kind: "forwarded" } as const;\nexport const parts = ["forwarded", "-ip"];',
+      'export const same = (k: string) => k === "forwarded";',
     ]) {
       expect(await hits(code, "src/lib/x.ts"), code).toBe(0);
     }
@@ -114,21 +126,19 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-describe("#5399 census: where either header is named in code", () => {
-  /** Each file allowed to name a header, with why. Stale entries fail too. */
-  const ALLOWED: Record<string, string> = {
-    [HELPER]: "the one reader of both headers",
-    "src/lib/mcp/dispatch.ts":
-      "WRITES x-forwarded-for onto the AI app's loopback request so the route's getClientIp() sees the provider's address",
-  };
+describe("#5399 census: where a client-address header is named in code", () => {
+  // The distinctive names anywhere in code; `forwarded` only in a header-shaped
+  // read, because the bare word is prose and an audit-census kind.
+  const NAMED =
+    /x-forwarded-for|x-real-ip|cf-connecting-ip|true-client-ip|x-vercel-forwarded-for|fly-client-ip|\.(?:get|has)\(\s*["'`]forwarded["'`]|\[\s*["'`]forwarded["'`]\s*\]/i;
 
-  it("finds the header names only in the helper and the loopback writer", () => {
+  it("finds a client-address header named only in the helper", () => {
     const files = walk(path.join(ROOT, "src"));
     expect(files.length, "the walk found no source; the census would pass vacuously").toBeGreaterThan(500);
     const naming = files
-      .filter((full) => /x-(forwarded-for|real-ip)/i.test(stripComments(readFileSync(full, "utf8"))))
+      .filter((full) => NAMED.test(stripComments(readFileSync(full, "utf8"))))
       .map((full) => path.relative(ROOT, full).split(path.sep).join("/"))
       .sort();
-    expect(naming).toEqual(Object.keys(ALLOWED).sort());
+    expect(naming).toEqual([HELPER]);
   });
 });
