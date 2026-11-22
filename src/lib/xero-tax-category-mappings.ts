@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { readXeroConnection } from "@/lib/xero-connection";
 import {
@@ -37,8 +38,11 @@ export interface XeroTaxCategoryMappings {
   rows: XeroTaxCategoryMappingRow[];
 }
 
-export async function loadXeroTaxCategoryMappings(): Promise<XeroTaxCategoryMappings> {
-  const [connection, rows] = await Promise.all([readXeroConnection(), readMappingRows()]);
+export async function loadXeroTaxCategoryMappings(
+  // #4988: a caller already inside a transaction passes its client (`INV-LOCK-004`).
+  db: Pick<Prisma.TransactionClient, "xeroConnection" | "xeroTaxCategoryMapping"> = prisma,
+): Promise<XeroTaxCategoryMappings> {
+  const [connection, rows] = await Promise.all([readXeroConnection(db), readMappingRows(db)]);
   const tenantId = connection?.tenantId ?? null;
   return {
     tenantId,
@@ -53,8 +57,8 @@ export async function loadXeroTaxCategoryMappings(): Promise<XeroTaxCategoryMapp
 // Its own async function so a read that fails at once still rejects, and
 // Promise.all handles it alongside the connection read: never an unhandled
 // rejection left behind by a sibling that was already running.
-async function readMappingRows() {
-  return prisma.xeroTaxCategoryMapping.findMany({
+async function readMappingRows(db: Pick<Prisma.TransactionClient, "xeroTaxCategoryMapping">) {
+  return db.xeroTaxCategoryMapping.findMany({
     select: { category: true, taxType: true, xeroTenantId: true },
     orderBy: { category: "asc" },
   });

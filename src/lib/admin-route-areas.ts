@@ -37,6 +37,7 @@ export const ROUTE_AREA_PREFIXES: Array<{
       "/api/admin/subscription-billing",
       "/api/admin/fee-configuration",
       "/api/admin/credit-approvals",
+      "/api/admin/opening-credits",
       "/api/admin/setup/finance-report-mappings",
       "/api/finance",
     ],
