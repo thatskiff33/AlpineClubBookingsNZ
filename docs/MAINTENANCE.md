@@ -933,9 +933,11 @@ production files changed" whatever the tree holds. Two branches that each add
 sixty lines to a six-hundred-line file both pass their own pull-request run,
 merge cleanly to 720 against a 700 budget, and nothing would ever say so — after
 which the next change to that file is measured against 720. The workflow
-therefore passes the push event's own pre-push commit as `--base`, and keys that
-on the event name, because a `pull_request` payload carries a `before` field too
-and it means something else entirely.
+therefore passes the last judged `main` commit as `--base` (`INV-OPS-021`: the
+push event's own pre-push commit, unless a newer merge replaced that commit's
+run or its run stopped before the ratchet), and keys that on the event name,
+because a `pull_request` payload carries a `before` field too and it means
+something else entirely.
 
 Most of the time that run says exactly what the pull-request run already said,
 against exactly the same base — for a branch that was up to date, the merge

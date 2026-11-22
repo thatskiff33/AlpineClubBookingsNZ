@@ -49,6 +49,7 @@ import process from "node:process";
 import { spawnSync } from "node:child_process";
 
 import { ALLOWANCE_DIR } from "../lib/allowance-dir.mjs";
+import { CI_WORKFLOW_FILE } from "../lib/ci-workflow.mjs";
 import { githubHeadingAnchor } from "../lib/github-heading-anchor.mjs";
 import {
   classifyUnreleased,
@@ -112,7 +113,7 @@ export const FEATURE_FRAGMENT_SUFFIX = ".feature.md";
 export const MAX_RELEASE_NOTES_CHARS = 120_000;
 
 /** The workflow whose `main` push runs publish the GHCR images a release tag deploys. */
-export const CI_WORKFLOW_FILE = "ci.yml";
+export { CI_WORKFLOW_FILE };
 
 /** That workflow's publishing job, by the display name GitHub's jobs API reports. */
 export const PUBLISH_IMAGES_JOB_NAME = "Publish GHCR images";

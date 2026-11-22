@@ -883,8 +883,8 @@ group per ref and cancel superseded runs.
 
 The push-only gates (doc index, file-size ratchet, migration-safety ledger)
 judge a push to `main` from the last judged `main` commit: the head of the
-newest earlier `ci.yml` push run on `main` that was not cancelled, so a merge
-whose run was dropped is judged with the next. It fails closed when GitHub
+newest earlier finished `ci.yml` push run on `main` whose gate steps ran, so a
+merge whose run was dropped is judged with the next. It fails closed when GitHub
 cannot say.
 
 A release tags only a commit whose `ci.yml` push run on `main` had a

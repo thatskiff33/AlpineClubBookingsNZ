@@ -4,64 +4,93 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { MainPushBaseError, main, resolveMainPushBase } from "./resolve-main-push-base.mjs";
+import { parseWorkflowYaml } from "./check-workflow-suite-checkout-depth.mjs";
+import { MainPushBaseError, main, parseArgs, resolveMainPushBase } from "./resolve-main-push-base.mjs";
 
 /*
   INV-OPS-021 (#5356): a push to main is judged from the last main commit
-  whose ci.yml run judged it, so a merge whose queued run a newer merge replaced
-  is still judged by the push-only gates. These cases drive the resolver over a
-  fake GitHub API.
+  whose ci.yml run ran the caller's gate steps, so a merge whose queued run a
+  newer merge replaced, or whose run stopped before the gates, is still judged.
+  These cases drive the resolver over a fake GitHub API, then pin how ci.yml
+  wires it, because a step that quietly stops running leaves every consumer
+  on `github.event.before` with nothing red.
 */
 
+const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const sha = (letter) => letter.repeat(40);
+const GATE = { job: "verify", steps: ["Doc index", "File-size budget ratchet"] };
 
 /** A `main` push run of ci.yml as GitHub lists it. */
-function run(runNumber, head, status = "completed", conclusion = status === "completed" ? "success" : null) {
-  return { id: 1000 + runNumber, run_number: runNumber, head_sha: head, status, conclusion };
+function run(runNumber, head, conclusion = "success", status = "completed") {
+  return { id: 1000 + runNumber, run_number: runNumber, head_sha: head, status, conclusion: status === "completed" ? conclusion : null };
 }
 
-/** A fetch that serves `pages` (newest-first lists) and records the URLs asked for. */
-function fakeApi(pages, { status = 200 } = {}) {
-  const urls = [];
-  const fetchImpl = async (url) => {
-    urls.push(url);
-    const page = Number(new URL(url).searchParams.get("page"));
-    return { ok: status === 200, status, json: async () => ({ total_count: 0, workflow_runs: pages[page - 1] ?? [] }) };
+/** The `verify` job of a run whose gate steps ended as `conclusions` (null: the step never ran). */
+function verifyJob(...conclusions) {
+  return { name: "verify", steps: GATE.steps.map((name, index) => ({ name, conclusion: conclusions[index] ?? null })) };
+}
+
+/**
+ * A fetch serving `pages` of runs (newest-first lists) and each run's jobs
+ * from `jobsByRunNumber` (default: both gates ran). Records the paths asked for.
+ */
+function fakeApi(pages, jobsByRunNumber = {}, { status = 200 } = {}) {
+  const paths = [];
+  const fetchImpl = async (input) => {
+    const url = new URL(input);
+    paths.push(`${url.pathname}${url.search}`);
+    const jobsMatch = /\/actions\/runs\/(\d+)\/jobs$/.exec(url.pathname);
+    let body;
+    if (jobsMatch) {
+      const jobs = jobsByRunNumber[Number(jobsMatch[1]) - 1000] ?? [verifyJob("success", "success")];
+      body = { total_count: jobs.length, jobs };
+    } else {
+      body = { total_count: 0, workflow_runs: pages[Number(url.searchParams.get("page")) - 1] ?? [] };
+    }
+    return { ok: status === 200, status, json: async () => body };
   };
-  return { fetchImpl, urls };
+  return { fetchImpl, paths };
 }
 
 const everyAncestor = () => true;
-const request = (overrides) => ({ repository: "owner/repo", token: "t", runNumber: 50, headSha: sha("f"), isAncestor: everyAncestor, ...overrides });
+const request = (overrides) => ({ repository: "owner/repo", token: "t", runNumber: 50, headSha: sha("f"), isAncestor: everyAncestor, ...GATE, ...overrides });
 
 describe("resolveMainPushBase", () => {
-  it("judges from the newest earlier run that ran, past runs a newer merge replaced", async () => {
-    // e's run is ours (#50). d and c were dropped from the queue; b's run finished red.
-    const { fetchImpl, urls } = fakeApi([
-      [run(50, sha("f"), "in_progress"), run(49, sha("d"), "completed", "cancelled"), run(48, sha("c"), "completed", "cancelled"), run(47, sha("b"), "completed", "failure"), run(46, sha("a"))],
+  it("judges from the newest earlier run whose gates ran, past runs a newer merge replaced", async () => {
+    const { fetchImpl, paths } = fakeApi([
+      [run(50, sha("f"), null, "in_progress"), run(49, sha("d"), "cancelled"), run(48, sha("c"), "cancelled"), run(47, sha("b"), "failure"), run(46, sha("a"))],
     ]);
 
     const result = await resolveMainPushBase(request({ fetchImpl }));
 
     expect(result.sha).toBe(sha("b"));
-    expect(urls[0]).toBe("https://api.github.com/repos/owner/repo/actions/workflows/ci.yml/runs?branch=main&event=push&per_page=100&page=1");
+    expect(paths).toEqual([
+      "/repos/owner/repo/actions/workflows/ci.yml/runs?branch=main&event=push&per_page=100&page=1",
+      "/repos/owner/repo/actions/runs/1047/jobs?filter=latest&per_page=100",
+    ]);
   });
 
   it("takes the previous commit when nothing was dropped", async () => {
-    const { fetchImpl } = fakeApi([[run(50, sha("f"), "in_progress"), run(49, sha("e"))]]);
+    const { fetchImpl } = fakeApi([[run(50, sha("f"), null, "in_progress"), run(49, sha("e"))]]);
     expect((await resolveMainPushBase(request({ fetchImpl }))).sha).toBe(sha("e"));
   });
 
-  it("counts a run still in progress but not one still queued, which can yet be replaced", async () => {
-    const queued = fakeApi([[run(49, sha("e"), "queued"), run(48, sha("d"), "in_progress"), run(47, sha("c"))]]);
-    expect((await resolveMainPushBase(request({ fetchImpl: queued.fetchImpl }))).sha).toBe(sha("d"));
+  it("skips a red run that stopped before the gates, though it was not cancelled", async () => {
+    // #49 failed on a flaky shard before the ratchet; #48 ran the doc index only.
+    const { fetchImpl } = fakeApi([[run(49, sha("e"), "failure"), run(48, sha("d"), "failure"), run(47, sha("c"), "failure")]], {
+      49: [verifyJob(null, null)],
+      48: [verifyJob("success", null)],
+      47: [verifyJob("success", "failure")],
+    });
+    expect((await resolveMainPushBase(request({ fetchImpl }))).sha).toBe(sha("c"));
   });
 
-  it("skips runs whose gates never ran", async () => {
-    const { fetchImpl } = fakeApi([
-      [run(49, sha("e"), "completed", "skipped"), run(48, sha("d"), "completed", "startup_failure"), run(47, sha("c"), "completed", "stale"), run(46, sha("b"), "completed", "timed_out")],
-    ]);
-    expect((await resolveMainPushBase(request({ fetchImpl }))).sha).toBe(sha("b"));
+  it("skips a run without the job, and runs not yet finished or that never ran", async () => {
+    const { fetchImpl } = fakeApi(
+      [[run(49, sha("e"), null, "in_progress"), run(48, sha("d"), null, "queued"), run(47, sha("c"), "startup_failure"), run(46, sha("b")), run(45, sha("a"))]],
+      { 46: [{ name: "lint", steps: [] }] },
+    );
+    expect((await resolveMainPushBase(request({ fetchImpl }))).sha).toBe(sha("a"));
   });
 
   it("ignores newer runs, its own commit's other runs, and commits that are not ancestors", async () => {
@@ -71,25 +100,30 @@ describe("resolveMainPushBase", () => {
   });
 
   it("reads further pages until it finds one", async () => {
-    const cancelled = Array.from({ length: 100 }, (_, index) => run(49 - index, sha("d"), "completed", "cancelled"));
-    const { fetchImpl, urls } = fakeApi([cancelled, [run(-60, sha("a"))]]);
+    const cancelled = Array.from({ length: 100 }, (_, index) => run(49 - index, sha("d"), "cancelled"));
+    const { fetchImpl } = fakeApi([cancelled, [run(-60, sha("a"))]]);
     expect((await resolveMainPushBase(request({ fetchImpl }))).sha).toBe(sha("a"));
-    expect(urls).toHaveLength(2);
   });
 
-  it("fails closed when no earlier run judged an ancestor", async () => {
-    const { fetchImpl } = fakeApi([[run(49, sha("d"), "completed", "cancelled")]]);
+  it("fails closed when no earlier run ran the gates on an ancestor", async () => {
+    const { fetchImpl } = fakeApi([[run(49, sha("d"), "cancelled"), run(48, sha("c"), "failure")]], { 48: [verifyJob(null, null)] });
     await expect(resolveMainPushBase(request({ fetchImpl }))).rejects.toThrow(MainPushBaseError);
   });
 
   it("fails closed on an API error or an answer it cannot read", async () => {
-    await expect(resolveMainPushBase(request({ fetchImpl: fakeApi([], { status: 403 }).fetchImpl }))).rejects.toThrow(/HTTP 403/);
+    await expect(resolveMainPushBase(request({ fetchImpl: fakeApi([], {}, { status: 403 }).fetchImpl }))).rejects.toThrow(/HTTP 403/);
     const garbled = async () => ({ ok: true, status: 200, json: async () => ({ workflow_runs: [{ id: "1" }] }) });
     await expect(resolveMainPushBase(request({ fetchImpl: garbled }))).rejects.toThrow(/shape/);
     const offline = async () => {
       throw new Error("network down");
     };
     await expect(resolveMainPushBase(request({ fetchImpl: offline }))).rejects.toThrow(/network down/);
+    const truncated = fakeApi([[run(49, sha("e"))]]);
+    const truncatedJobs = async (input) => {
+      if (!String(input).includes("/jobs")) return truncated.fetchImpl(input);
+      return { ok: true, status: 200, json: async () => ({ total_count: 150, jobs: [verifyJob("success", "success")] }) };
+    };
+    await expect(resolveMainPushBase(request({ fetchImpl: truncatedJobs }))).rejects.toThrow(/more than one page/);
   });
 });
 
@@ -97,6 +131,7 @@ describe("main", () => {
   let dir;
   afterEach(() => dir && rmSync(dir, { recursive: true, force: true }));
   const quiet = { log: () => {} };
+  const argv = ["--job", "verify", "--step", "Doc index", "--step", "File-size budget ratchet"];
 
   const mainPushEnv = (output) => ({
     GITHUB_EVENT_NAME: "push",
@@ -111,29 +146,74 @@ describe("main", () => {
   it("writes the resolved commit for a push to main", async () => {
     dir = mkdtempSync(path.join(tmpdir(), "main-push-base-"));
     const output = path.join(dir, "out");
-    const { fetchImpl } = fakeApi([[run(49, sha("d"), "completed", "cancelled"), run(48, sha("c"))]]);
+    const { fetchImpl } = fakeApi([[run(49, sha("d"), "cancelled"), run(48, sha("c"))]]);
 
-    expect(await main({ env: mainPushEnv(output), fetchImpl, isAncestor: everyAncestor, log: quiet })).toBe(0);
+    expect(await main({ argv, env: mainPushEnv(output), fetchImpl, isAncestor: everyAncestor, log: quiet })).toBe(0);
     expect(readFileSync(output, "utf8")).toBe(`sha=${sha("c")}\n`);
   });
 
   it("writes nothing and asks nothing for an epic push or a pull request", async () => {
     dir = mkdtempSync(path.join(tmpdir(), "main-push-base-"));
     const output = path.join(dir, "out");
-    const { fetchImpl, urls } = fakeApi([[run(49, sha("e"))]]);
+    const { fetchImpl, paths } = fakeApi([[run(49, sha("e"))]]);
     for (const env of [
       { ...mainPushEnv(output), GITHUB_REF: "refs/heads/epic/12-x" },
       { ...mainPushEnv(output), GITHUB_EVENT_NAME: "pull_request", GITHUB_REF: "refs/pull/7/merge" },
     ]) {
-      expect(await main({ env, fetchImpl, isAncestor: everyAncestor, log: quiet })).toBe(0);
+      expect(await main({ argv, env, fetchImpl, isAncestor: everyAncestor, log: quiet })).toBe(0);
     }
-    expect(urls).toEqual([]);
+    expect(paths).toEqual([]);
     expect(() => readFileSync(output, "utf8")).toThrow();
   });
 
-  it("refuses a push to main it cannot place", async () => {
+  it("refuses a push to main it cannot place, and a call that names no gate", async () => {
     const { fetchImpl } = fakeApi([[]]);
-    await expect(main({ env: { ...mainPushEnv(undefined), GITHUB_RUN_NUMBER: "" }, fetchImpl, log: quiet })).rejects.toThrow(/GITHUB_RUN_NUMBER/);
-    await expect(main({ env: mainPushEnv(undefined), fetchImpl, isAncestor: everyAncestor, log: quiet })).rejects.toThrow(MainPushBaseError);
+    await expect(main({ argv, env: { ...mainPushEnv(undefined), GITHUB_RUN_NUMBER: "" }, fetchImpl, log: quiet })).rejects.toThrow(/GITHUB_RUN_NUMBER/);
+    await expect(main({ argv, env: mainPushEnv(undefined), fetchImpl, isAncestor: everyAncestor, log: quiet })).rejects.toThrow(MainPushBaseError);
+    await expect(main({ argv: ["--job", "verify"], env: mainPushEnv(undefined), fetchImpl, log: quiet })).rejects.toThrow(/--step/);
+  });
+});
+
+/** The words of a `run:` line, honouring double quotes (all ci.yml's resolver steps use). */
+function shellWords(line) {
+  return [...line.matchAll(/"([^"]*)"|(\S+)/g)].map((match) => match[1] ?? match[2]);
+}
+
+describe("ci.yml's wiring of the resolver", () => {
+  const workflow = parseWorkflowYaml(readFileSync(path.join(REPO_ROOT, ".github", "workflows", "ci.yml"), "utf8"));
+  const RESOLVER = "node scripts/ci/resolve-main-push-base.mjs";
+  const reads = (step) => JSON.stringify(step.env ?? {}).includes("steps.main-push-base.outputs.sha");
+
+  for (const jobKey of ["verify", "migration-drift"]) {
+    it(`${jobKey} resolves the base before each gate it names, and every reader follows it`, () => {
+      const job = workflow.jobs[jobKey];
+      const steps = job.steps ?? [];
+      const at = steps.findIndex((step) => step.id === "main-push-base");
+      expect(at, `${jobKey} has a step with id main-push-base`).toBeGreaterThan(-1);
+      const resolver = steps[at];
+      expect(String(resolver.run).startsWith(RESOLVER)).toBe(true);
+      expect(resolver.env?.GITHUB_TOKEN).toBe("${{ secrets.GITHUB_TOKEN }}");
+      expect(job.permissions?.actions).toBe("read");
+
+      const { job: jobName, steps: gates } = parseArgs(shellWords(String(resolver.run).slice(RESOLVER.length)));
+      // GitHub's jobs API reports the job's display name.
+      expect(jobName).toBe(job.name ?? jobKey);
+      const later = steps.slice(at + 1);
+      for (const gate of gates) {
+        const step = later.find((candidate) => candidate.name === gate);
+        expect(step, `${jobKey} runs "${gate}" after the resolver`).toBeDefined();
+        expect(reads(step), `"${gate}" judges from the resolved base`).toBe(true);
+      }
+      // A reader the resolver does not name could be judged from a run where it never ran.
+      expect(later.filter(reads).map((step) => step.name)).toEqual(gates);
+      expect(steps.slice(0, at).filter(reads)).toEqual([]);
+    });
+  }
+
+  it("no other job reads the resolved base without resolving it", () => {
+    const readers = Object.entries(workflow.jobs)
+      .filter(([, job]) => (job.steps ?? []).some(reads))
+      .map(([key]) => key);
+    expect(readers.sort()).toEqual(["migration-drift", "verify"]);
   });
 });

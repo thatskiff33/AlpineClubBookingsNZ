@@ -580,12 +580,12 @@ may cover several merges. To find the one that broke it:
 
 The push-only gates in `verify` and `Migration drift check` already judge
 those merges together: a push to `main` is judged from the last commit whose
-run was not cancelled, and the step `Find the last judged main commit` says
-which commit that was. Judged together, they can fail where each merge alone
+finished run reached those gate steps, and the step `Find the last judged main
+commit` says which commit that was. Judged together, they can fail where each merge alone
 passed: two merges that each declared a `size-allowances.d/` entry for the same
 file, an allowance a later merge made unnecessary, or an expand and its
 contract migration landing in the same window. To judge them one at a time,
-re-run the replaced run of the earlier merge, and once it has started, re-run
+re-run the replaced run of the earlier merge, and once it has finished, re-run
 the failed job: it then judges from that commit.
 
 #### Rebuilding the code-owner configuration

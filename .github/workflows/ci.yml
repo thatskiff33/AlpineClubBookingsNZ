@@ -937,7 +937,8 @@ jobs:
       # #5356: the commit a push to main is judged from by the push-only gates
       # below (doc index, file-size ratchet). A newer merge may replace main's queued run, so the previous main
       # commit (`github.event.before`) may never have been judged; this finds
-      # the last main commit whose `ci.yml` run did (INV-OPS-021). It writes
+      # the last main commit whose `ci.yml` run ran the gate steps named here
+      # (INV-OPS-021). Keep the names in step with those steps. It writes
       # nothing for any other event, which keeps its existing base, and fails
       # closed when GitHub cannot say.
       - name: Find the last judged main commit
@@ -945,7 +946,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
-        run: node scripts/ci/resolve-main-push-base.mjs
+        run: node scripts/ci/resolve-main-push-base.mjs --job verify --step "Check doc index integrity (reachability + invariant ids)" --step "File-size budget ratchet"
 
       # #2691: every `docs/` page is reachable from a front door, and every cited
       # `INV-*` invariant id resolves to a real definition that the index lists.
@@ -1169,7 +1170,8 @@ jobs:
       # #5356: the commit a push to main is judged from by the migration-safety
       # ledger check below. A newer merge may replace main's queued run, so the previous main
       # commit (`github.event.before`) may never have been judged; this finds
-      # the last main commit whose `ci.yml` run did (INV-OPS-021). It writes
+      # the last main commit whose `ci.yml` run ran the gate steps named here
+      # (INV-OPS-021). Keep the names in step with those steps. It writes
       # nothing for any other event, which keeps its existing base, and fails
       # closed when GitHub cannot say.
       - name: Find the last judged main commit
@@ -1177,7 +1179,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
-        run: node scripts/ci/resolve-main-push-base.mjs
+        run: node scripts/ci/resolve-main-push-base.mjs --job "Migration drift check" --step "Check migration safety ledger coverage"
 
       # Fails fast (no database or dependency install needed) if any migration matching
       # the blue/green hot-table/breaking regexes lacks a safety-ledger entry, if
