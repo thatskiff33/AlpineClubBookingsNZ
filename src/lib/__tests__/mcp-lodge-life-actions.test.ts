@@ -42,6 +42,8 @@ vi.mock("@/lib/session-guards", () => ({
 vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: vi.fn(async () => ({
     eventsCalendar: true,
+    // `GET /api/work-parties` exists only for an AI app (INV-MCP-001).
+    mcpServer: true,
     workParties: true,
     commsPortal: true,
     maintenanceReports: true,
