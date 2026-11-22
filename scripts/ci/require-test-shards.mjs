@@ -126,15 +126,14 @@ export function classifyTestShardJobs(jobs, count = EXPECTED_SHARD_COUNT, label 
 }
 
 /**
- * One GET against this run's Actions API (#4397: shared by the shard gate and
- * the artifact wait, so both validate the run identity and send the same
- * headers the same way).
+ * One GET against this repository's Actions API at `actions/<path>`: the one
+ * copy of its validation, headers and timeout (#4397, #5356), shared by the
+ * shard gate, the artifact wait and `resolve-main-push-base.mjs`.
  */
-export async function getRunApiJson({ apiUrl, repository, runId, token, fetchImpl = fetch }, suffix, params = {}, what = "run") {
+export async function getActionsApiJson({ apiUrl, repository, token, fetchImpl = fetch }, path, params = {}, what = "Actions") {
   if (!/^[-\w.]+\/[-\w.]+$/.test(repository ?? "")) throw new Error("Invalid GITHUB_REPOSITORY");
-  if (!/^[1-9]\d*$/.test(String(runId ?? ""))) throw new Error("Invalid GITHUB_RUN_ID");
   if (!token) throw new Error(`GITHUB_TOKEN is required to read this run's ${what}`);
-  const url = new URL(`repos/${repository}/actions/runs/${runId}/${suffix}`, `${new URL(apiUrl).toString().replace(/\/$/, "")}/`);
+  const url = new URL(`repos/${repository}/actions/${path}`, `${new URL(apiUrl).toString().replace(/\/$/, "")}/`);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
   const response = await fetchImpl(url, {
     signal: AbortSignal.timeout(10_000),
@@ -146,6 +145,12 @@ export async function getRunApiJson({ apiUrl, repository, runId, token, fetchImp
   });
   if (!response.ok) throw new Error(`GitHub ${what} API returned HTTP ${response.status}`);
   return response.json();
+}
+
+/** One GET against one run's Actions API, `actions/runs/<runId>/<suffix>`. */
+export async function getRunApiJson({ apiUrl, repository, runId, token, fetchImpl = fetch }, suffix, params = {}, what = "run") {
+  if (!/^[1-9]\d*$/.test(String(runId ?? ""))) throw new Error("Invalid GITHUB_RUN_ID");
+  return getActionsApiJson({ apiUrl, repository, token, fetchImpl }, `runs/${runId}/${suffix}`, params, what);
 }
 
 export async function getAttemptJobs({ apiUrl, repository, runId, attempt, token, fetchImpl = fetch }) {

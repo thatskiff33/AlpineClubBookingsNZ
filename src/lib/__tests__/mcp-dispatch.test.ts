@@ -161,6 +161,7 @@ describe("runMcpAction: what it refuses", () => {
       method: "PUT",
       path: "/api/admin/modules",
       kind: "write",
+      returns: {},
       core: false,
     };
     const outcome = await runMcpAction(rogue, {}, caller);
@@ -177,6 +178,7 @@ describe("runMcpAction: what it refuses", () => {
       method: "PUT",
       path: "/api/admin/mcp/settings",
       kind: "write",
+      returns: {},
       core: false,
     };
     expect((await runMcpAction(rogue, {}, caller)).isError).toBe(true);

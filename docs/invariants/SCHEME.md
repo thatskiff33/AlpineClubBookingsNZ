@@ -606,7 +606,8 @@ revision.
 
 Current-tree scans plus one fail-closed revision comparison. Pull-request CI
 uses the merge base of `HEAD` and the event's exact base SHA (#5156), main-push
-CI uses the event's exact pre-push SHA, and local feature work uses its
+CI uses the last judged `main` commit (`INV-OPS-021`; usually the event's
+pre-push SHA), and local feature work uses its
 merge-base with `origin/main` (or `main`). A pull request's merge base is its
 branch point, the ids it is answerable for retaining: an id the base gained
 later is not reported as removed by a branch that is only behind, and when

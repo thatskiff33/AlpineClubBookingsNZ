@@ -4,6 +4,7 @@ import {
   reviewAdminFamilyGroupRequest,
   reviewFamilyGroupRequestSchema,
 } from "@/lib/admin-family-group-requests-service";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 
 function unauthorizedResponse() {
@@ -40,12 +41,9 @@ export async function PUT(req: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = reviewFamilyGroupRequestSchema.safeParse(body);
   if (!parsed.success) {

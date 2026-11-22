@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { BookingRequestError, bookingRequestGuestSchema, serializeBookingRequestForAdmin } from "@/lib/booking-request";
 import { BookingRequestCorrectionCommittedError } from "@/lib/booking-request-correction-hold";
 import { correctBookingRequest } from "@/lib/booking-request-corrections";
@@ -88,14 +89,13 @@ export async function POST(
   const session = guard.session;
 
   const { id } = await params;
-  let body: unknown;
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = correctionSchema.safeParse(body);
   if (!parsed.success) {
