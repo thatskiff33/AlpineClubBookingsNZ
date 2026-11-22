@@ -40,8 +40,8 @@ export const WAITLIST_QUEUE_ORDER_BY: Prisma.BookingOrderByWithRelationInput[] =
  * email goes out after commit. If that email were withheld, the offer would run
  * its whole window with the member never told, then lapse via
  * `expireStaleOffers()`, and the admin board would show it as an undeliverable
- * offer email. (An offer holds no bed, `INV-CAP-011`; the harm is the offer
- * nobody can answer.) Excluding the entry means the clock never starts: the
+ * offer email. (An offer holds no capacity, `INV-CAP-011`; the harm is the
+ * offer nobody can answer.) Excluding the entry means the clock never starts: the
  * place goes to the next candidate, and the entry rejoins at its original join
  * time when the switch is cleared. It is not counted in anyone's position
  * meanwhile (owner decision, 22 Nov 2026, #5402; `INV-LOCKOUT-060`).

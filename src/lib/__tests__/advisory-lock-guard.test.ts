@@ -938,7 +938,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "expireStaleOffers#1",
     tier: "GLOBAL",
     reason:
-      "Expiry releases offered beds and re-offers them to the next candidates, so it takes the global tier before the affected lodge keys and a concurrent confirm cannot be expired mid-claim.",
+      "Expiry reverts stale offers to WAITLISTED and reconciles their bed allocations, so it takes the global tier before each offer's own lodge key and a concurrent confirm cannot be expired mid-claim. The re-offers run after commit, each in its own processWaitlistForDates transaction (#5410).",
     invariant: "INV-LOCK-002",
   },
 

@@ -176,7 +176,7 @@ describe("processWaitlistForDates cross-lodge pass", () => {
   // offer transaction would stamp waitlistOfferExpiresAt and start the offer
   // clock, the offer email would then be withheld, and the offer would run its
   // whole window with the member never told, then lapse. (An offer holds no
-  // bed, INV-CAP-011.)
+  // capacity, INV-CAP-011.)
   it("excludes bookings with the No emails switch from waitlist candidacy", async () => {
     const own = candidate({
       id: "entry-b",

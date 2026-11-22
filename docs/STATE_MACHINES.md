@@ -3343,7 +3343,8 @@ live does not retract it, and the offer commits before its email is sent, so a
 flip in between leaves a live offer with a withheld send. An entry in
 `WAITLIST_OFFERED` whose offer is still unexpired therefore reports
 `suppressed_live_offer` with `needsOperatorAction: true` (a live offer the member
-was never told about; an offer holds no bed, `INV-CAP-011`); one whose offer has
+was never told about; an offer holds no capacity, `INV-CAP-011`, though it can
+hold a bed allocation, `INV-CAP-006`); one whose offer has
 already lapsed reports the benign
 `suppressed`. A silenced entry still in `WAITLISTED` has no EmailLog row at all
 and is marked on the board from the flag. It shows no position and is not

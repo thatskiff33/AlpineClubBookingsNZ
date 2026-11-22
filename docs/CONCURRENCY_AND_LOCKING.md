@@ -6418,7 +6418,7 @@ recorded four nulls and presented them as evidence.
 The post-commit sweep is keyed on `Booking.lodgeId`, **not**
 `waitlistOfferedLodgeId`, and this is where it deliberately differs from
 `expireStaleOffers`. That path's entry is still `WAITLIST_OFFERED`, and the place
-it was offered is at the OFFERED lodge (an offer holds no bed, `INV-CAP-011`), so
+it was offered is at the OFFERED lodge (an offer holds no capacity, `INV-CAP-011`), so
 the offered lodge is where its re-offer goes. Here the
 lodge key held above, the allocations the reconcile prunes, and any admin hold
 released are all `Booking.lodgeId`. Sweeping the offered lodge instead would

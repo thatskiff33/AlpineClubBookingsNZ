@@ -161,10 +161,12 @@ differently on this board, and the badges say which case you are looking at:
 - **"Offer email withheld (No emails)"** — an offer email was withheld, and that
   offer has since lapsed. Nothing needs doing.
 - **"Offer live but emails are off — member not told"** — the entry has an offer
-  that is still running (an offer does not hold a bed), and the member will get
-  no expiry warning and no confirmation if they accept. This one needs an
-  officer: the member was emailed the offer before the switch went on, so they
-  **can** still accept it. Contact them.
+  that is still running, and the member will get no expiry warning and no
+  confirmation if they accept. An offer does not count against the lodge's
+  capacity until it is accepted, but it can already have a bed assigned on the
+  bed board. This one needs an officer: the member was emailed the offer before
+  the switch went on, so they **can** still accept it. Leave any bed it has been
+  assigned in place, and contact them.
 
 Force-confirming any of these skips the email choice, as described above.
 
