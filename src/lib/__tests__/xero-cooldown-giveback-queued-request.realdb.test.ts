@@ -41,15 +41,17 @@ import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { cleanHistories, historyNames, postHistoryEdit, seedHistoryFixtures } from "./support/booking-ledger-history";
-import { createGroupHistory, GROUP_CHILD_CENTS, groupHistory } from "./support/booking-ledger-group-history";
-import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { GROUP_CHILD_CENTS } from "./support/booking-ledger-group-history";
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
 import type { SuiteEnvironmentRoleDeclaration } from "./helpers/environment-role";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import {
   breakerRefusal,
+  drainOfficerRetries,
   fakeXero,
+  officerRetry,
   paidCardBooking,
+  queuedGroupSettlementInvoice,
   queueRefundNote,
   recordCardRefund,
   runOutboxRow,
@@ -176,16 +178,9 @@ let role: SuiteEnvironmentRoleDeclaration | undefined;
     const NOTHING_TO_RUN = { found: 0, processed: 0, succeeded: 0, failed: 0, skipped: 0 };
     const BREAKER_REFUSED = expect.objectContaining({ name: "XeroTransientOutageError", preHttp: true });
 
-    async function officerRetry(operationId: string) {
-      const { enqueueXeroSyncOperationRetry, processQueuedXeroOperationRetries } = await import("@/lib/xero-operation-queue");
-      await enqueueXeroSyncOperationRetry(operationId, { createdByMemberId: names.officerId });
-      return processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST);
-    }
-
     /** No further retry drain or outbox pass sends anything. */
     async function nothingMoreIsSent(operationId: string, documents: SentDocument[]) {
-      const { processQueuedXeroOperationRetries } = await import("@/lib/xero-operation-queue");
-      expect(await processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).toMatchObject({ found: 0, succeeded: 0 });
+      expect(await drainOfficerRetries()).toMatchObject({ found: 0, succeeded: 0 });
       expect(await runOutboxRow(prisma, operationId, PREFIX)).toEqual(NOTHING_TO_RUN);
       expect(sent).toEqual(documents);
     }
@@ -216,7 +211,7 @@ let role: SuiteEnvironmentRoleDeclaration | undefined;
       expect(await fullRow(noteRow)).toEqual(partial);
 
       // The officer's Retry pays the note Xero holds and closes the row.
-      expect(await officerRetry(noteRow)).toMatchObject({ succeeded: 1, failed: 0 });
+      expect(await officerRetry(noteRow, names.officerId)).toMatchObject({ succeeded: 1, failed: 0 });
       expect(await fullRow(noteRow)).toMatchObject({ status: "SUCCEEDED", xeroObjectId: noteId, responsePayload: { refundPayment: { paymentID: expect.any(String) }, refundPaymentError: null } });
       expect(sent).toEqual(oneNote);
       expect(await links(paymentId, "REFUND_CREDIT_NOTE")).toEqual([expect.objectContaining({ xeroObjectId: noteId })]);
@@ -249,32 +244,19 @@ let role: SuiteEnvironmentRoleDeclaration | undefined;
       expect(await fullRow(invoiceRow)).toEqual(partial);
 
       // The officer's Retry records the card payment against the invoice Xero holds, once, and raises no second invoice.
-      expect(await officerRetry(invoiceRow)).toMatchObject({ succeeded: 1, failed: 0 });
+      expect(await officerRetry(invoiceRow, names.officerId)).toMatchObject({ succeeded: 1, failed: 0 });
       expect(await fullRow(invoiceRow)).toMatchObject({ xeroObjectId: invoiceId, responsePayload: { payment: { paymentID: expect.any(String), amount: PRICE / 100 }, paymentError: null } });
       expect(sent).toEqual(oneInvoice);
       expect(await links(paymentId, "PRIMARY_INVOICE")).toEqual([expect.objectContaining({ xeroObjectId: invoiceId })]);
       expect(await links(paymentId, "INVOICE_PAYMENT")).toEqual([expect.objectContaining({ metadata: expect.objectContaining({ invoiceId, amountCents: PRICE }) })]);
       await nothingMoreIsSent(invoiceRow, oneInvoice);
-      // Deliberately not asserted: the row's status after the Retry. It is reported from this clean-up (#5376) and
-      // is not pinned here as correct.
+      // Deliberately not asserted: the row's status after the Retry. It closes PARTIAL, naming an invoice email that
+      // was never due on a card payment; that is #5420, and it is not pinned here as correct.
     });
 
     it("a group settlement invoice refused by the breaker after its handler saved the invoice goes back PENDING with its queued request, and the next pass sends it once", async () => {
-      const g = groupHistory(PREFIX, `g${++sequence}`, "INTERNET_BANKING", 2);
-      await createGroupHistory(prisma, names, g);
-      // Not yet invoiced: the combined invoice is what the row raises.
-      await prisma.groupBookingSettlement.update({ where: { id: g.settlement }, data: { xeroInvoiceId: null } });
-      // The group invoice's email is gated on a declared environment; a copy, here.
-      const { declareEnvironmentRoleForSuite } = await import("./helpers/environment-role");
-      role = declareEnvironmentRoleForSuite("non-production");
-      const allow = { kind: "allow", clearance: {} } as never;
-      const invoiceEmail = await import("@/lib/xero-invoice-email");
-      vi.spyOn(invoiceEmail, "resolveXeroInvoiceEmailPolicy").mockResolvedValue(allow);
-      vi.spyOn(invoiceEmail, "reassertXeroInvoiceEmailPolicy").mockResolvedValue(allow);
-      vi.spyOn(invoiceEmail, "sendXeroInvoiceEmail").mockResolvedValue({ body: { emailed: true } } as never);
-      const { enqueueXeroGroupSettlementInvoiceOperation } = await import("@/lib/xero-group-settlement-invoice-outbox");
-      const groupRow = (await enqueueXeroGroupSettlementInvoiceOperation(g.settlement, { newAttempt: false })).queueOperationId!;
-      expect(groupRow).toEqual(expect.any(String));
+      const { g, groupRow, role: declared } = await queuedGroupSettlementInvoice(prisma, names, PREFIX, `g${++sequence}`);
+      role = declared;
 
       await refusedThenSent(groupRow, "createInvoices", { queueType: "GROUP_SETTLEMENT_INVOICE", settlementId: g.settlement }, GROUP_CHILD_CENTS * 2);
     });

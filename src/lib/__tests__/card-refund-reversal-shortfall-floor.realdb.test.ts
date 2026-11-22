@@ -479,13 +479,21 @@ let example: ReturnType<typeof cardShortfallLateRefundExample>;
           (value) => ({ ok: true as const, value }),
           (error: unknown) => ({ ok: false as const, error }),
         );
-      const one = settle(first);
-      await waitForBlocked(1, "the first writer");
-      const two = settle(second);
-      await waitForBlocked(2, "the second writer");
-      holder.release();
-      await holder.held;
-      return [await one, await two] as const;
+      let one: ReturnType<typeof settle<T>> | undefined;
+      let two: ReturnType<typeof settle<U>> | undefined;
+      try {
+        one = settle(first);
+        await waitForBlocked(1, "the first writer");
+        two = settle(second);
+        await waitForBlocked(2, "the second writer");
+      } finally {
+        // Released whatever happened (#5376 review): a writer that never queued then fails as itself, where a hold
+        // left open showed up as the next hook's timeout. The writers already started finish before this returns.
+        holder.release();
+        await holder.held;
+        await Promise.all([one, two]);
+      }
+      return [await one!, await two!] as const;
     }
 
     describe("the shortfall's completion and the late refund's failure racing on the Payment row", () => {

@@ -16,11 +16,15 @@
  * - a status the source does not spell out - a variable, a call, a `data`
  *   that is not an object literal, or a spread that may carry one - is listed
  *   in `UNREAD_STATUS_WRITERS` with what it can write;
- * - raw SQL that writes the table is listed in `RAW_SQL_WRITERS`. None today.
+ * - raw SQL that writes the table, under `src`, `scripts` or `prisma` (the
+ *   migrations included), is listed in `RAW_SQL_WRITERS`.
  * One of the unread writers, `completeXeroSyncOperation`, takes its status
- * from its caller, so a completion spelled at the call is read too. A
- * completion built elsewhere and a status carried through any other helper
- * are not read: the limit of reading source.
+ * from the completion its caller hands it, so each call is read the same way:
+ * a completion that names PENDING fails the census, and one whose status is
+ * not spelled at the call (a variable, a builder's result, a spread) is listed
+ * in `UNREAD_COMPLETIONS` with what it can carry. What is not read: the inside
+ * of a builder or of a wrapper's own callers (each entry says what was read by
+ * hand), and a status carried through any other helper.
  *
  * Reads source from disk, so `test:related` cannot select it; run it with
  * `pnpm run test:named` (docs/TESTING.md).
@@ -87,8 +91,55 @@ const UNREAD_STATUS_WRITERS: Readonly<Record<string, { writes: number; why: stri
   },
 };
 
-/** #5368: each file's count of raw SQL statements that write the table. None today: every write goes through Prisma. */
-const RAW_SQL_WRITERS: Readonly<Record<string, { writes: number; why: string }>> = {};
+/**
+ * #5368: each file's count of completions handed to `completeXeroSyncOperation` whose status is not spelled at the
+ * call, with what each can carry. None may carry PENDING: a completion is a run's outcome.
+ */
+const UNREAD_COMPLETIONS: Readonly<Record<string, { writes: number; why: string }>> = {
+  "src/lib/additional-capture-xero-receipt.ts": {
+    writes: 1,
+    why: "standDown passes its own status parameter, typed as SUCCEEDED or CANCELLED and nothing else",
+  },
+  "src/lib/membership-cancellation-xero.ts": {
+    writes: 2,
+    why: "two skipped completions spread strandedInvoiceLinks, the stranded invoice's Xero object fields or nothing; neither names a status, so SUCCEEDED",
+  },
+  "src/lib/xero-contact-create-recovery.ts": {
+    writes: 1,
+    why: "completeMemberContactOperation passes on its caller's completion; its one caller (xero-contact-groups.ts) spells one with no status, so SUCCEEDED",
+  },
+  "src/lib/xero-contacts.ts": {
+    writes: 4,
+    why: "contact completions built in this file, and the wrapper completeMemberContactUpdateOperation passing on its callers' (this file and xero-bulk-contact-sync.ts); none names a status, so SUCCEEDED",
+  },
+  "src/lib/xero-credit-notes.ts": {
+    writes: 1,
+    why: "refundCreditNoteCompletion: PARTIAL when the note's settling payment failed, SUCCEEDED otherwise",
+  },
+  "src/lib/xero-refund-note-settlement.ts": {
+    writes: 1,
+    why: "refundCreditNoteCompletion again: PARTIAL when the note's settling payment failed, SUCCEEDED otherwise",
+  },
+  "src/lib/xero-group-settlement-invoices.ts": {
+    writes: 1,
+    why: "boundGroupSettlementInvoiceCompletion: SUCCEEDED, for an invoice already raised for the settlement",
+  },
+  "src/lib/xero-operation-retry.ts": {
+    writes: 2,
+    why: "closeRepairOnClaim passes on a repair's completion (repairedPartialInvoiceCompletion or a spelled SUCCEEDED), and the refund note repair uses refundCreditNoteCompletion: PARTIAL or SUCCEEDED each",
+  },
+};
+
+/**
+ * #5368: each file's count of raw SQL statements that write the table. The application writes it through Prisma
+ * only; the one statement is a migration's.
+ */
+const RAW_SQL_WRITERS: Readonly<Record<string, { writes: number; why: string }>> = {
+  "prisma/migrations/20260706120000_xero_operation_queue_type_column/migration.sql": {
+    writes: 1,
+    why: "the queue type column's backfill: it copies requestPayload's queueType into the new column and sets no status, so it puts no row on PENDING",
+  },
+};
 
 const PENDING_STATUS = /status:\s*"PENDING"/g;
 const WHERE_OR_DATA = /\b(where|data)\s*:/g;
@@ -214,23 +265,34 @@ function rowWritersNaming(kind: StatusWrite): Record<string, number> {
 }
 
 /**
- * The completions handed straight to `completeXeroSyncOperation` in `text` that name PENDING. The writer above takes
- * its status from them, so a completion spelled at the call is read here. One built elsewhere (a variable, a builder
- * such as `refundCreditNoteCompletion`) is not: that is this census's stated limit.
+ * The completion each `completeXeroSyncOperation` call in `text` is handed, as the status it names. The writer above
+ * takes its status from it. `none` is no status (SUCCEEDED); `unread` is a completion not spelled at the call: a
+ * variable, a builder's result such as `refundCreditNoteCompletion`, or a spread that may carry a status.
  */
-function completionsNamingPending(file: string, text: string): number {
+function completions(file: string, text: string): StatusWrite[] {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
-  let naming = 0;
+  const handed: StatusWrite[] = [];
   const visit = (node: ts.Node) => {
     if (ts.isCallExpression(node)) {
       const callee = unwrap(node.expression);
       const name = ts.isIdentifier(callee) ? callee.text : ts.isPropertyAccessExpression(callee) ? callee.name.text : undefined;
-      if (name === "completeXeroSyncOperation" && node.arguments[1] && statusWritten(node.arguments[1]) === "pending") naming += 1;
+      if (name === "completeXeroSyncOperation" && node.arguments[1]) handed.push(statusWritten(node.arguments[1]));
     }
     ts.forEachChild(node, visit);
   };
   visit(source);
-  return naming;
+  return handed;
+}
+
+/** Per file, how many completions name `kind`. */
+function completionsNaming(kind: StatusWrite): Record<string, number> {
+  return Object.fromEntries(
+    [...sourceFiles("src"), ...sourceFiles("scripts")].flatMap((file) => {
+      const text = readFileSync(path.join(REPO_ROOT, file), "utf8");
+      const handed = text.includes("completeXeroSyncOperation") ? completions(file, text).filter((write) => write === kind).length : 0;
+      return handed > 0 ? [[file, handed]] : [];
+    }),
+  );
 }
 
 /** Raw SQL that writes the table, under either spelling of its name. */
@@ -261,19 +323,17 @@ describe("Xero operation PENDING writers (#5228)", () => {
   });
 
   it("no completion handed to completeXeroSyncOperation names PENDING (#5368)", () => {
-    const naming = Object.fromEntries(
-      [...sourceFiles("src"), ...sourceFiles("scripts")].flatMap((file) => {
-        const text = readFileSync(path.join(REPO_ROOT, file), "utf8");
-        const completions = text.includes("completeXeroSyncOperation") ? completionsNamingPending(file, text) : 0;
-        return completions > 0 ? [[file, completions]] : [];
-      }),
-    );
-    expect(naming).toEqual({});
+    expect(completionsNaming("pending")).toEqual({});
+  });
+
+  it("every completion whose status is not spelled at the call is named, with what it can carry (#5368)", () => {
+    expect(completionsNaming("unread")).toEqual(counts(UNREAD_COMPLETIONS));
+    for (const { why } of Object.values(UNREAD_COMPLETIONS)) expect(why.length).toBeGreaterThan(40);
   });
 
   it("no raw SQL writes the table but what is named (#5368)", () => {
     const writers = Object.fromEntries(
-      [...sourceFiles("src", /\.(?:[cm]?[jt]sx?|sql)$/), ...sourceFiles("scripts", /\.(?:[cm]?[jt]sx?|sql|sh)$/)].flatMap((file) => {
+      [...sourceFiles("src", /\.(?:[cm]?[jt]sx?|sql)$/), ...sourceFiles("scripts", /\.(?:[cm]?[jt]sx?|sql|sh)$/), ...sourceFiles("prisma", /\.(?:[cm]?[jt]sx?|sql)$/)].flatMap((file) => {
         const writes = rawSqlWrites(readFileSync(path.join(REPO_ROOT, file), "utf8"));
         return writes > 0 ? [[file, writes]] : [];
       }),
@@ -305,10 +365,15 @@ describe("Xero operation PENDING writers (#5228)", () => {
     expect(read('tx.xeroSyncOperation.findMany({ where: { status: "PENDING" } }); tx.xeroSyncOperation.create({ data: { status: "PENDING" } })')).toEqual([]);
     expect(read('tx.payment.update({ where: { id }, data: { status: PaymentStatus.PENDING } })')).toEqual([]);
 
-    const completions = (code: string) => completionsNamingPending("probe.ts", code);
-    expect(completions('await completeXeroSyncOperation(claim, { status: "PENDING", responsePayload })')).toBe(1);
-    expect(completions('await sync.completeXeroSyncOperation(claim, { status: failed ? "PENDING" : "SUCCEEDED" }, { store: tx })')).toBe(1);
-    expect(completions('await completeXeroSyncOperation(claim, { status: paymentError ? "PARTIAL" : "SUCCEEDED" }); await completeXeroSyncOperation(claim, completion)')).toBe(0);
+    const handed = (code: string) => completions("probe.ts", code);
+    expect(handed('await completeXeroSyncOperation(claim, { status: "PENDING", responsePayload })')).toEqual(["pending"]);
+    expect(handed('await sync.completeXeroSyncOperation(claim, { status: failed ? "PENDING" : "SUCCEEDED" }, { store: tx })')).toEqual(["pending"]);
+    expect(handed('await completeXeroSyncOperation(claim, { status: paymentError ? "PARTIAL" : "SUCCEEDED" }); await completeXeroSyncOperation(claim, { responsePayload })')).toEqual(["other", "none"]);
+    expect(handed("await completeXeroSyncOperation(claim, completion)")).toEqual(["unread"]);
+    expect(handed("await completeXeroSyncOperation(claim, { status, responsePayload: { skipped } })")).toEqual(["unread"]);
+    expect(handed("await completeXeroSyncOperation(claim, refundCreditNoteCompletion({ paymentId }))")).toEqual(["unread"]);
+    expect(handed("await completeXeroSyncOperation(claim, { responsePayload, ...links })")).toEqual(["unread"]);
+    expect(handed('await completeXeroSyncOperation(claim, { responsePayload, ...(failed ? { status: "PARTIAL" as const } : {}) })')).toEqual(["other"]);
 
     expect(rawSqlWrites(`UPDATE "XeroSyncOperation" SET "status" = 'PENDING' WHERE "id" = $1`)).toBe(1);
     expect(rawSqlWrites("update xero_sync_operation set status = 'PENDING'")).toBe(1);

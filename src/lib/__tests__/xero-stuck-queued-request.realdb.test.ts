@@ -26,14 +26,16 @@ import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { cleanHistories, historyNames, seedHistoryFixtures } from "./support/booking-ledger-history";
-import { createGroupHistory, GROUP_CHILD_CENTS, groupHistory } from "./support/booking-ledger-group-history";
-import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { GROUP_CHILD_CENTS } from "./support/booking-ledger-group-history";
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
 import type { SuiteEnvironmentRoleDeclaration } from "./helpers/environment-role";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import {
+  drainOfficerRetries,
   fakeXero,
+  officerRetry,
   paidCardBooking,
+  queuedGroupSettlementInvoice,
   queueRefundNote,
   recordCardRefund,
   runOutboxRow,
@@ -182,18 +184,17 @@ let role: SuiteEnvironmentRoleDeclaration | undefined;
       expect(await readRow(noteRow)).toEqual(released);
 
       // The officer's Retry, queued and drained as the button and the cron run it.
-      const { enqueueXeroSyncOperationRetry, processQueuedXeroOperationRetries } = await import("@/lib/xero-operation-queue");
-      await enqueueXeroSyncOperationRetry(noteRow, { createdByMemberId: names.officerId });
-      expect(await processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).toMatchObject({ succeeded: 1, failed: 0 });
+      expect(await officerRetry(noteRow, names.officerId)).toMatchObject({ succeeded: 1, failed: 0 });
       expect(sent).toEqual([{ operation: "createCreditNotes", cents: 5_000 }]);
       // And a second drain, or the outbox, sends nothing more.
-      expect(await processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).toMatchObject({ succeeded: 0 });
+      expect(await drainOfficerRetries()).toMatchObject({ succeeded: 0 });
       expect(sent).toHaveLength(1);
     });
 
     // #5368: release, then an officer's Retry, for an invoice row of two more queue types. The Retry's route differs by
     // type and each is pinned as it is: a booking invoice is created by the retry itself; a group settlement invoice
     // goes back to the outbox with a request it can claim, and the next pass creates it.
+    // The joining fee row is left out pending #5419: its Retry does not use the amount the row was queued with.
 
     /**
      * Strand `operationId` at its invoice create as a pre-#5228 give-back did, release it, and have an officer Retry
@@ -210,9 +211,7 @@ let role: SuiteEnvironmentRoleDeclaration | undefined;
       expect(await readRow(operationId)).toEqual({ ...before, status: "FAILED", completedAt: RELEASED_AT, lastErrorCode: "QUEUED_REQUEST_RELEASED" });
       expect(sent).toEqual([]);
 
-      const { enqueueXeroSyncOperationRetry, processQueuedXeroOperationRetries } = await import("@/lib/xero-operation-queue");
-      await enqueueXeroSyncOperationRetry(operationId, { createdByMemberId: names.officerId });
-      expect(await processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).toMatchObject({ succeeded: 1, failed: 0 });
+      expect(await officerRetry(operationId, names.officerId)).toMatchObject({ succeeded: 1, failed: 0 });
       const oneInvoice = [{ operation: "createInvoices", cents: expected.cents }];
       if (expected.sentBy === "the next outbox pass") {
         // Queued again, not sent: PENDING, unclaimed, holding the queued request in place of the execution request.
@@ -226,7 +225,7 @@ let role: SuiteEnvironmentRoleDeclaration | undefined;
       expect(await readRow(operationId)).toMatchObject({ status: "SUCCEEDED", xeroObjectId: expect.any(String), lastErrorCode: null });
 
       // And a second drain, or the outbox, sends nothing more.
-      expect(await processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).toMatchObject({ succeeded: 0 });
+      expect(await drainOfficerRetries()).toMatchObject({ succeeded: 0 });
       expect(await runOutboxRow(prisma, operationId, PREFIX)).toMatchObject({ found: 0, processed: 0 });
       expect(sent).toEqual(oneInvoice);
       expect(await reported()).toEqual([]);
@@ -238,21 +237,8 @@ let role: SuiteEnvironmentRoleDeclaration | undefined;
     });
 
     it("a stuck group settlement invoice row is released, an officer's Retry queues it again with a request the outbox can claim, and the next pass sends the invoice once", async () => {
-      const g = groupHistory(PREFIX, `g${++sequence}`, "INTERNET_BANKING", 2);
-      await createGroupHistory(prisma, names, g);
-      // Not yet invoiced: the combined invoice is what the row raises.
-      await prisma.groupBookingSettlement.update({ where: { id: g.settlement }, data: { xeroInvoiceId: null } });
-      // The group invoice's email is gated on a declared environment; a copy, here.
-      const { declareEnvironmentRoleForSuite } = await import("./helpers/environment-role");
-      role = declareEnvironmentRoleForSuite("non-production");
-      const allow = { kind: "allow", clearance: {} } as never;
-      const invoiceEmail = await import("@/lib/xero-invoice-email");
-      vi.spyOn(invoiceEmail, "resolveXeroInvoiceEmailPolicy").mockResolvedValue(allow);
-      vi.spyOn(invoiceEmail, "reassertXeroInvoiceEmailPolicy").mockResolvedValue(allow);
-      vi.spyOn(invoiceEmail, "sendXeroInvoiceEmail").mockResolvedValue({ body: { emailed: true } } as never);
-      const { enqueueXeroGroupSettlementInvoiceOperation } = await import("@/lib/xero-group-settlement-invoice-outbox");
-      const groupRow = (await enqueueXeroGroupSettlementInvoiceOperation(g.settlement, { newAttempt: false })).queueOperationId!;
-      expect(groupRow).toEqual(expect.any(String));
+      const { g, groupRow, role: declared } = await queuedGroupSettlementInvoice(prisma, names, PREFIX, `g${++sequence}`);
+      role = declared;
       await releasedThenRetriedOnce(groupRow, {
         queueType: "GROUP_SETTLEMENT_INVOICE", cents: GROUP_CHILD_CENTS * 2, sentBy: "the next outbox pass",
         queued: { queueType: "GROUP_SETTLEMENT_INVOICE", settlementId: g.settlement },
