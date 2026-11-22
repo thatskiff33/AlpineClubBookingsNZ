@@ -1052,6 +1052,27 @@ const ENVIRONMENT_FORMAT_ADAPTER_FILES = ["src/lib/club-format-env.ts"];
 /** The environment-format arm as bare selectors, read by its guard test. */
 export const ENVIRONMENT_FORMAT_ARMS = ENVIRONMENT_FORMAT_RESTRICTIONS.map((entry) => entry.selector);
 
+// #5399 — the caller's IP read anywhere but the one helper. The FIRST
+// `X-Forwarded-For` address is whatever the caller sent; 25 route sites read it
+// (three stored the raw header), so behind an appending proxy the audit log held
+// an address the caller chose. Any string naming either header is refused, which
+// also catches a local alias, a bracket read and a destructured key. An object
+// literal's KEY is allowed: that writes the header onto a request the app sends
+// itself (`mcp/dispatch.ts`'s loopback), it does not read one.
+const CLIENT_IP_HEADER_NAME = "/^x-(forwarded-for|real-ip)$/i";
+const CLIENT_IP_HEADER_MESSAGE =
+  "#5399: Read the caller's IP with getClientIp(request), or getAuditRequestContext(request) for an audit context; clientIpFromHeaders(headers) where only headers are in hand. The first X-Forwarded-For address is whatever the caller sent, so the rule (last address, then X-Real-IP) lives once, in src/lib/rate-limit-http.ts.";
+const CLIENT_IP_HEADER_RESTRICTIONS = [
+  `Literal[value=${CLIENT_IP_HEADER_NAME}]:not(ObjectExpression > Property > Literal.key)`,
+  `TemplateElement[value.raw=${CLIENT_IP_HEADER_NAME}]`,
+].map((selector) => ({ selector, message: CLIENT_IP_HEADER_MESSAGE }));
+
+/** The one file allowed to read the caller's IP headers. */
+const CLIENT_IP_HEADER_ADAPTER_FILES = ["src/lib/rate-limit-http.ts"];
+
+/** The client-IP arm as bare selectors, read by its guard test. */
+export const CLIENT_IP_HEADER_ARMS = CLIENT_IP_HEADER_RESTRICTIONS.map((entry) => entry.selector);
+
 const HOST_CLOCK_RESTRICTIONS = [...NO_HOST_CLOCK_FACE];
 
 const ENVIRONMENT_ZONE_RESTRICTIONS = [
@@ -2638,6 +2659,7 @@ const ALWAYS_RESTRICTED_IN_SRC = [
   ...CLUB_FORMAT_PARAMETER_RESTRICTIONS,
   ...RETIRED_FORMAT_CONSTANT_RESTRICTIONS,
   ...ENVIRONMENT_FORMAT_RESTRICTIONS,
+  ...CLIENT_IP_HEADER_RESTRICTIONS,
 ];
 
 /**
@@ -2672,6 +2694,12 @@ export const SRC_RESTRICTION_EXEMPTIONS = [
     omits: ENVIRONMENT_FORMAT_RESTRICTIONS,
     reason:
       "The seed reader for the club's currency and locale (#3563; #3567 review): the one module whose job is to read CURRENCY / LOCALE once, for the first-boot backfill and the no-row fallback, and to warn when only a retired NEXT_PUBLIC_ twin is set. Every other file reads the stored setting.",
+  },
+  {
+    files: CLIENT_IP_HEADER_ADAPTER_FILES,
+    omits: CLIENT_IP_HEADER_RESTRICTIONS,
+    reason:
+      "The one home of the caller-IP rule (#5399): last X-Forwarded-For address, then X-Real-IP. The rule exists to make every other file call getClientIp() / clientIpFromHeaders() instead of reading the header, and the helper has to read it somewhere.",
   },
   {
     files: ["prisma/**/*.{ts,tsx}"],
@@ -2916,6 +2944,18 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-syntax": srcRestrictedSyntaxWithout(
         ENVIRONMENT_FORMAT_RESTRICTIONS,
+        ...DATE_RENDERING_RESTRICTIONS,
+      ),
+    },
+  },
+  {
+    // The caller-IP helper is the one file that may read X-Forwarded-For and
+    // X-Real-IP (#5399). Only that group is dropped; the rendering arms are
+    // re-stated for the reason the zone block above gives.
+    files: CLIENT_IP_HEADER_ADAPTER_FILES,
+    rules: {
+      "no-restricted-syntax": srcRestrictedSyntaxWithout(
+        CLIENT_IP_HEADER_RESTRICTIONS,
         ...DATE_RENDERING_RESTRICTIONS,
       ),
     },
