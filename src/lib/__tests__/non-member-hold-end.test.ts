@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { addDaysDateOnly } from "@/lib/date-only";
 import { nonMemberHoldEnd } from "@/lib/non-member-hold-end";
 
 // #5407: the one definition of "check-in minus hold days" that booking create,
@@ -22,6 +23,16 @@ describe("nonMemberHoldEnd (#5407)", () => {
     // step in the club's zone would land an hour away; the hold never did.
     const checkIn = new Date("2026-10-01T00:00:00.000Z");
     expect(nonMemberHoldEnd(checkIn, 7).toISOString()).toBe("2026-09-24T00:00:00.000Z");
+  });
+
+  it("matches the UTC calendar-day step the waitlist used, for every whole-day count", () => {
+    // waitlist.ts stepped `addDaysDateOnly(checkIn, -holdDays)` before #5407.
+    for (const iso of ["2026-04-06T00:00:00.000Z", "2026-10-01T00:00:00.000Z", "2027-01-01T00:00:00.000Z"]) {
+      const checkIn = new Date(iso);
+      for (let holdDays = 0; holdDays <= 60; holdDays += 1) {
+        expect(nonMemberHoldEnd(checkIn, holdDays).getTime()).toBe(addDaysDateOnly(checkIn, -holdDays).getTime());
+      }
+    }
   });
 
   it("returns a new instant and leaves the check-in untouched", () => {

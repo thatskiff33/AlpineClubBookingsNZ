@@ -5,8 +5,10 @@
  *
  * The one definition. Booking create (the single booking and a split's
  * guest child), a guest edit, a modification's settlement, a date change, an
- * approved request's hold and the confirm-pending cron's first-expiry anchor
- * all read it, so a hold minted by one and read back by another cannot drift.
+ * approved request's hold, an accepted waitlist offer and the confirm-pending
+ * cron's first-expiry anchor all read it, so a hold minted by one and read
+ * back by another cannot drift. (The waitlist stepped UTC calendar days, which
+ * on a whole-day count is the same instant.)
  * The arithmetic is unchanged from the copies it replaced: an instant minus a
  * fixed number of milliseconds, with no club-zone or calendar-day step, so a
  * daylight-saving change between the two moves the result by that hour exactly
