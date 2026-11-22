@@ -30,6 +30,7 @@ import {
 import { clubFormatValues } from "@/lib/club-format-server";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 import { AI_DIAGNOSTICS_DISCLOSURE_VERSION } from "@/lib/ai-diagnostics-disclosure";
+import { judgeAiDiagnosticsEnable } from "@/lib/ai-diagnostics-enable-gate";
 import { isPrismaRecordNotFoundError } from "@/lib/prisma-errors";
 
 const moduleSettingsSchema = z
@@ -132,59 +133,31 @@ export async function PUT(request: Request) {
     }
   }
 
-  // AI Diagnostics sends excerpts of club data to its provider outside New
-  // Zealand, so switching it on needs the administrator to have acknowledged the
-  // CURRENT disclosure (ADR-006 §2, #5243). Any save that would turn it on, as
-  // judged against the row read above, is checked, whichever screen sent it.
-  // Switching it off, or saving while it is already on, needs no acknowledgement.
-  // That judgement holds only if the row has not changed since the read: the
-  // write below is conditional on it, so a stale whole-set save cannot switch
-  // Diagnostics back on after someone else switched it off.
-  const enablesAiDiagnostics = !before.aiDiagnostics && after.aiDiagnostics;
-  const acknowledgedVersion =
-    parsed.data.aiDiagnosticsDisclosureAcknowledgedVersion;
-  if (
-    enablesAiDiagnostics &&
-    acknowledgedVersion !== AI_DIAGNOSTICS_DISCLOSURE_VERSION
-  ) {
-    return NextResponse.json(
-      {
-        error:
-          "Read and tick the statement about where AI Diagnostics sends data, on Admin → Modules, before switching it on. Reload the page if you have already ticked it.",
-      },
-      { status: 409 },
-    );
+  // The disclosure gate (#5243). The write below is conditional on the
+  // aiDiagnostics value judged here: an existing row is written only if it still
+  // holds it, so a lost race matches no row, Prisma throws P2025 and the
+  // transaction rolls back with its audit rows. With no row yet the gate judged
+  // against "off", so a racing first save can only switch Diagnostics off.
+  const aiDiagnostics = judgeAiDiagnosticsEnable(
+    before,
+    after,
+    parsed.data.aiDiagnosticsDisclosureAcknowledgedVersion,
+  );
+  if (aiDiagnostics.refusal) {
+    return NextResponse.json({ error: aiDiagnostics.refusal }, { status: 409 });
   }
 
-  // An existing row is written only if its aiDiagnostics value is still the one
-  // the gate judged (#5243): Postgres re-checks the condition after any
-  // concurrent writer commits, so a lost race matches no row, Prisma throws
-  // P2025, and the transaction below rolls back with its audit rows. With no
-  // row yet, the gate judged against "off", so a racing first save can only
-  // ever switch Diagnostics off, never on unseen; the upsert keeps that case.
+  const data = { ...after, updatedByMemberId: session.user.id };
   const write = existing
     ? prisma.clubModuleSettings.update({
-        where: {
-          id: CLUB_MODULE_SETTINGS_ID,
-          aiDiagnostics: before.aiDiagnostics,
-        },
-        data: {
-          ...after,
-          updatedByMemberId: session.user.id,
-        },
+        where: { id: CLUB_MODULE_SETTINGS_ID, aiDiagnostics: before.aiDiagnostics },
+        data,
         select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
       })
     : prisma.clubModuleSettings.upsert({
         where: { id: CLUB_MODULE_SETTINGS_ID },
-        create: {
-          id: CLUB_MODULE_SETTINGS_ID,
-          ...after,
-          updatedByMemberId: session.user.id,
-        },
-        update: {
-          ...after,
-          updatedByMemberId: session.user.id,
-        },
+        create: { id: CLUB_MODULE_SETTINGS_ID, ...data },
+        update: data,
         select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
       });
 
@@ -216,7 +189,7 @@ export async function PUT(request: Request) {
                 request: getAuditRequestContext(request),
               }),
             ),
-            ...(enablesAiDiagnostics
+            ...(aiDiagnostics.enables
               ? [
                   prisma.auditLog.create(
                     buildStructuredAuditLogCreateArgs({
