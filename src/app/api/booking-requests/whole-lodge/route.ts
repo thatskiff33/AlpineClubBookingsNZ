@@ -17,6 +17,7 @@ import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { requireActiveSession } from "@/lib/session-guards";
 import logger from "@/lib/logger";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 /*
  * Member-facing "Book the whole lodge" request (#2263, epic #2245).
@@ -111,12 +112,11 @@ export async function POST(request: NextRequest) {
   if (!memberLimit.success) return rateLimitedResponse(memberLimit);
 
   // 3. Payload shape.
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = wholeLodgeRequestSchema.safeParse(body);
   if (!parsed.success) {

@@ -13,6 +13,7 @@ import {
 import { FOOD_ORDER_PRICE_CENTS_MAX } from "@/lib/food-order-rules";
 import { findFoodOrderForAction, setFoodOrderPrice } from "@/lib/food-orders";
 import { requireActiveSession } from "@/lib/session-guards";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 /**
  * Record or change a food order's price (fork #121, owner decisions 8, 11, 12).
@@ -50,12 +51,11 @@ export async function PATCH(
   const guard = await requireFoodOrderViewer(() => requireActiveSession());
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

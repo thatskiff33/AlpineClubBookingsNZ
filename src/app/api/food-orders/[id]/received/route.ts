@@ -16,6 +16,7 @@ import {
   markFoodOrderItemsReceived,
 } from "@/lib/food-orders";
 import { requireActiveSession } from "@/lib/session-guards";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 /**
  * Tick items of a food order received (fork #121; owner change, 13 Nov 2026:
@@ -67,12 +68,11 @@ export async function POST(
     );
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = bodySchema.safeParse(body);
   const ownItemIds = new Set(order.items.map((item) => item.id));
   if (!parsed.success || !parsed.data.itemIds.every((itemId) => ownItemIds.has(itemId))) {
