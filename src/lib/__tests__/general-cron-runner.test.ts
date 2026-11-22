@@ -134,6 +134,7 @@ describe("general cron runner", () => {
           partialBumpedBookingIds: [],
           failedBookingIds: [],
           cancelledBookingIds: [],
+          owedBumpNotices: { checked: 0, delivered: 0, cleared: 0, expired: 0 },
         })),
         reapStaleGroupSettlements: vi.fn(async () => ({
           scanned: 1,

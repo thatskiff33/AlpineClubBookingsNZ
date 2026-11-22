@@ -430,7 +430,14 @@ describe("Profile API: structured phone and address fields", () => {
 
   it("rejects incomplete required profile fields", async () => {
     vi.mocked(auth).mockResolvedValue(memberSession);
-    vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
+    // ALP-718: a field not sent keeps its stored value, so the refusal is for
+    // a profile that would be saved without an address, not one merely sent without.
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      ...baseMember,
+      streetAddressLine1: null,
+      streetCity: null,
+      postalAddressLine1: null,
+    } as any);
 
     const res = await updateProfile(makeProfilePut({
       firstName: "Alice",

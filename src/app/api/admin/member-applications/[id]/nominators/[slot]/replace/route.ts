@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { MembershipApplicationError } from "@/lib/member-application-fields";
 import { type NominatorSlot, replaceMemberApplicationNominator } from "@/lib/nomination";
 import { requireAdmin } from "@/lib/session-guards";
@@ -31,12 +32,11 @@ export async function POST(
     return NextResponse.json({ error: "Invalid nominator slot" }, { status: 400 });
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = replaceNominatorSchema.safeParse(body);
   if (!parsed.success) {

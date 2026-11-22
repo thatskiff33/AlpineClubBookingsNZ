@@ -32,7 +32,12 @@ describe("API JSON parsing", () => {
   });
 
   describe("caller-chosen error text", () => {
-    it.each(["Invalid JSON", "Invalid JSON payload", "Invalid JSON."] as const)(
+    it.each([
+      "Invalid JSON",
+      "Invalid JSON payload",
+      "Invalid JSON.",
+      "That post could not be read.",
+    ] as const)(
       "answers exactly { error: %j } with no details field",
       async (error) => {
         const result = await parseJsonRequestBody(post("{not json"), { error });

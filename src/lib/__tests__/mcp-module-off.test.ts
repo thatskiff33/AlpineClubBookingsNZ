@@ -33,7 +33,12 @@ const { modules, touched, auth, guards, limits, recentAuth } = vi.hoisted(() => 
   recentAuth: vi.fn(),
 }));
 
-vi.mock("@/lib/module-settings", () => ({ loadEffectiveModuleFlags: modules }));
+// The original's pure helpers stay: the roster loader's imports read them at
+// module scope. Only the flag read is replaced.
+vi.mock("@/lib/module-settings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/module-settings")),
+  loadEffectiveModuleFlags: modules,
+}));
 vi.mock("@/lib/auth", () => ({ auth }));
 vi.mock("@/lib/session-guards", () => guards);
 vi.mock("@/lib/require-recent-auth", () => ({ requireRecentAuth: recentAuth }));
@@ -125,6 +130,10 @@ function allRouteFiles(): string[] {
 const MCP_READ_HANDLERS: Readonly<Record<string, readonly string[]>> = {
   "src/app/api/bookings/[id]/route.ts": ["GET"],
   "src/app/api/bookings/mine/route.ts": ["GET"],
+  // ALP-718: the roster page's loader and one notice, for `get_lodge_roster`
+  // and `get_notice`.
+  "src/app/api/lodge-roster/route.ts": ["GET"],
+  "src/app/api/notices/[id]/route.ts": ["GET"],
   "src/app/api/notices/route.ts": ["GET"],
   "src/app/api/profile/summary/route.ts": ["GET"],
 };
