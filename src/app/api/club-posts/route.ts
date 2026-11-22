@@ -62,9 +62,10 @@ export async function GET(request: NextRequest) {
   const memberId = gate.session.user.id;
 
   const url = new URL(request.url);
-  const query = clubPostListQuerySchema.safeParse(
-    Object.fromEntries(url.searchParams),
-  );
+  const query = clubPostListQuerySchema.safeParse({
+    before: url.searchParams.get("before") ?? undefined,
+    beforeId: url.searchParams.get("beforeId") ?? undefined,
+  });
   if (!query.success) {
     return NextResponse.json(
       { error: "That page marker is not one this board gave out." },

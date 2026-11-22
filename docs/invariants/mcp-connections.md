@@ -176,8 +176,8 @@ only the rules.
   fields, at every depth; a refusal passes unchanged. Only a `POST` the
   census pins as side-effect free may run as a `preview` read.
 - **A connection acts as a member, never as an officer.** A route with an
-  officer branch decides with `memberOnlySessionUser`: role `USER`, only
-  `USER`/`ORG` access roles, an empty permission matrix. An on-behalf
+  officer branch decides with `memberOnlySessionUser`: no officer role,
+  only `USER`/`ORG` access roles, an empty permission matrix. An on-behalf
   target or officer override flag from a connection is refused. A reused
   member page keeps its audience (privacy register row `ai-apps`):
   committee-role notices (`notices.ts`) and the person's own actions in their

@@ -46,12 +46,13 @@ import { connectionJson } from "@/lib/mcp-connection-request";
 function parseFilters(
   params: URLSearchParams,
 ): FoodOrderHistoryFilters | { error: string } {
-  // An empty value is no filter, as the history page sends it.
-  const present = Object.fromEntries(
-    [...params]
-      .map(([key, value]) => [key, value.trim()] as const)
-      .filter(([, value]) => value !== ""),
-  );
+  // The first value of each filter, as `URLSearchParams.get` reads it; an
+  // empty value is no filter, as the history page sends it.
+  const present: Record<string, string> = {};
+  for (const key of Object.keys(foodOrderHistoryQuerySchema.shape)) {
+    const value = params.get(key)?.trim();
+    if (value) present[key] = value;
+  }
   const parsed = foodOrderHistoryQuerySchema.safeParse(present);
   if (!parsed.success) {
     const field = parsed.error.issues[0]?.path[0];

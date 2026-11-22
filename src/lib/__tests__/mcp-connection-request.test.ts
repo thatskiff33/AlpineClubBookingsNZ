@@ -93,6 +93,7 @@ describe("memberOnlySessionUser (ALP-718)", () => {
     const organisation = { ...officer, role: "USER", accessRoles: ["ORG", "ADMIN"] } as unknown as Session["user"];
     const user = memberOnlySessionUser(connectionRequest(), organisation);
     expect(user.accessRoles).toEqual(["ORG"]);
+    expect(user.role).toBe("SCHOOL");
     expect(isOrganisationAccount(user)).toBe(true);
     expect(hasAdminAccess(user)).toBe(false);
 

@@ -17,7 +17,7 @@ import {
 } from "@/lib/calendar-events";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { CALENDAR_EVENTS_CONNECTION_SHAPE } from "@/lib/connection-shapes";
-import { connectionJson } from "@/lib/mcp-connection-request";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 // Widest window a single list request may span, guarding against an unbounded
 // scan if a client sends a silly range. A month view needs ~6 weeks; a year of
@@ -54,10 +54,10 @@ export async function GET(req: NextRequest) {
   }
 
   const url = new URL(req.url);
-  const parsedQuery = calendarEventListQuerySchema.safeParse(
-    Object.fromEntries(url.searchParams),
-  );
-  const query = parsedQuery.success ? parsedQuery.data : {};
+  const query = calendarEventListQuerySchema.parse({
+    from: url.searchParams.get("from") ?? undefined,
+    to: url.searchParams.get("to") ?? undefined,
+  });
   const now = Date.now();
   const from =
     parseRangeParam(query.from) ??
@@ -91,7 +91,8 @@ export async function GET(req: NextRequest) {
       // result set (e.g. a runaway recurrence) rather than truncating real use.
       take: 2000,
     }),
-    canManageCalendarEvents(guard.session.user),
+    // A connection never edits the calendar, and is not told it could.
+    arrivesAsMcpConnection(req) ? false : canManageCalendarEvents(guard.session.user),
   ]);
 
   return connectionJson(

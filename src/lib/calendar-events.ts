@@ -35,8 +35,8 @@ export const recurrenceInputSchema = z.object({
  * as the calendar page has always been answered.
  */
 export const calendarEventListQuerySchema = z.object({
-  from: z.string().max(40).optional(),
-  to: z.string().max(40).optional(),
+  from: z.string().optional(),
+  to: z.string().optional(),
 });
 
 export const calendarEventInputSchema = z.object({
