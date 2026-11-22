@@ -92,9 +92,9 @@ const OWED_SCAN_LIMIT = 1000;
 type OwedRow = { key: string; lastAlertedAt: Date; replayAlert: Prisma.JsonValue };
 
 /**
- * Oldest first, paging past rows it skips (a claim in flight or deferred for
- * the day), so skipped rows never hold newer ones back: only rows it acts on
- * count against the per-run budget. Pages by `(lastAlertedAt, key)` rather
+ * Oldest first, paging past rows it skips (a claim in flight, deferred for
+ * the day, or a row that threw), so skipped rows never hold newer ones back:
+ * only rows it acts on count against the per-run budget. Pages by `(lastAlertedAt, key)` rather
  * than a cursor row, because a settled row is deleted mid-run.
  */
 async function drainOwedAlerts(now: Date, result: OnceEverAlertSweepResult): Promise<void> {
@@ -168,6 +168,7 @@ async function sweepOwedRow(row: OwedRow, now: Date, result: OnceEverAlertSweepR
   } catch (err) {
     result.failed += 1;
     logger.error({ ...context, err }, "Failed to sweep an owed once-ever admin alert");
-    return "acted";
+    // Skipped, not acted: rows that keep throwing must not hold newer ones back.
+    return "skipped";
   }
 }

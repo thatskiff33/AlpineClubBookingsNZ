@@ -217,6 +217,25 @@ describe("the sweep pages past owed rows it skips", () => {
     expect([...db.fake.rows.keys()].filter((key) => key.startsWith("once-ever-owed:"))).toHaveLength(60);
   });
 
+  it("re-sends a newer alert behind more than a page of older rows that keep throwing", async () => {
+    // 60 older rows whose claim-state read throws on every sweep; each is
+    // counted as failed but skipped, so the newer due row is still reached.
+    for (let i = 0; i < 60; i += 1) await owe(`once:bad-${String(i).padStart(2, "0")}`);
+    await owe(KEY, STORED, at(1));
+    const findUnique = db.fake.delegate.findUnique.bind(db.fake.delegate);
+    const spy = vi.spyOn(db.fake.delegate, "findUnique").mockImplementation(async (args) => {
+      if (args.where.key.startsWith("once:bad-")) throw new Error("row read failed");
+      return findUnique(args);
+    });
+    try {
+      await expect(sweepOnceEverAlerts(at(MINUTE))).resolves.toMatchObject({ resent: 1, failed: 60 });
+      expect(senders.xero).toHaveBeenCalledTimes(1);
+      expect(db.fake.rows.has(onceEverOwedKey(KEY))).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("still acts on at most 50 rows a run, leaving the rest for the next", async () => {
     for (let i = 0; i < 60; i += 1) await owe(`once:due-${String(i).padStart(2, "0")}`);
 
