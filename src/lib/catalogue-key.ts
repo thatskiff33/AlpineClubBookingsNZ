@@ -15,7 +15,7 @@ export function normalizeCatalogueText(value: string | null | undefined): string
 }
 
 /** UPPER_SNAKE key from a display name; `CUSTOM` when nothing usable remains. */
-function normalizeCatalogueKey(name: string): string {
+export function normalizeCatalogueKey(name: string): string {
   const normalized = name
     .trim()
     .toUpperCase()
