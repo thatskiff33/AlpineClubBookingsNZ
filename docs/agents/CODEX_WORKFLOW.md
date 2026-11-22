@@ -231,10 +231,10 @@ work.
 Before push: Prisma generation, lint, typecheck (with
 `NODE_OPTIONS=--max-old-space-size=12288`, as CI sets it), focused
 touched/adjacent tests, a mutation check per new guard, `quality:budget --base
-origin/main`, `ci:fast-censuses`, docs linkcheck for doc changes and knip for file/export changes. Then push a draft PR. GitHub Actions owns the full `pnpm test`, build,
-migration-drift, E2E, static/secret/dependency, and container gates. Run a full
-suite locally only to diagnose a CI failure or when CI is unavailable, and
-record the reason and result in the PR.
+origin/main`, `ci:fast-censuses`, docs linkcheck for doc changes, knip for file/export changes. Then push a draft PR. GitHub Actions owns the full `pnpm test`, build,
+migration-drift, E2E, static/secret/dependency, and container gates. Run the full
+suite locally only to diagnose CI or when it is unavailable; record why and the
+result in the PR.
 
 Known false greens: a stale Prisma client type-checks clean, so generate first;
 `pnpm test` does not typecheck; a guard must fail under mutation, and the
