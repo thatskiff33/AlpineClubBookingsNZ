@@ -58,6 +58,17 @@ which by definition that booking is not. See
    party fits, so a smaller party further back can be offered first. An entry
    with an offer out shows the offer instead of a number.
 
+4. **When an offer lapses.** The entry goes back to its original place and
+   number, and in the same run the place is offered to the next party behind it
+   that fits. The member whose offer lapsed is considered last for that place,
+   so a lone entry is offered it again. If offers keep lapsing, the place moves
+   on down the queue and only comes back to the front once everyone has had a
+   turn. Nothing marks the entry, so when a different place frees on the same
+   nights (a cancellation, say), it is considered in its usual place and can be
+   offered that one. In the re-offer itself, an entry ahead of the lapsed one
+   that has not yet had this offer (its party did not fit an earlier opening,
+   for example) is considered after those behind it; it keeps its place.
+
 ### Filter the queue
 
 1. Use **From**, **To**, and **Page size**, then click **Apply**. Click
@@ -149,11 +160,11 @@ differently on this board, and the badges say which case you are looking at:
   original place, and those behind it move back down.
 - **"Offer email withheld (No emails)"** — an offer email was withheld, and that
   offer has since lapsed. Nothing needs doing.
-- **"Offer live but emails are off — member not told"** — the entry is holding a
-  bed on an offer that is still running, and the member will get no expiry
-  warning and no confirmation if they accept. This one needs an officer: the
-  member was emailed the offer before the switch went on, so they **can** still
-  accept it. Do not reassign the bed — contact them.
+- **"Offer live but emails are off — member not told"** — the entry has an offer
+  that is still running (an offer does not hold a bed), and the member will get
+  no expiry warning and no confirmation if they accept. This one needs an
+  officer: the member was emailed the offer before the switch went on, so they
+  **can** still accept it. Contact them.
 
 Force-confirming any of these skips the email choice, as described above.
 

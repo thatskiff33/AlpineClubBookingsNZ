@@ -133,6 +133,14 @@ Two behaviours were pinned down during implementation:
   ahead), and a silenced entry is not counted. The three uncalled helpers this
   note once listed (`getWaitlistPosition`, `updateWaitlistPositions`,
   `getWaitlistForDates`) were deleted (`INV-CAP-041`).
+- **A lapsed cross-lodge offer passes on at the offered lodge** (#5410,
+  `INV-CAP-042`). The pass that re-offers a lapsed place starts just after the
+  lapsed opportunity and reaches it last. For a cross-lodge offer only the
+  opportunity at the offered lodge is the lapse; the entry's own-lodge
+  opportunity is not moved as one. Under `OWN_LODGE_FIRST` the cross-lodge part
+  rotates on its own, so the offered lodge's own queue is still walked first;
+  under `MERGED` the one list rotates, and an own-lodge opportunity that was
+  ahead of the lapsed place wraps round with everyone else who was.
 - **Confirm rejects a duplicate stay at the offered lodge.** If Phase 3
   (cancel the waitlist entry) failed on an earlier confirm, the entry is
   stranded in `WAITLIST_OFFERED` with a booking already created at the
