@@ -117,6 +117,7 @@ let originalRow: { settings: ModuleSettingsValues; updatedByMemberId: string | n
         where: { id: modules.CLUB_MODULE_SETTINGS_ID },
         create: { id: modules.CLUB_MODULE_SETTINGS_ID, ...fixture },
         update: fixture,
+        select: modules.CLUB_MODULE_SETTINGS_COLUMN_SELECT,
       });
     });
 
@@ -127,6 +128,7 @@ let originalRow: { settings: ModuleSettingsValues; updatedByMemberId: string | n
         await prisma.clubModuleSettings.update({
           where: { id: modules.CLUB_MODULE_SETTINGS_ID },
           data: { ...originalRow.settings, updatedByMemberId: originalRow.updatedByMemberId },
+          select: modules.CLUB_MODULE_SETTINGS_COLUMN_SELECT,
         });
       } else {
         await prisma.clubModuleSettings.deleteMany({ where: { id: modules.CLUB_MODULE_SETTINGS_ID } });
@@ -189,7 +191,7 @@ let originalRow: { settings: ModuleSettingsValues; updatedByMemberId: string | n
       // The switch-off stands, and the save's Waitlist change rolled back with it.
       const row = await prisma.clubModuleSettings.findUnique({
         where: { id: modules.CLUB_MODULE_SETTINGS_ID },
-        select: { aiDiagnostics: true, waitlist: true, updatedByMemberId: true },
+        select: modules.CLUB_MODULE_SETTINGS_COLUMN_SELECT,
       });
       expect(row).toMatchObject({ aiDiagnostics: false, waitlist: false });
       expect(row?.updatedByMemberId).not.toBe(ADMIN_ID);
