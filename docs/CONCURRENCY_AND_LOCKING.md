@@ -176,6 +176,19 @@ queue behind it whichever lodge they touch, so two members booking different
 lodges still queue behind one another. A waitlist create
 (`createWaitlistedBooking`) takes this lodge key alone.
 
+**A waitlist position read takes no lock** (#5402, `INV-CAP-041`). The position
+is display only and drives no decision, so a screen or API reads it through
+`getWaitlistPositions` on `prisma` with no advisory key; taking `lock(1)` would
+queue page renders behind the club-wide waitlist serialisation. Under READ
+COMMITTED a commit between its two statements (the cross-lodge order setting,
+then the queue) can give a one-render off-by-one that the next read corrects.
+Inside a writer (`createWaitlistedBooking`, the offer pass, `expireStaleOffers`,
+return-to-waitlist) the read runs on the writer's own `tx` after its locks, so
+it sees the writer's changes. Stated limit: under `MERGED`, a waitlist create
+at another lodge can commit concurrently with an earlier `createdAt`, so a
+confirmation email can quote one place too low; screens are right on the next
+read. No writer's key, order, participant or transaction changed.
+
 ### Tier 2 — global booking-status / money serialisation
 
 `pg_advisory_xact_lock(1)` (the literal global lock) serialises **status

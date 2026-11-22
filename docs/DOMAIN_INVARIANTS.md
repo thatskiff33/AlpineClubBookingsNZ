@@ -199,6 +199,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-CAP-037` | At most one live payment link per booking; never both settle |
 | `INV-CAP-038` | A whole-lodge hold excludes custodian-held bed-nights; the reverse asks, then amends atomically |
 | `INV-CAP-040` | An import claims beds under the lodge lock, never overbooks |
+| `INV-CAP-041` | A waitlist position is read from the live queue, never stored |
 | `INV-CAP-011` | Waitlisted and offered bookings hold no capacity until confirmed |
 | `INV-CAP-012` | A waitlist offer reprices at current rates and states what is payable |
 | `INV-CAP-013` | A member is present on only one live booking per lodge night |
@@ -655,7 +656,7 @@ Prefix `INV-LOCKOUT`.
 | `INV-LOCKOUT-057` | Every withhold writes a `SKIPPED_NO_EMAILS` `EmailLog` row with no retained body |
 | `INV-LOCKOUT-058` | The retry cron re-reads the switch and booking authority before every replay |
 | `INV-LOCKOUT-059` | Waitlist candidacy excludes a silenced booking; two residual cases surfaced, not denied |
-| `INV-LOCKOUT-060` | A silenced waitlist entry keeps its place and quoted position |
+| `INV-LOCKOUT-060` | A silenced waitlist entry shows no position and is not counted |
 | `INV-LOCKOUT-061` | Xero-sent invoice emails are gated too, superseding the #1705 always-send carve-out |
 | `INV-LOCKOUT-062` | Enabling the switch requires an acknowledgement; both set and clear are audited |
 | `INV-LOCKOUT-063` | The acknowledgement is a two-button dialog, never a checkbox; `bookings:edit` |

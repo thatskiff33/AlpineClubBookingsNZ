@@ -1683,6 +1683,30 @@ capacity or double-booking violation.
   the lodge lock and backed by the partial unique index on IMPORTED rows.
 - Proven by `booking-import-plan.test.ts` and `booking-import.realdb.test.ts`.
 
+### INV-CAP-041
+
+- **A waitlist position is derived on read from the offer order, and nothing
+  stores it** (#5402, owner decision 22 Nov 2026). `src/lib/waitlist-queue.ts`
+  owns the queue: the candidate filter (`WAITLISTED`, "No emails" off,
+  half-open overlap), the join order `(createdAt, id)`, and the own-lodge
+  versus cross-lodge ordering `processWaitlistForDates` walks. Every screen,
+  API field, email and audit row that shows a position reads it through
+  `getWaitlistPositions` (one booking: `getWaitlistPositionOf`) or
+  `getDisplayedWaitlistPositions`.
+- **The number:** one plus the opportunities the offer pass would consider
+  before the entry's own if a bed freed at its lodge on all its nights. Under
+  `MERGED` that includes older entries from other lodges that named this lodge;
+  under `OWN_LODGE_FIRST` it does not. An offered or silenced entry shows none
+  (`INV-LOCKOUT-060`). It is an upper bound, not a promise: a smaller party
+  behind can be offered first.
+- **`Booking.waitlistPosition` is retired.** No path writes a non-null value
+  and none reads it; exits keep writing `null` until the column is dropped.
+- **Reads take no lock.** A writer passes its own `tx` after its locks; a
+  screen passes `prisma`. No advisory key, order or transaction changed.
+- Guards: `waitlist-queue.test.ts` (the order against the old inline code, the
+  reader against the offer pass's walk), `waitlist-position-census.test.ts`,
+  `waitlist-queue-position.realdb.test.ts`.
+
 ### INV-LIFE-062
 
 A `HutLeaderAssignment` may additionally hold ONE bed (`bedId`), which makes it

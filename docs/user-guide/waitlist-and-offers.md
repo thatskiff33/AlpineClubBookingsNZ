@@ -28,6 +28,12 @@ in [`STATE_MACHINES.md`](../STATE_MACHINES.md#waitlist-lifecycle).
    first chose.
 3. Join the waitlist. Your waitlisted entry appears in **My Bookings** with a
    **Waitlist** status; a later offer shows as **Waitlist Offered**.
+4. Open the booking to see your **position**. It is your place in the queue for
+   your lodge right now, and it moves up as soon as anyone ahead of you leaves
+   the list. It counts only people waiting for nights that overlap yours, so
+   someone booking different nights may also be #1. It is a guide, not a
+   promise: when a bed frees up, it goes to the first person whose group fits,
+   so a smaller group behind you can be offered a bed your group would not fit.
 
 ![The My Bookings list showing a booking with a Waitlist Offered badge alongside a Payment Pending booking](../images/public/member-bookings.png)
 
