@@ -159,8 +159,8 @@ only the rules.
 - **Permanent reasons say a route is never an action**: `fresh-proof` (read
   from `STEP_UP_ROUTES`, never copied), `auth-flow`, `provider`, `cron`,
   `kiosk`, `needs-browser`, `infrastructure`, `moves-money`, `declaration`,
-  `public-visitor`, `website-flow`, `access-secrets`, `site-helper`. A member
-  route's reason names its exact method and path. A permanent exclusion beats
+  `public-visitor`, `website-flow`, `access-secrets`, `site-helper`,
+  `privacy-posture`. A member route's reason names its exact method and path. A permanent exclusion beats
   a catalogue entry.
 - **A `not-yet:` reason names the follow-on task** from `MCP_NOT_YET_TASKS`;
   that task adds its entries and removes its rule in one change. A route in
@@ -180,9 +180,9 @@ only the rules.
   connection. A reused member page keeps its audience, as privacy register
   row `ai-apps` discloses.
 - **An officer action is one whose route resolves to an admin area**
-  (`mcpActionAdminRequirement`, read from `getAdminRouteRequirement`). Only
-  someone holding that area at that level is offered or can run it; its
-  route decides with the officer's own permissions and must project.
+  (`mcpActionAdminRequirement`: the handler's own `requireAdmin` permission,
+  census-pinned as `requires`, else `getAdminRouteRequirement`). Only someone
+  holding it is offered or can run it; its route decides and must project.
 
 ## INV-MCP-007
 

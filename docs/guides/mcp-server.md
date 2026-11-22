@@ -220,19 +220,23 @@ app), `change_sign_in_details` (passwords and two-step sign-in) and
 
 An officer who holds the **Bookings & Beds** admin area can do through an AI
 app what they can do on that area's admin screens, apart from the steps that
-ask them to prove who they are again. The actions live in
+ask them to prove who they are again and the switch that opens member search
+(both listed below). The actions live in
 [`src/lib/mcp/catalogue/`](../../src/lib/mcp/catalogue/) (`bookings-*.ts`).
 
-- **Who is offered them.** Each action needs the level its route needs
-  (**Needs** below), read from the route's own rule in
-  [`admin-permissions.ts`](../../src/lib/admin-permissions.ts), never copied.
-  Anyone without the area at that level never sees the action in the tool
-  list, `find_actions` or `describe_action`, and cannot run it by name. A
-  view-only officer is offered the reads only.
+- **Who is offered them.** Each action needs what its route needs
+  (**Needs** below: Bookings & Beds view or edit unless named). That is the
+  route's own rule in
+  [`admin-permissions.ts`](../../src/lib/admin-permissions.ts), or, where the
+  route's handler names a stricter permission of its own, that permission
+  (the entry's `requires`, which the route census checks against the
+  handler). Anyone without it never sees the action in the tool list,
+  `find_actions` or `describe_action`, and cannot run it by name. A view-only
+  officer is offered only reads, and not the three reads that need edit.
 - **The route still decides.** Each action calls the admin route the screen
   calls, which checks the officer's own permissions exactly as for the
-  browser. Some routes check more than the area: for example, withdrawing an
-  extra payment request also needs **Finance** edit.
+  browser. Withdrawing an extra payment request needs **Finance** edit, as
+  on the website.
 - **Only `search_bookings` is listed as its own tool**; the rest are reached
   through `find_actions` and `run_action`, so the tool list stays short.
 - **Previews.** `preview_bed_allocation_move`, `preview_bed_allocation_removal`
@@ -241,8 +245,11 @@ ask them to prove who they are again. The actions live in
 - **Audit.** Each change writes the connection's `MCP_ACTION_CALLED` row, with
   no subject member, as well as the route's own audit rows.
 
-Nine Bookings & Beds steps are **website-only** because they are on the
-fresh-proof list (`STEP_UP_ROUTES`): quoting and deciding a booking change
+Ten Bookings & Beds steps are **website-only**. Saving the member-guest
+settings decides whether the club's member names, children included, can be
+browsed by anyone starting a booking; owner decision D-18 keeps that choice
+away from anything automated, so it has its own reason (below). The other
+nine are on the fresh-proof list (`STEP_UP_ROUTES`): quoting and deciding a booking change
 request, deciding a booking-policy exception request, correcting, declining
 or releasing the hold of a booking request, confirming a booking's pending
 guests, deciding a booking held for review, and adding a booking to a work
@@ -254,16 +261,16 @@ party or removing it from one.
 | --- | --- | --- | --- | --- |
 | `search_bookings` (tool) | Search bookings | read | view | `GET /api/admin/bookings/search` |
 | `list_bookings_for_month` | List bookings in a month | read | view | `GET /api/admin/bookings` |
-| `get_member_family_for_booking` | Read a member's family for a new booking | read | view | `GET /api/admin/bookings/eligible-family` |
-| `get_booking_owner_family` | Read a booking owner's family | read | view | `GET /api/admin/bookings/[id]/eligible-family` |
-| `search_non_member_contacts` | Find existing non-member contacts | read | view | `GET /api/admin/bookings/non-member-contact` |
+| `get_member_family_for_booking` | Read a member's family for a new booking | read | edit | `GET /api/admin/bookings/eligible-family` |
+| `get_booking_owner_family` | Read a booking owner's family | read | edit | `GET /api/admin/bookings/[id]/eligible-family` |
+| `search_non_member_contacts` | Find existing non-member contacts | read | edit | `GET /api/admin/bookings/non-member-contact` |
 | `create_non_member_contact` | Create a non-member booking contact | destructive | edit | `POST /api/admin/bookings/non-member-contact` |
 | `search_member_guest_candidates` | Find members to add as guests by name | read | view | `GET /api/admin/bookings/[id]/member-guest-candidates` |
 | `find_member_guest_by_email` | Find a member to add as a guest by email | write | edit | `POST /api/admin/bookings/[id]/member-guest-candidates` |
 | `get_booking_work_party_options` | Read the work parties a booking could join | read | view | `GET /api/admin/bookings/[id]/work-party` |
 | `copy_booking_to_draft` | Copy a booking to a new draft | destructive | edit | `POST /api/admin/bookings/[id]/copy` |
 | `send_additional_payment_reminder` | Remind a member of an extra amount owing | destructive | edit | `POST /api/admin/bookings/[id]/additional-payment-reminder` |
-| `withdraw_additional_payment_request` | Withdraw an extra payment request | destructive | edit | `POST /api/admin/bookings/[id]/additional-payment/withdraw` |
+| `withdraw_additional_payment_request` | Withdraw an extra payment request | destructive | Finance edit | `POST /api/admin/bookings/[id]/additional-payment/withdraw` |
 | `place_admin_capacity_hold` | Hold beds for an unpaid booking | destructive | edit | `POST /api/admin/bookings/[id]/capacity-hold` |
 | `release_admin_capacity_hold` | Release the beds held for an unpaid booking | destructive | edit | `DELETE /api/admin/bookings/[id]/capacity-hold` |
 | `set_exclusive_lodge_hold` | Set or clear a whole-lodge hold | destructive | edit | `POST /api/admin/bookings/[id]/exclusive-hold` |
@@ -367,12 +374,11 @@ party or removing it from one.
 | `get_booking_request_settings` | Read the booking request settings | read | view | `GET /api/admin/booking-requests/settings` |
 | `update_booking_request_settings` | Change the booking request settings | write | edit | `PUT /api/admin/booking-requests/settings` |
 | `get_member_guest_settings` | Read the member-guest settings | read | view | `GET /api/admin/member-guest-settings` |
-| `update_member_guest_settings` | Change the member-guest settings | destructive | edit | `PUT /api/admin/member-guest-settings` |
 
 ## What stays on the website, and why
 
 Every route method that is not an action has a stated reason
-([`exclusions.ts`](../../src/lib/mcp/exclusions.ts), `INV-MCP-006`). Thirteen
+([`exclusions.ts`](../../src/lib/mcp/exclusions.ts), `INV-MCP-006`). Fourteen
 reasons are permanent — those routes are never actions:
 
 - **Fresh proof** — anything on the fresh-proof list (`STEP_UP_ROUTES`), which
@@ -402,6 +408,8 @@ reasons are permanent — those routes are never actions:
   emergency access details. They are never sent to an AI provider.
 - **The website's help assistant** — the member's own AI app answers them
   instead.
+- **Privacy posture** — saving the member-guest settings, which decide who
+  may browse members' names. An officer chooses that on the website.
 
 Everything else is **not yet**: each such route names the follow-on task that
 will bring it in.
@@ -504,23 +512,27 @@ as that area's admin screens show it to the officer:
 
 - bookings and requests: booker and guest names, age groups, dates, lodge,
   status and prices; the reason or message a member wrote on a change,
-  exception or booking request, and the officers' notes on it; a guest's
-  dietary needs when the officer changes them; the family members an officer
-  can book for (name, age group, relationship);
+  exception or booking request, and the officers' notes on it; the names of
+  the officers who priced or reviewed a request or booking; a guest's dietary
+  needs when the officer changes them; the family members an officer can book
+  for (name, age group, relationship);
 - contact details where the officer is matching or choosing a contact: the
   email address and phone number of a non-member contact or a booking
   request's contact, and the names and email addresses of a school's
   teachers;
-- the bed allocation board, with guest and booking-owner names, and promo
-  code uses, with the member's name.
+- a change request's payment: its status, amounts and Xero invoice number;
+- the bed allocation board, with guest, booking-owner and custodian names;
+  promo codes with the names of the members they are assigned to, and their
+  uses with the member's name.
 
 Each answer is cut to a named shape
 (`src/lib/connection-shapes/bookings-*.ts`). Left out for a connection,
 though the admin screens still show them: the booker's email address on a
-search result, waitlist entry or review queue, payment and Xero references,
-the address a booking email went to, and which officer approved, reviewed or
-last saved something. Seasons, policies and settings carry no personal
-information.
+search result, waitlist entry or review queue, payment and Xero record ids,
+the address a booking email went to, the member ids of the officers who
+reviewed something, and who approved a bed allocation or last saved a
+setting. Seasons, policies and settings
+carry no personal information.
 
 The app also holds whatever the person typed to it, such as the guest names
 for a draft. Disconnecting stops new calls; it does not remove what the
@@ -590,13 +602,16 @@ route census reject any remaining `not-yet` exclusion.
    actions go in a module of their own under `src/lib/mcp/catalogue/`,
    spread into `MCP_ACTIONS`, with their shapes under
    `src/lib/connection-shapes/`; when every route in the area is decided,
-   add the area to `MCP_DECIDED_ADMIN_AREAS` in `exclusions.ts`.
+   add the area to `MCP_DECIDED_ADMIN_AREAS` in `exclusions.ts`. If the
+   handler passes its own `permission` to `requireAdmin`, set `requires` to
+   it; the census fails until they match.
 2. Give it `returns`: an allow-list shape in
    [`connection-shapes.ts`](../../src/lib/connection-shapes.ts), typed with
    `connectionShapeFor<T>()` so a misspelt field fails to compile. In the
    route, answer with `connectionJson(request, body, SHAPE)` (from
    `mcp-connection-request.ts`): a connection gets only the named fields, a
-   browser the whole answer. A route with an officer branch decides with
+   browser the whole answer; a list the browser reads as a bare array uses
+   `connectionListJson`. A route with an officer branch decides with
    `memberOnlySessionUser(request, session.user)` and refuses an on-behalf
    target or officer override flag from a connection.
 3. Test the contract with `expectActionContract` from
