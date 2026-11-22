@@ -471,7 +471,7 @@ describe("this repository", () => {
       env: {
         BUDGET_BASE:
           "${{ (github.event_name == 'push' && github.event.created == false && " +
-          "!startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || " +
+          "!startsWith(github.ref, 'refs/heads/epic/')) && (steps.main-push-base.outputs.sha || github.event.before) || " +
           "'origin/main' }}",
       },
       run: 'pnpm run quality:budget --base "$BUDGET_BASE"',

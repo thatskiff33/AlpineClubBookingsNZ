@@ -37,13 +37,15 @@ on:
 permissions:
   contents: read
 
-# Pull-request runs share a group per ref and cancel superseded runs. Each push
-# run gets a group of its own, keyed on ref and commit: GitHub replaces a PENDING run
-# in a shared group even without cancel-in-progress, and every push commit must
-# finish its run. Why: INV-OPS-021 (docs/invariants/operations.md, #4989).
-# Pinned by scripts/ci/main-push-runs-complete.test.ts.
+# Pull-request runs share a group per ref and cancel superseded runs. Pushes to
+# main share one group that never cancels a run in progress: GitHub keeps one
+# running and one pending run in it, so a newer merge replaces only main's
+# QUEUED run, a started run still reports, and the newest main commit always
+# gets its full set (owner decision, #5356). Pushes to epic/** keep a group per
+# commit. Why: INV-OPS-021 (docs/invariants/operations.md).
+# Pinned by scripts/ci/main-push-superseded-runs.test.ts.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'shared' }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && github.ref != 'refs/heads/main' && github.sha || github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -932,6 +934,19 @@ jobs:
       - name: Check workflows that run the suite check out full history
         run: node scripts/ci/check-workflow-suite-checkout-depth.mjs
 
+      # #5356: the commit a push to main is judged from by the push-only gates
+      # below (doc index, file-size ratchet). A newer merge may replace main's queued run, so the previous main
+      # commit (`github.event.before`) may never have been judged; this finds
+      # the last main commit whose `ci.yml` run did (INV-OPS-021). It writes
+      # nothing for any other event, which keeps its existing base, and fails
+      # closed when GitHub cannot say.
+      - name: Find the last judged main commit
+        id: main-push-base
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: node scripts/ci/resolve-main-push-base.mjs
+
       # #2691: every `docs/` page is reachable from a front door, and every cited
       # `INV-*` invariant id resolves to a real definition that the index lists.
       # Both properties are what make the routing table in AGENTS.md usable
@@ -944,7 +959,7 @@ jobs:
           # Immutable event SHAs: a branch ref can move while a run is queued,
           # and HEAD^1 may already postdate a deletion in a multi-commit push.
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PUSH_BASE_SHA: ${{ github.event.before }}
+          PUSH_BASE_SHA: ${{ steps.main-push-base.outputs.sha || github.event.before }}
         run: node scripts/ci/check-doc-index-integrity.mjs
 
       - name: Install dependencies
@@ -1091,7 +1106,7 @@ jobs:
       # reports before a size-budget failure ends `verify`.
       - name: File-size budget ratchet
         env:
-          BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false && !startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || 'origin/main' }}
+          BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false && !startsWith(github.ref, 'refs/heads/epic/')) && (steps.main-push-base.outputs.sha || github.event.before) || 'origin/main' }}
         run: pnpm run quality:budget --base "$BUDGET_BASE"
 
   migration-drift:
@@ -1103,6 +1118,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      actions: read # find the last judged main commit (#5356)
     services:
       postgres:
         image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
@@ -1150,6 +1166,19 @@ jobs:
           # over the very pair it exists to catch.
           fetch-depth: 0
 
+      # #5356: the commit a push to main is judged from by the migration-safety
+      # ledger check below. A newer merge may replace main's queued run, so the previous main
+      # commit (`github.event.before`) may never have been judged; this finds
+      # the last main commit whose `ci.yml` run did (INV-OPS-021). It writes
+      # nothing for any other event, which keeps its existing base, and fails
+      # closed when GitHub cannot say.
+      - name: Find the last judged main commit
+        id: main-push-base
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: node scripts/ci/resolve-main-push-base.mjs
+
       # Fails fast (no database or dependency install needed) if any migration matching
       # the blue/green hot-table/breaking regexes lacks a safety-ledger entry, if
       # a new migration reuses an existing timestamp prefix, or — since #3002 —
@@ -1163,13 +1192,14 @@ jobs:
       # head is the epic's BRANCH POINT, so the added set is the whole epic so far
       # plus this child — which means a child adding a contract for an expand an
       # EARLIER child added is caught at child-PR time rather than only at
-      # `epic -> main`. On a push the event's `before` is the honest base, except
+      # `epic -> main`. On a push to main the honest base is the last judged
+      # main commit (the step above; usually the event's `before`), except
       # for a ref-CREATING push, whose `before` is all zeroes and which the gate
       # refuses; `github.event.created == false` is what keeps that off, and it
       # matters now that `epic/**` branches are created routinely.
       - name: Check migration safety ledger coverage
         env:
-          MIGRATION_SAFETY_BASE: ${{ (github.event_name == 'push' && github.event.created == false && !startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || 'origin/main' }}
+          MIGRATION_SAFETY_BASE: ${{ (github.event_name == 'push' && github.event.created == false && !startsWith(github.ref, 'refs/heads/epic/')) && (steps.main-push-base.outputs.sha || github.event.before) || 'origin/main' }}
         run: bash scripts/check-migration-safety-coverage.sh --base "$MIGRATION_SAFETY_BASE"
 
       # #2418: a data-REWRITING migration (backfill, repair, value transform)
