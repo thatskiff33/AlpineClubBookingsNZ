@@ -61,7 +61,8 @@ import { noticeIdParamsSchema } from "@/lib/notices-shared";
 import type { StepUpHttpMethod } from "@/lib/step-up-routes";
 
 import { FINANCE_MONEY_MCP_ACTIONS } from "./catalogue/finance-money";
-import { FINANCE_XERO_MCP_ACTIONS } from "./catalogue/finance-xero";
+import { FINANCE_XERO_CONTACTS_MCP_ACTIONS } from "./catalogue/finance-xero-contacts";
+import { FINANCE_XERO_SYNC_MCP_ACTIONS } from "./catalogue/finance-xero-sync";
 
 /**
  * `read` changes nothing. `write` changes something the member can undo.
@@ -407,7 +408,8 @@ export const MCP_ACTIONS: readonly McpAction[] = [
   },
   // Officer areas (ALP-721 onwards): shown only to an officer holding the area.
   ...FINANCE_MONEY_MCP_ACTIONS,
-  ...FINANCE_XERO_MCP_ACTIONS,
+  ...FINANCE_XERO_SYNC_MCP_ACTIONS,
+  ...FINANCE_XERO_CONTACTS_MCP_ACTIONS,
 ];
 
 export const MCP_WEBSITE_ONLY_ACTIONS: readonly McpWebsiteOnlyAction[] = [
