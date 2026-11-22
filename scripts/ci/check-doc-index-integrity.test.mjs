@@ -28,6 +28,7 @@ import {
   auditWordBudgets,
   auditIndexCatalogueRows,
   auditInvisibleCharacters,
+  markdownLinkTargets,
   WORD_BUDGET_EXCEPTION_CEILING_MAX,
   countWords,
   formatWordInventory,
@@ -253,6 +254,23 @@ function family(prefix, numbers) {
     ...numbers.flatMap((n) => [`## INV-${prefix}-${n}`, "", "- A rule.", ""]),
   ].join("\n");
 }
+
+describe("markdownLinkTargets", () => {
+  // #5214: the link patterns come from scripts/lib/markdown-links.mjs, shared
+  // with check-doc-links.mjs and the changelog compiler, so a linked image
+  // yields both the image and the outer link here too.
+  it("sees both targets of an image wrapped in a link", () => {
+    expect(
+      markdownLinkTargets(
+        "docs/guide.md",
+        "[![Badge](badge.md)](other.md) and [ref]: ../README.md\n",
+      ),
+    ).toEqual(["docs/badge.md", "docs/other.md"]);
+    expect(markdownLinkTargets("docs/guide.md", "[ref]: ../README.md\n")).toEqual([
+      "README.md",
+    ]);
+  });
+});
 
 describe("scannableLines", () => {
   it("drops fenced blocks so a document can show an example id", () => {
