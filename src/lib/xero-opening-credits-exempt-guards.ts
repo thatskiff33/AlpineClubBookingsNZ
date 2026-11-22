@@ -37,7 +37,9 @@ import { readXeroTaxRates } from "@/lib/xero-tax-rates";
  *    carry (`exemptPrerequisiteProblem`; owner decision, 22 Nov 2026, #5375
  *    item 6: required only while a registered period is in force or scheduled).
  * 3. Clearing the Exempt mapping while Opening Credits is mapped and the club
- *    is, or is scheduled to be, GST-registered: the reverse of 2.
+ *    is, or is scheduled to be, GST-registered: the reverse of 2. Refused while
+ *    Xero is disconnected too; only a mapping the connected organisation does
+ *    not own may be cleared.
  *
  * A GST REGISTRATION IS NEVER REFUSED for this (owner decision, 22 Nov 2026,
  * https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4988#issuecomment-7070628422:
@@ -46,13 +48,18 @@ import { readXeroTaxRates } from "@/lib/xero-tax-rates";
  * warning is the Xero health check, which carries a problem while Opening
  * Credits is mapped, a registered period applies or is scheduled, and Exempt
  * has no usable rate (`openingCreditsExemptHealthProblem`), and the outbox
- * hold, under which each spent opening credit waits until Exempt is mapped.
+ * hold, under which each spent opening credit waits until Exempt is mapped. On
+ * a card booking the mint runs inside the booking's invoice operation, which
+ * fails instead and is retried by an officer (`CARD_BOOKING_FAILS_INSTEAD`).
  *
  * The decisions are #5209's pure functions; this module only reads what they
- * need, outside any transaction (`INV-LOCK-004`). The sender's own refusal
- * (`XeroTaxCategoryUnavailableError`, held by the outbox) stays the backstop
- * for what a screen cannot stop: a rate edited in Xero, a reconnect to another
- * organisation, or two saves racing.
+ * need, outside any transaction (`INV-LOCK-004`; the config import's plan is
+ * the stated exception, on `openingCreditsImportFindings`). The sender's own
+ * refusal (`XeroTaxCategoryUnavailableError`, held by the outbox) stays the
+ * backstop for what a screen cannot stop: a rate edited in Xero, a reconnect
+ * to another organisation, or two saves racing. Two racing saves can also
+ * leave refusal 1's shared account stored (the save is not atomic, #5391);
+ * the health check reports that state (`openingCreditsSharedAccountHealthProblem`).
  */
 
 type MappingCodeRow = { key: string; code: string | null };
@@ -66,19 +73,27 @@ function listInWords(items: readonly string[]): string {
 /**
  * Why these mapping codes cannot stand together, or null: Opening Credits is
  * mapped and another role's effective account is the same one
- * (`openingCreditsAccountConflicts`, which never counts the key itself).
+ * (`openingCreditsAccountConflicts`, which never counts the key itself). The
+ * rule and what to do about it, in the one sentence every place that reports
+ * the state opens with; each caller adds its own true ending.
  *
  * The message names roles, never the account code: the mapping screen reads a
  * bare "403" in a refusal as "not permitted", and an account can carry that code.
  */
-function openingCreditsSharedAccountProblem(rows: readonly MappingCodeRow[]): string | null {
+function openingCreditsSharedAccountRule(rows: readonly MappingCodeRow[]): string | null {
   const conflicts = openingCreditsAccountConflicts({
     openingCreditsCode: rows.find((row) => row.key === OPENING_CREDITS_MAPPING_KEY)?.code,
     mappings: rows,
   });
   if (conflicts.length === 0) return null;
   const roles = listInWords(conflicts.map((key) => MAPPING_LABELS[key] ?? key));
-  return `Opening Credits cannot use the same Xero account as ${roles}. Choose an account for Opening Credits that no other mapping uses, or change the other mapping first. No account mapping was saved.`;
+  return `Opening Credits cannot use the same Xero account as ${roles}. Choose an account for Opening Credits that no other mapping uses, or change the other mapping first.`;
+}
+
+/** The rule as a refused write says it (the mapping screen's save, the config import's plan): nothing was written. */
+function openingCreditsSharedAccountProblem(rows: readonly MappingCodeRow[]): string | null {
+  const rule = openingCreditsSharedAccountRule(rows);
+  return rule === null ? null : `${rule} No account mapping was saved.`;
 }
 
 /** The stored codes as they would read once `updates` is saved over them. */
@@ -167,6 +182,17 @@ export async function openingCreditsMappingSaveRefusal({
 const OPENING_CREDITS_NEEDS_EXEMPT = "Opening Credits needs the Exempt tax category.";
 
 /**
+ * What a card booking does where another booking's spent opening credit waits
+ * in the Xero queue: the mint runs inside the booking's invoice operation
+ * (`settleCardAppliedCreditAllocation`, `xero-booking-invoices.ts`), whose
+ * handler fails its own row, so nothing retries it until an officer does. The
+ * moving-in guide's sentence (`docs/guides/moving-in.md`), said once here for
+ * every message that tells an officer a spent opening credit waits.
+ */
+const CARD_BOOKING_FAILS_INSTEAD =
+  "On a card booking, the booking's Xero invoice operation fails instead; retry it from the Xero Operations list once Exempt is mapped.";
+
+/**
  * WHAT THE CONFIG IMPORT'S PLAN SAYS ABOUT OPENING CREDITS
  * (`config-transfer/categories/xero-config.ts`). An imported bundle writes the
  * same `XeroAccountMapping` rows the account mapping screen saves, so it is
@@ -182,11 +208,19 @@ const OPENING_CREDITS_NEEDS_EXEMPT = "Opening Credits needs the Exempt tax categ
  *   mapping exists in the connected Xero organisation. The import still
  *   applies; the health check and the outbox hold cover the state.
  *
- * The plan runs a second time inside the apply's transaction, so every read
- * goes through the caller's client (`INV-LOCK-004`) and Xero is not asked. A
- * mapped rate that Xero has since changed is therefore not judged here; the
- * health check reports that. Nothing is read unless the bundle sets or changes
- * the account.
+ * The plan runs a second time inside the apply's transaction, so the tax
+ * schedule, the connection and the Exempt mapping are read through the
+ * caller's client (`INV-LOCK-004`) and Xero is not asked. A mapped rate that
+ * Xero has since changed is therefore not judged here; the health check
+ * reports that. The club's time zone is the one read that does NOT go through
+ * that client: `readClubTimeZoneOutsideRequest()` has no client parameter and
+ * reads through the module one, so inside the apply it runs on another
+ * connection, outside the transaction's snapshot. `INV-LOCK-004` has the zone
+ * resolved before the transaction opens and passed in; the config import's
+ * plan and apply contexts carry no zone, and the joining-fee fan-out in the
+ * same category reads it the same way (`xero-config.ts`). It is one
+ * primary-key read that only decides which day "today" is for the warning.
+ * Nothing is read unless the bundle sets or changes the account.
  */
 export async function openingCreditsImportFindings(
   db: Pick<Prisma.TransactionClient, "clubTaxSettings" | "xeroConnection" | "xeroTaxCategoryMapping">,
@@ -210,7 +244,7 @@ export async function openingCreditsImportFindings(
     warning:
       problem === null
         ? null
-        : `${OPENING_CREDITS_NEEDS_EXEMPT} ${problem} The import still sets the account; until Exempt is mapped, spent opening credits wait in the Xero queue.`,
+        : `${OPENING_CREDITS_NEEDS_EXEMPT} ${problem} The import still sets the account; until Exempt is mapped, spent opening credits wait in the Xero queue. ${CARD_BOOKING_FAILS_INSTEAD}`,
   };
 }
 
@@ -227,7 +261,8 @@ async function openingCreditsAccountIsMapped(): Promise<boolean> {
  * Why the Exempt mapping may not be cleared, or null when it may
  * (`clearXeroTaxCategory`). While the Opening Credits account is mapped and the
  * club is, or is scheduled to be, GST-registered, every spent opening credit
- * needs the Exempt rate; without it each one would wait in the Xero queue.
+ * needs the Exempt rate; without it each one would wait in the Xero queue, or
+ * fail its card booking's invoice operation.
  */
 export async function exemptClearRefusalWhileOpeningCreditsMapped(): Promise<string | null> {
   const [mapped, schedule, zone, mappings] = await Promise.all([
@@ -238,9 +273,14 @@ export async function exemptClearRefusalWhileOpeningCreditsMapped(): Promise<str
   ]);
   if (!mapped) return null;
   if (!registeredNowOrLater(schedule, clubToday(zone))) return null;
-  // A row chosen in another Xero organisation already reads as unmapped: no
-  // line is sent with it, so clearing it strands nothing and is allowed.
-  if (mappedTaxTypeFor(mappings, "EXEMPT") === null) return null;
+  // A row chosen in another Xero organisation than the one connected now
+  // already reads as unmapped: no line is sent with it, so clearing it strands
+  // nothing and is allowed. Only a connected organisation can show that.
+  // Disconnecting deletes the connection row, and every row then reads as
+  // unmapped, the club's own included: cleared in that state, it would be
+  // missing when the same organisation is connected again, and spent opening
+  // credits would stall. So while Xero is disconnected the refusal stands.
+  if (mappings.tenantId !== null && mappedTaxTypeFor(mappings, "EXEMPT") === null) return null;
   return "The Exempt tax category is in use: the Opening Credits account is mapped, and the club is, or is scheduled to be, GST-registered, so each spent opening credit is sent to Xero with the Exempt rate. Unmap the Opening Credits account under Account Mappings first, then clear Exempt.";
 }
 
@@ -271,5 +311,26 @@ export async function openingCreditsExemptHealthProblem({
   const exemptTaxType = mappedTaxTypeFor(mappings, "EXEMPT");
   if (exemptTaxType !== null && rates === null) return null;
   if (exemptPrerequisiteProblem({ schedule, today, exemptTaxType, rates }) === null) return null;
-  return "Opening Credits is mapped and the club is, or is scheduled to be, GST-registered, but the Exempt tax category has no usable Xero tax rate, so spent opening credits wait, or will wait, in the Xero queue. A Full Admin maps Exempt to a 0% rate on the Xero setup screen, or unmaps the Opening Credits account under Account Mappings.";
+  return `Opening Credits is mapped and the club is, or is scheduled to be, GST-registered, but the Exempt tax category has no usable Xero tax rate, so spent opening credits wait, or will wait, in the Xero queue. ${CARD_BOOKING_FAILS_INSTEAD} A Full Admin maps Exempt to a 0% rate on the Xero setup screen, or unmaps the Opening Credits account under Account Mappings.`;
+}
+
+/**
+ * The Xero health check's line for a shared Opening Credits account that is
+ * already stored (`readXeroTaxHealth`). The mapping screen and the config
+ * import refuse to create it, but the screen's check and its writes are not
+ * one transaction, so two saves at once, or a save beside an import, can each
+ * pass and both land (#5391 makes the save atomic). Null, or the line: the
+ * same rule over the stored rows (`openingCreditsSharedAccountRule`), ending
+ * with what is true here. Nothing was refused; the mappings are saved.
+ *
+ * Judged whether or not the club is GST-registered, as the refusal is (owner
+ * decision, 21 Nov 2026). Like the health check's other mapping lines it says
+ * nothing while Xero is not connected, when nothing is sent.
+ */
+export async function openingCreditsSharedAccountHealthProblem(mappings: XeroTaxCategoryMappings): Promise<string | null> {
+  if (mappings.tenantId === null) return null;
+  const rule = openingCreditsSharedAccountRule(
+    await prisma.xeroAccountMapping.findMany({ select: { key: true, code: true } }),
+  );
+  return rule === null ? null : `${rule} The saved account mappings share that account now; change one of them under Account Mappings.`;
 }

@@ -173,6 +173,39 @@ describe("clearXeroTaxCategory", () => {
       expect(h.tx.auditLog.create).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ["GST-registered", REGISTERED],
+      ["only scheduled to register", REGISTERING_LATER],
+    ])(
+      "MUTATION: refuses the clear while Xero is disconnected, for a club that is %s: the row would be missing on reconnecting the same organisation",
+      async (_label, schedule) => {
+        // Disconnecting deletes the connection row, so every stored mapping reads as "not this organisation's".
+        h.prisma.xeroConnection.findUnique.mockResolvedValue(connected(null));
+        h.schedule.mockResolvedValue(schedule);
+        await expect(clearExempt()).resolves.toEqual({
+          refused: "in-use",
+          message: expect.stringMatching(/Unmap the Opening Credits account under Account Mappings first, then clear Exempt\.$/),
+        });
+        expect(h.tx.xeroTaxCategoryMapping.delete).not.toHaveBeenCalled();
+        expect(h.tx.auditLog.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it("refuses it while a connection row names no organisation", async () => {
+      h.prisma.xeroConnection.findUnique.mockResolvedValue({ tenantId: null, expiresAt: new Date() });
+      await expect(clearExempt()).resolves.toMatchObject({ refused: "in-use" });
+      expect(h.tx.xeroTaxCategoryMapping.delete).not.toHaveBeenCalled();
+    });
+
+    it("clears it while Xero is disconnected once Opening Credits is unmapped, or the club is not registered", async () => {
+      h.prisma.xeroConnection.findUnique.mockResolvedValue(connected(null));
+      h.prisma.xeroAccountMapping.findUnique.mockResolvedValue(null);
+      await expect(clearExempt()).resolves.toEqual({ changed: true });
+      h.prisma.xeroAccountMapping.findUnique.mockResolvedValue({ code: "2100" });
+      h.schedule.mockResolvedValue(NOT_REGISTERED);
+      await expect(clearExempt()).resolves.toEqual({ changed: true });
+    });
+
     it("refuses it for a club that is only scheduled to register", async () => {
       h.schedule.mockResolvedValue(REGISTERING_LATER);
       await expect(clearExempt()).resolves.toMatchObject({ refused: "in-use" });
