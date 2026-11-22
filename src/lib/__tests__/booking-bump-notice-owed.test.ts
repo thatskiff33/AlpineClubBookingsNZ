@@ -182,9 +182,15 @@ describe("deliverBumpNotice, right after the commit", () => {
   });
 
   it("sends nothing when a sweep already holds the marker", async () => {
+    // A sweep claimed it after the bump; the delivery runs later still, so a
+    // bound taken from the clock rather than the stamp would win it back.
     cooldown.rows.set(officerKey(), at(5));
-
-    await deliverBumpNotice("officers", cancelledBooking() as never, owedAt(BUMPED_AT, false));
+    vi.setSystemTime(at(60_000));
+    try {
+      await deliverBumpNotice("officers", cancelledBooking() as never, owedAt(BUMPED_AT, false));
+    } finally {
+      vi.setSystemTime(BUMPED_AT);
+    }
 
     expect(mocks.alertOfficers).not.toHaveBeenCalled();
     expect(cooldown.rows.get(officerKey())).toEqual(at(5));
