@@ -132,6 +132,14 @@
 
 ## Manual Checks Required
 
+<!-- A step someone must do once the release is deployed (run a report, map a
+     setting, check a page) is written by this PR's author, human or agent, as
+     its own `changelog.d/<pr-number>-<slug>.deploy.md` in this PR, with the
+     headings Who, What to do and How to check it worked
+     (`changelog.d/README.md`, "After-deploy steps"). `verify` fails a PR whose
+     answer here or under Migration Or Deployment Impact names such a step
+     without one (#5379). -->
+
 -
 
 ## Safety Confirmation

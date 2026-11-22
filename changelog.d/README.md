@@ -145,6 +145,76 @@ that genuinely need no entry (every workflow tweak, every test-harness change),
 and the noise would train everyone to reach for the no-entry marker, which is
 the one outcome that switches the gate off in practice.
 
+## After-deploy steps: the `.deploy.md` suffix
+
+A change that needs someone to act once its release is deployed — run a
+report, map a setting, check a page — writes that step as its own fragment,
+`changelog.d/<pr-number>-<short-slug>.deploy.md` (#5379, owner decisions D1 and
+D4, 22 Nov 2026). **The pull request's author, human or agent, adds it in the
+same pull request.** Before, such steps lived only in pull request
+descriptions, and a release's checklist had to be collected from them by hand
+(#5378). A pull request with two steps writes two fragments.
+
+The file is exactly three headings, once each, in this order, with nothing
+above the first and no other heading:
+
+```markdown
+## Who
+
+operator
+
+## What to do
+
+Before or during the deploy, check that your Stripe webhook endpoint sends the
+four `charge.dispute.*` events, as `DEPLOYMENT.md` lists them.
+
+## How to check it worked
+
+The endpoint's event list in the Stripe dashboard includes all four.
+```
+
+- **Who** is one line naming one role: `owner` (the club's owner, for a
+  production action only they may take), `operator` (whoever runs the
+  servers and the release) or `officer` (a lodge officer with admin access,
+  for a check in the app).
+- **What to do** and **How to check it worked** each open with a sentence,
+  not a list, quote, table or code block; more paragraphs, lists or code may
+  follow. Say "before or during the deploy" in What to do when the step cannot
+  wait until after.
+- The name is lower-case letters, digits and hyphens. It normally opens with
+  the pull request's number, which the checklist links; a lane that names its
+  files before the pull request exists may use its lane name and rename it
+  once the number is known.
+
+`scripts/lib/deploy-fragments.mjs` is the one definition of the format. A
+`.deploy.md` file is not a changelog entry: the compiler never puts it in
+`CHANGELOG.md`, and it does not satisfy the changelog gate, so a code-bearing
+pull request still writes its ordinary fragment too.
+
+What happens to it:
+
+- **`verify` and `pnpm run pr:check`** fail a pull request whose "Manual Checks
+  Required" or "Migration Or Deployment Impact" answer names a step for after
+  the deploy or the release ("after deploy", "post-deploy", "after the
+  release", "owner runs", "once after upgrading") while its diff adds or changes
+  no `.deploy.md` fragment, and fail any `.deploy.md` it adds or changes that is
+  malformed (`scripts/ci/check-pr-deploy-fragment.mjs`). There is no escape
+  marker: a pull request with no such step says so without those phrases. The
+  release-prep pull request, which deletes the fragments it files, is exempt.
+- **`pnpm run release:cut prepare`** refuses to cut, changing nothing, while any
+  `.deploy.md` is malformed. Otherwise it files every step, one checkbox each,
+  under "After deploying this release" at the end of the release's section of
+  `docs/UPGRADING.md` and in its notes page `docs/releases/v<version>.md`, and
+  deletes the fragments with the others. `--amend` adds late steps to both.
+  `compile-changelog.mjs` run on its own validates them but leaves them in
+  place.
+- **`pnpm run release:cut publish`** opens a "v<version> post-deploy checklist"
+  issue from the notes page's steps, assigned to whoever publishes, and links
+  it from the GitHub release. A re-run reuses the issue. If it cannot be
+  opened, the release is still published, linking the notes page instead, and
+  the exact `gh issue create` command is printed. A release with no steps
+  opens no issue.
+
 ## Compiling a release
 
 `pnpm run release:cut prepare --execute` runs the compiler for you on a new
