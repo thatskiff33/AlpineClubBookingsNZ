@@ -131,6 +131,12 @@ access settings as part of that disclosure. Ordinary error reporting and
 session replay are separate decisions; enabling error reporting does not
 constitute the club's Replay opt-in.
 
+Sentry's session tracking is a third thing, and the server has it off (#5262):
+it sends Sentry no count of requests and no session record for the server
+process. Error events and performance traces, tagged with the installed
+version, are unaffected. [CONFIGURATION.md](../CONFIGURATION.md#sentry) says
+what was sent before.
+
 Open tabs recheck the Replay setting every minute and when they regain focus
 or become visible. Saving retention settings refreshes the current tab
 immediately on the process handling that save. Other processes may retain the
