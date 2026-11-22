@@ -24,6 +24,7 @@ import {
   clubPostListQuerySchema,
   MAX_CLUB_POST_LENGTH,
 } from "@/lib/club-post-schema";
+import { FOOD_ORDER_HISTORY_PAGE_SIZE, FOOD_ORDER_STATUSES } from "@/lib/food-order-rules";
 import { foodOrderHistoryQuerySchema, foodOrderPlaceSchema } from "@/lib/food-order-schema";
 import { inductionIdParamsSchema } from "@/lib/induction-params";
 import { memberMaintenanceReportConnectionSchema } from "@/lib/maintenance-report-schema";
@@ -479,8 +480,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
   {
     id: "list_my_food_orders",
     title: "List my food orders",
-    summary:
-      "The signed-in member's own food orders, filtered by `lodgeId`, `status` (`OPEN` or `RECEIVED`) and needed-by days `from` and `to` (`YYYY-MM-DD`), 25 to a page from `page` 1, with the count and price total across the whole filter. Prices are in cents and are a record only.",
+    summary: `The signed-in member's own food orders, filtered by \`lodgeId\`, \`status\` (${FOOD_ORDER_STATUSES.map((status) => `\`${status}\``).join(" or ")}) and needed-by days \`from\` and \`to\` (\`YYYY-MM-DD\`), ${FOOD_ORDER_HISTORY_PAGE_SIZE} to a page from \`page\` 1, with the count and price total across the whole filter. Prices are in cents and are a record only.`,
     method: "GET",
     path: "/api/food-orders/history",
     query: foodOrderHistoryQuerySchema,
