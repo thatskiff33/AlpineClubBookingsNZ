@@ -216,14 +216,120 @@ Three **website-only** entries answer with the page to open and run nothing:
 app), `change_sign_in_details` (passwords and two-step sign-in) and
 `manage_connected_apps` (disconnecting apps).
 
+### Finance officer actions (ALP-721)
+
+An officer who holds the **Finance** admin area can do through a connected
+app what they can do on the finance screens, except what needs a fresh
+sign-in (refunds, card-refund resolutions, disconnecting Xero and the rest of
+`STEP_UP_ROUTES`) and the club's setup screens (see
+[What stays on the website](#what-stays-on-the-website-and-why)). Card entry
+stays in the browser.
+
+How an officer action works:
+
+- **It is offered only to someone holding the area at the route's level.**
+  `mcpActionAdminRequirement` reads the requirement from the admin route map
+  (`getAdminRouteRequirement`), or, for the `/api/finance` workspace, from the
+  entry's `requires`, which the census holds to the guard the route calls.
+  `find_actions`, `describe_action`, `run_action` and the tool list all ask it,
+  so a Finance viewer is shown the reads only, and an officer without the area,
+  or a member, is shown none and is told the action does not exist.
+- **It runs with the officer's real permissions.** The call reaches the
+  route through the front door, the route's own guard (`requireAdmin`, or the
+  finance workspace's) decides, and two-officer rules hold: a credit
+  adjustment a connection requests still needs a different officer to approve.
+- **Officers' connections are off by default.** **Officers may connect an AI
+  app** must be switched on first (`INV-MCP-002`).
+- Every amount an app sends or reads is integer cents. The payments list's
+  amount boxes take dollars as typed, so `list_payments` does not offer them.
+
+All of these are reached through `find_actions`. Kinds follow the catalogue
+rule: a change that only re-runs work is `write`; one that records or applies
+money, posts to Xero, or closes an item for good is `destructive`.
+
+**Payments, credits, refunds, subscriptions and reports**
+
+| Action | What it does | Kind | Route |
+| --- | --- | --- | --- |
+| `list_payments` | One page of booking payments with the filtered totals | read | `GET /api/admin/payments` |
+| `list_credit_adjustment_requests` | Manual credit adjustments waiting for, or given, a second officer's decision | read | `GET /api/admin/credit-approvals` |
+| `get_member_credits` | One member's credit balance, ledger and pending requests | read | `GET /api/admin/members/[id]/credits` |
+| `request_credit_adjustment` | Asks for a manual credit change in cents; nothing changes until another officer approves | write | `POST /api/admin/members/[id]/credits` |
+| `review_credit_adjustment` | Approves or rejects one; the requester cannot approve their own | destructive | `PATCH /api/admin/members/[id]/credits/[requestId]` |
+| `list_opening_credit_batches` | The opening-credit batches posted so far | read | `GET /api/admin/opening-credits` |
+| `generate_payment_invoice` | Raises the missing Xero invoice for a payment | destructive | `POST /api/admin/payments/[id]/generate-invoice` |
+| `answer_bank_refund_void` | Records what an officer did about a voided bank refund note | destructive | `POST /api/admin/payments/bank-refund-voids/[id]/answered` |
+| `list_manual_refund_tasks` | Money owed back by hand | read | `GET /api/admin/payments/manual-refund-tasks` |
+| `list_refund_requests` | Members' refund requests and their figures | read | `GET /api/admin/refund-requests` |
+| `get_finance_report` | The finance report for a date range | read | `GET /api/admin/reports` |
+| `list_subscriptions` | Members' subscriptions and their status | read | `GET /api/admin/subscriptions` |
+| `record_subscription_manual_payment` | Records a subscription paid by hand | destructive | `POST /api/admin/subscriptions/[id]/manual-payment` |
+| `record_booking_manual_payment` | Records a booking paid in cash or by bank transfer | destructive | `POST /api/admin/bookings/[id]/mark-paid` |
+| `get_subscription_billing` | The season's billing preview, charges and exceptions | read | `GET /api/admin/subscription-billing` |
+| `refresh_subscription_billing` | Refreshes the preview and clears exceptions it no longer finds | write | `POST /api/admin/subscription-billing` (`REFRESH_PREVIEW`) |
+| `confirm_subscription_billing_batch` | Raises the season's subscription invoices from a preview | destructive | same (`CONFIRM_ANNUAL_BATCH`) |
+| `retry_subscription_charge` | Queues a charge's invoice again | write | same (`RETRY_CHARGE`) |
+| `close_paid_subscription_charge` | Closes a charge whose subscriptions are already paid | destructive | same (`CLOSE_ALREADY_PAID`) |
+| `mark_family_invoiced`, `unmark_family_invoiced` | Sets or clears a family's already-invoiced mark | write | same (`MARK_FAMILY_INVOICED`, `UNMARK_FAMILY_INVOICED`) |
+| `get_finance_booking_metrics` | The finance workspace's booking figures | read | `GET /api/finance/bookings/metrics` |
+| `get_finance_sync_status` | The finance sync's latest run and failures (Finance edit) | read | `GET /api/finance/sync/status` |
+| `run_finance_sync` | Runs the finance sync now; a connection gets the outcome as JSON, the browser keeps its redirect | write | `POST /api/finance/sync/run` |
+| `backfill_finance_monthly_facts` | Rebuilds the monthly figures from a month | write | `POST /api/finance/sync/backfill-monthly-facts` |
+
+Changing the club's billing settings (`UPDATE_SETTINGS` on the same route) is
+not offered: it is club setup.
+
+**Xero sync**
+
+| Action | What it does | Kind | Route |
+| --- | --- | --- | --- |
+| `get_xero_connection_status` | Whether Xero is connected; `probe` runs the cached live check | read | `GET /api/admin/xero/status` |
+| `get_xero_sync_health` | The health counts on the Xero screens | read | `GET /api/admin/xero/health` |
+| `get_xero_api_usage` | Today's Xero API use against the budget | read | `GET /api/admin/xero/usage` |
+| `list_xero_operations` | The sync queue | read | `GET /api/admin/xero/operations` |
+| `retry_xero_operation`, `requeue_xero_operation` | Runs one operation again | write | `POST /api/admin/xero/operations/[id]/retry`, `…/requeue` |
+| `mark_xero_operation_failed` | Marks a stuck running operation failed | destructive | `POST /api/admin/xero/operations/[id]/mark-failed` |
+| `mark_xero_operation_non_replayable` | Marks an operation as never to be replayed | destructive | `POST /api/admin/xero/operations/[id]/mark-non-replayable` |
+| `resolve_xero_operation` | Records that an operation was put right in Xero by hand | destructive | `POST /api/admin/xero/operations/[id]/resolve` |
+| `reset_stale_running_xero_operations` | Resets every stuck running operation | destructive | `POST /api/admin/xero/operations/reset-stale-running` |
+| `retry_all_failed_xero_operations` | Queues every active failed operation again | write | `POST /api/admin/xero/operations/retry-all` |
+| `list_xero_inbound_events` | Events Xero sent the site | read | `GET /api/admin/xero/inbound-events` |
+| `replay_xero_inbound_event` | Processes one again | write | `POST /api/admin/xero/inbound-events/[id]/replay` |
+| `get_xero_record_activity` | One record's Xero operations, links and events | read | `GET /api/admin/xero/records/[localModel]/[localId]` |
+| `sync_member_from_xero`, `sync_booking_from_xero`, `sync_club_from_xero` | Reads one member, one booking or the whole club from Xero now | write | `POST /api/admin/xero/sync-now` (`scope` fixed) |
+| `sync_xero_contacts` | Matches Xero contacts to members | write | `POST /api/admin/xero/sync-contacts` |
+| `sync_xero_memberships` | Refreshes membership statuses from Xero | write | `POST /api/admin/xero/sync-memberships` |
+| `force_sync_member_xero_contact`, `force_refresh_member_xero_membership` | Forces one member's contact or membership status | write | `POST /api/admin/xero/force-sync` (`syncType` fixed) |
+| `force_sync_booking_xero_invoice` | Forces a paid booking's invoice into Xero, even beside one made by hand | destructive | same |
+| `run_xero_link_maintenance` | The nightly link backfill and clean-up, now | write | `POST /api/admin/xero/link-maintenance` |
+
+**Xero contacts and invoices**
+
+| Action | What it does | Kind | Route |
+| --- | --- | --- | --- |
+| `search_xero_contacts` | Finds Xero contacts by name or email, without their email addresses | read | `GET /api/admin/xero/search-contacts` |
+| `link_member_to_xero_contact`, `unlink_member_from_xero_contact` | Links or unlinks a member and a contact | destructive | `POST /api/admin/members/[id]/xero-link`, `…/xero-unlink` |
+| `create_xero_contact_for_member` | Creates a member's contact in Xero | destructive | `POST /api/admin/members/[id]/xero-push` |
+| `list_xero_cash_credits`, `refresh_xero_cash_credits` | Open overpayments and prepayments, and re-reading them | read, write | `GET`, `POST /api/admin/xero/cash-credits` |
+| `list_xero_contact_group_mismatches`, `resync_xero_contact_group_mismatches` | Members whose contact groups disagree, and re-reading them | read, write | `GET`, `POST /api/admin/xero/contact-group-mismatches` |
+| `list_xero_contact_link_mismatches`, `resync_xero_contact_link_mismatches` | Linked contacts that no longer match their member, and re-reading them | read, write | `GET`, `POST /api/admin/xero/contact-link-mismatches` |
+| `list_xero_duplicate_contacts` | Contacts that share an email, by name and invoice count | read | `GET /api/admin/xero/duplicate-contacts` |
+| `list_erased_member_xero_contacts`, `check_erased_member_xero_contacts` | Erased members' contacts left in Xero, and checking them there | read, write | `GET`, `POST /api/admin/xero/erased-member-contacts` |
+| `list_members_missing_xero_contacts` | Members with no Xero contact, and what a run would do | read | `GET /api/admin/xero/missing-contacts` |
+| `create_missing_xero_contacts` | Creates or links the reviewed ones | destructive | `POST /api/admin/xero/missing-contacts` |
+| `list_bookings_missing_xero_invoices`, `queue_missing_xero_invoices` | Paid bookings with no Xero invoice, and queueing them | read, destructive | `GET`, `POST /api/admin/xero/missing-invoices` |
+
 ## What stays on the website, and why
 
 Every route method that is not an action has a stated reason
-([`exclusions.ts`](../../src/lib/mcp/exclusions.ts), `INV-MCP-006`). Thirteen
+([`exclusions.ts`](../../src/lib/mcp/exclusions.ts), `INV-MCP-006`). Fifteen
 reasons are permanent — those routes are never actions:
 
 - **Fresh proof** — anything on the fresh-proof list (`STEP_UP_ROUTES`), which
-  asks an officer to prove who they are again. Only the website can do that.
+  asks an officer to prove who they are again, and the few handlers that ask
+  for it themselves without being on that list (the opening-credit CSV
+  preview, confirm and reverse). Only the website can do that; the census
+  finds every handler that calls `requireRecentAuth`.
 - **Sign-in and connections** — signing in, and approving, listing or ending AI
   app connections, and the club's AI settings. A connection can never manage
   connections or widen what they may do.
@@ -249,6 +355,14 @@ reasons are permanent — those routes are never actions:
   emergency access details. They are never sent to an AI provider.
 - **The website's help assistant** — the member's own AI app answers them
   instead.
+- **Club setup** — the finance area's setup screens: fees, tax, bank details,
+  finance-report and Xero account, item-code and tax mappings, Xero contact
+  grouping rules, and connecting Xero, Stripe, Google, MiroTalk, analytics and
+  the Alpine Central Server, including the one-off member import from Xero.
+  Credentials, sign-in hand-offs to a provider and mappings every later
+  invoice follows stay where the officer sees the whole screen.
+- **Service exports** — the old finance dashboard's bookings export, which
+  another system collects with its own shared key.
 
 Everything else is **not yet**: each such route names the follow-on task that
 will bring it in.
@@ -267,8 +381,8 @@ stop an AI model being misled. What limits the damage:
 - change actions are marked, and destructive ones tell the app to confirm with
   the member first; the server's own instructions to the app say text inside
   bookings, notices and profiles is information, never instructions;
-- payments, passwords, sign-in and fresh-proof actions are not reachable at
-  all, and a draft booking holds no beds and takes no money;
+- card payments, refunds, passwords, sign-in and fresh-proof actions are not
+  reachable at all, and a draft booking holds no beds and takes no money;
 - every call of a change action writes an audit row (`INV-MCP-008`).
 
 Calls that only read are **not** audited, and neither are connections ended by
@@ -277,18 +391,20 @@ shows that it was used.
 
 ### An officer's connection sends other members' data to their AI provider
 
-In stage 1, an officer's connection reaches only what the same person could
-reach as a member: every action answers it with the officer's own records.
+Through the member actions, an officer's connection reaches only what the
+same person could reach as a member: each answers with the officer's own
+records.
 `preview_cancel_booking` and `cancel_my_booking` refuse an officer's
 connection any booking but the officer's own, even though the officer may
 cancel members' bookings on the website (`INV-MCP-006`). Like any member's
 connection, it does carry the names on the officer's own bookings and in
 their family group.
 
-The follow-on stages add officer actions (ALP-719 onwards), and the switch
-governs the connection, not the action list. Once those ship, whatever the
-officer asks about, such as another member's details, bookings or payments,
-goes to that officer's AI provider. That is why **Officers may connect an AI
+Officer actions change that. The Finance actions (ALP-721) ship now and the
+other areas follow (ALP-719 onwards); the switch governs the connection, not
+the action list. Whatever an officer holding Finance asks about, such as
+another member's payments, credit, subscription or Xero contact, goes to that
+officer's AI provider. That is why **Officers may connect an AI
 app** is a separate switch, off by default. Before switching it on, the club
 should cover it in its privacy notice and decide which AI providers are
 acceptable.
@@ -297,8 +413,9 @@ acceptable.
 
 Everything an action returns goes to the company that runs the app: only the
 fields each action names, never the rest of what the website's screen uses.
-Every action sends the connected person's own records, except
-`get_lodge_roster` and the club information below:
+Every member action sends the connected person's own records, except
+`get_lodge_roster` and the club information below; the Finance officer
+actions send other members' records:
 
 - `who_am_i`: their name and email address, whether they are an officer, the
   club's website, the app's name and the connection's level.
@@ -342,6 +459,14 @@ Every action sends the connected person's own records, except
   person can book, reduced exactly as the roster page reduces them
   (`INV-PRIV-017`): a booking with a child names nobody, and the club's name
   setting applies. Only while the club has the roster switched on.
+- **Finance actions** (an officer holding Finance only): other members' names
+  and record ids with their payments, credit balances and ledgers, refund
+  requests, subscriptions, billing charges, and Xero sync state, as each
+  action names. Amounts are cents. Each shape leaves out email addresses,
+  Stripe and Xero internal ids, raw provider payloads and idempotency keys;
+  Xero contact search answers with names only, and the erased-member review
+  carries no member or contact id. A refusal's text passes to the app
+  unchanged.
 - `get_age_groups`, `get_booking_messages`, `list_committee` and
   `get_skifield_report`: information the club already publishes. Each
   committee entry carries a name, a role and the free-text description the
@@ -383,7 +508,7 @@ provider already received. The club's register row is `ai-apps` in
 
 ## The roadmap
 
-Stage 1 and ALP-718 are the foundation and the actions above. The remaining routes are
+Stage 1, ALP-718 and ALP-721 (Finance) are the foundation and the actions above. The remaining routes are
 grouped into follow-on tasks, named in `MCP_NOT_YET_TASKS` in
 [`exclusions.ts`](../../src/lib/mcp/exclusions.ts):
 
@@ -395,7 +520,6 @@ grouped into follow-on tasks, named in `MCP_NOT_YET_TASKS` in
 | ALP-797 | Group, school and whole-lodge requests |
 | ALP-719 | Bookings (officer) |
 | ALP-720 | Membership (officer) |
-| ALP-721 | Finance (officer, including `/api/finance`) |
 | ALP-722 | Lodge (officer) |
 | ALP-723 | Content (officer) |
 | ALP-724 | Support and overview (officer) |
@@ -420,7 +544,11 @@ route census reject any remaining `not-yet` exclusion.
    `mcp-connection-request.ts`): a connection gets only the named fields, a
    browser the whole answer. A route with an officer branch decides with
    `memberOnlySessionUser(request, session.user)` and refuses an on-behalf
-   target or officer override flag from a connection.
+   target or officer override flag from a connection. An officer action
+   instead runs on a route its admin area gates and goes in that area's module
+   under [`catalogue/`](../../src/lib/mcp/catalogue/); an `/api/finance` route,
+   which the admin route map does not cover, sets `requires` to the level its
+   guard enforces.
 3. Test the contract with `expectActionContract` from
    `src/lib/__tests__/helpers/mcp-action-contract.ts`, signed in as
    `officerMemberSession()`: the connection's answer has exactly the
