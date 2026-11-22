@@ -12,6 +12,10 @@ import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import { adminListPageQueryFields } from "@/lib/admin-list-page";
 import { getWaitlistOfferEmailDeliveries } from "@/lib/waitlist-offer-email-visibility";
+import {
+  WAITLIST_QUEUE_ORDER_BY,
+  getDisplayedWaitlistPositions,
+} from "@/lib/waitlist-queue";
 
 const querySchema = z
   .object({
@@ -92,7 +96,8 @@ export async function GET(request: NextRequest) {
         organisation: { select: { name: true, email: true } },
         guests: { select: { id: true, firstName: true, lastName: true, ageTier: true, isMember: true } },
       },
-      orderBy: { createdAt: "asc" },
+      // The queue's own join order (#5402).
+      orderBy: WAITLIST_QUEUE_ORDER_BY,
       take: pageSize,
       skip: (page - 1) * pageSize,
     }),
@@ -100,6 +105,10 @@ export async function GET(request: NextRequest) {
   ]);
 
   const offerEmailDeliveries = await getWaitlistOfferEmailDeliveries(bookings);
+  // #5402: each row's true place in its lodge's queue, read now from the whole
+  // queue (not this page or the date filter), in one batch. Null for an offered
+  // or silenced entry.
+  const positions = await getDisplayedWaitlistPositions(prisma, bookings);
 
   const entries = bookings.map((b) => ({
     id: b.id,
@@ -114,7 +123,7 @@ export async function GET(request: NextRequest) {
     guestCount: b.guests.length,
     guests: b.guests,
     status: b.status,
-    waitlistPosition: b.waitlistPosition,
+    waitlistPosition: positions.get(b.id) ?? null,
     waitlistOfferedAt: b.waitlistOfferedAt?.toISOString() || null,
     waitlistOfferExpiresAt: b.waitlistOfferExpiresAt?.toISOString() || null,
     requiresAdminReview: b.requiresAdminReview,

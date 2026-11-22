@@ -31,6 +31,7 @@ import {
 import logger from "@/lib/logger";
 import {
   copyStreetAddressToPostal,
+  MEMBER_PHONE_FIELDS,
   POSTAL_ADDRESS_FIELDS,
 } from "@/lib/member-address";
 import {
@@ -211,11 +212,6 @@ export const updateMemberSchema = z.object({
 
 export type UpdateMemberInput = z.infer<typeof updateMemberSchema>;
 
-const PHONE_FIELDS = [
-  "phoneCountryCode",
-  "phoneAreaCode",
-  "phoneNumber",
-] as const;
 const ADDRESS_FIELDS = [
   "streetAddressLine1",
   "streetAddressLine2",
@@ -237,7 +233,7 @@ const ADMIN_MEMBER_AUDIT_FIELDS = [
   "gender",
   "occupation",
   "email",
-  ...PHONE_FIELDS,
+  ...MEMBER_PHONE_FIELDS,
   ...ADDRESS_FIELDS,
   "dateOfBirth",
   "ageTier",
@@ -1059,7 +1055,7 @@ export async function updateAdminMember(params: {
       ? await readMemberDietaryRequirements(dietaryGrant, id)
       : null;
   Object.assign(updateData, dietaryPatch);
-  for (const f of PHONE_FIELDS) {
+  for (const f of MEMBER_PHONE_FIELDS) {
     if (data[f] !== undefined) updateData[f] = data[f]?.trim() || null;
   }
   for (const f of ADDRESS_FIELDS) {
@@ -1576,7 +1572,7 @@ export async function updateAdminMember(params: {
               occupation: changedFields.includes("occupation"),
               dietaryRequirements: changedFields.includes("dietaryRequirements"),
               email: changedFields.includes("email"),
-              phone: hasAnyField(changedFields, PHONE_FIELDS),
+              phone: hasAnyField(changedFields, MEMBER_PHONE_FIELDS),
               address: hasAnyField(changedFields, ADDRESS_FIELDS),
               access: accessChanges.length > 0,
               dateOfBirth: changedFields.includes("dateOfBirth"),

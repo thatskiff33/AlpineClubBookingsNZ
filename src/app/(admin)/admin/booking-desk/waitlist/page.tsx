@@ -170,13 +170,12 @@ function getWaitlistActionContext(clubTime: BoundClubTime, entry: WaitlistEntry)
 
   // #2258: a silenced entry is deliberately excluded from offers, so it will sit
   // here indefinitely. Say so plainly — otherwise it reads as an ordinary entry
-  // waiting its turn, and an officer wonders why it is never offered. It still
-  // occupies its place in the queue and still counts toward the position shown
-  // to the members behind it (see docs/DOMAIN_INVARIANTS.md).
+  // waiting its turn, and an officer wonders why it is never offered. While
+  // silenced it shows no position and is not counted in the positions of the
+  // members behind it; clearing the switch puts it back in its original place
+  // (owner decision, 22 Nov 2026, #5402; `INV-LOCKOUT-060`).
   if (entry.noEmails) {
-    return entry.waitlistPosition
-      ? `Position #${entry.waitlistPosition} — silenced, will not be offered`
-      : "Silenced — will not be offered while emails are off";
+    return "Silenced — will not be offered while emails are off";
   }
 
   if (entry.waitlistPosition) {

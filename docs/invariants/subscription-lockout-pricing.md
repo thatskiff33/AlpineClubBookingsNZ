@@ -435,8 +435,9 @@ lodge by the whole member/non-member spread.
 use.** `formatMissingPaidUpAdultWaitlistRefusal` appends "You've kept your place on
 the waitlist." to the shared refusal, and both waitlist paths call it so their
 answer cannot depend on which lodge the sweep offered. It is scoped to them because
-they reject the offer WITHOUT consuming it — neither revert touches
-`waitlistPosition`, so the claim is literally true — while a booking-time refusal
+they reject the offer WITHOUT consuming it — both revert the entry to
+`WAITLISTED` and keep its `createdAt`, the join time its place is read from
+(`INV-CAP-041`), so the claim is literally true — while a booking-time refusal
 has no waitlist place to claim. The frozen violation's own `message` is deliberately
 unchanged: it is hashed into exception snapshots and read by the reviewing officer,
 so `details`/`violations`/`exceptionReview` keep the policy's wording while `error`
@@ -966,12 +967,17 @@ The rules are:
 
 ### INV-LOCKOUT-060
 
-- **A silenced waitlist entry keeps its place in the queue.** It is skipped for
-  offers but is NOT removed, and it still counts toward the position quoted to
-  the members behind it — the position numbers other members see are unchanged
-  by anyone's switch. (Deliberate: position is member-visible, and silently
-  re-numbering a queue because of an internal admin setting would be a worse
-  surprise than a stalled entry an officer can see and fix.)
+- **A silenced waitlist entry is out of the running, and out of everyone's
+  position** (owner decision, 22 Nov 2026, #5402). With the "No emails" switch
+  on, a `WAITLISTED` entry is skipped for offers, shows no position of its own,
+  and is not counted in the position of any member behind it, who moves up
+  while it is silenced. It is NOT removed: it keeps its `createdAt`, so
+  clearing the switch puts it back in its original place and those behind it
+  move back down. The admin board shows it as silenced. Positions are read from
+  the live queue (`INV-CAP-041`), so this follows from the offer pass's own
+  candidate filter rather than a separate rule.
+- Guards: `waitlist-queue.test.ts` (silenced competitors not counted, the
+  display rule), `waitlist-queue-position.realdb.test.ts`.
 
 ### INV-LOCKOUT-061
 

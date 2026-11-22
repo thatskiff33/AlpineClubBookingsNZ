@@ -473,7 +473,6 @@ const EXAMPLE_RAW_ROWS: Record<string, Record<string, unknown>> = {
     requires_admin_review: true,
     admin_review_status: "NOT_REQUIRED",
     hosting_review_status: "NOT_REQUIRED",
-    waitlist_position: 999,
     // The alias the STATEMENT emits. It was `whole_lodge_hold` until the
     // stored-vs-effective rename, and the fixture kept the old name for a release:
     // the projection then read an absent key and this row silently stopped being
