@@ -180,9 +180,10 @@ export type ModifyBookingDatesInput = {
 
 /**
  * The non-member hold after a date change (#5398), shared by the member edit
- * and the admin date shift: the hold window and the PENDING → PAYMENT_PENDING
- * release both key off the new check-in. A booking with no non-member guests
- * holds nothing; otherwise the status is unchanged.
+ * and the admin date shift: the hold window, and whether a PENDING booking is
+ * released to PAYMENT_PENDING, both key off the new check-in. A booking with no
+ * non-member guests holds nothing. The status itself is written by each caller,
+ * as a literal the sale-status census can read.
  */
 async function recalculateNonMemberHold(
   booking: {
@@ -192,11 +193,13 @@ async function recalculateNonMemberHold(
     lodgeId: string | null;
   },
   newCheckIn: Date,
-  tx: Parameters<typeof getNonMemberHoldPolicy>[2],
-): Promise<{ nonMemberHoldUntil: Date | null; status: BookingStatus }> {
+  // Required: the policy read runs on the caller's transaction, never the
+  // module client while the global and lodge keys are held (INV-LOCK-004).
+  tx: NonNullable<Parameters<typeof getNonMemberHoldPolicy>[2]>,
+): Promise<{ nonMemberHoldUntil: Date | null; releasesToPaymentPending: boolean }> {
   const hasNonMembers = booking.guests.some((guest) => !guest.isMember);
   let newNonMemberHoldUntil = booking.nonMemberHoldUntil;
-  let newStatus = booking.status;
+  let releasesToPaymentPending = false;
   if (hasNonMembers) {
     const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId, tx);
     const holdDecision = calculateBookingHoldDecision({
@@ -211,14 +214,12 @@ async function recalculateNonMemberHold(
       );
     } else {
       newNonMemberHoldUntil = null;
-      if (booking.status === "PENDING") {
-        newStatus = "PAYMENT_PENDING";
-      }
+      releasesToPaymentPending = booking.status === "PENDING";
     }
   } else {
     newNonMemberHoldUntil = null;
   }
-  return { nonMemberHoldUntil: newNonMemberHoldUntil, status: newStatus };
+  return { nonMemberHoldUntil: newNonMemberHoldUntil, releasesToPaymentPending };
 }
 
 export async function modifyBookingDates({
@@ -797,7 +798,7 @@ export async function modifyBookingDates({
 
     const recalculatedHold = await recalculateNonMemberHold(booking, newCheckIn, tx);
     const newNonMemberHoldUntil = recalculatedHold.nonMemberHoldUntil;
-    let newStatus = recalculatedHold.status;
+    let newStatus = recalculatedHold.releasesToPaymentPending ? "PAYMENT_PENDING" : booking.status;
 
     // F20 (#1887): a date change that reduces the price can drop finalPriceCents
     // below the account credit applied at booking-create. Refund the
@@ -1915,7 +1916,7 @@ export async function adminShiftBookingDates({
     // check-in. Status is otherwise unchanged.
     const recalculatedHold = await recalculateNonMemberHold(booking, newCheckIn, tx);
     const newNonMemberHoldUntil = recalculatedHold.nonMemberHoldUntil;
-    const newStatus = recalculatedHold.status;
+    const newStatus = recalculatedHold.releasesToPaymentPending ? "PAYMENT_PENDING" : booking.status;
 
     // Update the booking envelope ONLY — every price field is left as booked.
     const updatedBooking = await tx.booking.update({

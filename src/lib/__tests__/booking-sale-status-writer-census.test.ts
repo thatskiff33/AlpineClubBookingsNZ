@@ -82,10 +82,8 @@ const REVIEWED: Record<string, Classification> = {
   "src/lib/waitlist-cross-lodge.ts|CANCELLED|2": { kind: "NOT_A_SALE", why: "an expired offer, and the card-priced replacement undone on price drift" },
   "src/app/api/admin/bookings/[id]/review/route.ts|CANCELLED|1": { kind: "NOT_A_SALE", why: "a rejected legacy draft" },
   // --- computed statuses, keyed by every value the census sees each take (`?`: one it cannot read) ---
-  // #5398: both start from `recalculateNonMemberHold`, which returns the status
-  // unchanged or PENDING released to PAYMENT_PENDING; the scan reads it as `?`.
-  "src/lib/booking-date-modification-service.ts|computed:newStatus{?,PAID}|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "the zero-dollar auto-pay confirms; otherwise PAYMENT_PENDING or unchanged" },
-  "src/lib/booking-date-modification-service.ts|computed:newStatus{?}|1": { kind: "NO_SALE_STATUS", why: "the admin date shift: unchanged, or PAYMENT_PENDING" },
+  "src/lib/booking-date-modification-service.ts|computed:newStatus{?,PAID,PAYMENT_PENDING}|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "the zero-dollar auto-pay confirms; otherwise PAYMENT_PENDING or unchanged" },
+  "src/lib/booking-date-modification-service.ts|computed:newStatus{?,PAYMENT_PENDING}|1": { kind: "NO_SALE_STATUS", why: "the admin date shift: unchanged, or PAYMENT_PENDING" },
   "src/lib/booking-batch-modification-service.ts|computed:lifecycle.newStatus{?}|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "the zero-dollar auto-pay confirms" },
   "src/lib/booking-guest-acceptance-reprice.ts|computed:lifecycle.newStatus{?}|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "the zero-dollar auto-pay confirms" },
   "src/lib/booking-guest-removal-service.ts|computed:lifecycle.newStatus{?}|1": { kind: "POSTS", call: "postStoredBookingConfirmationLedgerLines", why: "the zero-dollar auto-pay confirms" },
