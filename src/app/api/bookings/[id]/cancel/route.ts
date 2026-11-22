@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import {
   SameOwnerCoverageOverrideRequiredError,
@@ -47,20 +48,10 @@ export async function POST(
       return inactiveResponse;
     }
 
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      return NextResponse.json(
-        {
-          error: "Invalid JSON",
-          details: { body: ["Request body must be valid JSON"] },
-        },
-        { status: 400 }
-      );
-    }
+    const json = await parseJsonRequestBody(request);
+    if (!json.ok) return json.response;
 
-    const parsed = cancelBookingMutationSchema.safeParse(body);
+    const parsed = cancelBookingMutationSchema.safeParse(json.body);
     if (!parsed.success) {
       return NextResponse.json(
         { error: "Invalid input", details: parsed.error.flatten() },

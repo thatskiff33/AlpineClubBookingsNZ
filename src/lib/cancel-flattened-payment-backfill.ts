@@ -14,7 +14,7 @@
 // integer cents; only the flattened `status` field is touched.
 import { PaymentSource, PaymentStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { applyLegacyRefundStatus } from "@/lib/xero-booking-repair-payments";
+import { applyRefundStatus } from "@/lib/payment-transactions";
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { paymentShowsCaptureEvidence } from "@/lib/booking-payment-state";
 
@@ -79,7 +79,7 @@ export function paymentHasCaptureEvidence(
  *    from the stored FAILED.
  *
  * The restored status reuses the exact #1489 repair-pass synthesis
- * (`applyLegacyRefundStatus`) with base SUCCEEDED — capture evidence proves the
+ * (`applyRefundStatus`, `payment-transactions.ts`) with base SUCCEEDED — capture evidence proves the
  * payment captured, so its base state is SUCCEEDED and any refund history in
  * the intact `refundedAmountCents` mirror re-derives PARTIALLY_REFUNDED /
  * REFUNDED. Because the mirror is untouched by the flatten, this is exactly
@@ -95,7 +95,7 @@ export function deriveFlattenedPaymentRestoration(
     return null;
   }
 
-  const restoredStatus = applyLegacyRefundStatus(
+  const restoredStatus = applyRefundStatus(
     PaymentStatus.SUCCEEDED,
     payment.amountCents,
     payment.refundedAmountCents

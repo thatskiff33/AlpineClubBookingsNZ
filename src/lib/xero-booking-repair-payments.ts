@@ -10,7 +10,11 @@ import type { BookingPaymentRecord } from "./xero-booking-repair-types";
 import { captureChangeId } from "@/lib/additional-capture-receipt-link";
 import { isEditReviewChargeRequestRow } from "@/lib/edit-financial-review-charge-shape";
 import { compareLedgerRowsNewestFirst } from "@/lib/payment-ledger-order";
-import { isCapturedTransactionStatus } from "@/lib/payment-transactions";
+import {
+  applyRefundStatus,
+  isCapturedTransactionStatus,
+  mapLegacyAdditionalStatus,
+} from "@/lib/payment-transactions";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 
 interface RepairPaymentTransaction {
@@ -46,43 +50,12 @@ const CANCELLABLE_REPAIR_PAYMENT_STATUSES = new Set<PaymentStatus>([
  * operator CLI still starts.
  */
 
-function mapLegacyAdditionalPaymentStatus(
-  status: string | null | undefined
-): PaymentStatus {
-  switch (status) {
-    case "FAILED":
-      return PaymentStatus.FAILED;
-    case "SUCCEEDED":
-      return PaymentStatus.SUCCEEDED;
-    case "PROCESSING":
-      return PaymentStatus.PROCESSING;
-    case "PENDING":
-    default:
-      return PaymentStatus.PENDING;
-  }
-}
-
 // The repair pass's legacy-fallback status synthesis: when a payment has no
 // ledger rows, its captured/refunded state is derived from the aggregate
-// refund mirror (#1208 item 2). Exported so the #1506 cancel-flatten backfill
-// restores the exact captured status this read path already synthesizes,
-// rather than duplicating the derivation.
-export function applyLegacyRefundStatus(
-  baseStatus: PaymentStatus,
-  amountCents: number,
-  refundedAmountCents: number
-) {
-  if (amountCents > 0 && refundedAmountCents >= amountCents) {
-    return PaymentStatus.REFUNDED;
-  }
-
-  if (refundedAmountCents > 0) {
-    return PaymentStatus.PARTIALLY_REFUNDED;
-  }
-
-  return baseStatus;
-}
-
+// refund mirror (#1208 item 2) by `mapLegacyAdditionalStatus` and
+// `applyRefundStatus`, the same two helpers `payment-transactions.ts` uses for
+// its own legacy slices (#5394). The #1506 cancel-flatten backfill imports
+// `applyRefundStatus` from there too.
 function buildRepairPaymentTransactions(
   payment: BookingPaymentRecord | null | undefined
 ): RepairPaymentTransaction[] {
@@ -109,7 +82,7 @@ function buildRepairPaymentTransactions(
   }
 
   const legacyTransactions: RepairPaymentTransaction[] = [];
-  const additionalStatus = mapLegacyAdditionalPaymentStatus(
+  const additionalStatus = mapLegacyAdditionalStatus(
     payment.additionalPaymentStatus
   );
   const additionalCapturedAmountCents =
@@ -143,7 +116,7 @@ function buildRepairPaymentTransactions(
       stripePaymentIntentId: payment.stripePaymentIntentId,
       amountCents: primaryAmountCents,
       refundedAmountCents: primaryRefundedAmountCents,
-      status: applyLegacyRefundStatus(
+      status: applyRefundStatus(
         payment.status,
         primaryAmountCents,
         primaryRefundedAmountCents
@@ -161,7 +134,7 @@ function buildRepairPaymentTransactions(
       stripePaymentIntentId: payment.additionalPaymentIntentId,
       amountCents: payment.additionalAmountCents,
       refundedAmountCents: additionalRefundedAmountCents,
-      status: applyLegacyRefundStatus(
+      status: applyRefundStatus(
         additionalStatus,
         payment.additionalAmountCents,
         additionalRefundedAmountCents
