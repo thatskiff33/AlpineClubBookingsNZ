@@ -15,7 +15,6 @@ import { prisma } from "@/lib/prisma";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import { isCheckinBlockedByPendingReview } from "@/lib/booking-review";
 import { getGuestOperationalDayPresence, isGuestDepartureMorning, isGuestReturningOnDay, getOperationallyPresentGuestsForDay } from "@/lib/booking-guest-stay-ranges";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 /**
  * GET /api/lodge/guests/[date]
@@ -73,14 +72,7 @@ async function handleGet(req: NextRequest, dateStr: string) {
     return NextResponse.json({ error }, { status: status! });
   }
 
-  if (!dateOnlyStringSchema.safeParse(dateStr).success) {
-    return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
-  }
-
   const date = parseDateOnly(dateStr);
-  if (isNaN(date.getTime())) {
-    return NextResponse.json({ error: "Invalid date" }, { status: 400 });
-  }
 
   const canViewGuestContactDetails = tier !== "staying-guest";
   let lodgeId: string;

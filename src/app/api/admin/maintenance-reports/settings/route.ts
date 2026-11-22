@@ -6,6 +6,7 @@ import {
   MAINTENANCE_REPORT_PHOTO_RETENTION_DAYS_MIN,
 } from "@/config/club-settings-defaults";
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import logger from "@/lib/logger";
 import {
   MAINTENANCE_REPORT_SETTINGS_ID,
@@ -98,8 +99,7 @@ export async function PUT(request: NextRequest) {
       update: { ...parsed.data, updatedByMemberId: admin.session.user.id },
     });
 
-    const ipAddress =
-      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+    const ipAddress = getClientIp(request);
 
     if (before.anonymousReportsEnabled !== parsed.data.anonymousReportsEnabled) {
       logAudit({

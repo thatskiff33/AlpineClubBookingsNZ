@@ -219,6 +219,10 @@ export async function countActiveLodgesForBookingList(
  * and the archived test is per ROW (there, any archived row names every row).
  * A member's list names only the booking that is actually elsewhere.
  *
+ * Two officer alerts ask the same question (#5403): the booking-bumped alert
+ * with its booking's lodge, and the capacity warning with `active: true` (it
+ * only walks active lodges). Admin emails sit outside INV-CAP-039 itself.
+ *
  * The name is always the BOOKING's own lodge, never the club default (#2918,
  * #2919). The screens that ask a member to review or pay for one booking (the
  * booking page, the pay link) name it unconditionally and do not ask this.

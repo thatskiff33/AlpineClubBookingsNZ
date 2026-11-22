@@ -126,7 +126,7 @@ describe("an imported Opening Credits account never shares its Xero account with
 describe("an imported Opening Credits account on a GST-registered club with no Exempt mapping (#4988)", () => {
   const bundle = [account("hutFeesIncome", "201"), account("hutFeeRefunds", "202"), account("openingCredits", "2100")];
   const WARNING =
-    "Opening Credits needs the Exempt tax category. The club is, or is scheduled to be, GST-registered: map the Exempt tax category on the Xero setup screen first. The import still sets the account; until Exempt is mapped, spent opening credits wait in the Xero queue.";
+    "Opening Credits needs the Exempt tax category. The club is, or is scheduled to be, GST-registered: map the Exempt tax category on the Xero setup screen first. The import still sets the account; until Exempt is mapped, spent opening credits wait in the Xero queue. On a card booking, the booking's Xero invoice operation fails instead; retry it from the Xero Operations list once Exempt is mapped.";
 
   it("MUTATION: warns, and does not block, telling the officer to map Exempt", async () => {
     const { errors, warnings } = await plan(bundle, db({ accounts: [] }));

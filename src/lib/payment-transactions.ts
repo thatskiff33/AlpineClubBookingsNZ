@@ -101,7 +101,7 @@ function mapAdditionalSummaryStatus(status: PaymentStatus | null): string | null
   return "PENDING";
 }
 
-function mapLegacyAdditionalStatus(status: string | null | undefined): PaymentStatus {
+export function mapLegacyAdditionalStatus(status: string | null | undefined): PaymentStatus {
   switch (status) {
     case "FAILED":
       return PaymentStatus.FAILED;
@@ -115,7 +115,7 @@ function mapLegacyAdditionalStatus(status: string | null | undefined): PaymentSt
   }
 }
 
-function applyRefundStatus(
+export function applyRefundStatus(
   baseStatus: PaymentStatus,
   amountCents: number,
   refundedAmountCents: number

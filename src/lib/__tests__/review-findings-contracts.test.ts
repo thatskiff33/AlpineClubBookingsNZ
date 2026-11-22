@@ -1893,10 +1893,11 @@ describe("review finding source/schema contracts", () => {
 
   it("serializes stale waitlist-offer expiry and re-offer selection behind a transaction", () => {
     const source = readRepoFile("src/lib/waitlist.ts");
+    // #5402: the last function in the file since the uncalled
+    // `updateWaitlistPositions` after it was deleted, so it runs to the end.
     const expireStaleOffersBlock = sliceFrom(
       source,
       "export async function expireStaleOffers",
-      "// test seam"
     );
 
     expect(expireStaleOffersBlock).toContain("prisma.$transaction");

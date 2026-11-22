@@ -242,9 +242,11 @@ export function BookingNoEmailsControls({
               </p>
               <p>
                 While emails are off it is skipped when beds are handed out, so
-                no offer is made at all. It keeps its place in the queue and
-                does not hold anyone else up, and nothing will appear in the
-                withheld list to remind you — there is no offer to withhold.
+                no offer is made at all. It shows no waitlist position and is
+                not counted in anyone else&apos;s, so the members behind it move
+                up; turning emails back on puts it back in its original place.
+                Nothing will appear in the withheld list to remind you — there
+                is no offer to withhold.
               </p>
             </div>
           )}
