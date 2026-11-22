@@ -1826,8 +1826,10 @@ jobs:
       # image is built and scanned only when the change can bring a new package
       # into it: the dependency manifests, `patches/`, the Dockerfile, a compose
       # file, `.dockerignore` or this workflow (`CHANGE_SCOPES.image` in
-      # scripts/ci/change-scope.mjs). A push - every merge to `main` - always
-      # scans in full, and so does any failure to classify the change.
+      # scripts/ci/change-scope.mjs). That list also holds the few files the
+      # first-install smoke and the browser-bundle assertion below depend on
+      # (#4977, #5262). A push - every merge to `main` - always scans in full,
+      # and so does any failure to classify the change.
       - name: Decide whether this change needs the image build and scan
         id: scope
         run: node scripts/ci/change-scope.mjs image
