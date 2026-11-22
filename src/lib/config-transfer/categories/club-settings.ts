@@ -105,10 +105,8 @@ export interface SingletonSpec {
   excluded?: Record<string, string>;
   /**
    * Explicit Prisma `select` for reads of this singleton. Only set where a
-   * shared select already exists (e.g. CLUB_MODULE_SETTINGS_COLUMN_SELECT). It
-   * keeps a retired column out of the SELECT and a write's RETURNING, not out
-   * of an upsert's INSERT column list (INV-OPS-005). Other singletons keep a
-   * bare read.
+   * shared select exists (CLUB_MODULE_SETTINGS_COLUMN_SELECT); it narrows the
+   * SELECT and RETURNING, not an upsert's INSERT (INV-OPS-005). Others: none.
    */
   select?: Record<string, boolean>;
   /**
@@ -259,10 +257,8 @@ export const SINGLETONS: SingletonSpec[] = [
         "travelling and reasoned that not inheriting the source's dial was " +
         "the safe direction; it is the opposite, because the fallback is the " +
         "most permissive value rather than the least",
-      // The retired multiLodge column needs no entry: it is `@ignore`d (#5396),
-      // so the generated client, and with it this category, cannot see it. It
-      // awaits its contract DROP (hoppers99/AlpineClubBookingsNZ#139).
-      //
+      // No entry for the retired multiLodge column: `@ignore`d (#5396), so this
+      // category cannot see it (drop: hoppers99/AlpineClubBookingsNZ#139).
       // OWNER JUDGEMENT (#2178): the two auth-provider sign-in toggles do not
       // travel today, unlike EVERY other module flag (incl. twoFactor,
       // analytics, xeroIntegration) which does. (This read "the other 19
@@ -496,11 +492,9 @@ export const SINGLETONS: SingletonSpec[] = [
       lodgeId:
         "soft-link FK for the phase-7 per-lodge conversion, unused by runtime " +
         "reads today; a source lodge id is not portable across installs",
-      // The retired assignSchoolTeachersAsHutLeaders column (#3819) needs no
-      // entry: it is `@ignore`d (#5396), so the generated client, and with it
-      // this category, cannot see it. An older bundle's value is still never
-      // written here: the lodge-config importer maps it onto every imported
-      // lodge's teacher tick.
+      // No entry for the retired assignSchoolTeachersAsHutLeaders (#3819):
+      // `@ignore`d (#5396), so this category cannot see it. An older bundle's
+      // value is mapped onto each lodge's teacher tick by the lodge importer.
     },
     defaults: () => DEFAULT_BOOKING_REQUEST_SETTINGS,
   },
