@@ -12,6 +12,9 @@
  * action's answer (`returns`): the shape the route projects a connection's
  * answer onto, from `connection-shapes.ts`.
  *
+ * The booking actions are in `catalogue-bookings.ts` (ALP-794); the later
+ * member areas each add a module like it.
+ *
  * `mcp-route-census.test.ts` holds every route method in `src/app/api` to
  * either an entry here or a reasoned exclusion (`exclusions.ts`).
  */
@@ -19,83 +22,40 @@ import { z } from "zod";
 
 import { availabilityQuerySchema } from "@/lib/availability-query-schema";
 import { bookingIdParamsSchema, cancelBookingMutationSchema } from "@/lib/booking-cancel-schema";
-import {
-  changeRequestConnectionCreateSchema,
-  changeRequestEstimateSchema,
-} from "@/lib/booking-change-request-input";
 import { bookingCreateCoreShape } from "@/lib/booking-create-fields";
-import {
-  arrivalTimeUpdateSchema,
-  bookingNotesUpdateSchema,
-  requestedRoomUpdateSchema,
-} from "@/lib/booking-detail-edit-schemas";
-import {
-  bookingExceptionRequestParamsSchema,
-  exceptionRequestIdParamsSchema,
-  modificationExceptionRequestConnectionSchema,
-  newBookingExceptionRequestConnectionSchema,
-} from "@/lib/booking-exception-request-schemas";
-import { modifyQuoteConnectionSchema } from "@/lib/booking-modify-quote-request";
-import { bookingQuoteConnectionRequestSchema } from "@/lib/booking-quote-request";
-import {
-  availabilityCheckQuerySchema,
-  bookingPolicyCheckQuerySchema,
-  bookingRoomsQuerySchema,
-} from "@/lib/booking-stay-check-query";
 import type { ConnectionShape } from "@/lib/connection-projection";
 import {
   AGE_GROUPS_CONNECTION_SHAPE,
-  ARRIVAL_TIME_CONNECTION_SHAPE,
   AVAILABILITY_CONNECTION_SHAPE,
-  BOOKING_CHANGE_QUOTE_CONNECTION_SHAPE,
-  BOOKING_CHANGE_REQUEST_CONNECTION_SHAPE,
-  BOOKING_CHANGE_REQUEST_LIST_CONNECTION_SHAPE,
   BOOKING_MESSAGES_CONNECTION_SHAPE,
-  BOOKING_NOTE_CONNECTION_SHAPE,
-  BOOKING_QUOTE_CONNECTION_SHAPE,
-  BOOKING_RULES_CONNECTION_SHAPE,
   CANCEL_BOOKING_CONNECTION_SHAPE,
   CANCEL_PREVIEW_CONNECTION_SHAPE,
-  CHANGE_REQUEST_ESTIMATE_CONNECTION_SHAPE,
   COMMITTEE_CONNECTION_SHAPE,
-  CREATED_EXCEPTION_REQUEST_CONNECTION_SHAPE,
   CREDIT_BALANCE_CONNECTION_SHAPE,
-  DRAFT_DELETED_CONNECTION_SHAPE,
   LODGE_LIST_CONNECTION_SHAPE,
-  LODGE_ROOMS_CONNECTION_SHAPE,
   LODGE_ROSTER_CONNECTION_SHAPE,
   MEMBER_ACCOUNT_ACTIVITY_CONNECTION_SHAPE,
   MEMBER_BOOKING_CONNECTION_SHAPE,
   MEMBER_BOOKING_LIST_CONNECTION_SHAPE,
   MEMBER_DRAFT_LIST_CONNECTION_SHAPE,
   MEMBER_DRAFT_SUMMARY_CONNECTION_SHAPE,
-  MEMBER_EXCEPTION_REQUEST_LIST_CONNECTION_SHAPE,
   MEMBER_FAMILY_CONNECTION_SHAPE,
   MEMBER_NOTICE_CONNECTION_SHAPE,
   MEMBER_NOTICE_LIST_CONNECTION_SHAPE,
   MEMBER_NOTIFICATION_PREFERENCES_CONNECTION_SHAPE,
   MEMBER_PROFILE_CONNECTION_SHAPE,
   MEMBER_PROFILE_UPDATE_CONNECTION_SHAPE,
-  MEMBER_PROMO_CODES_CONNECTION_SHAPE,
   NOTICE_READ_CONNECTION_SHAPE,
-  PROMO_CHECK_CONNECTION_SHAPE,
-  REFUND_APPEAL_CONNECTION_SHAPE,
-  REFUND_APPEAL_LIST_CONNECTION_SHAPE,
-  REQUESTED_ROOM_CONNECTION_SHAPE,
   SKIFIELD_REPORT_CONNECTION_SHAPE,
-  STAY_AVAILABILITY_CONNECTION_SHAPE,
   SUBSCRIPTION_STATUS_CONNECTION_SHAPE,
-  WAITLIST_OFFER_ACCEPTED_CONNECTION_SHAPE,
-  WITHDRAWN_EXCEPTION_REQUEST_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes";
 import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
+import { MCP_BOOKING_ACTIONS } from "@/lib/mcp/catalogue-bookings";
 import { ROSTER_WINDOW_DAYS } from "@/lib/lodge-roster-window";
 import { memberAuditLogQuerySchema } from "@/lib/member-audit-log-query";
 import { memberNotificationPreferencesConnectionUpdateSchema } from "@/lib/member-notification-preferences";
 import { memberProfileConnectionUpdateSchema } from "@/lib/member-profile-update-schema";
 import { noticeIdParamsSchema } from "@/lib/notices-shared";
-import { promoValidateConnectionRequestSchema } from "@/lib/promo-validate-request";
-import { refundAppealRequestSchema } from "@/lib/refund-appeal-request";
 import type { StepUpHttpMethod } from "@/lib/step-up-routes";
 
 /**
@@ -433,316 +393,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     returns: SKIFIELD_REPORT_CONNECTION_SHAPE,
     core: false,
   },
-  // --- Bookings (ALP-794) ----------------------------------------------------
-  {
-    id: "check_stay_availability",
-    title: "Check beds for a stay",
-    summary:
-      "Free beds at a lodge for each night of one stay, and the lowest number free on any night. Dates are `YYYY-MM-DD`; `checkOut` is the morning the stay ends. `lodgeId` is from `list_lodges`; omitted, the club's main lodge. A full night and a night the lodge is held both show 0 free.",
-    method: "GET",
-    path: "/api/availability/check",
-    query: availabilityCheckQuerySchema,
-    kind: "read",
-    returns: STAY_AVAILABILITY_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "check_booking_rules",
-    title: "Check a stay against the booking rules",
-    summary:
-      "Whether a stay meets the club's minimum-stay rules, each rule it breaks in words, and the cancellation schedule that would apply. Dates are `YYYY-MM-DD`. A stay that breaks a rule can still be asked for with `request_booking_exception`.",
-    method: "GET",
-    path: "/api/booking-policies/check",
-    query: bookingPolicyCheckQuerySchema,
-    kind: "read",
-    returns: BOOKING_RULES_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "list_lodge_rooms",
-    title: "List lodge rooms",
-    summary:
-      "The rooms a member can ask to stay in, with their bed counts, at one lodge (`lodgeId`) or at every lodge the member may book. `enabled` is false when the club does not take room requests.",
-    method: "GET",
-    path: "/api/bookings/rooms",
-    query: bookingRoomsQuerySchema,
-    kind: "read",
-    returns: LODGE_ROOMS_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "list_requestable_rooms",
-    title: "List rooms I can request for a booking",
-    summary:
-      "The rooms at the booking's lodge that the signed-in member can request for one of their own bookings, for `set_my_requested_room`.",
-    method: "GET",
-    path: "/api/bookings/[id]/requested-room/options",
-    params: bookingIdParams,
-    kind: "read",
-    returns: LODGE_ROOMS_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "list_my_promo_codes",
-    title: "List my promo codes",
-    summary: "The promo codes the club has given the signed-in member, with what each takes off.",
-    method: "GET",
-    path: "/api/promo-codes/available",
-    kind: "read",
-    returns: MEMBER_PROMO_CODES_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "quote_booking",
-    title: "Price a stay",
-    summary:
-      "What a stay would cost the signed-in member, guest by guest, before anything is booked. Changes nothing. Dates are `YYYY-MM-DD`. Each guest gives `ageTier` and `isMember`, a member guest their `memberId` from `get_my_family_group`, and optionally their own `stayStart` and `stayEnd` or `nights`. `availableCreditCents` is the member's account credit.",
-    method: "POST",
-    path: "/api/bookings/quote",
-    body: bookingQuoteConnectionRequestSchema,
-    kind: "read",
-    preview: true,
-    returns: BOOKING_QUOTE_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "check_promo_code",
-    title: "Check a promo code",
-    summary:
-      "What a promo code (`code`), several codes (`codes`) or a working bee (`workPartyEventId`, with `lodgeId`) would take off a stay, without applying it. Changes nothing. Send the stay and party as for `quote_booking`; for a change to an existing booking, also its `bookingId`.",
-    method: "POST",
-    path: "/api/promo-codes/validate",
-    body: promoValidateConnectionRequestSchema,
-    kind: "read",
-    preview: true,
-    returns: PROMO_CHECK_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "quote_booking_change",
-    title: "Price a change to a booking",
-    summary:
-      "What changing one of the signed-in member's own bookings would cost or give back, and whether it can be made, without changing it. Send only what changes: new `checkIn` or `checkOut`, guests to add or remove (by the guest `id`), a guest's own nights, name corrections, the full list of `promoCodes`, or credit to apply. The change itself is made on the website (`change_my_booking`).",
-    method: "POST",
-    path: "/api/bookings/[id]/modify-quote",
-    params: bookingIdParams,
-    body: modifyQuoteConnectionSchema,
-    kind: "read",
-    preview: true,
-    returns: BOOKING_CHANGE_QUOTE_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "quote_booking_change_request",
-    title: "Price guests for a change request",
-    summary:
-      "An estimate for the guests a change request on a stay already under way would add, before the request is sent. Changes nothing. Member guests are counted but not priced. `editorChanges` is the rest of the request, as `request_booking_change` takes it.",
-    method: "POST",
-    path: "/api/bookings/[id]/change-requests/quote",
-    params: bookingIdParams,
-    body: changeRequestEstimateSchema,
-    kind: "read",
-    preview: true,
-    returns: CHANGE_REQUEST_ESTIMATE_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "set_my_booking_note",
-    title: "Change a booking's note",
-    summary:
-      "Saves the note on one of the signed-in member's own active bookings, up to 500 characters. An empty note clears it.",
-    method: "PUT",
-    path: "/api/bookings/[id]/notes",
-    params: bookingIdParams,
-    body: bookingNotesUpdateSchema,
-    kind: "write",
-    returns: BOOKING_NOTE_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "set_my_arrival_time",
-    title: "Set an expected arrival time",
-    summary:
-      "Records when the member expects to arrive at the lodge for one of their own bookings, on the hour or half hour (`HH:00` or `HH:30`, 24-hour). Only before the check-in date has passed.",
-    method: "PUT",
-    path: "/api/bookings/[id]/arrival-time",
-    params: bookingIdParams,
-    body: arrivalTimeUpdateSchema,
-    kind: "write",
-    returns: ARRIVAL_TIME_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "clear_my_arrival_time",
-    title: "Clear an expected arrival time",
-    summary: "Removes the expected arrival time from one of the signed-in member's own bookings.",
-    method: "DELETE",
-    path: "/api/bookings/[id]/arrival-time",
-    params: bookingIdParams,
-    kind: "write",
-    returns: ARRIVAL_TIME_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "set_my_requested_room",
-    title: "Request a room",
-    summary:
-      "Asks for a room, from `list_requestable_rooms`, on one of the signed-in member's own bookings. A request, not a guarantee; refused once the club has allocated beds.",
-    method: "PUT",
-    path: "/api/bookings/[id]/requested-room",
-    params: bookingIdParams,
-    body: requestedRoomUpdateSchema,
-    kind: "write",
-    returns: REQUESTED_ROOM_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "clear_my_requested_room",
-    title: "Withdraw a room request",
-    summary: "Withdraws the room request on one of the signed-in member's own bookings.",
-    method: "DELETE",
-    path: "/api/bookings/[id]/requested-room",
-    params: bookingIdParams,
-    kind: "write",
-    returns: REQUESTED_ROOM_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "list_booking_change_requests",
-    title: "List a booking's change requests",
-    summary:
-      "The change requests and exception requests on one of the signed-in member's own bookings, newest first, with each one's status and the club's reply.",
-    method: "GET",
-    path: "/api/bookings/[id]/change-requests",
-    params: bookingIdParams,
-    kind: "read",
-    returns: BOOKING_CHANGE_REQUEST_LIST_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "request_booking_change",
-    title: "Ask the club to change a stay",
-    summary:
-      "Asks a booking officer to change one of the signed-in member's own bookings in a way the member can no longer make themselves: a stay under way, or a night today or earlier. Name the change (new dates, guests added or removed, or a guest's nights) and add a `reason`. The officer decides, and any price difference is settled then. One open request per booking.",
-    method: "POST",
-    path: "/api/bookings/[id]/change-requests",
-    params: bookingIdParams,
-    body: changeRequestConnectionCreateSchema,
-    kind: "write",
-    returns: BOOKING_CHANGE_REQUEST_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "list_my_exception_requests",
-    title: "List my exception requests",
-    summary:
-      "The signed-in member's requests to book or change a booking outside the club's rules, with the proposal as frozen for the officer, the rules involved, and the decision.",
-    method: "GET",
-    path: "/api/bookings/exception-requests",
-    kind: "read",
-    returns: MEMBER_EXCEPTION_REQUEST_LIST_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "request_booking_exception",
-    title: "Ask to book outside the rules",
-    summary:
-      "Asks a booking officer to allow a new stay the club's rules refuse, such as one shorter than the minimum stay. `memberMessage` explains why. Nothing is booked until an officer approves; the member then confirms and pays on the website. `supersedeRequestId` replaces an open request.",
-    method: "POST",
-    path: "/api/bookings/exception-requests",
-    body: newBookingExceptionRequestConnectionSchema,
-    kind: "write",
-    returns: CREATED_EXCEPTION_REQUEST_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "withdraw_booking_exception_request",
-    title: "Withdraw a booking exception request",
-    summary:
-      "Withdraws one of the signed-in member's open requests to book outside the rules, by the `id` from `list_my_exception_requests`. This cannot be undone: ask again to reopen it.",
-    method: "PATCH",
-    path: "/api/bookings/exception-requests/[id]",
-    params: exceptionRequestIdParamsSchema,
-    fixedBody: { action: "cancel" },
-    kind: "destructive",
-    returns: WITHDRAWN_EXCEPTION_REQUEST_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "request_booking_change_exception",
-    title: "Ask to change a booking outside the rules",
-    summary:
-      "Asks a booking officer to allow a change to one of the signed-in member's own bookings that the club's rules refuse. Send only what changes, as for `quote_booking_change`, with `memberMessage` explaining why. Nothing changes until an officer approves.",
-    method: "POST",
-    path: "/api/bookings/[id]/exception-requests",
-    params: bookingIdParams,
-    body: modificationExceptionRequestConnectionSchema,
-    kind: "write",
-    returns: CREATED_EXCEPTION_REQUEST_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "withdraw_booking_change_exception_request",
-    title: "Withdraw a change exception request",
-    summary:
-      "Withdraws one of the signed-in member's open requests to change a booking outside the rules: the booking `id` and the request's `requestId`. This cannot be undone: ask again to reopen it.",
-    method: "PATCH",
-    path: "/api/bookings/[id]/exception-requests/[requestId]",
-    params: bookingExceptionRequestParamsSchema,
-    fixedBody: { action: "cancel" },
-    kind: "destructive",
-    returns: WITHDRAWN_EXCEPTION_REQUEST_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "list_my_refund_reviews",
-    title: "List refund reviews on a booking",
-    summary: "The refund reviews asked for on one of the signed-in member's own cancelled bookings, and the club's decisions.",
-    method: "GET",
-    path: "/api/bookings/[id]/refund-request",
-    params: bookingIdParams,
-    kind: "read",
-    returns: REFUND_APPEAL_LIST_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "request_refund_review",
-    title: "Ask for a refund review",
-    summary:
-      "Asks the club to review the refund on one of the signed-in member's own cancelled bookings. `reason` is 10 to 2000 characters; `requestedAmountCents` is optional. No money moves: an officer decides. One open review per booking.",
-    method: "POST",
-    path: "/api/bookings/[id]/refund-request",
-    params: bookingIdParams,
-    body: refundAppealRequestSchema,
-    kind: "write",
-    returns: REFUND_APPEAL_CONNECTION_SHAPE,
-    core: false,
-  },
-  {
-    id: "accept_waitlist_offer",
-    title: "Accept a waitlist offer",
-    summary:
-      "Accepts the place the club has offered on one of the signed-in member's waitlisted bookings. If `requiresPayment` is true the member must pay on the website to keep it; an offer at another lodge becomes a new booking, `newBookingId`.",
-    method: "POST",
-    path: "/api/bookings/[id]/waitlist-confirm",
-    params: bookingIdParams,
-    kind: "write",
-    returns: WAITLIST_OFFER_ACCEPTED_CONNECTION_SHAPE,
-    core: false,
-    nextStep: "If payment is needed, the member pays at {origin}/bookings/{id} to keep the place.",
-  },
-  {
-    id: "delete_my_draft_booking",
-    title: "Delete a draft booking",
-    summary:
-      "Deletes one of the signed-in member's own draft bookings, from `list_my_draft_bookings`. This cannot be undone. Only a draft: a confirmed booking is cancelled with `cancel_my_booking`.",
-    method: "DELETE",
-    path: "/api/bookings/[id]",
-    params: bookingIdParams,
-    kind: "destructive",
-    returns: DRAFT_DELETED_CONNECTION_SHAPE,
-    core: false,
-  },
+  ...MCP_BOOKING_ACTIONS,
 ];
 
 export const MCP_WEBSITE_ONLY_ACTIONS: readonly McpWebsiteOnlyAction[] = [

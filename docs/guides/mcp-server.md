@@ -214,7 +214,8 @@ and the connection's level), `find_actions`, `describe_action` and
 
 ### Bookings (ALP-794)
 
-All of these are reached through `find_actions`. Each acts on the connected
+These are in [`catalogue-bookings.ts`](../../src/lib/mcp/catalogue-bookings.ts),
+and all are reached through `find_actions`. Each acts on the connected
 member's own bookings only: a connection never reaches another member's
 booking, even an officer's, and never sends an officer's on-behalf fields.
 

@@ -171,10 +171,7 @@ import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { BOOKING_CHANGE_QUOTE_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
-import {
-  findBookingMemberNightConflicts,
-  getBookingMemberNightConflictResponse,
-} from "@/lib/booking-member-night-conflicts";
+import { findBookingMemberNightConflicts, getBookingMemberNightConflictResponse } from "@/lib/booking-member-night-conflicts";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { previewPaidReductionCreditGiveBackCents } from "@/lib/booking-modify-credit-give-back";
 import logger from "@/lib/logger";
@@ -323,14 +320,10 @@ export async function POST(
     return inactiveResponse;
   }
   // Issue #1313 (option A2): a Booking Officer (bookings:edit) resolves to ADMIN
-  // so the quote preview mirrors the admin-on-behalf modify they will perform —
-  // every isAdmin branch below (skip member-night authorization, locked-period,
-  // unpaid-subscription, and minimum-stay checks) applies to them identically to
-  // a Full Admin. Full Admin already resolves to ADMIN; member/read-only stay USER.
-  //
-  // ALP-794: also the AI app preview `quote_booking_change`, which changes
-  // nothing and acts as the member only, so its role is read from the
-  // member-only user and none of those officer branches open for it.
+  // so the preview mirrors their on-behalf modify — every isAdmin branch below
+  // (member-night, locked-period, unpaid-subscription, minimum-stay) applies as
+  // for a Full Admin. ALP-794: the AI app preview `quote_booking_change` acts as
+  // the member only, so its role is the member-only user's and none open for it.
   const actorRole = bookingManagementAuthorizationRole(memberOnlySessionUser(request, session.user));
   const isAdmin = actorRole === "ADMIN";
 
