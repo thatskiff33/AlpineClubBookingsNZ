@@ -33,7 +33,7 @@ const sendEmail = vi.hoisted(() =>
   vi.fn<(args: Record<string, unknown>) => Promise<unknown>>(async () => ({ status: "sent", emailLogId: "log-1", messageId: null })),
 );
 vi.mock("@/lib/email/core", () => ({ sendEmail }));
-const escalate = vi.hoisted(() => vi.fn(async (_args: { outcomes: { status: string }[] }) => undefined));
+const escalate = vi.hoisted(() => vi.fn<(args: { outcomes: { status: string }[] }) => Promise<undefined>>(async () => undefined));
 vi.mock("@/lib/email-admin-alert-escalation", () => ({ recordAdminAlertDeliveryEscalation: escalate }));
 vi.mock("@/lib/admin-permissions", () => ({ hasAdminAreaAccess: () => true }));
 

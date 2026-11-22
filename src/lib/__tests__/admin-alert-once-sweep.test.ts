@@ -117,6 +117,13 @@ describe("the sweep re-sends a raised-once alert's stored copy", () => {
     expect(senders.xero).toHaveBeenCalledTimes(1);
   });
 
+  it("sends once when two sweeps run at the same time: the claim decides", async () => {
+    await owe(KEY);
+    const results = await Promise.all([sweepOnceEverAlerts(at(MINUTE)), sweepOnceEverAlerts(at(MINUTE))]);
+    expect(senders.xero).toHaveBeenCalledTimes(1);
+    expect(results.reduce((sum, run) => sum + run.resent, 0)).toBe(1);
+  });
+
   it("rebuilds a payment alert with the club's format read afresh", async () => {
     await owe(KEY, {
       label: "lost close alert",
