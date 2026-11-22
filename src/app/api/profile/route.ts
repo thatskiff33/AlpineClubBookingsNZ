@@ -24,6 +24,10 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
+import {
+  hasAnyField,
+  normalizedChangedFields,
+} from "@/lib/audit-changed-fields";
 import { nameField } from "@/lib/zod-helpers";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import {
@@ -144,39 +148,6 @@ const PROFILE_XERO_SYNC_SELECT = {
   postalCountry: true,
   profileCompletedAt: true,
 } as const;
-
-function normalizeAuditValue(value: unknown): unknown {
-  if (value instanceof Date) {
-    return value.getTime();
-  }
-  if (value === undefined || value === "") {
-    return null;
-  }
-  return value;
-}
-
-function getChangedFields(
-  before: Record<string, unknown>,
-  updateData: Record<string, unknown>,
-  fields: readonly string[],
-): string[] {
-  return fields.filter((field) => {
-    if (!Object.prototype.hasOwnProperty.call(updateData, field)) {
-      return false;
-    }
-    return (
-      normalizeAuditValue(before[field]) !==
-      normalizeAuditValue(updateData[field])
-    );
-  });
-}
-
-function hasAnyField(
-  changedFields: readonly string[],
-  fields: readonly string[],
-): boolean {
-  return fields.some((field) => changedFields.includes(field));
-}
 
 export async function PUT(req: NextRequest) {
   const session = await auth();
@@ -397,7 +368,7 @@ export async function PUT(req: NextRequest) {
   }
 
   try {
-    const changedFields = getChangedFields(
+    const changedFields = normalizedChangedFields(
       existing as unknown as Record<string, unknown>,
       updateData,
       PROFILE_AUDIT_FIELDS,
