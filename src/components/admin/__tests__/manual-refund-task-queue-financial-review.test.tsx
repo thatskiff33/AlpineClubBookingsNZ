@@ -19,6 +19,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
 }));
 
 import { ManualRefundTaskQueue } from "@/components/admin/manual-refund-task-queue";
+import { waitForManualRefundQueueLoaded } from "@/lib/__tests__/support/manual-refund-task-queue-loaded";
 import { DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION, DISPUTED_HAND_BACK_LOST_NOT_PAYABLE, DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING, disputedHandBackDismissRefusal, JOURNAL_HAND_BACK_DISMISS_REFUSAL, RETIRED_EDIT_REVIEW_REFUSAL } from "@/lib/manual-refund-task-copy";
 
 /**
@@ -82,9 +83,7 @@ function stubLoad(body: unknown) {
 async function renderQueue(body: unknown) {
   stubLoad(body);
   render(<ManualRefundTaskQueue />);
-  await waitFor(() =>
-    expect(screen.getByTestId("manual-refund-task-queue")).toBeInTheDocument(),
-  );
+  await waitForManualRefundQueueLoaded();
   return screen.getByTestId("manual-refund-task-queue");
 }
 
@@ -254,7 +253,7 @@ describe("a group organiser's Internet Banking hand-back has its own sentence (#
   it("marking it paid back posts the total the card showed, so a total grown since is refused by the server", async () => {
     const fetchMock = stubLoad({ tasks: [{ ...HAND_BACK_TASK, groupOrganiserHandBack: true }], viewerCanViewBookings: true });
     render(<ManualRefundTaskQueue />);
-    await waitFor(() => expect(screen.getByTestId("manual-refund-task-queue")).toBeInTheDocument());
+    await waitForManualRefundQueueLoaded();
     fireEvent.click(screen.getByRole("button", { name: /paid back/i }));
     await screen.findByRole("dialog");
     fireEvent.click(screen.getByRole("button", { name: "Record as paid back" }));
@@ -266,7 +265,7 @@ describe("a group organiser's Internet Banking hand-back has its own sentence (#
   it("CONTROL: a cash hand-back posts the body it always did, with no amount", async () => {
     const fetchMock = stubLoad({ tasks: [HAND_BACK_TASK], viewerCanViewBookings: true });
     render(<ManualRefundTaskQueue />);
-    await waitFor(() => expect(screen.getByTestId("manual-refund-task-queue")).toBeInTheDocument());
+    await waitForManualRefundQueueLoaded();
     fireEvent.click(screen.getByRole("button", { name: /paid back/i }));
     await screen.findByRole("dialog");
     fireEvent.click(screen.getByRole("button", { name: "Record as paid back" }));
