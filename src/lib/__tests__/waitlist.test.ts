@@ -261,7 +261,7 @@ vi.mock("@/lib/booking-guest-removal-service", () => ({
 // which call should fail.
 const zoneReadFault = vi.hoisted(() => ({ call: 0, failOn: 0 }));
 vi.mock("@/lib/club-time-zone-runtime", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/club-time-zone-runtime")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/club-time-zone-runtime");
   return {
     ...actual,
     readClubTimeZoneOutsideRequest: async () => {
