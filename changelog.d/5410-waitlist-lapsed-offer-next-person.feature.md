@@ -22,6 +22,7 @@
   The "Waitlist Offer Expired" email now says a place that is not taken up is
   offered to the next person, that this one may go to someone behind them, and
   that they keep their place in the queue; its "New Position" line now reads
-  "Your Position". A club that has saved its own wording for this email keeps
-  that wording; use **Restore Default** on the email's template page to take
-  the new text.
+  "Your Position", and so does the same line in the "Your Waitlist Place Is
+  Back" email, which also shows the member's existing place in the queue. A
+  club that has saved its own wording for either email keeps that wording; use
+  **Restore Default** on the email's template page to take the new text.

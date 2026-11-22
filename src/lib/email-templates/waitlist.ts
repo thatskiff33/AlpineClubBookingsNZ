@@ -151,7 +151,7 @@ export function waitlistPlaceRestoredTemplate(
     ${infoTable([
       { label: "Check-in", value: emailCalendarDay(checkIn) },
       { label: "Check-out", value: emailCalendarDay(checkOut) },
-      { label: "New Position", value: "#" + String(position) },
+      { label: "Your Position", value: "#" + String(position) },
     ])}
     ${paragraph("You do not need to do anything. We will email you again as soon as a spot opens up for these nights.")}
     ${button("View Booking", BASE_URL + "/bookings")}

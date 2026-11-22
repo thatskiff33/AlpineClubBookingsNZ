@@ -115,7 +115,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "waitlist-place-restored": {
     "defaultSubject": "Your Waitlist Place Is Back - {{CLUB_LODGE_NAME}}",
-    "defaultBody": "Your Waitlist Place Is Back\n\nHi {{firstName}}, your booking for the dates below could not be finished, so we have put you back on the waitlist. This was not something you did wrong, and your offer did not run out — you confirmed in time and our system could not complete it.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nNew Position: #{{position}}\n\nYou do not need to do anything. We will email you again as soon as a spot opens up for these nights.\n\nView Booking: {{BASE_URL}}/bookings"
+    "defaultBody": "Your Waitlist Place Is Back\n\nHi {{firstName}}, your booking for the dates below could not be finished, so we have put you back on the waitlist. This was not something you did wrong, and your offer did not run out — you confirmed in time and our system could not complete it.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nYour Position: #{{position}}\n\nYou do not need to do anything. We will email you again as soon as a spot opens up for these nights.\n\nView Booking: {{BASE_URL}}/bookings"
   },
   "admin-waitlist-offer": {
     "defaultSubject": "Waitlist Offer: {{memberName}}",
