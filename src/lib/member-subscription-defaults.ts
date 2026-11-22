@@ -13,6 +13,10 @@ import {
   resolveMemberSubscriptionLiability,
 } from "@/lib/policies/subscription";
 import { lockSubscriptionBillingSeason } from "@/lib/subscription-billing-season-lock";
+import {
+  isUntouchedNotRequiredRow,
+  UNTOUCHED_NOT_REQUIRED_ROW,
+} from "@/lib/subscription-season-row-note";
 
 // Structural client type so the helper works with PrismaClient, a transaction
 // client, and the seed script alike.
@@ -71,25 +75,6 @@ export async function ensureDefaultSeasonSubscriptionForNewMember(
     create: { memberId: member.id, seasonYear, status: "NOT_REQUIRED" },
   });
 }
-
-/**
- * A season row nothing has billed, paid, covered or marked: the creation seed's
- * or the annual-fee sweep's `NOT_REQUIRED` default. Only such a row may be
- * rewritten when its member turns out to owe a subscription — a paid, invoiced,
- * actively charge/family-covered (`releasedAt` null, the #2147 "already billed"
- * rule; this includes a `NO_INVOICE` fee's claim) or manually-marked row is real
- * billing state. Asserted in each writer's `WHERE`, so a concurrent writer that
- * moves the row after a read still cannot be clobbered.
- */
-const UNTOUCHED_NOT_REQUIRED_ROW = {
-  status: "NOT_REQUIRED",
-  xeroInvoiceId: null,
-  manuallyMarkedPaidAt: null,
-  // #2179: re-asserted relationally — a NO_INVOICE billing confirm creates an
-  // ACTIVE coverage claim while leaving the row NOT_REQUIRED, so the scalar
-  // guards alone cannot exclude a claim that landed after a read.
-  chargeCoverage: { none: { releasedAt: null } },
-} as const satisfies Prisma.MemberSubscriptionWhereInput;
 
 type LiabilityReadDb = Pick<
   Prisma.TransactionClient,
@@ -232,13 +217,7 @@ export async function reconcileSeasonSubscriptionForAssignment(
   // Only the untouched creation/seed default is reconciled: a paid, invoiced,
   // actively charge/family-covered, or manually-marked row is real billing
   // state and is left alone.
-  if (
-    !existing ||
-    existing.status !== "NOT_REQUIRED" ||
-    existing.xeroInvoiceId !== null ||
-    existing.manuallyMarkedPaidAt !== null ||
-    existing.chargeCoverage.length > 0
-  ) {
+  if (!isUntouchedNotRequiredRow(existing)) {
     return { reconciled: false };
   }
 

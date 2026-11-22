@@ -369,6 +369,11 @@ export function MemberTable({
                 ) : (
                   subscriptionChip
                 )}
+                {member.subscriptionBillingNote ? (
+                  <p className="mt-1 max-w-[16rem] text-xs text-warning-11">
+                    {member.subscriptionBillingNote}
+                  </p>
+                ) : null}
               </TableCell>
               <TableCell>
                 <div className="space-y-1">

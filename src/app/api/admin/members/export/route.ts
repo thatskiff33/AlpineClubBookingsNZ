@@ -13,6 +13,10 @@ import { isRole } from "@/lib/member-roles";
 import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
 import { subscriptionNotRequiredMemberConditions } from "@/lib/subscription-liability-where";
 import {
+  notRequiredRowBillingNote,
+  SEASON_ROW_STATE_SELECT,
+} from "@/lib/subscription-season-row-note";
+import {
   effectiveSubscriptionBehavior,
   isSubscriptionNotRequiredForMembershipType,
 } from "@/lib/membership-types";
@@ -286,7 +290,8 @@ export async function GET(req: NextRequest) {
         comments: true,
         subscriptions: {
           where: { seasonYear: currentSeasonYear },
-          select: { status: true },
+          // #5190: the row-state columns the billing note reads.
+          select: SEASON_ROW_STATE_SELECT,
           take: 1,
         },
         seasonalMembershipAssignments: {
@@ -317,6 +322,19 @@ export async function GET(req: NextRequest) {
 
     // Optional fields are filtered so the header and data rows stay aligned.
     type MemberRow = (typeof members)[number];
+    // One member's inputs to the shared liability rule (#5190), read by the
+    // status column and the note column alike.
+    const liabilityFactsOf = (m: MemberRow) => ({
+      subscriptionBehavior: effectiveSubscriptionBehavior(
+        (m.seasonalMembershipAssignments ?? [])[0]?.membershipType
+          .subscriptionBehavior,
+        m.role,
+      ),
+      member: m,
+      seasonYear: currentSeasonYear,
+      ageTierSettings,
+      liabilitySettings: lockoutSettings,
+    });
     const columns: Array<{ header: string; value: (m: MemberRow) => string }> =
       [
         ...(flags.showTitle
@@ -436,19 +454,23 @@ export async function GET(req: NextRequest) {
             // #2149: membership type is the sole authority (role carries no
             // exemption); mirrors the members-list flag and the SQL filter.
             isSubscriptionNotRequiredForMembershipType({
-              subscriptionBehavior: effectiveSubscriptionBehavior(
-                (m.seasonalMembershipAssignments ?? [])[0]?.membershipType
-                  .subscriptionBehavior,
-                m.role,
-              ),
-              member: m,
+              ...liabilityFactsOf(m),
               seasonRowStatus: m.subscriptions[0]?.status,
-              seasonYear: currentSeasonYear,
-              ageTierSettings,
-              liabilitySettings: lockoutSettings,
             })
               ? "NOT_REQUIRED"
               : m.subscriptions[0]?.status || "NONE",
+        },
+        {
+          // #5190 (owner decision 22 Nov 2026): the members list's row note,
+          // so the export carries the same fact. Empty for every other row.
+          header: "Subscription Note",
+          value: (m: MemberRow) =>
+            csvEscape(
+              notRequiredRowBillingNote({
+                ...liabilityFactsOf(m),
+                seasonRow: m.subscriptions[0],
+              }) ?? "",
+            ),
         },
         { header: "Comments", value: (m: MemberRow) => csvEscape(m.comments || "") },
         {

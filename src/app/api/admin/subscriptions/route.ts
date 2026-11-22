@@ -21,6 +21,11 @@ import type { SubscriptionLiabilitySettings } from "@/lib/policies/subscription"
 import type { AgeTierSettingData } from "@/lib/age-tier";
 import { subscriptionNotRequiredMemberConditions } from "@/lib/subscription-liability-where";
 import {
+  notRequiredRowBillingNote,
+  SEASON_ROW_STATE_SELECT,
+  type SeasonRowState,
+} from "@/lib/subscription-season-row-note";
+import {
   effectiveSubscriptionBehavior,
   isSubscriptionNotRequiredForMembershipType,
 } from "@/lib/membership-types";
@@ -69,6 +74,12 @@ type SubscriptionCandidate = {
   paidAt: Date | null;
   manuallyMarkedPaidAt: Date | null;
   manualPaymentNote: string | null;
+  /**
+   * #5190 (owner decision 22 Nov 2026): set when the saved season row says
+   * "Not required" but the billing run will still invoice this member
+   * (`hasNotRequiredRowBillingNote`); null otherwise.
+   */
+  billingNote: string | null;
   xeroContactGroupsLoaded: boolean;
   xeroContactGroups: Array<{ id: string; name: string }>;
   member: {
@@ -115,6 +126,30 @@ function isNotRequiredMember(
     ),
     member,
     seasonRowStatus: seasonSubscriptionStatus,
+    ...rule,
+  });
+}
+
+/**
+ * #5190 (owner decision 22 Nov 2026): the row note for a saved season row the
+ * billing run will still invoice, from the shared rule on the lists' side, as
+ * the members list and export compute it.
+ */
+function subscriptionBillingNote(
+  subscription: SeasonRowState & {
+    member: Parameters<typeof isNotRequiredMember>[0];
+  },
+  rule: Parameters<typeof isNotRequiredMember>[1],
+) {
+  const { member } = subscription;
+  return notRequiredRowBillingNote({
+    subscriptionBehavior: effectiveSubscriptionBehavior(
+      member.seasonalMembershipAssignments?.[0]?.membershipType
+        .subscriptionBehavior,
+      member.role
+    ),
+    member,
+    seasonRow: subscription,
     ...rule,
   });
 }
@@ -236,6 +271,8 @@ export async function GET(request: NextRequest) {
       prisma.memberSubscription.findMany({
         where: summaryWhere,
         include: {
+          // #5190: the active-claim test the billing note reads.
+          chargeCoverage: SEASON_ROW_STATE_SELECT.chargeCoverage,
           member: {
             select: {
               firstName: true,
@@ -317,6 +354,7 @@ export async function GET(request: NextRequest) {
         paidAt: subscription.paidAt,
         manuallyMarkedPaidAt: subscription.manuallyMarkedPaidAt,
         manualPaymentNote: subscription.manualPaymentNote,
+        billingNote: subscriptionBillingNote(subscription, liabilityRule),
         xeroContactGroupsLoaded: true,
         xeroContactGroups: [],
         member: serializeSubscriptionMemberLoginStage(subscription.member),
@@ -334,6 +372,8 @@ export async function GET(request: NextRequest) {
         paidAt: null,
         manuallyMarkedPaidAt: null,
         manualPaymentNote: null,
+        // The rule exempts this member, so billing invoices nobody here.
+        billingNote: null,
         xeroContactGroupsLoaded: true,
         xeroContactGroups: [],
         member: serializeSubscriptionMemberLoginStage(member),

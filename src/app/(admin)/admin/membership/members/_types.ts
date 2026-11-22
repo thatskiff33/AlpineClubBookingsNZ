@@ -54,6 +54,12 @@ export interface Member {
     | "NOT_REQUIRED"
     | null;
   subscriptionXeroInvoiceId: string | null;
+  /**
+   * #5190 (owner decision 22 Nov 2026): set when the row's saved season status
+   * says "Not required" but the billing run will still invoice this member
+   * (`hasNotRequiredRowBillingNote`); null otherwise.
+   */
+  subscriptionBillingNote?: string | null;
   currentMembershipType: {
     id: string;
     key: string;

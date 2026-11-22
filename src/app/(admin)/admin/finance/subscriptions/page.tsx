@@ -127,6 +127,8 @@ interface Subscription {
   paidAt: string | null;
   manuallyMarkedPaidAt: string | null;
   manualPaymentNote: string | null;
+  /** #5190: "Not required" row the billing run will still invoice; else null. */
+  billingNote?: string | null;
   xeroContactGroupsLoaded: boolean;
   xeroContactGroups: Array<{ id: string; name: string }>;
   member: {
@@ -819,6 +821,11 @@ export default function SubscriptionsPage() {
                         : undefined
                     }
                   />
+                  {sub.billingNote ? (
+                    <p className="mt-1 max-w-[16rem] text-xs text-warning-11">
+                      {sub.billingNote}
+                    </p>
+                  ) : null}
                 </TableCell>
                 <TableCell>
                   {sub.xeroInvoiceId ? (

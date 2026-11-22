@@ -1,0 +1,121 @@
+import type {
+  AgeTier,
+  MembershipTypeSubscriptionBehavior,
+  Prisma,
+  SubscriptionStatus,
+} from "@prisma/client";
+
+import type { AgeTierSettingData } from "@/lib/policies/age-tier";
+import {
+  ADMIN_LIST_LIABILITY_SIDE,
+  liabilityRuleFor,
+  resolveMemberSubscriptionLiability,
+  type SubscriptionLiabilitySettings,
+} from "@/lib/policies/subscription";
+
+/**
+ * A season row nothing has billed, paid, covered or marked: the creation seed's
+ * or the annual-fee sweep's `NOT_REQUIRED` default. Only such a row may be
+ * rewritten when its member turns out to owe a subscription — a paid, invoiced,
+ * actively charge/family-covered (`releasedAt` null, the #2147 "already billed"
+ * rule; this includes a `NO_INVOICE` fee's claim) or manually-marked row is real
+ * billing state. Asserted in each writer's `WHERE`, so a concurrent writer that
+ * moves the row after a read still cannot be clobbered.
+ * {@link isUntouchedNotRequiredRow} is the same test over a row already read
+ * with {@link SEASON_ROW_STATE_SELECT}.
+ */
+export const UNTOUCHED_NOT_REQUIRED_ROW = {
+  status: "NOT_REQUIRED",
+  xeroInvoiceId: null,
+  manuallyMarkedPaidAt: null,
+  // #2179: re-asserted relationally — a NO_INVOICE billing confirm creates an
+  // ACTIVE coverage claim while leaving the row NOT_REQUIRED, so the scalar
+  // guards alone cannot exclude a claim that landed after a read.
+  chargeCoverage: { none: { releasedAt: null } },
+} as const satisfies Prisma.MemberSubscriptionWhereInput;
+
+/**
+ * The season-row columns {@link isUntouchedNotRequiredRow} reads. Only an
+ * ACTIVE claim (`releasedAt` null) counts: a released claim's invoice was
+ * voided, which makes the member billable again.
+ */
+export const SEASON_ROW_STATE_SELECT = {
+  status: true,
+  xeroInvoiceId: true,
+  manuallyMarkedPaidAt: true,
+  chargeCoverage: {
+    where: { releasedAt: UNTOUCHED_NOT_REQUIRED_ROW.chargeCoverage.none.releasedAt },
+    take: 1,
+    select: { id: true },
+  },
+} as const satisfies Prisma.MemberSubscriptionSelect;
+
+/** A season row read with {@link SEASON_ROW_STATE_SELECT}. */
+export interface SeasonRowState {
+  status: SubscriptionStatus;
+  xeroInvoiceId: string | null;
+  manuallyMarkedPaidAt: Date | null;
+  chargeCoverage: ReadonlyArray<unknown>;
+}
+
+/** {@link UNTOUCHED_NOT_REQUIRED_ROW} over a row already read. */
+export function isUntouchedNotRequiredRow(
+  row: SeasonRowState | null | undefined,
+): boolean {
+  return (
+    !!row &&
+    row.status === UNTOUCHED_NOT_REQUIRED_ROW.status &&
+    row.xeroInvoiceId === UNTOUCHED_NOT_REQUIRED_ROW.xeroInvoiceId &&
+    row.manuallyMarkedPaidAt === UNTOUCHED_NOT_REQUIRED_ROW.manuallyMarkedPaidAt &&
+    row.chargeCoverage.length === 0
+  );
+}
+
+/**
+ * The row note the admin members list, its CSV export and the subscriptions
+ * list show (#5190, owner decision 22 Nov 2026,
+ * https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5190#issuecomment-7070827526).
+ */
+export const NOT_REQUIRED_ROW_BILLING_NOTE =
+  "Marked not required, but the billing run will invoice this member";
+
+/**
+ * Whether a list row gets {@link NOT_REQUIRED_ROW_BILLING_NOTE}: the member has
+ * a saved `NOT_REQUIRED` season row that nothing has billed, paid, covered or
+ * marked, and the shared liability rule on the lists' side
+ * (`ADMIN_LIST_LIABILITY_SIDE`, billing) says they owe. The list shows the
+ * row's "Not required"; the billing run ignores the row and invoices them.
+ *
+ * Choosing a rule removes the note for the current season: under the chosen
+ * rule the member either stops owing, or the liability clear-up
+ * (`clearStaleNotRequiredRows`, the same row test and billing-side rule) flips
+ * their row to `NOT_INVOICED`. A row the clear-up did not reach (another
+ * season) keeps the note, because billing still invoices it. A covered,
+ * invoiced, paid or marked row never gets the note — billing has already dealt
+ * with it.
+ */
+export function hasNotRequiredRowBillingNote(input: {
+  subscriptionBehavior: MembershipTypeSubscriptionBehavior | null | undefined;
+  member: { dateOfBirth: Date | null; ageTier: AgeTier };
+  seasonRow: SeasonRowState | null | undefined;
+  seasonYear: number;
+  ageTierSettings: AgeTierSettingData[];
+  liabilitySettings: SubscriptionLiabilitySettings;
+}): boolean {
+  if (!isUntouchedNotRequiredRow(input.seasonRow)) return false;
+  return resolveMemberSubscriptionLiability({
+    subscriptionBehavior: input.subscriptionBehavior,
+    member: input.member,
+    seasonRowStatus: input.seasonRow?.status,
+    seasonYear: input.seasonYear,
+    rule: liabilityRuleFor(ADMIN_LIST_LIABILITY_SIDE, input.liabilitySettings),
+    ageTierSettings: input.ageTierSettings,
+  }).owes;
+}
+
+/** {@link hasNotRequiredRowBillingNote} as the note text, or null. */
+export function notRequiredRowBillingNote(
+  input: Parameters<typeof hasNotRequiredRowBillingNote>[0],
+): string | null {
+  return hasNotRequiredRowBillingNote(input) ? NOT_REQUIRED_ROW_BILLING_NOTE : null;
+}

@@ -85,6 +85,10 @@ import { ROLE_VALUES, isRole } from "@/lib/member-roles";
 import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
 import { subscriptionNotRequiredMemberConditions } from "@/lib/subscription-liability-where";
 import {
+  notRequiredRowBillingNote,
+  SEASON_ROW_STATE_SELECT,
+} from "@/lib/subscription-season-row-note";
+import {
   accessRoleChangeRequiresFullAdmin,
   accessRolesFromCompatibilityFields,
   isFullAdmin,
@@ -832,7 +836,8 @@ export async function listAdminMembers(
     },
     subscriptions: {
       where: { seasonYear: currentSeasonYear },
-      select: { status: true, seasonYear: true, xeroInvoiceId: true },
+      // #5190: the row-state columns the billing note reads.
+      select: { ...SEASON_ROW_STATE_SELECT, seasonYear: true },
       take: 1,
     },
     seasonalMembershipAssignments: {
@@ -1141,16 +1146,25 @@ export async function listAdminMembers(
     // assignment correctly owes a subscription). The current-season row (already
     // selected as m.subscriptions[0]) still lets a NOT_REQUIRED row dominate a
     // BASED_ON_AGE_TIER type after a mid-season tier promotion (#2041).
-    const subscriptionNotRequired = isSubscriptionNotRequiredForMembershipType({
+    const liabilityFacts = {
       subscriptionBehavior: effectiveSubscriptionBehavior(
         currentMembershipType?.subscriptionBehavior,
         m.role,
       ),
       member: m,
-      seasonRowStatus: m.subscriptions?.[0]?.status,
       seasonYear: currentSeasonYear,
       ageTierSettings,
       liabilitySettings: lockoutSettings,
+    };
+    const subscriptionNotRequired = isSubscriptionNotRequiredForMembershipType({
+      ...liabilityFacts,
+      seasonRowStatus: m.subscriptions?.[0]?.status,
+    });
+    // #5190 (owner decision 22 Nov 2026): a saved "Not required" row the
+    // billing run will still invoice gets a plain note.
+    const subscriptionBillingNote = notRequiredRowBillingNote({
+      ...liabilityFacts,
+      seasonRow: m.subscriptions?.[0],
     });
 
     return {
@@ -1171,6 +1185,7 @@ export async function listAdminMembers(
           : (m.subscriptions[0]?.status ?? null),
       subscriptionXeroInvoiceId:
         m.subscriptions[0]?.xeroInvoiceId ?? null,
+      subscriptionBillingNote,
       currentMembershipType: currentMembershipType
         ? {
             id: currentMembershipType.id,
