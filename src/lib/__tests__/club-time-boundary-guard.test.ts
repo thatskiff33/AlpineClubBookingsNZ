@@ -15,7 +15,12 @@ import {
   auditEnforcedGuardCoverage,
   auditResolvedGuardCoverage,
   PRODUCTION_GUARD_ROSTER,
+  resolveRestrictedSyntax,
 } from "./support/eslint-guard-coverage";
+import {
+  listSourceFiles,
+  toPosix,
+} from "../../../scripts/audit/ts-call-site-scan";
 
 /**
  * CT-6 (#2991) — the two Club Time recurrence paths, guarded mechanically.
@@ -168,10 +173,48 @@ import { z } from "zod";
 export const schema = z.string();
 `;
 
+/**
+ * The files ESLint ACTUALLY lifts the environment-zone group from, asked of the
+ * applied configuration rather than read out of the exemption record (#5407).
+ *
+ * `ENVIRONMENT_ZONE_EXEMPT_FILES` above is the record's claim. A path added to
+ * the config block alone (the block's `files` is derived from the reasons list
+ * today, but nothing forces the next block to be) would leave that record
+ * unchanged and every assertion fed by it green, while the guard was off for the
+ * file. So the leg that decides whether a file is "excused" resolves the real
+ * configuration for every production source file and keeps those missing any
+ * environment-zone arm. Paths are walked from the disk, not from the config, so
+ * the answer cannot be limited by the very glob it is checking.
+ */
+async function resolveEffectiveEnvironmentZoneExemptFiles(
+  linter: ESLint,
+): Promise<Set<string>> {
+  // Only TypeScript carries these guards; the config's `files` globs are
+  // `{ts,tsx}`, so a `.mjs` script is outside the rule rather than exempt.
+  const files = ["src", "scripts", "prisma"]
+    .flatMap((dir) =>
+      listSourceFiles(path.join(ROOT, dir), [], new Set(["node_modules"])),
+    )
+    .filter((file) => /\.tsx?$/.test(file));
+  const exempt = new Set<string>();
+  for (const absolute of files) {
+    const file = toPosix(path.relative(ROOT, absolute));
+    const resolved = await resolveRestrictedSyntax(linter, ROOT, file);
+    const present = new Set(resolved.selectors);
+    if (CLUB_TIME_GUARD_ARMS.environmentZone.some((arm) => !present.has(arm))) {
+      exempt.add(file);
+    }
+  }
+  return exempt;
+}
+
 let eslint: ESLint;
+let effectiveEnvironmentZoneExemptFiles: Set<string>;
 
 beforeAll(async () => {
   eslint = new ESLint({ cwd: ROOT, warnIgnored: false });
+  effectiveEnvironmentZoneExemptFiles =
+    await resolveEffectiveEnvironmentZoneExemptFiles(eslint);
   // ESLint's first `lintText` pays for config resolution and parser load. Pay it
   // here so the per-path audits below stay inside the default timeout.
   await eslint.lintText(HOST_CLOCK_CONTROL, {
@@ -431,6 +474,14 @@ describe("the environment-zone allowlist is a ratchet", () => {
     expect(ENVIRONMENT_ZONE_ADAPTERS.length).toBeLessThanOrEqual(1);
   });
 
+  it("lifts the guard from exactly the files the exemption record names", () => {
+    // The applied configuration, not the record: a path added to a config block
+    // alone is invisible to every leg derived from `SRC_RESTRICTION_EXEMPTIONS`.
+    expect([...effectiveEnvironmentZoneExemptFiles].sort()).toEqual(
+      [...ENVIRONMENT_ZONE_EXEMPT_FILES].sort(),
+    );
+  });
+
   it("excuses exactly the files it gives reasons for", () => {
     // The hole the count above does NOT close. The shared block's `files` is
     // now derived from the reasons list, so a path cannot be added to one
@@ -444,7 +495,7 @@ describe("the environment-zone allowlist is a ratchet", () => {
     // the exception went with them. If some file needs a block of its own again,
     // name it here rather than adding it to the reasons list, where a second
     // matching block would silently win.
-    const excused = [...ENVIRONMENT_ZONE_EXEMPT_FILES].sort();
+    const excused = [...effectiveEnvironmentZoneExemptFiles].sort();
     const explained = ENVIRONMENT_ZONE_ADAPTERS.map((entry) => entry.file).sort();
     expect(excused).toEqual(explained);
   });
@@ -457,7 +508,7 @@ describe("the environment-zone allowlist is a ratchet", () => {
     // An exemption naming a file that no longer exists is one nobody is using and
     // nobody can see is unused — and it would silently cover a NEW file created
     // at that path later.
-    const missing = [...ENVIRONMENT_ZONE_EXEMPT_FILES].filter(
+    const missing = [...effectiveEnvironmentZoneExemptFiles].filter(
       (file) => !fs.existsSync(path.join(ROOT, file)),
     );
     expect(missing).toEqual([]);
@@ -502,7 +553,7 @@ describe("the environment-zone allowlist is a ratchet", () => {
     // it, so postmortems are densest in exactly the files that no longer commit
     // the defect — which makes a raw-text guard here strictly worse than no
     // guard, since it reads as green while excusing the wrong set.
-    const stale = [...ENVIRONMENT_ZONE_EXEMPT_FILES].filter((file) => {
+    const stale = [...effectiveEnvironmentZoneExemptFiles].filter((file) => {
       const full = path.join(ROOT, file);
       // A glob cannot be read, so it cannot be checked. Fail closed rather than
       // skip it: an exemption this leg cannot measure is exactly the shape it
