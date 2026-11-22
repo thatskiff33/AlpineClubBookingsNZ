@@ -7,7 +7,7 @@ import { BookingEventType, BookingStatus, PaymentSource, PaymentStatus, PaymentT
 import { OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 import { bookingOwner } from "@/lib/booking-owner";
-import { deliverBumpNotice, drainOwedBumpNotices, recordBumpNoticesOwed, type OwedBumpNoticeSweepResult } from "@/lib/booking-bump-notice-owed";
+import { deliverBumpNotices, drainOwedBumpNotices, recordBumpNoticesOwed, type OwedBumpNoticeSweepResult } from "@/lib/booking-bump-notice-owed";
 import { bookingBumpReason } from "@/lib/booking-bump-reason";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
@@ -221,8 +221,7 @@ type PendingBooking = Prisma.BookingGetPayload<{
 
 type HoldResolution =
   | { type: "already_processed" }
-  // #5407: `bumpedAt` keys the notices the transaction recorded as owed.
-  | { type: "bumped"; booking: PendingBooking; flagged: boolean; bumpedAt: Date }
+  | { type: "bumped"; booking: PendingBooking; flagged: boolean }
   | { type: "confirmed_zero"; booking: PendingBooking }
   | {
       type: "extended_request_hold";
@@ -322,7 +321,7 @@ export interface CronConfirmResult {
   // members-only amount to settle here. Always empty.
   partialBumpedBookingIds: string[];
   failedBookingIds: string[];
-  // #5407: what this run's sweep did with bump notices still owed.
+  // #5407: what this run's sweep did with the bump notices earlier runs left owed.
   owedBumpNotices: OwedBumpNoticeSweepResult;
 }
 
@@ -552,16 +551,10 @@ async function resolveHoldWindowUnderLock(
       // #3611: nothing was paid, so nothing is kept; the stay's ledger lines are
       // reversed if a reversed mark-paid left it confirmed there (lock(1) above).
       await postCancellationLedgerLines({ store: tx, journal, bookingId: booking.id, lodgeId: booking.lodgeId, keptCents: 0, site: "confirm-pending:capacity-bump" });
-      // #5407: the member's and the officers' notices are owed from this
-      // commit until sent (`booking-bump-notice-owed.ts`).
+      // #5407: both notices are owed from this commit until sent, keyed by the run's `now`.
       await recordBumpNoticesOwed(tx, { bookingId: booking.id, bumpedAt: now, flagged: booking.cancelIfGuestsBumped });
 
-      return {
-        type: "bumped",
-        booking,
-        flagged: booking.cancelIfGuestsBumped,
-        bumpedAt: now,
-      };
+      return { type: "bumped", booking, flagged: booking.cancelIfGuestsBumped };
     }
 
     // Zero-dollar booking: skip Stripe, just confirm with a SUCCEEDED Payment.
@@ -1140,8 +1133,6 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
   // #4993: first hand stale saved-card claims back to PENDING, with their hold
   // at the claim time, so the pass below selects and replays them this run.
   const recovery = await recoverStaleSavedCardClaims(now);
-  // #5407: and send the bump notices an earlier run left owed.
-  const owedBumpNotices = await drainOwedBumpNotices(now);
 
   // Find all PENDING bookings past their hold deadline, including split
   // non-member child bookings (#738). Process oldest first so older provisional
@@ -1161,7 +1152,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
     cancelledBookingIds: [],
     partialBumpedBookingIds: [],
     failedBookingIds: [...recovery.failedBookingIds],
-    owedBumpNotices,
+    owedBumpNotices: await drainOwedBumpNotices(now),
   };
 
   for (const candidate of pendingBookings) {
@@ -1198,9 +1189,8 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           reason: bookingBumpReason(resolution.flagged),
           snapshot: { flagged: resolution.flagged },
         });
-        await deliverBumpNotice("member", resolution.booking, resolution.flagged, resolution.bumpedAt);
         triggerWaitlistProcessing(resolution.booking, format);
-        await deliverBumpNotice("officers", resolution.booking, resolution.flagged, resolution.bumpedAt);
+        await deliverBumpNotices(resolution.booking, resolution.flagged, now);
         continue;
       }
 

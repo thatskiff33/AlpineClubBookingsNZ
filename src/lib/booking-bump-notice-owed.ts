@@ -13,7 +13,7 @@
  * (`recordBumpNoticesOwed`): one `AlertCooldown` marker per notice, keyed by
  * booking, bump time and variant. After the commit `deliverBumpNotice` claims
  * each marker, sends, and clears it when the send returns; a send that throws
- * leaves it. Each run of the same cron then sweeps what is still owed
+ * leaves it. Each run of the same cron also sweeps what is still owed
  * (`drainOwedBumpNotices`): it claims a due marker, re-reads the booking, and
  * sends, or clears without sending when the booking is gone or no longer
  * cancelled, or when the marker is past its maximum age.
@@ -240,6 +240,14 @@ export async function deliverBumpNotice(
       "Failed to claim or clear a bump notice's owed marker; a later run sends what is still owed",
     );
   }
+}
+
+/**
+ * After the bump commits: deliver both notices, the member's first. `bumpedAt`
+ * is the instant the transaction keyed the markers with (the run's `now`).
+ */
+export async function deliverBumpNotices(booking: BumpNoticeBooking, flagged: boolean, bumpedAt: Date): Promise<void> {
+  for (const kind of KINDS) await deliverBumpNotice(kind, booking, flagged, bumpedAt);
 }
 
 export interface OwedBumpNoticeSweepResult {

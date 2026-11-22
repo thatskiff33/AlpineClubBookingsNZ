@@ -74,6 +74,7 @@ import { sendEmail, type EmailSendOutcome } from "./core";
 import {
   bookingOwnerEmailContext,
   type BookingOwnerEmailSource,
+  type BumpNoticeEmailSource,
 } from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
@@ -751,17 +752,6 @@ export async function sendBookingPolicyExceptionRefusedEmail(params: {
   });
 }
 
-/**
- * A bump notice's booking and the bump's event key (#5407). The key makes the
- * notice's EmailLog row durable (`email:<template>:<key>`), so the
- * confirm-pending cron can send it again after an interruption and the member
- * still has exactly one row per bump: a second send finds the row and sends
- * nothing (`already_recorded`).
- */
-export type BumpNoticeEmailSource = BookingOwnerEmailSource & {
-  idempotencyKey: string;
-};
-
 export async function sendBookingBumpedEmail(
   // Booking this message belongs to (#2258), and the bump's key (#5407).
   bookingContext: BumpNoticeEmailSource,
@@ -802,10 +792,7 @@ export async function sendBookingBumpedEmail(
       guestCount,
       recipientCanBookOnline,
     )),
-    bookingContext: bookingOwnerEmailContext(
-      bookingContext.bookingId,
-      bookingContext.recipientMemberId,
-    ),
+    bookingContext: bookingOwnerEmailContext(bookingContext.bookingId, bookingContext.recipientMemberId),
     templateName: "booking-bumped",
     templateData: {
       firstName,
