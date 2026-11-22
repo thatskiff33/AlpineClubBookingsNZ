@@ -25,7 +25,7 @@ import { bookingQuoteConnectionRequestSchema } from "@/lib/booking-quote-request
 import {
   availabilityCheckQuerySchema,
   bookingPolicyCheckQuerySchema,
-  bookingRoomsQuerySchema,
+  bookingRoomsConnectionQuerySchema,
 } from "@/lib/booking-stay-check-query";
 import {
   ARRIVAL_TIME_CONNECTION_SHAPE,
@@ -82,10 +82,10 @@ export const MCP_BOOKING_ACTIONS: readonly McpAction[] = [
     id: "list_lodge_rooms",
     title: "List lodge rooms",
     summary:
-      "The rooms a member can ask to stay in, with their bed counts, at one lodge (`lodgeId`) or at every lodge the member may book. `enabled` is false when the club does not take room requests.",
+      "The rooms a member can ask to stay in, with their bed counts, at one lodge (`lodgeId`, from `list_lodges`). `enabled` is false when the club does not take room requests.",
     method: "GET",
     path: "/api/bookings/rooms",
-    query: bookingRoomsQuerySchema,
+    query: bookingRoomsConnectionQuerySchema,
     kind: "read",
     returns: LODGE_ROOMS_CONNECTION_SHAPE,
     core: false,

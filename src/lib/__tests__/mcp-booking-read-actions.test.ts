@@ -74,6 +74,7 @@ import { GET as listExceptionRequests } from "@/app/api/bookings/exception-reque
 import { GET as listRooms } from "@/app/api/bookings/rooms/route";
 import { GET as listPromoCodes } from "@/app/api/promo-codes/available/route";
 import { expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
+import { findMcpAction, mcpActionInputSchema } from "@/lib/mcp/catalogue";
 import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
 
 /** Every key anywhere in a JSON value. */
@@ -194,6 +195,13 @@ describe("list_lodge_rooms", () => {
     });
     expect(connection).toEqual(browser);
     expect(connection).toEqual({ enabled: true, rooms: [{ id: "room-1", name: "Bunk room", bedCount: 2 }] });
+  });
+
+  it("always names a lodge: the cross-lodge listing is for callers outside this repository (INV-INT-016)", () => {
+    const action = findMcpAction("list_lodge_rooms");
+    if (!action) throw new Error("list_lodge_rooms is not in the catalogue");
+    expect(mcpActionInputSchema(action).safeParse({}).success).toBe(false);
+    expect(mcpActionInputSchema(action).safeParse({ lodgeId: "lodge-a" }).success).toBe(true);
   });
 });
 

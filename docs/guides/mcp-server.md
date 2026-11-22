@@ -223,7 +223,7 @@ booking, even an officer's, and never sends an officer's on-behalf fields.
 | --- | --- | --- | --- |
 | `check_stay_availability` | Free beds at a lodge for each night of one stay, and the fewest free on any night | read | `GET /api/availability/check` |
 | `check_booking_rules` | Whether a stay meets the minimum-stay rules, each rule it breaks, and the cancellation schedule | read | `GET /api/booking-policies/check` |
-| `list_lodge_rooms` | The rooms a member can ask for, with bed counts | read | `GET /api/bookings/rooms` |
+| `list_lodge_rooms` | The rooms a member can ask for at one lodge (its id from `list_lodges`), with bed counts. The cross-lodge listing stays for callers outside this repository (`INV-INT-016`) | read | `GET /api/bookings/rooms` |
 | `list_requestable_rooms` | The rooms the member can request on one of their bookings | read | `GET /api/bookings/[id]/requested-room/options` |
 | `list_my_promo_codes` | The promo codes the club has given the member | read | `GET /api/promo-codes/available` |
 | `quote_booking` | What a stay would cost, guest by guest. Changes nothing | read (preview) | `POST /api/bookings/quote` |

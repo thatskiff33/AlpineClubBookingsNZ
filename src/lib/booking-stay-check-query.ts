@@ -29,3 +29,9 @@ export const bookingPolicyCheckQuerySchema = z.object({
 export const bookingRoomsQuerySchema = z.object({
   lodgeId: z.string().min(1).optional(),
 });
+
+/**
+ * The AI app's `list_lodge_rooms` always names its lodge: the no-`lodgeId`
+ * mode is kept for consumers outside this repository only (`INV-INT-016`).
+ */
+export const bookingRoomsConnectionQuerySchema = bookingRoomsQuerySchema.required();
