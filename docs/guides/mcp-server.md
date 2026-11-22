@@ -27,7 +27,8 @@ the **Help & system** hub. The page exists only while the module is on.
 The end goal is that members can do everything on the website through an AI
 app, built in stages. Stage 1 is the foundation plus a first set of member
 actions; ALP-718 adds the member's own account and the club's published
-information; see [The roadmap](#the-roadmap).
+information, and ALP-794 the member's bookings; see
+[The roadmap](#the-roadmap).
 
 ## When you'd use it
 
@@ -211,10 +212,53 @@ place; both are counted against the connection's rate limit and answer
 and the connection's level), `find_actions`, `describe_action` and
 `run_action`.
 
-Three **website-only** entries answer with the page to open and run nothing:
+### Bookings (ALP-794)
+
+All of these are reached through `find_actions`. Each acts on the connected
+member's own bookings only: a connection never reaches another member's
+booking, even an officer's, and never sends an officer's on-behalf fields.
+
+| Action | What it does | Kind | Route |
+| --- | --- | --- | --- |
+| `check_stay_availability` | Free beds at a lodge for each night of one stay, and the fewest free on any night | read | `GET /api/availability/check` |
+| `check_booking_rules` | Whether a stay meets the minimum-stay rules, each rule it breaks, and the cancellation schedule | read | `GET /api/booking-policies/check` |
+| `list_lodge_rooms` | The rooms a member can ask for, with bed counts | read | `GET /api/bookings/rooms` |
+| `list_requestable_rooms` | The rooms the member can request on one of their bookings | read | `GET /api/bookings/[id]/requested-room/options` |
+| `list_my_promo_codes` | The promo codes the club has given the member | read | `GET /api/promo-codes/available` |
+| `quote_booking` | What a stay would cost, guest by guest. Changes nothing | read (preview) | `POST /api/bookings/quote` |
+| `check_promo_code` | What a promo code or working bee would take off a stay. Changes nothing | read (preview) | `POST /api/promo-codes/validate` |
+| `quote_booking_change` | What changing a booking would cost or give back, and whether it can be made. Changes nothing | read (preview) | `POST /api/bookings/[id]/modify-quote` |
+| `quote_booking_change_request` | An estimate for the guests a change request would add. Changes nothing | read (preview) | `POST /api/bookings/[id]/change-requests/quote` |
+| `set_my_booking_note` | Saves or clears the booking's note | write | `PUT /api/bookings/[id]/notes` |
+| `set_my_arrival_time`, `clear_my_arrival_time` | Sets or clears the expected arrival time | write | `PUT`, `DELETE /api/bookings/[id]/arrival-time` |
+| `set_my_requested_room`, `clear_my_requested_room` | Asks for a room, or withdraws the request | write | `PUT`, `DELETE /api/bookings/[id]/requested-room` |
+| `list_booking_change_requests` | The change and exception requests on a booking | read | `GET /api/bookings/[id]/change-requests` |
+| `request_booking_change` | Asks an officer to change a stay the member can no longer change themselves | write | `POST /api/bookings/[id]/change-requests` |
+| `list_my_exception_requests` | The member's requests to book or change outside the rules | read | `GET /api/bookings/exception-requests` |
+| `request_booking_exception` | Asks an officer to allow a new stay the rules refuse | write | `POST /api/bookings/exception-requests` |
+| `request_booking_change_exception` | Asks an officer to allow a change the rules refuse | write | `POST /api/bookings/[id]/exception-requests` |
+| `withdraw_booking_exception_request`, `withdraw_booking_change_exception_request` | Withdraws an open exception request. Cannot be undone | destructive | `PATCH /api/bookings/exception-requests/[id]`, `PATCH /api/bookings/[id]/exception-requests/[requestId]` |
+| `list_my_refund_reviews` | The refund reviews on a cancelled booking | read | `GET /api/bookings/[id]/refund-request` |
+| `request_refund_review` | Asks the club to review a refund. No money moves: an officer decides | write | `POST /api/bookings/[id]/refund-request` |
+| `accept_waitlist_offer` | Accepts a place the club offered. If payment is needed, the app tells the member to pay on the website | write | `POST /api/bookings/[id]/waitlist-confirm` |
+| `delete_my_draft_booking` | Deletes one of the member's drafts. Never a confirmed booking | destructive | `DELETE /api/bookings/[id]` |
+
+A preview is a `read`: a view-only connection may run it. A connection may not
+raise an officer's promo correction on an exception request (#4533), and the
+officer-only parts of each route stay officer-only. The routes' request schemas
+live in `src/lib` modules the catalogue shares, so the app is offered exactly
+what the route accepts (`INV-SSOT`).
+
+Changing a booking's dates or guests, confirming a draft and sending a guest a
+payment link can take or refund money, so they stay on the website: the
+website-only `change_my_booking` sends the member to the booking's page, and
+`quote_booking_change` shows the cost first.
+
+Four **website-only** entries answer with the page to open and run nothing:
 `pay_for_booking` (card details are entered on the website, never in an AI
 app), `change_sign_in_details` (passwords and two-step sign-in) and
-`manage_connected_apps` (disconnecting apps).
+`manage_connected_apps` (disconnecting apps) and `change_my_booking`
+(changing a booking's dates or guests, ALP-794).
 
 ## What stays on the website, and why
 
@@ -229,20 +273,22 @@ reasons are permanent — those routes are never actions:
   connections or widen what they may do.
 - **Providers**, **scheduled jobs**, **lodge kiosk and display screens**, and
   **health checks, deploy hooks and test helpers** — not called by a person.
-- **Needs the browser** — card entry, file uploads and downloads, and links
+- **Needs the browser** — card entry, file uploads and downloads (such as a
+  booking's invoice and credit note PDFs and its calendar entry), and links
   sent to the member by email (for example confirming a nomination).
 - **Moves money** — anything that takes, moves or refunds money or changes
-  what a booking costs, which the member confirms on the website. No route
-  carries this reason yet: ALP-794 gives it to changing a booking or its
-  dates, adding or removing a guest, confirming a draft booking and sending a
-  guest a payment link. A member's refund request is not one of them: it is a
-  request an officer reviews, so ALP-794 treats it as an ordinary write.
+  what a booking costs, which the member confirms on the website: changing a
+  booking or its dates, adding or removing a guest, confirming a draft booking
+  and sending a guest a payment link. A member's refund review is not one of
+  them: it is a request an officer decides, so it is an ordinary write.
 - **Declarations** — the member's own acknowledgements and consents:
   acknowledging a notice, confirming their details at onboarding, asking for
-  their account to be deleted.
+  their account to be deleted, and a member guest agreeing to be on someone
+  else's booking (`INV-GUEST`).
 - **Website steps** — the website's own screens and steps: the page shown
-  after signing in, the onboarding screen, the conditions widget and the
-  privacy replay.
+  after signing in, the onboarding screen, the conditions widget, the
+  privacy replay and the booking wizard's guest promo chips (an app checks a
+  code with `check_promo_code`).
 - **Visitor forms** — the contact form and membership applications, for
   people who are not signed in.
 - **Access details** — the lodge instructions, which carry door codes and
@@ -383,13 +429,12 @@ provider already received. The club's register row is `ai-apps` in
 
 ## The roadmap
 
-Stage 1 and ALP-718 are the foundation and the actions above. The remaining routes are
+Stage 1, ALP-718 and ALP-794 are the foundation and the actions above. The remaining routes are
 grouped into follow-on tasks, named in `MCP_NOT_YET_TASKS` in
 [`exclusions.ts`](../../src/lib/mcp/exclusions.ts):
 
 | Task | Area |
 | --- | --- |
-| ALP-794 | Member bookings: edits, quotes, notes, rooms, change, exception and refund requests, promo codes |
 | ALP-795 | Family groups, partner links, guest search and membership cancellation |
 | ALP-796 | Lodge life: calendar, chores, message board, food orders, inductions, maintenance, work parties |
 | ALP-797 | Group, school and whole-lodge requests |

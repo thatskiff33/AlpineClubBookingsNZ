@@ -44,7 +44,7 @@ export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_R
 /**
  * The task that will bring each remaining group of routes into the catalogue.
  * The member keys are the follow-ons ALP-718 split its member routes into
- * that are still to land (ALP-794, bookings, has); the rest are the officer
+ * that have not landed yet (bookings, ALP-794, has); the rest are the officer
  * areas.
  */
 export const MCP_NOT_YET_TASKS = {
