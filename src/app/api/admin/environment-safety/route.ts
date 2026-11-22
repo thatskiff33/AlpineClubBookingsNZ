@@ -6,11 +6,9 @@ import {
   stateFromResolution,
   stateFromWrittenRow,
 } from "@/lib/environment-safety-admin-state";
-import {
-  isTransactionContentionError,
-  writeEnvironmentSafetyOverride,
-} from "@/lib/environment-safety-override-write";
+import { writeEnvironmentSafetyOverride } from "@/lib/environment-safety-override-write";
 import logger from "@/lib/logger";
+import { isSingletonUpsertContention } from "@/lib/prisma-errors";
 import { requireAdmin } from "@/lib/session-guards";
 
 /**
@@ -114,7 +112,7 @@ export async function PATCH(request: Request) {
       cannot tell what a broken database means, and dressing that up as a
       friendly "try again shortly" would hide it from whoever has to fix it.
     */
-    if (!isTransactionContentionError(error)) throw error;
+    if (!isSingletonUpsertContention(error)) throw error;
     logger.warn(
       { err: error },
       "Environment safety override save hit write contention",

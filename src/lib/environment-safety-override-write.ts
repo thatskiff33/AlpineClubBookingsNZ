@@ -43,7 +43,7 @@ import {
 import { readEnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
 import { prisma } from "@/lib/prisma";
 
-/**
+/*
  * Retryable failures of the transaction below, answered 503 rather than 500.
  *
  * P2028 (transaction API error, including an exhausted `maxWait`/`timeout`) and
@@ -58,13 +58,10 @@ import { prisma } from "@/lib/prisma";
  * `AuditLog` and this set must be revisited, because a duplicate-audit bug would
  * start being answered "try again shortly" — a retryable status for something
  * retrying cannot fix.
+ *
+ * The set and the predicate are `isSingletonUpsertContention`
+ * (`@/lib/prisma-errors`); this comment is why `P2002` is safe for this writer.
  */
-const TRANSACTION_CONTENTION_CODES = new Set(["P2002", "P2028", "P2034"]);
-
-export function isTransactionContentionError(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === "string" && TRANSACTION_CONTENTION_CODES.has(code);
-}
 
 export interface EnvironmentSafetyOverrideWriteOutcome {
   changed: boolean;

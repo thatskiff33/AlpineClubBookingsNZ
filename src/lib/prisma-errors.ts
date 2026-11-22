@@ -68,16 +68,34 @@ export function isPostgresLockNotAvailable(
  * record, `waitlist-confirm/route.ts`, `admin/site-style/route.ts`, the
  * deletion release, the return to the waitlist, the group invoice email
  * fence (#4919) and the booking create route (#4933) all ask it. This list is
- * a sample, not the census: search for the callers. Four writers
- * keep their own set - `admin/club-time-zone/route.ts`,
- * `admin/club-format/route.ts`, `admin/ai-spend-currency/route.ts` and
- * `environment-safety-override-write.ts` - because theirs also carries
- * `P2002`: a racing first insert of a singleton row, retried as contention
- * there, which is a unique-constraint violation everywhere else.
+ * a sample, not the census: search for the callers. The singleton-setting
+ * writers ask `isSingletonUpsertContention` below instead, because theirs
+ * also counts `P2002`.
  */
 export function isTransactionContention(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
   return code === "P2028" || code === "P2034";
+}
+
+const SINGLETON_UPSERT_CONTENTION_CODES = new Set(["P2002", "P2028", "P2034"]);
+
+/**
+ * `isTransactionContention` plus `P2002`, for the settings writers where a
+ * unique-constraint violation can only mean a concurrent save won a race (the
+ * create arm of a constant-id singleton upsert, or club-tax's same-date
+ * period) and the loser wrote nothing, so it is retried as contention there.
+ * Everywhere else `P2002` is a real unique-constraint violation.
+ *
+ * Whether `P2002` is safe depends on every other table that transaction
+ * writes, so each caller states its own reason beside the call and must stop
+ * using this if that reason stops holding. Callers: `admin/club-time-zone`,
+ * `admin/club-format`, `admin/club-tax` and `admin/ai-spend-currency`
+ * routes, and `environment-safety/route.ts` for
+ * `environment-safety-override-write.ts`.
+ */
+export function isSingletonUpsertContention(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" && SINGLETON_UPSERT_CONTENTION_CODES.has(code);
 }
 
 export function isPrismaUniqueConstraintError(error: unknown) {
