@@ -870,7 +870,7 @@ rendering are active and its test passes; this design closes no bug by itself.
 | #4444 | Card refunded display retains earlier edit credit after any later Xero event | R12/R23: compatibility display sums distinct cash and application components; later snapshot cannot overwrite another source's posting |
 | #4447 | Removing an allocation lowers its contribution to refunded display | R23: exact application reversal; independent cash-return component remains unchanged |
 | #4449 | Cancel racing bank settle sees invoice-correction contribution | R04/R07/R23: common locking/claim transaction commits source application, projection and settlement together; cancel re-reads after locking |
-| #4488 | Card refund shortfall paid back by bank survives the lost card refund failing late | R05/R12/R13/R14: the shortfall's debt is raised at the cancel and paid by its R14 from B's receipt, the dead card refund's debt by its Paid another way close; the late refund's R12 posts unapplied and its R13 reverses it once, reopening neither debt, and the card capture funds no further refund (`member-money-card-shortfall-late-refund.realdb.test.ts`) |
+| #4488 | Card refund shortfall paid back by bank survives the lost card refund failing late | R05/R12/R13/R14, on a 30000-cent booking paid 20000 by card (A) and 10000 by bank (B): the shortfall's 10000 debt is raised at the cancel and paid by its R14 from B's receipt, the dead card refund's 20000 debt by its Paid another way close on A, so 30000 goes back by bank; the late 20000 refund's R12 posts unapplied and its R13 reverses it once, reopening neither debt, and the card capture funds no further refund (`member-money-card-shortfall-late-refund.realdb.test.ts`) |
 
 ## 10. Decisions
 
