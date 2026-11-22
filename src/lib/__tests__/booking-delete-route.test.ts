@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { expectDefaultInvalidJsonAnswer } from "./helpers/invalid-json-body";
 
 vi.mock("@/lib/auth", () => ({
   auth: vi.fn(),
@@ -78,11 +79,24 @@ describe("DELETE /api/bookings/[id]", () => {
       params: Promise.resolve({ id: "booking-1" }),
     });
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({
-      error: "Invalid JSON",
-    });
+    // #5407 item 28: read through the shared optional reader, so the answer is
+    // the shared default, byte for byte.
+    await expectDefaultInvalidJsonAnswer(response);
     expect(mockedDeleteBooking).not.toHaveBeenCalled();
+  });
+
+  it("deletes without a reason for an empty or whitespace-only JSON body (#5407)", async () => {
+    for (const body of ["", " \n"]) {
+      mockedDeleteBooking.mockClear();
+      const response = await DELETE(makeDeleteRequest(body), {
+        params: Promise.resolve({ id: "booking-1" }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(mockedDeleteBooking).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingId: "booking-1", reason: undefined }),
+      );
+    }
   });
 
   it("validates the optional deletion reason", async () => {

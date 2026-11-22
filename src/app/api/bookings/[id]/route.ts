@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { invalidJsonBodyResponse } from "@/lib/api-json";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { auth } from "@/lib/auth";
 import { bookingIdParamsSchema } from "@/lib/booking-cancel-schema";
 import { deleteBooking } from "@/lib/booking-delete";
@@ -17,19 +17,6 @@ const deleteBookingBodySchema = z
     reason: z.string().trim().min(3).max(500).optional(),
   })
   .strict();
-
-async function readDeleteBody(request: NextRequest) {
-  const text = await request.text();
-  if (!text.trim()) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * GET /api/bookings/[id]
@@ -90,12 +77,11 @@ export async function DELETE(
       return inactiveResponse;
     }
 
-    const body = await readDeleteBody(request);
-    if (body === null) {
-      return invalidJsonBodyResponse();
-    }
+    // The reason is optional: an empty body deletes without one.
+    const jsonBody = await parseOptionalJsonRequestBody(request);
+    if (!jsonBody.ok) return jsonBody.response;
 
-    const parsedBody = deleteBookingBodySchema.safeParse(body);
+    const parsedBody = deleteBookingBodySchema.safeParse(jsonBody.body ?? {});
     if (!parsedBody.success) {
       return NextResponse.json(
         { error: "Invalid input", details: parsedBody.error.flatten() },

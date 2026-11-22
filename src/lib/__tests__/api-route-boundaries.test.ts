@@ -32,40 +32,40 @@ const DIRECT_REQUEST_JSON_READ = /\b(?:request|req)\s*\??\.\s*json\(\)/;
 // Receivers of a `.json()` call that a route file may contain: the incoming
 // request (the two names routes use) and a provider's `response`.
 const JSON_RECEIVER_NAMES = new Set(["request", "req", "response"]);
+// The body read as text, or as bytes, on the incoming request.
+const DIRECT_REQUEST_RAW_READ =
+  /\b(?:request|req)\s*\??\.\s*(?:text|arrayBuffer|blob)\(\)/;
+// Receivers of a `.text()` call that a route file may contain: a provider's
+// answer. Uploaded files call `arrayBuffer()` on a `File`, which is not the
+// request.
+const TEXT_RECEIVER_NAMES = new Set(["upstream", "response"]);
 
 /**
  * Route files that still call `request.json()` themselves instead of the shared
- * reader in `src/lib/api-json.ts` (#5400). The census below derives the set of
- * such files from the tree and requires it to equal this list exactly: a route
- * that reads the body directly and is not listed fails, and so does a listed
- * route that no longer does (remove it from the list when you convert it).
+ * readers in `src/lib/api-json.ts` (#5400, #5407). The census below derives the
+ * set of such files from the tree and requires it to equal this list exactly: a
+ * route that reads the body directly and is not listed fails, and so does a
+ * listed route that no longer does.
  *
- * Each group is a reason the inline read could not be swapped for the shared
- * reader without changing what a caller sees.
+ * Every route reads its JSON body through `parseJsonRequestBody` when the body
+ * is required, or `parseOptionalJsonRequestBody` when it may be empty. Either
+ * way a body that is present but not valid JSON answers 400, never a 500 and
+ * never "no body" (#5407 items 26 to 28). What is left here is permanent
+ * exceptions, each group with its reason.
  *
- * Pending work, the list for #5407 (these only shrink as the items land):
- * `uncaught` (18 routes) is item 26: invalid JSON answers 500 today.
- * `oneAnswer` (28 routes) and `swallowedError` (32 routes) are item 27: the JSON
- * fault and the schema fault get one answer; a bad body is swallowed and
- * treated as no body.
- *
- * Permanent exception, not work to do: `intentionalExtraResponse` (2 routes),
- * whose 400 carries a field or headers on purpose.
- *
- * Do not add a route to dodge the census: a new route uses the shared reader.
+ * Do not add a route to dodge the census: a new route uses a shared reader.
  * Comments are removed before matching (`stripComments`, INV-SSOT-004), so a
  * comment that mentions `request.json()` is not a read and a commented-out
  * read does not keep an entry alive.
  *
- * What this census does not cover: bodies read without `.json()` on the
- * incoming request, that is `text()` plus `JSON.parse`, `clone()`,
- * `formData()` and streams. Three routes read `text()` to accept an empty body
- * and answer an unparseable one through `invalidJsonBodyResponse` (members
- * joining-fee preview, members xero-push, and `admin/mountain-conditions` POST,
- * #5407 item 28). The signed-webhook routes (Stripe, Xero, SES SNS, ServerNZ
- * posts) read the raw bounded text on purpose, because the signature covers the
- * exact bytes; `mcp` and `mcp/oauth/register` use the same bounded reader.
- * `JSON_RECEIVER_NAMES` below fails on a new `.json()` receiver name.
+ * The optional reader reads `text()`, so the second census below fails any
+ * route that reads the request as text or bytes itself: a route cannot parse a
+ * body by hand beside the shared readers. The signed-webhook routes (Stripe,
+ * Xero, SES SNS, ServerNZ posts) read the raw bounded text on purpose, because
+ * the signature covers the exact bytes, through `readBoundedWebhookText`;
+ * `mcp` and `mcp/oauth/register` use the same bounded reader. `formData()`
+ * and streams are not covered. `JSON_RECEIVER_NAMES` and
+ * `TEXT_RECEIVER_NAMES` fail on a new receiver name.
  */
 const directJsonReadAllowlist: Record<
   string,
@@ -640,6 +640,29 @@ describe("API route boundary metadata", () => {
       unlisted: [],
       stale: [],
       otherReceivers: [],
+    });
+  });
+
+  it("never reads a request body as text or bytes in a route; the shared readers do it", () => {
+    const routes = listRouteFiles(path.join(process.cwd(), "src/app/api")).map(
+      relativeRoutePath,
+    );
+    const code = (routePath: string) => stripComments(routeContents(routePath));
+
+    const rawReaders = routes.filter((routePath) =>
+      DIRECT_REQUEST_RAW_READ.test(code(routePath)),
+    );
+    // A request parameter under another name would slip past the pattern above.
+    const otherTextReceivers = routes.flatMap((routePath) =>
+      [...code(routePath).matchAll(/\b(\w+)\s*\??\.\s*text\(\)/g)]
+        .map((match) => match[1] ?? "")
+        .filter((name) => !TEXT_RECEIVER_NAMES.has(name))
+        .map((name) => `${routePath}: ${name}.text()`),
+    );
+
+    expect({ rawReaders, otherTextReceivers }).toEqual({
+      rawReaders: [],
+      otherTextReceivers: [],
     });
   });
 
