@@ -4220,6 +4220,30 @@ template and booking change. Only the retry worker sends it, after its normal
 same email row; failure to persist that row leaves the invoice operation
 retryable. This avoids a synchronous send racing email recovery.
 
+The confirm-pending cron's bump notices (#5407) are owed before any row
+exists. The bump's transaction writes one `AlertCooldown` marker for the
+member's email (`booking-bumped` or `booking-guests-cancelled`) and one for the
+officers' `admin-booking-bumped` alert. After the commit each marker is claimed
+by a stamp-guarded update, its notice sent at once, and the marker cleared when
+the send returns. A send that throws, or a job that stops first, leaves the
+marker. A later run of the same cron claims each marker last tried at least an
+hour before and sends it again (`booking-bump-notice-owed.ts`). It clears
+without sending when the booking is gone or no longer cancelled, or when the
+marker is more than seven days old, which it logs as an error. The member's
+email carries an id derived from the template, booking and bump time, so
+however often it is sent it has one row, and a provider failure leaves that
+row `FAILED` for the retry cron. The officers' alert has one row per officer
+and no such id: a crash after its send and before the clear sends it once more.
+A crash during the provider call itself leaves the member's row `QUEUED`,
+which nothing replays.
+
+```text
+bump commits + markers -> claim -> send returns -> marker cleared
+bump commits + markers -> claim -> send throws -> marker kept -> later run claims -> send -> cleared
+bump commits + markers -> job stops -> later run claims -> booking still CANCELLED -> send -> cleared
+later run claims -> booking gone, reinstated, or marker over 7 days old -> cleared, nothing sent
+```
+
 A message whose retry belongs entirely to something else keeps no body
 (`NON_RETRYABLE_EMAIL_LOG_TEMPLATES`), so its `FAILED` row is never replayed.
 

@@ -6167,6 +6167,19 @@ switch-to-internet-banking hold, the officer's held-request conversion
 `xero-inbound/invoice-paid-effects.ts` is the in-tree precedent for this
 composition.
 
+The confirm-pending cron's capacity bump (`resolveHoldWindowUnderLock`) also
+records its two notices as owed (#5407, `recordBumpNoticesOwed`): two
+`AlertCooldown` upserts on primary keys derived from the booking and the bump
+time, after the guarded `PENDING -> CANCELLED` claim and inside the same
+transaction, under the `lock(1)` and lodge lock it already holds. They add no
+advisory key, no change of order, no read, and no provider call or settings
+query (`INV-INT-003`); a plain upsert, never a caught unique-key error, so the
+transaction is never aborted by one. Everything after the commit runs on the
+base client with no advisory key: each notice's claim is a status-and-stamp
+guarded `updateMany` on its marker (`claimOwedAlert`), so of the post-commit
+delivery and any run's sweep exactly one sends, and a lost claim sends
+nothing; the clear deletes only a marker still stamped with its own claim.
+
 Officer approval of a held generic request pre-reads only the held booking's immutable concrete
 `lodgeId`, then takes global -> that lodge -> the held booking's row (#4857,
 "A booking writer takes the booking row before a Member key share") and fully

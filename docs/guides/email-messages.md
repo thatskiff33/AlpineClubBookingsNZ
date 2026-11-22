@@ -389,6 +389,16 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > itself says your saved copy uses a token it no longer supplies: swap it for
 > the chips now shown and save, or restore the default.
 
+> **Upgrade note (#5407).** A bump's notices are no longer lost if the
+> pending-booking job is interrupted, for example by a restart, between
+> releasing the booking and sending them. The member's email (subject
+> **Booking Update**, or **Booking Cancelled** when the booking was cancelled
+> because its guests could not come) and the officers' **Admin Booking Bumped**
+> alert are then sent by a later run of the same job, so a recovered notice arrives
+> a few hours late. The member never receives it twice. Very rarely the
+> officers may receive their alert twice, when the interruption falls just
+> after it was sent. Nothing about the wording changed.
+
 ## Settings reference
 
 Shared email variables (top card):
