@@ -647,29 +647,6 @@ export async function hasUnresolvedMemberContactCreateRecovery(
   );
 }
 
-export async function hasMemberContactCreateMergeBlocker(
-  memberId: string,
-  db: ContactCreateRecoveryDb = prisma,
-): Promise<boolean> {
-  const operation = await db.xeroSyncOperation.findFirst({
-    where: memberContactCreateMergeBlockerWhere(memberId),
-    select: {
-      id: true,
-      status: true,
-      lastErrorCode: true,
-      responsePayload: true,
-    },
-  });
-  return (
-    operation !== null &&
-    (operation.status === "RUNNING" ||
-      (operation.status === "FAILED" &&
-        operation.lastErrorCode ===
-          XERO_CONTACT_CREATE_STALE_RUNNING_ERROR_CODE) ||
-      isProviderCreatedLocalLinkFailurePayload(operation.responsePayload))
-  );
-}
-
 /**
  * The single reader behind every consumer of the member CONTACT lifecycle
  * blocker: merge preview/execute, account deletion, and the admin member detail
@@ -794,19 +771,10 @@ export async function closeProviderCreatedContactRecoveryForLinkedContact(
 /**
  * Account deletion calls this only after its standing fan-out has taken the
  * target Member FOR UPDATE. The blocker read therefore shares one snapshot and
- * one transaction with anonymisation: a committed create reservation refuses
- * deletion, while a deletion holding the row prevents a later KEY SHARE
+ * one transaction with anonymisation: a committed create or update reservation
+ * refuses deletion, while a deletion holding the row prevents a later KEY SHARE
  * reservation from passing its authoritative member re-read.
  */
-export async function assertNoMemberContactCreateBlockerForDeletion(
-  memberId: string,
-  db: ContactCreateRecoveryDb,
-): Promise<void> {
-  if (await hasMemberContactCreateMergeBlocker(memberId, db)) {
-    throw new XeroContactCreateBlocksDeletionError();
-  }
-}
-
 export async function assertNoMemberContactChangeBlockerForDeletion(
   memberId: string,
   db: ContactCreateRecoveryDb,
