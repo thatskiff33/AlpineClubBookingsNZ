@@ -679,14 +679,10 @@ export async function reserveOrganiserChildAppealRefund(
 }
 
 /**
- * The most a card payment's refunded total may be raised to from Xero: what it
- * reads now, or the refunds Stripe recorded against it if more
- * (`organiserChildRefundedCents`'s rule). A Xero note is not that evidence. For
- * an organiser child (#3653, `INV-PAY-114`) a mirror raised from one would
- * shrink what a later cancellation returns to the organiser; for any card
- * payment (#4444, `INV-PAY-126`, owner decision 23 Nov 2026) two notes for one
- * refund would read as twice the money. Used by the Xero inbound credit-note
- * repair; the total waits for Stripe's own sync to raise it.
+ * The most the Xero inbound repair may raise a card payment's refunded total to:
+ * its stored total, or Stripe's recorded refunds if more. A Xero note is not that
+ * evidence: it would shrink an organiser child's later cancellation (#3653), or
+ * count one refund twice from two notes (#4444, `INV-PAY-126`, owner, 23 Nov 2026).
  */
 export async function capCardRefundedTotalAtStripeRefunds(
   db: Db,
