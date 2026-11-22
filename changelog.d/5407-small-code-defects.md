@@ -12,5 +12,6 @@
   (#5415) drops the column, so deploy this release before that one (see
   `docs/UPGRADING.md`).
 
-  The email-change confirmation email now states the expiry the stored link
-  actually has, rather than working it out again a moment later.
+  The email-change confirmation and resent email-verification emails now state
+  the expiry their stored link actually has, rather than working it out again a
+  moment later.

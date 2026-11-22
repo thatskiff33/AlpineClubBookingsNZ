@@ -6,9 +6,12 @@ export const EMAIL_CHANGE_TTL_MS = 2 * 60 * 60 * 1000;
 
 /**
  * Create an email verification token for a member.
- * Deletes any existing tokens for the member first.
+ * Deletes any existing tokens for the member first. Returns the raw token and
+ * the expiry it stored, so the email states that instant (#5407).
  */
-export async function createEmailVerificationToken(memberId: string): Promise<string> {
+export async function createEmailVerificationToken(
+  memberId: string,
+): Promise<{ token: string; expiresAt: Date }> {
   // Delete existing tokens for this member
   await prisma.emailVerificationToken.deleteMany({ where: { memberId } });
 
@@ -19,5 +22,5 @@ export async function createEmailVerificationToken(memberId: string): Promise<st
     data: { memberId, tokenHash, expiresAt },
   });
 
-  return token;
+  return { token, expiresAt };
 }

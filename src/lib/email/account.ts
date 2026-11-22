@@ -19,7 +19,6 @@ import {
   CLUB_NAME,
 } from "@/config/club-identity";
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "../member-setup-invite";
-import { EMAIL_VERIFICATION_TTL_MS } from "@/lib/verification-tokens";
 import { sendEmail } from "./core";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailClubDateTime } from "@/lib/email-templates-club-time";
@@ -128,14 +127,15 @@ export async function sendTwoFactorCodeEmail(params: {
   });
 }
 
+/** `expiresAt` is the stored token's own expiry (#5407), as for an email change. */
 export async function sendVerificationEmail(
   email: string,
   firstName: string,
   token: string,
+  expiresAt: Date,
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const verifyUrl = `${baseUrl}/verify-email?token=${token}`;
-  const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TTL_MS);
 
   await sendEmail({
     to: email,

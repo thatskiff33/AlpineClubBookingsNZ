@@ -46,7 +46,7 @@ describe("createEmailVerificationToken", () => {
   });
 
   it("deletes existing tokens before creating a new one", async () => {
-    const token = await createEmailVerificationToken("member-1");
+    const { token, expiresAt } = await createEmailVerificationToken("member-1");
 
     expect(mockPrisma.emailVerificationToken.deleteMany).toHaveBeenCalledWith({
       where: { memberId: "member-1" },
@@ -60,6 +60,8 @@ describe("createEmailVerificationToken", () => {
     });
     expect(typeof token).toBe("string");
     expect(token).toHaveLength(64);
+    // #5407: the expiry handed back is the very instant written to the row.
+    expect(expiresAt).toBe(mockPrisma.emailVerificationToken.create.mock.calls[0][0].data.expiresAt);
   });
 
   it("sets expiry to 48 hours from now", async () => {

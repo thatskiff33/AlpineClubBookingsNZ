@@ -38,8 +38,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    const token = await createEmailVerificationToken(member.id);
-    await sendVerificationEmail(member.email, member.firstName, token);
+    const { token, expiresAt } = await createEmailVerificationToken(member.id);
+    await sendVerificationEmail(member.email, member.firstName, token, expiresAt);
 
     return NextResponse.json({ success: true });
   } catch (err) {
