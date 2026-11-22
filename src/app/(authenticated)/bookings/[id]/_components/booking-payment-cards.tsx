@@ -34,6 +34,7 @@ import type { BookingDetailMessages } from "../_lib/booking-detail-messages";
  */
 export function BookingPaymentCards({
   booking,
+  waitlistPosition,
   club,
   money,
   viewer,
@@ -43,6 +44,11 @@ export function BookingPaymentCards({
   messages,
 }: {
   booking: BookingDetailRecord;
+  /**
+   * #5402: the booking's place in its lodge's queue, read on this request by
+   * the page (`loadBookingDetailWaitlistPosition`). Null when none is shown.
+   */
+  waitlistPosition: number | null;
   club: BoundClubTime;
   money: BoundClubFormat;
   viewer: BookingDetailViewer;
@@ -152,9 +158,9 @@ export function BookingPaymentCards({
             <CardTitle headingLevel={2} className="text-cat1-11">On the Waitlist</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {booking.waitlistPosition && (
+            {waitlistPosition !== null && (
               <p className="text-sm font-medium text-cat1-11">
-                Position: #{booking.waitlistPosition}
+                Position: #{waitlistPosition}
               </p>
             )}
             <p className="text-sm text-cat1-11">

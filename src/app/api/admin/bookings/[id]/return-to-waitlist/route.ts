@@ -24,6 +24,7 @@ import {
 } from "@/lib/waitlist-return-contract";
 import { isTransactionContention } from "@/lib/prisma-errors";
 import { processWaitlistForDates } from "@/lib/waitlist";
+import { getWaitlistPositions, isWaitlistPositionShown } from "@/lib/waitlist-queue";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
@@ -161,6 +162,9 @@ export async function POST(
             wholeLodgeHold: true,
             wholeLodgeHoldAt: true,
             wholeLodgeHoldByMemberId: true,
+            // #5402: whether the response shows a position (a silenced entry
+            // shows none).
+            noEmails: true,
             member: { select: { email: true, firstName: true } },
             // #3369: the owner may be an Organisation; bookingOwner() reads both.
             organisation: { select: { name: true, email: true } },
@@ -200,11 +204,9 @@ export async function POST(
         }
 
         // The same field set the three in-tree reverts write, plus
-        // `waitlistPosition` and the two hold fragments. The confirm's first
-        // phase already nulled the position on its way out of the queue, so
-        // nulling it here is a no-op on the stranded shape — but it makes the
-        // documented outcome ("back of the queue by the ordinary rule") true by
-        // construction rather than by inheritance. `finalPriceCents` is
+        // `waitlistPosition` and the two hold fragments. Nothing reads the
+        // stored position any more (#5402): it is null everywhere and is
+        // written null here until the column is retired. `finalPriceCents` is
         // re-asserted in the guard so a concurrent re-price cannot turn this
         // into an un-confirm of a priced booking.
         const restored = await tx.booking.updateMany({
@@ -237,20 +239,21 @@ export async function POST(
           previousRange: { checkIn: booking.checkIn, checkOut: booking.checkOut },
         });
 
-        // The place the member is told they hold. Same rule as the offer-expiry
-        // email quotes (`waitlist.ts` `expireStaleOffers`): per-lodge queue,
-        // overlapping nights, FIFO on `createdAt`. Counted under the locks, so it
-        // cannot be quoted from a queue that moved.
-        const ahead = await tx.booking.count({
-          where: {
-            status: BookingStatus.WAITLISTED,
-            lodgeId: key.lodgeId,
-            checkIn: { lt: booking.checkOut },
-            checkOut: { gt: booking.checkIn },
-            createdAt: { lt: key.createdAt },
-          },
-        });
-        const waitlistPosition = ahead + 1;
+        // The place the member is told they hold, read from the live queue the
+        // offer pass walks (#5402, `INV-CAP-041`), under the locks, so it cannot
+        // be quoted from a queue that moved. The booking keeps its `createdAt`,
+        // so it takes its original place back.
+        const waitlistPosition = (
+          await getWaitlistPositions(tx, [
+            {
+              id: bookingId,
+              lodgeId: key.lodgeId,
+              checkIn: booking.checkIn,
+              checkOut: booking.checkOut,
+              createdAt: key.createdAt,
+            },
+          ])
+        ).get(bookingId)!;
 
         await createAuditLog(
           {
@@ -316,6 +319,13 @@ export async function POST(
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           waitlistPosition,
+          // What the officer's screen shows: no number for a silenced entry.
+          displayedWaitlistPosition: isWaitlistPositionShown({
+            status: BookingStatus.WAITLISTED,
+            noEmails: booking.noEmails,
+          })
+            ? waitlistPosition
+            : null,
         };
       },
       LOCK1_HOLDER_TRANSACTION_BUDGET,
@@ -386,7 +396,7 @@ export async function POST(
     return NextResponse.json({
       success: true,
       status: BookingStatus.WAITLISTED,
-      waitlistPosition: result.waitlistPosition,
+      waitlistPosition: result.displayedWaitlistPosition,
     });
   } catch (err) {
     logger.error(

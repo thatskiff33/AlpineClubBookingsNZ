@@ -59,7 +59,7 @@ vi.mock("@/lib/waitlist-cross-lodge", () => ({
 // #5402: the queue-order setting moved to the leaf queue module; the ordering
 // itself stays real.
 vi.mock("@/lib/waitlist-queue", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/waitlist-queue")>()),
+  ...((await importOriginal()) as typeof import("@/lib/waitlist-queue")),
   getWaitlistCrossLodgeOrder: mocks.getWaitlistCrossLodgeOrder,
 }));
 vi.mock("@/lib/email", () => ({
@@ -104,6 +104,10 @@ function candidate(input: {
 function makeTx(candidates: ReturnType<typeof candidate>[]) {
   return {
     $executeRaw: vi.fn().mockResolvedValue(1),
+    // #5402: the offer-time position read takes the club's cross-lodge order
+    // from here when another lodge's entry named the offered entry's lodge. A
+    // missing row is OWN_LODGE_FIRST.
+    bookingDefaults: { findUnique: vi.fn().mockResolvedValue(null) },
     lodge: {
       findMany: vi.fn().mockResolvedValue([{ id: "lodge-a" }, { id: "lodge-b" }]),
       findUnique: vi.fn().mockResolvedValue({ name: "River Lodge" }),
@@ -282,21 +286,25 @@ describe("processWaitlistForDates cross-lodge pass", () => {
     expect(currentTx.booking.update).not.toHaveBeenCalled();
   });
 
-  it("counts the offered candidate's queue position per-lodge, not club-wide (M6)", async () => {
-    // The candidate is first in line at lodge B. Older overlapping WAITLISTED
-    // entries exist at lodge A; club-wide counting would report position 4,
-    // but the per-lodge count makes it position 1.
+  it("counts the offered candidate's queue position per-lodge, not club-wide (M6, #5402)", async () => {
+    // The candidate is first in line at lodge B. Three older overlapping
+    // WAITLISTED entries wait at lodge A and named no alternate; club-wide
+    // counting would report position 4, but the per-lodge queue makes it 1.
     const ownCandidate = candidate({
       id: "entry-b",
       lodgeId: "lodge-b",
       createdAt: "2026-07-02T10:00:00Z",
     });
+    const olderAtA = ["a1", "a2", "a3"].map((id, index) =>
+      candidate({ id, lodgeId: "lodge-a", createdAt: `2026-07-01T0${index}:00:00Z` }),
+    );
     currentTx = makeTx([ownCandidate]);
-    // Only lodge-B entries count toward this candidate's position; the three
-    // older lodge-A entries do not.
-    currentTx.booking.count.mockImplementation(async (args: {
-      where: { lodgeId?: string };
-    }) => (args.where.lodgeId === "lodge-b" ? 0 : 3));
+    // #5402: the position is read from the live queue, not counted. The
+    // candidate read returns the offered entry; the position read returns the
+    // whole queue the reader would see, older lodge-A entries included.
+    currentTx.booking.findMany
+      .mockResolvedValueOnce([ownCandidate])
+      .mockResolvedValueOnce([...olderAtA, ownCandidate]);
     mocks.checkCapacityForGuestRanges.mockResolvedValue({ available: true });
 
     const result = await processWaitlistForDates({
@@ -306,11 +314,9 @@ describe("processWaitlistForDates cross-lodge pass", () => {
     }, CLUB_FORMAT_TEST);
 
     expect(result.offeredBookingId).toBe("entry-b");
-    // The position count is scoped to the candidate's own lodge.
-    expect(currentTx.booking.count).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ status: "WAITLISTED", lodgeId: "lodge-b" }),
-      }),
+    // The position read is scoped to the candidate's own lodge.
+    expect(currentTx.booking.findMany.mock.calls[1]![0].where.OR).toEqual(
+      expect.arrayContaining([{ lodgeId: { in: ["lodge-b"] } }]),
     );
     // The admin alert (and audit metadata) report position 1, not 4.
     expect(mocks.sendAdminWaitlistOfferAlert).toHaveBeenCalledWith(

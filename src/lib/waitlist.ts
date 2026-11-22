@@ -13,6 +13,7 @@ import {
 import {
   WAITLIST_QUEUE_ORDER_BY,
   getWaitlistCrossLodgeOrder,
+  getWaitlistPositions,
   orderWaitlistOpportunities,
   splitWaitlistOpportunities,
   waitlistCandidateWhere,
@@ -592,6 +593,21 @@ export async function processWaitlistForDates(freedDates: {
 
         const expiresAt = new Date(Date.now() + WAITLIST_OFFER_HOURS * 60 * 60 * 1000);
 
+        // The place the officer's alert and the audit row quote: the entry's
+        // own lodge's queue, read before it leaves it, under this pass's locks
+        // (#5402, `INV-CAP-041`).
+        const position = (
+          await getWaitlistPositions(tx, [
+            {
+              id: candidate.id,
+              lodgeId: candidate.lodgeId ?? defaultLodgeId,
+              checkIn: candidate.checkIn,
+              checkOut: candidate.checkOut,
+              createdAt: candidate.createdAt,
+            },
+          ])
+        ).get(candidate.id)!;
+
         await tx.booking.update({
           where: { id: candidate.id },
           data: {
@@ -611,20 +627,7 @@ export async function processWaitlistForDates(freedDates: {
           },
         });
 
-                offeredBookingId = candidate.id;
-
-        // Count position (how many were ahead in queue). Per-lodge: the
-        // position shown to the member counts only entries waiting for their
-        // own lodge, matching the per-lodge FIFO queue (multi-lodge).
-        const position = await tx.booking.count({
-          where: {
-            status: BookingStatus.WAITLISTED,
-            lodgeId: candidate.lodgeId ?? defaultLodgeId,
-            checkIn: { lt: candidate.checkOut },
-            checkOut: { gt: candidate.checkIn },
-            createdAt: { lt: candidate.createdAt },
-          },
-        });
+        offeredBookingId = candidate.id;
 
         offerDetails = {
           email: bookingOwner(candidate).member.email,
@@ -636,7 +639,7 @@ export async function processWaitlistForDates(freedDates: {
           bookingId: candidate.id,
           memberId: bookingOwner(candidate).memberId ?? "",
           memberName: `${bookingOwner(candidate).member.firstName} ${bookingOwner(candidate).member.lastName}`,
-          position: position + 1,
+          position,
           lodgeId: candidate.lodgeId,
           finalPriceCents: offerPriceCents,
           offeredLodgeId,
@@ -1333,19 +1336,25 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
       offers.push(candidate);
     }
 
+    // The place each expiry email quotes, read after every revert, so it
+    // counts the entries already waiting ahead as well as the other lapsed
+    // offers (#5402, `INV-CAP-041`). The revert keeps `createdAt`, so each
+    // entry takes its original place back.
+    const newPositions = await getWaitlistPositions(
+      tx,
+      offers.map((offer) => ({
+        id: offer.id,
+        lodgeId: offer.lodgeId ?? defaultLodgeId,
+        checkIn: offer.checkIn,
+        checkOut: offer.checkOut,
+        createdAt: offer.createdAt,
+      })),
+    );
+
     return {
       staleOffers: offers.map((offer) => ({
         ...offer,
-        newPosition:
-          offers.filter(
-            (entry) =>
-              // Per-lodge queue: only same-lodge expiring offers count toward
-              // the position quoted in the expiry email (same scoping as M6).
-              entry.lodgeId === offer.lodgeId &&
-              entry.checkIn < offer.checkOut &&
-              entry.checkOut > offer.checkIn &&
-              entry.createdAt < offer.createdAt
-          ).length + 1,
+        newPosition: newPositions.get(offer.id)!,
       })),
       affectedRanges: Array.from(
         new Map(
