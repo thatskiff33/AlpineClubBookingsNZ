@@ -790,7 +790,6 @@ module every provider call goes through (`INV-OPS-013`). Shared JSON-guard micro
 | `xero-refund-note-status-recorder` | Read-only provider GETs that record each linked refund credit note's live Xero status onto ALL of its local links, active or not (`--record-statuses`; run automatically before `--apply`). Exists because inbound reconciliation structurally cannot stamp a status onto an inactive link, and the repair never reactivates an unknown-status note. |
 | `xero-refund-note-status` | The one home for "does this credit-note status still count as refund coverage?" (`VOIDED`/`DELETED` do not) and for reading a link's recorded status — shared by the inbound contribution math, `sumCoveredRefundCreditNoteCents`, cleanup, the drift report and the operator repair so no path can disagree (#2901). Also "does this create row count toward coverage?" (`countsTowardRefundNoteCoverage`, #4265): only its own note, never a refund request's. |
 | `xero-resolve-refund-note` | "Resolve by hand" on a FAILED payment refund-note create that names no note (#4421, `INV-INT-028`): which rows ask for the Xero note's number (`refundNoteResolveShape`, `resolveCreditNotePrompt`), the note's check (reusing `verifyHandMadeRefundNote`), the `lock(1)`-then-Payment-row claim that records it on the row and as the payment's link (`writeHandMadeRefundNoteLink`), refusing a retry that ran or a note any other create row or link records, and the withdrawal that retires both (alerting if it fails). It also carries the resolve route's refund-note half (`resolveRecordingRefundNote`, `withdrawRecordedNoteOrAlert`, `answerExistingResolveMark`), and `xero-operation-resolve-guards.ts` its other pre-mark checks and plain mark writes, so the route stays a thin handler. Its words live in `bank-refund-void-follow-up-copy.ts`; the operator reason bounds in `xero-operation-resolution.ts`. |
-| `xero-invoice-rounding-audit` | Read-only diagnostic that replays the pre-#1231 line maths in integer cents to flag issued invoices that would have carried the #1163 rounding drift, across **both** builder callers — per-booking invoices (`Payment.xeroInvoiceId`) and group-settlement invoices (`GroupBookingSettlement.xeroInvoiceId`). Makes **no** live-provider calls and mutates nothing (only `booking.findMany` + `groupBookingSettlement.findMany`). CLI entry: `scripts/audit-xero-invoice-rounding.ts`. See "Historical rounding-drift audit" below. |
 | `xero-credit-sync-checker` | #2501 detect-and-warn reconciliation of **applied account credit**: compares each booking's stamped `BOOKING_APPLIED` sum (BookingApp's known credit, the same figure the #2483 email nets from) against its live Xero invoice `amountCredited`, and warns admins on drift with the exact per-booking amount. Read-only, idempotent, fail-safe. See "Credit-sync drift checker" below. |
 | `xero-cash-credits` | #5204: the snapshot of unallocated receive overpayments and prepayments (`XeroCashCredit`) and the finance queue read from it. Read-only toward Xero; a refresh reads every page before it writes, and an older read never overwrites a newer one. See "Unallocated overpayments and prepayments (#5204)" below. |
 | `xero-cron-runner` | Maps each Xero cron task to its worker above, records `CronJobRun` rows, gates on module + connection. |
@@ -3339,87 +3338,34 @@ outside the app" below).
   truncated or deferred is **not** complete, so it does not throttle and the next
   run retries.
 
-### Historical rounding-drift audit (#1318, read-only)
+### Invoice line rounding (#1163, #1231)
 
-Issue #1163 was a 1–2 cent Xero invoice drift: the pre-#1231 line builder grouped
-a guest's nights into contiguous **date** runs only and billed each run as
-`quantity: nightCount, unitAmount: round(totalCents / nightCount) / 100`. When a
-single contiguous run mixed nightly prices (a season boundary, or locked-vs-
-re-priced nights), `nightCount * round(totalCents / nightCount)` could not
-represent the exact cent total, so the issued invoice's guest-line total drifted.
-The legacy no-per-night path drifted the same way whenever `guest.priceCents` was
-not divisible by the night count. **PR #1231 fixed it for new invoices** by
-splitting every run to a single price (so `perNightCents * nightCount ===
-totalCents` by construction) but did **not** retroactively heal already-issued
-invoices.
+Issue #1163 was a 1–2 cent Xero invoice drift. The pre-#1231 line builder
+grouped a guest's nights into contiguous **date** runs only and billed each run
+as `quantity: nightCount, unitAmount: round(totalCents / nightCount) / 100`, so
+a run that mixed nightly prices (a season boundary, or locked-vs-re-priced
+nights) could not represent its exact cent total. **PR #1231 fixed it for new
+invoices**: `buildInvoiceLineItems` splits every run to a single price, so
+`perNightCents * nightCount === totalCents` by construction. A guest holding a
+night whose price is not known (`BookingGuestNight.priceCents` is `NULL`, a
+night a parked edit committed without valuing, #3170) has their per-night
+detail dropped and is billed on the whole-stay legacy path.
 
-**Stance on historical data:**
-
-- **Fresh install / new deployment — no action.** There is no pre-#1231 history to
-  heal, so nothing to run.
-- **Fork or existing install — self-check with the audit.** `xero-invoice-rounding-audit`
-  (`scripts/audit-xero-invoice-rounding.ts`) replays the pre-#1231 maths in
-  integer cents over persisted booking/guest/night data and flags issued
-  invoices whose guest-line total would have drifted. It scans **both** invoice
-  sources that use `buildInvoiceLineItems`:
-  - **Per-booking invoices** (`Payment.xeroInvoiceId`), keyed off the booking's
-    guests/nights, and
-  - **Group-booking settlement invoices** (`GroupBookingSettlement.xeroInvoiceId`).
-    For each settlement it re-runs the **exact** child query the real builder uses
-    (`xero-group-settlement-invoices.ts`: `parentBookingId = organiserBookingId`,
-    `organiserSettled = true`, `deletedAt = null`, `status in {CONFIRMED, PAID}`)
-    and sums each settleable child's per-guest run drift, so the reconstructed
-    line-item input matches what was invoiced.
-
-  A guest holding a night whose price is **not known** (`BookingGuestNight.priceCents`
-  is `NULL` — a night a parked edit committed without valuing, #3170) has their
-  per-night detail dropped for the replay, and is replayed on the whole-stay
-  legacy path instead. That is not a shortcut: it is what `buildInvoiceLineItems`
-  itself now does for such a guest, and this audit's whole promise is that it
-  replays the builder. Valuing an unknown night at zero would have reported a
-  drift figure that is not the drift.
-
-  It is a **diagnostic only**: zero live-provider calls, no transactions, no
-  mutations — it issues only `booking.findMany` +
-  `groupBookingSettlement.findMany` reads (cursor-paginated). Run it against a
-  **non-production copy** of the database:
-
-  ```bash
-  DATABASE_URL='postgresql://user:pass@host:5432/scratch_copy' \
-    pnpm run xero:audit-invoice-rounding --issued-before 2026-07-04
-  ```
-
-  `--issued-before <YYYY-MM-DD>` should be the date you deployed #1231; it scopes
-  the scan to invoices created before the fix via the issued-at proxy —
-  `Payment.createdAt` for booking invoices and `GroupBookingSettlement.createdAt`
-  for settlement invoices (both pre-exist their Xero invoice, so the filter is
-  over-inclusive-but-safe). Omit it to scan every issued invoice. The report
-  labels each candidate `[BOOKING]` or `[GROUP SETTLEMENT]` and prints the invoice
-  id/number, the affected line run, and the computed drift in cents.
-
-- **A flag is a candidate, not a proven error.** It means the local data would have
-  produced a drifting line total under the pre-#1231 builder. It does **not** prove
-  the live Xero invoice is still wrong: the invoice may have been issued after
-  #1231 (already correct — the `createdAt` proxy is over-inclusive), or since been
-  voided / credited / superseded. The audit also replays against the **current**
-  persisted night data: a booking (or, for a settlement, **any one of its child
-  bookings**) re-priced, modified, or cancelled after the invoice was issued will
-  replay against post-change data that may differ from what was actually invoiced.
-  The audit cannot see Xero invoice status, so **confirm each candidate against
-  Xero before acting.**
-- **Remediation is out of scope here.** Any correction is a **manual accounting
-  action** (a Xero credit note / adjustment by the operator) or a separately-scoped
-  repair task — this audit never edits money, invoices, or Xero.
-
-Scope boundary: only `buildInvoiceLineItems` carries this pattern, and both its
-callers — per-booking invoices and `xero-group-settlement-invoices` — are now
-scanned. The entrance-fee builder emits single `quantity: 1` exact-cent lines
-and cannot drift, so it is out of scope by construction. Since #3530 the
-supplementary and modification-credit-note builders may carry itemised
-`quantity: n` lines, but each is a stored line whose money is
+Only `buildInvoiceLineItems` carried the drifting pattern, through both its
+callers: per-booking invoices and `xero-group-settlement-invoices`. The
+entrance-fee builder emits single `quantity: 1` exact-cent lines and cannot
+drift. Since #3530 the supplementary and modification-credit-note builders may
+carry itemised `quantity: n` lines, but each is a stored line whose money is
 `sign × unitCents × quantity` by the parser's rule, and a set that does not sum
-to the document's figure is refused as a whole (`INV-MOD-058`) — so those
-documents reconcile to the cent by construction rather than by audit.
+to the document's figure is refused as a whole (`INV-MOD-058`), so those
+documents reconcile to the cent by construction.
+
+The read-only audit that flagged invoices issued before #1231
+(`xero:audit-invoice-rounding`, #1318) served only clubs that ran `v0.9.0` or
+earlier and has left `main` under the one-off retirement rule
+([`UPGRADING.md` → Principles](../UPGRADING.md#principles), #5404). It remains in
+the `v0.14.0` tag, with its instructions in this section there; it was not
+tested against any later schema.
 
 ### Stored promotion build-up on a booking invoice (#3277)
 

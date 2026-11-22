@@ -415,14 +415,6 @@ const CENTS_IN_PROSE_RESTRICTIONS = [
   },
 ];
 
-// #3589: this replacement is installed only on the rounding-audit path. The
-// diagnostic deliberately shows formatted currency plus signed raw-cent drift;
-// another file with a same-named function still receives the global arm.
-const ROUNDING_AUDIT_C_SUFFIX_RESTRICTION = {
-  selector: `${CENTS_IN_PROSE_C_SUFFIX_SELECTOR}:not(FunctionDeclaration[id.name="formatDriftCents"] > BlockStatement > ReturnStatement > TemplateLiteral > TemplateElement)`,
-  message: CENTS_IN_PROSE_MESSAGE,
-};
-
 /** Bare selectors, for `cents-in-prose-guard.test.ts`, same mirror as above. */
 export const CENTS_IN_PROSE_GUARD_ARM = CENTS_IN_PROSE_RESTRICTIONS.map(
   (entry) => entry.selector,
@@ -2691,12 +2683,6 @@ export const SRC_RESTRICTION_EXEMPTIONS = [
     reason:
       "The two reviewed money boundaries (#2685). They own the conversion every other file is sent here to use, so they are the one place allowed to write it; each carries its own written reason on MONEY_GUARD_EXEMPTIONS above.",
   },
-  {
-    files: ["src/lib/xero-invoice-rounding-audit.ts"],
-    omits: [...MONEY_CENTS_RESTRICTIONS, CENTS_IN_PROSE_RESTRICTIONS[1]],
-    reason:
-      "#3589: the money-domain conversion arm remains replaced by its stricter counterpart, and the global c-suffix arm is replaced only here by the same arm excluding formatDriftCents's direct dual-format return. The formatter deliberately pairs currency with signed raw-cent drift; every other function and file remains guarded.",
-  },
 ];
 
 /** The mandatory set, for the integrity test to measure blocks against. */
@@ -3084,20 +3070,6 @@ const eslintConfig = defineConfig([
       "no-restricted-syntax": srcRestrictedSyntaxWithout(
         CENTS_DISPLAY_RESTRICTIONS,
         ...DATE_RENDERING_RESTRICTIONS,
-      ),
-    },
-  },
-  {
-    // #3589: preserve the deliberate dual-format drift annotation in this one
-    // file and direct return only. Flat config replaces an earlier rule, so
-    // restate the Xero money-domain arm and every other mandatory restriction.
-    files: ["src/lib/xero-invoice-rounding-audit.ts"],
-    rules: {
-      "no-restricted-syntax": srcRestrictedSyntaxWithout(
-        [...MONEY_CENTS_RESTRICTIONS, CENTS_IN_PROSE_RESTRICTIONS[1]],
-        ...DATE_RENDERING_RESTRICTIONS,
-        ...MONEY_MODULE_RESTRICTIONS,
-        ROUNDING_AUDIT_C_SUFFIX_RESTRICTION,
       ),
     },
   },
