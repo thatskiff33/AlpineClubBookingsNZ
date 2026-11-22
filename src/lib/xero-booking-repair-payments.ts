@@ -54,8 +54,7 @@ const CANCELLABLE_REPAIR_PAYMENT_STATUSES = new Set<PaymentStatus>([
 // ledger rows, its captured/refunded state is derived from the aggregate
 // refund mirror (#1208 item 2) by `mapLegacyAdditionalStatus` and
 // `applyRefundStatus`, the same two helpers `payment-transactions.ts` uses for
-// its own legacy slices (#5394). The #1506 cancel-flatten backfill imports
-// `applyRefundStatus` from there too.
+// its own legacy slices (#5394).
 function buildRepairPaymentTransactions(
   payment: BookingPaymentRecord | null | undefined
 ): RepairPaymentTransaction[] {

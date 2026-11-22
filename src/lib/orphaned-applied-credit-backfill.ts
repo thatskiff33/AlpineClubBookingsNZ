@@ -48,7 +48,7 @@ import {
   restoreCreditFromBooking,
 } from "@/lib/member-credit";
 import { calculateRestoredCreditAmount } from "@/lib/policies/member-credit";
-import { paymentHasCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
+import { paymentHasCaptureEvidence } from "@/lib/payment-capture-evidence";
 import { formatCents } from "@/lib/utils";
 import { clubFormatValues } from "@/lib/club-format-server";
 
@@ -68,7 +68,7 @@ export interface OrphanedAppliedCreditFinding {
   bookingDeletedAt: string | null;
 }
 
-// Full FlattenedCandidatePayment shape so paymentHasCaptureEvidence type-checks.
+// Full CaptureEvidencePayment shape so paymentHasCaptureEvidence type-checks.
 const CANDIDATE_BOOKING_SELECT = {
   id: true,
   memberId: true,
@@ -320,8 +320,7 @@ export async function healOrphanedAppliedCredits(options?: {
 }
 
 /**
- * Format a scan or heal result for the operator report, mirroring
- * formatFlattenedCancelPaymentReport.
+ * Format a scan or heal result for the operator report.
  */
 export function formatOrphanedAppliedCreditReport(
   result: {
