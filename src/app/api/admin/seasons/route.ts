@@ -11,7 +11,7 @@ import {
   ADMIN_SEASON_CONNECTION_SHAPE,
   ADMIN_SEASON_LIST_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/bookings-setup"
-import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request"
+import { connectionJson, connectionListJson } from "@/lib/mcp-connection-request"
 import {
   lodgeNullTolerantScope,
   resolveOptionalActiveLodgeId,
@@ -46,13 +46,8 @@ export async function GET(req: NextRequest) {
     orderBy: { startDate: "desc" },
   })
 
-  // A connection's answer must be an object, so it gets the list under
-  // `seasons`; the browser keeps the bare array.
-  return connectionJson(
-    req,
-    arrivesAsMcpConnection(req) ? { seasons } : seasons,
-    ADMIN_SEASON_LIST_CONNECTION_SHAPE,
-  )
+  // The browser keeps the bare array; a connection gets it under `seasons`.
+  return connectionListJson(req, seasons, "seasons", ADMIN_SEASON_LIST_CONNECTION_SHAPE)
 }
 
 export async function POST(req: NextRequest) {

@@ -18,7 +18,7 @@ import {
   ADMIN_BOOKING_PERIOD_CONNECTION_SHAPE,
   ADMIN_BOOKING_PERIOD_LIST_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/bookings-setup";
-import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
+import { connectionJson, connectionListJson } from "@/lib/mcp-connection-request";
 
 // The schemas live in admin-bookings-schemas/setup.ts so the AI app actions
 // `list_booking_periods` and `create_booking_period` offer the same fields
@@ -47,13 +47,8 @@ export async function GET(request: NextRequest) {
     ...period,
     cancellationRules: normalizeStoredCancellationRules(period.cancellationRules),
   }));
-  // A connection's answer must be an object, so it gets the list under
-  // `periods`; the browser keeps the bare array.
-  return connectionJson(
-    request,
-    arrivesAsMcpConnection(request) ? { periods: answer } : answer,
-    ADMIN_BOOKING_PERIOD_LIST_CONNECTION_SHAPE,
-  );
+  // The browser keeps the bare array; a connection gets it under `periods`.
+  return connectionListJson(request, answer, "periods", ADMIN_BOOKING_PERIOD_LIST_CONNECTION_SHAPE);
 }
 
 export async function POST(request: NextRequest) {

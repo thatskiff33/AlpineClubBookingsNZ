@@ -76,7 +76,7 @@ function exportedMethods(file: string): string[] {
 }
 
 /** The calls that cut an answer down for a connection (`INV-MCP-006`). */
-const PROJECTIONS: ReadonlySet<string> = new Set(["connectionJson", "projectForConnection"]);
+const PROJECTIONS: ReadonlySet<string> = new Set(["connectionJson", "connectionListJson", "projectForConnection"]);
 
 interface RouteHandler {
   readonly source: ts.SourceFile;

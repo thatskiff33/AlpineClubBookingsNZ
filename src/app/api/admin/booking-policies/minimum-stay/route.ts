@@ -13,7 +13,7 @@ import {
   ADMIN_MINIMUM_STAY_POLICY_CONNECTION_SHAPE,
   ADMIN_MINIMUM_STAY_POLICY_LIST_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/bookings-setup"
-import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request"
+import { connectionJson, connectionListJson } from "@/lib/mcp-connection-request"
 import {
   DUPLICATE_MINIMUM_STAY_POLICY_NAME_MESSAGE,
   lockMinimumStayPolicySet,
@@ -46,13 +46,8 @@ export async function GET(request: NextRequest) {
     orderBy: { startDate: "desc" },
   })
 
-  // A connection's answer must be an object, so it gets the list under
-  // `policies`; the browser keeps the bare array.
-  return connectionJson(
-    request,
-    arrivesAsMcpConnection(request) ? { policies } : policies,
-    ADMIN_MINIMUM_STAY_POLICY_LIST_CONNECTION_SHAPE,
-  )
+  // The browser keeps the bare array; a connection gets it under `policies`.
+  return connectionListJson(request, policies, "policies", ADMIN_MINIMUM_STAY_POLICY_LIST_CONNECTION_SHAPE)
 }
 
 export async function POST(request: NextRequest) {

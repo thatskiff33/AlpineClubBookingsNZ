@@ -15,7 +15,7 @@ import {
   type AdminPromoCodeListRow,
   type AdminPromoCodeView,
 } from "@/lib/connection-shapes/bookings-review-queues";
-import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
+import { connectionJson, connectionListJson } from "@/lib/mcp-connection-request";
 
 // The query and body schemas live in admin-bookings-schemas/promo-codes.ts so
 // the AI app actions `list_promo_codes` and `create_promo_code` offer the same
@@ -103,13 +103,8 @@ export async function GET(req: NextRequest) {
   }));
   const rows: AdminPromoCodeListRow[] = list;
 
-  // A connection's answer must be an object, so it gets the list under
-  // `promoCodes`; the browser keeps the bare array.
-  return connectionJson(
-    req,
-    arrivesAsMcpConnection(req) ? { promoCodes: rows } : rows,
-    ADMIN_PROMO_CODE_LIST_CONNECTION_SHAPE,
-  );
+  // The browser keeps the bare array; a connection gets it under `promoCodes`.
+  return connectionListJson(req, rows, "promoCodes", ADMIN_PROMO_CODE_LIST_CONNECTION_SHAPE);
 }
 
 /**
