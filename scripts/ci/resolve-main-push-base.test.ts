@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { parseWorkflowYaml } from "./check-workflow-suite-checkout-depth.mjs";
-import { MainPushBaseError, main, parseArgs, resolveMainPushBase } from "./resolve-main-push-base.mjs";
+import { type WorkflowRun, MainPushBaseError, main, parseArgs, resolveMainPushBase } from "./resolve-main-push-base.mjs";
 
 /*
   INV-OPS-021 (#5356): a push to main is judged from the last main commit
@@ -17,16 +17,18 @@ import { MainPushBaseError, main, parseArgs, resolveMainPushBase } from "./resol
 */
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
-const sha = (letter) => letter.repeat(40);
+const sha = (letter: string) => letter.repeat(40);
 const GATE = { job: "verify", steps: ["Doc index", "File-size budget ratchet"] };
 
 /** A `main` push run of ci.yml as GitHub lists it. */
-function run(runNumber, head, conclusion = "success", status = "completed") {
+function run(runNumber: number, head: string, conclusion: string | null = "success", status = "completed"): WorkflowRun {
   return { id: 1000 + runNumber, run_number: runNumber, head_sha: head, status, conclusion: status === "completed" ? conclusion : null };
 }
 
+type FakeJob = { name: string; steps: Array<{ name: string; conclusion: string | null }> };
+
 /** The `verify` job of a run whose gate steps ended as `conclusions` (null: the step never ran). */
-function verifyJob(...conclusions) {
+function verifyJob(...conclusions: Array<string | null>): FakeJob {
   return { name: "verify", steps: GATE.steps.map((name, index) => ({ name, conclusion: conclusions[index] ?? null })) };
 }
 
@@ -34,13 +36,13 @@ function verifyJob(...conclusions) {
  * A fetch serving `pages` of runs (newest-first lists) and each run's jobs
  * from `jobsByRunNumber` (default: both gates ran). Records the paths asked for.
  */
-function fakeApi(pages, jobsByRunNumber = {}, { status = 200 } = {}) {
-  const paths = [];
-  const fetchImpl = async (input) => {
+function fakeApi(pages: WorkflowRun[][], jobsByRunNumber: Record<number, FakeJob[]> = {}, { status = 200 } = {}) {
+  const paths: string[] = [];
+  const fetchImpl = async (input: string) => {
     const url = new URL(input);
     paths.push(`${url.pathname}${url.search}`);
     const jobsMatch = /\/actions\/runs\/(\d+)\/jobs$/.exec(url.pathname);
-    let body;
+    let body: unknown;
     if (jobsMatch) {
       const jobs = jobsByRunNumber[Number(jobsMatch[1]) - 1000] ?? [verifyJob("success", "success")];
       body = { total_count: jobs.length, jobs };
@@ -53,7 +55,7 @@ function fakeApi(pages, jobsByRunNumber = {}, { status = 200 } = {}) {
 }
 
 const everyAncestor = () => true;
-const request = (overrides) => ({ repository: "owner/repo", token: "t", runNumber: 50, headSha: sha("f"), isAncestor: everyAncestor, ...GATE, ...overrides });
+const request = (overrides: Partial<Parameters<typeof resolveMainPushBase>[0]>) => ({ repository: "owner/repo", token: "t", runNumber: 50, headSha: sha("f"), isAncestor: everyAncestor, ...GATE, ...overrides });
 
 describe("resolveMainPushBase", () => {
   it("judges from the newest earlier run whose gates ran, past runs a newer merge replaced", async () => {
@@ -110,6 +112,23 @@ describe("resolveMainPushBase", () => {
     await expect(resolveMainPushBase(request({ fetchImpl }))).rejects.toThrow(MainPushBaseError);
   });
 
+  it("counts a run that ran a renamed gate under the old name given as an alias", async () => {
+    // #49 ran the ratchet as "Size ratchet"; this PR renamed it. Without the
+    // alias nothing matches and every main push fails closed for good, since
+    // the gates after the resolver are skipped and never record the new name.
+    const renamed = { name: "verify", steps: [{ name: "Doc index", conclusion: "success" }, { name: "Size ratchet", conclusion: "success" }] };
+    const { fetchImpl } = fakeApi([[run(49, sha("e"))]], { 49: [renamed] });
+    await expect(resolveMainPushBase(request({ fetchImpl }))).rejects.toThrow(/--step-was/);
+    const steps = ["Doc index", { name: "File-size budget ratchet", was: ["Size ratchet"] }];
+    expect((await resolveMainPushBase(request({ fetchImpl, steps }))).sha).toBe(sha("e"));
+  });
+
+  it("counts a run of a renamed job under the old name given as an alias", async () => {
+    const { fetchImpl } = fakeApi([[run(49, sha("e"))]], { 49: [{ ...verifyJob("success", "success"), name: "Verify" }] });
+    await expect(resolveMainPushBase(request({ fetchImpl }))).rejects.toThrow(MainPushBaseError);
+    expect((await resolveMainPushBase(request({ fetchImpl, jobWas: ["Verify"] }))).sha).toBe(sha("e"));
+  });
+
   it("fails closed on an API error or an answer it cannot read", async () => {
     await expect(resolveMainPushBase(request({ fetchImpl: fakeApi([], {}, { status: 403 }).fetchImpl }))).rejects.toThrow(/HTTP 403/);
     const garbled = async () => ({ ok: true, status: 200, json: async () => ({ workflow_runs: [{ id: "1" }] }) });
@@ -121,7 +140,7 @@ describe("resolveMainPushBase", () => {
     };
     await expect(resolveMainPushBase(request({ fetchImpl: offline }))).rejects.toThrow(/network down/);
     const truncated = fakeApi([[run(49, sha("e"))]]);
-    const truncatedJobs = async (input) => {
+    const truncatedJobs = async (input: string) => {
       if (!String(input).includes("/jobs")) return truncated.fetchImpl(input);
       return { ok: true, status: 200, json: async () => ({ total_count: 150, jobs: [verifyJob("success", "success")] }) };
     };
@@ -129,13 +148,31 @@ describe("resolveMainPushBase", () => {
   });
 });
 
+describe("parseArgs", () => {
+  it("attaches each --step-was to the --step before it, and collects --job-was", () => {
+    expect(parseArgs(["--job", "verify", "--job-was", "Verify", "--step", "A", "--step-was", "Old A", "--step-was", "Older A", "--step", "B"])).toEqual({
+      job: "verify",
+      jobWas: ["Verify"],
+      steps: [
+        { name: "A", was: ["Old A", "Older A"] },
+        { name: "B", was: [] },
+      ],
+    });
+  });
+
+  it("refuses a --step-was with no --step before it, and an unknown flag", () => {
+    expect(() => parseArgs(["--job", "verify", "--step-was", "Old", "--step", "A"])).toThrow(/must follow/);
+    expect(() => parseArgs(["--job", "verify", "--steps", "A"])).toThrow(/Unexpected argument/);
+  });
+});
+
 describe("main", () => {
-  let dir;
+  let dir: string | undefined;
   afterEach(() => dir && rmSync(dir, { recursive: true, force: true }));
   const quiet = { log: () => {} };
   const argv = ["--job", "verify", "--step", "Doc index", "--step", "File-size budget ratchet"];
 
-  const mainPushEnv = (output) => ({
+  const mainPushEnv = (output: string | undefined) => ({
     GITHUB_EVENT_NAME: "push",
     GITHUB_REF: "refs/heads/main",
     GITHUB_REPOSITORY: "owner/repo",
@@ -177,44 +214,57 @@ describe("main", () => {
 });
 
 /** The words of a `run:` line, honouring double quotes (all ci.yml's resolver steps use). */
-function shellWords(line) {
-  return [...line.matchAll(/"([^"]*)"|(\S+)/g)].map((match) => match[1] ?? match[2]);
+function shellWords(line: string): string[] {
+  return [...line.matchAll(/"([^"]*)"|(\S+)/g)].map((match) => match[1] ?? match[2] ?? "");
 }
 
 describe("ci.yml's wiring of the resolver", () => {
   const workflow = parseWorkflowYaml(readFileSync(path.join(REPO_ROOT, ".github", "workflows", "ci.yml"), "utf8"));
   const RESOLVER = "node scripts/ci/resolve-main-push-base.mjs";
-  const reads = (step) => JSON.stringify(step.env ?? {}).includes("steps.main-push-base.outputs.sha");
+  type Step = Record<string, unknown>;
+  const reads = (step: Step) => JSON.stringify(step.env ?? {}).includes("steps.main-push-base.outputs.sha");
 
   for (const jobKey of ["verify", "migration-drift"]) {
     it(`${jobKey} resolves the base before each gate it names, and every reader follows it`, () => {
       const job = workflow.jobs[jobKey];
-      const steps = job.steps ?? [];
+      if (!job) throw new Error(`ci.yml has no ${jobKey} job`);
+      const steps: Step[] = job.steps ?? [];
       const at = steps.findIndex((step) => step.id === "main-push-base");
       expect(at, `${jobKey} has a step with id main-push-base`).toBeGreaterThan(-1);
-      const resolver = steps[at];
+      const resolver = steps[at] ?? {};
       expect(String(resolver.run).startsWith(RESOLVER)).toBe(true);
-      expect(resolver.env?.GITHUB_TOKEN).toBe("${{ secrets.GITHUB_TOKEN }}");
+      expect((resolver.env as Record<string, string> | undefined)?.GITHUB_TOKEN).toBe("${{ secrets.GITHUB_TOKEN }}");
       expect(job.permissions?.actions).toBe("read");
 
-      const { job: jobName, steps: gates } = parseArgs(shellWords(String(resolver.run).slice(RESOLVER.length)));
+      const { job: jobName, jobWas, steps: gates } = parseArgs(shellWords(String(resolver.run).slice(RESOLVER.length)));
       // GitHub's jobs API reports the job's display name.
       expect(jobName).toBe(job.name ?? jobKey);
       const later = steps.slice(at + 1);
-      for (const gate of gates) {
-        const step = later.find((candidate) => candidate.name === gate);
-        expect(step, `${jobKey} runs "${gate}" after the resolver`).toBeDefined();
-        expect(reads(step), `"${gate}" judges from the resolved base`).toBe(true);
+      for (const { name } of gates) {
+        const step = later.find((candidate) => candidate.name === name);
+        expect(step, `${jobKey} runs "${name}" after the resolver`).toBeDefined();
+        expect(reads(step as Step), `"${name}" judges from the resolved base`).toBe(true);
       }
       // A reader the resolver does not name could be judged from a run where it never ran.
-      expect(later.filter(reads).map((step) => step.name)).toEqual(gates);
+      expect(later.filter(reads).map((step) => step.name)).toEqual(gates.map(({ name }) => name));
       expect(steps.slice(0, at).filter(reads)).toEqual([]);
+
+      // An old name must be old: one that is still a step's name here would
+      // count a run where a different step ran as having run this gate.
+      const current = new Set(steps.map((step) => step.name));
+      for (const old of gates.flatMap(({ was }) => was)) {
+        expect(current.has(old), `--step-was "${old}" is still the name of a ${jobKey} step`).toBe(false);
+      }
+      const jobNames = new Set(Object.entries(workflow.jobs).map(([key, other]) => other.name ?? key));
+      for (const old of jobWas) {
+        expect(jobNames.has(old), `--job-was "${old}" is still the name of a ci.yml job`).toBe(false);
+      }
     });
   }
 
   it("no other job reads the resolved base without resolving it", () => {
     const readers = Object.entries(workflow.jobs)
-      .filter(([, job]) => (job.steps ?? []).some(reads))
+      .filter(([, job]) => ((job.steps ?? []) as Step[]).some(reads))
       .map(([key]) => key);
     expect(readers.sort()).toEqual(["migration-drift", "verify"]);
   });

@@ -907,7 +907,7 @@ exists, or GitHub's answer cannot be read. A dropped intermediate commit has no 
   publishes no images and judges nothing, hence the last-judged base and the
   release check.
 - Enforced by `scripts/ci/main-push-superseded-runs.test.ts`, which evaluates
-  each workflow's group for each event; `scripts/ci/resolve-main-push-base.test.mjs`;
+  each workflow's group for each event; `scripts/ci/resolve-main-push-base.test.ts`;
   and the `requirePublishedImages` cases in `scripts/release/cut-release.test.mjs`.
 
 ## INV-OPS-022

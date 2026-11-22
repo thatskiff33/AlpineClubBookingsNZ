@@ -1,7 +1,8 @@
 /**
  * The commit a push to `main` is judged from (INV-OPS-021, #5356).
  *
- *   node scripts/ci/resolve-main-push-base.mjs --job <job name> --step <step name> [--step …]
+ *   node scripts/ci/resolve-main-push-base.mjs --job <job name> [--job-was <old name> …]
+ *     --step <step name> [--step-was <old name> …] [--step …]
  *
  * WHY NOT `github.event.before`. Since #5356 a newer merge may replace `main`'s
  * queued CI run: the push concurrency group holds one running and one pending
@@ -22,12 +23,20 @@
  * a re-run keeps its number), for another commit, and that commit must be an
  * ancestor of HEAD.
  *
+ * RENAMING A GATE. Earlier runs recorded the old names, so a renamed job or
+ * step would match no run and fail closed on every push; and since the gates
+ * after this step are then skipped, no run ever records the new name either.
+ * So a rename keeps the old name as an alias: `--job-was <old>` for the job,
+ * `--step-was <old>` after the `--step` it belongs to. A run that ran the step
+ * under either name counts. Drop the alias once a `main` run has finished the
+ * gate under its new name (CONTRIBUTING.md, "Finding which merge broke main").
+ *
  * Writes `sha=<commit>` to `$GITHUB_OUTPUT`. Any event other than a push to
  * `main` writes nothing, so the caller keeps its own base (epic pushes and pull
  * requests are unchanged). It FAILS CLOSED: an API answer it cannot read, or no
  * judged run in what it reads, exits non-zero rather than falling back to
  * `before`, because a silent fallback is exactly the unjudged merge this exists
- * to prevent. `resolve-main-push-base.test.mjs` pins the callers' wiring.
+ * to prevent. `resolve-main-push-base.test.ts` pins the callers' wiring.
  *
  * Node built-ins only: `verify` and `migration-drift` run it before installing.
  */
@@ -83,23 +92,30 @@ async function runsPage(context, page) {
   return runs;
 }
 
-/** Did the latest attempt of `run` finish every gate step of `job`? Throws on any answer it cannot read. */
-async function gatesRan(context, run, job, steps) {
+/** A gate step as `{ name, was }`: its current name and any earlier names it ran under. */
+function asGate(step) {
+  return typeof step === "string" ? { name: step, was: [] } : { name: step.name, was: step.was ?? [] };
+}
+
+/** Did the latest attempt of `run` finish every gate step of `job` (under a current or earlier name)? Throws on any answer it cannot read. */
+async function gatesRan(context, run, job, jobWas, steps) {
   const what = `the jobs of ${CI_WORKFLOW_FILE} run #${run.run_number}`;
   const body = await apiJson(context, `runs/${run.id}/jobs`, { filter: "latest", per_page: PAGE_SIZE }, what);
   const jobs = body?.jobs;
   if (!Array.isArray(jobs) || !Number.isInteger(body.total_count)) throw new MainPushBaseError(`GitHub answered ${what} in a shape this script does not read`);
   if (jobs.length < body.total_count) throw new MainPushBaseError(`GitHub answered ${what} with more than one page, more than this script reads`);
-  const found = jobs.find((candidate) => candidate?.name === job);
+  const jobNames = [job, ...jobWas];
+  const found = jobs.find((candidate) => jobNames.includes(candidate?.name));
   if (!found) return false;
-  if (!Array.isArray(found.steps)) throw new MainPushBaseError(`GitHub answered ${what} without the steps of "${job}"`);
-  return steps.every((name) => found.steps.some((step) => step?.name === name && GATE_RAN.has(step.conclusion)));
+  if (!Array.isArray(found.steps)) throw new MainPushBaseError(`GitHub answered ${what} without the steps of "${found.name}"`);
+  return steps.every(({ name, was }) => found.steps.some((step) => [name, ...was].includes(step?.name) && GATE_RAN.has(step.conclusion)));
 }
 
 /**
  * The last judged `main` commit before the run numbered `runNumber` for
  * `headSha`, with the run that judged it: the newest earlier run whose `job`
- * finished every one of `steps`. Throws `MainPushBaseError` when the API cannot
+ * finished every one of `steps`. `jobWas` and each step's `was` are earlier
+ * names a run may have recorded (see RENAMING A GATE). Throws `MainPushBaseError` when the API cannot
  * be read or no such run exists.
  */
 export async function resolveMainPushBase({
@@ -109,11 +125,13 @@ export async function resolveMainPushBase({
   runNumber,
   headSha,
   job,
+  jobWas = [],
   steps,
   isAncestor = gitIsAncestor,
   fetchImpl = fetch,
 }) {
   if (!job || steps.length === 0) throw new MainPushBaseError("Name the gate with --job and at least one --step");
+  const gates = steps.map(asGate);
   const context = { apiUrl, repository, token, fetchImpl };
   for (let page = 1; page <= MAX_PAGES; page += 1) {
     const runs = await runsPage(context, page);
@@ -121,25 +139,37 @@ export async function resolveMainPushBase({
       if (run.run_number >= runNumber || run.head_sha === headSha) continue;
       if (run.status !== "completed" || NOTHING_RAN.has(run.conclusion)) continue;
       if (!isAncestor(run.head_sha)) continue;
-      if (await gatesRan(context, run, job, steps)) return { sha: run.head_sha, run };
+      if (await gatesRan(context, run, job, jobWas, gates)) return { sha: run.head_sha, run };
     }
     if (runs.length < PAGE_SIZE) break;
   }
   throw new MainPushBaseError(
-    `No earlier ${CI_WORKFLOW_FILE} push run on main ran "${job}" → ${steps.map((step) => `"${step}"`).join(", ")} ` +
-      `on an ancestor of ${headSha.slice(0, 12)}, so there is no commit to judge this push from.`,
+    `No earlier ${CI_WORKFLOW_FILE} push run on main ran "${job}" → ${gates.map(({ name }) => `"${name}"`).join(", ")} ` +
+      `on an ancestor of ${headSha.slice(0, 12)}, so there is no commit to judge this push from. ` +
+      `If a change renamed that job or a step, name the old one with --job-was or --step-was.`,
   );
 }
 
-/** `--job <name>` once and `--step <name>` one or more times. */
+/**
+ * `--job <name>` once, `--step <name>` one or more times, and the earlier names
+ * of a renamed gate: `--job-was <old>` for the job, `--step-was <old>` after the
+ * `--step` it belongs to. Each may repeat.
+ */
 export function parseArgs(argv) {
-  const parsed = { job: null, steps: [] };
+  const parsed = { job: null, jobWas: [], steps: [] };
+  const FLAGS = new Set(["--job", "--job-was", "--step", "--step-was"]);
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     const value = argv[index + 1];
-    if ((flag !== "--job" && flag !== "--step") || value === undefined) throw new MainPushBaseError(`Unexpected argument "${flag}"`);
+    if (!FLAGS.has(flag) || value === undefined) throw new MainPushBaseError(`Unexpected argument "${flag}"`);
     if (flag === "--job") parsed.job = value;
-    else parsed.steps.push(value);
+    else if (flag === "--job-was") parsed.jobWas.push(value);
+    else if (flag === "--step") parsed.steps.push({ name: value, was: [] });
+    else {
+      const gate = parsed.steps.at(-1);
+      if (!gate) throw new MainPushBaseError(`--step-was "${value}" must follow the --step it is an old name of`);
+      gate.was.push(value);
+    }
     index += 1;
   }
   if (!parsed.job || parsed.steps.length === 0) throw new MainPushBaseError("Name the gate with --job and at least one --step");
@@ -148,7 +178,7 @@ export function parseArgs(argv) {
 
 /** The CLI: resolve and write `sha=` for a push to `main`; write nothing for any other event. */
 export async function main({ argv = process.argv.slice(2), env = process.env, fetchImpl = fetch, isAncestor = gitIsAncestor, log = console } = {}) {
-  const { job, steps } = parseArgs(argv);
+  const { job, jobWas, steps } = parseArgs(argv);
   if (env.GITHUB_EVENT_NAME !== "push" || env.GITHUB_REF !== MAIN_REF) {
     log.log(`Not a push to main (${env.GITHUB_EVENT_NAME ?? "no event"} on ${env.GITHUB_REF ?? "no ref"}); the step keeps its own base.`);
     return 0;
@@ -166,6 +196,7 @@ export async function main({ argv = process.argv.slice(2), env = process.env, fe
     runNumber,
     headSha: env.GITHUB_SHA,
     job,
+    jobWas,
     steps,
     isAncestor,
     fetchImpl,
@@ -192,7 +223,9 @@ if (isMainModule(import.meta.url)) {
     process.stderr.write(
       `::error::${message}\n` +
         "Nothing was judged. If GitHub's API failed, re-run this job. If no earlier main run reached these gates, " +
-        "re-run the newest replaced one with `gh run rerun <run-id>` when nothing is pending on main (CONTRIBUTING.md, \"Finding which merge broke main\"), and once it has finished re-run this job.\n",
+        "re-run the newest replaced one with `gh run rerun <run-id>` when nothing is pending on main, and once it has finished re-run this job. " +
+        "If a change renamed the job or a gate step, a re-run cannot help: add --job-was or --step-was with the old name " +
+        "(CONTRIBUTING.md, \"Finding which merge broke main\").\n",
     );
     process.exitCode = 1;
   }

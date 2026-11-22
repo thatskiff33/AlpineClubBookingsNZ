@@ -6,7 +6,6 @@ import { execFileSync, spawnSync } from "node:child_process";
 import {
   bumpPackageJson,
   bumpVersion,
-  CI_WORKFLOW_FILE,
   computeRelease,
   FEATURE_FRAGMENT_SUFFIX,
   fragmentBump,
@@ -24,6 +23,7 @@ import {
 } from "./cut-release.mjs";
 import { releaseSection } from "./compile-changelog.mjs";
 import { parseWorkflowYaml } from "../ci/check-workflow-suite-checkout-depth.mjs";
+import { CI_WORKFLOW_FILE } from "../lib/ci-workflow.mjs";
 import {
   NO_UPGRADE_STEPS,
   RUNBOOK_RELEASE_AGNOSTIC_MARKER,

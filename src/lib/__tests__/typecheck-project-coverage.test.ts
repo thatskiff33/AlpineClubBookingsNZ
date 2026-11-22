@@ -185,6 +185,11 @@ const DECLARED_JAVASCRIPT_MODULES = [
     load: () => import("../../../scripts/ci/check-allow-builds.mjs"),
   },
   {
+    module: "scripts/ci/resolve-main-push-base.mjs",
+    declaration: "scripts/ci/resolve-main-push-base.d.mts",
+    load: () => import("../../../scripts/ci/resolve-main-push-base.mjs"),
+  },
+  {
     module: "scripts/ci/server-only-boundary-selftest.mjs",
     declaration: "scripts/ci/server-only-boundary-selftest.d.mts",
     load: () => import("../../../scripts/ci/server-only-boundary-selftest.mjs"),

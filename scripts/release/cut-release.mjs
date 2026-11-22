@@ -112,9 +112,6 @@ export const FEATURE_FRAGMENT_SUFFIX = ".feature.md";
  */
 export const MAX_RELEASE_NOTES_CHARS = 120_000;
 
-/** The workflow whose `main` push runs publish the GHCR images a release tag deploys. */
-export { CI_WORKFLOW_FILE };
-
 /** That workflow's publishing job, by the display name GitHub's jobs API reports. */
 export const PUBLISH_IMAGES_JOB_NAME = "Publish GHCR images";
 
