@@ -26,6 +26,7 @@ import {
   servingMcpConnection,
 } from "@/lib/mcp-connection-request";
 import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
+import { isOrganisationAccount } from "@/lib/organisation-account";
 
 function connectionRequest(): Request {
   return new Request("https://club.example.test/api/x", {
@@ -86,6 +87,18 @@ describe("memberOnlySessionUser (ALP-718)", () => {
     expect(memberOnlySessionUser(connectionRequest(), assigned).accessRoles).toEqual(["USER"]);
     const adminOnly = { ...officer, accessRoles: ["ADMIN"] } as unknown as Session["user"];
     expect(memberOnlySessionUser(connectionRequest(), adminOnly).accessRoles).toEqual([]);
+  });
+
+  it("keeps an organisation an organisation, so its connection is refused what the account is (ALP-796)", () => {
+    const organisation = { ...officer, role: "USER", accessRoles: ["ORG", "ADMIN"] } as unknown as Session["user"];
+    const user = memberOnlySessionUser(connectionRequest(), organisation);
+    expect(user.accessRoles).toEqual(["ORG"]);
+    expect(isOrganisationAccount(user)).toBe(true);
+    expect(hasAdminAccess(user)).toBe(false);
+
+    const legacySchool = { ...officer, role: "SCHOOL", accessRoles: [] } as unknown as Session["user"];
+    expect(isOrganisationAccount(memberOnlySessionUser(connectionRequest(), legacySchool))).toBe(true);
+    expect(isOrganisationAccount(memberOnlySessionUser(connectionRequest(), officer))).toBe(false);
   });
 
   it("leaves a browser's session user exactly as it is", () => {

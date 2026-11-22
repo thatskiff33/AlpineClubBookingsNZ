@@ -40,8 +40,15 @@ export async function servingMcpConnection(): Promise<boolean> {
  * The session user a route decides with (ALP-718, `INV-MCP-006`). A browser
  * gets the user unchanged. A connection always acts as the member and never
  * as an officer, whatever roles the person holds: its role is `USER`, it keeps
- * only the `USER` access role (whether the account is a member), and its
- * admin permission matrix is empty, so every officer branch reads as refused.
+ * only the classifying access roles (`USER`, whether the account is a member,
+ * and `ORG`, whether it is an organisation), and its admin permission matrix
+ * is empty, so every officer branch reads as refused.
+ *
+ * The classifying roles grant nothing; `ORG` takes things away (an
+ * organisation is kept off the calendar and food orders), so dropping it
+ * would lend an organisation's connection what the account itself is refused
+ * (ALP-796). The legacy `SCHOOL` role is the same classification and is kept
+ * for the same reason.
  *
  * Call it once, before any officer branch, and decide with what it returns.
  */
@@ -49,12 +56,15 @@ export function memberOnlySessionUser<U extends Session["user"]>(request: Reques
   if (!arrivesAsMcpConnection(request)) return user;
   return {
     ...user,
-    role: "USER",
-    // Read through the one role resolver, so either assignment shape keeps USER.
-    accessRoles: hasAccessRole(user, "USER") ? ["USER"] : [],
+    role: user.role === LEGACY_ORGANISATION_ROLE ? LEGACY_ORGANISATION_ROLE : "USER",
+    // Read through the one role resolver, so either assignment shape keeps them.
+    accessRoles: CLASSIFYING_ACCESS_ROLES.filter((role) => hasAccessRole(user, role)),
     adminPermissionMatrix: emptyAdminPermissionMatrix(),
   };
 }
+
+const CLASSIFYING_ACCESS_ROLES = ["USER", "ORG"] as const;
+const LEGACY_ORGANISATION_ROLE = "SCHOOL";
 
 /**
  * The route's JSON answer. A connection's successful answer is projected
