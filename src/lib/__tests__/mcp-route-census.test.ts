@@ -75,6 +75,120 @@ function exportedMethods(file: string): string[] {
   return [...found].sort();
 }
 
+/** The calls that cut an answer down for a connection (`INV-MCP-006`). */
+const PROJECTIONS: ReadonlySet<string> = new Set(["connectionJson", "projectForConnection"]);
+
+interface RouteHandler {
+  readonly source: ts.SourceFile;
+  readonly body: ts.Node | undefined;
+}
+
+/** One exported method's function, by `export async function` or `export const`. */
+function routeHandler(file: string, method: string): RouteHandler {
+  const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+  for (const statement of source.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === method && hasExport(statement)) {
+      return { source, body: statement };
+    }
+    if (ts.isVariableStatement(statement) && hasExport(statement)) {
+      const declaration = statement.declarationList.declarations.find(
+        (entry) => ts.isIdentifier(entry.name) && entry.name.text === method,
+      );
+      if (declaration) return { source, body: declaration.initializer };
+    }
+  }
+  return { source, body: undefined };
+}
+
+function calleeName(call: ts.CallExpression): string | null {
+  const callee = unwrap(call.expression);
+  return ts.isIdentifier(callee) ? callee.text : null;
+}
+
+/** Whether `node`, or a top-level function of the same file it calls, calls one of `names`. */
+function handlerCalls({ source, body }: RouteHandler, names: ReadonlySet<string>): boolean {
+  const localFunctions = new Map<string, ts.Node>();
+  for (const statement of source.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name) localFunctions.set(statement.name.text, statement);
+  }
+  const seen = new Set<ts.Node>();
+  const visit = (node: ts.Node | undefined): boolean => {
+    if (!node || seen.has(node)) return false;
+    seen.add(node);
+    let found = false;
+    const walk = (child: ts.Node): void => {
+      if (found) return;
+      if (ts.isCallExpression(child)) {
+        const name = calleeName(child);
+        if (name && names.has(name)) found = true;
+        else if (name && localFunctions.has(name)) found = visit(localFunctions.get(name));
+      }
+      if (!found) ts.forEachChild(child, walk);
+    };
+    walk(node);
+    return found;
+  };
+  return visit(body);
+}
+
+/** `{ area: "x", level: "y" }`, read from an object literal, or null. */
+function requirementLiteral(expression: ts.Expression): { area: string; level: string } | null {
+  const node = unwrap(expression);
+  if (!ts.isObjectLiteralExpression(node)) return null;
+  const read = (key: string) => {
+    const property = node.properties.find(
+      (entry) => ts.isPropertyAssignment(entry) && ts.isIdentifier(entry.name) && entry.name.text === key,
+    );
+    const value = property && ts.isPropertyAssignment(property) ? unwrap(property.initializer) : undefined;
+    return value && ts.isStringLiteral(value) ? value.text : null;
+  };
+  const area = read("area");
+  const level = read("level");
+  return area && level ? { area, level } : null;
+}
+
+/**
+ * The area and level the handler passes to `requireAdmin({ permission })`,
+ * a literal or a top-level `const` of the file; null when it names none (the
+ * path's rule decides). A permission the census cannot read fails loudly.
+ */
+function explicitAdminPermission({ source, body }: RouteHandler): { area: string; level: string } | null {
+  const constants = new Map<string, ts.Expression>();
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.initializer) {
+        constants.set(declaration.name.text, declaration.initializer);
+      }
+    }
+  }
+  let explicit: { area: string; level: string } | null = null;
+  const walk = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && calleeName(node) === "requireAdmin") {
+      const options = node.arguments[0] && unwrap(node.arguments[0]);
+      const permission = options && ts.isObjectLiteralExpression(options)
+        ? options.properties.find(
+          (entry) => ts.isPropertyAssignment(entry) && ts.isIdentifier(entry.name) && entry.name.text === "permission",
+        )
+        : undefined;
+      if (permission && ts.isPropertyAssignment(permission)) {
+        const value = unwrap(permission.initializer);
+        const resolved = ts.isIdentifier(value) ? constants.get(value.text) : value;
+        // `false` and "any-admin" are looser than the path's rule: the
+        // catalogue keeps the stricter path rule, failing closed.
+        const looser = value.kind === ts.SyntaxKind.FalseKeyword || ts.isStringLiteral(value);
+        if (!looser) {
+          explicit = resolved ? requirementLiteral(resolved) : null;
+          if (!explicit) throw new Error(`Cannot read the requireAdmin permission in ${source.fileName}`);
+        }
+      }
+    }
+    ts.forEachChild(node, walk);
+  };
+  if (body) walk(body);
+  return explicit;
+}
+
 /**
  * Functions that decide officer reach from a person's roles or admin matrix
  * (`access-roles.ts`, `admin-permissions.ts`, `on-behalf-booking.ts`). A
@@ -264,11 +378,25 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
 
   it("answers a connection on every officer action only through the connection projection", () => {
     // A member action's route may answer with a complete shape (stage 1); an
-    // officer route also feeds the admin screens, so it must project.
-    const unprojected = [...new Set(
-      MCP_ACTIONS.filter((action) => mcpActionAdminRequirement(action) !== null).map(mcpActionRouteFile),
-    )].filter((file) => !/\bconnectionJson\(|\bprojectForConnection\(/.test(readFileSync(file, "utf8")));
+    // officer route also feeds the admin screens, so each catalogued handler
+    // must project, itself or through a function of its own file.
+    const unprojected = MCP_ACTIONS.filter((action) => mcpActionAdminRequirement(action) !== null)
+      .filter((action) => !handlerCalls(routeHandler(mcpActionRouteFile(action), action.method), PROJECTIONS))
+      .map((action) => stepUpRouteKey(mcpActionRouteFile(action), action.method));
     expect(unprojected).toEqual([]);
+  });
+
+  it("offers each officer action at exactly the permission its handler demands", () => {
+    // A handler that names its own `requireAdmin` permission overrides the
+    // path's rule; the entry must carry it as `requires`, and only then.
+    const mismatched = MCP_ACTIONS.filter((action) => mcpActionAdminRequirement(action) !== null).flatMap((action) => {
+      const explicit = explicitAdminPermission(routeHandler(mcpActionRouteFile(action), action.method));
+      const ok = explicit === null
+        ? action.requires === undefined
+        : JSON.stringify(mcpActionAdminRequirement(action)) === JSON.stringify(explicit);
+      return ok ? [] : [`${action.id}: handler ${JSON.stringify(explicit)}, entry ${JSON.stringify(action.requires)}`];
+    });
+    expect(mismatched).toEqual([]);
   });
 
   it("points every catalogue entry at a route method that exists", () => {

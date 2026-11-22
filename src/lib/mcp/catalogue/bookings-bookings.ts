@@ -51,6 +51,11 @@ import {
 
 import type { McpAction } from "../catalogue";
 
+// The routes below that name their own `requireAdmin` permission, stricter
+// than (or other than) their path's rule; the census pins each to its handler.
+const BOOKINGS_EDIT = { area: "bookings", level: "edit" } as const;
+const FINANCE_EDIT = { area: "finance", level: "edit" } as const;
+
 // ── The booking list and search ─────────────────────────────────────────────
 
 const LIST_AND_SEARCH: readonly McpAction[] = [
@@ -87,10 +92,11 @@ const ON_BEHALF_PICKERS: readonly McpAction[] = [
     id: "get_member_family_for_booking",
     title: "Read a member's family for a new booking",
     summary:
-      "Officer: one member's family group, for booking on their behalf: the member and the active members of their family groups (id, names, age tier, relationship) and their own recorded dependants. The member ids are what a booking's guest list takes. Needs Bookings & Beds edit access.",
+      "Officer: one member's family group, for booking on their behalf: the member and the active members of their family groups (id, names, age tier, relationship) and their own recorded dependants. The member ids are what a booking's guest list takes.",
     method: "GET",
     path: "/api/admin/bookings/eligible-family",
     query: adminEligibleFamilyQuerySchema,
+    requires: BOOKINGS_EDIT,
     kind: "read",
     returns: ADMIN_MEMBER_FAMILY_CONNECTION_SHAPE,
     core: false,
@@ -99,10 +105,11 @@ const ON_BEHALF_PICKERS: readonly McpAction[] = [
     id: "get_booking_owner_family",
     title: "Read a booking owner's family",
     summary:
-      "Officer: the family group of the member who owns a booking (`id` from `search_bookings`), for adding guests to it: the same fields as `get_member_family_for_booking`, plus the confirmed partners of the booking's member guests who could share a double bed. Needs Bookings & Beds edit access.",
+      "Officer: the family group of the member who owns a booking (`id` from `search_bookings`), for adding guests to it: the same fields as `get_member_family_for_booking`, plus the confirmed partners of the booking's member guests who could share a double bed.",
     method: "GET",
     path: "/api/admin/bookings/[id]/eligible-family",
     params: bookingIdParamsSchema,
+    requires: BOOKINGS_EDIT,
     kind: "read",
     returns: ADMIN_BOOKING_ELIGIBLE_FAMILY_CONNECTION_SHAPE,
     core: false,
@@ -111,10 +118,11 @@ const ON_BEHALF_PICKERS: readonly McpAction[] = [
     id: "search_non_member_contacts",
     title: "Find existing non-member contacts",
     summary:
-      "Officer: existing non-member booking contacts (people and schools who cannot sign in) whose email or name matches, so one can be reused instead of creating a duplicate. Answers with each contact's id, names, email, phone, role and number of bookings. Needs Bookings & Beds edit access.",
+      "Officer: existing non-member booking contacts (people and schools who cannot sign in) whose email or name matches, so one can be reused instead of creating a duplicate. Answers with each contact's id, names, email, phone, role and number of bookings.",
     method: "GET",
     path: "/api/admin/bookings/non-member-contact",
     query: adminNonMemberContactQuerySchema,
+    requires: BOOKINGS_EDIT,
     kind: "read",
     returns: ADMIN_NON_MEMBER_CONTACT_SUGGESTIONS_CONNECTION_SHAPE,
     core: false,
@@ -207,10 +215,11 @@ const ONE_BOOKING_TOOLS: readonly McpAction[] = [
     id: "withdraw_additional_payment_request",
     title: "Withdraw an extra payment request",
     summary:
-      "Officer: withdraw an unpaid request, raised by a completed financial review, for the member to pay an extra amount: the card request is cancelled and the amount no longer shows as owing. Refused once paid (that is a refund). Answers with the amount withdrawn in cents. Needs Finance edit access. Cannot be undone.",
+      "Officer: withdraw an unpaid request, raised by a completed financial review, for the member to pay an extra amount: the card request is cancelled and the amount no longer shows as owing. Refused once paid (that is a refund). Answers with the amount withdrawn in cents. Cannot be undone.",
     method: "POST",
     path: "/api/admin/bookings/[id]/additional-payment/withdraw",
     params: bookingIdParamsSchema,
+    requires: FINANCE_EDIT,
     kind: "destructive",
     returns: ADMIN_ADDITIONAL_PAYMENT_WITHDRAW_CONNECTION_SHAPE,
     core: false,

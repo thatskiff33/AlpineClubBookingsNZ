@@ -15,11 +15,16 @@ vi.mock("@/lib/mcp/dispatch", () => ({
   websiteOnlyAnswer: () => ({ isError: false, text: "Nothing was done. Open the website." }),
 }));
 
-import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
+import { getAdminRouteRequirement, type AdminPermissionMatrix } from "@/lib/admin-permissions";
 import { MCP_ACTIONS, mcpActionAdminRequirement } from "@/lib/mcp/catalogue";
 import { callMcpTool, listMcpTools, type McpServerContext } from "@/lib/mcp/server";
 
-const BOOKINGS_ACTIONS = MCP_ACTIONS.filter((action) => mcpActionAdminRequirement(action)?.area === "bookings");
+// Every action on a Bookings & Beds route, and those of them the area alone
+// unlocks: a route may name a stricter permission of its own (`requires`).
+const AREA_ROUTE_ACTIONS = MCP_ACTIONS.filter(
+  (action) => getAdminRouteRequirement(action.path, action.method)?.area === "bookings",
+);
+const BOOKINGS_ACTIONS = AREA_ROUTE_ACTIONS.filter((action) => mcpActionAdminRequirement(action)?.area === "bookings");
 
 const NO_AREAS: AdminPermissionMatrix = {
   overview: "none", bookings: "none", membership: "none", finance: "none",
@@ -87,6 +92,17 @@ describe("Bookings & Beds officer actions: who is offered them", () => {
       const needsEdit = mcpActionAdminRequirement(action)?.level === "edit";
       expect(found.has(action.id), action.id).toBe(!needsEdit);
     }
+  });
+
+  it("offers an action on a Bookings & Beds route at the stricter permission its route names", async () => {
+    const withdraw = AREA_ROUTE_ACTIONS.find((action) => action.id === "withdraw_additional_payment_request");
+    expect(withdraw && mcpActionAdminRequirement(withdraw)).toEqual({ area: "finance", level: "edit" });
+    expect(await foundIds(context({ bookings: "edit" }))).not.toContain("withdraw_additional_payment_request");
+    expect(await foundIds(context({ bookings: "edit", finance: "edit" }))).toContain("withdraw_additional_payment_request");
+
+    const viewOnly = new Set(await foundIds(context({ bookings: "view" })));
+    expect(viewOnly.has("get_member_family_for_booking")).toBe(false);
+    expect(viewOnly.has("search_non_member_contacts")).toBe(false);
   });
 
   it("offers an officer with Bookings & Beds edit every action, and runs one by name", async () => {

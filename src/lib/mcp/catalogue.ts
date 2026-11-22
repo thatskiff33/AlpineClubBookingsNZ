@@ -100,6 +100,12 @@ export interface McpAction {
   /** Listed as its own tool. The rest are reached through `find_actions`. */
   readonly core: boolean;
   /**
+   * An officer route's explicit `requireAdmin({ permission })`, when it names
+   * one instead of the path's rule. The census reads the handler and fails
+   * unless this matches it, so it is never a free-standing copy.
+   */
+  readonly requires?: AdminAccessRequirement;
+  /**
    * A sentence appended to a successful result that points the member at the
    * website for the step an app cannot take. `{origin}` is the club's site and
    * `{id}` the `id` of the returned record.
@@ -448,13 +454,14 @@ export function mcpActionRouteFile(action: Pick<McpAction, "path">): string {
 
 /**
  * The admin area and level an officer action needs, or null for a member
- * action. Read from the route's own rule (`admin-permissions.ts`), never
- * copied onto the entry, so the action and the admin screen cannot disagree.
+ * action: what the route itself demands. That is the route's explicit
+ * `requireAdmin` permission where it names one (`requires`, pinned to the
+ * handler by the census), else the path's rule in `admin-permissions.ts`.
  */
 export function mcpActionAdminRequirement(
-  action: Pick<McpAction, "path" | "method">,
+  action: Pick<McpAction, "path" | "method" | "requires">,
 ): AdminAccessRequirement | null {
-  return getAdminRouteRequirement(action.path, action.method);
+  return action.requires ?? getAdminRouteRequirement(action.path, action.method);
 }
 
 export function findMcpAction(id: string): McpAction | undefined {
