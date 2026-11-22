@@ -73,11 +73,11 @@ export async function POST(request: NextRequest) {
   });
   if (!admin.ok) return admin.response;
 
-  const parsedJson = await parseJsonRequestBody(request, {
+  const jsonBody = await parseJsonRequestBody(request, {
     error: "Invalid JSON",
   });
-  if (!parsedJson.ok) return parsedJson.response;
-  const body = parsedJson.body;
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = postSchema.safeParse(body);
   if (!parsed.success) {

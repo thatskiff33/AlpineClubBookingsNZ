@@ -6,6 +6,7 @@ import { enrolmentSessionIssuedAt } from "@/lib/two-factor-api";
 import { verifyPasskeyRegistration } from "@/lib/webauthn";
 
 import { guardPasskeyRequest, passkeyJsonError, registrationAllowed } from "../../guard";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const bodySchema = z
   .object({
@@ -20,12 +21,11 @@ export async function POST(request: NextRequest) {
   const refused = registrationAllowed(guard);
   if (refused) return refused;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return passkeyJsonError(400, "Invalid JSON payload");
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
