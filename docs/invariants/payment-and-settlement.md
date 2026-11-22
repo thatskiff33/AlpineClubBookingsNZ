@@ -119,8 +119,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - **Limit:** PAID transitions no transaction settles (zero cash, full credit,
   $0 auto-pay, group settlement) never write it; a lone capture is
   kept and alerted unless a replay, retried until delivered or moot (#4285).
-  Unsettled saved-card captures: new money, judged as arriving, or
-  alerted by day 7 if paid (#5240, `STATE_MACHINES`).
+  Unsettled saved-card captures: new money; alerted if paid (bar silent
+  keeps), else logged at day 7 (#5240).
 - **One home**: `duplicate-capture-guard.ts`, sharing the Xero conflict's
   readings (#4283).
 - Decided under `lock(1)`, enqueued before Stripe, one operation per

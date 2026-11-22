@@ -2005,12 +2005,25 @@ task an hour on, in a transaction that reads the payment's recorded settler and
 claims the flag by its delete: cleared for a capture gone, holding no money, or
 recorded as the settler. On a PAID or COMPLETED booking the guard judges it as
 its arrival would. Kept and told, for any reason: the flag becomes the owed
-alert, sent in that run. Kept silently (the superseded or duplicate-capture
-machinery owns it): the flag is cleared. Refunded, because another card is the
-settlement: the flag waits for the webhook, which refunds it, so nobody is told
-"kept" about money then refunded; at seven days Stripe's retries are over, so
-it becomes the owed alert instead, as does a capture no longer `SUCCEEDED`. A
-flag on any other booking waits for its webhook. A waiting flag is never
+alert, sent in that run with the guard's own reason (`not-recorded` and
+`settler-released` travel in the owed marker's key). Kept silently (the
+superseded or duplicate-capture machinery owns it, or a cancel in flight holds
+it): the flag waits and is judged again each run, since the cancel may die and
+leave the money kept and told; at seven days it is cleared. Refunded, because
+another payment is the settlement (a card, cash or a bank receipt, or the
+capture's own duplicate-capture refund is re-sent): the flag waits for the
+webhook, which refunds it, so nobody is told "kept" about money then refunded;
+at seven days Stripe's retries are over, so it becomes an owed
+`unsettled-saved-card` alert instead, as does a capture no longer `SUCCEEDED`.
+That alert is due an hour later, not in the same run, so an arrival that lost
+the flag to the cron and refunds the capture has committed its refund before
+the alert is judged, and no "kept" alert goes beside the refund. Known limits:
+a promoted alert that cannot go out in its run (a refund in flight, a send that
+throws, the day's cooldown) is retried by the drain, which keeps its reason; but
+a refund-verdict capture alerted at day seven can still be refunded by a later
+arrival (a manual redelivery from Stripe, or intent recovery), so the officers
+may see "kept" and then the refund. A flag on any other booking waits for its
+webhook. A waiting flag is never
 re-stamped; at seven days on any other booking the error is logged for a person
 to check, and only then is the flag cleared, so a crash between the two repeats
 the log rather than losing it. Every due flag is read on each run, a page at a

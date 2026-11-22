@@ -390,7 +390,8 @@ export async function recordNewCaptureAlertOwed(
  * cannot be read (`claimAlertCooldownFailOpen`), and the claim is given back if
  * the send throws so the next repeat tries again (`releaseAlertCooldown`, as
  * `internet-banking-hold-kept.ts`). Any delivered alert for the capture clears
- * its owed `new-capture` marker (#4285 review). Never throws; says what happened.
+ * its owed `new-capture` marker (#4285 review), and any the payments cron
+ * promoted under its reason (#5240 review). Never throws; says what happened.
  */
 export async function alertCaptureKeptWithoutRecordedSettler({
   booking,
