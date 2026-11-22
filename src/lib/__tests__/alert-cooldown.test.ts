@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 /*
  * #3672: the cross-instance alert claim, its give-back and its one-day hold.
- * The store is an in-memory `alertCooldown` table implementing exactly the
+ * The store is the shared in-memory `alertCooldown` table, which answers the
  * where shapes these helpers use, and every write is also pinned by its call,
  * so dropping the own-stamp guard from a release or a hold fails here.
  */
@@ -23,56 +23,10 @@ import {
 } from "@/lib/alert-cooldown";
 import { createAlertCooldownStore } from "./support/alert-cooldown-store";
 
-type Where = { key: string; lastAlertedAt?: Date | { lt: Date } };
-
-function stampMatches(stored: Date, filter: Where["lastAlertedAt"]): boolean {
-  if (filter === undefined) return true;
-  if (filter instanceof Date) return stored.getTime() === filter.getTime();
-  return stored.getTime() < filter.lt.getTime();
-}
-
+/** The shared in-memory table (`support/alert-cooldown-store.ts`), as a helper's `store`. */
 function memoryStore() {
-  const rows = new Map<string, Date>();
-  const matching = (where: Where) =>
-    [...rows.entries()].filter(
-      ([key, at]) => key === where.key && stampMatches(at, where.lastAlertedAt)
-    );
-  const alertCooldown = {
-    updateMany: vi.fn(async ({ where, data }: { where: Where; data: { lastAlertedAt: Date } }) => {
-      const hits = matching(where);
-      for (const [key] of hits) rows.set(key, data.lastAlertedAt);
-      return { count: hits.length };
-    }),
-    create: vi.fn(async ({ data }: { data: { key: string; lastAlertedAt: Date } }) => {
-      if (rows.has(data.key)) {
-        throw Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
-      }
-      rows.set(data.key, data.lastAlertedAt);
-      return data;
-    }),
-    // Only the owed-marker listing's shape: a prefix and a "due by" stamp.
-    findMany: vi.fn(
-      async ({
-        where,
-      }: {
-        where: { key: { startsWith: string }; lastAlertedAt: { lte: Date } };
-      }) =>
-        [...rows.entries()]
-          .filter(
-            ([key, at]) =>
-              key.startsWith(where.key.startsWith) &&
-              at.getTime() <= where.lastAlertedAt.lte.getTime()
-          )
-          .sort((a, b) => a[1].getTime() - b[1].getTime())
-          .map(([key]) => ({ key }))
-    ),
-    deleteMany: vi.fn(async ({ where }: { where: Where }) => {
-      const hits = matching(where);
-      for (const [key] of hits) rows.delete(key);
-      return { count: hits.length };
-    }),
-  };
-  return { rows, store: { alertCooldown } as never, alertCooldown };
+  const { rows, delegate } = createAlertCooldownStore();
+  return { rows, store: { alertCooldown: delegate } as never, alertCooldown: delegate };
 }
 
 const KEY = "group-joiner-started-stay:g1";
@@ -198,9 +152,9 @@ describe("owed alert claims (#5407)", () => {
   const WAIT = 60 * 60 * 1000;
 
   function owedStore() {
-    const { rows, delegate } = createAlertCooldownStore();
+    const { rows, store, alertCooldown } = memoryStore();
     rows.set(OWED, T0);
-    return { rows, delegate, store: { alertCooldown: delegate } as never };
+    return { rows, delegate: alertCooldown, store };
   }
 
   it("lets exactly one of two callers claim a due marker", async () => {
