@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AgeTier } from "@prisma/client";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import {
   DIETARY_REQUIREMENTS_TOO_LONG_MESSAGE,
@@ -79,12 +80,9 @@ export async function PATCH(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = guestDietarySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

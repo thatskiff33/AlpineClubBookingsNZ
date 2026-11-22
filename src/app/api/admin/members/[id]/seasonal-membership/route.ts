@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { getAuditRequestContext } from "@/lib/audit";
 import { saveSeasonalMembershipAssignment } from "@/lib/seasonal-membership-assignments";
 import { requireAdmin } from "@/lib/session-guards";
@@ -45,12 +46,11 @@ export async function PATCH(
     );
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsedBody = saveSchema.safeParse(body);
   if (!parsedBody.success) {

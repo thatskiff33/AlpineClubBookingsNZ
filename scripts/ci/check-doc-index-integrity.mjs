@@ -2639,8 +2639,11 @@ function pullRequestBranchPoint(repoRoot, head, prBase) {
  *
  * Pull requests compare with the merge base of `HEAD` and the immutable base SHA
  * from their event (#5156; see {@link pullRequestBranchPoint}). Pushes to
- * `main` and to an `epic/**` integration branch (#3002) compare with the event's
- * immutable pre-push SHA — except the push that CREATES an epic branch, which
+ * `main` and to an `epic/**` integration branch (#3002) compare with the
+ * immutable `PUSH_BASE_SHA` — on `main` the last judged main commit, which
+ * `ci.yml` resolves because a newer merge may have replaced the previous
+ * commit's queued run (#5356, INV-OPS-021), and on an epic branch the event's
+ * pre-push SHA — except the push that CREATES an epic branch, which
  * carries no such SHA and compares with the branch point instead. Local feature
  * branches compare with their merge-base against `origin/main` (or `main`).
  * Every event/explicit ref fails closed when missing; `HEAD^1` is not a safe
