@@ -1,4 +1,5 @@
 import { xeroCalendarDate } from "@/lib/xero-provider-dates";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import { bookingWorthCents } from "@/lib/booking-payment-state";
 import { type Invoice } from "xero-node";
 import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
@@ -677,7 +678,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         const paymentNeverSettled =
           originalPaymentStatus === PaymentStatus.PENDING ||
           originalPaymentStatus === PaymentStatus.FAILED;
-        const bookingLabel = settlementPayment.bookingId.slice(0, 8);
+        const bookingLabel = storedShortBookingId(settlementPayment.bookingId);
 
         // #3369: this arm mints MEMBER CREDIT, and an organisation-owned
         // booking has no member account to mint into. It never had a usable one
