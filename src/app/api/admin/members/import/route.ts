@@ -1,3 +1,4 @@
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { memberImportIdentityKey } from "@/lib/member-import-identity";
 import { NextRequest, NextResponse } from "next/server";
 import type { AgeTier, Gender, Title } from "@prisma/client";
@@ -141,12 +142,9 @@ export async function POST(req: NextRequest) {
   );
   if (rateLimitResponse) return rateLimitResponse;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = memberImportBodySchema.safeParse(body);
   if (!parsed.success) {

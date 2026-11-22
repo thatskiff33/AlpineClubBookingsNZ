@@ -1015,7 +1015,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-017` | Third-party deployment and workflow container images require digest pins |
 | `INV-OPS-018` | First Bootstrap provisions restricted roles and a separate data key |
 | `INV-OPS-019` | Production deploys only a published annotated release tag, or a recorded override |
-| `INV-OPS-021` | Every main push run completes; releases tag only published commits |
+| `INV-OPS-021` | Newer merges replace main's queued runs; releases tag published commits |
 | `INV-OPS-022` | The documented Docker first install, seed included, is what CI runs |
 
 ## Product Configuration

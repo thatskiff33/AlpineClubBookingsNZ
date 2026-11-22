@@ -220,7 +220,7 @@ describe("blocking CI wiring", () => {
     expect(verify).toContain(
       "BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false" +
         " && !startsWith(github.ref, 'refs/heads/epic/'))" +
-        " && github.event.before || 'origin/main' }}",
+        " && (steps.main-push-base.outputs.sha || github.event.before) || 'origin/main' }}",
     );
   });
 

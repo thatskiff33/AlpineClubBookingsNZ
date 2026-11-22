@@ -1,3 +1,4 @@
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -60,14 +61,13 @@ export async function POST(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  let body: unknown;
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = importMemberContactSchema.safeParse(body);
   if (!parsed.success) {

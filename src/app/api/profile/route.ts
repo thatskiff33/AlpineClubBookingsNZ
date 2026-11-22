@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
@@ -130,12 +131,9 @@ export async function PUT(req: NextRequest) {
     return inactiveResponse;
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   // ALP-718: a connection sends only its allow-list; dietary needs and the
   // lobby phone opt-in are refused, not silently dropped.
