@@ -17,6 +17,7 @@
  *
  * Ordinary Vitest runs skip the file; CI's real-PostgreSQL job runs it against the guarded loopback race database.
  */
+import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -73,12 +74,22 @@ const ADMIN = `${PREFIX}admin`;
 const PRICE = 20_000;
 let prisma: PrismaClient;
 
-/** A card booking the duplicate member owns, settled on the ledger and in the journal, with a PENDING appeal. */
-async function appealOnDuplicatesBooking(tag: string) {
-  const loser = `${PREFIX}loser-${tag}`;
-  const master = `${PREFIX}master-${tag}`;
+/**
+ * A merge pair's member ids, fresh each run. A merge's journal event is keyed by its members, not a booking, so it
+ * outlives the booking cleanup; fixed ids would meet the last run's merge on the same database and replay it.
+ */
+const MERGE_MEMBERS = `${PREFIX}${randomUUID().slice(0, 8)}-`;
+async function mergePairFor(tag: string) {
+  const loser = `${MERGE_MEMBERS}loser-${tag}`;
+  const master = `${MERGE_MEMBERS}master-${tag}`;
   await createRaceMember(prisma, loser);
   await createRaceMember(prisma, master);
+  return { loser, master };
+}
+
+/** A card booking the duplicate member owns, settled on the ledger and in the journal, with a PENDING appeal. */
+async function appealOnDuplicatesBooking(tag: string) {
+  const { loser, master } = await mergePairFor(tag);
   const id = `${PREFIX}b-${tag}`;
   await createHistoryBooking(prisma, { ...names, memberId: loser }, id, { payment: { amountCents: PRICE, source: "STRIPE", intent: `pi_${id}` } });
   await settleHistoryByCard(id, PRICE);
@@ -177,10 +188,7 @@ async function conservationHolds(bookingId: string) {
 
     /** A card booking the duplicate owns, settled; a PENDING request of the duplicate's parks a merge right after its owner move. */
     async function settled(tag: string) {
-      const loser = `${PREFIX}loser-${tag}`;
-      const master = `${PREFIX}master-${tag}`;
-      await createRaceMember(prisma, loser);
-      await createRaceMember(prisma, master);
+      const { loser, master } = await mergePairFor(tag);
       const id = `${PREFIX}b-${tag}`;
       await createHistoryBooking(prisma, { ...names, memberId: loser }, id, { payment: { amountCents: PRICE, source: "STRIPE", intent: `pi_${id}` } });
       await settleHistoryByCard(id, PRICE);
