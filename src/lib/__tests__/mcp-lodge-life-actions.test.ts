@@ -63,14 +63,14 @@ vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/logger", () => ({ default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
 // The board's reader and serializer stay real; only the writer is replaced.
 vi.mock("@/lib/club-posts", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/club-posts")>()),
+  ...((await importOriginal()) as typeof import("@/lib/club-posts")),
   createClubPost: h.createClubPost,
 }));
 vi.mock("@/lib/club-post-sharing", () => ({ shareOnePost: vi.fn(async () => undefined) }));
 vi.mock("@/lib/servernz-config", () => ({ isServerNzConfigured: vi.fn(async () => true) }));
 // The view mapper and the sign-off rules stay real.
 vi.mock("@/lib/induction", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/induction")>()),
+  ...((await importOriginal()) as typeof import("@/lib/induction")),
   getInductionForMember: h.getInductionForMember,
   getInductionById: h.getInductionById,
   listInductionsAwaitingSignOff: h.listInductionsAwaitingSignOff,
@@ -84,7 +84,7 @@ vi.mock("@/lib/work-party", () => ({
   findActiveWorkPartyEventsForRange: h.findActiveWorkPartyEventsForRange,
 }));
 vi.mock("@/lib/maintenance-reports", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/maintenance-reports")>()),
+  ...((await importOriginal()) as typeof import("@/lib/maintenance-reports")),
   loadActiveMaintenanceQuestions: h.loadActiveMaintenanceQuestions,
   createMaintenanceReport: h.createMaintenanceReport,
 }));

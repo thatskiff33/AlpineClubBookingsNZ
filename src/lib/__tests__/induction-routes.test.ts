@@ -23,7 +23,7 @@ vi.mock("@/lib/hut-leader", () => ({
 
 vi.mock("@/lib/induction", async (importOriginal) => {
   // The route's own view mapper, so the test reads what the route really sends.
-  const { memberInductionView } = await importOriginal<typeof import("@/lib/induction")>();
+  const { memberInductionView } = (await importOriginal()) as typeof import("@/lib/induction");
   class InductionError extends Error {
     status: number;
 
