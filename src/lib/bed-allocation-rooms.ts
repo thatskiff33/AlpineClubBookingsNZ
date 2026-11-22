@@ -29,6 +29,8 @@ import type { DashboardRoom } from "@/lib/bed-allocation-board-payload";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { assertGlobalLockHeld } from "@/lib/global-lock-held";
 import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
+// The bulk caps are the request schema's, held with it (ALP-719).
+import { MAX_BULK_BEDS_PER_ROOM, MAX_BULK_ROOMS } from "@/lib/admin-bookings-schemas/beds";
 
 export interface RoomsAndBedsConfigurationPayload {
   rooms: DashboardRoom[];
@@ -211,9 +213,6 @@ export async function createBedAllocationRoom(input: {
     },
   });
 }
-
-export const MAX_BULK_ROOMS = 50;
-export const MAX_BULK_BEDS_PER_ROOM = 20;
 
 /**
  * Seed a lodge with `roomCount` rooms of `bedsPerRoom` beds each

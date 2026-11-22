@@ -1,8 +1,4 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
-import {
-  MAX_BED_ALLOCATION_RANGE_NIGHTS,
-} from "@/lib/bed-allocation-date-range";
 import {
   manuallyAllocateBedForNights,
 } from "@/lib/bed-allocation-manual-writes";
@@ -13,19 +9,16 @@ import {
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import { formatDateOnly } from "@/lib/date-only";
+import { bedAllocationBulkBodySchema } from "@/lib/admin-bookings-schemas/beds";
+import {
+  ADMIN_BED_ALLOCATION_BULK_CONNECTION_SHAPE,
+  type BedAllocationBulkAnswer,
+} from "@/lib/connection-shapes/bookings-beds";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 // requireAdmin() is enforced by requireBedAllocationWrite().
-const bulkAllocationSchema = z
-  .object({
-    bookingGuestId: z.string().min(1),
-    bedId: z.string().min(1),
-    stayDates: z
-      .array(z.string().min(1))
-      .min(1)
-      .max(MAX_BED_ALLOCATION_RANGE_NIGHTS),
-  })
-  .strict();
 
+/** Also the AI app action `allocate_guest_bed_nights` (ALP-719). */
 export async function POST(request: Request) {
   const guard = await requireBedAllocationWrite();
   if (!guard.ok) return guard.response;
@@ -34,7 +27,7 @@ export async function POST(request: Request) {
     const json = await parseJsonRequestBody(request);
     if (!json.ok) return json.response;
 
-    const body = bulkAllocationSchema.safeParse(json.body);
+    const body = bedAllocationBulkBodySchema.safeParse(json.body);
     if (!body.success) {
       return NextResponse.json(
         { error: "Invalid input", details: body.error.flatten() },
@@ -92,7 +85,7 @@ export async function POST(request: Request) {
       });
     }
 
-    return NextResponse.json({
+    const answer: BedAllocationBulkAnswer = {
       allocations: result.allocations.map((allocation) => ({
         id: allocation.id,
         bookingId: allocation.bookingId,
@@ -104,7 +97,8 @@ export async function POST(request: Request) {
       })),
       conflicts: result.conflicts,
       skipped: result.skipped,
-    });
+    };
+    return connectionJson(request, answer, ADMIN_BED_ALLOCATION_BULK_CONNECTION_SHAPE);
   } catch (error) {
     return bedAllocationErrorResponse(error);
   }

@@ -1,6 +1,4 @@
 import { NextResponse } from "next/server";
-import { BedType } from "@prisma/client";
-import { z } from "zod";
 import {
   createBedAllocationBed,
 } from "@/lib/bed-allocation-beds";
@@ -11,21 +9,13 @@ import {
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
+import { bedAllocationBedCreateBodySchema } from "@/lib/admin-bookings-schemas/beds";
+import { ADMIN_LODGE_BED_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-beds";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 // requireAdmin() is enforced by requireBedInventoryWrite().
-const bedSchema = z
-  .object({
-    roomId: z.string().min(1),
-    name: z.string().trim().min(1).max(100),
-    sortOrder: z.coerce.number().int().min(0).max(10000).default(0),
-    active: z.boolean().default(true),
-    // Descriptive bed type (#1675); mirrors the Prisma BedType enum.
-    bedType: z.nativeEnum(BedType).default(BedType.SINGLE),
-    // Bunk-pairing label; validated server-side in createBedAllocationBed.
-    bunkGroup: z.string().trim().max(50).nullable().optional(),
-  })
-  .strict();
 
+/** Also the AI app action `create_lodge_bed` (ALP-719). */
 export async function POST(request: Request) {
   const guard = await requireBedInventoryWrite();
   if (!guard.ok) return guard.response;
@@ -34,7 +24,7 @@ export async function POST(request: Request) {
     const json = await parseJsonRequestBody(request);
     if (!json.ok) return json.response;
 
-    const body = bedSchema.safeParse(json.body);
+    const body = bedAllocationBedCreateBodySchema.safeParse(json.body);
     if (!body.success) {
       return NextResponse.json(
         { error: "Invalid input", details: body.error.flatten() },
@@ -61,7 +51,7 @@ export async function POST(request: Request) {
       },
     });
 
-    return NextResponse.json({ bed }, { status: 201 });
+    return connectionJson(request, { bed }, ADMIN_LODGE_BED_CONNECTION_SHAPE, { status: 201 });
   } catch (error) {
     return bedAllocationErrorResponse(error);
   }

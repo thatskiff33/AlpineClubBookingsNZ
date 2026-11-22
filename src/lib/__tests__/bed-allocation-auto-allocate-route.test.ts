@@ -14,7 +14,9 @@ vi.mock("@/lib/admin-bed-allocation-routes", () => ({
   bedAllocationErrorResponse: () =>
     Response.json({ error: "Bed allocation request failed" }, { status: 500 }),
 }));
-vi.mock("@/lib/bed-allocation-date-range", () => ({
+// The real limits stay: the route's request schema reads them (ALP-719).
+vi.mock("@/lib/bed-allocation-date-range", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/bed-allocation-date-range")),
   parseBedAllocationDateRange: mocks.parseDateRange,
 }));
 vi.mock("@/lib/bed-allocation-auto-allocate", () => ({
