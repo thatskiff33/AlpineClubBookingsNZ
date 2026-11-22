@@ -8,6 +8,7 @@ import { normaliseSignInEmail } from "@/lib/login-throttle";
 import logger from "@/lib/logger";
 import { issueActionToken } from "@/lib/action-tokens";
 import { SELF_SERVICE_PASSWORD_RESET_TTL_MS } from "@/lib/password-reset";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const forgotPasswordSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -25,12 +26,11 @@ export async function POST(req: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.forgotPassword, req);
   if (rateLimited) return rateLimited;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   try {
     const parsed = forgotPasswordSchema.safeParse(body);

@@ -15,6 +15,7 @@ import {
 import { committeeRolePatchSchema } from "@/lib/forms/committee-role-schema";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const paramsSchema = z.object({
   id: z.string().min(1),
@@ -60,12 +61,11 @@ export async function PATCH(
     );
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = committeeRolePatchSchema.safeParse(body);
   if (!parsed.success) {

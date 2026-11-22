@@ -7,6 +7,7 @@ import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { sendFamilyGroupInvitationEmail } from "@/lib/email";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const inviteSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -31,12 +32,9 @@ export async function POST(req: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.familyGroupJoinRequest, req);
   if (rateLimited) return rateLimited;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = inviteSchema.safeParse(body);
   if (!parsed.success) {

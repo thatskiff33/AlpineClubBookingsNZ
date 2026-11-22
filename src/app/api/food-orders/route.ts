@@ -34,6 +34,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { applyMemberScopedRateLimit } from "@/lib/rate-limit";
 import { requireActiveSession } from "@/lib/session-guards";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 /**
  * The member's Order food door (fork #121): `GET` returns what the form needs,
@@ -123,12 +124,11 @@ export async function POST(request: NextRequest) {
   );
   if (limited) return limited;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = postSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid input" }, { status: 400 });

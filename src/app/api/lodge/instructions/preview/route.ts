@@ -11,6 +11,7 @@ import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { getSanitizedLodgeInstructions } from "@/lib/lodge-instructions";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { HUT_LEADER_PIN_PATTERN } from "@/lib/hut-leader-pin";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 /**
  * Remote, PIN-gated lodge-instructions preview (#1642).
@@ -66,12 +67,9 @@ export async function POST(req: NextRequest) {
     return limited;
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
