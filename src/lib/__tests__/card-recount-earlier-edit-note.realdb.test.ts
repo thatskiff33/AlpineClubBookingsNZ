@@ -9,8 +9,13 @@
  * edit, not the payment, and only a bank transfer's notes were found by
  * invoice, so the second note's recount (`repairRefundedPaymentBusinessState`)
  * read $30, not $80: the Stripe raise-only floor kept the ledger but raised a
- * false "Xero may be missing a credit note" alert, and a ledger Stripe had not
- * caught up on stayed understated.
+ * false "Xero may be missing a credit note" alert.
+ *
+ * The cap (owner decision 23 Nov 2026, #4444): a card payment's recounted
+ * total never rises above the refunds Stripe recorded
+ * (`capCardRefundedTotalAtStripeRefunds`, the #3653 organiser-child cap), so
+ * two notes for one refund cannot push it past Stripe, and a total Xero shows
+ * before Stripe's sync waits for that sync.
  *
  * The trace first: since #3993 an edit refunded to the card queues the
  * payment's own refund note and no modification note
@@ -284,15 +289,26 @@ let refundCreatedSeconds = 0;
       expect(divergenceAlerts).toEqual([]);
     });
 
-    it("MUTATION (2): Stripe has recorded only the $50; the second note's recount raises the total to $80", async () => {
+    it("MUTATION (2): Stripe has recorded only the $50; the recount reads $80 but waits for Stripe, then follows its sync", async () => {
       await bothEditNotesSynced({ afterFirst: [FIRST], afterSecond: [FIRST] });
 
       // Before #4444: $30 read, below the $50 ledger - kept at $50 and alerted.
+      // Now $80 read, capped at the $50 Stripe recorded (owner decision 23 Nov 2026): no raise, no alert.
+      expect(await payment()).toEqual({ refundedAmountCents: FIRST_CENTS, status: "PARTIALLY_REFUNDED" });
+      expect(divergenceAlerts).toEqual([]);
+
+      // Stripe's sync then records the $30: the total follows, and a later recount keeps it without an alert.
+      await syncCharge([FIRST, SECOND]);
+      expect(await payment()).toEqual({ refundedAmountCents: FIRST_CENTS + SECOND_CENTS, status: "PARTIALLY_REFUNDED" });
+      await inbound(SECOND_NOTE, SECOND_CENTS);
       expect(await payment()).toEqual({ refundedAmountCents: FIRST_CENTS + SECOND_CENTS, status: "PARTIALLY_REFUNDED" });
       expect(divergenceAlerts).toEqual([]);
     });
 
-    it("MUTATION (3): a note linked to the payment as its refund note and allocated to its invoice counts once", async () => {
+    // The cap at Stripe's refunds hides a card double count here; the count-once
+    // mutation is caught by this test's unit twin (the cap set aside) and the
+    // bank-transfer cases in xero-credit-note-repairs and allocation-write-real-rules.
+    it("(3): a note linked to the payment as its refund note and allocated to its invoice counts once", async () => {
       await syncCharge([FIRST]);
       await editNote(EDIT_1, FIRST_NOTE, FIRST_CENTS);
       // The same note also linked as the payment's refund note, as a refund-note repair links one.
@@ -306,6 +322,7 @@ let refundCreatedSeconds = 0;
       await inbound(FIRST_NOTE, FIRST_CENTS);
       // Synced itself: once as the payment's note, not again by its allocation.
       expect((await payment()).refundedAmountCents).toBe(FIRST_CENTS);
+      await syncCharge([FIRST, SECOND]);
       await editNote(EDIT_2, SECOND_NOTE, SECOND_CENTS);
       await inbound(SECOND_NOTE, SECOND_CENTS);
 
@@ -321,7 +338,7 @@ let refundCreatedSeconds = 0;
       expect((await payment()).refundedAmountCents).toBe(FIRST_CENTS);
     });
 
-    it("(6) old stored shape, #3993 review: one $50 card refund recorded as both the edit's allocated note and a refund note counts twice", async () => {
+    it("MUTATION (6) old stored shape, #3993 review: one $50 card refund recorded as both the edit's allocated note and a refund note never passes Stripe's figure", async () => {
       // Before #3993 one card refund of a price cut could leave two notes: the
       // edit's modification note (here allocated to the invoice) and the refund
       // note the nightly self-heal raised on the payment for the same refund.
@@ -335,27 +352,26 @@ let refundCreatedSeconds = 0;
       });
       await editNote(EDIT_1, FIRST_NOTE, FIRST_CENTS);
       await inbound(FIRST_NOTE, FIRST_CENTS);
-      // The edit note's own sync already counts both, on main as here: $50 + $50.
-      expect((await payment()).refundedAmountCents).toBe(2 * FIRST_CENTS);
+      // The edit note's own sync reads both, $50 + $50; capped at the $50 Stripe recorded.
+      expect((await payment()).refundedAmountCents).toBe(FIRST_CENTS);
 
       await syncCharge([FIRST, SECOND]);
       await editNote(EDIT_2, SECOND_NOTE, SECOND_CENTS);
       await inbound(SECOND_NOTE, SECOND_CENTS);
 
-      // A later note's recount reads the links: $50 + $50 + $30. Two note ids,
-      // so the count-once rule does not apply. On main the Stripe sync above had
-      // put the ledger back to $80 and the recount read $50 + $30, so it stayed
-      // $80: this change makes the double count stick. This pins what the
-      // recount writes until the owner picks a rule (#4444).
-      expect(await payment()).toEqual({ refundedAmountCents: 2 * FIRST_CENTS + SECOND_CENTS, status: "PARTIALLY_REFUNDED" });
+      // A later note's recount reads the links: $50 + $50 + $30 = $130. Two note
+      // ids, so the count-once rule does not apply; the cap at the $80 Stripe
+      // recorded does (owner decision 23 Nov 2026, #4444). No alert: the floor
+      // alerts only below the ledger.
+      expect(await payment()).toEqual({ refundedAmountCents: FIRST_CENTS + SECOND_CENTS, status: "PARTIALLY_REFUNDED" });
       expect(divergenceAlerts).toEqual([]);
     });
 
     it("(5): an allocation Xero removed (its link retired, #4447) is not counted", async () => {
-      // No Stripe refund recorded: the notes alone set the total.
+      // Stripe holds both refunds, so the cap allows $80 and only the alert tells the counts apart.
+      await syncCharge([FIRST, SECOND]);
       await editNote(EDIT_1, FIRST_NOTE, FIRST_CENTS);
       await inbound(FIRST_NOTE, FIRST_CENTS);
-      expect((await payment()).refundedAmountCents).toBe(FIRST_CENTS);
       // Xero then lists the first note unallocated: its allocation link is turned off.
       await inbound(FIRST_NOTE, FIRST_CENTS, { allocatedTo: null });
       expect(
@@ -363,10 +379,11 @@ let refundCreatedSeconds = 0;
       ).toBe(0);
 
       await editNote(EDIT_2, SECOND_NOTE, SECOND_CENTS);
+      divergenceAlerts = [];
       await inbound(SECOND_NOTE, SECOND_CENTS);
 
-      // Counting the retired $50 would read $80. The links read $30; the card floor keeps the $50 recorded, and says so.
-      expect((await payment()).refundedAmountCents).toBe(FIRST_CENTS);
+      // Counting the retired $50 would read $80, no alert. The links read $30; the card floor keeps the $80 recorded, and says so.
+      expect((await payment()).refundedAmountCents).toBe(FIRST_CENTS + SECOND_CENTS);
       expect(divergenceAlerts).toHaveLength(1);
     });
   },

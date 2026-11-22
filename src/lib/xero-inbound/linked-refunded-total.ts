@@ -11,7 +11,7 @@
  * locked transactions. #4370 (`INV-PAY-155`): what card refunds
  * Stripe failed later take off is subtracted here, so every writer keeps that
  * rule. It writes nothing and takes no lock; callers clamp and floor what it
- * returns.
+ * returns, and the recount caps a card payment's at Stripe's refunds (#4444).
  */
 import { PaymentTransactionKind, type PaymentSource, type PaymentStatus, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";

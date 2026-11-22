@@ -2045,6 +2045,48 @@ those ids, one call each. `--apply` adds one confirming call per listed
 candidate payment it checks; a `--payment` id's direct answer is already that
 confirmation.
 
+### Card recount Stripe cap
+
+`INV-PAY-126`, #4444. The inbound recount (`repairRefundedPaymentBusinessState`,
+through `decideLinkedRefundedTotalCents`) finds every payment's modification
+notes by its Xero invoice, whatever its source. The inbound sync links an
+edit's note and its allocation to the edit, not the payment, so before #4444 a
+later note's recount dropped a card payment's earlier edit notes and raised a
+false refund-ledger-divergence alert. Each note id counts once per payment: a
+note the payment links as its own refund or account note, with an amount the
+recount could read, is not added again by its allocation.
+
+**The cap (owner decision, 23 Nov 2026, on
+[#4444](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4444)).** A
+card payment's recounted total never rises above the refunds Stripe recorded
+for it: the larger of its stored total and its `PaymentRefund` rows, failed and
+cancelled ones left out (`capCardRefundedTotalAtStripeRefunds`). It is the cap
+#3653 set for organiser children (`INV-PAY-114`), now applied to every card
+payment. Before #3993 one card refund could be raised as two Xero notes: the
+edit's note allocated to the invoice and the nightly self-heal's refund note on
+the payment. They have two ids, so counting each note once does not catch them;
+the cap keeps them from reading as twice the money. The accepted cost: where
+Xero shows a refund before Stripe's sync records it, the total waits for that
+sync, which raises it itself. The cap raises no alert; the raise-only floor
+(`INV-ADDPAY-021`) still alerts on a Xero total below the ledger. The kept
+settle and the allocation write are bank-transfer only and take no cap.
+
+Stated limit: counting once is per payment. A note linked directly to one
+payment and allocated to another payment's invoice counts on both. The cap
+bounds that for a card payment; a bank transfer's is bounded only by its
+amount paid, as before #4444.
+
+Pinned by `xero-credit-note-repairs.test.ts`,
+`card-recount-earlier-edit-note.realdb.test.ts`,
+`allocation-write-real-rules.test.ts`,
+`account-credit-modification-notes.test.ts`,
+`xero-booking-edit-settlement.test.ts`,
+`xero-repair-known-modification-refund.test.ts`,
+`kept-settle-correction-recount.test.ts`,
+`retire-unlisted-credit-note-allocations.test.ts`,
+`ib-settle-from-cash.realdb.test.ts` and
+`kept-settle-queued-cancel.realdb.test.ts`.
+
 ## Flow 3 — Repair and hardening
 
 Reconciliation heals what Xero tells us about; repair audits what we *should*
