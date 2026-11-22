@@ -10,7 +10,7 @@ import { loadOwnedOtherLodges } from "@/lib/servernz-settings";
  * currently holds the Booking Officer committee role.
  *
  * When a member is assigned (or removed from) the Booking Officer committee role,
- * the OtherLodge rows the central server says this club OWNS (#52) have their
+ * the OtherLodge rows the central server says this club OWNS (triyder/AlpineClubBookingsNZ#52) have their
  * bookingOfficerName / bookingOfficerEmail / bookingOfficerPhone (and, via Prisma's
  * `@updatedAt`, `updatedAt`) refreshed. Name and phone come from the assigned
  * member; the email is the ROLE's shared contact address (e.g. bookings@club), not
@@ -155,7 +155,7 @@ async function applyBookingOfficerContact(
     centralId: { in: owned.lodges.map((l) => l.id) },
   };
 
-  // Hidden lodges (#58) are not written into: they are deleted lodges kept.
+  // Hidden lodges (triyder/AlpineClubBookingsNZ#58) are not written into: they are deleted lodges kept.
   const rows = await db.otherLodge.findMany({
     where: { ...candidates, ...visibleOtherLodgeWhere },
     select: {

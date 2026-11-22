@@ -453,8 +453,8 @@ describe("Admin modules API", () => {
     });
     expect(mocks.clubModuleSettingsUpsert).not.toHaveBeenCalled();
     // The PUT handler's pre-write read must use the explicit column select
-    // (#153), as #150 established for the other reads, and the write's
-    // implicit RETURNING (update or upsert) needs the same select (#175).
+    // (hoppers99/AlpineClubBookingsNZ#153), as hoppers99/AlpineClubBookingsNZ#150 established for the other reads, and the write's
+    // implicit RETURNING (update or upsert) needs the same select (hoppers99/AlpineClubBookingsNZ#175).
     // Neither reaches the upsert's INSERT column list, so neither makes a
     // DROP safe (INV-OPS-005).
     expect(mocks.clubModuleSettingsFindUnique).toHaveBeenCalledWith({

@@ -22,7 +22,7 @@ export const FOOD_ORDER_MEMBER_RATE_LIMIT: RateLimitConfig = {
 };
 
 /**
- * The guard every member food-order route opens with (fork #121), so the four
+ * The guard every member food-order route opens with (fork triyder/AlpineClubBookingsNZ#121), so the four
  * handlers cannot apply it in different orders.
  *
  * 1. THE MODULE, FIRST. With `foodOrders` off the route answers the same 404 the

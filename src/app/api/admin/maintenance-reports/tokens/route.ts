@@ -13,6 +13,7 @@ import {
 } from "@/lib/maintenance-report-tokens";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 /**
  * QR sign management (#2780). Lodge Operations `view`/`edit`.
@@ -72,12 +73,11 @@ export async function POST(request: NextRequest) {
   });
   if (!admin.ok) return admin.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = postSchema.safeParse(body);
   if (!parsed.success) {
@@ -137,12 +137,11 @@ export async function PATCH(request: NextRequest) {
   });
   if (!admin.ok) return admin.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {

@@ -3,7 +3,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { buildDisplayState } from "@/lib/lodge-display-state";
 import { resolveDisplayTemplate } from "@/lib/lodge-display/template-resolution";
 
-// Admin display preview (fork issue #34): the same read-only discipline as
+// Admin display preview (fork issue hoppers99/AlpineClubBookingsNZ#34): the same read-only discipline as
 // the kiosk per-account preview (upstream #1721) — GET-only, admin-only, and
 // it renders from the SAME privacy-reduced serialiser the real display uses,
 // so a preview can never show more than a lobby wall would (AC3). No write

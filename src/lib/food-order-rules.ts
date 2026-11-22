@@ -1,5 +1,5 @@
 /**
- * The food-order limits and pure rules (fork #121).
+ * The food-order limits and pure rules (fork triyder/AlpineClubBookingsNZ#121).
  *
  * A CLIENT-SAFE MODULE ON PURPOSE, like `maintenance-report-limits.ts`: the
  * order form, the history page and the settings card import these in the
@@ -9,7 +9,7 @@
  */
 import { MAX_INTEGER_CENTS } from "@/lib/money-input";
 
-/** An order holds 1 to 50 item lines (fork #121 owner decision 13, issue item 6). */
+/** An order holds 1 to 50 item lines (fork triyder/AlpineClubBookingsNZ#121 owner decision 13, issue item 6). */
 export const FOOD_ORDER_MIN_ITEMS = 1;
 export const FOOD_ORDER_MAX_ITEMS = 50;
 

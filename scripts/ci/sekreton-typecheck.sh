@@ -35,4 +35,14 @@ if [ "$mem_kb" -lt "$MIN_KB" ]; then
   exit 0
 fi
 
+# Passing the memory check is not enough on its own: Node caps its heap at
+# about 2 GiB unless told otherwise, so a run on an 8 GiB runner still died
+# out of memory (#5234). Give tsc the runner's memory less 1.5 GiB of headroom
+# for everything else, unless the caller already chose a heap size.
+heap_mb=$(( mem_kb / 1024 - 1536 ))
+case " ${NODE_OPTIONS:-} " in
+  *" --max-old-space-size="* | *" --max_old_space_size="*) ;;
+  *) export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=$heap_mb" ;;
+esac
+
 pnpm run typecheck:src

@@ -7,7 +7,7 @@ import { logAudit } from "@/lib/audit";
 import { validateTemplateForSave } from "@/lib/lodge-display/authoring-validation";
 import { isBuiltInDisplayTemplateKey } from "@/lib/lodge-display/built-in-seeds";
 
-// Admin lobby-display TEMPLATE management (fork issue #79, LTV-033, ADR-003 §1).
+// Admin lobby-display TEMPLATE management (fork issue hoppers99/AlpineClubBookingsNZ#79, LTV-033, ADR-003 §1).
 // A Template is built on a Layout: it fills each declared slot with content or
 // an embedded module, layers CSS overrides on the layout default, carries the
 // footer, and renders dynamically against whichever lodge its display is bound

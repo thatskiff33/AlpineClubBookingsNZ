@@ -17,7 +17,7 @@ import { withOtherLodgesSyncClaim } from "@/lib/servernz-sync-claim";
 /**
  * The setup page's second step after a key save: pull the central server's
  * lodges, then link this club's lodges to the ones the server says it owns
- * (`Lodge.centralLodgeId`, #62), so the central lodge search can ask about
+ * (`Lodge.centralLodgeId`, triyder/AlpineClubBookingsNZ#62), so the central lodge search can ask about
  * free beds without the administrator finding the Central lodge card.
  *
  * NOTHING IS LINKED WITHOUT THE ADMINISTRATOR'S SAVE (owner decision,
@@ -72,7 +72,7 @@ export interface LodgeLinkStepResult {
 export async function runLodgeLinkStep(actorMemberId: string): Promise<LodgeLinkStepResult> {
   const settings = await loadServerNzSettings();
   if (!settings.otherLodgesEnabled) return { step: { kind: "sharing-off" }, download: "skipped" };
-  // The recorded version first, as the Download button does (#66).
+  // The recorded version first, as the Download button does (triyder/AlpineClubBookingsNZ#66).
   if (settings.baseUrl) assertStoredServerVersionMatches(settings.serverVersion);
   const pulled = await withOtherLodgesSyncClaim(() => downloadOtherClubsFromServer());
   if (pulled !== null) {

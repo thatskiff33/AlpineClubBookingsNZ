@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { usableCentralId } from "@/lib/other-lodge-central-id";
 import { canRenameOtherLodge, ownedCentralLodgesSchema, ownsOtherLodge } from "@/lib/other-lodges";
 
-describe("usableCentralId (#64)", () => {
+describe("usableCentralId (triyder/AlpineClubBookingsNZ#64)", () => {
   it("keeps an id that could key a row", () => {
     expect(usableCentralId("cmabc123")).toBe("cmabc123");
     expect(usableCentralId("x".repeat(64))).toBe("x".repeat(64));
@@ -21,7 +21,7 @@ describe("usableCentralId (#64)", () => {
   });
 });
 
-describe("ownsOtherLodge: by central id only (#69)", () => {
+describe("ownsOtherLodge: by central id only (triyder/AlpineClubBookingsNZ#69)", () => {
   const owned = [{ id: "c-1", name: "Ruapehu Lodge" }];
 
   it("owns a keyed row by its id, whatever it is called here", () => {
@@ -43,7 +43,7 @@ describe("ownsOtherLodge: by central id only (#69)", () => {
   });
 });
 
-describe("canRenameOtherLodge (#64)", () => {
+describe("canRenameOtherLodge (triyder/AlpineClubBookingsNZ#64)", () => {
   it("is true only for an owned lodge that is keyed", () => {
     const mine = [{ id: "c-1", name: "Mine" }];
     expect(canRenameOtherLodge(mine, { centralId: "c-1" })).toBe(true);
@@ -53,7 +53,7 @@ describe("canRenameOtherLodge (#64)", () => {
   });
 });
 
-describe("one central lodge id rule for the pull's lodges and its ownLodges (#64)", () => {
+describe("one central lodge id rule for the pull's lodges and its ownLodges (triyder/AlpineClubBookingsNZ#64)", () => {
   it("refuses a padded owned id exactly as it refuses a padded lodge id", () => {
     expect(ownedCentralLodgesSchema.safeParse([{ id: " c-1", name: "Mine" }]).success).toBe(false);
     expect(usableCentralId(" c-1")).toBeNull();

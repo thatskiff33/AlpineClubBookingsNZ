@@ -17,7 +17,7 @@ import {
 //   2. `resolveDisplayTemplate` still backs the admin `/api/admin/display/preview`
 //      testing path (preview the exact fallback board by built-in key).
 //
-// The device `templateKey` column was removed in #86 (LTV-040); no device ever
+// The device `templateKey` column was removed in hoppers99/AlpineClubBookingsNZ#86 (LTV-040); no device ever
 // carries a key now, so `resolveDisplayTemplateForDevice` is called with a null
 // key and returns the club default. The `templateKey` here is a registry key
 // (the built-in identifier), not a per-device binding. Client-safe: pure data,

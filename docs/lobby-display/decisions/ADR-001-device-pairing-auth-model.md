@@ -1,8 +1,8 @@
 # ADR-001: Lobby display device pairing and auth model
 
 **Status:** Accepted (2026-07-11)
-**Issue:** fork #27 (LTV-002), epic #25
-**Deciders:** fork owner (delivery authorisation on epic #25), implementation agent
+**Issue:** fork hoppers99/AlpineClubBookingsNZ#27 (LTV-002), epic hoppers99/AlpineClubBookingsNZ#25
+**Deciders:** fork owner (delivery authorisation on epic hoppers99/AlpineClubBookingsNZ#25), implementation agent
 
 ## Context
 

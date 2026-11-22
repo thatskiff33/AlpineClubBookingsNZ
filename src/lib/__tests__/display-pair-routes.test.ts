@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Issue #27 (LTV-002): route-level behaviour of the display pairing surface —
+// Issue hoppers99/AlpineClubBookingsNZ#27 (LTV-002): route-level behaviour of the display pairing surface —
 // the full pairing lifecycle, the heartbeat auth matrix (a rejected token
 // never updates lastSeenAt, AC6), the admin bind endpoint's guards, and the
 // module-gating decoupling from the kiosk flag (ADR-001 §1).

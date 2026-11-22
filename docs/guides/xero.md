@@ -54,6 +54,17 @@ does not record a refund (#4315).
    > what did and did not reach Xero. A booking whose records hold neither is
    > listed, and **Trigger All Missing** raises an invoice for it.
 
+   > **Group mismatches** counts two kinds of entry (#5234). One *to re-sync*
+   > is a member a grouping rule matches whose Xero contact sits in the wrong
+   > managed group; the bulk re-sync on **Xero member grouping** repairs it.
+   > One *to review by hand* is a member no rule matches (often an
+   > organisation) whose contact still sits in a managed group. The re-sync
+   > never touches those, so the panel names each one with the group it sits
+   > in: remove the contact from that group in Xero, or add a grouping rule
+   > that covers the member, then press the panel's **Refresh**, which
+   > re-fetches both kinds from Xero. Stuck States counts both kinds and its
+   > link opens the panel.
+
    > The whole Xero area (`/admin/xero`, `/admin/xero/*`, `/admin/internet-banking`)
    > is gated by the **Xero integration** module (`src/config/feature-routes.ts`)
    > and returns *Not Found* when it is off. The demo seed leaves Xero disabled,
@@ -457,6 +468,22 @@ same message and is retried by hand once the category is mapped
 Nothing changes on upgrade: until you map a category, every document is sent
 exactly as before. How it works:
 [`INV-CONFIG-008`](../invariants/product-configuration.md#inv-config-008).
+
+**The app checks a rate against its own copy of Xero's tax rates, which can be
+up to 15 minutes old** (#5375). When the app sends a line in a mapped category,
+such as the Exempt line of a spent opening credit, it reads Xero's tax rates
+from a copy it keeps for up to 15 minutes (`CACHE_TTL_MS` in
+`src/lib/xero-tax-rates.ts`); it does not ask Xero each time. So for up to 15
+minutes after a rate is changed or archived in Xero, the app can still send a
+line with that rate. Once the copy is renewed, a line with that rate is no
+longer sent: it waits in the Xero queue or, on a card booking, the booking's
+invoice operation fails, as described above. This card, the **GST / tax
+treatment** card and the Xero health check also read a copy of that age, so
+they can take as long to show the change. A save does not use a copy: mapping
+a category on this card, saving a GST-registered treatment, and the Exempt
+check made when the **Opening Credits** account is saved each read Xero's
+rates fresh. A copy belongs to the Xero organisation it was read from, so
+after you connect a different organisation it is not used.
 
 ## Settings reference
 
