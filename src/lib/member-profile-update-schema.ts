@@ -15,7 +15,8 @@ const maxStr = (len: number) => z.string().max(len).optional().nullable();
 /**
  * What a connection may save. Dietary needs (health data, `INV-PRIV-022`) and
  * the public lobby-screen phone opt-in stay website-only, so they are not in
- * it, and zod drops them if sent.
+ * it. The route parses a connection's body with `.strict()`, so either one
+ * sent is refused rather than silently dropped.
  */
 export const memberProfileConnectionUpdateSchema = z.object({
   firstName: nameField({ required: "First name is required" }),
