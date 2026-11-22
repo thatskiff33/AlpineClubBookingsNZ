@@ -1,13 +1,17 @@
 /**
  * #5228: the fixtures the queued-request real-PostgreSQL suites share - a fake
  * Xero for the real senders, a card-paid booking settled through the real
- * settle, a card refund as the webhook records it, and the outbox worker run
- * on one row. No provider is called.
+ * settle, a card refund as the webhook records it, a queued group settlement
+ * invoice, the outbox worker run on one row, and an officer's Retry. No
+ * provider is called.
  */
 import type { PrismaClient } from "@prisma/client";
 import { expect, vi } from "vitest";
 
+import type { SuiteEnvironmentRoleDeclaration } from "../helpers/environment-role";
+import { createGroupHistory, groupHistory, type GroupHistory } from "./booking-ledger-group-history";
 import { createHistoryBooking, settleHistoryByCard, type HistoryNames } from "./booking-ledger-history";
+import { CLUB_FORMAT_TEST } from "./club-format-fixture";
 import { assertNoForeignPendingXeroOperations } from "./race-harness-outbox-guard";
 
 export type SentDocument = { operation: "createInvoices" | "createCreditNotes"; cents: number };
@@ -31,6 +35,7 @@ export async function fakeXero(prefix: string, sent: SentDocument[], refuse: Map
   const invoicePayments = await import("@/lib/xero-invoice-payments");
   // An edit's credit note reads its invoice's amount due before creating anything (#3993).
   const invoices = new Map<string, Record<string, unknown>>();
+  const notes = new Map<string, Record<string, unknown>>();
   const handlers: Record<string, (...args: never[]) => unknown> = {
     createInvoices: async (_tenant: string, body: { invoices: Array<{ lineItems: Lines }> }) => {
       const cents = linesCents(body.invoices[0]!.lineItems);
@@ -53,10 +58,13 @@ export async function fakeXero(prefix: string, sent: SentDocument[], refuse: Map
       const cents = linesCents(body.creditNotes[0]!.lineItems);
       sent.push({ operation: "createCreditNotes", cents });
       const id = `${prefix}xero-note-${++documents}`;
-      return { body: { creditNotes: [{ creditNoteID: id, creditNoteNumber: `CN-${id}`, status: "AUTHORISED", total: cents / 100, remainingCredit: cents / 100, payments: [] }] } };
+      const note = { creditNoteID: id, creditNoteNumber: `CN-${id}`, status: "AUTHORISED", total: cents / 100, remainingCredit: cents / 100, payments: [] };
+      notes.set(id, note);
+      return { body: { creditNotes: [note] } };
     },
     createCreditNoteAllocation: async () => ({ body: { allocations: [{ amount: 0 }] } }),
-    getCreditNote: async () => ({ body: { creditNotes: [] } }),
+    // A note this fake raised is read back as it was raised (#5368: the retry leg that pays a note reads it first).
+    getCreditNote: async (_tenant: string, creditNoteId: string) => ({ body: { creditNotes: notes.has(creditNoteId) ? [notes.get(creditNoteId)] : [] } }),
   };
   const accountingApi = new Proxy(handlers, {
     get(target, name: string) {
@@ -121,6 +129,54 @@ export async function paidCardBooking(prisma: PrismaClient, names: HistoryNames,
   return { bookingId, paymentId, invoiceRow: enqueued.queueOperationId! };
 }
 
+/**
+ * A two-child group paid by internet banking whose combined invoice is not raised yet, and its queued group
+ * settlement invoice row. The invoice's email is gated on a declared environment: this declares a copy and stands in
+ * for the send. The caller restores the returned `role` (and Vitest's mocks) when its case ends.
+ */
+export async function queuedGroupSettlementInvoice(
+  prisma: PrismaClient,
+  names: HistoryNames,
+  prefix: string,
+  key: string,
+): Promise<{ g: GroupHistory; groupRow: string; role: SuiteEnvironmentRoleDeclaration }> {
+  const g = groupHistory(prefix, key, "INTERNET_BANKING", 2);
+  await createGroupHistory(prisma, names, g);
+  // Not yet invoiced: the combined invoice is what the row raises.
+  await prisma.groupBookingSettlement.update({ where: { id: g.settlement }, data: { xeroInvoiceId: null } });
+  // The group invoice's email is gated on a declared environment; a copy, here.
+  const { declareEnvironmentRoleForSuite } = await import("../helpers/environment-role");
+  const role = declareEnvironmentRoleForSuite("non-production");
+  try {
+    const allow = { kind: "allow", clearance: {} } as never;
+    const invoiceEmail = await import("@/lib/xero-invoice-email");
+    vi.spyOn(invoiceEmail, "resolveXeroInvoiceEmailPolicy").mockResolvedValue(allow);
+    vi.spyOn(invoiceEmail, "reassertXeroInvoiceEmailPolicy").mockResolvedValue(allow);
+    vi.spyOn(invoiceEmail, "sendXeroInvoiceEmail").mockResolvedValue({ body: { emailed: true } } as never);
+    const { enqueueXeroGroupSettlementInvoiceOperation } = await import("@/lib/xero-group-settlement-invoice-outbox");
+    const groupRow = (await enqueueXeroGroupSettlementInvoiceOperation(g.settlement, { newAttempt: false })).queueOperationId!;
+    expect(groupRow).toEqual(expect.any(String));
+    return { g, groupRow, role };
+  } catch (error) {
+    // Never leave the declaration behind for the next suite in the shared harness.
+    role.restore();
+    throw error;
+  }
+}
+
+/** The retry cron's drain of queued officer Retries (`processQueuedXeroOperationRetries`). */
+export async function drainOfficerRetries() {
+  const { processQueuedXeroOperationRetries } = await import("@/lib/xero-operation-queue");
+  return processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST);
+}
+
+/** An officer's Retry of `operationId`, queued and drained as the Retry button and the cron run it. */
+export async function officerRetry(operationId: string, officerMemberId: string) {
+  const { enqueueXeroSyncOperationRetry } = await import("@/lib/xero-operation-queue");
+  await enqueueXeroSyncOperationRetry(operationId, { createdByMemberId: officerMemberId });
+  return drainOfficerRetries();
+}
+
 /** A card refund as the `charge.refunded` webhook records it, and the payment's mirror. */
 export async function recordCardRefund(prisma: PrismaClient, paymentId: string, cents: number, name: string): Promise<void> {
   const transaction = await prisma.paymentTransaction.findFirstOrThrow({ where: { paymentId }, select: { id: true, stripePaymentIntentId: true } });
@@ -133,7 +189,17 @@ export async function recordCardRefund(prisma: PrismaClient, paymentId: string, 
   await prisma.payment.update({ where: { id: paymentId }, data: { refundedAmountCents: { increment: cents }, status: "PARTIALLY_REFUNDED" } });
 }
 
-/** The refund's note, queued by the real enqueue as the refund webhook queues it. */
+/**
+ * The refund's note, queued by the real enqueue as the refund webhook queues it.
+ *
+ * #5368 item 5: each send of this note logs "A refund document does not match the journal" with
+ * COMPONENT_UNUSABLE. That is not a gap in these fixtures. On a card payment the note is sized on the payment's
+ * refunded watermark and names no door (no card refund, request, review or bank record), so
+ * `resolveRefundNoteObligation` answers "a note sized on the payment's watermark answers no one refund debt" before
+ * it reads any journal row: recording the refund's debt here would not change it
+ * (docs/design/member-money-ledger.md, section 7). The booking itself is journalled: its primary invoice and
+ * capture receipt manifests are COVERED.
+ */
 export async function queueRefundNote(paymentId: string, cents: number): Promise<string> {
   const { enqueueXeroRefundCreditNoteOperation } = await import("@/lib/xero-operation-outbox");
   const queued = await enqueueXeroRefundCreditNoteOperation(paymentId, cents);

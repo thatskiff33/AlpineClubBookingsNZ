@@ -5,6 +5,7 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
+import { shallowChangedFields } from "@/lib/audit-changed-fields";
 import {
   committeeAssignmentSelect,
   normalizeCommitteeEmail,
@@ -37,13 +38,6 @@ const patchSchema = z
     isActive: z.boolean().optional(),
   })
   .strict();
-
-function changedFields(
-  before: Record<string, unknown>,
-  after: Record<string, unknown>,
-) {
-  return Object.keys(after).filter((key) => before[key] !== after[key]);
-}
 
 export async function PATCH(
   request: Request,
@@ -175,7 +169,7 @@ export async function PATCH(
         outcome: "success",
         summary: "Committee assignment updated",
         metadata: {
-          changedFields: changedFields(existing, data as Record<string, unknown>),
+          changedFields: shallowChangedFields(existing, data as Record<string, unknown>),
           previousCommitteeAssignment: serializeCommitteeAssignment(existing),
           newCommitteeAssignment: serializeCommitteeAssignment(assignment),
         },

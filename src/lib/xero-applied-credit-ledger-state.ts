@@ -6,7 +6,7 @@
  */
 import { BookingStatus, CreditType, Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
-import { paymentHasCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
+import { paymentHasCaptureEvidence } from "@/lib/payment-capture-evidence";
 
 /**
  * THE unallocated predicate (#1620, #3836 `INV-PAY-024`): per booking, the

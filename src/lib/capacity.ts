@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import {
   ACTIVE_BOOKING_STATUSES,
@@ -309,6 +310,37 @@ export interface HoldConflictBooking {
   overridden?: boolean;
 }
 
+/** The row both hold-conflict readers below select and map (#5398). */
+const HOLD_CONFLICT_BOOKING_SELECT = {
+  id: true,
+  checkIn: true,
+  checkOut: true,
+  status: true,
+  member: { select: { firstName: true, lastName: true, email: true } },
+  // #3369: the owner may be an Organisation. Without this the accessor has
+  // no projection to build and hands the null member straight back, so an
+  // officer overriding a hold saw "Unknown member" for the school booking
+  // they were about to override.
+  organisation: { select: { name: true, email: true } },
+  _count: { select: { guests: true } },
+} as const satisfies Prisma.BookingSelect;
+
+function toHoldConflictBooking(
+  row: Prisma.BookingGetPayload<{ select: typeof HOLD_CONFLICT_BOOKING_SELECT }>,
+): HoldConflictBooking {
+  return {
+    id: row.id,
+    memberName:
+      [bookingOwner(row).member.firstName, bookingOwner(row).member.lastName].filter(Boolean).join(" ") ||
+      bookingOwner(row).member.email ||
+      "Unknown member",
+    checkIn: formatDateOnly(row.checkIn),
+    checkOut: formatDateOnly(row.checkOut),
+    guestCount: row._count.guests,
+    status: row.status,
+  };
+}
+
 /**
  * Admin conflict surfacing (ADR-001 decision 1, issue #119): the existing
  * capacity-holding bookings that overlap [checkIn, checkOut) at `lodgeId`,
@@ -343,33 +375,11 @@ export async function findOverlappingCapacityHoldingBookings(
       lodgeId: input.lodgeId,
       ...(input.excludeBookingId ? { id: { not: input.excludeBookingId } } : {}),
     },
-    select: {
-      id: true,
-      checkIn: true,
-      checkOut: true,
-      status: true,
-      member: { select: { firstName: true, lastName: true, email: true } },
-      // #3369: the owner may be an Organisation. Without this the accessor has
-      // no projection to build and hands the null member straight back, so an
-      // officer overriding a hold saw "Unknown member" for the school booking
-      // they were about to override.
-      organisation: { select: { name: true, email: true } },
-      _count: { select: { guests: true } },
-    },
+    select: HOLD_CONFLICT_BOOKING_SELECT,
     orderBy: [{ checkIn: "asc" }, { id: "asc" }],
   });
 
-  return rows.map((row) => ({
-    id: row.id,
-    memberName:
-      [bookingOwner(row).member.firstName, bookingOwner(row).member.lastName].filter(Boolean).join(" ") ||
-      bookingOwner(row).member.email ||
-      "Unknown member",
-    checkIn: formatDateOnly(row.checkIn),
-    checkOut: formatDateOnly(row.checkOut),
-    guestCount: row._count.guests,
-    status: row.status,
-  }));
+  return rows.map(toHoldConflictBooking);
 }
 
 /**
@@ -421,34 +431,11 @@ export async function findOverlappingOverriddenNonHoldingBookings(
       NOT: capacityHoldingBookingFilter(),
       ...(input.excludeBookingId ? { id: { not: input.excludeBookingId } } : {}),
     },
-    select: {
-      id: true,
-      checkIn: true,
-      checkOut: true,
-      status: true,
-      member: { select: { firstName: true, lastName: true, email: true } },
-      // #3369: the owner may be an Organisation. Without this the accessor has
-      // no projection to build and hands the null member straight back, so an
-      // officer overriding a hold saw "Unknown member" for the school booking
-      // they were about to override.
-      organisation: { select: { name: true, email: true } },
-      _count: { select: { guests: true } },
-    },
+    select: HOLD_CONFLICT_BOOKING_SELECT,
     orderBy: [{ checkIn: "asc" }, { id: "asc" }],
   });
 
-  return rows.map((row) => ({
-    id: row.id,
-    memberName:
-      [bookingOwner(row).member.firstName, bookingOwner(row).member.lastName].filter(Boolean).join(" ") ||
-      bookingOwner(row).member.email ||
-      "Unknown member",
-    checkIn: formatDateOnly(row.checkIn),
-    checkOut: formatDateOnly(row.checkOut),
-    guestCount: row._count.guests,
-    status: row.status,
-    overridden: true,
-  }));
+  return rows.map((row) => ({ ...toHoldConflictBooking(row), overridden: true }));
 }
 
 /**

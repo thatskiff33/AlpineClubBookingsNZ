@@ -111,8 +111,6 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
   "src/lib/booking-payment-cleanup.ts > queueSupersededPrimaryIntentCancellations":
     "queues a durable cancellation for EVERY superseded pending PRIMARY intent; each is keyed by its own " +
     "intent, so the order only changes the order they are queued in.",
-  "src/lib/cancel-flattened-payment-backfill.ts > CANDIDATE_PAYMENT_SELECT":
-    "reads only each row's status to ask whether ANY row was captured (`.some`).",
   "src/lib/cron-confirm-pending.ts > cancelSupersededLinkIntentsBestEffort":
     "cancels EVERY other in-flight link intent, best effort, each by its own intent id; the order only " +
     "changes the order the cancellations are sent in.",

@@ -266,11 +266,13 @@ const REVIEWED_PARTNER_WRITER_MANIFEST: readonly ReviewedPartnerSite[] = [
   },
   {
     file: "src/lib/member-partner-link.ts",
-    site: "removeOwnPartnerLink/memberPartnerLink.deleteMany",
+    // #5398: member dissolution (removeOwnPartnerLink) and admin removal
+    // (adminRemovePartnerLink) share this one delete transaction.
+    site: "deletePartnerLinkAndSweepShares/memberPartnerLink.deleteMany",
     persistence: "member-persistence",
     operation: "remove",
     classification: "removal-only",
-    note: "Member dissolution removes the relationship under the existing partner locks.",
+    note: "Member dissolution and admin removal delete the relationship here, under the existing partner locks.",
   },
   ...[
     "adminAssignPartnerLink/memberPartnerLink.update",
@@ -284,14 +286,6 @@ const REVIEWED_PARTNER_WRITER_MANIFEST: readonly ReviewedPartnerSite[] = [
     note:
       "Admin assignment locks the pair and re-reads direct parentage before promotion or creation.",
   })),
-  {
-    file: "src/lib/member-partner-link.ts",
-    site: "adminRemovePartnerLink/memberPartnerLink.deleteMany",
-    persistence: "member-persistence",
-    operation: "remove",
-    classification: "removal-only",
-    note: "Admin removal deletes the relationship under the existing partner locks.",
-  },
   ...[
     "formPartnerLinkOnClaim/memberPartnerLink.update",
     "formPartnerLinkOnClaim/memberPartnerLink.create",

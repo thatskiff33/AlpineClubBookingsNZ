@@ -1212,6 +1212,14 @@ were off by two orders of magnitude.
 
 ## Operational Repair Tools
 
+### When a one-off tool leaves `main` (#5404)
+
+When a one-off upgrade tool leaves `main`, what it excludes and what replaces
+its documentation are set once, in principle 5 of
+[`docs/UPGRADING.md` → Principles](UPGRADING.md#principles). Removing such a tool takes
+everything that exists only for it: the script, its library module, tests,
+package script, lint exceptions and census entries.
+
 ### Run these through `pnpm run`, never `pnpm exec tsx`
 
 Every repair tool below is published as a `pnpm run` command, and that is the
@@ -1851,6 +1859,23 @@ appearing after the refund is recorded by hand, and that is expected: recording
 a refund by hand in Xero writes no row the app can read, and the tool has no
 way to acknowledge a finding.
 
+**A capped late-capture refund note and the journal's export manifest**
+(#4383, #5343). A refund note capped at what the receipt recorded is for less
+than the refund's debt in the member-money journal. Where the note names its
+card refund (a card refund's own note, `cardRefundId`) and that refund's
+journal entry pays one live refund debt, its `REFUND_NOTE` export manifest is
+recorded as a `CENTS` conflict (`coverRefundExportComponent` in
+`refund-note-plan.ts`), and the app logs "A refund document does not match the
+journal; its manifest records a conflict and the document still sent". The
+note is still sent, and the conflict is accurate: Xero holds less than the
+debt. Nothing needs doing for it. Expect it until M13 (#4525). Where the
+refund's entry pays no debt (none is posted, or it is posted and not yet
+answered to one), pays more than one, or pays one since reversed, the conflict
+is `COMPONENT_UNUSABLE` instead (`resolveRefundNoteObligation`). So is that of
+a capped note that names no card refund or other door, as for every note sized
+on the payment's refunded watermark, capped or not
+([`member-money-ledger.md`](design/member-money-ledger.md), section 7).
+
 **Credit-paid card bookings invoiced before #3836.** A card booking paid
 entirely with account credit was invoiced at its full price, but the credit was
 never allocated against the invoice, so Xero shows the whole booking owing and
@@ -1913,40 +1938,15 @@ hand, then apply the same action: on that row it only reads the note back and
 records the payments Xero now shows, never paying, and the listing clears once
 the note is fully settled.
 
-### Backfill cancel-flattened payment statuses (#1473 / #1506)
+### Backfill cancel-flattened payment statuses (retired, #5404)
 
-`scripts/backfill-cancel-flattened-payments.ts` is a one-off, idempotent,
-local-only cleanup for the residual left by PR #1489. Before #1489,
-`cancelBooking` overwrote every non-SUCCEEDED payment's aggregate `status` to
-`FAILED` — including captured `(PARTIALLY_)REFUNDED` payments — while leaving
-`refundedAmountCents` and the `PaymentTransaction` ledger intact. #1489 stopped
-the overwrite going forward but did not backfill rows already flattened. The
-read path is already correct (the booking-vs-Xero repair pass synthesizes the
-captured status from the intact STRIPE mirror / ledger), so this only restores
-the stored `status` field for cleanliness.
-
-It identifies `FAILED` payments on `CANCELLED` bookings that carry capture
-evidence per the exact #1489 discriminator — a captured `PaymentTransaction`
-row, or (for pre-ledger STRIPE rows) `refundedAmountCents > 0` — and restores
-`status` to the same value the repair pass already derives
-(`PARTIALLY_REFUNDED` / `REFUNDED`, or `SUCCEEDED` for a captured-ledger row
-with no refund). It deliberately skips folded never-captured internet-banking
-payments (mirror refund with no captured ledger row: correctly `FAILED`) and
-the narrow unrecoverable residual (no ledger, `refundedAmountCents == 0`: no
-truth to restore). It makes ZERO Xero/Stripe calls, touches only `status`, and
-a second run finds nothing.
-
-Always start with a dry run (the default) against a non-production copy:
-
-```bash
-DATABASE_URL=<non-prod copy> pnpm run payments:backfill-cancel-flattened
-```
-
-Only after reviewing the dry-run report, apply inside a transaction:
-
-```bash
-DATABASE_URL=<non-prod copy> pnpm run payments:backfill-cancel-flattened --apply
-```
+`payments:backfill-cancel-flattened` restored the stored status of payments a
+pre-`v0.10.0` cancellation flattened to `FAILED` (#1473 / #1506). It served
+only clubs that ran `v0.9.0` or earlier and has left `main` under the one-off
+retirement rule ([`UPGRADING.md` → Principles](UPGRADING.md#principles)). It
+remains in the `v0.14.0` tag, with its instructions in this file there under
+"Backfill cancel-flattened payment statuses (#1473 / #1506)"; it was not tested
+against any later schema.
 
 ### Backfill orphaned applied credit (#1547)
 

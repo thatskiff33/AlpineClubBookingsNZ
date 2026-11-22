@@ -1,5 +1,6 @@
 import { type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import logger from "@/lib/logger";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { canonicalXeroWebhookEventCategory } from "@/lib/xero-webhook-categories";
@@ -21,15 +22,6 @@ import { xeroInboundDedupMarkerWhere } from "./dedup-marker";
 import { takeOverStaleProcessingXeroInboundEvent, takeOverStaleProcessingXeroInboundEvents } from "./stale-event-takeover";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
-
-function isPrismaUniqueConstraintError(error: unknown): boolean {
-  return Boolean(
-    error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "P2002"
-  );
-}
 
 function getXeroInboundFailedRetryBackoffMs() {
   const configured = Number.parseInt(
