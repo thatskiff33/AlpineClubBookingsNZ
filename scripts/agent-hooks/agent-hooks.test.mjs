@@ -311,8 +311,12 @@ describe("the dispatcher as a process", () => {
   it("still enforces when reached through a symlinked checkout", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "agent-hooks-link-"));
     try {
-      const link = path.join(dir, "dispatch.mjs");
-      symlinkSync(DISPATCH, link);
+      // A linked DIRECTORY, so `argv[1]` is not the real path. Windows creates
+      // a file symlink only with a privilege most hosts lack (EPERM), but a
+      // junction needs none; elsewhere the type is ignored (#5407 item 35).
+      const linkedDir = path.join(dir, "agent-hooks");
+      symlinkSync(path.dirname(DISPATCH), linkedDir, process.platform === "win32" ? "junction" : "dir");
+      const link = path.join(linkedDir, path.basename(DISPATCH));
       expect(run(JSON.stringify(bash("npx x")), [], link).status).toBe(2);
     } finally {
       rmSync(dir, { recursive: true, force: true });
