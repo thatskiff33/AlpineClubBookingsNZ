@@ -32,7 +32,7 @@ vi.mock("@/lib/session-guards", async () => ({
   requireActiveSessionUser: mocks.requireActiveSessionUser,
 }));
 vi.mock("@/lib/audit", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/audit")>()),
+  ...((await importOriginal()) as typeof import("@/lib/audit")),
   logAudit: mocks.logAudit,
 }));
 vi.mock("@/lib/prisma", () => ({
