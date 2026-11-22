@@ -112,7 +112,7 @@ describe("GET /api/admin/membership-lockout-settings/liability-impact (#5190)", 
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.requireAdmin.mockResolvedValue({ ok: true, session: { user: { id: "admin-1" } } });
-    mocks.buildImpact.mockResolvedValue({ newlyOwing: [] });
+    mocks.buildImpact.mockResolvedValue({ newlyOwing: [], noLongerOwing: [] });
   });
 
   it("requires membership view", async () => {
@@ -135,6 +135,39 @@ describe("GET /api/admin/membership-lockout-settings/liability-impact (#5190)", 
     const response = await get(query);
     expect(response.status).toBe(400);
     expect(mocks.buildImpact).not.toHaveBeenCalled();
+  });
+
+  // #5190 review: the list is membership-view data, but an unpaid invoice
+  // number is finance data, shown only to a caller who also holds finance view.
+  describe("unpaid invoice numbers", () => {
+    const noLongerOwing = [
+      { memberId: "m1", name: "Sam Child", billingChanges: true, accessChanges: false, unpaidInvoiceNumber: "INV-0042" },
+    ];
+    const proposal = "?requiredTypeAgeRule=AGE_TIER_EXEMPTS&liabilityAgeSource=SEASON_START";
+    const signedInWith = (adminPermissionMatrix: Record<string, string>) =>
+      mocks.requireAdmin.mockResolvedValue({
+        ok: true,
+        session: { user: { id: "officer-1", accessRoles: ["USER"], adminPermissionMatrix } },
+      });
+
+    beforeEach(() => {
+      mocks.buildImpact.mockResolvedValue({ newlyOwing: [], noLongerOwing: structuredClone(noLongerOwing) });
+    });
+
+    it("are hidden from a membership-only caller", async () => {
+      signedInWith({ membership: "view" });
+      const body = await (await get(proposal)).json();
+      expect(body.invoiceNumbersShown).toBe(false);
+      expect(body.impact.noLongerOwing).toEqual([{ ...noLongerOwing[0], unpaidInvoiceNumber: null }]);
+      expect(JSON.stringify(body)).not.toContain("INV-0042");
+    });
+
+    it("are shown to a caller who also holds finance view", async () => {
+      signedInWith({ membership: "view", finance: "view" });
+      const body = await (await get(proposal)).json();
+      expect(body.invoiceNumbersShown).toBe(true);
+      expect(body.impact.noLongerOwing).toEqual(noLongerOwing);
+    });
   });
 
   it("previews a saveable rule for the club's current season", async () => {

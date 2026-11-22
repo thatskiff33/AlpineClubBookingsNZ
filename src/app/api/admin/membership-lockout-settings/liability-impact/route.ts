@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { CHOOSABLE_LIABILITY_AGE_SOURCES } from "@/lib/policies/subscription";
@@ -22,7 +23,10 @@ const proposalSchema = z
 /**
  * Who a proposed liability rule would change, for the club's current season
  * (#5190). Read-only: it writes nothing and runs no clear-up. Membership view,
- * like the settings it previews.
+ * like the settings it previews. The unpaid invoice numbers in `noLongerOwing`
+ * are finance data, so they are returned only to a caller who also holds
+ * finance view (#5190 review); anyone else gets null and
+ * `invoiceNumbersShown: false`.
  */
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
@@ -45,5 +49,20 @@ export async function GET(request: NextRequest) {
     seasonYear,
     proposed: parsed.data,
   });
-  return NextResponse.json({ impact });
+  const invoiceNumbersShown = hasAdminAreaAccess(guard.session.user, {
+    area: "finance",
+    level: "view",
+  });
+  return NextResponse.json({
+    impact: invoiceNumbersShown
+      ? impact
+      : {
+          ...impact,
+          noLongerOwing: impact.noLongerOwing.map((member) => ({
+            ...member,
+            unpaidInvoiceNumber: null,
+          })),
+        },
+    invoiceNumbersShown,
+  });
 }

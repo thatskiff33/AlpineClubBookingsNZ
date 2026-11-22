@@ -283,7 +283,8 @@ own; age decides. Choosing also updates any untouched "Not required" record whos
 member now owes. Before choosing, ask for the impact list, which names every
 member the choice would newly charge or stop charging:
 `GET /api/admin/membership-lockout-settings/liability-impact?requiredTypeAgeRule=ALWAYS_OWES&liabilityAgeSource=SEASON_START`
-(membership view). The screen for this choice arrives in a later release; until
+(membership view; the numbers of any unpaid invoices it lists are shown only to
+an officer who also has finance view). The screen for this choice arrives in a later release; until
 then it is made through the settings API or a configuration import. A chosen
 rule cannot be set back to *Not chosen*, and *age today* is not available yet.
 
