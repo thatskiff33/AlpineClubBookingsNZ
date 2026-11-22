@@ -148,7 +148,8 @@ export function pickMemberAddressValues<T>(
   ) as Record<MemberAddressField, T>;
 }
 
-const MEMBER_PHONE_FIELDS = [
+/** The member's three phone columns, in column order: the one list (#5398). */
+export const MEMBER_PHONE_FIELDS = [
   "phoneCountryCode",
   "phoneAreaCode",
   "phoneNumber",
