@@ -1,6 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -211,6 +215,29 @@ describe("main", () => {
     await expect(main({ argv, env: mainPushEnv(undefined), fetchImpl, isAncestor: everyAncestor, log: quiet })).rejects.toThrow(MainPushBaseError);
     await expect(main({ argv: ["--job", "verify"], env: mainPushEnv(undefined), fetchImpl, log: quiet })).rejects.toThrow(/--step/);
   });
+
+  it("as a CLI, exits 1 and writes no output when GitHub's API fails", async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "main-push-base-"));
+    const output = path.join(dir, "out");
+    // A local stand-in for the Actions API that fails every request.
+    const server = createServer((_request, response) => response.writeHead(503).end());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    try {
+      const failure = await promisify(execFile)(process.execPath, [path.join(REPO_ROOT, "scripts", "ci", "resolve-main-push-base.mjs"), ...argv], {
+        cwd: REPO_ROOT,
+        env: { ...process.env, PUSH_BEFORE_SHA: "", ...mainPushEnv(output), GITHUB_API_URL: `http://127.0.0.1:${port}` },
+      }).then(
+        () => null,
+        (error: { code?: number; stderr?: string }) => error,
+      );
+      expect(failure?.code).toBe(1);
+      expect(failure?.stderr).toMatch(/HTTP 503[\s\S]*Nothing was judged/);
+      expect(existsSync(output)).toBe(false);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
 });
 
 /** The words of a `run:` line, honouring double quotes (all ci.yml's resolver steps use). */
@@ -230,6 +257,10 @@ describe("ci.yml's wiring of the resolver", () => {
     --step-was leaves no earlier run to match, so every push to main fails
     closed. Change a name here only once a main run has finished the gate
     under its new name (CONTRIBUTING.md "Finding which merge broke main").
+    Never change this list in the same pull request as a step or job rename:
+    the rename needs its alias (--step-was/--job-was), and this list changes
+    only after main has recorded the new name. A rename plus an edit here
+    passes every test, then fails closed on every push to main.
   */
   const RECORDED_ON_MAIN: Record<string, { job: string; steps: string[] }> = {
     verify: { job: "verify", steps: ["Check doc index integrity (reachability + invariant ids)", "File-size budget ratchet"] },
@@ -270,6 +301,18 @@ describe("ci.yml's wiring of the resolver", () => {
         expect(step, `${jobKey} runs "${name}" after the resolver`).toBeDefined();
         expect(reads(step as Step), `"${name}" judges from the resolved base`).toBe(true);
       }
+      // Fail closed needs the resolver to fail its step and every reader to be
+      // skipped after it: each reader's env still falls back to
+      // github.event.before. continue-on-error or an `if:` on the resolver, or
+      // an `if:` with a status function (always(), failure(), !cancelled()) on
+      // a reader, would run a gate after a failed resolver, judging from before.
+      expect(resolver["continue-on-error"], `${jobKey}'s resolver must fail its step`).toBeUndefined();
+      expect(resolver.if, `${jobKey}'s resolver must run unconditionally`).toBeUndefined();
+      expect(job["continue-on-error"], `${jobKey} must not continue on a failed resolver`).toBeUndefined();
+      for (const reader of later.filter(reads)) {
+        expect(String(reader.if ?? ""), `"${String(reader.name)}" must be skipped after a failed resolver`).not.toMatch(/\b(always|failure|cancelled)\s*\(/);
+      }
+
       // A reader the resolver does not name could be judged from a run where it never ran.
       expect(later.filter(reads).map((step) => step.name)).toEqual(gates.map(({ name }) => name));
       expect(steps.slice(0, at).filter(reads)).toEqual([]);

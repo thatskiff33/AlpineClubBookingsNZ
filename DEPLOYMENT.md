@@ -823,9 +823,12 @@ A `main` commit has images exactly when its CI run's `Publish GHCR images`
 job succeeded, not merely because it is on `main`. A newer merge may replace
 `main`'s queued run, so an intermediate `main` commit can have no run and no
 images; a run that has started always finishes, and the newest `main` commit
-always gets one (`INV-OPS-021`, #5356). A run whose `Publish GHCR images` job
-did not succeed (replaced while queued, skipped after a failed gate, failed,
-or cancelled by hand) published nothing; re-run it with `gh run rerun <run-id>`.
+normally gets one (a manual re-run can replace its pending run; `INV-OPS-021`,
+#5356). A run whose `Publish GHCR images` job did not succeed (replaced while
+queued, skipped after a failed gate, failed, or cancelled by hand) published
+nothing; re-run it with `gh run rerun <run-id>`. A re-run joins `main`'s queue
+and replaces whatever is pending there, so start it only when nothing is
+pending on `main` (`gh run list --workflow ci.yml --branch main --status pending`).
 `pnpm run release:cut publish` tags `origin/main` by default, asks GitHub for
 that job's result, and will not tag a commit without images.
 

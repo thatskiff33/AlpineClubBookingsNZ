@@ -19,9 +19,10 @@
  * `ci.yml` push run on `main` whose latest attempt finished every `--step` of
  * the job named by `--job` with `success` or `failure` (the gate ran, whatever
  * it said; a red gate turned `main` red and was seen). A run still in progress
- * does not count yet. The run must be older than this one (a lower run number;
- * a re-run keeps its number), for another commit, and that commit must be an
- * ancestor of HEAD.
+ * does not count yet, and a run that ended cancelled does not count at all,
+ * even if a gate finished before the cancel (conservative). The run must be
+ * older than this one (a lower run number; a re-run keeps its number), for
+ * another commit, and that commit must be an ancestor of HEAD.
  *
  * RENAMING A GATE. Earlier runs recorded the old names, so a renamed job or
  * step would match no run and fail closed on every push; and since the gates
@@ -54,7 +55,11 @@ const PAGE_SIZE = 100;
 const COMMIT_SHA = /^[0-9a-f]{40}$/;
 /** Ten pages is a thousand `main` runs: far past any real run of cancellations. */
 const MAX_PAGES = 10;
-/** A completed run with one of these conclusions never ran its gates, so it is not worth asking about its steps. */
+/**
+ * A completed run with one of these conclusions is treated as not judged, so its steps are not asked about.
+ * A "cancelled" run may have finished a gate before it was cancelled; skipping it anyway is conservative,
+ * since falling back to an earlier judged run only widens the range the gates judge.
+ */
 const NOTHING_RAN = new Set(["cancelled", "skipped", "stale", "startup_failure"]);
 /** A gate step that finished with one of these ran and gave its verdict. */
 const GATE_RAN = new Set(["success", "failure"]);

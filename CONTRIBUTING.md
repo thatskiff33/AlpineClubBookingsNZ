@@ -588,7 +588,9 @@ it:
    that workflow is pending on `main`
    (`gh run list --workflow ci.yml --branch main --status pending`), and if one
    was replaced anyway, re-run it last. The first commit whose re-run goes red
-   is the merge that broke `main`.
+   is the merge that broke `main`. "Re-run failed jobs" on a `main` run, for
+   example after a flaky shard, has the same effect: it joins that queue and
+   replaces whatever is pending, so check for a pending run first there too.
 
 The push-only gates in `verify` and `Migration drift check` already judge
 those merges together: a push to `main` is judged from the last commit whose

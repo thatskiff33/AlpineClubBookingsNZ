@@ -913,7 +913,9 @@ function requirePublishedImages(cmd, repo, sha) {
       (found.length > 0 ? `Found: ${found.join("; ")}.` : "GitHub has no such run for it."),
     found.length > 0
       ? `Nothing was created. Wait for the run to finish, or re-run it if it was cancelled or failed: ` +
-          `gh run rerun ${runs[0].id} --repo ${repo.slug}. Publish once "${PUBLISH_IMAGES_JOB_NAME}" has succeeded.`
+          `gh run rerun ${runs[0].id} --repo ${repo.slug}, started only when nothing is pending on ${MAIN_BRANCH} ` +
+          `(gh run list --workflow ${CI_WORKFLOW_FILE} --branch ${MAIN_BRANCH} --status pending --repo ${repo.slug}), ` +
+          `because a re-run replaces ${MAIN_BRANCH}'s pending run. Publish once "${PUBLISH_IMAGES_JOB_NAME}" has succeeded.`
       : `Nothing was created. Tag a ${MAIN_BRANCH} commit whose ${CI_WORKFLOW_FILE} run published its images.`,
   );
 }

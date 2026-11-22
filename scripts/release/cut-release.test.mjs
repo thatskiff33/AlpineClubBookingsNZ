@@ -1673,6 +1673,8 @@ describe("release:cut publish asks GitHub whether CI published the commit's imag
       /run 4242/,
     );
     expect(cancelled.recovery).toContain("gh run rerun 4242 --repo fixture-owner/fixture-repo");
+    // A re-run replaces main's pending run (INV-OPS-021), so the hint says to check first.
+    expect(cancelled.recovery).toContain("gh run list --workflow ci.yml --branch main --status pending --repo fixture-owner/fixture-repo");
     const absent = expectRefusal(() => publishRelease({ repoRoot: repo, run: fixtureRunner(repo, { [GH_RUNS]: ciRuns() }), log: silentLog() }), /no such run/);
     expect(absent.recovery).toBe("Nothing was created. Tag a main commit whose ci.yml run published its images.");
   });
