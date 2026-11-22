@@ -57,10 +57,7 @@ import {
 } from "@/lib/manual-settlement-reversal-event";
 import { closeCapacityRaceRefundRecordingEvent, recordBookingEvent, recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
 import { alertCapacityRaceRefundShortfall, raiseCapacityRaceRefundShortfallTask } from "@/lib/capacity-race-refund-shortfall";
-import {
-  sendAdminDuplicateCaptureRefundAlert,
-  sendAdminPaymentFailureAlert,
-} from "@/lib/email";
+import { sendAdminDuplicateCaptureRefundAlert, sendAdminPaymentFailureAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { formatCents } from "@/lib/utils";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";

@@ -678,7 +678,6 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         const paymentNeverSettled =
           originalPaymentStatus === PaymentStatus.PENDING ||
           originalPaymentStatus === PaymentStatus.FAILED;
-        const bookingLabel = storedShortBookingId(settlementPayment.bookingId);
 
         // #3369: this arm mints MEMBER CREDIT, and an organisation-owned
         // booking has no member account to mint into. It never had a usable one
@@ -790,7 +789,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
                 // comes from the invoice's quantified cash, not from an
                 // officer's judgement, so it is not amendable at completion.
                 raisedAmountCents: handBackCents,
-                reason: `Booking ${bookingLabel} was cancelled and an Internet Banking payment arrived for it. The booking belongs to an organisation, which has no member account for the money to be held as credit, so it must be returned to the organisation by hand (#3369).`.slice(
+                reason: `Booking ${storedShortBookingId(settlementPayment.bookingId)} was cancelled and an Internet Banking payment arrived for it. The booking belongs to an organisation, which has no member account for the money to be held as credit, so it must be returned to the organisation by hand (#3369).`.slice(
                   0,
                   MANUAL_REFUND_TASK_REASON_MAX,
                 ),

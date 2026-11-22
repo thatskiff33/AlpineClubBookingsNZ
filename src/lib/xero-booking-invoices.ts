@@ -36,10 +36,7 @@ import {
   startXeroSyncOperation,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
-import {
-  callXeroApi,
-  getAuthenticatedXeroClient,
-} from "./xero-api-client";
+import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
 import {
   resolveXeroInvoiceEmailPolicy,
   sendXeroInvoiceEmail,

@@ -261,8 +261,7 @@ export async function POST(request: Request) {
           created = true;
         });
       } catch (error) {
-        // A concurrent mark lost the race to the partial unique index — the family
-        // is now marked either way, so the action is idempotently satisfied.
+        // A concurrent mark lost the race to the partial unique index: the family is marked either way.
         if (!isPrismaUniqueConstraintError(error)) throw error;
       }
       if (created) {

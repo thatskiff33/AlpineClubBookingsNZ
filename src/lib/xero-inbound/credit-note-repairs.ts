@@ -689,9 +689,7 @@ export async function repairAccountCreditAllocationBusinessState(
 
     matchedPayments += 1;
     const expectedAmountCents = -target.amountCents;
-    const expectedDescription = buildBookingAppliedCreditDescription(
-      payment.bookingId
-    );
+    const expectedDescription = buildBookingAppliedCreditDescription(payment.bookingId);
     // Serialize each payment's applied-credit repair on the PER-MEMBER credit
     // ledger lock (#1881) so the existing-credit read, the create/link, the
     // aggregate, and the creditAppliedCents write commit atomically AND mutually
