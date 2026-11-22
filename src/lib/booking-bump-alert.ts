@@ -2,6 +2,7 @@ import { bookingBumpReason } from "@/lib/booking-bump-reason";
 import { BOOKING_OWNER_NAME_SELECT, bookingOwnerName } from "@/lib/booking-owner-name";
 import { formatBookingReference } from "@/lib/booking-reference";
 import { sendAdminBookingBumpedAlert } from "@/lib/email";
+import { adminAlertNeedsResend } from "@/lib/email/admin-alert-send-result";
 import logger from "@/lib/logger";
 import { bookingListLodgeLabel, countActiveLodgesForBookingList } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
@@ -47,15 +48,17 @@ async function bumpedBookingLodgeName(lodgeId: string): Promise<string | null> {
  * So officers receive it at least once, and very rarely twice: a crash after
  * the send and before the marker is cleared repeats it on a later run.
  *
- * Never throws: a failure is logged and reported as `false` so it can never
- * undo the bump, the member's email or the rest of the run, and the caller
- * keeps the marker. `true` means the send returned, whatever each recipient's
- * outcome; a failed transport leaves the usual FAILED row for the email retry
- * cron, so the marker is cleared rather than sending the alert again.
+ * Never throws. `false` keeps the marker: the send threw, or nobody got the
+ * alert and at least one officer's copy failed before its EmailLog row existed,
+ * so nothing will replay it (`adminAlertNeedsResend`). `true` clears it: an
+ * officer has it, a failed copy's FAILED row is the email retry cron's to
+ * replay, or nobody is meant to get it (the alert switched off, nobody opted
+ * in, every copy refused or withheld on purpose). Either way it can never
+ * undo the bump, the member's email or the rest of the run.
  */
 export async function alertOfficersOfBump(booking: BumpedBooking, flagged: boolean): Promise<boolean> {
   try {
-    await sendAdminBookingBumpedAlert({
+    const result = await sendAdminBookingBumpedAlert({
       bumpedMemberName: bookingOwnerName(booking),
       bookingReference: formatBookingReference(booking.id),
       lodgeName: await bumpedBookingLodgeName(booking.lodgeId),
@@ -64,7 +67,12 @@ export async function alertOfficersOfBump(booking: BumpedBooking, flagged: boole
       guestCount: booking.guests.length,
       reason: bookingBumpReason(flagged),
     });
-    return true;
+    if (!adminAlertNeedsResend(result)) return true;
+    logger.warn(
+      { bookingId: booking.id, failedBeforeLogged: result.failedBeforeLogged, job: "confirmPendingBookings" },
+      "No officer received the booking-bumped alert and nothing will replay it; it stays owed",
+    );
+    return false;
   } catch (err) {
     logger.error({ err, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to send admin booking-bumped alert");
     return false;

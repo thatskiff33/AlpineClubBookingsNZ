@@ -7,7 +7,7 @@ import { BookingEventType, BookingStatus, PaymentSource, PaymentStatus, PaymentT
 import { OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 import { bookingOwner } from "@/lib/booking-owner";
-import { deliverBumpNotices, drainOwedBumpNotices, recordBumpNoticesOwed, type OwedBumpNoticeSweepResult } from "@/lib/booking-bump-notice-owed";
+import { deliverBumpNotices, drainOwedBumpNotices, recordBumpNoticesOwed, type OwedBumpNotice, type OwedBumpNoticeSweepResult } from "@/lib/booking-bump-notice-owed";
 import { bookingBumpReason } from "@/lib/booking-bump-reason";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
@@ -221,7 +221,8 @@ type PendingBooking = Prisma.BookingGetPayload<{
 
 type HoldResolution =
   | { type: "already_processed" }
-  | { type: "bumped"; booking: PendingBooking; flagged: boolean }
+  // #5407: `owed` is what the transaction recorded as owed, for the delivery to claim.
+  | { type: "bumped"; booking: PendingBooking; flagged: boolean; owed: OwedBumpNotice }
   | { type: "confirmed_zero"; booking: PendingBooking }
   | {
       type: "extended_request_hold";
@@ -551,10 +552,10 @@ async function resolveHoldWindowUnderLock(
       // #3611: nothing was paid, so nothing is kept; the stay's ledger lines are
       // reversed if a reversed mark-paid left it confirmed there (lock(1) above).
       await postCancellationLedgerLines({ store: tx, journal, bookingId: booking.id, lodgeId: booking.lodgeId, keptCents: 0, site: "confirm-pending:capacity-bump" });
-      // #5407: both notices are owed from this commit until sent, keyed by the run's `now`.
-      await recordBumpNoticesOwed(tx, { bookingId: booking.id, bumpedAt: now, flagged: booking.cancelIfGuestsBumped });
+      // #5407: both notices are owed from this commit until sent.
+      const owed = await recordBumpNoticesOwed(tx, { bookingId: booking.id, flagged: booking.cancelIfGuestsBumped });
 
-      return { type: "bumped", booking, flagged: booking.cancelIfGuestsBumped };
+      return { type: "bumped", booking, flagged: owed.flagged, owed };
     }
 
     // Zero-dollar booking: skip Stripe, just confirm with a SUCCEEDED Payment.
@@ -1190,7 +1191,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           snapshot: { flagged: resolution.flagged },
         });
         triggerWaitlistProcessing(resolution.booking, format);
-        await deliverBumpNotices(resolution.booking, resolution.flagged, now);
+        await deliverBumpNotices(resolution.booking, resolution.owed);
         continue;
       }
 

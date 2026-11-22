@@ -8,7 +8,9 @@
  * `AlertCooldown` table, the real email core and its `EmailLog` rows, and the
  * real officer audience:
  *
- * - both notices throw right after the commit; the sweep sends each once, a
+ * - right after the commit the email core cannot read the message settings,
+ *   so the member's email throws and every officer's copy fails before its
+ *   `EmailLog` row exists; both markers stay, the sweep sends each once, a
  *   second sweep adds nothing, and a member marker left standing after its
  *   send (a crash before the clear) finds the row recorded and sends nothing;
  * - a bump whose transaction rolls back leaves no marker;
@@ -39,7 +41,21 @@ vi.mock("@/lib/session-guards", () => ({
   requireAdmin: vi.fn(async () => ({ ok: false })),
   requireSession: vi.fn(async () => ({ ok: false })),
 }));
-// The real senders, wrapped so a case can make one attempt throw first.
+// The real message renderer, made to fail while `outage.down` is set: the email
+// core reads it before it writes a copy's EmailLog row, as a settings read that
+// throws would.
+const outage = vi.hoisted(() => ({ down: false }));
+vi.mock("@/lib/email-message-renderer", async (importOriginal) => {
+  const real = (await importOriginal()) as typeof import("@/lib/email-message-renderer");
+  return {
+    ...real,
+    prepareEmailMessage: async (...args: Parameters<typeof real.prepareEmailMessage>) => {
+      if (outage.down) throw new Error("message settings unreadable");
+      return real.prepareEmailMessage(...args);
+    },
+  };
+});
+// The real senders, wrapped so a case can count and filter their calls.
 vi.mock("@/lib/email", async (importOriginal) => {
   const real = (await importOriginal()) as typeof import("@/lib/email");
   return {
@@ -130,16 +146,21 @@ let harnessRole: { restore: () => void } | undefined;
       });
     }
 
-    /** The cron's bump, as far as the notices care: the guarded claim and the markers, in one transaction. */
-    async function commitBump(ids: CaseIds, bumpedAt: Date, failAfterMarkers = false) {
-      await prisma.$transaction(async (tx) => {
+    /**
+     * The cron's bump, as far as the notices care: the guarded claim and the
+     * markers, in one transaction. Returns the owed descriptor the delivery
+     * claims with, as the cron's `bumped` resolution carries it.
+     */
+    async function commitBump(ids: CaseIds, failAfterMarkers = false) {
+      return prisma.$transaction(async (tx) => {
         const claimed = await tx.booking.updateMany({
           where: { id: ids.bookingId, status: "PENDING" },
           data: { status: "CANCELLED", nonMemberHoldUntil: null },
         });
         expect(claimed.count).toBe(1);
-        await owed.recordBumpNoticesOwed(tx, { bookingId: ids.bookingId, bumpedAt, flagged: false });
+        const recorded = await owed.recordBumpNoticesOwed(tx, { bookingId: ids.bookingId, flagged: false });
         if (failAfterMarkers) throw new Error("the bump's transaction failed after its markers");
+        return recorded;
       });
     }
 
@@ -188,6 +209,7 @@ let harnessRole: { restore: () => void } | undefined;
 
     beforeEach(() => {
       resetStripeRaceHooks();
+      outage.down = false;
       vi.mocked(email.sendBookingBumpedEmail).mockClear();
       vi.mocked(email.sendAdminBookingBumpedAlert).mockClear();
     });
@@ -207,20 +229,20 @@ let harnessRole: { restore: () => void } | undefined;
       }
     });
 
-    it("sends both notices from the sweep once when they threw right after the commit, and records the member's email once", async () => {
+    it("sends both notices from the sweep once when they failed before any row right after the commit, and records the member's email once", async () => {
       const ids = CASES.threw;
       await deleteCaseRows(ids);
       await seedPendingBooking(ids);
-      const bumpedAt = new Date();
-      await commitBump(ids, bumpedAt);
+      const bumped = await commitBump(ids);
+      const bumpedAt = bumped.bumpedAt;
       expect((await recorded(ids)).markers).toBe(2);
 
-      // Right after the commit, both sends throw before writing anything.
-      vi.mocked(email.sendBookingBumpedEmail).mockRejectedValueOnce(new Error("SMTP down"));
-      vi.mocked(email.sendAdminBookingBumpedAlert).mockRejectedValueOnce(new Error("SMTP down"));
-      const booking = await readBooking(ids);
-      await owed.deliverBumpNotice("member", booking, false, bumpedAt);
-      await owed.deliverBumpNotice("officers", booking, false, bumpedAt);
+      // Right after the commit the email core cannot read the message settings:
+      // the member's email throws, and every officer's copy fails before its row.
+      outage.down = true;
+      await owed.deliverBumpNotices(await readBooking(ids), bumped);
+      outage.down = false;
+      expect(vi.mocked(email.sendAdminBookingBumpedAlert)).toHaveBeenCalledTimes(1);
       expect(await recorded(ids)).toEqual({ memberRows: [], officerRows: 0, markers: 2 });
 
       // A later run's sweep sends each, once.
@@ -248,7 +270,7 @@ let harnessRole: { restore: () => void } | undefined;
       await deleteCaseRows(ids);
       await seedPendingBooking(ids);
 
-      await expect(commitBump(ids, new Date(), true)).rejects.toThrow("failed after its markers");
+      await expect(commitBump(ids, true)).rejects.toThrow("failed after its markers");
 
       expect((await recorded(ids)).markers).toBe(0);
       expect((await prisma.booking.findUniqueOrThrow({ where: { id: ids.bookingId }, select: { status: true } })).status).toBe("PENDING");
@@ -258,8 +280,7 @@ let harnessRole: { restore: () => void } | undefined;
       const ids = CASES.race;
       await deleteCaseRows(ids);
       await seedPendingBooking(ids);
-      const bumpedAt = new Date();
-      await commitBump(ids, bumpedAt);
+      const { bumpedAt } = await commitBump(ids);
       // Only the officers' marker is owed here; the member's was delivered.
       await prisma.alertCooldown.delete({ where: { key: owed.bumpNoticeOwedKey("member", ids.bookingId, bumpedAt, false) } });
 

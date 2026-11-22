@@ -210,7 +210,8 @@ export async function sendAdminPendingDeadlineAlert(
 // also says when it was the guests-cancelled variant. The subject carries the
 // stay and the booking reference so an officer can tell two bumps for one
 // owner apart. The Daily digest no longer depends on it: since #5407 it counts
-// each officer's copies, not distinct subjects.
+// each officer's copies, not distinct subjects. Returns `sendToAdmins`' result
+// so the bump's owed marker can tell an alert nobody got from one sent (#5407).
 export async function sendAdminBookingBumpedAlert(data: {
   bumpedMemberName: string;
   bookingReference: string;
@@ -223,7 +224,7 @@ export async function sendAdminBookingBumpedAlert(data: {
 }) {
   const checkIn = emailCalendarDay(data.checkIn);
   const checkOut = emailCalendarDay(data.checkOut);
-  await sendToAdmins({
+  return sendToAdmins({
     subject: `Booking Bumped: ${data.bumpedMemberName}, ${checkIn} to ${checkOut} (${data.bookingReference})`,
     html: await renderEmailHtml(() => adminBookingBumpedTemplate(data)),
     templateName: "admin-booking-bumped",
