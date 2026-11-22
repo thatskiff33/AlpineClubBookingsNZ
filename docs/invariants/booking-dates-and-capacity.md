@@ -1722,8 +1722,8 @@ capacity or double-booking violation.
   next and the lapsed opportunity last, so two members who lapse together
   cannot pass the places between them. A queue of one is re-offered.
 - **Only the opportunity at the offered lodge moves.** Under `OWN_LODGE_FIRST`
-  the own-lodge and cross-lodge parts rotate separately; under `MERGED` the
-  list is one part.
+  each part rotates separately, but the lapses go after both: a member who just
+  lapsed is behind every opt-in too (owner decision, 23 Nov 2026).
 - **Nothing is stored.** Every other caller of `processWaitlistForDates` walks
   the plain order. The lapsed booking keeps its join time and number.
 - **Limits.** Offers hold no capacity (`INV-CAP-011`), so: a later, unrelated

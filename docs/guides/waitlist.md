@@ -63,13 +63,17 @@ which by definition that booking is not. See
    that fits. The member whose offer lapsed is considered last for that place,
    so a lone entry is offered it again. Anyone else whose offer lapsed in the
    same run is considered just before them, after everyone who has not just had
-   a turn. Where your club lets members opt into another lodge, the lodge's own
-   queue and the opt-ins are each walked this way on their own when your club
-   serves the lodge's own queue first. If offers keep lapsing, the place moves
-   on down the queue and only comes back to the front once everyone has had a
-   turn.
+   a turn. That holds even where your club serves the lodge's own queue first:
+   members from other lodges who opted into this one and have not had the
+   offer come before the lodge's own member who just let it lapse. If offers
+   keep lapsing, the place moves on down the queue and only comes back to the
+   front once everyone has had a turn.
 
    Things to know:
+
+   - Serving the lodge's own queue first gives way only in that re-offer. Every
+     other offer still goes to the lodge's own waiting members before anyone
+     from another lodge.
 
    - Nothing marks the entry, so when a different place frees on the same
      nights (a cancellation, say), it is considered in its usual place and can

@@ -13,7 +13,11 @@
   people behind them wait. If offers keep lapsing, the place moves on down the
   queue and only returns to the front once everyone has had a turn.
 
-  A lapsed cross-lodge offer passes on at the lodge that was offered.
+  A lapsed cross-lodge offer passes on at the lodge that was offered. At a club
+  that serves each lodge's own queue first, a member whose offer just lapsed
+  now goes behind members from other lodges who opted into that lodge and have
+  not had the offer; every other offer still serves the lodge's own queue
+  first.
 
   Nothing is stored about the lapse. When a different place frees on the same
   nights later (a cancellation, say), the member who let an offer lapse is

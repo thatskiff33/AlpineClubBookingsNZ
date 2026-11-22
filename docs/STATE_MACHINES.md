@@ -3365,7 +3365,9 @@ write `waitlistPosition: null` until that column is dropped.
 `expireStaleOffers` reverts each stale `WAITLIST_OFFERED` entry to `WAITLISTED`,
 then makes one offer pass per lapsed offer, in join order. That pass starts just
 after the lapsed entry's place, wraps to the front, and reaches the lapsed entry
-last, with any other offer that lapsed in the same run just before it. So the
+last, with any other offer that lapsed in the same run just before it. Under
+`OWN_LODGE_FIRST` the lapses go after the cross-lodge opt-ins as well (owner
+decision, 23 Nov 2026), the one exception to own lodge first. So the
 same run offers the place to the next party that fits, the lapsed entry keeps its
 original place and number, and a queue of one is offered again. Offers that
 lapse in turn walk the place down the queue and wrap to the front only after
