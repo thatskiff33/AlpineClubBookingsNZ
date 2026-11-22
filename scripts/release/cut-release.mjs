@@ -850,8 +850,10 @@ function requireFirstParent(firstParent, sha) {
  * The `main` push run of `CI_WORKFLOW_FILE` for `sha` whose
  * `PUBLISH_IMAGES_JOB_NAME` job succeeded: the only evidence that the images a
  * deploy of its tag pulls exist (INV-OPS-021). A cancelled, failed or
- * unfinished run published nothing, so this asks GitHub rather than trusting
- * the first-parent chain. Any answer it cannot read refuses, never passes.
+ * unfinished run published nothing, and since #5356 a newer merge may replace
+ * an intermediate commit's queued run, so this asks GitHub rather than
+ * trusting the first-parent chain. Any answer it cannot read refuses, never
+ * passes.
  */
 function requirePublishedImages(cmd, repo, sha) {
   const short = sha.slice(0, 12);

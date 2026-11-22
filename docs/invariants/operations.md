@@ -6,8 +6,8 @@ Prefixes defined in this file: **`INV-OPS`** — raw SQL result shapes, raw SQL
 construction and row locking, the client/server bundle boundary, production
 deployment including the worked windowed column drop, changing what values
 already stored in a column mean, what may be used as test input, which money
-seams a test may mock (`INV-OPS-015`), and which CI runs must finish and what a
-release may tag (`INV-OPS-021`) — and
+seams a test may mock (`INV-OPS-015`), and which CI runs a newer merge may
+replace and what a release may tag (`INV-OPS-021`) — and
 **`INV-LOCK`** (#2722), the two-tier advisory-lock protocol: which tier a writer
 takes, the order it takes them in, and the registration every global site
 carries. `INV-LOCK` sits here because advisory locking is the sibling of the row
@@ -873,30 +873,35 @@ installation.
 
 ## INV-OPS-021
 
-Every push run of `ci.yml`, `e2e.yml` and `money-coverage.yml` runs to
-completion. A newer push never cancels it or replaces it while pending. Each
-push run's concurrency group is keyed on its branch and commit, because GitHub
-replaces an older pending run in a shared group even with
-`cancel-in-progress: false`.
-Pull-request runs keep one group per ref and cancel superseded runs. This holds
-for `epic/**` pushes too, which use the same `github.event.before` gates.
+A newer push to `main` may replace `main`'s queued run of `ci.yml`, `e2e.yml`,
+`money-coverage.yml` and `docs-link-check.yml`, never one that has started.
+Every push to `main` shares one concurrency group per workflow with
+`cancel-in-progress: false`: GitHub keeps one running and one pending run and
+drops the older pending one, so the newest `main` commit always gets its full
+set. Pushes to `epic/**` keep a group per commit. Pull-request runs keep one
+group per ref and cancel superseded runs.
+
+The push-only gates (doc index, file-size ratchet, migration-safety ledger)
+judge a push to `main` from the last judged `main` commit: the head of the
+newest earlier `ci.yml` push run on `main` that was not cancelled, so a merge
+whose run was dropped is judged with the next. It fails closed when GitHub
+cannot say.
 
 A release tags only a commit whose `ci.yml` push run on `main` had a
 successful `Publish GHCR images` job. `release:cut publish` asks GitHub for
-that job's result, not git history, on the commit it would tag (on a resume,
-the tagged commit). It refuses before any tag or release when the job did not
-succeed, when no run exists, or when GitHub's answer cannot be read — so its
-token needs Actions read access.
+that job's result on the commit it would tag (on a resume, the tagged commit)
+and refuses before any tag or release when the job did not succeed, no run
+exists, or GitHub's answer cannot be read. A dropped intermediate commit has no images; the default,
+`origin/main`, always has a run.
 
-- Why: one shared group cancelled about half of `main`'s runs on a busy day
-  (#4989). A cancelled run publishes no images, so a release tag on it could not
-  be deployed. The push-only gates (file-size ratchet, migration-safety ledger,
-  doc index) never judged its change. And a red `main` could not be traced to
-  the merge that caused it. Being on `main`'s first-parent chain proved none of
-  this.
-- Enforced by `scripts/ci/main-push-runs-complete.test.ts`, which evaluates
-  each workflow's group for a push and a pull request, and by the
-  `requirePublishedImages` cases in `scripts/release/cut-release.test.mjs`.
+- Why: one full CI run takes about 48 minutes, and queuing one per merge held
+  every open pull request behind `main` (#5356, owner decision 22 Nov 2026,
+  replacing #4989's rule that every push run completes). A dropped run
+  publishes no images and judges nothing, hence the last-judged base and the
+  release check.
+- Enforced by `scripts/ci/main-push-superseded-runs.test.ts`, which evaluates
+  each workflow's group for each event; `scripts/ci/resolve-main-push-base.test.mjs`;
+  and the `requirePublishedImages` cases in `scripts/release/cut-release.test.mjs`.
 
 ## INV-OPS-022
 

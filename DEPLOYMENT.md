@@ -819,13 +819,15 @@ echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u <owner> --password-stdin
 
 Do not store that token in the repository or `.env`.
 
-Every push to `main` gets a CI run of its own that runs to completion; a later
-merge never cancels or replaces it (`INV-OPS-021`). So a `main` commit has
-images exactly when its run's `Publish GHCR images` job succeeded — not merely
-because it is on `main`. A run whose `Publish GHCR images` job did not succeed
-(skipped after a failed gate, failed, or cancelled by hand) published nothing;
-re-run it with `gh run rerun <run-id>`. `pnpm run release:cut publish`
-asks GitHub for that job's result and will not tag a commit without images.
+A `main` commit has images exactly when its CI run's `Publish GHCR images`
+job succeeded, not merely because it is on `main`. A newer merge may replace
+`main`'s queued run, so an intermediate `main` commit can have no run and no
+images; a run that has started always finishes, and the newest `main` commit
+always gets one (`INV-OPS-021`, #5356). A run whose `Publish GHCR images` job
+did not succeed (replaced while queued, skipped after a failed gate, failed,
+or cancelled by hand) published nothing; re-run it with `gh run rerun <run-id>`.
+`pnpm run release:cut publish` tags `origin/main` by default, asks GitHub for
+that job's result, and will not tag a commit without images.
 
 ### Supply chain
 

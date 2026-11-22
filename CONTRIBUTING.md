@@ -555,6 +555,34 @@ each required check present on the **exact current head SHA**: a conflicted
 PR gets no `pull_request` runs, so `gh pr checks` can read green off an older
 head, and an empty failure list is not a passing run (#2641).
 
+#### Finding which merge broke main
+
+A newer merge may replace `main`'s queued runs of CI, E2E, Money coverage and
+Docs link check (`INV-OPS-021`, #5356). A run that has started always
+finishes, and the newest `main` commit always gets its full set, but the
+commits in between can have no run. So when `main` goes red, the first red run
+may cover several merges. To find the one that broke it:
+
+1. List the runs that were replaced or cancelled, with their commits:
+
+   ```bash
+   gh run list --workflow ci.yml --branch main --event push --status cancelled \
+     --json databaseId,headSha,createdAt,displayTitle
+   ```
+
+   Use the workflow that went red (`e2e.yml`, `money-coverage.yml` or
+   `docs-link-check.yml`) in place of `ci.yml` where it differs.
+2. Take the cancelled runs whose commits sit between the last green `main`
+   commit and the first red one (`git log --first-parent --oneline <green>..<red>`).
+3. Re-run them oldest first with `gh run rerun <run-id>`. A re-run joins the
+   same queue, so start the next once the previous one has started. The first
+   commit whose re-run goes red is the merge that broke `main`.
+
+The push-only gates in `verify` and `Migration drift check` already judge
+those merges together: a push to `main` is judged from the last commit whose
+run was not cancelled, and the step `Find the last judged main commit` says
+which commit that was.
+
 #### Rebuilding the code-owner configuration
 
 What is owned is `.github/CODEOWNERS` itself: the money surface (#3341) and,
