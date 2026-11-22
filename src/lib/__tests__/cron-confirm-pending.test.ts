@@ -41,8 +41,6 @@ const cancellationLedger = vi.hoisted(() => ({
 // captured row, and where its refund stands; nothing here is superseded unless
 // a case says so (`supersededDoor.owned`, no refund started).
 const supersededDoor = vi.hoisted(() => ({ owned: new Set<string>(), handOff: vi.fn() }));
-/** #5240: the saved-card capture's "not yet settled" flag (`unsettled-capture-marker.ts`). */
-const mockAlertCooldownUpsert = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<object>>(async () => ({})));
 
 vi.mock("@/lib/superseded-capture-ownership", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/superseded-capture-ownership")),
@@ -371,7 +369,6 @@ vi.mock("../prisma", () => ({
       updateMany: (...args: unknown[]) => mockPaymentUpdateMany(...args),
     },
     paymentTransaction: paymentTransactionMocks,
-    alertCooldown: { upsert: (...args: unknown[]) => mockAlertCooldownUpsert(...args) },
     memberCredit: {
       aggregate: (...args: unknown[]) => mockMemberCreditAggregate(...args),
     },
@@ -757,8 +754,6 @@ describe("Cron: Confirm Pending Bookings", () => {
           // #3267: the claim mints the attempt row in-tx; the PROCESSING
           // release records Stripe's answer on it in-tx.
           paymentTransaction: paymentTransactionMocks,
-          // #5240: the capture's "not yet settled" flag, written with the row.
-          alertCooldown: { upsert: (...args: unknown[]) => mockAlertCooldownUpsert(...args) },
           promoRedemption: {
             findMany: (...args: unknown[]) =>
               mockPromoRedemptionFindMany(...args),
@@ -780,7 +775,8 @@ describe("Cron: Confirm Pending Bookings", () => {
             create: (...args: unknown[]) =>
               mockHostingCoverageReevaluationCreate(...args),
           },
-          // #5407: the bump records its notices as owed here, by upsert only.
+          // #5407: the bump records its notices as owed here, by upsert only;
+          // #5240: so does a saved-card settle, its capture's "not yet settled" flag.
           alertCooldown: {
             upsert: async (args: (typeof stagedMarkers)[number]) => {
               markerKeysWrittenInTransaction.push(args.where.key);
@@ -3977,9 +3973,14 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith(
         expect.objectContaining({ paymentIntentId: "pi_admin" })
       );
-      // #5240: the pre-record flagged the capture for that settle to consume.
-      expect(mockAlertCooldownUpsert).toHaveBeenCalledWith(expect.objectContaining({ where: { key: "saved-card-capture-unsettled:pi_admin" } }));
-      expect(mockAlertCooldownUpsert.mock.invocationCallOrder[0]).toBeLessThan(mockMarkBookingPaymentSucceeded.mock.invocationCallOrder[0]!);
+      // #5240: the pre-record flagged the capture, committed, for that settle to consume.
+      const flagKey = "saved-card-capture-unsettled:pi_admin";
+      expect(markerKeysWrittenInTransaction).toEqual([flagKey]);
+      const flagCommitted = alertCooldownStore.delegate.upsert.mock.calls.findIndex(([call]) => call.where.key === flagKey);
+      expect(flagCommitted).toBeGreaterThanOrEqual(0);
+      expect(alertCooldownStore.delegate.upsert.mock.invocationCallOrder[flagCommitted]).toBeLessThan(
+        mockMarkBookingPaymentSucceeded.mock.invocationCallOrder[0]!,
+      );
     });
 
     it("ends an unresolved attempt on a card that has since been replaced, cancels its intent before charging the new card, and mints a fresh key", async () => {
