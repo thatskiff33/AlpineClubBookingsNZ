@@ -973,14 +973,21 @@ this section records how it is enforced.
 
 Audience: Operator, Developer.
 
-The rate limits, the lockouts and the audit log all take a caller's IP from one
-helper, `getClientIp()` in `src/lib/rate-limit-http.ts`: the last
-`X-Forwarded-For` address, then `X-Real-IP`, else `unknown`. The first address is
+For a visitor's request, the per-address rate limits, the lodge PIN lockout and
+the audit log all take the caller's IP from one helper, `getClientIp()` in
+`src/lib/rate-limit-http.ts`: the last `X-Forwarded-For` address, or
+`X-Real-IP` when that header is absent, else `unknown`. The first address is
 whatever the caller sent, so a route that read it would let an audit row show an
 address the caller chose behind a proxy that appends to the header. A lint arm
-refuses a read of either header anywhere else.
-[`DEPLOYMENT.md`](../DEPLOYMENT.md#public-rate-limits-and-proxy-headers) states
-what the proxy in front must do.
+refuses a read of a client-address header anywhere else, platform headers such
+as `CF-Connecting-IP` included.
+
+The address is the one the hop nearest the app saw. It is the visitor's only
+where [`DEPLOYMENT.md`](../DEPLOYMENT.md#public-rate-limits-and-proxy-headers)'s
+conditions hold: behind more than one proxy the nearest hop must resolve and
+overwrite the header, and with no proxy the caller sets both headers freely.
+Not every audit row holds a visitor's address in that column: a scheduled job
+can record its own tag there, and a row written without a request has none.
 
 ## Token-bearing URL paths
 
