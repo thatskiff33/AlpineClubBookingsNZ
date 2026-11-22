@@ -230,8 +230,8 @@ work.
 
 Before push: Prisma generation, lint, typecheck (with
 `NODE_OPTIONS=--max-old-space-size=12288`, as CI sets it), focused
-touched/adjacent tests, a mutation check per new guard, `quality:budget --base
-origin/main`, `ci:fast-censuses`, docs linkcheck for doc changes and knip for file/export changes. Then push a draft PR. GitHub Actions owns the full `pnpm test`, build,
+touched/adjacent tests, a mutation check per new guard, `quality:budget`,
+`ci:fast-censuses`, docs linkcheck for docs, knip for file/export changes. Then push a draft PR. GitHub Actions owns the full `pnpm test`, build,
 migration-drift, E2E, static/secret/dependency, and container gates. Run a full
 suite locally only to diagnose a CI failure or when CI is unavailable, and
 record the reason and result in the PR.
@@ -241,7 +241,7 @@ Known false greens: a stale Prisma client type-checks clean, so generate first;
 mutation must then be restored; a test that agrees with odd behaviour may be
 the wrong one. Environmental failures:
 [`TESTING.md`](../TESTING.md#suites-that-time-out-under-load-and-pass-alone),
-[knip on Windows](../TESTING.md#knip-on-a-windows-host-reports-two-unused-exports).
+[Windows knip](../TESTING.md#knip-on-a-windows-host-reports-two-unused-exports).
 
 For concurrency-sensitive work, the orchestrator also reviews the open PRs and
 last 10 merged PRs affecting the subsystem, reconciles their lock/state/provider
