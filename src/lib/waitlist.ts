@@ -8,9 +8,15 @@ import { getDefaultLodgeId } from "@/lib/lodges";
 import { isMemberEligibleToBookLodge } from "@/lib/lodge-access";
 import {
   confirmCrossLodgeWaitlistOffer,
-  getWaitlistCrossLodgeOrder,
   quoteWaitlistEntryAtLodge,
 } from "@/lib/waitlist-cross-lodge";
+import {
+  WAITLIST_QUEUE_ORDER_BY,
+  getWaitlistCrossLodgeOrder,
+  orderWaitlistOpportunities,
+  splitWaitlistOpportunities,
+  waitlistCandidateWhere,
+} from "@/lib/waitlist-queue";
 import { getNonMemberHoldPolicy } from "./cancellation";
 import {
   sendWaitlistOfferEmail,
@@ -483,22 +489,11 @@ export async function processWaitlistForDates(freedDates: {
       }
 
       const candidates = await tx.booking.findMany({
-        where: {
-          status: BookingStatus.WAITLISTED,
-          checkIn: { lt: freedDates.checkOut },
-          checkOut: { gt: freedDates.checkIn },
-          // #2258: a waitlist entry with the "No emails" switch on is NOT a
-          // candidate. Making an offer stamps waitlistOfferExpiresAt inside this
-          // transaction and starts the offer clock; the offer email goes out
-          // un-awaited after commit. If that email were withheld, the entry
-          // would hold a bed for the whole offer window with the member never
-          // told, then lapse via expireStaleOffers() — and the admin board would
-          // render it as a missing/undeliverable offer email, indistinguishable
-          // from a bounce. Excluding the entry means the clock never starts: the
-          // place goes to the next candidate and the suppressed entry keeps its
-          // WAITLISTED position for when the switch is cleared.
-          noEmails: false,
-        },
+        // The queue's candidate filter and join order live in
+        // `waitlist-queue.ts` (#5402), so the position members are shown is
+        // read from the same queue this pass walks. #2258: the filter leaves
+        // out entries with the "No emails" switch on; see its note.
+        where: waitlistCandidateWhere(freedDates),
         include: {
           guests: { include: { nights: true } }, // per-night sets (issue #713)
           member: { select: { id: true, email: true, firstName: true, lastName: true } },
@@ -516,53 +511,20 @@ export async function processWaitlistForDates(freedDates: {
             },
           },
         },
-        orderBy: { createdAt: "asc" },
+        orderBy: WAITLIST_QUEUE_ORDER_BY,
       });
 
-      // One "opportunity" is a candidate considered at one lodge. Every
-      // candidate gets an own-lodge opportunity (pre-ADR-004 behaviour);
-      // candidates from other lodges who opted into the freed lodge also
-      // get a cross-lodge opportunity there.
-      type Opportunity = {
-        candidate: (typeof candidates)[number];
-        offerLodgeId: string;
-        cross: boolean;
-      };
-      const ownOpportunities: Opportunity[] = candidates.map((candidate) => ({
-        candidate,
-        offerLodgeId: candidate.lodgeId ?? defaultLodgeId,
-        cross: false,
-      }));
-      const crossOpportunities: Opportunity[] = candidates
-        .filter(
-          (candidate) =>
-            (candidate.lodgeId ?? defaultLodgeId) !== freedLodgeId &&
-            candidate.waitlistAlternateLodges.some(
-              (alternate) => alternate.lodgeId === freedLodgeId,
-            ),
-        )
-        .map((candidate) => ({
-          candidate,
-          offerLodgeId: freedLodgeId,
-          cross: true,
-        }));
-
-      let opportunities: Opportunity[];
-      if (crossOpportunities.length === 0) {
-        opportunities = ownOpportunities;
-      } else {
-        const order = await getWaitlistCrossLodgeOrder(tx);
-        opportunities =
-          order === "MERGED"
-            ? [...ownOpportunities, ...crossOpportunities].sort(
-                (a, b) =>
-                  a.candidate.createdAt.getTime() -
-                    b.candidate.createdAt.getTime() ||
-                  // Same entry considered at two lodges: its own lodge first.
-                  Number(a.cross) - Number(b.cross),
-              )
-            : [...ownOpportunities, ...crossOpportunities];
-      }
+      // One "opportunity" is a candidate considered at one lodge; the order
+      // they are walked in is `waitlist-queue.ts`'s (#5402). The club's
+      // cross-lodge order is read only when a cross-lodge opportunity exists.
+      const split = splitWaitlistOpportunities(candidates, {
+        freedLodgeId,
+        defaultLodgeId,
+      });
+      const opportunities = orderWaitlistOpportunities(
+        split,
+        split.cross.length === 0 ? null : await getWaitlistCrossLodgeOrder(tx),
+      );
 
       for (const { candidate, offerLodgeId, cross } of opportunities) {
         // Check if ALL nights in the candidate's range have capacity

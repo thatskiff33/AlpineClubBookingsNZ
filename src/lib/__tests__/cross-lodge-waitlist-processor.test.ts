@@ -53,9 +53,14 @@ vi.mock("@/lib/lodge-access", () => ({
   isMemberEligibleToBookLodge: mocks.isMemberEligibleToBookLodge,
 }));
 vi.mock("@/lib/waitlist-cross-lodge", () => ({
-  getWaitlistCrossLodgeOrder: mocks.getWaitlistCrossLodgeOrder,
   quoteWaitlistEntryAtLodge: mocks.quoteWaitlistEntryAtLodge,
   confirmCrossLodgeWaitlistOffer: mocks.confirmCrossLodgeWaitlistOffer,
+}));
+// #5402: the queue-order setting moved to the leaf queue module; the ordering
+// itself stays real.
+vi.mock("@/lib/waitlist-queue", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/waitlist-queue")>()),
+  getWaitlistCrossLodgeOrder: mocks.getWaitlistCrossLodgeOrder,
 }));
 vi.mock("@/lib/email", () => ({
   sendWaitlistOfferEmail: mocks.sendWaitlistOfferEmail,
