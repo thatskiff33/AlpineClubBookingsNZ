@@ -5,9 +5,11 @@ import {
   loadMemberGuestFindGate,
   searchMemberGuestCandidatesByName,
 } from "@/lib/member-guest-find-service";
-import { MEMBER_GUEST_SEARCH_AUDIT_Q_MAX_CHARS } from "@/lib/member-guest-find";
+import { MEMBER_GUEST_SEARCH_Q_MAX_CHARS } from "@/lib/member-guest-find";
 import { applyMemberScopedRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { requireActiveSession } from "@/lib/session-guards";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { MEMBER_GUEST_CANDIDATES_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 /**
  * `GET /api/members/guest-candidates/search?q=` — MG3's open name type-ahead
@@ -40,6 +42,11 @@ import { requireActiveSession } from "@/lib/session-guards";
  * A GET is correct here where it was wrong for the email route: a name fragment
  * is not another member's contact detail, and the type-ahead needs the ordinary
  * request semantics.
+ *
+ * Also the AI app action `search_members_for_guest` (ALP-795), with the same
+ * gate, limits (keyed on the connection) and audit row. A connection is sent
+ * the candidate envelope's allow-listed fields only: never a contact detail
+ * or a date of birth.
  */
 export async function GET(request: NextRequest) {
   const guard = await requireActiveSession();
@@ -55,7 +62,7 @@ export async function GET(request: NextRequest) {
   // stored (truncated) on an audit row and matched against an index.
   const rawQ = (request.nextUrl.searchParams.get("q") ?? "").slice(
     0,
-    MEMBER_GUEST_SEARCH_AUDIT_Q_MAX_CHARS * 4,
+    MEMBER_GUEST_SEARCH_Q_MAX_CHARS,
   );
 
   const burst = await applyMemberScopedRateLimit(
@@ -113,7 +120,7 @@ export async function GET(request: NextRequest) {
       truncated: result.truncated === true,
     });
 
-    return NextResponse.json(result);
+    return connectionJson(request, result, MEMBER_GUEST_CANDIDATES_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err }, "Failed to search member-guest candidates by name");
     return NextResponse.json({ candidates: [], truncated: false });

@@ -32,7 +32,10 @@ const HTTP_METHODS: ReadonlySet<string> = new Set(STEP_UP_HTTP_METHODS);
  * nothing, which a reviewer checked against the route. A view-only connection
  * runs them and no audit row is written, so adding one here is a decision.
  */
-const PREVIEW_ROUTE_KEYS: readonly string[] = [];
+const PREVIEW_ROUTE_KEYS: readonly string[] = [
+  // ALP-795: looks a member up by exact email; writes only its own audit row.
+  "POST src/app/api/members/guest-candidates/resolve/route.ts",
+];
 
 /** The HTTP methods a route file exports, however it spells the export. */
 function exportedMethods(file: string): string[] {

@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -24,7 +23,6 @@ import {
   getMissingMemberProfileFieldDetails,
 } from "@/lib/member-profile-completeness";
 import logger from "@/lib/logger";
-import { nameField } from "@/lib/zod-helpers";
 import {
   isOrganisationMember,
   resolveAccessRoleTokens,
@@ -34,15 +32,14 @@ import {
   resolveEnforcedAgeTier,
 } from "@/lib/age-tier-enforcement";
 import { reconcileEmailInheritanceForMemberChange } from "@/lib/member-email-inheritance";
-import { dateOfBirthStringSchema } from "@/lib/date-only-schema";
 import { parseJsonRequestBody } from "@/lib/api-json";
-
-const delegatedDetailsSchema = z.object({
-  firstName: nameField({ required: "First name required" }),
-  lastName: nameField({ required: "Last name required" }),
-  dateOfBirth: dateOfBirthStringSchema,
-  inheritContactFromSelf: z.literal(true),
-});
+import {
+  delegatedFamilyDetailsSchema,
+  familyMemberIdParamsSchema,
+} from "@/lib/family-group-request-schemas";
+import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { FAMILY_MEMBER_DETAILS_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 const DELEGATED_MEMBER_SELECT = {
   id: true,
@@ -135,13 +132,24 @@ export async function PUT(
     return inactiveResponse;
   }
 
-  const { memberId } = await params;
+  // Keyed on the AI app connection for one, on the address for a browser.
+  const rateLimited = await applyRateLimit(rateLimiters.api, req);
+  if (rateLimited) return rateLimited;
+
+  const parsedParams = familyMemberIdParamsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return NextResponse.json(
+      { error: "Family member not found" },
+      { status: 404 },
+    );
+  }
+  const { memberId } = parsedParams.data;
 
   const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = delegatedDetailsSchema.safeParse(body);
+  const parsed = delegatedFamilyDetailsSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       {
@@ -387,14 +395,20 @@ export async function PUT(
     }
   }
 
-  return NextResponse.json({
-    member: {
-      id: updated.id,
-      firstName: updated.firstName,
-      lastName: updated.lastName,
-      ageTier: updated.ageTier,
-      canLogin: updated.canLogin,
+  // Also the AI app action `confirm_family_member_details` (ALP-795), which
+  // is sent the allow-listed fields only.
+  return connectionJson(
+    req,
+    {
+      member: {
+        id: updated.id,
+        firstName: updated.firstName,
+        lastName: updated.lastName,
+        ageTier: updated.ageTier,
+        canLogin: updated.canLogin,
+      },
+      profileStatus: serializeStatus(updated),
     },
-    profileStatus: serializeStatus(updated),
-  });
+    FAMILY_MEMBER_DETAILS_CONNECTION_SHAPE,
+  );
 }
