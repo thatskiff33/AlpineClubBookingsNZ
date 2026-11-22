@@ -173,7 +173,7 @@ calls an existing API route, and the route decides, exactly as for a browser.
 | `list_my_bookings` | The member's newest 200 bookings, made by them or as a guest; says when there are older ones | read | `GET /api/bookings/mine` |
 | `get_my_booking` | A summary of one of those bookings; the price and note only on a booking the member made, and whether the price is still being checked | read | `GET /api/bookings/[id]` |
 | `get_my_family_group` | The member and their family groups' active members: id, name, age group, relationship and whether they can be booked | read | `GET /api/members/family` |
-| `get_my_profile` | The member's own name, contact details, address and age group | read | `GET /api/profile/summary` |
+| `get_my_profile` | The member's own name, contact details, address, age group and whether two-step sign-in is on | read | `GET /api/profile/summary` |
 | `list_notices` | Club notices the member can see, each body as plain text | read | `GET /api/notices` |
 | `create_draft_booking` | Saves a **draft** booking: holds no beds, takes no payment; the member finishes and pays on the website. The route refuses a connection anything but a draft, and refuses an account that is not a member. Answers with the draft's summary | write | `POST /api/bookings` (always `draft: true`) |
 | `preview_cancel_booking` | What cancelling would refund, without cancelling | read | `GET /api/bookings/[id]/cancel-preview` |

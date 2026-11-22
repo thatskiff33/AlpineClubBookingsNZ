@@ -15,7 +15,12 @@ import {
 } from "@/lib/xero-contact-sync";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
-import { copyStreetAddressToPostal, MEMBER_PHONE_FIELDS } from "@/lib/member-address";
+import {
+  copyStreetAddressToPostal,
+  MEMBER_PHONE_FIELDS,
+  POSTAL_ADDRESS_FIELDS,
+  STREET_ADDRESS_FIELDS,
+} from "@/lib/member-address";
 import { parseDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
@@ -52,30 +57,14 @@ import {
 import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 import { MEMBER_PROFILE_UPDATE_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
-const STREET_FIELDS = [
-  "streetAddressLine1",
-  "streetAddressLine2",
-  "streetCity",
-  "streetRegion",
-  "streetPostalCode",
-  "streetCountry",
-] as const;
-const POSTAL_FIELDS = [
-  "postalAddressLine1",
-  "postalAddressLine2",
-  "postalCity",
-  "postalRegion",
-  "postalPostalCode",
-  "postalCountry",
-] as const;
 const PROFILE_AUDIT_FIELDS = [
   "firstName",
   "lastName",
   ...MEMBER_PHONE_FIELDS,
   "dateOfBirth",
   "ageTier",
-  ...STREET_FIELDS,
-  ...POSTAL_FIELDS,
+  ...STREET_ADDRESS_FIELDS,
+  ...POSTAL_ADDRESS_FIELDS,
   "occupation",
   "lodgeScreenPhoneOptIn",
   "profileCompletedAt",
@@ -88,15 +77,15 @@ const PROFILE_AUDIT_FIELDS = [
  */
 function postalCopiedFromStreet(
   updateData: Record<string, unknown>,
-  existing: Partial<Record<(typeof STREET_FIELDS)[number], string | null>>,
-): Record<(typeof POSTAL_FIELDS)[number], string | null> {
+  existing: Partial<Record<(typeof STREET_ADDRESS_FIELDS)[number], string | null>>,
+): Record<(typeof POSTAL_ADDRESS_FIELDS)[number], string | null> {
   const street = Object.fromEntries(
-    STREET_FIELDS.map((field) => [field, (field in updateData ? updateData[field] : existing[field]) as string | null | undefined]),
-  ) as Record<(typeof STREET_FIELDS)[number], string | null | undefined>;
+    STREET_ADDRESS_FIELDS.map((field) => [field, (field in updateData ? updateData[field] : existing[field]) as string | null | undefined]),
+  ) as Record<(typeof STREET_ADDRESS_FIELDS)[number], string | null | undefined>;
   const postalAddress = copyStreetAddressToPostal(street);
   return Object.fromEntries(
-    POSTAL_FIELDS.map((field) => [field, postalAddress[field]?.trim() || null]),
-  ) as Record<(typeof POSTAL_FIELDS)[number], string | null>;
+    POSTAL_ADDRESS_FIELDS.map((field) => [field, postalAddress[field]?.trim() || null]),
+  ) as Record<(typeof POSTAL_ADDRESS_FIELDS)[number], string | null>;
 }
 
 const PROFILE_XERO_SYNC_SELECT = {
@@ -175,7 +164,7 @@ export async function PUT(req: NextRequest) {
   }
 
   // Address fields
-  for (const f of [...STREET_FIELDS, ...POSTAL_FIELDS]) {
+  for (const f of [...STREET_ADDRESS_FIELDS, ...POSTAL_ADDRESS_FIELDS]) {
     if (data[f] !== undefined) {
       updateData[f] = data[f]?.trim() || null;
     }
@@ -390,8 +379,8 @@ export async function PUT(req: NextRequest) {
               name: hasAnyField(changedFields, ["firstName", "lastName"]),
               phone: hasAnyField(changedFields, MEMBER_PHONE_FIELDS),
               address: hasAnyField(changedFields, [
-                ...STREET_FIELDS,
-                ...POSTAL_FIELDS,
+                ...STREET_ADDRESS_FIELDS,
+                ...POSTAL_ADDRESS_FIELDS,
               ]),
               dateOfBirth: changedFields.includes("dateOfBirth"),
               ageTier: changedFields.includes("ageTier"),

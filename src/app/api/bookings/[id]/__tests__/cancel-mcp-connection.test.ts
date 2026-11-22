@@ -20,6 +20,7 @@ const h = vi.hoisted(() => ({
   requireActiveSessionUser: vi.fn(),
   cancelBooking: vi.fn(),
   bookingFindUnique: vi.fn(),
+  calculateCancellationPreview: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
@@ -27,8 +28,48 @@ vi.mock("@/lib/session-guards", () => ({ requireActiveSessionUser: h.requireActi
 vi.mock("@/lib/booking-cancel", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/booking-cancel")),
   cancelBooking: h.cancelBooking,
+  paymentEligibleForPaidCancelPath: vi.fn(async () => true),
 }));
-vi.mock("@/lib/prisma", () => ({ prisma: { booking: { findUnique: h.bookingFindUnique } } }));
+// The paid preview's money readers, stubbed so the test reaches the paid
+// answer; the figures themselves are pinned in the cancel preview's own tests.
+vi.mock("@/lib/rate-limit", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/rate-limit")),
+  checkRateLimit: vi.fn(async () => ({ success: true })),
+}));
+vi.mock("@/lib/internet-banking-part-payment-at-cancel", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/internet-banking-part-payment-at-cancel")),
+  readPartPaymentAtCancel: vi.fn(async () => null),
+}));
+vi.mock("@/lib/cancellation", () => ({ loadCancellationPolicy: vi.fn(async () => []) }));
+vi.mock("@/lib/policies/booking-route-decisions", () => ({
+  calculateCancellationPreview: h.calculateCancellationPreview,
+}));
+vi.mock("@/lib/club-time/server", () => ({ clubTime: vi.fn(async () => ({ today: () => "2026-07-01" })) }));
+vi.mock("@/lib/stripe-dispute-hold", () => ({ paymentDisputedCaptureCents: vi.fn(async () => ({ cents: 0 })) }));
+vi.mock("@/lib/superseded-capture-hold-back", () => ({ readSupersededCaptureHeldBack: vi.fn(async () => ({ totalCents: 0 })) }));
+vi.mock("@/lib/booking-credit-give-back-marker", () => ({ bookingReducedThroughCreditGiveBack: vi.fn(async () => false) }));
+vi.mock("@/lib/member-credit", () => ({ deriveBookingAppliedCreditCents: vi.fn(async () => 0) }));
+vi.mock("@/lib/cancel-card-refund-shortfall-preview", () => ({
+  cancelPreviewCardShortfall: vi.fn(async () => ({ cardShortfall: { cardCents: 8000, bankCents: 0, checkCents: 0 } })),
+}));
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    booking: { findUnique: h.bookingFindUnique },
+    memberCredit: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
+  },
+}));
+// The unpaid answer names only fields the action promises, so a stray one is
+// added here: a route that skipped the projection would send it.
+vi.mock("@/lib/cancel-preview-answer", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/cancel-preview-answer");
+  return {
+    ...actual,
+    unpaidCancelPreviewAnswer: (input: Parameters<typeof actual.unpaidCancelPreviewAnswer>[0]) => ({
+      ...actual.unpaidCancelPreviewAnswer(input),
+      internalNote: "not for an AI provider",
+    }),
+  };
+});
 vi.mock("@/lib/club-format-server", () => ({ clubFormatValues: vi.fn(async () => ({})) }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -139,6 +180,57 @@ describe("GET /api/bookings/[id]/cancel-preview through an AI app connection", (
     h.bookingFindUnique.mockResolvedValue({ id: "b1", memberId: OFFICER, status: "CANCELLED" });
     const res = await preview(previewRequest(true), { params });
     expect(res.status).toBe(400);
+  });
+
+  it("sends a connection only the preview_cancel_booking fields of an unpaid preview", async () => {
+    h.bookingFindUnique.mockResolvedValue({ id: "b1", memberId: OFFICER, status: "PENDING", payment: null });
+    const viaConnection = await preview(previewRequest(true), { params });
+    expect(viaConnection.status).toBe(200);
+    const connection = await viaConnection.json();
+    expect(connection).toMatchObject({ hasPayment: false, creditRestoredCents: 0 });
+    expect(connection).not.toHaveProperty("internalNote");
+    const viaBrowser = await preview(previewRequest(false), { params });
+    expect(await viaBrowser.json()).toMatchObject({ internalNote: "not for an AI provider" });
+  });
+
+  it("sends a connection only the preview_cancel_booking fields of a paid preview", async () => {
+    // The paid answer spreads the policy calculation, so a field added there
+    // reaches the website at once; the route must project it for a connection.
+    const figures = {
+      refundAmountCents: 8000,
+      keptAmountCents: 2000,
+      changeFeeCents: 0,
+      refundPercentage: 80,
+      creditRefundAmountCents: 0,
+      creditRefundPercentage: 0,
+      creditRestoredCents: 0,
+      totalPaidCents: 10000,
+    };
+    h.calculateCancellationPreview.mockReturnValue({ ...figures, policyTierInternalId: "tier-7" });
+    h.bookingFindUnique.mockResolvedValue({
+      id: "b1",
+      memberId: OFFICER,
+      status: "PAID",
+      checkIn: new Date("2026-08-01T00:00:00.000Z"),
+      lodgeId: "lodge-1",
+      finalPriceCents: 10000,
+      payment: {
+        id: "p1",
+        source: "STRIPE",
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        changeFeeCents: 0,
+        manuallyMarkedPaidAt: null,
+        manualRefundTasks: [],
+      },
+    });
+    const viaConnection = await preview(previewRequest(true), { params });
+    expect(viaConnection.status).toBe(200);
+    const connection = await viaConnection.json();
+    expect(connection).toMatchObject({ ...figures, hasPayment: true, manualRefund: false });
+    expect(connection).not.toHaveProperty("policyTierInternalId");
+    const viaBrowser = await preview(previewRequest(false), { params });
+    expect(await viaBrowser.json()).toMatchObject({ policyTierInternalId: "tier-7" });
   });
 
   it("keeps the officer's preview of another member's booking on the website", async () => {

@@ -5,11 +5,11 @@
  * connection gets exactly the `returns` fields, the browser's answer is
  * unchanged.
  *
- * Each fixture carries a field the action's shape does not name, which the
- * connection must not see. The cancel answer is pinned in
+ * Each fixture carries a field the action's shape does not name, in a place
+ * the route passes through, so the test fails if the route stops projecting.
+ * The cancel and cancel preview answers are pinned in
  * `cancel-mcp-connection.test.ts`, the draft create answer in
- * `issue7-8-draft-subscription.test.ts`, and the cancel preview's paid answer,
- * which spreads the policy calculation, below.
+ * `issue7-8-draft-subscription.test.ts`.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -45,9 +45,6 @@ vi.mock("@/lib/capacity", () => ({
 import { GET as getAvailability } from "@/app/api/availability/route";
 import { GET as getLodges } from "@/app/api/lodges/route";
 import { expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
-import { paidCancelPreviewAnswer } from "@/lib/cancel-preview-answer";
-import { projectForConnection } from "@/lib/connection-projection";
-import { CANCEL_PREVIEW_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -71,7 +68,15 @@ describe("get_availability", () => {
   it("answers with each night's occupied beds, its season and the lodge's capacity", async () => {
     h.prisma.lodge.findUnique.mockResolvedValue({ id: "lodge-1", active: true });
     h.isMemberEligibleToBookLodge.mockResolvedValue(true);
-    h.getMonthAvailability.mockResolvedValue(new Map([["2026-07-03", 12]]));
+    // The route copies each occupancy entry as it comes, so an entry that is
+    // not a bed count reaches the website; the shape keeps only plain values.
+    const stray = { occupiedBeds: 3, guestNames: ["A. Member"] };
+    h.getMonthAvailability.mockResolvedValue(
+      new Map<string, unknown>([
+        ["2026-07-03", 12],
+        ["2026-07-04", stray],
+      ]),
+    );
     h.getLodgeCapacity.mockResolvedValue(30);
     h.prisma.season.findMany.mockResolvedValue([
       {
@@ -93,43 +98,8 @@ describe("get_availability", () => {
       seasons: { "2026-07-01": { name: "Winter", type: "PEAK" }, "2026-07-02": { name: "Winter", type: "PEAK" } },
       lodgeCapacity: 30,
     });
-    expect(browser).toEqual(connection);
-    expect(JSON.stringify(connection)).not.toMatch(/season-1|Committee pricing note/);
+    expect(browser).toEqual({ ...connection, availability: { "2026-07-03": 12, "2026-07-04": stray } });
+    expect(JSON.stringify(connection)).not.toMatch(/season-1|Committee pricing note|A\. Member/);
     expect(h.isMemberEligibleToBookLodge).toHaveBeenCalledWith(h.prisma, "officer-1", "lodge-1");
-  });
-});
-
-describe("preview_cancel_booking's paid answer", () => {
-  it("drops a field the policy calculation adds that the action does not name", () => {
-    // The paid answer spreads the policy calculation, so a field added there
-    // would reach the website at once; a connection is sent only the shape.
-    const preview = {
-      refundAmountCents: 8000,
-      keptAmountCents: 2000,
-      changeFeeCents: 0,
-      refundPercentage: 80,
-      creditRefundAmountCents: 0,
-      creditRefundPercentage: 0,
-      creditRestoredCents: 0,
-      totalPaidCents: 10000,
-      policyTierInternalId: "tier-7",
-    };
-    const answer = paidCancelPreviewAnswer({
-      preview: preview as never,
-      groupCancellationRefund: null,
-      cardShortfall: { cardShortfall: { cardCents: 0, bankCents: 0, checkCents: 0 } } as never,
-      manualRefund: false,
-      refundDisputed: false,
-      refundMethodForced: null as never,
-    });
-    expect(answer).toHaveProperty("policyTierInternalId");
-    const { policyTierInternalId: _withheld, ...named } = preview;
-    expect(projectForConnection(answer, CANCEL_PREVIEW_CONNECTION_SHAPE)).toEqual({
-      ...named,
-      cardShortfall: { cardCents: 0, bankCents: 0, checkCents: 0 },
-      hasPayment: true,
-      manualRefund: false,
-      refundMethodForced: null,
-    });
   });
 });
