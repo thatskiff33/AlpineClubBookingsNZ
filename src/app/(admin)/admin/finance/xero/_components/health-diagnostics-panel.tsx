@@ -39,7 +39,7 @@ import type {
   XeroHealthSnapshot,
 } from "./types"
 import { adminHref } from "@/lib/admin-hubs";
-import { describeContactGroupMismatchCounts } from "@/lib/xero-contact-group-mismatch-summary";
+import { describeContactGroupMismatchTotal } from "@/lib/xero-contact-group-mismatch-summary";
 import { ContactGroupMismatchPanel } from "./contact-group-mismatch-panel"
 
 type Props = {
@@ -345,7 +345,7 @@ export function HealthAndDiagnosticsPanels({
               <HealthStatCard
                 label="Group mismatches"
                 value={health.contactGroupMismatches.count}
-                subtitle={!health.contactGroupMismatches.cacheReady ? "Refresh Xero contact groups before mismatch checks can run." : health.contactGroupMismatches.count > 0 ? `${describeContactGroupMismatchCounts(health.contactGroupMismatches)}. Linked members whose Xero contact groups disagree with the grouping rules.` : "Linked members whose Xero contact groups disagree with the grouping rules."}
+                subtitle={!health.contactGroupMismatches.cacheReady ? "Refresh Xero contact groups before mismatch checks can run." : health.contactGroupMismatches.count > 0 ? `${describeContactGroupMismatchTotal(health.contactGroupMismatches)}. Linked members whose Xero contact groups disagree with the grouping rules.` : "Linked members whose Xero contact groups disagree with the grouping rules."}
                 badge={!health.contactGroupMismatches.cacheReady ? <ToneChip tone="neutral" icon={Circle}>Cache needed</ToneChip> : health.contactGroupMismatches.count > 0 ? <ToneChip tone="warning" icon={AlertTriangle}>Review</ToneChip> : <ToneChip tone="success" icon={CheckCircle2}>Clear</ToneChip>}
                 onClick={() => scrollToSection("contactGroupMismatches")}
               />

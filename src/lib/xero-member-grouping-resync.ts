@@ -202,7 +202,13 @@ export interface MemberGroupingInformationalEntry {
   memberEmail: string;
   ageTier: AgeTier;
   xeroContactId: string;
-  /** Managed-universe groups the member sits in although no rule matches (#5234: named). */
+  /**
+   * Managed-universe group ids the member sits in although no rule matches.
+   * Kept beside `unexpectedManagedGroups` so a tab loaded before #5234, or an
+   * old server answering a new bundle, still works (blue-green, additive).
+   */
+  unexpectedManagedGroupIds: string[];
+  /** The same groups, named (#5234). */
   unexpectedManagedGroups: XeroGroupRef[];
 }
 
@@ -405,6 +411,7 @@ export async function getXeroMemberGroupingSnapshot(options?: {
           memberEmail: member.email,
           ageTier: member.ageTier,
           xeroContactId: member.xeroContactId,
+          unexpectedManagedGroupIds: unexpectedManagedGroups.map((group) => group.id),
           unexpectedManagedGroups,
         });
       }

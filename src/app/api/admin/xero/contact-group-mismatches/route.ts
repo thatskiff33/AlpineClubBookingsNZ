@@ -70,8 +70,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // #5234: information-only entries too, so a contact removed from a
+    // managed group in Xero drops off the panel on Refresh. Both lists are
+    // already capped by the request's `limit`.
     const resync = await resyncXeroContactCachesByIds(
-      before.mismatches.map((mismatch) => mismatch.xeroContactId),
+      [
+        ...before.mismatches.map((mismatch) => mismatch.xeroContactId),
+        ...before.informational.map((entry) => entry.xeroContactId),
+      ],
       "adminXeroContactGroupMismatchResync"
     );
     const snapshot = await getXeroMemberGroupingSnapshot(parsed.data);

@@ -40,6 +40,24 @@ export function describeContactGroupMismatchCounts({
   return parts.length > 0 ? parts.join(", ") : "none";
 }
 
+/**
+ * The health tile's wording. An older server sends only `count`, so word it
+ * from the total alone until both split counts arrive (blue-green).
+ */
+export function describeContactGroupMismatchTotal(counts: {
+  count: number;
+  resyncCount?: number;
+  reviewByHandCount?: number;
+}): string {
+  if (counts.resyncCount === undefined || counts.reviewByHandCount === undefined) {
+    return `${counts.count} to review`;
+  }
+  return describeContactGroupMismatchCounts({
+    resyncCount: counts.resyncCount,
+    reviewByHandCount: counts.reviewByHandCount,
+  });
+}
+
 /** Why an information-only entry is left to a person. */
 export const REVIEW_BY_HAND_REASON =
   "Members to review by hand match no grouping rule, so the re-sync never changes them.";
@@ -59,4 +77,18 @@ export function describeContactGroupMismatchStuckState(
 ): string {
   const byHand = counts.reviewByHandCount > 0 ? ` ${REVIEW_BY_HAND_REASON}` : "";
   return `Linked members' Xero contact groups disagree with the grouping rules: ${describeContactGroupMismatchCounts(counts)}.${byHand}`;
+}
+
+/**
+ * The managed groups an information-only entry sits in. An older server sends
+ * only `unexpectedManagedGroupIds`, so fall back to unnamed ids (blue-green).
+ */
+export function unexpectedManagedGroupRefs(entry: {
+  unexpectedManagedGroupIds: readonly string[];
+  unexpectedManagedGroups?: ReadonlyArray<{ id: string; name: string | null }>;
+}): ReadonlyArray<{ id: string; name: string | null }> {
+  return (
+    entry.unexpectedManagedGroups ??
+    entry.unexpectedManagedGroupIds.map((id) => ({ id, name: null }))
+  );
 }

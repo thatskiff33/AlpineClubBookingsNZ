@@ -14,6 +14,7 @@ import {
   describeContactGroupMismatchCounts,
   REVIEW_BY_HAND_REASON,
   reviewByHandFix,
+  unexpectedManagedGroupRefs,
   type ContactGroupMismatchCounts,
 } from "@/lib/xero-contact-group-mismatch-summary"
 import { buildXeroContactUrl } from "@/lib/xero-links"
@@ -77,7 +78,7 @@ function ReviewByHandList({
       <h4 className="text-sm font-semibold">To review by hand</h4>
       <p className="text-sm text-muted-foreground">{REVIEW_BY_HAND_REASON} Showing {data.informational.length} of {data.informationalCount}.</p>
       {data.informational.map((entry) => {
-        const groupNames = entry.unexpectedManagedGroups.map((group) => group.name ?? group.id)
+        const groupNames = unexpectedManagedGroupRefs(entry).map((group) => group.name ?? group.id)
         return (
           <div key={entry.memberId} className="rounded-md border border-dashed p-3">
             <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">

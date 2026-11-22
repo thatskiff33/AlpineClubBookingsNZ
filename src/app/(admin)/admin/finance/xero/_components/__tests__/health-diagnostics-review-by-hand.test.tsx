@@ -54,14 +54,18 @@ const groupMismatches: ContactGroupMismatchResponse = {
       memberEmail: "office@ridge.example",
       ageTier: "NOT_APPLICABLE",
       xeroContactId: "contact-org",
+      unexpectedManagedGroupIds: ["group-adults"],
       unexpectedManagedGroups: [{ id: "group-adults", name: "Adult Members" }],
     },
   ],
 }
 
-function renderPanel() {
+function renderPanel(
+  healthAnswer: unknown = health,
+  groupAnswer: unknown = groupMismatches,
+) {
   mocks.fetchJson.mockImplementation(async (url: string) =>
-    url.startsWith("/api/admin/xero/contact-group-mismatches") ? groupMismatches : health,
+    url.startsWith("/api/admin/xero/contact-group-mismatches") ? groupAnswer : healthAnswer,
   )
   return render(
     <HealthAndDiagnosticsPanels
@@ -110,6 +114,27 @@ describe("an information-only contact-group entry (#5234)", () => {
     expect(panel.getByText("In Adult Members")).toBeInTheDocument()
     expect(
       panel.getByText("Remove the contact from Adult Members in Xero, or add a grouping rule that covers this member."),
+    ).toBeInTheDocument()
+  })
+
+  // Blue-green: a new bundle can meet a server from before #5234, which sends
+  // no split counts and only group ids. The page must still render and count.
+  it("still counts and names the entry when an older server answers", async () => {
+    const olderHealth = { ...health, contactGroupMismatches: { count: 1, cacheReady: true } }
+    const { unexpectedManagedGroups: _named, ...olderEntry } = groupMismatches.informational[0]
+    const olderGroups = { ...groupMismatches, informational: [olderEntry] }
+    renderPanel(olderHealth, olderGroups)
+
+    const card = (await screen.findByText("Group mismatches")).closest("div.rounded-xl") as HTMLElement
+    // Worded from the total alone: no split it cannot know.
+    expect(card).toHaveTextContent("1 to review. Linked members")
+    expect(card).not.toHaveTextContent("by hand")
+
+    await screen.findByText("Ridge Outdoor Trust")
+    const panel = within(document.getElementById(xeroSectionId("contactGroupMismatches")) as HTMLElement)
+    expect(panel.getByText("In group-adults")).toBeInTheDocument()
+    expect(
+      panel.getByText("Remove the contact from group-adults in Xero, or add a grouping rule that covers this member."),
     ).toBeInTheDocument()
   })
 })

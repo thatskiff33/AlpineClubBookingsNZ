@@ -171,6 +171,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
         lastRefreshedAt: "2026-07-01T00:00:00.000Z",
         mismatchCount: 1,
         mismatches: [{ memberId: "m1", xeroContactId: "xc-1" }],
+        informational: [],
       })
       // Recompute after the resync: the fix made inside Xero has landed in
       // the caches, so the mismatch clears.
@@ -179,6 +180,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
         lastRefreshedAt: "2026-07-01T00:00:00.000Z",
         mismatchCount: 0,
         mismatches: [],
+        informational: [],
       });
     mockFetchContactsByIds.mockResolvedValue([{ contactID: "xc-1" }]);
 
@@ -203,12 +205,45 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
     );
   });
 
+  // #5234: an officer who removes an information-only contact from a managed
+  // group in Xero then presses Refresh; that contact must be re-fetched too,
+  // or the row the panel told them to fix never clears.
+  it("re-fetches information-only contacts alongside the mismatches", async () => {
+    mockGroupSnapshot
+      .mockResolvedValueOnce({
+        cacheReady: true,
+        lastRefreshedAt: "2026-07-01T00:00:00.000Z",
+        mismatchCount: 1,
+        mismatches: [{ memberId: "m1", xeroContactId: "xc-1" }],
+        informational: [{ memberId: "m2", xeroContactId: "xc-org" }],
+      })
+      .mockResolvedValueOnce({
+        cacheReady: true,
+        lastRefreshedAt: "2026-07-01T00:00:00.000Z",
+        mismatchCount: 0,
+        mismatches: [],
+        informational: [],
+      });
+    mockFetchContactsByIds.mockResolvedValue([{ contactID: "xc-1" }, { contactID: "xc-org" }]);
+
+    const res = await resyncGroupMismatches(
+      postRequest("http://localhost/api/admin/xero/contact-group-mismatches")
+    );
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).resync).toMatchObject({ requestedContacts: 2, resyncedContacts: 2 });
+    expect(mockFetchContactsByIds).toHaveBeenCalledWith(
+      expect.objectContaining({ contactIds: ["xc-1", "xc-org"] })
+    );
+  });
+
   it("returns 409 without calling Xero when the cache has never been synced", async () => {
     mockGroupSnapshot.mockResolvedValue({
       cacheReady: false,
       lastRefreshedAt: null,
       mismatchCount: 0,
       mismatches: [],
+      informational: [],
     });
 
     const res = await resyncGroupMismatches(
@@ -226,6 +261,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
       lastRefreshedAt: "2026-07-01T00:00:00.000Z",
       mismatchCount: 1,
       mismatches: [{ memberId: "m1", xeroContactId: "xc-1" }],
+      informational: [],
     });
     mockFetchContactsByIds.mockRejectedValue(new XeroDailyLimitError(3600));
 
@@ -243,6 +279,7 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
       lastRefreshedAt: "2026-07-01T00:00:00.000Z",
       mismatchCount: 1,
       mismatches: [{ memberId: "m1", xeroContactId: "xc-1" }],
+      informational: [],
     });
     mockIsXeroConnected.mockResolvedValue(false);
 

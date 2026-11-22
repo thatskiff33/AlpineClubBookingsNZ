@@ -273,7 +273,7 @@ export interface XeroHealthSnapshot {
   pendingOperations: { count: number }
   lastMembershipRefresh: { at: string | null; lastCronStatus: string | null; lastCronStartedAt: string | null }
   missingInvoices: { count: number }
-  contactGroupMismatches: { count: number; resyncCount: number; reviewByHandCount: number; cacheReady: boolean }
+  contactGroupMismatches: { count: number; resyncCount?: number; reviewByHandCount?: number; cacheReady: boolean } // #5234 split; optional while an older server answers
   contactLinkMismatches: { count: number; cacheReady: boolean }
   creditNotesSpentOutsideApp?: { count: number } // #4220; optional while an older server answers
   apiBudget: { status: "healthy" | "warning" | "critical" | "exhausted" | "unknown"; usagePercent: number | null; totalCalls: number | null; failedCalls: number | null }
@@ -329,7 +329,8 @@ interface ContactGroupInformationalEntry {
   memberEmail: string
   ageTier: AgeTier
   xeroContactId: string
-  unexpectedManagedGroups: Array<{ id: string; name: string | null }>
+  unexpectedManagedGroupIds: string[]
+  unexpectedManagedGroups?: Array<{ id: string; name: string | null }> // #5234; optional while an older server answers
 }
 
 export interface ContactGroupMismatchResponse {

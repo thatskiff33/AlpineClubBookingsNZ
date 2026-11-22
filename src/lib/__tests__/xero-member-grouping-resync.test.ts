@@ -258,6 +258,8 @@ describe("getXeroMemberGroupingSnapshot", () => {
         xeroContactId: "c5",
         // Only the managed-universe intersection — g_unrelated is not listed —
         // named from the cache so the panel can say which group to leave (#5234).
+        // The id list stays beside it for blue-green and stale tabs.
+        unexpectedManagedGroupIds: ["g_adult"],
         unexpectedManagedGroups: [{ id: "g_adult", name: "Adults" }],
       },
     ]);
