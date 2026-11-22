@@ -147,9 +147,8 @@ export async function PUT(
 
   const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body;
 
-  const parsed = updateFamilyGroupSchema.safeParse(body);
+  const parsed = updateFamilyGroupSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
@@ -246,16 +245,9 @@ export async function PUT(
   // Field by field, for the same reason as the GET above: a spread of the row
   // would re-export the raw `memberships` relation beside the flattened
   // `members` array. Nothing reads the duplicate.
-  return connectionJson(
-    req,
-    {
-      id,
-      name: updated?.name ?? null,
-      createdAt: updated?.createdAt ?? null,
-      members: updated?.memberships.map((m) => m.member) ?? [],
-    },
-    FAMILY_GROUP_UPDATED_CONNECTION_SHAPE,
-  );
+  const members = updated?.memberships.map((m) => m.member) ?? [];
+  const group = { id, name: updated?.name ?? null, createdAt: updated?.createdAt ?? null, members };
+  return connectionJson(req, group, FAMILY_GROUP_UPDATED_CONNECTION_SHAPE);
 }
 
 /**

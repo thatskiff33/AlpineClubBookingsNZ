@@ -32,9 +32,7 @@ const sectionSchema = z.object({
 const updateSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   version: z.string().trim().min(1).max(50).optional(),
-  kind: z
-    .enum(["NEW_MEMBER", "HUT_LEADER", "YOUTH_TO_FULL", "RE_INDUCTION"])
-    .optional(),
+  kind: z.enum(["NEW_MEMBER", "HUT_LEADER", "YOUTH_TO_FULL", "RE_INDUCTION"]).optional(),
   sections: z.array(sectionSchema).max(30),
 });
 
@@ -63,11 +61,8 @@ export async function GET(
     return NextResponse.json({ error: "Template not found" }, { status: 404 });
   }
 
-  return connectionJson(
-    req,
-    { template, used: await templateUsed(id) },
-    INDUCTION_TEMPLATE_DETAIL_CONNECTION_SHAPE,
-  );
+  const body = { template, used: await templateUsed(id) };
+  return connectionJson(req, body, INDUCTION_TEMPLATE_DETAIL_CONNECTION_SHAPE);
 }
 
 export async function PUT(
