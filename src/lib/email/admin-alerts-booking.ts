@@ -203,23 +203,30 @@ export async function sendAdminPendingDeadlineAlert(
   });
 }
 
-// test seam
-// N-07: Admin alert - booking bumped
+// N-07: Admin alert - booking bumped. #5403: sent by the confirm-pending cron
+// when it releases a pending booking at its hold deadline because the dates
+// filled up. The cron has no "triggering" booking to name (the beds went to
+// whoever was confirmed first), so the alert names the booking's lodge and the
+// reason instead; `reason` also says when it was the guests-cancelled variant.
 export async function sendAdminBookingBumpedAlert(data: {
   bumpedMemberName: string;
+  lodgeName: string;
   checkIn: Date;
   checkOut: Date;
   guestCount: number;
-  triggeringMemberName: string;
+  reason: string;
 }) {
   await sendToAdmins({
     subject: `Booking Bumped: ${data.bumpedMemberName}`,
     html: await renderEmailHtml(() => adminBookingBumpedTemplate(data)),
     templateName: "admin-booking-bumped",
     templateData: {
-      ...data,
+      bumpedMemberName: data.bumpedMemberName,
+      lodgeName: data.lodgeName,
       checkIn: emailCalendarDay(data.checkIn),
       checkOut: emailCalendarDay(data.checkOut),
+      guestCount: data.guestCount,
+      reason: data.reason,
     },
     preferenceKey: "adminBookingBumped",
   });

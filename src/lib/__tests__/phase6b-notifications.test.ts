@@ -732,6 +732,27 @@ describe("N-13: sendAdminDigest", () => {
     });
   });
 
+  // #5403: the confirm-pending cron sends the bumped alert again, so its line
+  // in the digest counts real events instead of always reading zero.
+  it("counts each bumped-booking alert in the digest", async () => {
+    mockPrisma.emailLog.findMany.mockResolvedValue([
+      { templateName: "admin-booking-bumped", subject: "Booking Bumped: Jane Doe" },
+      { templateName: "admin-booking-bumped", subject: "Booking Bumped: Sam Smith" },
+    ]);
+
+    const { sendAdminDigest } = await import("../cron-admin-digest");
+    const result = await sendAdminDigest();
+    await flushAsyncEmailSends();
+
+    expect(result.totalAlerts).toBe(2);
+    expect(result.sent).toBe(true);
+    const digestHtml = mockTransporter.sendMail.mock.calls
+      .map((call) => call[0] as { subject: string; html: string })
+      .find((mail) => mail.html.includes("Admin Daily Digest"))?.html;
+    // The row's own Count cell, the one straight after its label.
+    expect(digestHtml).toMatch(/Bookings Bumped<\/td>\s*<td[^>]*>2<\/td>/);
+  });
+
   it("does not send digest when no alerts occurred by default", async () => {
     mockPrisma.emailLog.findMany.mockResolvedValue([]);
 

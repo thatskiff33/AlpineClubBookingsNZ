@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { resolveClubFormat } from "@/lib/club-format";
 import { stripeSdkError as stripeError } from "./support/stripe-sdk-error";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { bookingBumpReason } from "@/lib/booking-bump-reason";
 
 // Mock Stripe
 vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_fake");
@@ -156,6 +157,8 @@ const mockSendBookingRequestPaymentExpiredEmail = vi
   .mockResolvedValue(undefined);
 // #3268: the one member notice for a saved card the cron has given up on.
 const mockSendSavedCardChargeFailedEmail = vi.fn().mockResolvedValue(undefined);
+// #5403: the officers' alert for a bumped booking, sent after the bump commits.
+const mockSendAdminBookingBumpedAlert = vi.fn().mockResolvedValue(undefined);
 vi.mock("../email", () => ({
   sendSavedCardChargeFailedEmail: (...args: unknown[]) =>
     mockSendSavedCardChargeFailedEmail(...args),
@@ -178,6 +181,8 @@ vi.mock("../email", () => ({
     mockSendAdminSplitSettlementUnpaidAlert(...args),
   sendAdminSplitSettlementCancelledAlert: (...args: unknown[]) =>
     mockSendAdminSplitSettlementCancelledAlert(...args),
+  sendAdminBookingBumpedAlert: (...args: unknown[]) =>
+    mockSendAdminBookingBumpedAlert(...args),
 }));
 
 // #1993 Part B: the derived alert cadence anchors on the hold's original expiry,
@@ -315,6 +320,9 @@ const mockHostingCoverageReevaluationCreate = vi
   .fn()
   .mockResolvedValue({ id: "hcr_1" });
 const mockHostingCoverageReevaluationFindMany = vi.fn().mockResolvedValue([]);
+// #5403: the bumped alert names the booking's lodge, read on the base client
+// after the bump has committed.
+const mockLodgeFindUnique = vi.fn().mockResolvedValue({ name: "Ruapehu Lodge" });
 
 vi.mock("../prisma", () => ({
   prisma: {
@@ -365,6 +373,9 @@ vi.mock("../prisma", () => ({
     // #4993: the claim recovery's and the failed release's awaited audit rows.
     auditLog: {
       create: (...args: unknown[]) => mockAuditLogCreate(...args),
+    },
+    lodge: {
+      findUnique: (...args: unknown[]) => mockLodgeFindUnique(...args),
     },
     $transaction: (...args: unknown[]) => mockPrismaTransaction(...args),
     // #4217: the root client, so a settle without a caller's transaction opens its own.
@@ -652,6 +663,8 @@ describe("Cron: Confirm Pending Bookings", () => {
       })
     );
     mockSendSavedCardChargeFailedEmail.mockResolvedValue(undefined);
+    mockSendAdminBookingBumpedAlert.mockResolvedValue(undefined);
+    mockLodgeFindUnique.mockResolvedValue({ name: "Ruapehu Lodge" });
     mockClubTimeSettingsFindUnique.mockResolvedValue(null);
     mockMemberCreditAggregate.mockResolvedValue({ _sum: { amountCents: null } });
     mockPromoRedemptionFindMany.mockResolvedValue([]);
@@ -1758,6 +1771,167 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(mockBookingUpdateMany).toHaveBeenCalledWith({
       where: { id: "b1", status: "PENDING" },
       data: { status: "CANCELLED", nonMemberHoldUntil: null },
+    });
+  });
+
+  // #5403 (owner decision, 22 Nov 2026): the officers' booking-bumped alert is
+  // reconnected here, the one place that knows a bump happened. Recipients
+  // (the `adminBookingBumped` switch and `bookings: edit`) are the shared
+  // sender's rule, proved in phase6a-notifications.test.ts; this block proves
+  // when the cron sends it, what it says, and that it is once per bump.
+  describe("#5403 the officers' booking-bumped alert", () => {
+    const NO_ROOM = { available: false, minAvailable: 0, nightDetails: [] };
+
+    /** Wraps the transaction double so a test can see whether a call ran inside one. */
+    function trackTransaction() {
+      const state = { inside: false };
+      const original = mockPrismaTransaction.getMockImplementation();
+      mockPrismaTransaction.mockImplementation(async (arg: unknown) => {
+        state.inside = true;
+        try {
+          return await original!(arg);
+        } finally {
+          state.inside = false;
+        }
+      });
+      return state;
+    }
+
+    it("alerts officers after the bump commits, outside the transaction, naming the member, lodge and reason", async () => {
+      const booking = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+      const transaction = trackTransaction();
+      const sentInsideTransaction: boolean[] = [];
+      mockSendAdminBookingBumpedAlert.mockImplementation(async () => {
+        sentInsideTransaction.push(transaction.inside);
+      });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.bumpedBookingIds).toEqual(["b1"]);
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledWith({
+        bumpedMemberName: "Test User",
+        lodgeName: "Ruapehu Lodge",
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+        guestCount: 2,
+        reason: bookingBumpReason(false),
+      });
+      // The booking's own lodge, read on the base client, not the default.
+      expect(mockLodgeFindUnique).toHaveBeenCalledWith({
+        where: { id: "lodge-1" },
+        select: { name: true },
+      });
+      expect(sentInsideTransaction).toEqual([false]);
+      // After the won claim, and after the member's own email.
+      const claimOrder = mockBookingUpdateMany.mock.invocationCallOrder[
+        mockBookingUpdateMany.mock.calls.findIndex(
+          ([call]) => call?.data?.status === "CANCELLED",
+        )
+      ];
+      const alertOrder = mockSendAdminBookingBumpedAlert.mock.invocationCallOrder[0];
+      expect(claimOrder).toBeLessThan(alertOrder);
+      expect(mockSendBumpedEmail.mock.invocationCallOrder[0]).toBeLessThan(alertOrder);
+      // The member's email is unchanged.
+      expect(mockSendBumpedEmail).toHaveBeenCalledTimes(1);
+    });
+
+    it("says so when it is the guests-cancelled variant", async () => {
+      const booking = {
+        ...makeMixedPendingBooking({ cancelIfGuestsBumped: true }),
+        lodgeId: "lodge-1",
+      };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+
+      await confirmPendingBookings();
+
+      expect(mockSendGuestsCancelledEmail).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          guestCount: 2,
+          reason: bookingBumpReason(true),
+        }),
+      );
+      expect(bookingBumpReason(true)).not.toEqual(bookingBumpReason(false));
+    });
+
+    it("sends once when the job runs twice over the same bump", async () => {
+      const booking = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+
+      const first = await confirmPendingBookings();
+      expect(first.bumpedBookingIds).toEqual(["b1"]);
+
+      // The second run still lists the booking (a stale read, as a concurrent
+      // run would have) but the locked re-read finds the first run's CANCELLED.
+      mockBookingFindUnique.mockResolvedValue({
+        ...booking,
+        status: "CANCELLED",
+        nonMemberHoldUntil: null,
+      });
+      const second = await confirmPendingBookings();
+
+      expect(second.bumpedBookingIds).toEqual([]);
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledTimes(1);
+      expect(mockSendBumpedEmail).toHaveBeenCalledTimes(1);
+    });
+
+    it("sends nothing when another run won the claim", async () => {
+      const booking = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+      mockBookingUpdateMany.mockResolvedValue({ count: 0 });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.bumpedBookingIds).toEqual([]);
+      expect(mockSendAdminBookingBumpedAlert).not.toHaveBeenCalled();
+      expect(mockSendBumpedEmail).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["the send fails", () => mockSendAdminBookingBumpedAlert.mockRejectedValueOnce(new Error("SMTP down"))],
+      ["the lodge read fails", () => mockLodgeFindUnique.mockRejectedValueOnce(new Error("db down"))],
+    ])("keeps the bump, the member's email and the rest of the run when %s", async (_label, breakIt) => {
+      const first = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+      const second = {
+        ...makePendingBooking("b2", { checkIn: "2026-07-20", checkOut: "2026-07-22" }),
+        lodgeId: "lodge-1",
+      };
+      mockPendingBookings([first, second]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+      breakIt();
+
+      const result = await confirmPendingBookings();
+
+      expect(result.bumpedBookingIds).toEqual(["b1", "b2"]);
+      expect(result.failedBookingIds).toEqual([]);
+      expect(mockSendBumpedEmail).toHaveBeenCalledTimes(2);
+      // The second booking's alert still went out.
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenLastCalledWith(
+        expect.objectContaining({ checkIn: second.checkIn }),
+      );
+      expect(mockProcessWaitlistForDates).toHaveBeenCalledTimes(2);
+    });
+
+    it("is not sent when the booking fits and is confirmed", async () => {
+      const booking = { ...makePendingBooking("b1", { finalPriceCents: 0 }), lodgeId: "lodge-1" };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.confirmedBookingIds).toEqual(["b1"]);
+      expect(mockSendAdminBookingBumpedAlert).not.toHaveBeenCalled();
     });
   });
 

@@ -7,6 +7,8 @@ import { BookingEventType, BookingStatus, PaymentSource, PaymentStatus, PaymentT
 import { OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 import { bookingOwner } from "@/lib/booking-owner";
+import { bookingBumpReason } from "@/lib/booking-bump-reason";
+import { memberName } from "@/lib/member-serialization";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import {
@@ -61,6 +63,7 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "./xero-operation-outbox";
 import {
+  sendAdminBookingBumpedAlert,
   sendAdminBookingRequestHoldCancelledEmail,
   sendAdminBookingRequestHoldExpiredEmail,
   sendAdminPaymentFailureAlert,
@@ -461,6 +464,42 @@ async function sendBumpedEmail(booking: PendingBooking, flagged: boolean) {
     logger.error(
       { err: emailErr, bookingId: booking.id, job: "confirmPendingBookings" },
       "Failed to send bumped email"
+    );
+  }
+}
+
+/**
+ * #5403: tell the Booking Officers a pending booking was bumped. Runs only
+ * after `resolveHoldWindowUnderLock` committed the bump and only for the run
+ * that won its status claim, so it is once per bump exactly as the member's
+ * email is: a rerun finds the booking CANCELLED and never gets here. Sent for
+ * both variants, as the pre-#738 alert was for every whole-booking bump; the
+ * reason line tells them apart. Recipients are `sendToAdmins`'s rule for the
+ * `adminBookingBumped` preference. A failure is logged and swallowed so it can
+ * never undo the bump, the member's email or the rest of the run; a failed
+ * transport leaves the usual FAILED row for the email retry cron.
+ */
+async function alertOfficersOfBump(booking: PendingBooking, flagged: boolean) {
+  try {
+    // The booking's own lodge, read after the commit and outside every lock.
+    const lodge = await prisma.lodge.findUnique({
+      where: { id: booking.lodgeId },
+      select: { name: true },
+    });
+    await sendAdminBookingBumpedAlert({
+      bumpedMemberName: memberName(bookingOwner(booking).member),
+      // `lodgeId` is a NOT NULL Restrict foreign key, so the row is there; the
+      // id is a never-empty stand-in rather than a blank "Lodge:" line.
+      lodgeName: lodge?.name ?? booking.lodgeId,
+      checkIn: booking.checkIn,
+      checkOut: booking.checkOut,
+      guestCount: booking.guests.length,
+      reason: bookingBumpReason(flagged),
+    });
+  } catch (alertErr) {
+    logger.error(
+      { err: alertErr, bookingId: booking.id, job: "confirmPendingBookings" },
+      "Failed to send admin booking-bumped alert"
     );
   }
 }
@@ -1223,13 +1262,12 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         await recordBookingEvent({
           bookingId: resolution.booking.id,
           type: BookingEventType.BUMPED,
-          reason: resolution.flagged
-            ? "Released because the whole party could not be confirmed (only-if-guests-come)."
-            : "These dates filled up before the provisional guests were confirmed.",
+          reason: bookingBumpReason(resolution.flagged),
           snapshot: { flagged: resolution.flagged },
         });
         await sendBumpedEmail(resolution.booking, resolution.flagged);
         triggerWaitlistProcessing(resolution.booking, format);
+        await alertOfficersOfBump(resolution.booking, resolution.flagged);
         continue;
       }
 

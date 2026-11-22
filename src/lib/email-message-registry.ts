@@ -35,6 +35,7 @@ import { bookingPaymentDueNote } from "@/lib/email-payment-due-note";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { BOOKING_URL_TEMPLATE_NAMES } from "@/lib/booking-email-template-contract";
 import { bookingModificationTypeLabel } from "@/lib/booking-money-lines";
+import { bookingBumpReason } from "@/lib/booking-bump-reason";
 import {
   organiserJoinerAppealRefundSentence,
   refundRequestApprovedRefundSentence,
@@ -706,6 +707,15 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     triggerSummary:
       "A Full Admin, or the operator break-glass command, cleared this member's authenticator app and passkeys",
     frequency: "Each time that reset commits",
+  },
+  // #5403: reconnected to the confirm-pending cron. It replaced the
+  // {{triggeringMemberName}} the pre-#738 sender filled in: the cron has no
+  // triggering booking to name, so a saved override still using it is reported
+  // as a retired token in the editor.
+  "admin-booking-bumped": {
+    triggerSummary:
+      "The confirm-pending cron released a pending booking at its hold deadline because there was no longer room for its party, including a booking cancelled because its guests could not be confirmed",
+    frequency: "Once per bumped booking",
   },
   "admin-daily-digest": {
     triggerSummary: "Scheduled admin alert summary",
@@ -1713,6 +1723,10 @@ const TEMPLATE_SAMPLE_VALUE_OVERRIDES: Partial<
   "admin-stripe-dispute": {
     reason: "fraudulent",
   },
+  // #5403: the confirm-pending cron's own sentence for a plain bump.
+  "admin-booking-bumped": {
+    reason: bookingBumpReason(false),
+  },
   "group-organiser-extra-invoice": {
     joinerName: "Sam Joiner",
     // The sender's own wording of a change (`bookingModificationTypeLabel`).
@@ -2194,7 +2208,6 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "totalDue",
   "paymentDueNote",
   "totalPaid",
-  "triggeringMemberName",
   // #2550: how many of the party still carry a generated placeholder name.
   "unnamedGuestCount",
   // #2576: the NZ lodge-nights on which a booking's non-member guests have no

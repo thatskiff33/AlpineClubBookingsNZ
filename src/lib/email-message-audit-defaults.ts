@@ -402,7 +402,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "admin-booking-bumped": {
     "defaultSubject": "Booking Bumped: {{bumpedMemberName}}",
-    "defaultBody": "Booking Bumped\n\nA pending booking has been bumped due to a member booking.\n\nBumped Member: {{bumpedMemberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTriggered By: {{triggeringMemberName}}\n\nView Bookings: {{BASE_URL}}" + adminHref("bookings")
+    "defaultBody": "Booking Bumped\n\nA pending booking was released at its hold deadline because there was no longer room for its party.\n\nBumped Member: {{bumpedMemberName}}\nLodge: {{lodgeName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nReason: {{reason}}\n\nView Bookings: {{BASE_URL}}" + adminHref("bookings")
   },
   "admin-capacity-warning": {
     "defaultSubject": "Capacity Warning: {{count}} high-occupancy day{{s}} ahead",
