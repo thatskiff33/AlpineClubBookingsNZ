@@ -41,7 +41,7 @@
  * alert for the capture clears the marker. Never throws for one marker.
  */
 import type { PaymentStatus, Prisma } from "@prisma/client";
-import { listOwedAlertKeys, noteOwedAlertAttempt, settleOwedAlert } from "@/lib/alert-cooldown";
+import { listAllOwedAlertKeys, listOwedAlertKeys, noteOwedAlertAttempt, settleOwedAlert } from "@/lib/alert-cooldown";
 import { bookingOwner } from "@/lib/booking-owner";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
 import {
@@ -237,7 +237,7 @@ async function judgeOwedAlert(bookingId: string, paymentIntentId: string, format
 }
 
 /**
- * #5240: the hourly look at each saved-card capture still flagged "not yet
+ * #5240: the payments cron's look at each saved-card capture still flagged "not yet
  * settled" (`unsettled-capture-marker.ts`) an hour after it was written - one
  * whose caller stopped before the settle and whose webhook has not settled it
  * since. Read without a lock; only the flag's own delete decides, so a settle
@@ -253,7 +253,9 @@ async function judgeOwedAlert(bookingId: string, paymentIntentId: string, format
  *   over and it is cleared with an error logged for a person to check.
  */
 async function promoteUnsettledCaptures(now: Date): Promise<void> {
-  const keys = await listOwedAlertKeys({ prefix: UNSETTLED_CAPTURE_PREFIX, now, retryAfterMs: NEW_CAPTURE_ALERT_DRAIN_AFTER_MS });
+  // Every due flag, not the oldest 50: waiting flags are never re-stamped, so a
+  // first page of them would hide a newer flag on a paid booking for seven days.
+  const keys = await listAllOwedAlertKeys({ prefix: UNSETTLED_CAPTURE_PREFIX, now, retryAfterMs: NEW_CAPTURE_ALERT_DRAIN_AFTER_MS });
   for (const key of keys) {
     const paymentIntentId = key.slice(UNSETTLED_CAPTURE_PREFIX.length);
     try {

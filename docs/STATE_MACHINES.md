@@ -2005,7 +2005,8 @@ task an hour on: cleared for a capture gone, holding no money, or recorded as
 the settler; on a PAID or COMPLETED booking it becomes an owed `new-capture`
 alert, sent in that run; on any other booking it waits, unstamped, for the
 webhook, and at seven days it is cleared with an error logged for a person to
-check. A duplicate-capture refund the retry finishes records the settler then
+check. Every due flag is read on each run, a page at a time, so waiting flags
+never hide a newer one. A duplicate-capture refund the retry finishes records the settler then
 recorded on the payment in its history entry, as the inline refund does.
 
 Every other status the

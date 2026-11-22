@@ -12,7 +12,7 @@
  * So the row write records this flag in the same transaction, and the settle
  * consumes it under lock(1): a consumed flag means "new money", whatever the
  * row's status. The flag is the one source of that answer (`INV-SSOT`). A flag
- * nothing consumes is judged hourly by the payments cron's drain
+ * nothing consumes is judged, once an hour old, by the payments cron's drain
  * (`drainOwedNewCaptureAlerts`), and handed over to the error log after
  * `UNSETTLED_CAPTURE_HAND_OVER_MS`.
  *

@@ -76,12 +76,14 @@ const mocks = vi.hoisted(() => ({
   flags: new Map<string, Date>(),
   /** #5240: owed new-capture markers the flag step wrote, by key. */
   owed: new Map<string, Date>(),
+  /** #5240 review: how many pages of flags the listing read. */
+  flagPages: 0,
 }));
 
-vi.mock("@/lib/alert-cooldown", () => ({
-  // #5240: the flags are listed by their own prefix, from the flag store.
-  listOwedAlertKeys: async (args: { prefix: string }) =>
-    args.prefix === "saved-card-capture-unsettled:" ? [...mocks.flags.keys()] : mocks.listOwedAlertKeys(args),
+vi.mock("@/lib/alert-cooldown", async (importOriginal) => ({
+  // #5240 review: the flags are listed by the real pager, over the fake flag store's `findMany` below.
+  listAllOwedAlertKeys: ((await importOriginal()) as typeof import("@/lib/alert-cooldown")).listAllOwedAlertKeys,
+  listOwedAlertKeys: (...args: unknown[]) => mocks.listOwedAlertKeys(...args),
   noteOwedAlertAttempt: (...args: unknown[]) => mocks.noteOwedAlertAttempt(...args),
   settleOwedAlert: (...args: unknown[]) => mocks.settleOwedAlert(...args),
   releaseAlertCooldown: vi.fn(),
@@ -182,6 +184,20 @@ vi.mock("@/lib/prisma", () => {
   };
   // #5240: the flag store, as the flag step and its promotion read and write it.
   const alertCooldown = {
+    // The listing's shape, interpreted: an escaped prefix, a "due by" stamp, an optional key cursor, its order and page size.
+    findMany: async ({ where, orderBy, take }: {
+      where: { key: { startsWith: string }; lastAlertedAt: { lte: Date }; AND?: Array<{ key: { gt: string } }> };
+      orderBy: { key?: "asc"; lastAlertedAt?: "asc" };
+      take: number;
+    }) => {
+      mocks.flagPages += 1;
+      const after = where.AND?.[0]?.key.gt;
+      return [...mocks.flags.entries()]
+        .filter(([key, at]) => key.startsWith(unescapeLike(where.key.startsWith)) && at <= where.lastAlertedAt.lte && (after === undefined || key > after))
+        .sort(([a, aAt], [b, bAt]) => (orderBy.key ? a.localeCompare(b) : aAt.getTime() - bAt.getTime()))
+        .slice(0, take)
+        .map(([key]) => ({ key }));
+    },
     findUnique: async ({ where }: { where: { key: string } }) => {
       const at = mocks.flags.get(where.key);
       return at ? { lastAlertedAt: at } : null;
@@ -282,6 +298,7 @@ function prime({
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.flags.clear();
+  mocks.flagPages = 0;
   mocks.owed.clear();
   mocks.rows = [];
   mocks.operations = [];
@@ -833,5 +850,25 @@ describe("#5240 a saved-card capture still flagged \"not yet settled\" an hour o
       { bookingId: "booking-1", paymentIntentId: "pi_new", ageMs: UNSETTLED_CAPTURE_HAND_OVER_MS, bookingStatus: "CONFIRMED" },
       expect.stringContaining("never settled"),
     );
+  });
+
+  it("#5240 review: more than a page of older flags waiting on unpaid bookings never hides a newer one on a paid booking", async () => {
+    primeFlag();
+    // 60 flags written six days ago, each waiting on an unpaid booking, all ahead of the paid one in key and age order.
+    const waiting = Array.from({ length: 60 }, (_, i) => `saved-card-capture-unsettled:pi_a${String(i).padStart(2, "0")}`);
+    for (const key of waiting) mocks.flags.set(key, new Date(NOW.getTime() - 6 * DAY_MS));
+    const judgeCapture = { id: "txn-new", paymentId: "payment-1", status: "SUCCEEDED", amountCents: 20000, refundedAmountCents: 0 };
+    mocks.transactionFindUnique.mockReset().mockImplementation(async ({ where, select }: { where: { stripePaymentIntentId: string }; select: { payment?: unknown } }) => {
+      if (!select.payment) return judgeCapture;
+      const paid = where.stripePaymentIntentId === "pi_new";
+      return { id: `txn-${where.stripePaymentIntentId}`, status: "SUCCEEDED", payment: { settledByTransactionId: null, bookingId: paid ? "booking-1" : "booking-unpaid", booking: { status: paid ? "PAID" : "CONFIRMED" } } };
+    });
+
+    expect(await drainOwedNewCaptureAlerts(NOW)).toEqual({ checked: 1, sent: 1 });
+
+    expect(mocks.flagPages, "the listing read past its first page").toBeGreaterThan(1);
+    expect(mocks.flags.has(FLAG), "the paid booking's flag is consumed").toBe(false);
+    expect(mocks.alert).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_new", reason: "new-capture" }));
+    expect(waiting.every((key) => mocks.flags.has(key)), "the waiting flags still wait").toBe(true);
   });
 });
