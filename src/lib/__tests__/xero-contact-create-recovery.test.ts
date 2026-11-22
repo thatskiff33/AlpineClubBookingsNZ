@@ -186,7 +186,7 @@ describe("unresolved member Xero contact-create recovery proof", () => {
         },
       },
     ],
-  ])("blocks deletion on the complete %s recovery proof", async (_label, operation) => {
+  ])("refuses deletion, naming the operation, when the blocker read returns a %s create", async (_label, operation) => {
     const operationFindFirst = vi
       .fn()
       .mockResolvedValue({ ...operation, operationType: "CREATE", xeroObjectId: null });
@@ -210,12 +210,22 @@ describe("unresolved member Xero contact-create recovery proof", () => {
         responsePayload: true,
       },
     });
-    // The deletion read's CREATE branch is exactly the create-blocker proof set.
-    expect(memberContactChangeMergeBlockerWhere("member-1").OR).toContainEqual({
-      operationType: "CREATE",
-      OR: memberContactCreateMergeBlockerWhere("member-1").OR,
-    });
   },);
+
+  // The rows above block only because the query selects them, so what blocks is
+  // the where clause: the change blocker must read the same member CONTACT
+  // operations as the create blocker, and its CREATE branch must be exactly the
+  // create blocker's recovery states.
+  it("reads the create blocker's operations and states inside the change blocker", () => {
+    const withoutKeys = (where: object, keys: string[]) =>
+      Object.fromEntries(Object.entries(where).filter(([key]) => !keys.includes(key)));
+    const create = memberContactCreateMergeBlockerWhere("member-1");
+    const change = memberContactChangeMergeBlockerWhere("member-1");
+
+    expect(create.operationType).toBe("CREATE");
+    expect(withoutKeys(change, ["OR"])).toEqual(withoutKeys(create, ["OR", "operationType"]));
+    expect(change.OR).toContainEqual({ operationType: "CREATE", OR: create.OR });
+  });
 
   it("accepts actual provider creation and rejects matched-existing phases", () => {
     expect(
@@ -243,7 +253,7 @@ describe("unresolved member Xero contact-create recovery proof", () => {
     ).toBe(false);
   });
 
-  it("blocks merge on the exact RUNNING reservation without claiming provider recovery", async () => {
+  it("reports a merge blocker when the blocker read returns a RUNNING create, without claiming provider recovery", async () => {
     findFirst
       .mockResolvedValueOnce({
         id: "operation-running",

@@ -132,14 +132,13 @@ export class XeroContactCreateBlocksDeletionError extends Error {
   /**
    * The exact operation the refusal is about, so the caller can name it instead
    * of leaving the operator to guess which screen holds the remedy (#2623 T7).
-   * Optional only so older/mocked construction sites keep compiling.
    */
-  readonly operationId?: string;
+  readonly operationId: string;
 
-  constructor(operationId?: string) {
+  constructor(operationId: string) {
     super(XERO_CONTACT_CREATE_BLOCKS_DELETION_MESSAGE);
     this.name = "XeroContactCreateBlocksDeletionError";
-    if (operationId) this.operationId = operationId;
+    this.operationId = operationId;
   }
 }
 
@@ -166,13 +165,19 @@ export type MemberContactChangeBlocker = {
  */
 const CONTACT_CREATE_RECOVERY_CLOSE_SCAN_LIMIT = 20;
 
-const contactCreateIdentityWhere = (memberId: string) => ({
+// The member's unresolved outbound CONTACT operations, of any type. The create
+// readers narrow it to CREATE; the change blocker reads CREATE and UPDATE.
+const memberContactIdentityWhere = (memberId: string) => ({
   direction: "OUTBOUND",
   entityType: "CONTACT",
-  operationType: "CREATE",
   localModel: "Member",
   localId: memberId,
   manuallyResolvedAt: null,
+}) satisfies Prisma.XeroSyncOperationWhereInput;
+
+const contactCreateIdentityWhere = (memberId: string) => ({
+  ...memberContactIdentityWhere(memberId),
+  operationType: "CREATE",
 }) satisfies Prisma.XeroSyncOperationWhereInput;
 
 const providerCreatedPayloadWhere = (phase: string) => [
@@ -563,11 +568,7 @@ export function memberContactChangeMergeBlockerWhere(
   memberId: string,
 ): Prisma.XeroSyncOperationWhereInput {
   return {
-    direction: "OUTBOUND",
-    entityType: "CONTACT",
-    localModel: "Member",
-    localId: memberId,
-    manuallyResolvedAt: null,
+    ...memberContactIdentityWhere(memberId),
     OR: [
       {
         operationType: "UPDATE",
