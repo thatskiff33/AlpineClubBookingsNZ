@@ -483,7 +483,8 @@ async function deleteCrossLodgeSeason() {
     });
 
     it("considers the lapsed entry in plain queue order when a different place frees later", async () => {
-      const { ids, from, to } = await seedQueue("d", 3);
+      // "later", not "d": `${PREFIX}d1`..`d3` belong to the date-boundary case.
+      const { ids, from, to } = await seedQueue("later", 3);
       const [first, second, third] = ids as [string, string, string];
       await setCapacity(LODGE_A, 2);
       await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
