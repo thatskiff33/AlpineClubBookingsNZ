@@ -3,15 +3,11 @@ import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-host
 import { BookingRequestType } from "@prisma/client";
 import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
 import { approveBookingRequest, BookingRequestError } from "@/lib/booking-request";
-import {
-  approveMemberWholeLodgeRequest,
-  approveSchoolBookingRequest,
-} from "@/lib/school-booking-request";
+import { approveMemberWholeLodgeRequest, approveSchoolBookingRequest } from "@/lib/school-booking-request";
 import {
   bookingRequestOwnerContactIdSchema,
   memberWholeLodgeApprovalSchema,
   schoolChildCountsSchema,
-  type SchoolChildCounts,
 } from "@/lib/admin-bookings-schemas/requests";
 import {
   ADMIN_BOOKING_REQUEST_APPROVAL_CONNECTION_SHAPE,
@@ -31,12 +27,8 @@ import {
 } from "@/lib/booking-member-night-conflicts";
 import { clubFormatValues } from "@/lib/club-format-server";
 
-/**
- * POST /api/admin/booking-requests/[id]/approve — convert a request into a
- * booking, on the branch its kind selects. The body's fields are read on
- * their own branch with the schemas `adminBookingRequestApproveBodySchema`
- * composes. Also the AI app action `approve_booking_request` (ALP-719).
- */
+/** Each branch reads its fields with the schemas `adminBookingRequestApproveBodySchema` composes;
+ * also the AI app action `approve_booking_request` (ALP-719). */
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -78,10 +70,7 @@ export async function POST(
   if (body.ownerContactMemberId !== undefined && body.ownerContactMemberId !== null) {
     const parsedContact = bookingRequestOwnerContactIdSchema.safeParse(body.ownerContactMemberId);
     if (!parsedContact.success) {
-      return NextResponse.json(
-        { error: "Invalid contact selection" },
-        { status: 422 }
-      );
+      return NextResponse.json({ error: "Invalid contact selection" }, { status: 422 });
     }
     ownerContactMemberId = parsedContact.data;
   }
@@ -106,10 +95,7 @@ export async function POST(
           : {}),
       });
       if (!parsedOverride.success) {
-        return NextResponse.json(
-          { error: "Invalid headcount or price override" },
-          { status: 422 }
-        );
+        return NextResponse.json({ error: "Invalid headcount or price override" }, { status: 422 });
       }
 
       const result = await approveMemberWholeLodgeRequest({
@@ -149,7 +135,7 @@ export async function POST(
     }
 
     if (requestRow.type === BookingRequestType.SCHOOL) {
-      let guestOverride: { childCounts: SchoolChildCounts } | undefined;
+      let guestOverride: { childCounts: ReturnType<typeof schoolChildCountsSchema.parse> } | undefined;
       if (body.childCounts !== undefined) {
         const parsedCounts = schoolChildCountsSchema.safeParse(body.childCounts);
         if (!parsedCounts.success) {

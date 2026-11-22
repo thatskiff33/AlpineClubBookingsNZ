@@ -131,8 +131,7 @@ export async function POST(
 
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
-  // A body without a string `email` reads as an empty address: the audited
-  // miss below, never a 400 of its own.
+  // No string `email` reads as an empty address: the audited miss, never a 400.
   const body = adminMemberGuestEmailBodySchema.safeParse(json.body);
   const rawEmail = body.success ? body.data.email.slice(0, 320) : "";
   const email = normalizeMemberGuestEmail(rawEmail);
@@ -215,8 +214,7 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Every value of `q` parses (it is an optional string), so a missing one is
-  // the empty fragment exactly as before.
+  // Every `q` parses (an optional string); a missing one is the empty fragment.
   const query = adminMemberGuestNameQuerySchema.safeParse({
     q: request.nextUrl.searchParams.get("q") ?? undefined,
   });
@@ -245,10 +243,7 @@ export async function GET(
     return connectionJson(request, result, ADMIN_MEMBER_GUEST_NAME_CANDIDATES_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err }, "Failed to search member-guest candidates for an admin");
-    return connectionJson(
-      request,
-      { candidates: [], truncated: false },
-      ADMIN_MEMBER_GUEST_NAME_CANDIDATES_CONNECTION_SHAPE,
-    );
+    const empty = { candidates: [], truncated: false };
+    return connectionJson(request, empty, ADMIN_MEMBER_GUEST_NAME_CANDIDATES_CONNECTION_SHAPE);
   }
 }

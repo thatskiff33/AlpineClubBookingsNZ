@@ -25,11 +25,8 @@ import {
 } from "@/lib/connection-shapes/bookings-requests";
 import { connectionJson } from "@/lib/mcp-connection-request";
 
-/**
- * GET /api/admin/booking-requests — the officer queue of group, school and
- * whole-lodge requests. Also the AI app action `list_booking_requests`
- * (ALP-719).
- */
+/** The officer queue of group, school and whole-lodge requests; also the AI
+ * app action `list_booking_requests` (ALP-719). */
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
