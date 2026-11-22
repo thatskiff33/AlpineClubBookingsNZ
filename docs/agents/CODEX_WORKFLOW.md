@@ -242,6 +242,20 @@ mutation must then be restored; a test that agrees with odd behaviour may be
 the wrong one. Failures caused by the environment are listed in
 [`TESTING.md`](../TESTING.md#suites-that-time-out-under-load-and-pass-alone).
 
+Known environmental result, Windows host only (#5407): on unchanged `main`,
+`pnpm run knip` reports `setStripeClientForTests` and `resetStripeClientForTests`
+as unused exports, and CI's Linux run passes. Only
+`src/test/providers/provider-transports.test.ts` imports them, through the `@/`
+alias, and `tsconfig.json` excludes every test file. On that host knip then
+leaves `@/` unresolved for a test file outside a `__tests__` directory;
+lifting the test exclusions from a copy of `tsconfig.json` clears both lines.
+`knip.jsonc` cannot carry the fix: its `tsConfig` is a command-line flag, CI runs
+`pnpm exec knip`, and a `paths` entry did not change the result. Classify the two
+lines as environmental. Do not delete the exports or edit `knip.jsonc` to silence
+them, and take the verdict from CI. The same run suggests removing `awk`,
+`pg_dump` and `gunzip` from `ignoreBinaries`; those are hints, they do not fail
+the run, and their cause is not established, so leave the entries in place.
+
 For concurrency-sensitive work, the orchestrator also reviews the open PRs and
 last 10 merged PRs affecting the subsystem, reconciles their lock/state/provider
 contracts, and records the relevant PR numbers in the PR lock-impact section.
