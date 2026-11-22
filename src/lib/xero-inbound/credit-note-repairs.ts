@@ -1,4 +1,5 @@
 import { APPLIED_CREDIT_ALLOCATION_ROLE } from "@/lib/xero-applied-credit-link-roles";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import { type CreditNote as XeroCreditNote } from "xero-node";
 import { CreditType, PaymentSource, PaymentStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -7,7 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { lockPaymentForRefundedTotal, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } from "@/lib/payment-transactions";
 import logger from "@/lib/logger";
 import { type AccountCreditAllocationRepairResult, type AccountCreditAllocationTarget, type RefundedPaymentBusinessStateRepairResult } from "./types";
-import { buildBookingAppliedCreditDescription, getCreditNoteAmountCents, getJsonRecord, getRefundContributionCentsFromCreditNoteMetadata } from "./amounts";
+import { getCreditNoteAmountCents, getJsonRecord, getRefundContributionCentsFromCreditNoteMetadata } from "./amounts";
 import { isIncludedRefundCreditNoteStatus, readRefundNoteRowsByPayment } from "@/lib/xero-refund-note-status";
 import { findActiveXeroObjectLinks } from "./object-links";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
@@ -15,6 +16,7 @@ import { sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
 import { decideXeroRefundedColumns } from "./xero-refunded-columns";
 import { createAuditLog } from "@/lib/audit";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
+import { buildBookingAppliedCreditDescription } from "@/lib/member-credit-booking-rows";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
 import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
 import { getClubFormat } from "@/lib/club-format-settings";
@@ -902,7 +904,7 @@ export async function repairAccountCreditAllocationBusinessState(
             memberId: creditLedgerMemberId,
             amountCents: -ledgerDeltaCents,
             type: CreditType.BOOKING_APPLIED,
-            description: `Xero allocation reconciliation for booking ${payment.bookingId.slice(0, 8)}`,
+            description: `Xero allocation reconciliation for booking ${storedShortBookingId(payment.bookingId)}`,
             appliedToBookingId: payment.bookingId,
             xeroCreditNoteId: creditNoteId,
           },

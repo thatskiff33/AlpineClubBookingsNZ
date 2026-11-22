@@ -16,5 +16,27 @@
  * and the dates, and never used to look a booking up.
  */
 export function formatBookingReference(bookingId: string): string {
-  return bookingId.slice(0, 8).toUpperCase();
+  return storedShortBookingId(bookingId).toUpperCase();
+}
+
+/**
+ * THE SHORT BOOKING ID AS STORED (#5407 item 36): the first eight characters of
+ * a booking's or group booking's id, exactly as written, never re-cased.
+ *
+ * PERSISTED AND MATCHED: NEVER CHANGE WHAT THIS RETURNS. It is written into Xero
+ * invoice, credit-note and payment references and line descriptions, into
+ * credit-ledger descriptions, and (upper-cased by their builders in
+ * `booking-payment-methods.ts`) into the Internet Banking references members
+ * type into their bank. Records already written carry it, and readers match
+ * some of them exactly (`cancellationCreditDescription`,
+ * `buildBookingAppliedCreditDescription`), so a new length or case would leave
+ * every earlier record unmatched. Officer-facing text that points at those
+ * records uses it too, so it reads as Xero shows it.
+ *
+ * Not the display handle: a member or officer reads `formatBookingReference`.
+ * `stored-short-booking-id-census.test.ts` fails on a short form written out
+ * anywhere else; `booking-reference.test.ts` pins the output.
+ */
+export function storedShortBookingId(bookingId: string): string {
+  return bookingId.slice(0, 8);
 }
