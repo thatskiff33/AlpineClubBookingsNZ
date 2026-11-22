@@ -2927,7 +2927,6 @@ const eslintConfig = defineConfig([
     // update, and these files run against production data with an operator
     // watching a row count. `scripts/` alone holds the money-adjacent
     // `backfill-orphaned-applied-credits.ts`,
-    // `backfill-cancel-flattened-payments.ts`,
     // `backfill-finance-monthly-facts.ts` and `xero-booking-repair.ts`. Neither
     // directory contains any raw SQL today, so this costs nothing now and is
     // purely about what may be written next — and it makes the unqualified

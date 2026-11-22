@@ -4274,10 +4274,11 @@ None required.
 **Optional cleanup:** if your fork ever ran a pre-`v0.10.0` build (any build
 older than PR #1489), booking cancellations may have flattened captured
 `(PARTIALLY_)REFUNDED` payments' stored `status` to `FAILED`. The read path
-already compensates, so this is cosmetic-only for the stored rows. You can
-restore them with `pnpm run payments:backfill-cancel-flattened` (dry-run by
-default; review the report before re-running with `--apply`). See "Backfill
-cancel-flattened payment statuses" in `docs/MAINTENANCE.md`.
+already compensates, so this is cosmetic-only for the stored rows. The
+one-off that restored them, `payments:backfill-cancel-flattened`, has left
+`main` under the one-off retirement rule in [Principles](#principles) (#5404).
+It remains in the `v0.14.0` tag, with its instructions in that tag's
+`docs/MAINTENANCE.md`; it was not tested against any later schema.
 
 ---
 
