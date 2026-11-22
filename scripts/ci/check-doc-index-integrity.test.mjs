@@ -2218,7 +2218,7 @@ describe("doc-index CLI baseline wiring", () => {
     );
   });
 
-  it("wires both immutable event SHAs into the CI doc-index step", () => {
+  it("wires the immutable base SHAs into the CI doc-index step (main push: the last judged main commit)", () => {
     const workflow = readFileSync(path.join(REPO_ROOT, ".github", "workflows", "ci.yml"), "utf8");
     const start = workflow.indexOf(
       "- name: Check doc index integrity (reachability + invariant ids)",
@@ -2232,7 +2232,7 @@ describe("doc-index CLI baseline wiring", () => {
       "          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}",
     ]);
     expect(step.match(/^ {10}PUSH_BASE_SHA:.*$/gm)).toEqual([
-      "          PUSH_BASE_SHA: ${{ github.event.before }}",
+      "          PUSH_BASE_SHA: ${{ steps.main-push-base.outputs.sha || github.event.before }}",
     ]);
     expect(step.match(/^ {8}env:\s*$/gm)).toHaveLength(1);
     expect(step.match(/^ {8}run:.*$/gm)).toEqual([
