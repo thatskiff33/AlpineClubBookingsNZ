@@ -631,7 +631,7 @@ describe("bed allocation lock topology", () => {
   it("keeps Booking.lodgeId immutable: no writer moves a booking between lodges", () => {
     const offenders: string[] = [];
     for (const file of walkSources(path.resolve(process.cwd(), "src"))) {
-      const rel = path.relative(process.cwd(), file).split(path.sep).join("/");
+      const rel = toPosix(path.relative(process.cwd(), file));
       if (isTestFile(rel)) continue;
       const text = fs.readFileSync(file, "utf8");
 
