@@ -79,6 +79,7 @@ import { auth } from "@/lib/auth";
 import { GET as getSubscriptions } from "@/app/api/admin/subscriptions/route";
 import { GET as getPayments } from "@/app/api/admin/payments/route";
 import { GET as getAuditLog } from "@/app/api/admin/audit-log/route";
+import { NOT_REQUIRED_ROW_BILLING_NOTE } from "@/lib/subscription-season-row-note";
 
 const mockedAuth = vi.mocked(auth);
 
@@ -278,9 +279,9 @@ describe("Admin Subscriptions API", () => {
 });
 
 // #5190 (owner decision 22 Nov 2026, issue comment 7070827526): a saved
-// NOT_REQUIRED row the billing run will still invoice gets a plain note.
+// NOT_REQUIRED row whose member billing treats as owing gets a plain note.
 describe("Admin Subscriptions API: billing note on a saved Not-required row (#5190)", () => {
-  const NOTE = "Marked not required, but the billing run will invoice this member";
+  const NOTE = NOT_REQUIRED_ROW_BILLING_NOTE;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -300,6 +301,7 @@ describe("Admin Subscriptions API: billing note on a saved Not-required row (#51
     subscriptionBehavior: string;
     ageTier: string;
     chargeCoverage?: unknown[];
+    active?: boolean;
   }) {
     return {
       id: "sub-note", memberId: "m-note", seasonYear: 2026, status: opts.status,
@@ -308,7 +310,8 @@ describe("Admin Subscriptions API: billing note on a saved Not-required row (#51
       chargeCoverage: opts.chargeCoverage ?? [],
       member: {
         firstName: "Note", lastName: "Shape", email: "note@test.com",
-        ageTier: opts.ageTier, dateOfBirth: null, role: "MEMBER", canLogin: false,
+        ageTier: opts.ageTier, dateOfBirth: null, active: opts.active ?? true, archivedAt: null,
+        role: "MEMBER", canLogin: false,
         passwordChangedAt: null, lastLoginAt: null, passwordResetTokens: [],
         xeroContactId: null,
         seasonalMembershipAssignments: [
@@ -365,6 +368,26 @@ describe("Admin Subscriptions API: billing note on a saved Not-required row (#51
       chargeCoverage: [{ id: "claim-1" }],
     }));
     expect(row.billingNote).toBeNull();
+  });
+
+  it("no note for an inactive member, whom billing never considers", async () => {
+    const row = await rowFor(seasonRow({
+      status: "NOT_REQUIRED", subscriptionBehavior: "REQUIRED", ageTier: "CHILD", active: false,
+    }));
+    expect(row.billingNote).toBeNull();
+  });
+
+  it("reads the member's active flag and archive date for the population check", async () => {
+    await rowFor(seasonRow({ status: "PAID", subscriptionBehavior: "REQUIRED", ageTier: "ADULT" }));
+    expect(prisma.memberSubscription.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({
+          member: expect.objectContaining({
+            select: expect.objectContaining({ active: true, archivedAt: true }),
+          }),
+        }),
+      }),
+    );
   });
 
   it("no note once a rule is chosen and the member stops owing", async () => {

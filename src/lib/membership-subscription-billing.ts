@@ -29,6 +29,7 @@ import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { seasonYearsLabel } from "@/lib/season-label";
 import { loadMembershipLockoutSettingsStrict } from "@/lib/membership-lockout-settings";
 import { liabilityRuleFor, resolveMemberSubscriptionLiability } from "@/lib/policies/subscription";
+import { SUBSCRIPTION_BILLING_POPULATION_WHERE } from "@/lib/subscription-billing-population";
 import { lockSubscriptionBillingSeason } from "@/lib/subscription-billing-season-lock";
 import { prisma } from "@/lib/prisma";
 import { defaultMembershipTypeKeyForRole, storedRoleDefaultMembershipTypeWhere } from "@/lib/membership-types";
@@ -571,8 +572,7 @@ export async function buildSubscriptionBillingPreview(input: {
     }),
     db.member.findMany({
       where: {
-        active: true,
-        archivedAt: null,
+        ...SUBSCRIPTION_BILLING_POPULATION_WHERE,
         ...(input.memberIds?.length ? { id: { in: input.memberIds } } : {}),
       },
       orderBy: { id: "asc" },

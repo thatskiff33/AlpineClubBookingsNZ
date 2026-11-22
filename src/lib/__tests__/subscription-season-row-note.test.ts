@@ -15,7 +15,7 @@ import {
 } from "@/lib/subscription-season-row-note";
 
 // #5190 (owner decision 22 Nov 2026, issue comment 7070827526): the admin
-// lists' note on a saved NOT_REQUIRED row the billing run will still invoice.
+// lists' note on a saved NOT_REQUIRED row whose member billing treats as owing.
 
 const ageTierSettings: AgeTierSettingData[] = [
   { tier: "CHILD", label: "Child", minAge: 0, maxAge: 17, sortOrder: 0, subscriptionRequiredForBooking: false },
@@ -34,10 +34,17 @@ function note(opts: {
   ageTier: "CHILD" | "ADULT";
   seasonRow?: typeof untouched | null;
   liabilitySettings?: SubscriptionLiabilitySettings;
+  active?: boolean;
+  archivedAt?: Date | null;
 }) {
   return hasNotRequiredRowBillingNote({
     subscriptionBehavior: opts.subscriptionBehavior,
-    member: { dateOfBirth: null, ageTier: opts.ageTier },
+    member: {
+      dateOfBirth: null,
+      ageTier: opts.ageTier,
+      active: opts.active ?? true,
+      archivedAt: opts.archivedAt ?? null,
+    },
     seasonRow: opts.seasonRow === undefined ? untouched : opts.seasonRow,
     seasonYear: 2026,
     ageTierSettings,
@@ -97,6 +104,23 @@ describe("hasNotRequiredRowBillingNote", () => {
     ).toBe(false);
   });
 
+  it("no note outside the billing population (inactive or archived)", () => {
+    expect(note({ subscriptionBehavior: "REQUIRED", ageTier: "CHILD", active: false })).toBe(false);
+    expect(
+      note({ subscriptionBehavior: "REQUIRED", ageTier: "CHILD", archivedAt: new Date("2026-05-01") }),
+    ).toBe(false);
+  });
+
+  it("a chosen rule under which the member still owes keeps the note (a row the clear-up did not reach)", () => {
+    expect(
+      note({
+        subscriptionBehavior: "BASED_ON_AGE_TIER",
+        ageTier: "ADULT",
+        liabilitySettings: { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_START" },
+      }),
+    ).toBe(true);
+  });
+
   it("no note once a rule is chosen and the member stops owing", () => {
     expect(
       note({
@@ -112,12 +136,12 @@ describe("hasNotRequiredRowBillingNote", () => {
 
   it("returns the owner's wording", () => {
     expect(NOT_REQUIRED_ROW_BILLING_NOTE).toBe(
-      "Marked not required, but the billing run will invoice this member",
+      "Marked not required, but billing treats this member as owing",
     );
     expect(
       notRequiredRowBillingNote({
         subscriptionBehavior: "REQUIRED",
-        member: { dateOfBirth: null, ageTier: "CHILD" },
+        member: { dateOfBirth: null, ageTier: "CHILD", active: true, archivedAt: null },
         seasonRow: untouched,
         seasonYear: 2026,
         ageTierSettings,

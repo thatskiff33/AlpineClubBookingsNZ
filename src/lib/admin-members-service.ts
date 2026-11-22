@@ -1161,7 +1161,7 @@ export async function listAdminMembers(
       seasonRowStatus: m.subscriptions?.[0]?.status,
     });
     // #5190 (owner decision 22 Nov 2026): a saved "Not required" row the
-    // billing run will still invoice gets a plain note.
+    // billing treats as owing gets a plain note.
     const subscriptionBillingNote = notRequiredRowBillingNote({
       ...liabilityFacts,
       seasonRow: m.subscriptions?.[0],

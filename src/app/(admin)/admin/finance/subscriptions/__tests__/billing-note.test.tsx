@@ -5,10 +5,11 @@ import { cleanup, render, screen } from "@/lib/__tests__/support/club-time-rende
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import SubscriptionsPage from "@/app/(admin)/admin/finance/subscriptions/page";
+import { NOT_REQUIRED_ROW_BILLING_NOTE } from "@/lib/subscription-season-row-note";
 
 /*
   #5190 (owner decision 22 Nov 2026, issue comment 7070827526): a saved
-  "Not required" row the billing run will still invoice carries a plain note
+  "Not required" row whose member billing treats as owing carries a plain note
   under its status badge. The route computes it; the page shows it.
 */
 
@@ -46,22 +47,8 @@ vi.mock("@/components/confirm-dialog", () => ({
 vi.mock("@/app/(admin)/admin/finance/subscriptions/_components/subscription-billing-panel", () => ({
   SubscriptionBillingPanel: () => null,
 }));
-vi.mock("@/app/(admin)/admin/finance/subscriptions/_components/manual-payment-dialog", () => ({
-  ManualPaymentDialog: ({
-    target,
-    onSubmit,
-  }: {
-    target: unknown;
-    onSubmit: (submission: { note: string; notifyMember?: boolean }) => void;
-  }) =>
-    target ? (
-      <button type="button" onClick={() => onSubmit({ note: "Cash at the lodge", notifyMember: false })}>
-        Record manual payment
-      </button>
-    ) : null,
-}));
 
-const NOTE = "Marked not required, but the billing run will invoice this member";
+const NOTE = NOT_REQUIRED_ROW_BILLING_NOTE;
 
 function subscription(billingNote: string | null) {
   return {

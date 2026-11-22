@@ -76,7 +76,7 @@ type SubscriptionCandidate = {
   manualPaymentNote: string | null;
   /**
    * #5190 (owner decision 22 Nov 2026): set when the saved season row says
-   * "Not required" but the billing run will still invoice this member
+   * "Not required" but billing treats this member as owing
    * (`hasNotRequiredRowBillingNote`); null otherwise.
    */
   billingNote: string | null;
@@ -131,13 +131,16 @@ function isNotRequiredMember(
 }
 
 /**
- * #5190 (owner decision 22 Nov 2026): the row note for a saved season row the
- * billing run will still invoice, from the shared rule on the lists' side, as
- * the members list and export compute it.
+ * #5190 (owner decision 22 Nov 2026): the row note for a saved "Not required"
+ * season row whose member billing treats as owing, from the shared rule on the
+ * lists' side, as the members list and export compute it.
  */
 function subscriptionBillingNote(
   subscription: SeasonRowState & {
-    member: Parameters<typeof isNotRequiredMember>[0];
+    member: Parameters<typeof isNotRequiredMember>[0] & {
+      active: boolean;
+      archivedAt: Date | null;
+    };
   },
   rule: Parameters<typeof isNotRequiredMember>[1],
 ) {
@@ -281,6 +284,9 @@ export async function GET(request: NextRequest) {
               ageTier: true,
               // #5190: read by the liability rule only; never serialised.
               dateOfBirth: true,
+              // #5190: the billing note speaks only for the billing population.
+              active: true,
+              archivedAt: true,
               role: true,
               canLogin: true,
               passwordChangedAt: true,

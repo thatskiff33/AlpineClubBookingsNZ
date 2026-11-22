@@ -180,6 +180,7 @@ import {
   googleSubCollisionError,
   loginEmailCollisionError,
 } from "@/lib/__tests__/helpers";
+import { NOT_REQUIRED_ROW_BILLING_NOTE } from "@/lib/subscription-season-row-note";
 
 const mockedAuth = vi.mocked(auth);
 const mockedSendMemberSetupInviteEmail = vi.mocked(sendMemberSetupInviteEmail);
@@ -1104,9 +1105,9 @@ describe("Phase 3: Admin Member Management", () => {
     });
 
     // #5190 (owner decision 22 Nov 2026, issue comment 7070827526): a saved
-    // NOT_REQUIRED row the billing run will still invoice gets a plain note.
+    // NOT_REQUIRED row whose member billing treats as owing gets a plain note.
     describe("billing note on a saved Not-required row (#5190)", () => {
-      const NOTE = "Marked not required, but the billing run will invoice this member";
+      const NOTE = NOT_REQUIRED_ROW_BILLING_NOTE;
       const untouchedNotRequiredRow = {
         status: "NOT_REQUIRED", seasonYear: 2026, xeroInvoiceId: null,
         manuallyMarkedPaidAt: null, chargeCoverage: [],
@@ -1116,12 +1117,15 @@ describe("Phase 3: Admin Member Management", () => {
         subscriptionBehavior: string;
         ageTier: string;
         subscriptions: unknown[];
+        active?: boolean;
+        archivedAt?: Date | null;
       }) {
         return {
           id: "note-1", firstName: "Note", lastName: "Shape", email: "note@test.com",
           phoneCountryCode: null, phoneAreaCode: null, phoneNumber: null,
           dateOfBirth: null, role: "USER", financeAccessLevel: "NONE",
-          ageTier: opts.ageTier, active: true, canLogin: true, xeroContactId: null,
+          ageTier: opts.ageTier, active: opts.active ?? true, archivedAt: opts.archivedAt ?? null,
+          canLogin: true, xeroContactId: null,
           joinedDate: null, createdAt: new Date("2025-01-01"), forcePasswordChange: false,
           passwordChangedAt: null, lastLoginAt: null,
           streetAddressLine1: null, streetAddressLine2: null, streetCity: null,
@@ -1186,7 +1190,7 @@ describe("Phase 3: Admin Member Management", () => {
         expect(row.subscriptionBillingNote).toBeNull();
       });
 
-      it("no note once a rule is chosen: the member stops owing, or the clear-up flips the row", async () => {
+      it("no note once a rule is chosen under which the member stops owing", async () => {
         vi.mocked(prisma.membershipLockoutSettings.findUnique).mockResolvedValue({
           requiredTypeAgeRule: "AGE_TIER_EXEMPTS", liabilityAgeSource: "SEASON_START",
         } as any);
@@ -1197,13 +1201,37 @@ describe("Phase 3: Admin Member Management", () => {
         }));
         expect(exempt.subscriptionStatus).toBe("NOT_REQUIRED");
         expect(exempt.subscriptionBillingNote).toBeNull();
-        // The liable member still owes, so the clear-up flipped their row.
+      });
+
+      it("a chosen rule under which the member still owes keeps the note until the clear-up flips the row", async () => {
+        vi.mocked(prisma.membershipLockoutSettings.findUnique).mockResolvedValue({
+          requiredTypeAgeRule: "AGE_TIER_EXEMPTS", liabilityAgeSource: "SEASON_START",
+        } as any);
+        // A row the clear-up has not reached (it runs for the current season
+        // when the rule is saved): billing still treats this member as owing.
+        const stillOwing = await rowFor(noteMember({
+          subscriptionBehavior: "BASED_ON_AGE_TIER", ageTier: "YOUTH",
+          subscriptions: [untouchedNotRequiredRow],
+        }));
+        expect(stillOwing.subscriptionStatus).toBe("NOT_REQUIRED");
+        expect(stillOwing.subscriptionBillingNote).toBe(NOTE);
+        // Once the clear-up has flipped it, the row says what billing does.
         const flipped = await rowFor(noteMember({
           subscriptionBehavior: "BASED_ON_AGE_TIER", ageTier: "YOUTH",
           subscriptions: [{ ...untouchedNotRequiredRow, status: "NOT_INVOICED" }],
         }));
         expect(flipped.subscriptionStatus).toBe("NOT_INVOICED");
         expect(flipped.subscriptionBillingNote).toBeNull();
+      });
+
+      it("no note for a member billing never considers (inactive or archived)", async () => {
+        for (const outside of [{ active: false }, { archivedAt: new Date("2026-05-01") }]) {
+          const row = await rowFor(noteMember({
+            subscriptionBehavior: "REQUIRED", ageTier: "CHILD",
+            subscriptions: [untouchedNotRequiredRow], ...outside,
+          }));
+          expect(row.subscriptionBillingNote).toBeNull();
+        }
       });
     });
 
@@ -1755,7 +1783,7 @@ describe("Phase 3: Admin Member Management", () => {
       const exportRow = (firstName: string, subscriptions: unknown[]) => ({
         firstName, lastName: "Member", email: `${firstName.toLowerCase()}@test.com`,
         phoneCountryCode: null, phoneAreaCode: null, phoneNumber: null, dateOfBirth: null,
-        role: "USER", ageTier: "CHILD", active: true,
+        role: "USER", ageTier: "CHILD", active: true, archivedAt: null,
         xeroContactId: null, createdAt: new Date("2025-01-01"),
         subscriptions,
         seasonalMembershipAssignments: [{ membershipType: { subscriptionBehavior: "REQUIRED" } }],
@@ -1772,7 +1800,7 @@ describe("Phase 3: Admin Member Management", () => {
       expect(noteIndex).toBe(headers.indexOf("Subscription Status") + 1);
       const noted = lines.find((line) => line.startsWith(",Noted,"))!;
       expect(noted).toContain(
-        "NOT_REQUIRED,\"Marked not required, but the billing run will invoice this member\",",
+        `NOT_REQUIRED,"${NOT_REQUIRED_ROW_BILLING_NOTE}",`,
       );
       const plain = lines.find((line) => line.startsWith(",Plain,"))!;
       expect(plain).toContain(",NONE,,");

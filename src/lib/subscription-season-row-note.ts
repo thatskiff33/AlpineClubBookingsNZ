@@ -12,6 +12,7 @@ import {
   resolveMemberSubscriptionLiability,
   type SubscriptionLiabilitySettings,
 } from "@/lib/policies/subscription";
+import { isInSubscriptionBillingPopulation } from "@/lib/subscription-billing-population";
 
 /**
  * A season row nothing has billed, paid, covered or marked: the creation seed's
@@ -77,33 +78,43 @@ export function isUntouchedNotRequiredRow(
  * The row note the admin members list, its CSV export and the subscriptions
  * list show (#5190, owner decision 22 Nov 2026,
  * https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5190#issuecomment-7070827526).
+ * The owner's suggested "the billing run will invoice this member" is not used
+ * (#5190 review): billing can treat a member as owing and still send no
+ * invoice (a no-invoice fee, a family billed through another member, a type
+ * with no fee row), so the note says only what the shared rule decides.
  */
 export const NOT_REQUIRED_ROW_BILLING_NOTE =
-  "Marked not required, but the billing run will invoice this member";
+  "Marked not required, but billing treats this member as owing";
 
 /**
- * Whether a list row gets {@link NOT_REQUIRED_ROW_BILLING_NOTE}: the member has
- * a saved `NOT_REQUIRED` season row that nothing has billed, paid, covered or
- * marked, and the shared liability rule on the lists' side
- * (`ADMIN_LIST_LIABILITY_SIDE`, billing) says they owe. The list shows the
- * row's "Not required"; the billing run ignores the row and invoices them.
+ * Whether a list row gets {@link NOT_REQUIRED_ROW_BILLING_NOTE}: the member is
+ * in the billing population (active, not archived:
+ * `isInSubscriptionBillingPopulation`), has a saved `NOT_REQUIRED` season row
+ * that nothing has billed, paid, covered or marked, and the shared liability
+ * rule on the lists' side (`ADMIN_LIST_LIABILITY_SIDE`, billing) says they owe.
+ * The list shows the row's "Not required"; billing ignores the row.
  *
- * Choosing a rule removes the note for the current season: under the chosen
- * rule the member either stops owing, or the liability clear-up
- * (`clearStaleNotRequiredRows`, the same row test and billing-side rule) flips
- * their row to `NOT_INVOICED`. A row the clear-up did not reach (another
- * season) keeps the note, because billing still invoices it. A covered,
- * invoiced, paid or marked row never gets the note — billing has already dealt
- * with it.
+ * Choosing a rule removes the note for the current season only: under the
+ * chosen rule the member either stops owing, or the liability clear-up
+ * (`clearStaleNotRequiredRows`, the same row test and billing-side rule, run
+ * for the current season) flips their row to `NOT_INVOICED`. A row of another
+ * season keeps the note, because billing still treats that member as owing.
+ * A covered, invoiced, paid or marked row never gets the note.
  */
 export function hasNotRequiredRowBillingNote(input: {
   subscriptionBehavior: MembershipTypeSubscriptionBehavior | null | undefined;
-  member: { dateOfBirth: Date | null; ageTier: AgeTier };
+  member: {
+    dateOfBirth: Date | null;
+    ageTier: AgeTier;
+    active: boolean;
+    archivedAt: Date | string | null;
+  };
   seasonRow: SeasonRowState | null | undefined;
   seasonYear: number;
   ageTierSettings: AgeTierSettingData[];
   liabilitySettings: SubscriptionLiabilitySettings;
 }): boolean {
+  if (!isInSubscriptionBillingPopulation(input.member)) return false;
   if (!isUntouchedNotRequiredRow(input.seasonRow)) return false;
   return resolveMemberSubscriptionLiability({
     subscriptionBehavior: input.subscriptionBehavior,

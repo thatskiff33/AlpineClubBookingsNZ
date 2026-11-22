@@ -127,7 +127,7 @@ interface Subscription {
   paidAt: string | null;
   manuallyMarkedPaidAt: string | null;
   manualPaymentNote: string | null;
-  /** #5190: "Not required" row the billing run will still invoice; else null. */
+  /** #5190: "Not required" row whose member billing treats as owing; else null. */
   billingNote?: string | null;
   xeroContactGroupsLoaded: boolean;
   xeroContactGroups: Array<{ id: string; name: string }>;

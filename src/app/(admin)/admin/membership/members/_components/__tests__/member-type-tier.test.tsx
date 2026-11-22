@@ -12,6 +12,7 @@ import {
 } from "../../_utils";
 import { MemberFilterToolbar } from "../member-filter-toolbar";
 import { MemberTable } from "../member-table";
+import { NOT_REQUIRED_ROW_BILLING_NOTE } from "@/lib/subscription-season-row-note";
 
 // The toolbar resolves its option lists via hooks that fetch in the browser;
 // the tests pin them to deterministic values.
@@ -377,10 +378,10 @@ describe("Type – Tier uses the club's own name for the fallback type (#2978)",
 });
 
 // #5190 (owner decision 22 Nov 2026): a saved "Not required" row the billing
-// run will still invoice carries a plain note under its badge.
+// run treats as owing carries a plain note under its badge.
 describe("members list: billing note on a saved Not-required row (#5190)", () => {
   afterEach(() => cleanup());
-  const NOTE = "Marked not required, but the billing run will invoice this member";
+  const NOTE = NOT_REQUIRED_ROW_BILLING_NOTE;
 
   it("shows the note under the badge when the row carries one", () => {
     renderMemberTable([
