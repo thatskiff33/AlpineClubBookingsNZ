@@ -130,8 +130,9 @@ prepare() {
   DATABASE_URL="$HOST_DATABASE_URL" pnpm exec tsx --conditions=react-server e2e/setup/seed-stripe-credentials.ts
 
   # Multi-lodge project only (E2E_MULTI_LODGE=1): provision a second active
-  # lodge and enable the multiLodge module. Skipped by default, so the default
-  # single-lodge suite is seeded byte-identically.
+  # lodge. Multi-lodge is core (ADR-005), so there is no module to enable.
+  # Skipped by default, so the default single-lodge suite is seeded
+  # byte-identically.
   if [[ "${E2E_MULTI_LODGE:-}" == "1" ]]; then
     echo "==> Provisioning second lodge (E2E_MULTI_LODGE=1)"
     DATABASE_URL="$HOST_DATABASE_URL" pnpm exec tsx --conditions=react-server e2e/setup/seed-second-lodge.ts
