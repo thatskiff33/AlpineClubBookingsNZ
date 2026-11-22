@@ -5,7 +5,7 @@ import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 /**
  * The query strings of the booking wizard's three stay checks (ALP-794,
  * `INV-SSOT`). Each route parses its query with the schema here, and the AI
- * app catalogue (`src/lib/mcp/catalogue.ts`) offers the same fields, so the
+ * app catalogue (`src/lib/mcp/catalogue-bookings.ts`) offers the same fields, so the
  * app is never told one shape while the route enforces another.
  */
 
