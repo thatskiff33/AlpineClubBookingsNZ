@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-import { XERO_OPERATION_REASON_MAX, XERO_OPERATION_REASON_MIN } from "@/lib/xero-operation-resolution";
+import { xeroOperationReasonBodySchema } from "@/lib/admin-xero-sync-schemas";
 import { createAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
+import { XERO_OPERATION_MARKED_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-xero-sync";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import logger from "@/lib/logger";
-
-const reviewSchema = z.object({
-  reason: z.string().trim().min(XERO_OPERATION_REASON_MIN).max(XERO_OPERATION_REASON_MAX),
-});
 
 export async function POST(
   request: NextRequest,
@@ -21,7 +18,7 @@ export async function POST(
   if (!guard.ok) return guard.response;
   const session = guard.session;
   const body = await request.json().catch(() => ({}));
-  const parsed = reviewSchema.safeParse(body);
+  const parsed = xeroOperationReasonBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid review payload", details: parsed.error.flatten() },
@@ -94,10 +91,10 @@ export async function POST(
       );
     }
 
-    return NextResponse.json({
+    return connectionJson(request, {
       ok: true,
       message: "Xero operation marked non-replayable with an audit record.",
-    });
+    }, XERO_OPERATION_MARKED_CONNECTION_SHAPE);
   } catch (error) {
     logger.error({ err: error, operationId: id }, "Failed to mark Xero operation non-replayable");
     return NextResponse.json(

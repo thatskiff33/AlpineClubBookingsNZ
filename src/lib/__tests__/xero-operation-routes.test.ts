@@ -917,7 +917,7 @@ describe("Xero operation admin retry routes", () => {
       count: where.lastErrorCode === "PARTIAL_REPAIR_RUNNING" || where.lastErrorCode === "REFUND_NOTE_UNRECORDED" ? 0 : 3,
     }));
 
-    const response = await resetStaleRunning();
+    const response = await resetStaleRunning(new Request("http://localhost/api/admin/xero/operations/reset-stale-running", { method: "POST" }));
 
     expect(response.status).toBe(200);
     expect(mocks.xeroOperationUpdateMany).toHaveBeenCalledWith(
@@ -984,7 +984,7 @@ describe("Xero operation admin retry routes", () => {
     });
     mocks.createAuditLog.mockRejectedValue(new Error("audit insert failed"));
 
-    const response = await resetStaleRunning();
+    const response = await resetStaleRunning(new Request("http://localhost/api/admin/xero/operations/reset-stale-running", { method: "POST" }));
 
     expect(response.status).toBe(500);
     expect(row.status).toBe("RUNNING");
@@ -995,7 +995,7 @@ describe("Xero operation admin retry routes", () => {
   it("writes no audit row when no operation was stale", async () => {
     mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 0 });
 
-    const response = await resetStaleRunning();
+    const response = await resetStaleRunning(new Request("http://localhost/api/admin/xero/operations/reset-stale-running", { method: "POST" }));
 
     expect(response.status).toBe(200);
     expect(mocks.createAuditLog).not.toHaveBeenCalled();
@@ -1006,7 +1006,7 @@ describe("Xero operation admin retry routes", () => {
       count: where.lastErrorCode === "PARTIAL_REPAIR_RUNNING" ? 1 : where.lastErrorCode === "REFUND_NOTE_UNRECORDED" ? 0 : 2,
     }));
 
-    const response = await resetStaleRunning();
+    const response = await resetStaleRunning(new Request("http://localhost/api/admin/xero/operations/reset-stale-running", { method: "POST" }));
 
     await expect(response.json()).resolves.toMatchObject({
       count: 3,

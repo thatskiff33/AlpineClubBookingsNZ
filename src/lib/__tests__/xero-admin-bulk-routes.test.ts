@@ -203,7 +203,7 @@ describe("Xero admin bulk routes", () => {
     };
     mocks.getXeroAdminHealthSnapshot.mockResolvedValue(snapshot);
 
-    const response = await getHealth();
+    const response = await getHealth(new Request("http://localhost/api/admin/xero/health"));
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual(snapshot);
@@ -307,7 +307,7 @@ describe("Xero admin bulk routes", () => {
         new XeroOperationRetryError("A queued retry is already pending for this Xero operation.", 409)
       );
 
-    const response = await retryAllFailedOperations();
+    const response = await retryAllFailedOperations(new Request("http://localhost/api/admin/xero/operations/retry-all", { method: "POST" }));
 
     expect(response.status).toBe(202);
     expect(mocks.enqueueXeroSyncOperationRetry).toHaveBeenNthCalledWith(1, "op-1", {
@@ -357,7 +357,7 @@ describe("Xero admin bulk routes", () => {
       cleanupResult({ failedRefundNoteHealLinkIds: ["link_a"], deferredRefundNoteHealLinkIds: ["link_b"] })
     );
 
-    const response = await runLinkMaintenance();
+    const response = await runLinkMaintenance(new Request("http://localhost/api/admin/xero/link-maintenance", { method: "POST" }));
 
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -376,7 +376,7 @@ describe("Xero admin bulk routes", () => {
   it("audits a link maintenance run that stopped on an error", async () => {
     mocks.cleanupStaleCanonicalXeroObjectLinks.mockRejectedValue(new Error("db down"));
 
-    const response = await runLinkMaintenance();
+    const response = await runLinkMaintenance(new Request("http://localhost/api/admin/xero/link-maintenance", { method: "POST" }));
 
     expect(response.status).toBe(500);
     expect(mocks.logAudit).toHaveBeenCalledTimes(1);
@@ -386,7 +386,7 @@ describe("Xero admin bulk routes", () => {
   });
 
   it("runs Xero link ledger maintenance for admins", async () => {
-    const response = await runLinkMaintenance();
+    const response = await runLinkMaintenance(new Request("http://localhost/api/admin/xero/link-maintenance", { method: "POST" }));
 
     expect(response.status).toBe(200);
     expect(mocks.backfillHistoricalXeroObjectLinks).toHaveBeenCalled();

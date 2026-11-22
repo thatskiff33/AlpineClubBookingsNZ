@@ -1,6 +1,8 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { XERO_OPERATION_QUEUED_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-xero-sync";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import {
@@ -21,7 +23,7 @@ function scheduleAfterResponse(task: () => Promise<void>) {
 }
 
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
@@ -60,12 +62,14 @@ export async function POST(
       }
     });
 
-    return NextResponse.json(
+    return connectionJson(
+      request,
       {
         ok: true,
         message: result.message,
         queueOperationId: result.queueOperationId,
       },
+      XERO_OPERATION_QUEUED_CONNECTION_SHAPE,
       { status: 202 }
     );
   } catch (error) {

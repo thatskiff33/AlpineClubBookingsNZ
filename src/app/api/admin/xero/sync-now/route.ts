@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import { xeroSyncNowRequestSchema } from "@/lib/admin-xero-sync-schemas";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import {
+  XERO_SYNC_NOW_CLUB_CONNECTION_SHAPE,
+  XERO_SYNC_NOW_RECORD_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-xero-sync";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
@@ -13,11 +18,6 @@ import {
   syncMemberFromXeroNow, syncBookingFromXeroNow, syncClubFromXeroNow, XeroSyncNowError,
 } from "@/lib/xero-sync-now";
 
-const requestSchema = z.discriminatedUnion("scope", [
-  z.object({ scope: z.literal("member"), id: z.string().min(1).max(128) }),
-  z.object({ scope: z.literal("booking"), id: z.string().min(1).max(128) }),
-  z.object({ scope: z.literal("club") }),
-]);
 const limiter = { id: "xero-sync-now", limit: 3, windowSeconds: 60 };
 
 export async function POST(request: Request) {
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
   });
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
-  const parsed = requestSchema.safeParse(body);
+  const parsed = xeroSyncNowRequestSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Choose a member, booking or whole-club sync." }, { status: 400 });
   const scope = parsed.data;
   const targetId = "id" in scope ? scope.id : undefined;
@@ -44,7 +44,11 @@ export async function POST(request: Request) {
       action: "XERO_SYNC_NOW", category: "xero", memberId: guard.session.user.id,
       targetId, entityType, entityId, summary: result.message, metadata: { scope: scope.scope },
     });
-    return NextResponse.json(result);
+    return connectionJson(
+      request,
+      result,
+      scope.scope === "club" ? XERO_SYNC_NOW_CLUB_CONNECTION_SHAPE : XERO_SYNC_NOW_RECORD_CONNECTION_SHAPE,
+    );
   } catch (error) {
     const info = getXeroApiErrorInfo(error, "Sync could not finish. Some records may have updated; it is safe to retry.");
     const message = error instanceof XeroSyncNowError ? error.message : info.clientMessage;

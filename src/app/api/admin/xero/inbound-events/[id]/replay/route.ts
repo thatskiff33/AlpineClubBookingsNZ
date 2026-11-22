@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { XERO_INBOUND_EVENT_REPLAYED_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-xero-sync";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import {
@@ -9,7 +11,7 @@ import {
 } from "@/lib/xero-inbound-reconciliation";
 
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
@@ -32,11 +34,11 @@ export async function POST(
       details: `status=${replay.event.status}`,
     });
 
-    return NextResponse.json({
+    return connectionJson(request, {
       ok: true,
       message: "Xero inbound event replayed.",
       replay,
-    });
+    }, XERO_INBOUND_EVENT_REPLAYED_CONNECTION_SHAPE);
   } catch (error) {
     if (error instanceof XeroInboundReplayError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
