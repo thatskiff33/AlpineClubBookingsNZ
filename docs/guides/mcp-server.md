@@ -216,10 +216,105 @@ Three **website-only** entries answer with the page to open and run nothing:
 app), `change_sign_in_details` (passwords and two-step sign-in) and
 `manage_connected_apps` (disconnecting apps).
 
+### Membership (officer, ALP-720)
+
+An officer who holds the **Membership** admin area can do through a connected
+app what they can do on that area's screens, except what needs a fresh proof of
+who they are or stays on the website for a reason below. Each action runs on
+the area's own route with the officer's real permissions
+([`catalogue/membership.ts`](../../src/lib/mcp/catalogue/membership.ts)): a
+**view** grant reaches the reads, an **edit** grant the changes too. Anyone
+without the area is never shown these actions, and the route refuses them
+anyway. All are reached through `find_actions` except `list_members` and
+`get_member`.
+
+| Action | What it does | Kind | Route |
+| --- | --- | --- | --- |
+| **Members** | | | |
+| `list_members` | Find members by name or email, with filters and paging; each member's standing, membership type and subscription status. Listed as its own tool | read | `GET /api/admin/members` |
+| `get_member` | One member's record: contact email and phone, membership, subscription and family links. Listed as its own tool | read | `GET /api/admin/members/[id]` |
+| `list_member_activity` | List a member's account history | read | `GET /api/admin/members/[id]/audit-log` |
+| `get_member_lodge_access` | Read a member's lodge access | read | `GET /api/admin/members/[id]/lodge-access` |
+| `set_member_lodge_access` | Set a member's lodge access | write | `PUT /api/admin/members/[id]/lodge-access` |
+| `get_member_partner_links` | Read a member's partner links | read | `GET /api/admin/members/[id]/partner-link` |
+| `link_member_partner` | Records two members as confirmed partners; both are always emailed | write | `POST /api/admin/members/[id]/partner-link` |
+| `remove_member_partner_link` | Removes a pending or confirmed partner link; a confirmed one emails both members | destructive | `DELETE /api/admin/members/[id]/partner-link` |
+| `link_member_dependant` | Links a dependant to a parent. Never turns off the dependant's sign-in; no one is emailed | write | `POST /api/admin/members/[id]/dependents/link` |
+| `unlink_member_dependant` | Unlink a dependant from a parent | destructive | `DELETE /api/admin/members/[id]/dependents/[dependentId]` |
+| `list_membership_types` | List membership types | read | `GET /api/admin/membership-types` |
+| **Applications and request queues** | | | |
+| `list_member_applications` | List membership applications | read | `GET /api/admin/member-applications` |
+| `refresh_application_nominations` | Re-send nomination requests | write | `POST /api/admin/member-applications/[id]/nominations/refresh` |
+| `replace_application_nominator` | Replace a nominator | write | `POST /api/admin/member-applications/[id]/nominators/[slot]/replace` |
+| `request_member_archive` | Raises an archive request for another officer to decide on the website | write | `POST /api/admin/members/[id]/lifecycle/archive` |
+| `request_membership_cancellation` | Raises a cancellation request for another officer to decide on the website | write | `POST /api/admin/members/[id]/membership-cancellation` |
+| `list_member_lifecycle_requests` | List archive and deletion requests | read | `GET /api/admin/member-lifecycle-action-requests` |
+| `list_membership_cancellation_requests` | List membership cancellation requests | read | `GET /api/admin/membership-cancellation-requests` |
+| `resend_cancellation_confirmation` | Re-send a cancellation confirmation | write | `POST /api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]/resend-confirmation` |
+| `list_account_deletion_requests` | List account deletion requests | read | `GET /api/admin/deletion-requests` |
+| **Family groups** | | | |
+| `list_family_groups` | List family groups | read | `GET /api/admin/family-groups` |
+| `get_family_group` | Read a family group | read | `GET /api/admin/family-groups/[id]` |
+| `create_family_group` | Create a family group | write | `POST /api/admin/family-groups` |
+| `update_family_group` | Rename a family group or change its members | write | `PUT /api/admin/family-groups/[id]` |
+| `delete_family_group` | Delete a family group | destructive | `DELETE /api/admin/family-groups/[id]` |
+| `search_family_group_members` | Find members for a family group | read | `GET /api/admin/family-groups/member-search` |
+| `list_partner_invites` | List partner invitations | read | `GET /api/admin/family-groups/partner-invites` |
+| `revoke_partner_invite` | Revoke a partner invitation | destructive | `DELETE /api/admin/family-groups/partner-invites` |
+| `list_family_group_requests` | List family group requests | read | `GET /api/admin/family-groups/requests` |
+| `review_family_group_request` | Approves or rejects a family group request | destructive | `PUT /api/admin/family-groups/requests` |
+| `list_family_suggestions` | List suggested family groups | read | `GET /api/admin/family-suggestions` |
+| `create_family_group_from_suggestion` | Create a family group from a suggestion | write | `POST /api/admin/family-suggestions` |
+| `hide_family_suggestion` | Hide a suggested family group | write | `POST /api/admin/family-suggestions/hide` |
+| `reset_hidden_family_suggestions` | Show hidden family suggestions again | write | `POST /api/admin/family-suggestions/reset` |
+| **Notices, sent email and the message board** | | | |
+| `list_admin_notices` | List all club notices | read | `GET /api/admin/notices` |
+| `get_admin_notice` | Read a club notice | read | `GET /api/admin/notices/[id]` |
+| `create_notice` | Writes a club notice. Never emails members: publish on the website to email them | write | `POST /api/admin/notices` |
+| `update_notice` | Edits, publishes or archives a notice; never emails members | write | `PATCH /api/admin/notices/[id]` |
+| `delete_notice` | Delete a club notice | destructive | `DELETE /api/admin/notices/[id]` |
+| `list_notice_reads` | Who has read a notice, without their email addresses | read | `GET /api/admin/notices/[id]/reads` |
+| `list_bulk_email_history` | List sent bulk emails | read | `GET /api/admin/communications/history` |
+| `list_message_board_posts` | List message board posts | read | `GET /api/admin/club-posts` |
+| `moderate_message_board_post` | Hide, restore or edit a message board post | write | `PATCH /api/admin/club-posts/[id]` |
+| `remove_message_board_post` | Remove a message board post | destructive | `DELETE /api/admin/club-posts/[id]` |
+| `run_message_board_cleanup` | Delete old message board posts now | destructive | `POST /api/admin/club-posts/cleanup` |
+| **Committee and inductions** | | | |
+| `list_committee_roles` | List committee roles | read | `GET /api/admin/committee/roles` |
+| `create_committee_role` | Add a committee role | write | `POST /api/admin/committee/roles` |
+| `update_committee_role` | Edit or archive a committee role | write | `PATCH /api/admin/committee/roles/[id]` |
+| `delete_committee_role` | Delete a committee role | destructive | `DELETE /api/admin/committee/roles/[id]` |
+| `list_committee_assignments` | List who holds committee roles | read | `GET /api/admin/committee/assignments` |
+| `assign_committee_role` | Gives a member a committee role, or replaces every setting of one they hold | write | `POST /api/admin/committee/assignments` |
+| `update_committee_assignment` | Change a committee assignment | write | `PATCH /api/admin/committee/assignments/[id]` |
+| `deactivate_committee_assignment` | Takes a member off a committee role and off the public committee page | destructive | `DELETE /api/admin/committee/assignments/[id]` |
+| `list_inductions` | List member inductions | read | `GET /api/admin/inductions` |
+| `get_induction` | Show a member induction | read | `GET /api/admin/inductions/[id]` |
+| `create_induction` | Starts an induction; any assigned signers are emailed asking them to sign off | write | `POST /api/admin/inductions` |
+| `reassign_induction_signers` | Replaces an induction's assigned signers; no one is emailed | write | `PATCH /api/admin/inductions/[id]` |
+| `void_induction` | Voids an induction with a reason; it cannot be reopened | destructive | `PATCH /api/admin/inductions/[id]` |
+| `list_induction_templates` | List induction checklists | read | `GET /api/admin/induction-templates` |
+| `get_induction_template` | Show an induction checklist | read | `GET /api/admin/induction-templates/[id]` |
+| **Lockers** | | | |
+| `list_lockers` | List lockers | read | `GET /api/admin/lockers` |
+| `create_locker` | Add a locker | write | `POST /api/admin/lockers` |
+| `update_locker` | Rename or reallocate a locker | write | `PUT /api/admin/lockers/[id]` |
+| `delete_locker` | Delete a locker | destructive | `DELETE /api/admin/lockers/[id]` |
+| `bulk_create_lockers` | Add numbered lockers | write | `POST /api/admin/lockers/bulk` |
+
+What stays on the website in this area: merging, deleting and exporting
+members, role and access changes and the other fresh-proof actions; deciding an
+application, an archive, deletion or cancellation request; changing a member's
+membership type or anything else that changes what they owe; sign-in links and
+email changes; bulk emails; the club's membership settings, membership types,
+member fields and induction checklists; overriding an induction to complete
+without its sign-offs; and the member page's drawn family tree, whose links
+`get_member` already gives.
+
 ## What stays on the website, and why
 
 Every route method that is not an action has a stated reason
-([`exclusions.ts`](../../src/lib/mcp/exclusions.ts), `INV-MCP-006`). Thirteen
+([`exclusions.ts`](../../src/lib/mcp/exclusions.ts), `INV-MCP-006`). These
 reasons are permanent — those routes are never actions:
 
 - **Fresh proof** — anything on the fresh-proof list (`STEP_UP_ROUTES`), which
@@ -250,6 +345,25 @@ reasons are permanent — those routes are never actions:
 - **The website's help assistant** — the member's own AI app answers them
   instead.
 
+Officer areas add their own permanent reasons:
+
+- **Club setup** — how the club runs: fees, tax, bank details, accounting
+  mappings, membership types and rules, member fields, induction checklists
+  and connections to outside services. An officer configures and checks these
+  on the website.
+- **Changes charges** — anything that changes what a member owes or is
+  invoiced, such as their seasonal membership type, or the preview that mints
+  the token its save needs.
+- **Ends membership** — deciding a request to archive, delete or cancel
+  someone's membership. Raising one is an action; a second officer decides it
+  on the website.
+- **Sign-in access** — sending someone a sign-in link, or changing who signs
+  in with an email address.
+- **Bulk email** — emailing many members at once.
+- **Privacy request** — part of answering a person's request for their own
+  data, which a Full Admin does after proving who they are again.
+- **Switched off** — a route that only answers that it is switched off.
+
 Everything else is **not yet**: each such route names the follow-on task that
 will bring it in.
 
@@ -277,21 +391,21 @@ shows that it was used.
 
 ### An officer's connection sends other members' data to their AI provider
 
-In stage 1, an officer's connection reaches only what the same person could
-reach as a member: every action answers it with the officer's own records.
-`preview_cancel_booking` and `cancel_my_booking` refuse an officer's
-connection any booking but the officer's own, even though the officer may
-cancel members' bookings on the website (`INV-MCP-006`). Like any member's
-connection, it does carry the names on the officer's own bookings and in
-their family group.
+The member actions answer an officer's connection with the officer's own
+records only. `preview_cancel_booking` and `cancel_my_booking` refuse it any
+booking but the officer's own, even though the officer may cancel members'
+bookings on the website (`INV-MCP-006`).
 
-The follow-on stages add officer actions (ALP-719 onwards), and the switch
-governs the connection, not the action list. Once those ship, whatever the
-officer asks about, such as another member's details, bookings or payments,
-goes to that officer's AI provider. That is why **Officers may connect an AI
-app** is a separate switch, off by default. Before switching it on, the club
-should cover it in its privacy notice and decide which AI providers are
-acceptable.
+The officer actions are different: they exist to reach other members. An
+officer who holds the Membership area can ask for any member's record, family
+links, applications, requests, inductions and committee roles, and the answer
+goes to that officer's AI provider (see
+[what each sends](#what-a-connection-sends-to-the-ai-provider)). The switch
+governs the connection, not the action list: an officer allowed to connect
+gets every officer action their admin areas allow. That is why **Officers may
+connect an AI app** is a separate switch, off by default. Before switching it
+on, the club should cover it in its privacy notice and decide which AI
+providers are acceptable.
 
 ### What a connection sends to the AI provider
 
@@ -347,6 +461,31 @@ Every action sends the connected person's own records, except
   committee entry carries a name, a role and the free-text description the
   club wrote, not photos or phone numbers.
 
+The Membership officer actions send **other members' information** to the
+officer's AI provider, only the fields each action names:
+
+- Members (`list_members`, `get_member` and the family-link actions): name,
+  email address, age group, membership standing, type and subscription status;
+  the record adds their phone number, their parents (with email addresses),
+  dependants and family groups, and `get_member_partner_links` their partner. Never a date of birth, street or postal address, dietary
+  or medical details, provider ids, officer notes, access roles or sign-in
+  details. `list_member_activity` sends a member's account history as
+  `list_my_account_activity` does.
+- Family groups: each member's id, name, age group and whether they are
+  active. An email address only where the screen uses one to tell similar
+  people apart: member search, a request's people and candidate matches, and
+  suggested groups. A partner invitation's address, never its link.
+- Applications and request queues: who a request is about, what it asks and
+  where it stands. Not an applicant's date of birth, phone, address or family
+  details, nor an unpaid invoice's number, amount or link.
+- Notices: the notice itself, and who read it, without their email addresses.
+  Message board posts with their authors' names.
+- Committee: each holder's name, email address and phone number, as the
+  committee screen shows them. Inductions: the member's name, email address
+  and age group, the signers' names and email addresses, and the sign-off
+  comments.
+- Lockers: each locker and the name of the member it is allocated to.
+
 The app also holds whatever the person typed to it, such as the guest names
 for a draft. Disconnecting stops new calls; it does not remove what the
 provider already received. The club's register row is `ai-apps` in
@@ -383,9 +522,9 @@ provider already received. The club's register row is `ai-apps` in
 
 ## The roadmap
 
-Stage 1 and ALP-718 are the foundation and the actions above. The remaining routes are
-grouped into follow-on tasks, named in `MCP_NOT_YET_TASKS` in
-[`exclusions.ts`](../../src/lib/mcp/exclusions.ts):
+Stage 1, ALP-718 and ALP-720 (Membership) are the foundation and the actions
+above. The remaining routes are grouped into follow-on tasks, named in
+`MCP_NOT_YET_TASKS` in [`exclusions.ts`](../../src/lib/mcp/exclusions.ts):
 
 | Task | Area |
 | --- | --- |
@@ -394,7 +533,6 @@ grouped into follow-on tasks, named in `MCP_NOT_YET_TASKS` in
 | ALP-796 | Lodge life: calendar, chores, message board, food orders, inductions, maintenance, work parties |
 | ALP-797 | Group, school and whole-lodge requests |
 | ALP-719 | Bookings (officer) |
-| ALP-720 | Membership (officer) |
 | ALP-721 | Finance (officer, including `/api/finance`) |
 | ALP-722 | Lodge (officer) |
 | ALP-723 | Content (officer) |

@@ -154,18 +154,15 @@ only the rules.
   action or has a stated exclusion reason.** `classifyMcpRoute` in
   [`exclusions.ts`](../../src/lib/mcp/exclusions.ts) answers for each;
   [`mcp-route-census.test.ts`](../../src/lib/__tests__/mcp-route-census.test.ts)
-  fails on anything unclassified, a catalogue entry whose route method is
-  missing, and an action on a permanently excluded route.
-- **Permanent reasons say a route is never an action**: `fresh-proof` (read
-  from `STEP_UP_ROUTES`, never copied), `auth-flow`, `provider`, `cron`,
-  `kiosk`, `needs-browser`, `infrastructure`, `moves-money`, `declaration`,
-  `public-visitor`, `website-flow`, `access-secrets`, `site-helper`. A member
-  route's reason names its exact method and path. A permanent exclusion beats
-  a catalogue entry.
+  fails on anything unclassified, an entry whose route method is missing, and
+  an action on a permanently excluded route.
+- **Permanent reasons say a route is never an action**: the keys of
+  `MCP_PERMANENT_EXCLUSION_REASONS`, `fresh-proof` read from `STEP_UP_ROUTES`,
+  never copied. A member or officer route's reason names its exact method and
+  path. A permanent exclusion beats a catalogue entry.
 - **A `not-yet:` reason names the follow-on task** from `MCP_NOT_YET_TASKS`
   that brings the route in; that task adds its catalogue entries and
-  removes its rule in one change. A route in an undecided area stays
-  unclassified and fails the census.
+  removes its rule in one change. An undecided area's route fails the census.
 - **The catalogue adds no behaviour or permission.** An action's request
   schemas and its `returns` shape are its route's, imported from
   lib modules ([`connection-shapes.ts`](../../src/lib/connection-shapes.ts)
@@ -175,13 +172,14 @@ only the rules.
   `connectionJson` or `projectForConnection`, which keep only the shape's
   fields, at every depth; a refusal passes unchanged. Only a `POST` the
   census pins as side-effect free may run as a `preview` read.
-- **A connection acts as a member, never as an officer.** A route with an
+- **A member action acts as a member, never as an officer.** A route with an
   officer branch decides with `memberOnlySessionUser`: role `USER`, no other
-  access role, an empty permission matrix. An on-behalf target or officer
+  access role, an empty permission matrix; an on-behalf target or officer
   override flag from a connection is refused. A reused member page keeps its
-  audience, as privacy register row `ai-apps` discloses: committee-role
-  notices (`notices.ts`) and the person's own actions in their account
-  history. Officer actions come with ALP-719.
+  audience (privacy register row `ai-apps`).
+- **An officer action runs on its admin area's route with the officer's real
+  permissions.** `mcpActionAdminRequirement` names the area and level; a
+  caller without them never sees or runs it.
 
 ## INV-MCP-007
 
