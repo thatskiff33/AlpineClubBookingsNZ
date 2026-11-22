@@ -225,7 +225,7 @@ describe("sendAdminXeroRepeatedFailureAlert", () => {
 
     const result = await sendAdminXeroRepeatedFailureAlert(data);
 
-    expect(result).toEqual({ ...expected, sent: 0, queuedForRetry: 0, notDelivered: 0 });
+    expect(result).toEqual({ ...expected, sent: 0, queuedForRetry: 0, notDelivered: 0, failedBeforeLogged: 0 });
     expect(h.getXeroOrgShortCode).not.toHaveBeenCalled();
     expect(h.sendAdminAlertTo).not.toHaveBeenCalled();
   });

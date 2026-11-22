@@ -33,7 +33,12 @@ import {
 } from "../email-message-notes";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
-import { adminAlertSendOutcome, type AdminAlertSendOutcome, type AdminAlertSendResult } from "./admin-alert-send-result";
+import {
+  adminAlertSendOutcome,
+  type AdminAlertRecipientsResult,
+  type AdminAlertSendOutcome,
+  type AdminAlertSendResult,
+} from "./admin-alert-send-result";
 import { applyXeroOrgShortCode } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { stampXeroOrganisation } from "./admin-alert-xero-links";
@@ -491,14 +496,14 @@ export async function sendAdminXeroRepeatedFailureAlert(data: {
   xeroObjectUrl: string | null;
   latestErrorMessage: string | null;
   timestamp: Date;
-}): Promise<AdminAlertSendResult> {
+}): Promise<AdminAlertRecipientsResult> {
   // #5407: the delivery policy and the audience are read BEFORE the
   // organisation stamp below, because that stamp is a live Xero read
   // (`confirmLive`) and an alert switched off, or with nobody opted in, must
   // not cost one on every qualifying failure. The same two reads, in the same
   // order, as `sendToAdmins`; the delivery half is `sendAdminAlertTo`, as
-  // `sendAdminDailyDigestAlert` does it. Returns the result so the caller can
-  // settle its window claim.
+  // `sendAdminDailyDigestAlert` does it. Returns the wider result, with
+  // `failedBeforeLogged`, because its caller settles its window claim on it.
   const templateName = "admin-xero-repeated-failure";
   const preferenceKey = "adminXeroSyncError";
   const delivery = await shouldSendAdminSystemEmail({ templateName });
@@ -507,11 +512,11 @@ export async function sendAdminXeroRepeatedFailureAlert(data: {
       { templateName, deliveryMode: delivery.mode, reason: delivery.reason },
       "Skipped admin email by delivery policy",
     );
-    return { deliveryAllowed: false, recipients: 0, sent: 0, queuedForRetry: 0, notDelivered: 0 };
+    return { deliveryAllowed: false, recipients: 0, sent: 0, queuedForRetry: 0, notDelivered: 0, failedBeforeLogged: 0 };
   }
   const emails = await getAdminAlertEmails(preferenceKey);
   if (emails.length === 0) {
-    return { deliveryAllowed: true, recipients: 0, sent: 0, queuedForRetry: 0, notDelivered: 0 };
+    return { deliveryAllowed: true, recipients: 0, sent: 0, queuedForRetry: 0, notDelivered: 0, failedBeforeLogged: 0 };
   }
 
   // #2314: the operation's stored `xeroObjectUrl` is organisation-agnostic, so

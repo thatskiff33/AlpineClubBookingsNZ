@@ -2535,10 +2535,9 @@ Scheduled hardening (cron tasks, all idempotent):
   the club saves for the alert cannot switch the limit off. The claim is kept
   once the alert is raised (sent, queued for retry, bounced or withheld on a
   copy), held for a day when nobody could receive it (the alert switched off
-  or nobody opted in), and given back only when the send threw. Stated limit:
-  when every copy fails before its mail log row exists, the send result reads
-  as queued for retry, so the claim is kept and nobody gets that alert until
-  the window ends (#5448 makes the case tellable apart).
+  or nobody opted in) or when it reached nobody and nothing will replay it (a
+  copy failed before its mail log row existed, #5448), and given back only
+  when the send threw.
 
 ### Repairing Stripe refund-note links (#2901)
 

@@ -142,6 +142,7 @@ describe("maybeNotifyXeroRepeatedFailure", () => {
       sent: 1,
       queuedForRetry: 0,
       notDelivered: 0,
+      failedBeforeLogged: 0,
     });
     mocks.cooldowns.clear();
     mocks.cooldownUpdateMany.mockImplementation(
@@ -246,6 +247,7 @@ describe("maybeNotifyXeroRepeatedFailure", () => {
       sent: 1,
       queuedForRetry: 0,
       notDelivered: 0,
+      failedBeforeLogged: 0,
       ...overrides,
     });
 
@@ -340,18 +342,27 @@ describe("maybeNotifyXeroRepeatedFailure", () => {
       },
     );
 
-    it("keeps the claim, a stated limit, when every copy failed before its mail log row existed", async () => {
-      // `sendAdminAlertTo` counts a copy that threw before its row was written
-      // as queued for retry, so nobody has the alert and nothing replays it,
-      // yet the outcome reads `queued-for-retry` and the claim is kept for the
-      // window. #5448 makes this case tellable apart.
-      mocks.sendRepeatedFailureAlert.mockResolvedValue(sendResult({ sent: 0, queuedForRetry: 1 }));
+    it("holds the claim for a day when the alert reached nobody and nothing will replay it (#5448)", async () => {
+      // Every copy failed before its mail log row existed: no retry row, so
+      // only sending again reaches anyone (`adminAlertNeedsResend`).
+      mocks.sendRepeatedFailureAlert.mockResolvedValue(
+        sendResult({ sent: 0, notDelivered: 1, failedBeforeLogged: 1 }),
+      );
 
-      await maybeNotifyXeroRepeatedFailure(failing());
-      await maybeNotifyXeroRepeatedFailure(failing());
+      await maybeNotifyXeroRepeatedFailure(failing(), { windowHours: 48 });
+      await maybeNotifyXeroRepeatedFailure(failing(), { windowHours: 48 });
 
       expect(mocks.sendRepeatedFailureAlert).toHaveBeenCalledTimes(1);
-      expect(mocks.cooldowns.has(COOLDOWN_KEY)).toBe(true);
+      // Deferred: due again one day on, not after the 48-hour window.
+      expect(mocks.cooldowns.get(COOLDOWN_KEY)?.getTime()).toBe(Date.now() - WINDOW_MS);
+    });
+
+    it("keeps the whole window for copies withheld or refused on purpose", async () => {
+      mocks.sendRepeatedFailureAlert.mockResolvedValue(sendResult({ sent: 0, notDelivered: 1 }));
+
+      await maybeNotifyXeroRepeatedFailure(failing(), { windowHours: 48 });
+
+      expect(mocks.cooldowns.get(COOLDOWN_KEY)?.getTime()).toBe(Date.now());
     });
 
     it("gives the claim back when the send throws, so the next failure alerts", async () => {

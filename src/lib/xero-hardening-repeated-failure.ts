@@ -13,8 +13,9 @@ import {
   releaseAlertCooldown,
 } from "@/lib/alert-cooldown";
 import {
+  adminAlertNeedsResend,
   adminAlertSendOutcome,
-  type AdminAlertSendResult,
+  type AdminAlertRecipientsResult,
 } from "@/lib/email/admin-alert-send-result";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { buildLocalAdminUrl } from "@/lib/xero-record-links";
@@ -105,18 +106,15 @@ export async function maybeNotifyXeroRepeatedFailure(
     in `alert-cooldown.ts` (#3635 F1):
     - sent, queued for the retry cron, or undelivered (BOUNCED, or withheld on
       a copy as `SKIPPED_NON_PRODUCTION`): kept for the window;
-    - nobody could receive it (`skipped-by-policy`, `no-recipients`): held for
-      `ALERT_NOBODY_ELIGIBLE_RETRY_MS`, as `sendAdminAlertOnceEver` holds it,
-      then the next qualifying failure tries again (with the default 24-hour
-      window the hold and the window are the same day). The sender reads the
-      policy and the audience before its live Xero read, so each such attempt
-      costs no Xero call;
+    - nobody could receive it (`skipped-by-policy`, `no-recipients`), or it
+      reached nobody and nothing will replay it (`adminAlertNeedsResend`: a
+      copy failed before its mail log row existed): held for
+      `ALERT_NOBODY_ELIGIBLE_RETRY_MS`, as `sendAdminAlertOnceEver` and the
+      bump notice hold it, then the next qualifying failure tries again (with
+      the default 24-hour window the hold and the window are the same day).
+      The sender reads the policy and the audience before its live Xero read,
+      so a switched-off alert costs no Xero call;
     - the send threw: given back, so the next qualifying failure retries.
-
-    A STATED LIMIT: a copy whose send threw before its mail log row existed
-    is counted by `sendAdminAlertTo` as queued for retry, so when every copy
-    fails that way the outcome reads `queued-for-retry`, the claim is kept,
-    nobody has the alert and nothing replays it until the window ends.
 
     Claim first and send after, outside any transaction (`alert-cooldown.ts`),
     so two instances failing the same key at once raise one alert.
@@ -136,7 +134,7 @@ export async function maybeNotifyXeroRepeatedFailure(
     return { triggered: false, failureCount };
   }
 
-  let result: AdminAlertSendResult;
+  let result: AdminAlertRecipientsResult;
   try {
     result = await sendAdminXeroRepeatedFailureAlert({
       subject,
@@ -173,10 +171,8 @@ export async function maybeNotifyXeroRepeatedFailure(
     );
     return { triggered: false, failureCount };
   }
-  // After #5448, which tells a copy that failed before its row existed apart
-  // (`failedBeforeLogged`), that case should be deferred for a day here too.
   const outcome = adminAlertSendOutcome(result);
-  if (outcome === "skipped-by-policy" || outcome === "no-recipients") {
+  if (outcome === "skipped-by-policy" || outcome === "no-recipients" || adminAlertNeedsResend(result)) {
     await deferAlertCooldown({
       key,
       claimedAt: now,
