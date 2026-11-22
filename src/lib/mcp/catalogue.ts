@@ -559,7 +559,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     id: "report_maintenance_issue",
     title: "Report a lodge maintenance issue",
     summary:
-      "Sends the club a maintenance report for a lodge from `get_maintenance_report_form`: a short `summary` and an answer (`questionId`, `value`) for each question. The club's officers are emailed it. A photo is added on the website.",
+      "Sends the club a maintenance report for a lodge from `get_maintenance_report_form`: a short `summary` and an answer (`questionId`, `value`) for each question. The club's officers are emailed it, so confirm it with the member first. A photo is added on the website.",
     method: "POST",
     path: "/api/maintenance-reports",
     body: memberMaintenanceReportConnectionSchema,
