@@ -32,6 +32,7 @@ const {
   mockPaymentTransactionUpdateMany,
   mockPaymentTransactionFindUnique,
   mockPaymentTransactionDeleteMany,
+  mockAlertCooldownUpsert,
   mockReconcileBeds,
   mockEnqueueHosting,
   mockSettleHosting,
@@ -73,6 +74,8 @@ const {
   mockPaymentTransactionUpdateMany: vi.fn(),
   mockPaymentTransactionFindUnique: vi.fn(),
   mockPaymentTransactionDeleteMany: vi.fn(),
+  // #5240: the "captured, not yet settled" flag the attempt's settle writes.
+  mockAlertCooldownUpsert: vi.fn(),
   mockReconcileBeds: vi.fn(),
   mockEnqueueHosting: vi.fn(),
   mockSettleHosting: vi.fn(),
@@ -217,6 +220,7 @@ const txClient = {
     update: (...args: unknown[]) => mockBookingUpdate(...args),
   },
   paymentTransaction: paymentTransactionMocks(),
+  alertCooldown: { upsert: (...args: unknown[]) => mockAlertCooldownUpsert(...args) },
 };
 
 vi.mock("@/lib/prisma", () => ({
@@ -662,6 +666,15 @@ describe("POST /api/payments/charge-saved-method", () => {
       expect(orderOf(mockPaymentTransactionUpdateMany, settle!)).toBeLessThan(
         mockMarkBookingPaymentSucceeded.mock.invocationCallOrder[0]!,
       );
+      // #5240: the same write flags the capture "not yet settled", after the row and before the booking's settle.
+      expect(mockAlertCooldownUpsert).toHaveBeenCalledTimes(1);
+      expect(mockAlertCooldownUpsert).toHaveBeenCalledWith({
+        where: { key: "saved-card-capture-unsettled:pi_1" },
+        create: { key: "saved-card-capture-unsettled:pi_1", lastAlertedAt: expect.any(Date) },
+        update: {},
+      });
+      expect(mockAlertCooldownUpsert.mock.invocationCallOrder[0]!).toBeGreaterThan(orderOf(mockPaymentTransactionUpdateMany, settle!));
+      expect(mockAlertCooldownUpsert.mock.invocationCallOrder[0]!).toBeLessThan(mockMarkBookingPaymentSucceeded.mock.invocationCallOrder[0]!);
       expect(mockReconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: "payment-1", store: expect.anything() });
     });
 
