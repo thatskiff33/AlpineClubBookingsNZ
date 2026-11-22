@@ -4,6 +4,8 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { INDUCTION_TEMPLATE_DETAIL_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-committee";
 
 const TEMPLATE_INCLUDE = {
   sections: {
@@ -44,7 +46,7 @@ async function templateUsed(id: string): Promise<boolean> {
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
@@ -61,7 +63,11 @@ export async function GET(
     return NextResponse.json({ error: "Template not found" }, { status: 404 });
   }
 
-  return NextResponse.json({ template, used: await templateUsed(id) });
+  return connectionJson(
+    req,
+    { template, used: await templateUsed(id) },
+    INDUCTION_TEMPLATE_DETAIL_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(

@@ -3,13 +3,13 @@
  */
 import {
   adminMemberAuditLogQuerySchema,
+  adminMembersQuerySchema,
   assignPartnerLinkSchema,
   dependentRouteParamsSchema,
   linkDependentSchema,
   memberLodgeAccessUpdateSchema,
   removePartnerLinkQuerySchema,
 } from "@/lib/admin-membership-api/members";
-import { adminMembersQuerySchema } from "@/lib/admin-members-service";
 import { AGE_TIER_VALUES } from "@/lib/age-tier-schema";
 import { AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
 import {

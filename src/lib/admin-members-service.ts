@@ -24,6 +24,7 @@ import {
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
+import type { AdminMembersQuery } from "@/lib/admin-membership-api/members";
 import {
   effectiveSubscriptionBehavior,
   isSubscriptionNotRequiredForMembershipType,
@@ -128,18 +129,6 @@ function jsonResult(body: unknown, init?: ResponseInit): JsonRouteResult {
   return { body, init };
 }
 
-const optionalSearchParam = z.string().optional();
-
-function parseClampedInt(
-  value: string | undefined,
-  fallback: number,
-  min: number,
-  max: number,
-) {
-  const parsed = parseInt(value || String(fallback), 10) || fallback;
-  return Math.min(max, Math.max(min, parsed));
-}
-
 export const createMemberSchema = z.object({
   email: z.string().email("Invalid email address"),
   title: titleEnum.optional().nullable(),
@@ -195,14 +184,6 @@ export const createMemberSchema = z.object({
   postalSameAsPhysical: z.boolean().optional(),
 });
 
-const SORT_BY_WHITELIST = [
-  "name",
-  "email",
-  "access",
-  "ageTier",
-  "active",
-  "createdAt",
-] as const;
 const SUBSCRIPTION_STATUS_FILTERS = [
   "PAID",
   "UNPAID",
@@ -223,53 +204,6 @@ const MEMBER_LIFECYCLE_STATUS_FILTERS = [
   "archived",
   "all",
 ] as const;
-
-export const adminMembersQuerySchema = z
-  .object({
-    q: optionalSearchParam,
-    search: optionalSearchParam,
-    page: optionalSearchParam,
-    pageSize: optionalSearchParam,
-    sortBy: optionalSearchParam,
-    sortDir: optionalSearchParam,
-    inheritEmailEligible: optionalSearchParam,
-    excludeId: optionalSearchParam,
-    dependentLinkEligibleFor: optionalSearchParam,
-    parentLinkEligibleFor: optionalSearchParam,
-    partnerLinkEligibleFor: optionalSearchParam,
-    role: optionalSearchParam,
-    financeAccess: optionalSearchParam,
-    lifecycleStatus: optionalSearchParam,
-    includeArchived: optionalSearchParam,
-    active: optionalSearchParam,
-    ageTier: optionalSearchParam,
-    ageTierIn: optionalSearchParam,
-    membershipType: optionalSearchParam,
-    xeroLinked: optionalSearchParam,
-    contactability: optionalSearchParam,
-    inviteStatus: optionalSearchParam,
-    subscription: optionalSearchParam,
-    familyGroup: optionalSearchParam,
-    xeroContactGroup: optionalSearchParam,
-  })
-  .transform((value) => {
-    const q = value.q || value.search || undefined;
-    const sortByRaw = value.sortBy || "name";
-    return {
-      ...value,
-      trimmedQuery: q?.trim(),
-      page: parseClampedInt(value.page, 1, 1, Number.MAX_SAFE_INTEGER),
-      pageSize: parseClampedInt(value.pageSize, 25, 1, 100),
-      sortBy: (SORT_BY_WHITELIST as readonly string[]).includes(sortByRaw)
-        ? sortByRaw
-        : "name",
-      sortDir: value.sortDir === "desc" ? "desc" : "asc",
-      inheritEmailEligible: value.inheritEmailEligible === "true",
-      includeArchived: value.includeArchived === "true",
-    };
-  });
-
-export type AdminMembersQuery = z.infer<typeof adminMembersQuerySchema>;
 
 export type CreateMemberInput = z.infer<typeof createMemberSchema>;
 

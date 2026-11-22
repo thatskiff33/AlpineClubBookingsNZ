@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   listAdminFamilyGroupRequests,
   reviewAdminFamilyGroupRequest,
-  reviewFamilyGroupRequestSchema,
 } from "@/lib/admin-family-group-requests-service";
+import { reviewFamilyGroupRequestSchema } from "@/lib/admin-membership-api/family-groups";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { connectionJson } from "@/lib/mcp-connection-request";

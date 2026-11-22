@@ -246,13 +246,15 @@ const PERMANENT_ROUTES: ReadonlyArray<{
   },
   // Finds a guest's id for the subject access report, which is fresh-proof.
   { reason: "privacy-request", routes: ["GET /api/admin/members/subject-access/guests"] },
-  // The merge's preview, whose merge is fresh-proof, and the link dialogs'
-  // "whose mailbox would this reach" helper.
+  // The merge's preview, whose merge is fresh-proof; the link dialogs'
+  // "whose mailbox would this reach" helper; and the member page's drawn
+  // family tree, whose links `get_member` already answers.
   {
     reason: "website-flow",
     routes: [
       "POST /api/admin/members/[id]/merge/preview",
       "GET /api/admin/members/[id]/dependent-email-source",
+      "GET /api/admin/members/[id]/family-tree",
     ],
   },
   // Direct deletion answers 405: deletion is a lifecycle request.

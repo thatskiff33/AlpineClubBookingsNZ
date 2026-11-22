@@ -1,16 +1,13 @@
 /**
  * Family groups, their requests and partner invites, and suggested groups (Membership admin area, ALP-720).
- *
- * The member search query and the request review body are imported from the
- * service modules the routes import them from (`INV-SSOT`).
  */
-import { familyGroupMemberSearchQuerySchema } from "@/lib/admin-family-group-member-search";
-import { reviewFamilyGroupRequestSchema } from "@/lib/admin-family-group-requests-service";
 import { ADMIN_FAMILY_GROUP_MAX_MEMBERS } from "@/lib/admin-family-group-create";
 import {
   createFamilyGroupFromSuggestionSchema,
   createFamilyGroupSchema,
+  familyGroupMemberSearchQuerySchema,
   hideFamilySuggestionSchema,
+  reviewFamilyGroupRequestSchema,
   revokePartnerInviteQuerySchema,
   updateFamilyGroupSchema,
 } from "@/lib/admin-membership-api/family-groups";

@@ -2,7 +2,7 @@ import { exactContains } from "@/lib/prisma-exact-prefix";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { ageTierEnum } from "@/lib/age-tier-schema";
+import type { familyGroupMemberSearchQuerySchema } from "@/lib/admin-membership-api/family-groups";
 import { formatMemberIdentityAge } from "@/lib/member-age";
 import { clubTime } from "@/lib/club-time/server";
 import { buildParentLinks, type ParentLinkSummary } from "@/lib/member-parent-links";
@@ -37,19 +37,6 @@ import {
  */
 
 const MAX_RESULTS = 10;
-
-export const familyGroupMemberSearchQuerySchema = z.object({
-  q: z.string().trim().min(2, "Enter at least 2 characters").max(100),
-  // CSV, e.g. "INFANT,CHILD,YOUTH". An empty or absent value means no tier
-  // restriction; an unrecognised tier is a 400 rather than a silent widening.
-  ageTierIn: z
-    .string()
-    .trim()
-    .optional()
-    .transform((value) => (value ? value.split(",").map((part) => part.trim()) : undefined))
-    .pipe(z.array(ageTierEnum).min(1).optional()),
-  prospectiveParentMemberId: z.string().trim().min(1).optional(),
-});
 
 export type FamilyGroupMemberSearchQuery = z.infer<
   typeof familyGroupMemberSearchQuerySchema

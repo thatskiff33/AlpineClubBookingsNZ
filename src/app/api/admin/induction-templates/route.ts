@@ -4,6 +4,8 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { INDUCTION_TEMPLATE_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-committee";
 
 const TEMPLATE_INCLUDE = {
   sections: {
@@ -21,7 +23,7 @@ const createSchema = z.object({
   cloneFromId: z.string().min(1).optional(),
 });
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "membership", level: "view" },
   });
@@ -34,7 +36,7 @@ export async function GET() {
     },
   });
 
-  return NextResponse.json({
+  return connectionJson(request, {
     templates: templates.map((template) => ({
       id: template.id,
       name: template.name,
@@ -47,7 +49,7 @@ export async function GET() {
       inductionCount: template._count.inductions,
       used: template._count.inductions > 0,
     })),
-  });
+  }, INDUCTION_TEMPLATE_LIST_CONNECTION_SHAPE);
 }
 
 export async function POST(request: NextRequest) {

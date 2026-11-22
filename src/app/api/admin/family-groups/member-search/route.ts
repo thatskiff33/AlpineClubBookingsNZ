@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  familyGroupMemberSearchQuerySchema,
-  searchFamilyGroupCandidateMembers,
-} from "@/lib/admin-family-group-member-search";
+import { searchFamilyGroupCandidateMembers } from "@/lib/admin-family-group-member-search";
+import { familyGroupMemberSearchQuerySchema } from "@/lib/admin-membership-api/family-groups";
 import { requireAdmin } from "@/lib/session-guards";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { FAMILY_GROUP_MEMBER_SEARCH_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-family-groups";

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { adminMembersQuerySchema } from "@/lib/admin-membership-api/members";
 import {
-  adminMembersQuerySchema,
   createAdminMember,
   createMemberSchema,
   listAdminMembers,
