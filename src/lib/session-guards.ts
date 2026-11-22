@@ -40,6 +40,9 @@ type SessionUser = {
   canLogin: boolean;
   adminPermissionMatrix?: AdminPermissionMatrix;
   email?: string | null;
+  name?: string | null;
+  /** When this sign-in began, as the session carries it (INV-AUTH-007). */
+  sessionIssuedAt?: number;
   twoFactorRequired?: boolean;
   twoFactorVerified?: boolean;
   twoFactorEnrolled?: boolean;

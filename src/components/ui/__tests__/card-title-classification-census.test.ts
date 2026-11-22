@@ -22,9 +22,8 @@ import {
  *    member reaches from an email link or their account, where #4951 found the
  *    screen-reader heading list empty.
  * 2. **Everywhere else is held at a falling baseline.** Admin and finance
- *    titles, and the member components used from more than one kind of page
- *    (the edit-booking panel, the booking editor, the guest-consent card), are
- *    swept area by area; each sweep lowers the baseline in the same change.
+ *    titles are swept area by area; each sweep lowers the baseline in the same
+ *    change and adds what it swept to the lists below, so it cannot regress.
  *    When it reaches zero, `headingLevel` becomes required by the type and
  *    this census retires.
  *
@@ -34,6 +33,18 @@ import {
  * touches `CardTitle` for the second case; the first is a plain merge conflict
  * on one line.
  */
+
+/**
+ * Roots swept since #4951 that the shared `MEMBER_FACING_ROOTS` list does not
+ * hold (#5216). Kept here rather than added to that list because the tab-title
+ * guard (`member-route-titles.test.ts`) reads it too, and these pages are not
+ * in its scope. `src/app/(website)/` is the public website, including the
+ * membership application page.
+ */
+const SWEPT_ROOTS = ["src/app/(website)/"];
+
+/** Every root where an unclassified `CardTitle` is never allowed. */
+const FORBIDDEN_ROOTS = [...MEMBER_FACING_ROOTS, ...SWEPT_ROOTS];
 
 /**
  * Shared member screens that live outside `MEMBER_FACING_ROOTS`, the roots
@@ -56,17 +67,36 @@ const MEMBER_FACING_SHARED_FILES = [
   "src/components/refund-appeal-button.tsx",
   "src/components/self-remove-from-booking-card.tsx",
   "src/components/waitlist-offer-card.tsx",
+  // #5216: the member bucket #4951 left at the baseline. Every card below
+  // renders directly under /bookings/[id]'s "Booking Details" h1 — the booking
+  // editor's read view, the edit-booking panel that replaces it, the guest's
+  // consent card and the officer's cards on the same page — or under
+  // /join/apply's h1, so each is level 2.
+  "src/components/admin/admin-booking-tools-card.tsx",
+  "src/components/admin/booking-additional-payment-panel.tsx",
+  "src/components/admin/confirm-pending-guests-button.tsx",
+  "src/components/booking-editor.tsx",
+  "src/components/edit-booking/account-credit-card.tsx",
+  "src/components/edit-booking/admin-override-card.tsx",
+  "src/components/edit-booking/change-request-card.tsx",
+  "src/components/edit-booking/edit-dates-card.tsx",
+  "src/components/edit-booking/edit-guests-card.tsx",
+  "src/components/edit-booking/finished-stay-promo-correction-card.tsx",
+  "src/components/edit-booking/price-summary-card.tsx",
+  "src/components/edit-booking/promo-code-card.tsx",
+  "src/components/member-guest-consent-card.tsx",
+  "src/components/website/join-apply-page-client.tsx",
 ];
 
 /**
  * The number of production `CardTitle`s that still omit `headingLevel`. Only
  * ever lower it: a sweep that classifies titles sets it to the new count.
  */
-const UNCLASSIFIED_BASELINE = 252;
+const UNCLASSIFIED_BASELINE = 231;
 
 function isMemberFacing(file: string) {
   return (
-    MEMBER_FACING_ROOTS.some((root) => file.startsWith(root)) ||
+    FORBIDDEN_ROOTS.some((root) => file.startsWith(root)) ||
     MEMBER_FACING_SHARED_FILES.includes(file)
   );
 }
@@ -116,7 +146,7 @@ describe("every CardTitle declares a heading level or \"none\" (#4951)", () => {
   it("scans a tree that actually contains what it claims to", () => {
     // A census that silently finds nothing passes for the wrong reason.
     expect(SOURCE_FILES.length).toBeGreaterThan(100);
-    for (const root of MEMBER_FACING_ROOTS) {
+    for (const root of FORBIDDEN_ROOTS) {
       expect(SOURCE_FILES.some((file) => file.startsWith(root))).toBe(true);
     }
     for (const file of MEMBER_FACING_SHARED_FILES) {

@@ -91,6 +91,10 @@ vi.mock("@/lib/prisma", () => ({
     sessionReauthChallenge: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    // ALP-653: erasure ends the member's AI app connections in the same transaction.
+    mcpGrant: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
     // #1756: deletion approval sweeps future shared-double placements inside
     // the anonymise transaction; empty by default so it is a no-op here.
     bedAllocation: {

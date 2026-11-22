@@ -4529,4 +4529,5 @@ settlement body), **`INV-PAY-040`** (the manual capacity refusal),
   yet") until #5008; reversing a batch and the refund-as-credit choice are
   #5005 children B and D.
 - Proven by `booking-import-parse.test.ts`, `booking-import-plan.test.ts`,
+  `booking-import-plan-decisions.test.ts`, `booking-import-write.test.ts`,
   `zero-price-payment-call-sites.test.ts` and `booking-import.realdb.test.ts`.

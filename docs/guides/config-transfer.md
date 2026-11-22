@@ -160,8 +160,8 @@ new target receives the built-in on default. If the whole per-lodge settings
 file is absent, that lodge's existing row is left alone.
 
 Club identity and email message settings work slightly differently. Their fields
-— club name, short name, hut-leader label, Facebook URL, support and contact
-addresses, public URL — are optional overrides on top of the values in the
+— club name, short name, hut-leader label, Facebook URL, legal name and postal
+address (#5066), support and contact addresses, public URL — are optional overrides on top of the values in the
 install's own configuration file. When the source club **has** set them they are
 exported and imported like any other setting, so a transfer does move the
 source's club name and addresses onto the target; that is intended, and it is
