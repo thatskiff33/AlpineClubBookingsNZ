@@ -1204,8 +1204,6 @@ export const DATE_FNS_ADAPTERS = [
  * again it would still belong in its own block rather than on this list: listing
  * it twice would give it two matching blocks, the later of which silently wins.
  */
-const ENVIRONMENT_ZONE_ADAPTER_FILES = ["src/lib/club-time-zone-env.ts"];
-
 export const ENVIRONMENT_ZONE_ADAPTERS = [
   {
     file: "src/lib/club-time-zone-env.ts",
@@ -1213,6 +1211,9 @@ export const ENVIRONMENT_ZONE_ADAPTERS = [
       "STRUCTURAL. CT-1's seed reader (#2989), and since #3567 the one read of `process.env.TZ` in the tree: exactly one module decides what the environment claims, and `client-server-boundary-census.test.ts` already keeps it out of the browser bundle.",
   },
 ];
+
+// Derived from the reasons list above so the two cannot name different files.
+const ENVIRONMENT_ZONE_ADAPTER_FILES = ENVIRONMENT_ZONE_ADAPTERS.map((entry) => entry.file);
 
 /**
  * The three `toLocale*` DATE-RENDERING arms (#2256, #2264), as a NAMED array

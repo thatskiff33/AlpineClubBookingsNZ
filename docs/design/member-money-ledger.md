@@ -22,7 +22,10 @@ reference; a finance officer records the receipt. With Xero connected, its
 receipt can enter through the same journal command. Bank reconciliation,
 sending accounting statements and invoices, GST returns, expenses, payroll and
 profit-and-loss stay in Xero. The app still supplies its booking confirmations,
-payment instructions and member money views.
+payment instructions and member money views. Later owner decision (#5066,
+15 Nov 2026): only while the club's Xero module is off, the booking page also
+offers a booking invoice the app generates from the booking; with Xero on, the
+invoice is Xero's own.
 
 This extends #3527/#3532; it does not discard their posted history. The 27 Oct
 scope decision supersedes D-3532-4's bookings-only limit, while subscription

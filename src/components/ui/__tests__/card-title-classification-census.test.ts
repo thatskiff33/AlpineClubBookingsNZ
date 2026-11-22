@@ -38,10 +38,12 @@ import {
  * Roots swept since #4951 that the shared `MEMBER_FACING_ROOTS` list does not
  * hold (#5216). Kept here rather than added to that list because the tab-title
  * guard (`member-route-titles.test.ts`) reads it too, and these pages are not
- * in its scope. `src/app/(website)/` is the public website, including the
- * membership application page.
+ * in its scope. The public website is two roots: `src/app/(website)/` holds
+ * its pages, and `src/components/website/` holds the cards those pages draw,
+ * the membership application form among them (#5372). Both are needed: the
+ * pages root alone holds no card title.
  */
-const SWEPT_ROOTS = ["src/app/(website)/"];
+const SWEPT_ROOTS = ["src/app/(website)/", "src/components/website/"];
 
 /** Every root where an unclassified `CardTitle` is never allowed. */
 const FORBIDDEN_ROOTS = [...MEMBER_FACING_ROOTS, ...SWEPT_ROOTS];
@@ -68,10 +70,10 @@ const MEMBER_FACING_SHARED_FILES = [
   "src/components/self-remove-from-booking-card.tsx",
   "src/components/waitlist-offer-card.tsx",
   // #5216: the member bucket #4951 left at the baseline. Every card below
-  // renders directly under /bookings/[id]'s "Booking Details" h1 — the booking
+  // renders directly under /bookings/[id]'s "Booking Details" h1 (the booking
   // editor's read view, the edit-booking panel that replaces it, the guest's
-  // consent card and the officer's cards on the same page — or under
-  // /join/apply's h1, so each is level 2.
+  // consent card and the officer's cards on the same page), so each is level
+  // 2. /join/apply's card is under `src/components/website/`, a swept root.
   "src/components/admin/admin-booking-tools-card.tsx",
   "src/components/admin/booking-additional-payment-panel.tsx",
   "src/components/admin/confirm-pending-guests-button.tsx",
@@ -85,7 +87,6 @@ const MEMBER_FACING_SHARED_FILES = [
   "src/components/edit-booking/price-summary-card.tsx",
   "src/components/edit-booking/promo-code-card.tsx",
   "src/components/member-guest-consent-card.tsx",
-  "src/components/website/join-apply-page-client.tsx",
 ];
 
 /**

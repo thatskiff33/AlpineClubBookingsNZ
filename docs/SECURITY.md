@@ -211,7 +211,9 @@ hash; changing the cost requires regenerating both.
 **Older stored hashes (#5261).** Passwords set before a cost rise stay at their
 original cost until the member proves them. After a successful password
 sign-in, or a password step-up, `src/lib/password-rehash.ts` hashes the same
-password at `PASSWORD_BCRYPT_COST` and saves it. The save changes only
+password at `PASSWORD_BCRYPT_COST` and saves it. It runs once the password is
+proved and before any second factor is asked for, so a sign-in that stops at
+the second step has still upgraded the hash. The save changes only
 `passwordHash`, so no session ends and the member notices nothing, and it
 matches only while the stored hash is still the one just proved: a password
 changed or reset at the same moment is never overwritten. A failed save is

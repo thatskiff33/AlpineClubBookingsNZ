@@ -574,7 +574,22 @@ they were chosen in. An unregistered period renders no tax type in any
 category. A registered line whose category is unmapped, from another tenant,
 or mapped to a rate Xero no longer has active throws
 `XeroTaxCategoryUnavailableError` before any provider write, so its operation
-waits rather than sending a guessed code. The one writer,
+waits rather than sending a guessed code. The first such line is #4988's spent
+opening credit coded to the mapped Opening Credits account (`INV-PAY-162`): the
+applied-credit allocation asks `resolveXeroCategoryLineTax` for it before its
+first provider write, and the outbox returns the row to PENDING under
+`TAX_CATEGORY_AWAITING_MAPPING`, spaced five minutes apart
+([`xero-tax-category-hold.ts`](../../src/lib/xero-tax-category-hold.ts)). Inside
+a card booking's invoice operation the same error fails that operation, as any
+allocation failure there does, and an officer retries it. The settings screens
+refuse what would strand the line
+([`xero-opening-credits-exempt-guards.ts`](../../src/lib/xero-opening-credits-exempt-guards.ts)):
+Opening Credits on an account another role uses, Opening Credits mapped before
+Exempt while a registered period applies or is scheduled, and Exempt cleared
+while Opening Credits is mapped. A registration scheduled while Opening Credits
+is mapped and Exempt is unusable is allowed (owner decision, 22 Nov 2026, on
+#4988): `readXeroTaxHealth` warns of that state, and the hold keeps each spent
+opening credit waiting. The one writer,
 [`xero-tax-category-write.ts`](../../src/lib/xero-tax-category-write.ts)
 (Full Admin, `PUT`/`DELETE /api/admin/xero/tax-categories`), reads Xero's rates
 fresh before a Serializable single-table transaction with its audit row and no
@@ -735,7 +750,7 @@ module every provider call goes through (`INV-OPS-013`). Shared JSON-guard micro
 | `xero-invoice-helpers` | Shared date/allocation helpers for the six modules above. |
 | `xero-account-class` | Leaf, pure: the ONE reading of a Xero account's CLASS (#2717), shared by the admin account pickers and the finance reports so they cannot come to disagree about what an expense account is. |
 | `xero-account-mapping-keys` | Leaf, pure data: the ONE registry of account mapping keys (#2717) — label, description, required account-CLASS filter (optionally narrowed to named types), default code, registered fallback, and which keys carry a Xero Item code. The admin picker, the API allowlist, `xero-mappings`, the setup checklist and the seed all derive from it, which is what makes `INV-INT-021`'s filter structural rather than policed. `mappingWriteViolation` is the write path's refusal rule. |
-| `xero-applied-credit-mint-accounts` | Leaf, pure: where a minted remainder note for a noteless lot lands (#2717). It is the noteless remainder, not a manual grant that already queued its own note. `mintSliceMappingKey` still sends a noteless legacy `ADMIN_ADJUSTMENT` to `goodwillWriteOffs` and a member's own money to `hutFeeRefunds`. The line coding beside it keeps an unconfigured club's note unchanged. |
+| `xero-applied-credit-mint-accounts` | Leaf, pure: where a minted remainder note for a noteless lot lands (#2717). It is the noteless remainder, not a manual grant that already queued its own note. `mintSliceMappingKey` still sends a noteless legacy `ADMIN_ADJUSTMENT` to `goodwillWriteOffs` and a member's own money to `hutFeeRefunds`; an opening credit (#4988) goes to the optional `openingCredits` mapping, which falls back to `hutFeeRefunds` while unset. The line coding beside it keeps an unconfigured club's note unchanged, and marks the share the Opening Credits mapping itself coded as the note's one Exempt line, never merged into an income line. |
 | `xero-mappings` | Account-code / item-code resolution from `XeroAccountMapping`/`XeroItemCodeMapping` (with legacy fallbacks), entrance-fee categorisation and idempotency keys. `getResolvedAccountMappingWithFallback` applies a key's registered one-hop fallback (`INV-INT-021`), and `isCodeExplicitlyConfigured` is the one definition of a club having CHOSEN a code. |
 
 ### Contacts and membership
@@ -3694,9 +3709,29 @@ page and both routes, so neither can serve what the page does not offer.
   deleted invoice), no update is queued for that change, and neither of those
   applies, the page says instead that the invoice stays as it was issued. A
   failed credit note outranks a queued one, and both outrank this state.
-- **Later work.** A single statement PDF for the booking (invoice, credits,
-  payments and balance in one document) belongs to #5066's generated-document
-  slice, which waits on the club GST status work (#5153).
+- **Xero off** (#5066 slice 2). The same offer serves the app's own document
+  instead (`GENERATED`, `generatedBookingInvoiceOnOffer`) and makes no Xero
+  read; it is never offered while the module is on, so a Xero club has one
+  invoice of record. A booking holding Xero documents from when the module was
+  on (a primary invoice id, supplementary-invoice evidence or a held credit
+  note) gets `ASK_CLUB` with reason `XERO_DOCUMENTS` instead, never a second
+  "Invoice". The flags are read strictly (`loadEffectiveModuleFlagsStrict`): a
+  failed read offers nothing.
+- **A recorded GST-registered period** (owner decision, 20 Nov 2026). The
+  document is titled "Invoice" and prints no tax wording. A booking whose tax
+  anchor (`readBookingTaxAnchorInstant`: when it was made, or for a group place
+  its organiser's booking) falls in a GST-registered period the club recorded
+  gets `ASK_CLUB` with reason `REGISTERED_TAX_PERIOD` instead, until the "Tax
+  invoice" form and the club GST number setting exist (#5291). The period comes
+  from the one schedule (`resolveAnchoredClubTax` in
+  `xero-tax-anchors.ts`); a club that never recorded a status (the code
+  baseline an absent `"default"` row stands for, `clubTaxPeriodIsRecorded`) or
+  a period recorded as not registered gets the document. The schedule is read
+  strictly: a failed read offers nothing and the download answers 503. See
+  `src/lib/booking-invoice.ts`.
+- **Later work.** A single statement PDF for a Xero club's booking (invoice,
+  credits, payments and balance in one document) is #5292; any bank details on
+  the generated document wait on #4526.
 
 ## OAuth and token lifecycle (supporting flow)
 

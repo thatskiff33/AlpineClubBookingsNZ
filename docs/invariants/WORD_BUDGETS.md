@@ -152,7 +152,7 @@ while exceptions are proposed on their deciding issues (#2576, #3040, #3039,
 | `INV-DATE-024` | 350 |
 | `INV-MONEY-024` | 348 |
 | `INV-PAY-025` | 348 |
-| `INV-PAY-023` | 335 |
+| `INV-PAY-023` | 332 |
 | `INV-ADDPAY-035` | 340 |
 | `INV-LIFE-018` | 338 |
 | `INV-CAP-030` | 337 |

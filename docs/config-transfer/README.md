@@ -30,6 +30,16 @@ deeper reference for what each category contains and the import safety model.
   category: it replaces the complete exported minimum-stay and adult-member
   hosting sets and previews every deletion before Apply. The pre-apply backup is
   the true rollback.
+- **Xero account mappings keep the mapping screen's rule (#4988):** the plan
+  overlays the bundle's account codes on the stored ones, as the chosen write
+  mode would apply them, and an **Opening Credits** account that another
+  mapping would then share is an **error** that disables Apply, in the same
+  sentence the account mapping screen uses (owner decision, 21 Nov 2026). A
+  bundle that sets or changes Opening Credits on a club that is, or is
+  scheduled to be, GST-registered with no Exempt tax category mapped in the
+  connected Xero organisation gets a **warning** only. The plan asks Xero
+  nothing, so it does not judge a mapped rate's current percentage; the Xero
+  health check does.
 - **Validation blocks apply:** every row is strictly validated at plan time —
   malformed dates, unknown enum values, non-integer/negative money, and
   invalid or reserved page slugs (the same rules the admin page editor
