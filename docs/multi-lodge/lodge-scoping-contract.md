@@ -549,9 +549,11 @@ operational documents (which may carry door/emergency access details).
 - **Stateful booking responses and queue positions keep their lodge owner**
   (#2701/#2887). The admin booking wizard owns each availability response by
   request and lodge, so a late Lodge A response cannot advance or resize a Lodge
-  B booking. Initial waitlist positions are counted under the selected lodge's
-  capacity lock using only older overlapping entries at that lodge, matching
-  every later waitlist position calculation and the member's confirmation email.
+  B booking. A waitlist position belongs to the entry's own lodge: the
+  confirmation email reads it under the selected lodge's capacity lock, and
+  every screen reads it from that lodge's live queue through
+  `getWaitlistPositions` (#5402, `INV-CAP-041`); entries at other lodges count
+  only as `MERGED` opt-ins that named this lodge.
 - **Booking admission and lodge deactivation share one lodge lock** (#2701).
   Draft, confirmed and waitlist creation take the selected lodge's immutable
   capacity key before re-reading active status, member access and requested-room
