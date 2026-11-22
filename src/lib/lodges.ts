@@ -169,6 +169,20 @@ export async function countActiveLodges(db: LodgeDb): Promise<number> {
 }
 
 /**
+ * The lodge name an OFFICER ALERT prints, or null to leave it out (ADR-002):
+ * named only when the club has more than one active lodge, so a one-lodge
+ * club's alerts read as they always have. The capacity warning and the
+ * booking-bumped alert (#5403) both ask it. Admin emails sit outside
+ * INV-CAP-039, which governs member- and guest-facing screens.
+ */
+export function adminAlertLodgeName(
+  activeLodgeCount: number,
+  lodgeName: string,
+): string | null {
+  return activeLodgeCount > 1 ? lodgeName : null;
+}
+
+/**
  * INV-CAP-039: the lodge fields a booking LIST row selects so it can name its
  * lodge. Spread into each list query's `select` (`lodge: BOOKING_LIST_LODGE_SELECT`)
  * so every list asks the same question of the same row.

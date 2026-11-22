@@ -220,12 +220,13 @@ export function adminPendingDeadlineTemplate(bookings: Array<{
 
 // ---- N-07: Admin Alert — Booking Bumped ----
 
-// #5403: names the booking's own lodge always (a booking officer must be able
-// to tell one booking from another, INV-CAP-039's reasoning) and the reason the
-// confirm-pending cron gave, which also marks the guests-cancelled variant.
+// #5403: the lodge row appears only when the club has more than one active
+// lodge (`adminAlertLodgeName`, the capacity warning's rule); the reason also
+// marks the guests-cancelled variant.
 export function adminBookingBumpedTemplate(data: {
   bumpedMemberName: string;
-  lodgeName: string;
+  bookingReference: string;
+  lodgeName: string | null;
   checkIn: Date;
   checkOut: Date;
   guestCount: number;
@@ -236,7 +237,8 @@ export function adminBookingBumpedTemplate(data: {
     ${alertBox("A pending booking was released at its hold deadline because there was no longer room for its party.", "warning")}
     ${infoTable([
       { label: "Bumped Member", value: escapeHtml(data.bumpedMemberName) },
-      { label: "Lodge", value: escapeHtml(data.lodgeName) },
+      { label: "Booking", value: escapeHtml(data.bookingReference) },
+      ...(data.lodgeName ? [{ label: "Lodge", value: escapeHtml(data.lodgeName) }] : []),
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },

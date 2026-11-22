@@ -733,21 +733,39 @@ describe("N-13: sendAdminDigest", () => {
   });
 
   // #5403: the confirm-pending cron sends the bumped alert again, so its line
-  // in the digest counts real events instead of always reading zero.
-  it("counts each bumped-booking alert in the digest", async () => {
-    mockPrisma.emailLog.findMany.mockResolvedValue([
-      { templateName: "admin-booking-bumped", subject: "Booking Bumped: Jane Doe" },
-      { templateName: "admin-booking-bumped", subject: "Booking Bumped: Sam Smith" },
-    ]);
+  // in the digest counts real events instead of always reading zero. The rows
+  // are the ones the real sender writes, and the read applies the digest's own
+  // `distinct`, so two bumps for one owner must stay two.
+  it("counts two bumps for the same owner as two", async () => {
+    const { sendAdminBookingBumpedAlert } = await import("../email");
+    const bump = {
+      bumpedMemberName: "Jane Doe",
+      lodgeName: null,
+      guestCount: 2,
+      reason: "These dates filled up before the provisional guests were confirmed.",
+    };
+    await sendAdminBookingBumpedAlert({ ...bump, bookingReference: "CKAAAA11", checkIn: new Date("2026-08-01"), checkOut: new Date("2026-08-03") });
+    await sendAdminBookingBumpedAlert({ ...bump, bookingReference: "CKBBBB22", checkIn: new Date("2026-08-10"), checkOut: new Date("2026-08-12") });
+    await flushAsyncEmailSends();
+    const written = mockPrisma.emailLog.create.mock.calls.map(
+      (call) => call[0].data as { templateName: string; subject: string },
+    );
+    expect(written.filter((row) => row.templateName === "admin-booking-bumped")).toHaveLength(2);
+    mockPrisma.emailLog.findMany.mockImplementation(
+      async ({ distinct }: { distinct: Array<"templateName" | "subject"> }) => {
+        const seen = new Map<string, { templateName: string; subject: string }>();
+        for (const row of written) seen.set(distinct.map((key) => row[key]).join("|"), row);
+        return [...seen.values()];
+      },
+    );
 
     const { sendAdminDigest } = await import("../cron-admin-digest");
     const result = await sendAdminDigest();
     await flushAsyncEmailSends();
 
     expect(result.totalAlerts).toBe(2);
-    expect(result.sent).toBe(true);
     const digestHtml = mockTransporter.sendMail.mock.calls
-      .map((call) => call[0] as { subject: string; html: string })
+      .map((call) => call[0] as { html: string })
       .find((mail) => mail.html.includes("Admin Daily Digest"))?.html;
     // The row's own Count cell, the one straight after its label.
     expect(digestHtml).toMatch(/Bookings Bumped<\/td>\s*<td[^>]*>2<\/td>/);

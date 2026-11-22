@@ -247,8 +247,13 @@ vi.mock("../capacity", () => ({
 }));
 
 const mockLodgeFindFirst = vi.fn().mockResolvedValue({ id: "lodge-1" });
-vi.mock("../lodges", () => ({
+// #5403: the bumped alert counts the active lodges to decide whether to name
+// one (the real `adminAlertLodgeName` decides); two by default, so it does.
+const mockCountActiveLodges = vi.fn().mockResolvedValue(2);
+vi.mock("../lodges", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("../lodges")),
   getDefaultLodgeId: (...args: unknown[]) => mockLodgeFindFirst(...args).then((l: { id: string }) => l.id),
+  countActiveLodges: (...args: unknown[]) => mockCountActiveLodges(...args),
 }));
 
 // Mock Prisma
@@ -665,6 +670,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     mockSendSavedCardChargeFailedEmail.mockResolvedValue(undefined);
     mockSendAdminBookingBumpedAlert.mockResolvedValue(undefined);
     mockLodgeFindUnique.mockResolvedValue({ name: "Ruapehu Lodge" });
+    mockCountActiveLodges.mockResolvedValue(2);
     mockClubTimeSettingsFindUnique.mockResolvedValue(null);
     mockMemberCreditAggregate.mockResolvedValue({ _sum: { amountCents: null } });
     mockPromoRedemptionFindMany.mockResolvedValue([]);
@@ -1806,6 +1812,11 @@ describe("Cron: Confirm Pending Bookings", () => {
       mockSendAdminBookingBumpedAlert.mockImplementation(async () => {
         sentInsideTransaction.push(transaction.inside);
       });
+      const lodgeReadInsideTransaction: boolean[] = [];
+      mockLodgeFindUnique.mockImplementation(async () => {
+        lodgeReadInsideTransaction.push(transaction.inside);
+        return { name: "Ruapehu Lodge" };
+      });
 
       const result = await confirmPendingBookings();
 
@@ -1813,6 +1824,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledTimes(1);
       expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledWith({
         bumpedMemberName: "Test User",
+        bookingReference: "B1",
         lodgeName: "Ruapehu Lodge",
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
@@ -1825,6 +1837,8 @@ describe("Cron: Confirm Pending Bookings", () => {
         select: { name: true },
       });
       expect(sentInsideTransaction).toEqual([false]);
+      // The display-only lodge read is after the commit too, never under the locks.
+      expect(lodgeReadInsideTransaction).toEqual([false]);
       // After the won claim, and after the member's own email.
       const claimOrder = mockBookingUpdateMany.mock.invocationCallOrder[
         mockBookingUpdateMany.mock.calls.findIndex(
@@ -1894,10 +1908,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(mockSendBumpedEmail).not.toHaveBeenCalled();
     });
 
-    it.each([
-      ["the send fails", () => mockSendAdminBookingBumpedAlert.mockRejectedValueOnce(new Error("SMTP down"))],
-      ["the lodge read fails", () => mockLodgeFindUnique.mockRejectedValueOnce(new Error("db down"))],
-    ])("keeps the bump, the member's email and the rest of the run when %s", async (_label, breakIt) => {
+    it("keeps the bump, the member's email and the rest of the run when the send fails", async () => {
       const first = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
       const second = {
         ...makePendingBooking("b2", { checkIn: "2026-07-20", checkOut: "2026-07-22" }),
@@ -1905,7 +1916,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       };
       mockPendingBookings([first, second]);
       mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
-      breakIt();
+      mockSendAdminBookingBumpedAlert.mockRejectedValueOnce(new Error("SMTP down"));
 
       const result = await confirmPendingBookings();
 
@@ -1917,6 +1928,34 @@ describe("Cron: Confirm Pending Bookings", () => {
         expect.objectContaining({ checkIn: second.checkIn }),
       );
       expect(mockProcessWaitlistForDates).toHaveBeenCalledTimes(2);
+    });
+
+    it("still alerts, naming the lodge by id, when the display-only lodge read fails", async () => {
+      const booking = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+      mockLodgeFindUnique.mockRejectedValueOnce(new Error("db down"));
+
+      const result = await confirmPendingBookings();
+
+      expect(result.bumpedBookingIds).toEqual(["b1"]);
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ lodgeName: "lodge-1" }),
+      );
+    });
+
+    it("leaves the lodge out in a one-lodge club, as the capacity warning does", async () => {
+      const booking = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+      mockCountActiveLodges.mockResolvedValue(1);
+
+      await confirmPendingBookings();
+
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ lodgeName: null }),
+      );
     });
 
     it("is not sent when the booking fits and is confirmed", async () => {

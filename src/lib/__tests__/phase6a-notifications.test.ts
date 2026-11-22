@@ -1077,6 +1077,7 @@ describe("N-07: sendAdminBookingBumpedAlert", () => {
 
   const bumpedAlert = {
     bumpedMemberName: "Jane Doe",
+    bookingReference: "CKB1A2B3",
     lodgeName: "Ruapehu Lodge",
     checkIn: new Date("2026-04-10"),
     checkOut: new Date("2026-04-12"),
@@ -1091,13 +1092,14 @@ describe("N-07: sendAdminBookingBumpedAlert", () => {
     expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         to: "support@example.org",
-        subject: "Booking Bumped: Jane Doe",
+        subject: expect.stringMatching(/^Booking Bumped: Jane Doe, .*2026 to .*2026 \(CKB1A2B3\)$/),
         templateName: "admin-booking-bumped",
       }),
     });
     const html = mockTransporter.sendMail.mock.calls[0][0].html as string;
     expect(html).toContain("Jane Doe");
     expect(html).toContain("Ruapehu Lodge");
+    expect(html).toContain("CKB1A2B3");
     expect(html).toContain(bumpedAlert.reason);
   });
 
@@ -1250,19 +1252,25 @@ describe("Email templates - Phase 6a", () => {
 
   it("adminBookingBumpedTemplate shows the lodge and reason, escaped", async () => {
     const { adminBookingBumpedTemplate } = await import("@/lib/email-templates/admin-booking");
-    const html = adminBookingBumpedTemplate({
+    const { bookingBumpReason } = await import("@/lib/booking-bump-reason");
+    const bumped = {
       bumpedMemberName: "Jane <b>Doe</b>",
-      lodgeName: "Ruapehu & Co Lodge",
+      bookingReference: "CKB1A2B3",
+      lodgeName: "Ruapehu & Co Lodge" as string | null,
       checkIn: new Date("2026-04-10"),
       checkOut: new Date("2026-04-12"),
       guestCount: 2,
-      reason: "Released because the whole party could not be confirmed (only-if-guests-come).",
-    });
+      reason: bookingBumpReason(true),
+    };
+    const html = adminBookingBumpedTemplate(bumped);
 
     expect(html).toContain("Jane &lt;b&gt;Doe&lt;/b&gt;");
     expect(html).toContain("Ruapehu &amp; Co Lodge");
-    expect(html).toContain("only-if-guests-come");
+    expect(html).toContain("asked for the whole booking to be cancelled");
     // The cron has no triggering booking to name (#5403).
     expect(html).not.toContain("Triggered By");
+    // A one-lodge club gets no lodge row (`adminAlertLodgeName`).
+    expect(adminBookingBumpedTemplate({ ...bumped, lodgeName: null })).not.toContain(">Lodge<");
+    expect(html).toContain(">Lodge<");
   });
 });

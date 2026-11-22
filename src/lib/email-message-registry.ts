@@ -97,8 +97,9 @@ const GLOBAL_EMAIL_TEMPLATE_TOKENS = [
 // #2268 keeps rendering and keeps re-saving.
 // Exported as a test seam (#2268): the supplied-token approval guard reads it.
 export const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
-  // Lodge the warning is about; empty for single-lodge clubs (ADR-002).
+  // The lodge the alert is about; empty for single-lodge clubs (ADR-002).
   "admin-capacity-warning": ["lodgeName"],
+  "admin-booking-bumped": ["lodgeName"],
   // #49: the raw numbers behind the composed {{serverVersionNote}} - the version
   // this site is built for and the one the server reports - both empty on a day
   // the versions match. A Lodge Operations editor who does not receive the
@@ -707,15 +708,6 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     triggerSummary:
       "A Full Admin, or the operator break-glass command, cleared this member's authenticator app and passkeys",
     frequency: "Each time that reset commits",
-  },
-  // #5403: reconnected to the confirm-pending cron. It replaced the
-  // {{triggeringMemberName}} the pre-#738 sender filled in: the cron has no
-  // triggering booking to name, so a saved override still using it is reported
-  // as a retired token in the editor.
-  "admin-booking-bumped": {
-    triggerSummary:
-      "The confirm-pending cron released a pending booking at its hold deadline because there was no longer room for its party, including a booking cancelled because its guests could not be confirmed",
-    frequency: "Once per bumped booking",
   },
   "admin-daily-digest": {
     triggerSummary: "Scheduled admin alert summary",
@@ -1719,14 +1711,9 @@ const TEMPLATE_SAMPLE_VALUE_OVERRIDES: Partial<
   "group-organiser-joiner-refund": {
     refundSentence: organiserJoinerAppealRefundSentence("$123.45", "Sam Joiner"),
   },
-  // #4911: Stripe's reason code as the sender words it, not the bare token name.
-  "admin-stripe-dispute": {
-    reason: "fraudulent",
-  },
-  // #5403: the confirm-pending cron's own sentence for a plain bump.
-  "admin-booking-bumped": {
-    reason: bookingBumpReason(false),
-  },
+  // #4911 / #5403: each sender's own reason wording, not the bare token name.
+  "admin-stripe-dispute": { reason: "fraudulent" },
+  "admin-booking-bumped": { reason: bookingBumpReason(false) },
   "group-organiser-extra-invoice": {
     joinerName: "Sam Joiner",
     // The sender's own wording of a change (`bookingModificationTypeLabel`).

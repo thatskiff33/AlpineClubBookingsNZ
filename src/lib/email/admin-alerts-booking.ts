@@ -206,25 +206,32 @@ export async function sendAdminPendingDeadlineAlert(
 // N-07: Admin alert - booking bumped. #5403: sent by the confirm-pending cron
 // when it releases a pending booking at its hold deadline because the dates
 // filled up. The cron has no "triggering" booking to name (the beds went to
-// whoever was confirmed first), so the alert names the booking's lodge and the
-// reason instead; `reason` also says when it was the guests-cancelled variant.
+// whoever was confirmed first), so the alert names the reason instead, which
+// also says when it was the guests-cancelled variant. The subject carries the
+// stay and the booking reference: the Daily digest counts one event per
+// distinct subject, so two bumps for one owner must not share one.
 export async function sendAdminBookingBumpedAlert(data: {
   bumpedMemberName: string;
-  lodgeName: string;
+  bookingReference: string;
+  // Null in a one-lodge club (`adminAlertLodgeName`, ADR-002).
+  lodgeName: string | null;
   checkIn: Date;
   checkOut: Date;
   guestCount: number;
   reason: string;
 }) {
+  const checkIn = emailCalendarDay(data.checkIn);
+  const checkOut = emailCalendarDay(data.checkOut);
   await sendToAdmins({
-    subject: `Booking Bumped: ${data.bumpedMemberName}`,
+    subject: `Booking Bumped: ${data.bumpedMemberName}, ${checkIn} to ${checkOut} (${data.bookingReference})`,
     html: await renderEmailHtml(() => adminBookingBumpedTemplate(data)),
     templateName: "admin-booking-bumped",
     templateData: {
       bumpedMemberName: data.bumpedMemberName,
-      lodgeName: data.lodgeName,
-      checkIn: emailCalendarDay(data.checkIn),
-      checkOut: emailCalendarDay(data.checkOut),
+      bookingReference: data.bookingReference,
+      lodgeName: data.lodgeName ?? "",
+      checkIn,
+      checkOut,
       guestCount: data.guestCount,
       reason: data.reason,
     },
