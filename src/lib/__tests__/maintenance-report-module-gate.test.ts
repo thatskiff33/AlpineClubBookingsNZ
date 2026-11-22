@@ -190,7 +190,7 @@ describe("anonymous QR route closes when the module is off", () => {
 describe("member submit route closes when the module is off", () => {
   it("GET 404s with the module off even for a valid active session", async () => {
     mocks.loadEffectiveModuleFlags.mockResolvedValue(moduleFlags(false));
-    const res = await memberGet();
+    const res = await memberGet(new NextRequest("http://localhost/api/maintenance-reports"));
     expect(res.status).toBe(404);
     expect(mocks.lodgeFindMany).not.toHaveBeenCalled();
   });
@@ -209,7 +209,7 @@ describe("member submit route closes when the module is off", () => {
 
   it("GET proceeds with the module on (control)", async () => {
     mocks.loadEffectiveModuleFlags.mockResolvedValue(moduleFlags(true));
-    const res = await memberGet();
+    const res = await memberGet(new NextRequest("http://localhost/api/maintenance-reports"));
     expect(res.status).toBe(200);
   });
 });

@@ -296,7 +296,7 @@ describe("the module gate", () => {
     mocks.modules = { foodOrders: false };
     for (const session of [ROLES.lodgeEditAdmin(), null]) {
       mocks.session = session;
-      expect((await formGet()).status).toBe(404);
+      expect((await formGet(new NextRequest("http://localhost/api/food-orders"))).status).toBe(404);
       expect((await placeOrder()).status).toBe(404);
       expect(
         (await historyGet(jsonRequest("/api/food-orders/history", "GET"))).status,
@@ -346,13 +346,13 @@ describe("placing an order", () => {
     expect(fakeDb.orders).toHaveLength(0);
     expect(mocks.sendFoodOrderPlacedEmail).not.toHaveBeenCalled();
 
-    const form = await (await formGet()).json();
+    const form = await (await formGet(new NextRequest("http://localhost/api/food-orders"))).json();
     expect(form.ready).toBe(false);
   });
 
   it("reports ready, the label and the club's today to the form when set up", async () => {
     fakeDb.settings = { officerEmail: "food@club.test", officerLabel: "Catering officer" };
-    const form = await (await formGet()).json();
+    const form = await (await formGet(new NextRequest("http://localhost/api/food-orders"))).json();
     expect(form).toMatchObject({ ready: true, officerLabel: "Catering officer", today: "2026-07-01" });
     expect(JSON.stringify(form)).not.toContain("food@club.test");
   });
@@ -407,7 +407,7 @@ describe("placing an order", () => {
   // Owner answer on PR #5143, question 6: ordering follows booking eligibility.
   it("offers and accepts only the lodges a booking-restricted member may book", async () => {
     fakeDb.bookingRestrictions.push({ memberId: "member-1", lodgeId: "lodge-b" });
-    const form = await (await formGet()).json();
+    const form = await (await formGet(new NextRequest("http://localhost/api/food-orders"))).json();
     expect(form.lodges.map((lodge: { id: string }) => lodge.id)).toEqual(["lodge-b"]);
 
     const refused = await placeOrder({ ...VALID_ORDER, lodgeId: "lodge-a" });
@@ -420,7 +420,7 @@ describe("placing an order", () => {
   });
 
   it("offers every active lodge to a member with no booking restriction", async () => {
-    const form = await (await formGet()).json();
+    const form = await (await formGet(new NextRequest("http://localhost/api/food-orders"))).json();
     expect(form.lodges.map((lodge: { id: string }) => lodge.id)).toEqual(["lodge-a", "lodge-b"]);
   });
 
@@ -450,7 +450,7 @@ describe("placing an order", () => {
   it("refuses an organisation account", async () => {
     mocks.session = ROLES.organisation();
     expect((await placeOrder()).status).toBe(403);
-    expect((await formGet()).status).toBe(403);
+    expect((await formGet(new NextRequest("http://localhost/api/food-orders"))).status).toBe(403);
     expect(fakeDb.orders).toHaveLength(0);
   });
 

@@ -21,7 +21,9 @@ vi.mock("@/lib/hut-leader", () => ({
   hasActiveHutLeaderAssignment: mocks.hasActiveHutLeaderAssignment,
 }));
 
-vi.mock("@/lib/induction", () => {
+vi.mock("@/lib/induction", async (importOriginal) => {
+  // The route's own view mapper, so the test reads what the route really sends.
+  const { memberInductionView } = await importOriginal<typeof import("@/lib/induction")>();
   class InductionError extends Error {
     status: number;
 
@@ -37,6 +39,7 @@ vi.mock("@/lib/induction", () => {
     canSignOff: mocks.canSignOff,
     getInductionById: mocks.getInductionById,
     InductionError,
+    memberInductionView,
     resolveSignerRole: mocks.resolveSignerRole,
   };
 });
