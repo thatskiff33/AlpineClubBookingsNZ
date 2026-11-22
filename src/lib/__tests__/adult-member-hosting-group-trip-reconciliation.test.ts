@@ -74,9 +74,7 @@ import {
   loadGroupTripCoverageDependentBookingIds,
   reconcileAdultMemberHostingReviewWithSiblings,
 } from "@/lib/adult-member-hosting-review";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const LODGE = "lodge-a";
 const TRIP = "group-trip-1";

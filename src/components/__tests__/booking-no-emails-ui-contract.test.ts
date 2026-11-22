@@ -9,9 +9,7 @@ import { describe, expect, it } from "vitest";
 // touch it at all — explains the whole honesty rule in its module comment.
 // Matching raw text enrolled it as a notify-prompt surface.
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /*
   #2259 (owner decision D10) — the two invariants the "No emails" UI must never

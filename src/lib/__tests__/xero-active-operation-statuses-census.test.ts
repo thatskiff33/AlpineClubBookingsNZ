@@ -5,9 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { XERO_ACTIVE_OPERATION_STATUSES } from "@/lib/xero-active-operation-statuses";
 import { OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES } from "@/lib/xero-supplementary-invoice-statuses";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const HOME = "src/lib/xero-active-operation-statuses.ts";
 const MIGRATION = "prisma/migrations/20260706040000_xero_outbox_active_correlation_unique/migration.sql";

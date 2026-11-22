@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 
 import { blankLiterals, stripComments } from "@/lib/__tests__/support/strip-comments";
 import { balancedBrackets } from "../../__tests__/support/balanced-brackets";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = process.cwd();
 const KERNEL = path.join(ROOT, "src", "lib", "club-time");
@@ -26,7 +27,7 @@ const LODGE_DISPLAY = path.join(ROOT, "src", "components", "lodge-display");
   synchronously for seconds, and longer on a loaded CI runner. Vitest's 5,000 ms
   default is not a budget for that scan, so those cases state their own (#5439).
 */
-const CENSUS_TIMEOUT_MS = 90_000;
+// The budget is the shared CENSUS_TIMEOUT_MS (src/test/census-timeout.ts).
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {

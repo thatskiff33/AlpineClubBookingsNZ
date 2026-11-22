@@ -23,9 +23,7 @@ import {
   resolvePartnerSpotsLostByCapacityChange,
   type EffectiveLodgeCapacity,
 } from "@/lib/lodge-effective-capacity";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 describe("resolveEffectiveLodgeCapacity — the scenario table in docs/CAPACITY_MODEL.md", () => {
   // Columns match the published table: active beds, configured capacity, then

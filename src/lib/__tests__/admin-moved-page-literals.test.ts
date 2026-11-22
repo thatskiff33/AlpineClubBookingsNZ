@@ -5,9 +5,7 @@ import { describe, expect, it } from "vitest";
 import { ADMIN_PAGES } from "@/lib/admin-hubs";
 import type { AdminHubPage } from "@/lib/admin-hubs/define";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // ---------------------------------------------------------------------------
 // No production code spells a moved admin page's old URL as a string literal

@@ -8,9 +8,7 @@ import {
   importCycles,
   resolveSpecifier,
 } from "./support/static-import-graph";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * INV-SSOT-008 (#4930): the module graph's three boundary rules.

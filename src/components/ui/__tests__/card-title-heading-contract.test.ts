@@ -7,9 +7,7 @@ import {
   read,
   SOURCE_FILES,
 } from "./support/card-title-source";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #2796 — the guard that stops "a card title has no heading semantics" being

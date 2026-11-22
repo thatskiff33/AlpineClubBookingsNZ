@@ -8,9 +8,7 @@ import { describe, expect, it } from "vitest";
 // them from, so the modules that describe this relation at length are exactly
 // the ones a raw-text scanner would misfire on.
 import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3260 (`INV-SSOT-001`): a booking's final price is its total plus its signed

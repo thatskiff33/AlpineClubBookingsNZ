@@ -6,9 +6,7 @@ import { describe, expect, it } from "vitest";
 // prose with its own copy goes falsely green when the copy under-reports, and
 // this file's own docblocks quote the defect it looks for.
 import { stripComments } from "./support/strip-comments";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * The bounded census behind #2981: every credential-bearing input rendered on a

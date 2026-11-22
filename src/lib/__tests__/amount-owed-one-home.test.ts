@@ -4,9 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { bookingAmountOwedCents, bookingWorthCents, savedCardChargeCents } from "@/lib/booking-payment-state";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3750 (owner decision, 7 Oct 2026, "Add fee to amount owed"): what an unpaid

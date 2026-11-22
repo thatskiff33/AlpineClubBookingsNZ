@@ -3,9 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { CODE_EXTENSIONS, ROOT, relative, walk } from "./support/provider-mount-census";
 import { stripComments } from "./support/strip-comments";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // Runtime env access is server-only. Scanning ALL source also catches a browser
 // import of a shared helper without relying on a growing list of client roots.

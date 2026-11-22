@@ -5,9 +5,7 @@ import ts from "typescript";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { CLUB_FORMAT_GUARD_ARMS, MANDATORY_SRC_RESTRICTIONS } from "../../../eslint.config.mjs";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * The club's format stays a REQUIRED parameter (#3566 review, finding B7).

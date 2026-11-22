@@ -12,9 +12,7 @@ import {
   type PasswordHashWriterKind,
   type PasswordHashWriterSite,
 } from "./support/password-hash-writer-scan";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // Census of every `passwordHash` writer (#4610, INV-AUTH-006).
 //

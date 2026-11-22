@@ -28,9 +28,7 @@ import {
   UNPAID_BALANCE_CLEARING_WORDING,
   UNPAID_INVOICE_CLEARING_WORDING,
 } from "@/lib/xero-refund-method";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 describe("the owner's three wordings (INV-PAY-101)", () => {
   it("are exactly these, and there are exactly three", () => {

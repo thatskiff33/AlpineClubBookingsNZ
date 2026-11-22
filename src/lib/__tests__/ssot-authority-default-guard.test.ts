@@ -17,9 +17,7 @@ import {
   auditResolvedGuardCoverage,
   PRODUCTION_GUARD_ROSTER,
 } from "./support/eslint-guard-coverage";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * `INV-SSOT-003` (#3126) — a parameter that resolves a CLUB authority may not

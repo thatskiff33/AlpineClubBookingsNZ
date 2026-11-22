@@ -4,9 +4,7 @@ import { describe, expect, it } from "vitest";
 import { ADMIN_PAGES, getAdminPage } from "@/lib/admin-hubs";
 import { withAdminHubTwins } from "@/lib/admin-hubs/security-map";
 import { FRAME_SRC_SELF_PATHS, TIGHT_IMG_SRC_PATHS } from "@/lib/csp";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * Static guards for the invariants that make this app's route-scoped CSP

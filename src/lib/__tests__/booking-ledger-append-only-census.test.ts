@@ -7,9 +7,7 @@ import { describe, expect, it } from "vitest";
 // that mis-reads a regex literal deletes the rest of the line, and a census
 // whose stripper under-reports goes FALSELY GREEN.
 import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3580 (programme #3527): THE LEDGER IS APPEND-ONLY, AND THIS IS WHAT HOLDS IT.

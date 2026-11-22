@@ -58,9 +58,7 @@ import {
   hostScopeEnabled,
   type AdultMemberHostScopeSet,
 } from "@/lib/policies/adult-member-hosting";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 function readRepoFile(relativePath: string): string {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");

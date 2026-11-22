@@ -8,6 +8,7 @@ import {
   scanRepository,
   summariseSizeDebt,
 } from "../lib/file-size-budget";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 /*
@@ -16,7 +17,7 @@ const REPO_ROOT = path.resolve(__dirname, "..", "..");
   it runs once in `beforeAll` under an explicit budget rather than in each case
   under vitest's 5,000 ms default (#5439).
 */
-const CENSUS_TIMEOUT_MS = 90_000;
+// The budget is the shared CENSUS_TIMEOUT_MS (src/test/census-timeout.ts).
 
 function captureReport(): string {
   const chunks: string[] = [];

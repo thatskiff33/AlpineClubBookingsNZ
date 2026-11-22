@@ -56,9 +56,7 @@ import { DEFAULT_MEMBER_GUEST_SETTINGS } from "@/config/club-settings-defaults";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { buildClubModuleSettingsPayload } from "@/lib/module-settings";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // Test helper: reads a fixed repo file under process.cwd(); the path is
 // test-controlled, not user input.

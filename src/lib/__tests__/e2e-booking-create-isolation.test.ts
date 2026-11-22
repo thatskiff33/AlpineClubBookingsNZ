@@ -21,9 +21,7 @@ import {
   getClientIp,
   rateLimiters,
 } from "../rate-limit";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const E2E_ROOT = path.join(process.cwd(), "e2e");
 

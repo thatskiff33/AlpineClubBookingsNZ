@@ -102,9 +102,7 @@ import { getFinanceBookingMetrics } from "@/lib/finance-booking-metrics";
 import { GET as getLegacyDashboardBookings } from "@/app/api/finance/legacy-dashboard/bookings/route";
 import { todayDateOnlyForTimeZone } from "@/lib/date-only";
 import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 function mockPublicSettingsFetch() {
   global.fetch = vi.fn(async (input: RequestInfo | URL) => {

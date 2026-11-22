@@ -8,9 +8,7 @@ import {
   clubDownloadPrefix,
 } from "@/lib/club-download-filename";
 import { relativeSource, sourceFiles } from "./support/booking-guest-night-writer-scan";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 describe("clubDownloadPrefix (#4932, INV-CONFIG-001)", () => {
   it("slugifies the club's short name to lowercase ASCII words joined by dashes", () => {

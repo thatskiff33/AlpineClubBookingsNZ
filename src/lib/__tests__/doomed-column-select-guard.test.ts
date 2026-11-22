@@ -3,9 +3,7 @@ import path from "path";
 import { describe, expect, it } from "vitest";
 import { blankLiterals } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // #2130 guard (same shape as club-module-settings-select-guard.test.ts): every
 // read AND write of XeroItemCodeMapping and AgeTierSetting must name its

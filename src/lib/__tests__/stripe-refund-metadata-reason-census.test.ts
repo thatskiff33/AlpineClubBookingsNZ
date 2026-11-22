@@ -7,9 +7,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 import { relativeSource, sourceFiles } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 import { cardRefundDoorOf } from "@/lib/card-refund-own-note-share";
 import * as keys from "@/lib/payment-recovery-keys";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #4312 review (`INV-ADDPAY-047`, `INV-SSOT`): EVERY STRIPE REFUND THE APP

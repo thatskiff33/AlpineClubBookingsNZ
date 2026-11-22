@@ -7,9 +7,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { emptyFilters } from "../../_utils";
 import { MemberFilterToolbar } from "../member-filter-toolbar";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * The members filter toolbar rendered against the REAL `@/components/ui/select`.

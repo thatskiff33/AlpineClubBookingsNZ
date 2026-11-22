@@ -6,9 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { unexercisedRealdbFiles } from "./check-realdb-ran.mjs";
 import { realdbFilesToRun } from "./realdb-files.mjs";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "../../src/test/census-timeout.ts";
 
 const root = path.resolve(import.meta.dirname, "..", "..");
 const A = "src/lib/__tests__/a.realdb.test.ts";

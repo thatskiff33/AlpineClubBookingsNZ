@@ -50,9 +50,7 @@ import {
   relativeSource,
   sourceFiles,
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const USE_ORDER = "CREDIT_LOT_USE_ORDER";
 const ORDER_HOME = "src/lib/xero-applied-credit-plan.ts";

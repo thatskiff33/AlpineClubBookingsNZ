@@ -10,9 +10,7 @@ vi.mock("next-auth/react", () => nextAuth);
 
 import { loadWizardWork, saveWizardWork } from "@/lib/booking-wizard-work";
 import { signOutMember } from "@/lib/member-sign-out";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 afterEach(() => {
   window.sessionStorage.clear();

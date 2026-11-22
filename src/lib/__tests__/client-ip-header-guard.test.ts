@@ -10,9 +10,7 @@ import {
 } from "../../../eslint.config.mjs";
 import { auditEnforcedGuardCoverage } from "./support/eslint-guard-coverage";
 import { stripComments } from "./support/strip-comments";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #5399: the caller's IP has one rule (last `X-Forwarded-For` address, then

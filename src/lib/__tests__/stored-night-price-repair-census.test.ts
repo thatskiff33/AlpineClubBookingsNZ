@@ -8,9 +8,7 @@ import { describe, expect, it } from "vitest";
 // rest of the line, and a census whose stripper under-reports goes FALSELY GREEN
 // - it passes while the thing it exists to catch is sitting in the file (#3164).
 import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3191 (epic #2797): the census behind `INV-MOD-028`'s hardest clause - "a

@@ -19,9 +19,7 @@ import {
   type BookingLedgerIdentityRow,
 } from "@/lib/additional-payment-ask";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /*
   #3340 scope item 6 — THE CENSUS GUARD.

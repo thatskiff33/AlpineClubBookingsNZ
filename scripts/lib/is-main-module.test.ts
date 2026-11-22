@@ -7,9 +7,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { blankLiterals } from "@/lib/__tests__/support/strip-comments";
 import { isMainModule } from "./is-main-module.mjs";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const HELPER = "scripts/lib/is-main-module.mjs";

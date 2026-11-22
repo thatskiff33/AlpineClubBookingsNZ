@@ -4,9 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { XERO_CRON_JOB_NAMES } from "@/lib/xero-cron-jobs";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // ---------------------------------------------------------------------------
 // No code under `src/` outside `__tests__` spells one of the ten Xero cron

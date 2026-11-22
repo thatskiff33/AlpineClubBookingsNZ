@@ -8,9 +8,7 @@ import {
   realdbFilesToRun,
 } from "../../../scripts/ci/realdb-files.mjs";
 import { jobBlock, stepBlock } from "./helpers/ci-workflow";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #4458: every real-PostgreSQL suite runs in CI, or is named in the quarantine.

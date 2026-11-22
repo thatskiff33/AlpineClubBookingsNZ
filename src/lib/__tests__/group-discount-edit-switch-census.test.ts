@@ -10,9 +10,7 @@ import { describe, expect, it } from "vitest";
 // scan that cannot tell code from prose can be talked out of a finding by
 // wording, in either direction.
 import { stripComments } from "./support/strip-comments";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * Census: the club's edit-time group-discount switch has exactly ONE gate, and

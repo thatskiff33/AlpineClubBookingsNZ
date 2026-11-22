@@ -5,9 +5,7 @@ import { describe, expect, it } from "vitest";
 import { AUDIT_RETENTION_CLASSES } from "@/lib/audit-retention-classes";
 import { expressionAt } from "./support/balanced-brackets";
 import { blankLiterals, stripComments } from "./support/strip-comments";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3940: `AuditLog.retentionClass` is free text, so a value outside

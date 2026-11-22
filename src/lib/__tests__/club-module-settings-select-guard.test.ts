@@ -4,9 +4,7 @@ import { describe, expect, it } from "vitest";
 import { MODULE_KEYS } from "@/config/modules";
 import { blankLiterals, stripComments } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // The guard from issues 153, 150 and 175 of hoppers99/AlpineClubBookingsNZ: every
 // read AND write of the ClubModuleSettings singleton must use an explicit column `select`

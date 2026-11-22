@@ -5,6 +5,7 @@ import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 
 import { jsxSourceFiles, REQUIRED_SCANNED_SUBTREES } from "./support/money-number-input-scan";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // The older number-input guard enforces INV-MONEY-003's text boundary. This
 // guard keeps the editing affordance in one component (INV-SSOT-001, #3414).
@@ -59,9 +60,6 @@ function unsharedMoneyInputs(file: string, source: string): string[] {
   visit(parsed);
   return hits;
 }
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
 
 describe("one shared money box (INV-SSOT-001, #3414)", () => {
   it("has no raw decimal money box or legacy money-props spread in production JSX", () => {

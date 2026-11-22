@@ -8,9 +8,7 @@ import {
 } from "@/lib/__tests__/helpers/sentry-init-files";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { APP_VERSION_ENV_VAR, getAppVersion } from "@/lib/app-version";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // Only `init` matters here: the tests read the options each runtime hands it.
 const sentry = vi.hoisted(() => ({

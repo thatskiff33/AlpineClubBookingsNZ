@@ -3,9 +3,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadBrowserSentryInit } from "@/lib/__tests__/helpers/sentry-init-files";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * A canary bound to the INSTALLED Sentry SDK (#5262).

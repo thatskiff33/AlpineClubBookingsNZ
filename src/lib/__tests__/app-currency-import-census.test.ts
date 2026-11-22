@@ -9,9 +9,7 @@ import {
   RETIRED_FORMAT_CONSTANT_ARMS,
 } from "../../../eslint.config.mjs";
 import { stripComments } from "./support/strip-comments";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * `src/config/operational.ts` is gone, with all four of its constants

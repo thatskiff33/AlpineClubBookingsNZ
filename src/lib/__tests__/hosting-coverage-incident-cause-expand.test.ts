@@ -6,9 +6,7 @@ import { describe, expect, it } from "vitest";
 import { describeHostingCoverageIncidentCause } from "@/lib/adult-member-hosting-incident-causes";
 
 import { stripComments } from "./support/strip-comments";
-
-/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
-const CENSUS_TIMEOUT_MS = 90_000;
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * `INV-HOST-052` — a two-release enum addition, and what is left to hold once
