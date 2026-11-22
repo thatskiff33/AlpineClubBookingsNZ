@@ -59,6 +59,15 @@ describe("change-scope: which pull requests can skip a required job's heavy step
     [[".env.example"], true],
     [["DEPLOYMENT.md"], true],
     [["scripts/provision-database-roles.ts"], true],
+    // #5262: what the browser-bundle assertion in this job depends on.
+    [["next.config.ts"], true],
+    [["src/instrumentation-client.ts"], true],
+    [["src/lib/app-version.ts"], true],
+    [["src/lib/release-nonce.ts"], true],
+    [["src/lib/release-nonce-seed.ts"], true],
+    [["src/instrumentation.ts"], false],
+    [["src/lib/release-nonce-other.ts"], false],
+    [["website/next.config.ts"], false],
     [["docs/DEPLOYMENT.md"], false],
     [["prisma/demo-seed.ts"], false],
     [[".github/workflows/ci.yml"], true],
@@ -151,6 +160,24 @@ describe("ci.yml's scoped required jobs", () => {
     );
     // The heavy steps are still there to run.
     expect(job.steps.slice(at + 1).filter((step) => step.if === SKIP).length).toBeGreaterThan(skippable === null ? 3 : 1);
+  });
+
+  // #5262: each named trigger must be a real file, or a rename would leave
+  // the bundle assertion ungated on pull requests with this suite still green.
+  it("the image scope's browser-bundle triggers are files that exist", () => {
+    const files = [
+      "next.config.ts",
+      "src/instrumentation-client.ts",
+      "src/lib/app-version.ts",
+      "src/lib/release-nonce.ts",
+      "src/lib/release-nonce-seed.ts",
+    ];
+    expect(files.filter((file) => !existsSync(path.join(root, file)))).toEqual([]);
+    expect(files.filter((file) => !needed("image", [file]))).toEqual([]);
+    const step = workflow.jobs["docker-image-security"].steps.find((candidate) =>
+      candidate.name?.startsWith("Assert the browser bundle carries the version"),
+    );
+    expect(step?.if).toBe(SKIP);
   });
 
   it("the Trivy CRITICAL gate itself still blocks whenever it runs", () => {
