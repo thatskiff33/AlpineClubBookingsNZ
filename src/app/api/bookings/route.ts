@@ -139,9 +139,8 @@ import {
 } from "@/lib/access-roles";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { refuseOnBehalfUnlessBookingOfficer } from "@/lib/on-behalf-booking";
-import { arrivesAsMcpConnection, connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
-import { MEMBER_DRAFT_SUMMARY_CONNECTION_SHAPE } from "@/lib/connection-shapes";
-import { getMemberDraftSummary } from "@/lib/member-draft-summary";
+import { arrivesAsMcpConnection, memberOnlySessionUser } from "@/lib/mcp-connection-request";
+import { draftCreatedForConnection, refuseConnectionUnlessOwnDraft } from "@/lib/booking-create-connection";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
@@ -235,15 +234,6 @@ function bookingCreateContendedResponse(
   return transactionContendedResponse(err, logMessage, { code: BOOKING_CREATE_CONTENDED_CODE });
 }
 
-/**
- * ALP-653: `create_draft_booking` (a connection only reaches the draft branch) is
- * sent the draft's narrow summary; the website's answer is unchanged.
- */
-async function draftCreatedForConnection(request: Request, memberId: string, bookingId: string) {
-  const summary = await getMemberDraftSummary(memberId, bookingId);
-  return connectionJson(request, summary ?? { id: bookingId }, MEMBER_DRAFT_SUMMARY_CONNECTION_SHAPE, { status: 201 });
-}
-
 export async function POST(request: NextRequest) {
   // #2388: taken at the top so the collapsed-refusal timing floor covers the
   // whole request, not only the part after the refusal was detected.
@@ -259,7 +249,6 @@ export async function POST(request: NextRequest) {
   if (inactiveResponse) {
     return inactiveResponse;
   }
-  // On-behalf reach (#1313) never comes from an AI app connection (INV-MCP-006).
   const memberAuthority = memberOnlySessionUser(request, session.user);
   const isAdmin = hasAdminAccess(memberAuthority);
   // Dual-hat detection: a USER token alongside admin roles means this account
@@ -278,6 +267,8 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
+  const connectionRefusal = refuseConnectionUnlessOwnDraft(request, isMember, parsed.data.draft);
+  if (connectionRefusal) return connectionRefusal;
 
   // Retroactive-create + email-choice gating (issue #1695), mirroring the
   // #1668 modify-dates override gating: any of the three flags present (even a
@@ -350,9 +341,8 @@ export async function POST(request: NextRequest) {
   > | null = null;
 
   // Only admin-only accounts (no USER token) are forced onto the on-behalf
-  // page; dual-hat admins self-book here (#1442). A connection reads as no admin,
-  // so its admin-only account, with no member to book as, is refused here too.
-  if (!isMember && !parsed.data.forMemberId && (isAdmin || arrivesAsMcpConnection(request))) {
+  // page; dual-hat admins self-book here under full member rules (#1442).
+  if (isAdmin && !isMember && !parsed.data.forMemberId) {
     return NextResponse.json(
       { error: "Admins must book on behalf of a member. Use the admin booking page.", code: "ADMIN_MUST_BOOK_ON_BEHALF" },
       { status: 403 }

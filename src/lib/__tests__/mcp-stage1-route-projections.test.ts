@@ -5,8 +5,11 @@
  * connection gets exactly the `returns` fields, the browser's answer is
  * unchanged.
  *
- * The cancel, cancel preview and draft create answers are pinned in
- * `cancel-mcp-connection.test.ts` and the shapes' complete types.
+ * Each fixture carries a field the action's shape does not name, which the
+ * connection must not see. The cancel answer is pinned in
+ * `cancel-mcp-connection.test.ts`, the draft create answer in
+ * `issue7-8-draft-subscription.test.ts`, and the cancel preview's paid answer,
+ * which spreads the policy calculation, below.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -42,6 +45,9 @@ vi.mock("@/lib/capacity", () => ({
 import { GET as getAvailability } from "@/app/api/availability/route";
 import { GET as getLodges } from "@/app/api/lodges/route";
 import { expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
+import { paidCancelPreviewAnswer } from "@/lib/cancel-preview-answer";
+import { projectForConnection } from "@/lib/connection-projection";
+import { CANCEL_PREVIEW_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -50,12 +56,14 @@ beforeEach(() => {
 
 describe("list_lodges", () => {
   it("answers with each bookable lodge's id, name and travel note", async () => {
-    const lodges = [{ id: "lodge-1", name: "Main lodge", travelNote: "Chains in winter" }];
-    h.prisma.lodge.findMany.mockResolvedValue(lodges);
+    const lodge = { id: "lodge-1", name: "Main lodge", travelNote: "Chains in winter" };
+    // A column the route's select leaves out today; the connection never sees it either way.
+    const row = { ...lodge, internalNote: "Spare key under the mat" };
+    h.prisma.lodge.findMany.mockResolvedValue([row]);
     h.getEligibleLodgeIdsForMember.mockResolvedValue({ allLodges: true });
     const { connection, browser } = await expectActionContract({ actionId: "list_lodges", handler: getLodges });
-    expect(connection).toEqual({ lodges });
-    expect(browser).toEqual({ lodges });
+    expect(connection).toEqual({ lodges: [lodge] });
+    expect(browser).toEqual({ lodges: [row] });
   });
 });
 
@@ -67,10 +75,12 @@ describe("get_availability", () => {
     h.getLodgeCapacity.mockResolvedValue(30);
     h.prisma.season.findMany.mockResolvedValue([
       {
+        id: "season-1",
         name: "Winter",
         type: "PEAK",
         startDate: new Date("2026-07-01T00:00:00.000Z"),
         endDate: new Date("2026-07-02T00:00:00.000Z"),
+        notes: "Committee pricing note",
       },
     ]);
     const { connection, browser } = await expectActionContract({
@@ -84,6 +94,42 @@ describe("get_availability", () => {
       lodgeCapacity: 30,
     });
     expect(browser).toEqual(connection);
+    expect(JSON.stringify(connection)).not.toMatch(/season-1|Committee pricing note/);
     expect(h.isMemberEligibleToBookLodge).toHaveBeenCalledWith(h.prisma, "officer-1", "lodge-1");
+  });
+});
+
+describe("preview_cancel_booking's paid answer", () => {
+  it("drops a field the policy calculation adds that the action does not name", () => {
+    // The paid answer spreads the policy calculation, so a field added there
+    // would reach the website at once; a connection is sent only the shape.
+    const preview = {
+      refundAmountCents: 8000,
+      keptAmountCents: 2000,
+      changeFeeCents: 0,
+      refundPercentage: 80,
+      creditRefundAmountCents: 0,
+      creditRefundPercentage: 0,
+      creditRestoredCents: 0,
+      totalPaidCents: 10000,
+      policyTierInternalId: "tier-7",
+    };
+    const answer = paidCancelPreviewAnswer({
+      preview: preview as never,
+      groupCancellationRefund: null,
+      cardShortfall: { cardShortfall: { cardCents: 0, bankCents: 0, checkCents: 0 } } as never,
+      manualRefund: false,
+      refundDisputed: false,
+      refundMethodForced: null as never,
+    });
+    expect(answer).toHaveProperty("policyTierInternalId");
+    const { policyTierInternalId: _withheld, ...named } = preview;
+    expect(projectForConnection(answer, CANCEL_PREVIEW_CONNECTION_SHAPE)).toEqual({
+      ...named,
+      cardShortfall: { cardCents: 0, bankCents: 0, checkCents: 0 },
+      hasPayment: true,
+      manualRefund: false,
+      refundMethodForced: null,
+    });
   });
 });

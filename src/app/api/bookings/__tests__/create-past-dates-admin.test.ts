@@ -967,7 +967,26 @@ describe("POST /api/bookings through an AI app connection", () => {
     request.headers.set("x-mcp-principal", "signed-principal");
     const res = await POST(request);
     expect(res.status).toBe(403);
-    expect(await res.json()).toMatchObject({ code: "ADMIN_MUST_BOOK_ON_BEHALF" });
+    // Said plainly, not as the website's "Admins must book on behalf" (a kiosk-only account gets it too).
+    expect(await res.json()).toEqual({
+      error: "This account is not a member, so an AI app cannot book for it.",
+      code: "MCP_DRAFT_ONLY",
+    });
     expect(h.createDraftBooking).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a confirmed booking", { draft: undefined }],
+    ["a waitlist place", { draft: undefined, waitlist: true }],
+    ["a booking marked not a draft", { draft: false }],
+  ])("refuses %s from a member's connection: it only saves drafts", async (_label, change) => {
+    const request = makeRequest({ ...draftPayload(), ...change });
+    request.headers.set("x-mcp-principal", "signed-principal");
+    const res = await POST(request);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ code: "MCP_DRAFT_ONLY" });
+    expect(h.createDraftBooking).not.toHaveBeenCalled();
+    expect(h.createConfirmedBooking).not.toHaveBeenCalled();
+    expect(h.createWaitlistedBooking).not.toHaveBeenCalled();
   });
 });

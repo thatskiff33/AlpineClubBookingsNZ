@@ -105,10 +105,13 @@ describe("POST /api/bookings/[id]/cancel through an AI app connection", () => {
       refundMethod: "card",
       message: "ok",
       internalLedgerNote: "not for an AI provider",
+      // Record ids the member cannot act on: kept from the AI provider.
+      stripeRefundId: "re_123",
+      manualRefundTaskId: "task-9",
     };
     h.cancelBooking.mockResolvedValue({ status: 200, data });
     const viaConnection = await POST(cancelRequest({ refundMethod: "card" }, true), { params });
-    const { internalLedgerNote: _withheld, ...promised } = data;
+    const { internalLedgerNote: _withheld, stripeRefundId: _refundId, manualRefundTaskId: _taskId, ...promised } = data;
     expect(await viaConnection.json()).toEqual(promised);
     const viaBrowser = await POST(cancelRequest({ refundMethod: "card" }, false), { params });
     expect(await viaBrowser.json()).toEqual(data);

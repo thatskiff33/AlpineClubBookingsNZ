@@ -211,4 +211,12 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     expect(mcpPermanentExclusion("src/app/api/contact/route.ts", "POST")).toBe("public-visitor");
     expect(mcpPermanentExclusion("src/app/api/contact/extra/route.ts", "POST")).toBeNull();
   });
+
+  it("keeps the lodge door codes website-only for good", () => {
+    // Not a lodge-life action waiting to be built: access details never go to an AI provider.
+    expect(classifyMcpRoute("src/app/api/lodge-instructions/route.ts", "GET")).toEqual({
+      kind: "excluded",
+      reason: "access-secrets",
+    });
+  });
 });

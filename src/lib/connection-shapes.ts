@@ -169,15 +169,18 @@ export const CANCEL_PREVIEW_CONNECTION_SHAPE = completeConnectionShapeFor<EveryF
   refundMethodForced: true,
 });
 
-export const CANCEL_BOOKING_CONNECTION_SHAPE = completeConnectionShapeFor<CancelBookingResult>({
+/**
+ * What cancelling sends back: the refund figures and method. Never the Stripe
+ * refund id or the officer task id, which identify records the member cannot
+ * act on and the AI provider has no use for (data minimisation).
+ */
+export const CANCEL_BOOKING_CONNECTION_SHAPE = connectionShapeFor<CancelBookingResult>({
   success: true,
   refundAmountCents: true,
   refundPercentage: true,
   refundMethod: true,
   creditAmountCents: true,
   creditRestoredCents: true,
-  stripeRefundId: true,
-  manualRefundTaskId: true,
   refundDisputed: true,
   organiserRefund: { method: true, amountCents: true },
   ownCardRefund: { method: true, amountCents: true, byHandCents: true, toCheckCents: true },
