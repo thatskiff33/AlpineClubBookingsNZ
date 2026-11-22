@@ -2756,14 +2756,12 @@ export async function paymentEligibleForPaidCancelPath(
   return paymentShowsCaptureEvidence(payment, Boolean(capturedTransaction), booking, { preLedgerStripeMirror: false });
 }
 
-// #1473/#1491: capture evidence for cancel-time decisions. Ledger truth
-// first — any transaction row that holds/held money — because the aggregate
-// mirror lies in both directions (the invoice-side fold on never-captured IB
-// payments, and the pre-#1473 cancel flow flattening captured statuses to
-// FAILED); then the pre-ledger STRIPE mirror. The combination's one home is
-// `paymentShowsCaptureEvidence`. This one QUERIES the ledger (on `db`, so a
-// caller holding a transaction passes it); `paymentHasCaptureEvidence` in
-// `payment-capture-evidence.ts` answers synchronously from rows already loaded.
+// #1473/#1491: capture evidence for cancel-time decisions, QUERIED from the
+// ledger on `db` (`paymentHasCaptureEvidence` in payment-capture-evidence.ts
+// answers synchronously from loaded rows). Ledger truth first, because the
+// aggregate mirror lies both ways (the invoice-side fold on never-captured IB
+// payments; the pre-#1473 cancel flow flattening captured statuses to FAILED),
+// then the pre-ledger STRIPE mirror; the combination is `paymentShowsCaptureEvidence`.
 export async function queryPaymentCaptureEvidence(
   booking: {
     organiserSettled: boolean;

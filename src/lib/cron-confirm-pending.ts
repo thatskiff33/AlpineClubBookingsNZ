@@ -1384,11 +1384,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             // promise "your own booking remains confirmed" when the parent is
             // genuinely settled (parentUnpaid === false).
             parentConfirmed: !resolution.parentUnpaid,
-            // The short handle the member's other emails show (#5407), never
-            // the whole id; a split child always has a parent.
-            parentBookingReference: resolution.booking.parentBookingId
-              ? formatBookingReference(resolution.booking.parentBookingId)
-              : null,
+            parentBookingReference: resolution.booking.parentBookingId && formatBookingReference(resolution.booking.parentBookingId),
             lodgeId: resolution.booking.lodgeId,
           });
         } catch (emailErr) {
