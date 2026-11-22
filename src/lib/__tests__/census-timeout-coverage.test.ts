@@ -104,17 +104,17 @@ function importsOf(file: string, text: string): Import[] {
   const out: Import[] = [];
   const named = /import\s+(?:type\s+)?(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*["']([^"']+)["']/g;
   for (const match of text.matchAll(named)) {
-    const module = resolveSpecifier(file, match[2]!);
-    if (!module) continue;
+    const target = resolveSpecifier(file, match[2]!);
+    if (!target) continue;
     const names = match[1]!
       .split(",")
       .map((part) => part.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0]!.trim())
       .filter(Boolean);
-    out.push({ module, names });
+    out.push({ module: target, names });
   }
   for (const match of text.matchAll(/import\s+\*\s+as\s+[\w$]+\s+from\s*["']([^"']+)["']/g)) {
-    const module = resolveSpecifier(file, match[1]!);
-    if (module) out.push({ module, names: "*" });
+    const target = resolveSpecifier(file, match[1]!);
+    if (target) out.push({ module: target, names: "*" });
   }
   return out;
 }
