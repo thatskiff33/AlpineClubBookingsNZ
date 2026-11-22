@@ -31,7 +31,7 @@ import {
  * request proves itself: an HMAC over `${timestamp}.${body}` with the secret
  * issued at registration, compared in constant time, with the timestamp bounded
  * to close the replay window — `verifyServerNzSignature`, shared with the
- * availability route (#62).
+ * availability route (triyder/AlpineClubBookingsNZ#62).
  */
 
 export const runtime = "nodejs";
@@ -100,7 +100,7 @@ export async function POST(request: NextRequest) {
   // without waiting for a full sync pass; the pass's single-flight claim makes
   // a doorbell ringing during a poll harmless.
   //
-  // A version pause (#49) changes nothing here on purpose: the signature is
+  // A version pause (triyder/AlpineClubBookingsNZ#49) changes nothing here on purpose: the signature is
   // still verified, the answer is still a plain 200 (the server retries a
   // failure with backoff, and a club mid-upgrade should not be hammered), and
   // the pull inside `runMirrorSync` is what declines - logged at info, since it

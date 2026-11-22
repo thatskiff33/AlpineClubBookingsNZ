@@ -24,7 +24,7 @@ import { formatCents, formatCentsPlain } from "@/lib/utils";
 import { FoodOrderItems, type FoodOrderItemView } from "./food-order-items";
 
 /**
- * One order in the food-order history (fork #121).
+ * One order in the food-order history (fork triyder/AlpineClubBookingsNZ#121).
  *
  * The received checklist and the price editor appear only when the server said
  * `canManage` for this row — the value `canManageFoodOrder` computed. This

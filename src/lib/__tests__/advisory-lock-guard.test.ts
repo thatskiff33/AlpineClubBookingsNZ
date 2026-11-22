@@ -505,7 +505,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "correctWorkParty#1",
     tier: "GLOBAL",
     reason:
-      "Fork #119: an officer adds an existing booking to a work party (fork #130: or removes it from one; both directions are this one writer, `addBookingToWorkParty` and `removeBookingFromWorkParty` its two entry points) — the canonical batch modification on the same transaction, which moves settlement money (account credit, a refund, or an amount owed) and must exclude a concurrent cancel, capture or refund of the same booking, composed with a capacity re-check on a booking that does not yet hold its beds. Global first, then the booking's immutable lodge key, then (#4845) the booking row before the officer's re-authorisation; the tx-aware service re-enters all three and takes the member keys after. No claim row: two concurrent applies serialise here and the second re-reads a booking that already carries (or no longer carries) the work party and is refused.",
+      "Fork triyder/AlpineClubBookingsNZ#119: an officer adds an existing booking to a work party (fork triyder/AlpineClubBookingsNZ#130: or removes it from one; both directions are this one writer, `addBookingToWorkParty` and `removeBookingFromWorkParty` its two entry points) — the canonical batch modification on the same transaction, which moves settlement money (account credit, a refund, or an amount owed) and must exclude a concurrent cancel, capture or refund of the same booking, composed with a capacity re-check on a booking that does not yet hold its beds. Global first, then the booking's immutable lodge key, then (#4845) the booking row before the officer's re-authorisation; the tx-aware service re-enters all three and takes the member keys after. No claim row: two concurrent applies serialise here and the second re-reads a booking that already carries (or no longer carries) the work party and is refused.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -1557,7 +1557,7 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // advisory lock; disjoint from booking/money writers. See
   // docs/CONCURRENCY_AND_LOCKING.md → "Member photo writer".
   "src/app/api/members/[id]/photo/route.ts": 2,
-  // Central lodge link writer (#62, #4262 review): `saveCentralLodgeLinks`,
+  // Central lodge link writer (triyder/AlpineClubBookingsNZ#62, #4262 review): `saveCentralLodgeLinks`,
   // shared by the lodge's Central lodge card PUT and the setup page's link
   // step, takes the settings row (`lockServerNzSettings`, counted under
   // servernz-settings.ts) and re-checks the owned list under it, then locks
@@ -1576,7 +1576,7 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // touching credentials (settings -> credential -> audit). No advisory key;
   // disjoint from booking/money writers. See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Alpine Central Server connection and version recorder".
-  // Other lodges download writes (triyder/AlpineClubBookingsNZ#64, #69; #4262
+  // Other lodges download writes (triyder/AlpineClubBookingsNZ#64, triyder/AlpineClubBookingsNZ#69; #4262
   // review): the same one statement, reached through the same fence
   // (`withCurrentServerNzConnection` / `serverNzAnswerWriter`), takes the
   // settings row before EVERY write the download makes from an answer (hides

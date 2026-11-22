@@ -1,7 +1,7 @@
 import type { AgeTier } from "@prisma/client";
 
 /**
- * Single source of truth (fork #125 / #37) for whether a member's phone number
+ * Single source of truth (fork hoppers99/AlpineClubBookingsNZ#125 / hoppers99/AlpineClubBookingsNZ#37) for whether a member's phone number
  * may be served to a lodge kiosk or lobby-display surface. Two-sided consent
  * with an adults-only floor:
  *   - the lodge must enable phone display (config side), AND

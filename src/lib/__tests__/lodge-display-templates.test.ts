@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DisplayState } from "@/lib/lodge-display-state";
 
-// Issue #29 (LTV-004, ADR-002) + LTV-024: the template registry and condition
+// Issue hoppers99/AlpineClubBookingsNZ#29 (LTV-004, ADR-002) + LTV-024: the template registry and condition
 // engine — built-in resolution (DB overrides retired with the v2 rebuild),
 // load-time rejection of unknown modules/conditions (never a partially-broken
 // template), pure condition evaluation, and eligibility filtering for rotation.
@@ -298,7 +298,7 @@ describe("template validation (AC6/AC7)", () => {
     ).toThrow(/at least one region/);
   });
 
-  it("accepts the stack layout and rejects unknown layouts (issue #56)", async () => {
+  it("accepts the stack layout and rejects unknown layouts (issue hoppers99/AlpineClubBookingsNZ#56)", async () => {
     const { validateDisplayTemplateDefinition } = await import(
       "@/lib/lodge-display/template-registry"
     );

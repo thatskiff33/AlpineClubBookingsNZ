@@ -23,7 +23,7 @@ import { isBuiltInDisplayLayoutKey } from "@/lib/lodge-display/built-in-seeds";
 import { DISPLAY_TERM_LAYOUT } from "@/lib/lodge-display/display-terminology";
 import { adminHref, adminLink, getAdminPage } from "@/lib/admin-hubs";
 
-// Lobby display LAYOUT authoring (fork issue #78, LTV-032, ADR-003 §1). An
+// Lobby display LAYOUT authoring (fork issue hoppers99/AlpineClubBookingsNZ#78, LTV-032, ADR-003 §1). An
 // admin authors the structural template: an HTML body with `{{area:key}}`
 // placeholders, a default CSS block, and the area/slot descriptors (static /
 // conditional / rotator). Templates (LTV-033) then fill each declared slot.
@@ -137,7 +137,7 @@ function emptyDraft(): LayoutDraft {
  * Assemble the areas JSON the save contract validates, including only the
  * fields each `kind` allows (the contract rejects a condition on a non-
  * conditional area, children on a non-rotator, defaultContent on a rotator,
- * …). This is also the SEAM for a future preview-before-save (#82/#79): the
+ * …). This is also the SEAM for a future preview-before-save (hoppers99/AlpineClubBookingsNZ#82/#79): the
  * current draft `{ bodyHtml, defaultCss, areas: buildAreasPayload(draft) }` is
  * exactly the shape a sandboxed preview call will take.
  */
@@ -256,10 +256,10 @@ export default function AdminDisplayLayoutsPage() {
 
   // A built-in layout is code-managed scaffolding: `ensureBuiltInDisplays`
   // refreshes it from code on every re-seed — the database seed, or the
-  // Restore built-in boards action (owner decision A, #111; #2247) — so
+  // Restore built-in boards action (owner decision A, hoppers99/AlpineClubBookingsNZ#111; #2247) — so
   // an in-place edit does not survive. Detected by the reserved KEY (the seed
   // matches on key). Only an EXISTING row can be a built-in — a new draft never
-  // is. Drives the persistent notice + the not-upgrade-safe save confirm (#156).
+  // is. Drives the persistent notice + the not-upgrade-safe save confirm (hoppers99/AlpineClubBookingsNZ#156).
   const editingBuiltIn =
     draft.id !== null && isBuiltInDisplayLayoutKey(draft.key);
 
@@ -285,7 +285,7 @@ export default function AdminDisplayLayoutsPage() {
 
   // Fork the opened built-in into a NEW custom layout (id cleared → a create),
   // carrying its body/CSS/areas but a fresh key/name so the admin customises the
-  // copy instead of the re-seed-clobbered original (#156, design.md §3/§8). The
+  // copy instead of the re-seed-clobbered original (hoppers99/AlpineClubBookingsNZ#156, design.md §3/§8). The
   // built-in itself is untouched until the admin saves the copy.
   function duplicateLayout() {
     setErrors([]);
@@ -357,7 +357,7 @@ export default function AdminDisplayLayoutsPage() {
     // Built-in layouts are code-managed and READ-ONLY: the PUT route now 409s on
     // a `builtin-*` key (#2048), so an in-place save can never persist. Never
     // fire that doomed PUT — offer the duplicate-to-customise fork instead, the
-    // only path that keeps the admin's changes (#156, #2048 D).
+    // only path that keeps the admin's changes (hoppers99/AlpineClubBookingsNZ#156, #2048 D).
     if (draft.id !== null && isBuiltInDisplayLayoutKey(draft.key)) {
       if (
         window.confirm(

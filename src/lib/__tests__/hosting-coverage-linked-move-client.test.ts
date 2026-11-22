@@ -317,7 +317,7 @@ describe("what the offer says about the money (#3232)", () => {
     expect(alreadyChosen).not.toMatch(/You will be asked once/);
   });
 
-  it("fork #132: names the freed applied credit inside the one total, and keeps it out of the card-or-credit choice", () => {
+  it("fork triyder/AlpineClubBookingsNZ#132: names the freed applied credit inside the one total, and keeps it out of the card-or-credit choice", () => {
     // All of it freed credit: the total is still the one figure, the share is
     // named, and the card-or-credit sentence cannot describe it.
     const freedOnly = formatLinkedMoveMoneySentence(

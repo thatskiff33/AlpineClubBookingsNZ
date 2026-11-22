@@ -23,7 +23,7 @@ import {
   NIGHT_COLUMNS_MAX_DAYS,
 } from "@/components/lodge-display/modules/module-options";
 
-// Issue #30 (LTV-005): the booking/occupancy display modules — pure functions
+// Issue hoppers99/AlpineClubBookingsNZ#30 (LTV-005): the booking/occupancy display modules — pure functions
 // of the privacy-reduced DisplayState. Fixtures mirror the payload the
 // serialiser emits; no module ever queries anything.
 
@@ -111,7 +111,7 @@ function state(overrides: Partial<DisplayState>): DisplayState {
 }
 
 describe("bar layout maths (clipping regression surface)", () => {
-  // stayEnd is the CHECK-OUT date (issue #56): a bar occupies nights
+  // stayEnd is the CHECK-OUT date (issue hoppers99/AlpineClubBookingsNZ#56): a bar occupies nights
   // stayStart .. stayEnd-1, matching the approved mock.
   it("places an in-window stay on its nights only (checkout morning excluded)", () => {
     expect(
@@ -594,7 +594,7 @@ describe("OccupancyGrid / WelcomePanel (whole-lodge treatment, AC3/AC5)", () => 
     expect(screen.getByText("Harakeke College")).toBeDefined();
   });
 
-  it("welcome shows the mock's info tiles for the group (issue #58)", () => {
+  it("welcome shows the mock's info tiles for the group (issue hoppers99/AlpineClubBookingsNZ#58)", () => {
     const { container } = render(
       <WelcomePanel
         state={{
@@ -609,7 +609,7 @@ describe("OccupancyGrid / WelcomePanel (whole-lodge treatment, AC3/AC5)", () => 
     expect(container.querySelectorAll(".display-welcome-tile").length).toBe(3);
   });
 
-  it("statement variant (no rooms) renders the block statement with a week strip (issue #58)", () => {
+  it("statement variant (no rooms) renders the block statement with a week strip (issue hoppers99/AlpineClubBookingsNZ#58)", () => {
     const { container } = render(<OccupancyGrid state={blockoutState} />);
     expect(screen.getByText("The lodge is fully booked")).toBeDefined();
     expect(container.querySelectorAll(".display-week-day").length).toBe(3);
@@ -686,7 +686,7 @@ describe("OccupancyGrid / WelcomePanel (whole-lodge treatment, AC3/AC5)", () => 
     expect(container.querySelector(".display-blockout-board")).toBeNull();
   });
 
-  it("board variant blocks only the booked nights and keeps other bars (part-week, issue #58)", () => {
+  it("board variant blocks only the booked nights and keeps other bars (part-week, issue hoppers99/AlpineClubBookingsNZ#58)", () => {
     const partWeek = state({
       rooms: [
         { id: "room-1", name: "A - Kea" },
@@ -807,7 +807,7 @@ describe("SinglesBoard (AC4)", () => {
       />
     );
     expect(screen.getByText("Jane S")).toBeDefined();
-    // Weekday out labels (issue #58) — each guest keeps their own check-out.
+    // Weekday out labels (issue hoppers99/AlpineClubBookingsNZ#58) — each guest keeps their own check-out.
     expect(screen.getByText("out Tue 14")).toBeDefined();
     expect(screen.getByText("out Wed 15")).toBeDefined();
   });

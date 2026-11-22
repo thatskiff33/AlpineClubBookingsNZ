@@ -180,7 +180,7 @@ function hasWebhookSignatureBoundary(routePath: string, contents: string) {
     routePath.endsWith("/webhooks/servernz-posts/route.ts") ||
     routePath.endsWith("/webhooks/servernz-availability/route.ts")
   ) {
-    // Epic #2992 and #62: HMAC with the registration-issued secret, compared in
+    // Epic #2992 and triyder/AlpineClubBookingsNZ#62: HMAC with the registration-issued secret, compared in
     // constant time, through the ONE shared verifier. The route must call it;
     // the verifier's own constant-time compare is pinned below
     // ("the shared Alpine Central Server verifier keeps its constant-time compare").
@@ -292,7 +292,7 @@ describe("API route boundary metadata", () => {
     // Both servernz webhook routes are accepted above because they call
     // verifyServerNzSignature; this pins that the verifier itself still checks
     // the signature header in constant time with its length guard, so a refactor
-    // that lost either cannot leave both routes "verifying" (#2992, #62).
+    // that lost either cannot leave both routes "verifying" (#2992, triyder/AlpineClubBookingsNZ#62).
     const verifier = fs.readFileSync(
       path.join(process.cwd(), "src/lib/servernz-signature.ts"),
       "utf8",

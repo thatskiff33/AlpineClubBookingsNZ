@@ -129,8 +129,8 @@ export interface LinkedMoveQuote {
   combinedChangeFeeCents: number;
   /** What the member pays now, across both bookings. */
   combinedAmountDueCents: number;
-  /** Every cent that comes back to the member, across both bookings, freed applied credit included (fork #132). */
-  combinedRefundCents: number; combinedFreedCreditCents: number; // fork #132: the freed applied credit inside it, for the wording only
+  /** Every cent that comes back to the member, across both bookings, freed applied credit included (fork triyder/AlpineClubBookingsNZ#132). */
+  combinedRefundCents: number; combinedFreedCreditCents: number; // fork triyder/AlpineClubBookingsNZ#132: the freed applied credit inside it, for the wording only
   /**
    * What the club's cancellation policy KEEPS of the reductions, across every
    * booking that moves — the difference between what a booking's price fell by and
@@ -389,7 +389,7 @@ export interface LinkedMoveSettledBooking {
   accountCreditAmountCents: number;
   /** #3809: applied credit the reduction gave back - money coming back as well. */
   appliedCreditGivenBackCents: number;
-  refundedExcessCreditCents: number; // F20 (#1887): an UNPAID booking's applied credit the lower price freed (fork #132)
+  refundedExcessCreditCents: number; // F20 (#1887): an UNPAID booking's applied credit the lower price freed (fork triyder/AlpineClubBookingsNZ#132)
   /** The WRITE's own answer, never inferred from the amounts — see `combineLinkedMoveQuote`. */
   requiresSettlementMethod: boolean;
   /** #5303 (`INV-PAY-160`): the settlement's own answer that a reduction's refund goes to the card. */
@@ -596,7 +596,7 @@ export function combineLinkedMoveQuote(input: {
     // A reduction can come back as a card refund OR as account credit, and the
     // member chose once for both; credit given back (#3809) adds to either, and so
     // does an unpaid booking's applied credit freed by the lower price (owner
-    // decision on fork #132: one total, so it matches the balance change). The one
+    // decision on fork triyder/AlpineClubBookingsNZ#132: one total, so it matches the balance change). The one
     // sum is `editTotalMoneyBackCents` (why it never double-counts is there).
     combinedRefundCents: sum(editTotalMoneyBackCents), combinedFreedCreditCents: sum((r) => r.refundedExcessCreditCents),
     combinedPolicyRetainedCents: sum((r) => r.policyRetainedAmountCents),

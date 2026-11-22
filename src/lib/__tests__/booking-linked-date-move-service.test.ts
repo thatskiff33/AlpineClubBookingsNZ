@@ -803,7 +803,7 @@ describe("what the member is charged, once, for both (#3232 D2)", () => {
     expect(quote.settlementMethodRequired).toBe(true);
   });
 
-  it("counts an unpaid booking's freed applied credit in what comes back (fork #132)", async () => {
+  it("counts an unpaid booking's freed applied credit in what comes back (fork triyder/AlpineClubBookingsNZ#132)", async () => {
     // The dependent is still pending with account credit applied, and its lower
     // price frees $15.00 of that credit back to the member's balance. The owner
     // decided the one "comes back" figure includes it, so the offer matches the
