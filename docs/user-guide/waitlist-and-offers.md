@@ -46,7 +46,9 @@ in [`STATE_MACHINES.md`](../STATE_MACHINES.md#waitlist-lifecycle).
 1. When a bed frees up, the club offers it to you — you are emailed and the entry
    in **My Bookings** flips to **Waitlist Offered**.
 2. Open the offer and **accept it before it expires**. The offer states its
-   expiry; if it lapses, the place can pass to the next person on the list.
+   expiry. If it lapses, the place is offered to the next person on the list,
+   so it may go to someone behind you. You keep your place in the queue, and
+   you are emailed again if a place opens up for you.
 3. If the offer is for a **different lodge** than you first chose (a cross-lodge
    offer), it names the lodge and its **price** — which may differ from your
    original lodge — and asks you to **confirm explicitly**. Accepting books a
@@ -61,7 +63,7 @@ in [`STATE_MACHINES.md`](../STATE_MACHINES.md#waitlist-lifecycle).
 | Joining the waitlist | Only offered when your chosen nights are full |
 | Alternate lodges | Opt in to receive offers from other lodges (multi-lodge clubs) |
 | Getting an offer | You are emailed and the entry shows **Waitlist Offered** in My Bookings |
-| Offer expiry | Each offer expires; accept before then or it may pass on |
+| Offer expiry | Each offer expires; if you do not accept in time, the place is offered to the next person and you keep your place in the queue |
 | Cross-lodge offer | Names the lodge and its price (which can differ) and needs explicit confirmation |
 | After accepting | Pay as normal; a cross-lodge accept creates a fresh booking at that lodge |
 | Leaving the waitlist | Open the waitlisted booking (or the one holding an offer) and cancel it — nothing was paid, so there is no refund to work out |

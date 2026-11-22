@@ -42,7 +42,7 @@ import {
 import { DISPLAY_TERM_TEMPLATE } from "@/lib/lodge-display/display-terminology";
 import { adminHref, adminLink } from "@/lib/admin-hubs";
 
-// Lobby display TEMPLATE authoring (fork issue #79, LTV-033, ADR-003 §1). A
+// Lobby display TEMPLATE authoring (fork issue hoppers99/AlpineClubBookingsNZ#79, LTV-033, ADR-003 §1). A
 // Template is built on a Layout: it fills each declared slot with content or an
 // embedded module, layers CSS overrides on the layout default, and carries the
 // footer. It renders dynamically against whichever lodge its display is bound
@@ -188,10 +188,10 @@ export default function AdminDisplayTemplatesPage() {
 
   // A built-in template is code-managed scaffolding: `ensureBuiltInDisplays`
   // refreshes it from code on every re-seed — the database seed, or the
-  // Restore built-in boards action (owner decision A, #111; #2247) — so
+  // Restore built-in boards action (owner decision A, hoppers99/AlpineClubBookingsNZ#111; #2247) — so
   // an in-place edit does not survive. Detected by the reserved KEY (the seed
   // matches on key). Only an EXISTING row can be a built-in. Drives the
-  // persistent notice + the not-upgrade-safe save confirm (#156).
+  // persistent notice + the not-upgrade-safe save confirm (hoppers99/AlpineClubBookingsNZ#156).
   const editingBuiltIn =
     draft.id !== null && isBuiltInDisplayTemplateKey(draft.key);
 
@@ -284,7 +284,7 @@ export default function AdminDisplayTemplatesPage() {
   // Fork the opened built-in into a NEW custom template (id cleared → a create),
   // carrying its layout binding, slots, CSS, and footer but a fresh key/name so
   // the admin customises the copy instead of the re-seed-clobbered original
-  // (#156, design.md §3/§8). The built-in itself is untouched until the copy is
+  // (hoppers99/AlpineClubBookingsNZ#156, design.md §3/§8). The built-in itself is untouched until the copy is
   // saved; with the id cleared the layout binding becomes editable again.
   function duplicateTemplate() {
     setErrors([]);
@@ -372,7 +372,7 @@ export default function AdminDisplayTemplatesPage() {
   // directly: the host mints a signed grant and renders the authored template in
   // an `sandbox="allow-scripts"` iframe, so it can never execute against this
   // admin session. The lodge is passed explicitly so the preview is
-  // never a silent default (#64).
+  // never a silent default (hoppers99/AlpineClubBookingsNZ#64).
   function previewTemplate(item: TemplateListItem) {
     if (!previewLodgeId) {
       setMessage("Choose an explicit lodge before opening a preview.");
@@ -422,7 +422,7 @@ export default function AdminDisplayTemplatesPage() {
     // Built-in templates are code-managed and READ-ONLY: the PUT route now 409s
     // on a `builtin-*` key (#2048), so an in-place save can never persist. Never
     // fire that doomed PUT — offer the duplicate-to-customise fork instead, the
-    // only path that keeps the admin's changes (#156, #2048 D).
+    // only path that keeps the admin's changes (hoppers99/AlpineClubBookingsNZ#156, #2048 D).
     if (draft.id !== null && isBuiltInDisplayTemplateKey(draft.key)) {
       if (
         window.confirm(
@@ -512,7 +512,7 @@ export default function AdminDisplayTemplatesPage() {
     }));
   }
 
-  // Re-seed one slot's editor from its layout-provided default (issue #111),
+  // Re-seed one slot's editor from its layout-provided default (issue hoppers99/AlpineClubBookingsNZ#111),
   // reusing the same seeding path buildSlots uses on create. Only offered for
   // slots whose area declares a defaultContent (static/conditional built-ins).
   function resetSlotToDefault(index: number) {

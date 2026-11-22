@@ -7,7 +7,7 @@ import {
 } from "@/lib/servernz-signature";
 
 // The one Alpine Central Server signature check, shared by the shared-post
-// doorbell and the availability question (#2992, #62).
+// doorbell and the availability question (#2992, triyder/AlpineClubBookingsNZ#62).
 
 const SECRET = "s".repeat(64);
 const NOW = Date.parse("2026-07-01T00:00:00.000Z");

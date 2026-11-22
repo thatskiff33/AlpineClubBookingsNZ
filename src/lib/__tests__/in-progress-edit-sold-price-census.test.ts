@@ -206,7 +206,7 @@ describe("in-progress edit sold-price census (#2744)", { timeout: CENSUS_TIMEOUT
     expect(found).toEqual(
       PLAN_CALL_SITES.map((site) => site.file as string).sort(),
     );
-  });
+  }, 30_000);
 
   it("counts the calls in each declared file, so a second one cannot hide", () => {
     for (const site of PLAN_CALL_SITES) {
@@ -377,7 +377,7 @@ describe("season rate data census (#2756)", { timeout: CENSUS_TIMEOUT_MS }, () =
     expect(found).toEqual(
       [SEASON_RATE_MAPPER_FILE, ...DECLARED_NON_MAPPINGS].sort(),
     );
-  });
+  }, 30_000);
 });
 
 
@@ -593,5 +593,5 @@ describe("no edit door parks its money (#4317, INV-MOD-028)", { timeout: CENSUS_
     }
     expect(creators, "a review is raised only by raiseEditFinancialReviewTask").toEqual([]);
     expect(reopeners, "nothing puts an edit review back to OPEN").toEqual([]);
-  });
+  }, 30_000);
 });

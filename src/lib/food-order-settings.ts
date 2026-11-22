@@ -9,7 +9,7 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
 /**
- * The food-order settings singleton (fork #121): the food officer's email
+ * The food-order settings singleton (fork triyder/AlpineClubBookingsNZ#121): the food officer's email
  * address and what the club calls them.
  *
  * Follows `maintenance-report-settings.ts`: the row is created LAZILY on first
@@ -21,7 +21,7 @@ import { prisma } from "@/lib/prisma";
  * email", which refuses new orders. An outage can stop orders being taken; it
  * can never accept an order that nobody is told about.
  *
- * THE ADDRESS IS CHECKED ONLY AS AN EMAIL ADDRESS (fork #121 owner decision 10). It is
+ * THE ADDRESS IS CHECKED ONLY AS AN EMAIL ADDRESS (fork triyder/AlpineClubBookingsNZ#121 owner decision 10). It is
  * never matched against members or committee roles: keeping it current is the
  * committee's job.
  */

@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * Fork #121: the Food Orders settings card's API and the settings reader.
+ * Fork triyder/AlpineClubBookingsNZ#121: the Food Orders settings card's API and the settings reader.
  *
  * - Any valid email address saves; an invalid one is refused; an empty one
  *   clears it (ordering then reads as not set up). It is never checked against
- *   members (fork #121 owner decision 10).
+ *   members (fork triyder/AlpineClubBookingsNZ#121 owner decision 10).
  * - Lodge Operations view reads, edit saves; the module being off is a 404.
  * - Every failure of the reader is closed: no row, a bad stored value or a
  *   database error reads as "no officer email".

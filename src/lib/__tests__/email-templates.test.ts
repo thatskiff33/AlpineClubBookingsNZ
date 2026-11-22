@@ -788,11 +788,14 @@ describe("email-templates", () => {
       expect(html).toContain("Your Waitlist Place Is Back");
       expect(html).toContain("Mike");
 
-      // Same facts, same rows, same order as waitlistOfferExpiredTemplate — the
-      // member still needs to know which nights and where they now sit.
+      // Same facts, same rows, same labels, same order as
+      // waitlistOfferExpiredTemplate — the member still needs to know which
+      // nights and where they sit. "Your Position" since #5410: the number is
+      // the booking's place in the live queue, its old place, not a new one.
       expect(html).toContain("Check-in");
       expect(html).toContain("Check-out");
-      expect(html).toContain("New Position");
+      expect(html).toContain("Your Position");
+      expect(html).not.toContain("New Position");
       expect(html).toContain("#3");
 
       // The reassurance is the entire reason this template exists: the club's

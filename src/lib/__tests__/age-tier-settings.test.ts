@@ -219,7 +219,9 @@ describe("getAgeTierSettings fallback", () => {
     // AgeTierSetting.xeroContactGroupId / xeroContactGroupName in generated SQL
     // one release BEFORE the #2130 STEP 2 contract migration
     // 20260721130000_contract_drop_ismember_and_agetier_xero_columns dropped
-    // them, which is what made that drop legal. The columns are gone now, so a
+    // them. A narrowed read does not make a drop safe on its own (INV-OPS-005);
+    // it sufficed here because both columns are nullable with no default, so no
+    // INSERT named them either. The columns are gone now, so a
     // no-select findMany would be a hard 42703; the pin stays to stop someone
     // removing the explicit select and reintroducing one. Inspects the mock
     // call args.

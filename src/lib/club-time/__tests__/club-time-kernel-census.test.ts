@@ -273,7 +273,7 @@ describe("the legacy adapter is an adapter, not a second implementation", () => 
       cannot catch one whose shape is identical — which is the likelier
       regression, because the obvious way to "fix" a formatting bug in an adapter
       is to build a formatter there. Two implementations that agree today are two
-      implementations, and CT-6 has to delete one of them.
+      implementations, and the kernel exists to leave one of them.
     */
     for (const adapter of ["src/lib/date-only.ts"]) {
       const source = stripComments(
@@ -283,8 +283,8 @@ describe("the legacy adapter is an adapter, not a second implementation", () => 
       expect(
         source.includes("new Intl.DateTimeFormat"),
         `${adapter} builds its own Intl.DateTimeFormat again. It is a ` +
-          "compatibility adapter over @/lib/club-time (CT-2, #2990) and CT-6 (#2991) " +
-          "deletes it; a formatter here is a second rule system growing back under " +
+          "compatibility adapter over @/lib/club-time (CT-2, #2990) that #2991 (CT-6) " +
+          "closed with, kept as a reviewed adapter; a formatter here is a second rule system growing back under " +
           "the one the epic exists to establish.",
       ).toBe(false);
     }

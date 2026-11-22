@@ -1978,8 +1978,8 @@ re-verify an entry.
   that mapper the only production season mapping", ran **2,589ms** alone, over
   half the budget with the machine otherwise idle. Under the smaller batch it
   **timed out**. This is the entry closest to being a real per-test budget
-  problem rather than a load artefact, and it is a candidate for an inline
-  budget like the next entry's.
+  problem rather than a load artefact, so since #5407 its three tree-reading
+  tests carry an inline 30,000ms budget, like the entries below.
 - [`src/lib/__tests__/hut-leader-change-last-night.test.tsx`](../src/lib/__tests__/hut-leader-change-last-night.test.tsx)
   — measured 13 October 2026 (vitest 5.0.3, Node 24, WSL2): run alone its
   first test, which absorbs the Hut Leaders page's first jsdom render, took
@@ -1995,6 +1995,31 @@ re-verify an entry.
   now waits for the settled scope before typing (#4085), and keeps the
   30,000ms `describe` budget for the full-page render itself.
 
+Four more suites, and two cases of a fifth, carry an inline 30,000ms budget
+since #5407 (measured 22 November 2026 on an in-use 20-core Windows 11 host,
+vitest 5.1.0, Node 24, with other lanes running). Lanes sharing that host
+saw each time out at 5,000ms, and an isolated `pnpm exec vitest run <file>`
+on it did too, so these are not "pass alone" entries: the budget is the fix,
+not a classification. Each loops or walks `src/`, and its 5s default measured
+only that the host was busy.
+
+- [`src/lib/__tests__/cli-server-only-reach-census.test.ts`](../src/lib/__tests__/cli-server-only-reach-census.test.ts)
+  — the "no static or dynamic path to `next/headers`" walk timed out at 5,000ms.
+- [`src/lib/__tests__/app-currency-import-census.test.ts`](../src/lib/__tests__/app-currency-import-census.test.ts)
+  — the "none of the four retired names" scan timed out at 5,000ms.
+- [`src/lib/__tests__/auth-session-max-age.test.ts`](../src/lib/__tests__/auth-session-max-age.test.ts)
+  — the hourly-refresh loops (one handler round trip per simulated hour, up to
+  722 for the 720-hour cap) timed out at 5,000ms.
+- [`src/lib/__tests__/bed-allocation-lock-topology-contract.test.ts`](../src/lib/__tests__/bed-allocation-lock-topology-contract.test.ts)
+  — its two whole-of-`src/` cases (the member-key restore census and the
+  `Booking.lodgeId` writer scan) timed out at 5,000ms.
+- [`src/lib/__tests__/admin-hubs-registry.test.ts`](../src/lib/__tests__/admin-hubs-registry.test.ts)
+  — three tree-reading or grid-wide cases ("reproduces canOpenAdminPath for every
+  permission grid", "are linked from nowhere in the code", and the reviewed-importers
+  scan) timed out at 5,000ms. The "linked from nowhere" case walks `src/`,
+  `e2e/` and `scripts/`, so since #5439 it carries `CENSUS_TIMEOUT_MS`
+  (90,000ms) instead.
+
 Of the entries above, the two 2026-09-19 batches covered the first five; they
 produced no timeout, so their figures show how close each suite runs to the
 budget under a batch of that size, not a red. The reds came later, on 20
@@ -2006,6 +2031,24 @@ batch: the 141 files vitest selects for the filters `census`, `contract` and
 passed alone immediately afterwards. That is the evidence of the limit being
 crossed; a lane running any such batch beside another lane's tests, a build, or
 a typecheck is where it will be crossed again.
+
+### Knip on a Windows host reports two unused exports
+
+Measured under #5407: on unchanged `main`,
+`pnpm run knip` reports `setStripeClientForTests` and `resetStripeClientForTests`
+as unused exports, and CI's Linux run passes. Two test files reach them through
+the `@/` alias: `src/test/providers/provider-transports.test.ts` (static import)
+and `src/test/providers/stripe-webhook-round-trip.realdb.test.ts` (dynamic
+import). `tsconfig.json` excludes every test file. On that host knip credits
+neither, and leaves `@/` unresolved for a test file outside a `__tests__`
+directory;
+lifting the test exclusions from a copy of `tsconfig.json` clears both lines.
+`knip.jsonc` cannot carry the fix: its `tsConfig` is a command-line flag, CI runs
+`pnpm exec knip`, and a `paths` entry did not change the result. Classify the two
+lines as environmental. Do not delete the exports or edit `knip.jsonc` to silence
+them, and take the verdict from CI. The same run suggests removing `awk`,
+`pg_dump` and `gunzip` from `ignoreBinaries`; those are hints, they do not fail
+the run, and their cause is not established, so leave the entries in place.
 
 ## The shared race harness: declare the environment role per suite, and put it back
 
