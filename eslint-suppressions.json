@@ -1247,7 +1247,7 @@
   },
   "src/components/edit-booking/price-summary-card.tsx": {
     "design-system/no-raw-input": {
-      "count": 3
+      "count": 2
     }
   },
   "src/components/finance/charts/mix-pie-chart.tsx": {
