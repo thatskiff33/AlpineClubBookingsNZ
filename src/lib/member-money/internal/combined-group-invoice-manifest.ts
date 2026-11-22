@@ -3,11 +3,8 @@ import type { LineItem } from "xero-node";
 import { prisma } from "../../prisma";
 import logger from "../../logger";
 import { storedInvoiceRequestLines } from "../../xero-json";
-import {
-  committedGroupChildrenWhere,
-  storedGroupInvoiceChildBookingIds,
-  type GroupSettlementInvoiceLines,
-} from "../../xero-group-settlement-invoice-lines";
+import { committedGroupChildrenWhere, storedGroupInvoiceChildBookingIds } from "../../xero-group-settlement-invoice-children";
+import type { GroupSettlementInvoiceLines } from "../../xero-group-settlement-invoice-lines";
 import {
   groupSettlementInvoiceCreateKey,
   parseGroupSettlementInvoiceAttempt,
