@@ -20,6 +20,7 @@ import { z } from "zod";
 import { availabilityQuerySchema } from "@/lib/availability-query-schema";
 import { bookingIdParamsSchema, cancelBookingMutationSchema } from "@/lib/booking-cancel-schema";
 import { bookingCreateCoreShape } from "@/lib/booking-create-fields";
+import { getAdminRouteRequirement, type AdminAccessRequirement } from "@/lib/admin-permissions";
 import type { ConnectionShape } from "@/lib/connection-projection";
 import {
   AGE_GROUPS_CONNECTION_SHAPE,
@@ -53,6 +54,8 @@ import { memberNotificationPreferencesConnectionUpdateSchema } from "@/lib/membe
 import { memberProfileConnectionUpdateSchema } from "@/lib/member-profile-update-schema";
 import { noticeIdParamsSchema } from "@/lib/notices-shared";
 import type { StepUpHttpMethod } from "@/lib/step-up-routes";
+
+import { BOOKINGS_OFFICER_ACTIONS } from "./bookings-officer";
 
 /**
  * `read` changes nothing. `write` changes something the member can undo.
@@ -115,7 +118,8 @@ export interface McpWebsiteOnlyAction {
 
 const bookingIdParams = bookingIdParamsSchema;
 
-export const MCP_ACTIONS: readonly McpAction[] = [
+/** The member's own actions (ALP-653, ALP-718). */
+const MEMBER_ACTIONS: readonly McpAction[] = [
   {
     id: "get_availability",
     title: "Check lodge availability",
@@ -391,6 +395,14 @@ export const MCP_ACTIONS: readonly McpAction[] = [
   },
 ];
 
+/**
+ * Every action. An officer action is one whose route `getAdminRouteRequirement`
+ * resolves to an admin area: it is offered only to someone holding that area
+ * at that level (`mcpActionAdminRequirement`), and its route decides with the
+ * officer's own permissions, exactly as on the admin screens.
+ */
+export const MCP_ACTIONS: readonly McpAction[] = [...MEMBER_ACTIONS, ...BOOKINGS_OFFICER_ACTIONS];
+
 export const MCP_WEBSITE_ONLY_ACTIONS: readonly McpWebsiteOnlyAction[] = [
   {
     id: "pay_for_booking",
@@ -418,6 +430,17 @@ export const MCP_WEBSITE_ONLY_ACTIONS: readonly McpWebsiteOnlyAction[] = [
 /** `/api/bookings/[id]` → `src/app/api/bookings/[id]/route.ts`. */
 export function mcpActionRouteFile(action: Pick<McpAction, "path">): string {
   return `src/app${action.path}/route.ts`;
+}
+
+/**
+ * The admin area and level an officer action needs, or null for a member
+ * action. Read from the route's own rule (`admin-permissions.ts`), never
+ * copied onto the entry, so the action and the admin screen cannot disagree.
+ */
+export function mcpActionAdminRequirement(
+  action: Pick<McpAction, "path" | "method">,
+): AdminAccessRequirement | null {
+  return getAdminRouteRequirement(action.path, action.method);
 }
 
 export function findMcpAction(id: string): McpAction | undefined {

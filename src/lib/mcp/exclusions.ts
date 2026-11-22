@@ -44,23 +44,39 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
 export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_REASONS;
 
 /**
+ * Officer areas whose every route method has been decided: each is a
+ * catalogue action or has a permanent reason. A route added to one of these
+ * areas is unclassified until someone decides about it.
+ *
+ * - `bookings` (Bookings & Beds): ALP-719.
+ */
+const MCP_DECIDED_ADMIN_AREAS = ["bookings"] as const satisfies readonly AdminPermissionArea[];
+
+type McpDecidedAdminArea = (typeof MCP_DECIDED_ADMIN_AREAS)[number];
+
+/**
  * The task that will bring each remaining group of routes into the catalogue.
  * The member keys are the four follow-ons ALP-718 split its member routes
- * into; the rest are the officer areas.
+ * into; the rest are the officer areas not yet decided.
  */
 export const MCP_NOT_YET_TASKS = {
   memberBookings: "ALP-794",
   memberFamilyAndMembership: "ALP-795",
   memberLodgeLife: "ALP-796",
   memberGroupsAndWholeLodge: "ALP-797",
-  bookings: "ALP-719",
   membership: "ALP-720",
   finance: "ALP-721",
   lodge: "ALP-722",
   content: "ALP-723",
   support: "ALP-724",
   overview: "ALP-724",
-} as const satisfies Record<AdminPermissionArea | MemberNotYetGroup, string>;
+} as const satisfies Record<Exclude<AdminPermissionArea, McpDecidedAdminArea> | MemberNotYetGroup, string>;
+
+type McpNotYetAdminArea = Exclude<AdminPermissionArea, McpDecidedAdminArea>;
+
+function isNotYetAdminArea(area: AdminPermissionArea): area is McpNotYetAdminArea {
+  return !(MCP_DECIDED_ADMIN_AREAS as readonly AdminPermissionArea[]).includes(area);
+}
 
 type MemberNotYetGroup =
   | "memberBookings"
@@ -245,7 +261,10 @@ export function classifyMcpRoute(file: string, method: string): McpRouteClassifi
   const path = adminRouteApiPath(file);
   const adminArea = getAdminRouteRequirement(path, method)?.area;
   if (adminArea) {
-    return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS[adminArea]}` };
+    // A route in a decided area has no `not-yet` to fall back on.
+    return isNotYetAdminArea(adminArea)
+      ? { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS[adminArea]}` }
+      : { kind: "unclassified" };
   }
   if (FINANCE_NOT_YET_PREFIXES.some((prefix) => underPrefix(path, prefix))) {
     return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.finance}` };

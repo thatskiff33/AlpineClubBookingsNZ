@@ -10,6 +10,7 @@ import {
 } from "@/lib/date-only";
 import { getActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
 import { formatBookingReference } from "@/lib/booking-reference";
+import { OCCUPANCY_MONTH_PATTERN } from "@/lib/admin-bookings-api/occupancy";
 
 type OccupancyBookingSummary = {
   id: string;
@@ -38,7 +39,7 @@ export type OccupancyMonth = {
 export function parseOccupancyMonth(month: string | null):
   | { ok: true; month: string; startDate: Date; endDate: Date }
   | { ok: false; error: string } {
-  if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+  if (!month || !OCCUPANCY_MONTH_PATTERN.test(month)) {
     return { ok: false, error: "month is required as YYYY-MM" };
   }
 
@@ -47,7 +48,7 @@ export function parseOccupancyMonth(month: string | null):
     return { ok: false, error: "Invalid month" };
   }
 
-  // The `^\d{4}-\d{2}$` check above guarantees exactly two numeric segments.
+  // The `OCCUPANCY_MONTH_PATTERN` check above guarantees exactly two numeric segments.
   const [yearPart, monthPart] = month.split("-").map(Number);
   if (yearPart === undefined || monthPart === undefined) {
     return { ok: false, error: "Invalid month" };

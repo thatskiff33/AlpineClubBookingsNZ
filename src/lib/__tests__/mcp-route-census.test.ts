@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   MCP_ACTIONS,
   MCP_WEBSITE_ONLY_ACTIONS,
+  mcpActionAdminRequirement,
   mcpActionRouteFile,
 } from "@/lib/mcp/catalogue";
 import {
@@ -15,7 +16,9 @@ import {
   mcpPermanentExclusion,
 } from "@/lib/mcp/exclusions";
 import { fileExists, hasExport, unwrap, walkDir } from "@/lib/step-up-route-census-ast";
+import { getAdminRouteRequirement } from "@/lib/admin-permissions";
 import {
+  adminRouteApiPath,
   STEP_UP_HTTP_METHODS,
   STEP_UP_ROUTES,
   stepUpRouteKey,
@@ -225,13 +228,41 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     }
   });
 
-  it("leaves no route waiting on ALP-718, which decided its member routes", () => {
-    expect(Object.values(MCP_NOT_YET_TASKS)).not.toContain("ALP-718");
-    const waiting = routeMethods.filter((route) => {
-      const result = classifyMcpRoute(route.file, route.method);
-      return result.kind === "excluded" && result.reason === "not-yet:ALP-718";
-    });
+  // ALP-718 decided its member routes; ALP-719 the Bookings & Beds officer routes.
+  it.each(["ALP-718", "ALP-719"])("leaves no route waiting on %s, which decided its routes", (task) => {
+    expect(Object.values(MCP_NOT_YET_TASKS)).not.toContain(task);
+    const waiting = routeMethods
+      .filter((route) => {
+        const result = classifyMcpRoute(route.file, route.method);
+        return result.kind === "excluded" && result.reason === `not-yet:${task}`;
+      })
+      .map((route) => stepUpRouteKey(route.file, route.method));
     expect(waiting).toEqual([]);
+  });
+
+  it("brings every Bookings & Beds officer route in, or keeps it website-only for a stated reason", () => {
+    const bookingsRoutes = routeMethods.filter(
+      (route) => getAdminRouteRequirement(adminRouteApiPath(route.file), route.method)?.area === "bookings",
+    );
+    expect(bookingsRoutes.length).toBeGreaterThan(90);
+    for (const route of bookingsRoutes) {
+      const result = classifyMcpRoute(route.file, route.method);
+      const key = stepUpRouteKey(route.file, route.method);
+      expect(result.kind === "action" || (result.kind === "excluded" && !result.reason.startsWith("not-yet:")), key).toBe(true);
+    }
+    // A new route in a decided area is not covered by a neighbour's decision.
+    expect(classifyMcpRoute("src/app/api/admin/bookings/[id]/brand-new/route.ts", "POST")).toEqual({
+      kind: "unclassified",
+    });
+  });
+
+  it("answers a connection on every officer action only through the connection projection", () => {
+    // A member action's route may answer with a complete shape (stage 1); an
+    // officer route also feeds the admin screens, so it must project.
+    const unprojected = [...new Set(
+      MCP_ACTIONS.filter((action) => mcpActionAdminRequirement(action) !== null).map(mcpActionRouteFile),
+    )].filter((file) => !/\bconnectionJson\(|\bprojectForConnection\(/.test(readFileSync(file, "utf8")));
+    expect(unprojected).toEqual([]);
   });
 
   it("points every catalogue entry at a route method that exists", () => {
@@ -241,9 +272,11 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     expect(stale).toEqual([]);
   });
 
-  it("decides officer reach in a catalogued route only on the member-only user", () => {
+  it("decides officer reach in a catalogued member route only on the member-only user", () => {
     const methodsByFile = new Map<string, Set<string>>();
-    for (const action of MCP_ACTIONS) {
+    // An officer action's route decides with the officer's own permissions,
+    // as the admin screen does: only member actions are read here.
+    for (const action of MCP_ACTIONS.filter((entry) => mcpActionAdminRequirement(entry) === null)) {
       const file = mcpActionRouteFile(action);
       methodsByFile.set(file, (methodsByFile.get(file) ?? new Set<string>()).add(action.method));
     }

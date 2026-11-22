@@ -24,6 +24,7 @@ import { FORWARDED_FOR_HEADER } from "@/lib/rate-limit-http";
 
 import { recordMcpAudit } from "./audit";
 import {
+  mcpActionAdminRequirement,
   mcpActionInputSchema,
   mcpActionRouteFile,
   splitMcpActionArguments,
@@ -124,11 +125,12 @@ async function recordCall(action: McpAction, caller: McpCaller, status: number |
     await recordMcpAudit({
       action: "MCP_ACTION_CALLED",
       actorMemberId: caller.memberId,
-      // Every stage 1 change action acts on the connected member's own
-      // records: a draft is theirs, and the cancel route refuses a
-      // connection any booking but its member's own (`INV-MCP-006`). An
-      // officer action (ALP-719) must name the record's member here instead.
-      subjectMemberId: caller.memberId,
+      // A member action acts on the connected member's own records: a draft
+      // is theirs, and the cancel route refuses a connection any booking but
+      // its member's own (`INV-MCP-006`). An officer action acts on the
+      // club's records, so the row names no subject: the route's own audit
+      // row names the record it changed, as it does for the admin screen.
+      subjectMemberId: mcpActionAdminRequirement(action) === null ? caller.memberId : undefined,
       grantId: caller.grantId,
       severity: action.kind === "destructive" ? "important" : "info",
       succeeded,
