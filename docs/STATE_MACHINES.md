@@ -3351,8 +3351,10 @@ the switch puts it back in its original place (`INV-LOCKOUT-060`).
 
 A waitlist position is never stored on a transition (#5402, `INV-CAP-041`). It
 is read from the live queue whenever it is shown, so every transition out of
-`WAITLISTED` (cancel, offer, force-confirm, the past-date cron, a cross-lodge
-accept) moves the entries behind it up without writing anything to them, and a
+`WAITLISTED` (cancel, offer, force-confirm, the past-date cron) moves the entries
+behind it up without writing anything to them. An offered entry is already out
+of the count, so its accept (same-lodge, or the cross-lodge
+`WAITLIST_OFFERED -> CANCELLED` replacement) changes no one's number, and a
 revert to `WAITLISTED` (an expired offer, a capacity-lost or failed confirm,
 return-to-waitlist) puts the entry back at its original join time. Exits still
 write `waitlistPosition: null` until that column is dropped.

@@ -253,6 +253,36 @@ before this release skips a privacy body that exactly matches the replaced
 starter text and warns in the preview (#2511), but can set the "Last updated"
 date back; re-check `/privacy` after any import.
 
+### Re-provision the AI Diagnostics role after the upgrade (#5402)
+
+**Who needs it.** A deployment that has AI Diagnostics turned on with its
+read-only database role (`AI_DIAGNOSTICS_DATABASE_URL`). Others can skip this.
+
+**What changes.** The booking search no longer reports a waitlist position,
+because positions are now read from the live queue and the stored column is
+being retired. Its grant on `Booking."waitlistPosition"` leaves the allowlist.
+The diagnostics privilege check refuses a role that can read any column the
+allowlist does not name, so until the role is re-provisioned every SQL-backed
+diagnostics tool refuses with "database role unsafe". Nothing else is
+affected.
+
+**What to do, once, after the new colour is serving.** Re-run the provisioning
+from the live app's environment, with the same password the role's connection
+string already uses (it sets the password every time):
+
+```bash
+AI_DIAGNOSTICS_DB_PASSWORD='<the existing password>' pnpm run diagnostics:provision-role
+```
+
+Use `AI_DIAGNOSTICS_PROVISION_DATABASE_URL` set to the operator connection if
+your deployment uses the least-privilege database roles
+([deployment guide](ai-diagnostics/deployment.md#provisioning)). Do it after
+cutover, not before: the previous release still expects the old grant and
+refuses the role once it is gone.
+
+**Rollback.** Rolling back to the previous release needs the role provisioned
+by that release's code: re-run the same command from the old release.
+
 ---
 
 ## v0.13.2 → v0.14.0

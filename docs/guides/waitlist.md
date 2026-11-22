@@ -45,7 +45,11 @@ which by definition that booking is not. See
 
 3. **What the position means.** It is the entry's place in its own lodge's queue
    right now, worked out each time the page loads, so it moves up as soon as
-   anyone ahead cancels, is offered a bed, is confirmed or drops off. It counts
+   anyone ahead cancels, is offered a bed, is confirmed or drops off. It can
+   also move down: an entry whose offer lapsed, a silenced entry whose **No
+   emails** is turned off, or a booking returned to the waitlist takes its
+   original place again, and where the queues are ordered by join time alone,
+   an older opt-in from another lodge counts ahead. It counts
    only entries at the same lodge whose nights overlap, so two entries can both
    be #1 at different lodges or on stays that do not overlap. Where your club
    lets members opt into another lodge and orders the queues by join time

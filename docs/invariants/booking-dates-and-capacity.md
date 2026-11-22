@@ -1702,7 +1702,11 @@ capacity or double-booking violation.
 - **`Booking.waitlistPosition` is retired.** No path writes a non-null value
   and none reads it; exits keep writing `null` until the column is dropped.
 - **Reads take no lock.** A writer passes its own `tx` after its locks; a
-  screen passes `prisma`. No advisory key, order or transaction changed.
+  screen passes `prisma`. No advisory key, order or transaction changed. A
+  quoted figure can be one place out when an unexcluded change commits at the
+  same moment (a "No emails" flip, another lodge's opt-in under `MERGED`, two
+  same-lodge creates); screens correct on the next read and nothing branches on
+  it (`docs/CONCURRENCY_AND_LOCKING.md`).
 - Guards: `waitlist-queue.test.ts` (the order against the old inline code, the
   reader against the offer pass's walk), `waitlist-position-census.test.ts`,
   `waitlist-queue-position.realdb.test.ts`.

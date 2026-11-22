@@ -9,7 +9,14 @@
   A booking with **No emails** switched on is no longer counted in anyone's
   position and shows no number of its own; the members behind it move up while
   it is silenced, and it returns to its original place when the switch is turned
-  off. The position counts only entries at the same lodge on overlapping nights,
-  and is a guide rather than a promise: a smaller group further back can still
-  be offered a bed a larger group ahead would not fit. AI Diagnostics no longer
-  reports a waitlist position on its booking search.
+  off. The position counts entries at the same lodge on overlapping nights and,
+  where the club orders the queues by join time alone, older entries from other
+  lodges that opted into this one. It can move down as well as up, for example
+  when a lapsed offer takes its place back. It is a guide rather than a promise:
+  a smaller group further back can still be offered a bed a larger group ahead
+  would not fit.
+
+  AI Diagnostics no longer reports a waitlist position on its booking search.
+  If you use AI Diagnostics, re-run `pnpm run diagnostics:provision-role` once
+  after the upgrade, or its database tools refuse to run; the steps are in
+  `docs/UPGRADING.md`.
