@@ -185,7 +185,7 @@ validated server-side against configured bounds).
 > route serves three admin previews, all read-only (never stamp `lastSeenAt`):
 > `?previewDevice=<id>` (the device's lodge + template), `?preview=1&templateId=<id>[&previewLodge=<id>]`
 > (an authored v2 template against an **explicit** lodge — validated active,
-> club default when omitted; the old silent default is gone, #64), and
+> club default when omitted; the old silent default is gone, hoppers99/AlpineClubBookingsNZ#64), and
 > `?preview=1` (the club-default fallback board, default lodge; the legacy
 > `&templateKey=…` param was removed in #86 / LTV-040). These honour a
 > full-admin session. A fourth caller, `?previewGrant=<token>`, is a signed
@@ -785,8 +785,8 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > straight to the existing `/api/admin/display/lodge-config` GET/PUT route (which
 > always accepted a `lodgeId` — the old page just never sent it), so the surface
 > now edits the lodge being viewed rather than always the club default lodge.
-> That closes the MVP bug (old backlog #64) where a second lodge's config
-> silently edited the default lodge, and consolidates old backlog #62 ("config
+> That closes the MVP bug (old backlog hoppers99/AlpineClubBookingsNZ#64) where a second lodge's config
+> silently edited the default lodge, and consolidates old backlog hoppers99/AlpineClubBookingsNZ#62 ("config
 > belongs in the lodge configuration UI"). The route, its validation (bad
 > keys/values → 400), and token resolution at serve time are unchanged. The old
 > `/admin/display/settings` path redirects to Devices
@@ -815,7 +815,7 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > `lastSeenAt`, and works on no other route. The lodge is **explicit**
 > (`?previewLodge`, validated active; club default when omitted; a selector
 > appears next to Preview when multi-lodge is on) and the board shows a
-> "previewing against <lodge>" line near the clock — the old silent default (#64)
+> "previewing against <lodge>" line near the clock — the old silent default (hoppers99/AlpineClubBookingsNZ#64)
 > is gone. The **simulated-date** input (LTV-017) is now a **sibling** of the
 > picker button (it was nested inside it — invalid HTML that stopped a native
 > selection applying, #65). CSP is relaxed **only** for named same-origin paths,

@@ -216,7 +216,7 @@ export async function setServerNzApiKey(
  * that key goes with it (triyder/AlpineClubBookingsNZ#52): it was THAT connection's answer, and a key
  * issued later, or by a different server, may own different lodges. The panel
  * is read-only until the next download records a fresh list. The server's last
- * reported API version goes for the same reason (#49): it was that server's
+ * reported API version goes for the same reason (triyder/AlpineClubBookingsNZ#49): it was that server's
  * answer. Both in ONE write.
  *
  * `tx` is a `withServerNzConnectionTransaction` client, by type (#4436): a

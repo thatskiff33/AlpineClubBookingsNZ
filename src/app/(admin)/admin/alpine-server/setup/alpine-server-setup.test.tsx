@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 /**
- * The setup page's version display (#49): both numbers beside the address and
+ * The setup page's version display (triyder/AlpineClubBookingsNZ#49): both numbers beside the address and
  * the key, ONE call to the version route per page entry, `0` with no key, a
  * could-not-check note that pauses nothing, and one mismatch message inside
  * the existing Connection section.
@@ -63,7 +63,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("AlpineServerSetup version display (#49)", () => {
+describe("AlpineServerSetup version display (triyder/AlpineClubBookingsNZ#49)", () => {
   it("asks the version route exactly once on entry and shows both numbers", async () => {
     versionRouteAnswers({ status: "match", serverVersion: "2.6", expected: "2.6", checkedAt: "2026-07-01T00:00:00.000Z", couldNotCheck: false, missingBaseUrl: false });
     render(<AlpineServerSetup initialState={initial()} />);
@@ -242,7 +242,7 @@ describe("AlpineServerSetup Download summary (triyder/AlpineClubBookingsNZ#64)",
   });
 });
 
-describe("AlpineServerSetup when another sync is running (#66)", () => {
+describe("AlpineServerSetup when another sync is running (triyder/AlpineClubBookingsNZ#66)", () => {
   it.each(["upload", "download"])("shows the route's message when %s is refused because a sync is running", async (direction) => {
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (String(url).includes("/api/admin/alpine-server/version")) {

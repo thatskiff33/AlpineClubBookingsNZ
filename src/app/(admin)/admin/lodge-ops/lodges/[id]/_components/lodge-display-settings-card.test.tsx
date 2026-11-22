@@ -33,7 +33,7 @@ import { LodgeDisplaySettingsCard } from "./lodge-display-settings-card";
 
 // LTV-035 (#81): the per-lodge display settings card edits THE LODGE BEING
 // VIEWED. The old /admin/display/settings surface never sent a lodgeId, so it
-// always read and wrote the club default lodge — the MVP bug (old backlog #64)
+// always read and wrote the club default lodge — the MVP bug (old backlog hoppers99/AlpineClubBookingsNZ#64)
 // where editing a second lodge's config silently edited the default lodge. These
 // tests pin the fix: every GET and PUT carries the viewed lodgeId, and a second
 // lodge round-trips its own id, never the default.
@@ -114,7 +114,7 @@ describe("LodgeDisplaySettingsCard", () => {
     expect(screen.getByDisplayValue("Committee meets Sunday")).toBeTruthy();
   });
 
-  it("saves against the viewed lodge — the PUT carries that lodgeId (regression: old #64 always wrote the default lodge)", async () => {
+  it("saves against the viewed lodge — the PUT carries that lodgeId (regression: old hoppers99/AlpineClubBookingsNZ#64 always wrote the default lodge)", async () => {
     stubFetch({
       "lodge-whakapapa": lodge({
         lodgeId: "lodge-whakapapa",

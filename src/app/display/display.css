@@ -377,7 +377,7 @@
   font-weight: 600;
 }
 
-/* --- whole-lodge blockout (issue #58; mocks whole-lodge.html A/B/C) ------- */
+/* --- whole-lodge blockout (issue hoppers99/AlpineClubBookingsNZ#58; mocks whole-lodge.html A/B/C) ------- */
 
 /* Board variant: grid chrome stays, the block panel spans the booked nights. */
 .display-blockout-board {
@@ -537,7 +537,7 @@
   margin-top: 0.7vmin;
 }
 
-/* --- welcome panel (issue #58; mock whole-lodge-rotating.html B) ---------- */
+/* --- welcome panel (issue hoppers99/AlpineClubBookingsNZ#58; mock whole-lodge-rotating.html B) ---------- */
 
 .display-welcome {
   height: 100%;
@@ -588,7 +588,7 @@
 .display-tile-value { font-size: 2.7vmin; font-weight: 750; }
 .display-tile-value small { font-weight: 600; color: var(--display-muted); font-size: 1.9vmin; }
 
-/* --- singles by-booking board (issue #58; mock singles-by-booking.html) --- */
+/* --- singles by-booking board (issue hoppers99/AlpineClubBookingsNZ#58; mock singles-by-booking.html) --- */
 
 .display-singles-board {
   display: grid;

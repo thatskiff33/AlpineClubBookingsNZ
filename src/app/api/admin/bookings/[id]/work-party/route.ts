@@ -92,7 +92,7 @@ export async function GET(
  * "Add booking to work party" (fork #119), and with `action: "remove"`
  * "Remove from work party" (fork #130). `mode: "preview"` runs the whole
  * change and rolls it back, returning the figures and the settlement methods
- * offered (`settlementOptions`, fork #129) for the confirm dialog;
+ * offered (`settlementOptions`, triyder/AlpineClubBookingsNZ#129) for the confirm dialog;
  * `mode: "apply"` saves it, refusing if the figures moved since the preview.
  * Booking Officers and Full Admins (`bookings:edit`); the service re-authorises
  * the officer under its locks. The work and the money rules are in

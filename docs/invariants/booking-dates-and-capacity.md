@@ -234,7 +234,7 @@ covered?": many rows were stamped through the leader's check-out day.
 
 ### INV-DATE-006
 
-- **The lobby wall is deliberately mixed and stays fenced** (issue #58): it asks
+- **The lobby wall is deliberately mixed and stays fenced** (issue hoppers99/AlpineClubBookingsNZ#58): it asks
   BOTH models, each for its own job, and keeps its own code path
   (`src/lib/lodge-display-state.ts`). Its guest-name privacy gate
   (sole-occupancy detection) is a NIGHT count. Everything a viewer reads — who

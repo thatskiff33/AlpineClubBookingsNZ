@@ -14,7 +14,7 @@ import {
 
 /**
  * The answer to an Upload or Download press while another pass — the nightly
- * job, or another administrator's press — holds the sync claim (#66). Nothing
+ * job, or another administrator's press — holds the sync claim (triyder/AlpineClubBookingsNZ#66). Nothing
  * was attempted, so nothing is audited: the press is refused before any
  * request is built, and the administrator is told to try again. A container
  * killed mid-pass leaves the claim until it is reaped as stale (15 minutes),
@@ -106,11 +106,11 @@ export async function auditSyncFailure(
  * and download routes. Not a route file, so it may export freely.
  *
  * ONE audit write site for every refused or failed press of the button. A
- * version pause (#49) is refused LOCALLY, before any request is built, and is
+ * version pause (triyder/AlpineClubBookingsNZ#49) is refused LOCALLY, before any request is built, and is
  * still recorded here as a failure: an admin pressed a button and nothing
  * happened. Its details name only the two versions (INV-INT-005). The one
  * press NOT recorded is the one another pass is already running for
- * (`respondSyncRunning`, #66): that pass is the sync, and nothing failed.
+ * (`respondSyncRunning`, triyder/AlpineClubBookingsNZ#66): that pass is the sync, and nothing failed.
  */
 export async function respondToSyncError(
   error: unknown,

@@ -394,7 +394,7 @@ These family rules are enforced by automated tests (issue #1132):
     (`officerWorkPartyCorrection`) that no request body can carry, and a census
     pins its one caller (and the service refuses it without an officer, a
     caller transaction and a promo-only change). It moves money only through
-    the canonical booking edit's own settlement (fork #129): account credit by
+    the canonical booking edit's own settlement (triyder/AlpineClubBookingsNZ#129): account credit by
     default, a refund only when the officer chooses it where the edit itself
     offers one — to the card, or the edit's bank-transfer hand-back for
     Internet Banking (any other method is refused, 409) — and an organiser-paid

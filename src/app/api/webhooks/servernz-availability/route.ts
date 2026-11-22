@@ -33,7 +33,7 @@ import {
  * Its public lodge search shows non-members which lodges have room before they
  * click through to book on the lodge's own site. This answers, for ONE lodge
  * and stay, the free beds on each night of it as the member calendar counts
- * them (`nights`, #79: the server's bed planner shows them night by night) and
+ * them (`nights`, triyder/AlpineClubBookingsNZ#79: the server's bed planner shows them night by night) and
  * the fewest of them (`freeBeds`, triyder/AlpineClubBookingsNZ#62), from `freeBedsForStay` — and nothing
  * else: no guest, member, booking or hold detail.
  *

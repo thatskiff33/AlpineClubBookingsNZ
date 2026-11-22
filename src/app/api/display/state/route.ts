@@ -25,7 +25,7 @@ import { clubFormatValues } from "@/lib/club-format-server";
 //  - a PAIRED DEVICE (display-token cookie): the device's bound lodge and
 //    template; a successful fetch stamps lastSeenAt so admins can see a dead
 //    screen (the page polls this — no separate heartbeat needed).
-//  - an ADMIN PREVIEW (issue #52; the kiosk per-account preview pattern,
+//  - an ADMIN PREVIEW (issue hoppers99/AlpineClubBookingsNZ#52; the kiosk per-account preview pattern,
 //    upstream #1721): a full admin passes ?previewDevice=<id> (that device's
 //    lodge + template), ?preview=1&templateId=<id>[&previewLodge=<id>] (an
 //    AUTHORED v2 template against an explicit lodge — LTV-036, ADR-003 §5), or
@@ -123,7 +123,7 @@ async function resolvePreview(
     return { ...device, deviceId: previewDeviceId };
   }
 
-  // Authored v2 template preview (LTV-036, ADR-003 §5, shrinks #64). Templates
+  // Authored v2 template preview (LTV-036, ADR-003 §5, shrinks hoppers99/AlpineClubBookingsNZ#64). Templates
   // are lodge-agnostic, so the lodge is EXPLICIT: ?previewLodge=<id> (validated
   // to exist and be active) or the club default when omitted — never a silent
   // default. This is the admin-session/direct-navigation form; the sandboxed
@@ -313,7 +313,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
     }
     const template = resolveDisplayTemplateForDevice({ templateKey: null });
-    // The poll doubles as the device heartbeat (issue #52): only genuine
+    // The poll doubles as the device heartbeat (issue hoppers99/AlpineClubBookingsNZ#52): only genuine
     // device-token fetches stamp lastSeenAt — previews never do.
     await prisma.lodgeDisplayDevice.update({
       where: { id: deviceAuth.device.id },

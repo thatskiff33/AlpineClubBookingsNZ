@@ -61,7 +61,7 @@ export const OTHER_LODGE_ROOM_TYPES = [
   "DORMITORY",
 ] as const satisfies readonly OtherLodgeRoomType[];
 
-/** The `@db.Date` season starts and ends (#75): calendar dates, never instants (`INV-DATE-026`). */
+/** The `@db.Date` season starts and ends (triyder/AlpineClubBookingsNZ#75): calendar dates, never instants (`INV-DATE-026`). */
 export const OTHER_LODGE_DATE_FIELDS = [
   "winterSeasonStart",
   "winterSeasonEnd",
@@ -70,8 +70,8 @@ export const OTHER_LODGE_DATE_FIELDS = [
 ] as const;
 
 /**
- * The non-member rates (server API 2.2, #61): per person per night, NZD incl.
- * GST, a winter and a summer rate for each age group (#77). Stored and
+ * The non-member rates (server API 2.2, triyder/AlpineClubBookingsNZ#61): per person per night, NZD incl.
+ * GST, a winter and a summer rate for each age group (triyder/AlpineClubBookingsNZ#77). Stored and
  * handled here as INTEGER CENTS (INV-MONEY-001); the central server carries
  * dollars, and `@/lib/servernz-rate` is the only place the two meet. Display
  * only — nothing is charged from them.
@@ -113,7 +113,7 @@ export type OtherLodgeDataField = (typeof OTHER_LODGE_DATA_FIELDS)[number];
  * not on it), so the only columns excused are the identity and timestamp ones
  * — `centralId` (triyder/AlpineClubBookingsNZ#64) is identity too: the central server's key for the row,
  * written by the download merge, never edited or uploaded as data — and
- * `hiddenAt` (triyder/AlpineClubBookingsNZ#58) is lifecycle, and `ratesFromFees` (#77) a local setting.
+ * `hiddenAt` (triyder/AlpineClubBookingsNZ#58) is lifecycle, and `ratesFromFees` (triyder/AlpineClubBookingsNZ#77) a local setting.
  * When the check fails, the annotation names the unlisted column.
  */
 type UnlistedOtherLodgeColumn = Exclude<
@@ -298,7 +298,7 @@ export function normalizeOtherLodgeText(value: string | null | undefined) {
 // One shape for the admin create and PATCH routes AND for the rows the central
 // server sends: the remote is held to exactly the bounds the club's own officer
 // is held to, no looser and no tighter (see `servernz-api.ts` for why). The
-// rates differ only in form (#61): cents here and on the admin route, dollars
+// rates differ only in form (triyder/AlpineClubBookingsNZ#61): cents here and on the admin route, dollars
 // on the wire, so the pull takes `otherLodgeCommonDataShape` and adds the
 // server's dollar rates from `@/lib/servernz-rate`, held to the same bound.
 
@@ -408,7 +408,7 @@ export const otherLodgeCommonDataShape = {
   roomType: z.enum(OTHER_LODGE_ROOM_TYPES).nullable().optional(),
   // Held to http(s) only, because the PULL shares this shape: a lodge the
   // server already holds with an odd address still arrives (shown as text).
-  // The admin edit is held to the stricter rule (#55, its PATCH route).
+  // The admin edit is held to the stricter rule (triyder/AlpineClubBookingsNZ#55, its PATCH route).
   siteUrl: z.preprocess(
     blankToNull,
     boundedText(OTHER_LODGE_BOUNDS.siteUrl)
@@ -599,7 +599,7 @@ export type AdminOtherLodge = Omit<SerializedOtherLodge, "bookingOfficerPhone"> 
   owned: boolean;
   /** Owned AND keyed by a central id, so a new name renames it there (triyder/AlpineClubBookingsNZ#64). */
   renamable: boolean;
-  /** Owned only (#77): rates and dates from the Fees page, and why they cannot be, if so. */
+  /** Owned only (triyder/AlpineClubBookingsNZ#77): rates and dates from the Fees page, and why they cannot be, if so. */
   ratesFromFees?: boolean;
   feesProblem?: string;
   /**
@@ -617,7 +617,7 @@ export interface OtherLodgeReferences {
 
 /**
  * The admin list response: the rows, the owned list in its three states, and
- * whether syncing with the central server is paused for version (#49) - the
+ * whether syncing with the central server is paused for version (triyder/AlpineClubBookingsNZ#49) - the
  * panel shows a note linking to setup while it is. Read from the stored
  * answer; this route never contacts the server.
  */

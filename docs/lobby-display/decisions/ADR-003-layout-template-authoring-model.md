@@ -138,7 +138,7 @@ contribution model.
 A display specifies a lodge, so preview is **display-scoped** (kiosk-style — it
 renders that display's lodge; already correct via `previewDevice`). The
 template-editor quick preview must render against a **clearly-indicated lodge**,
-not silently the default (shrinks backlog #64). The **simulated date** (LTV-017)
+not silently the default (shrinks backlog hoppers99/AlpineClubBookingsNZ#64). The **simulated date** (LTV-017)
 is retained; its **picker markup is fixed** (backlog #65). Because previews now
 render admin HTML/CSS, preview renders in a **sandboxed iframe** so a template
 authored by one admin cannot run against another admin's session.
@@ -165,7 +165,7 @@ our own admin host may frame it.
 
 **Replaced:** the `DisplayTemplate` JSON-region model; the raw-JSON editor; the
 `Lodge.displayConfig` glob **editing location** (the per-lodge values move into
-the lodge configuration UI — backlog #62); the ADR-002 condition names (renamed
+the lodge configuration UI — backlog hoppers99/AlpineClubBookingsNZ#62); the ADR-002 condition names (renamed
 into the namespaced scheme — no alias map needed since nothing shipped).
 
 **Carried over unchanged:** pairing/auth (ADR-001, `LodgeDisplayDevice`); the

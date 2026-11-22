@@ -452,7 +452,7 @@ export async function buildDisplayState(
   const perBookingDayCounts = new Map<string, Map<string, number>>();
   // NIGHT counts (departure day excluded) drive whole-lodge detection: a
   // group leaving Monday morning still had the lodge to itself even when
-  // someone arrives Monday evening (issue #58 — the departure-day overlap
+  // someone arrives Monday evening (issue hoppers99/AlpineClubBookingsNZ#58 — the departure-day overlap
   // used to break the blockout for every back-to-back handover).
   const perBookingNightCounts = new Map<string, Map<string, number>>();
   const nightTotals = new Map<string, number>();
@@ -487,7 +487,7 @@ export async function buildDisplayState(
       // here, in either direction. It is the phantom night that matters — a
       // sole-occupancy count is what decides whether an unauthenticated screen
       // prints guests' names and phone numbers (INV-DATE-006, INV-DATE-023,
-      // issue #58). THAT SEPARATION IS WHAT MADE THE #2735 WIDENING SAFE:
+      // issue hoppers99/AlpineClubBookingsNZ#58). THAT SEPARATION IS WHAT MADE THE #2735 WIDENING SAFE:
       // couple this back to `visible` and the visibility rule has to narrow
       // again first.
       //
@@ -552,7 +552,7 @@ export async function buildDisplayState(
   //   also covers the group whose only presence in this window is that departure
   //   morning: they had the lodge to themselves on night `startDate - 1`, and
   //   naming fourteen people who were alone in the building is exactly the
-  //   disclosure issue #58 and design.md §10 refuse. The morning they leave is
+  //   disclosure issue hoppers99/AlpineClubBookingsNZ#58 and design.md §10 refuse. The morning they leave is
   //   not an exception to that (INV-DATE-006).
   //
   // Being a superset is the safety property: this can only ever WITHHOLD more

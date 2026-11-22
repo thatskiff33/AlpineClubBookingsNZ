@@ -30,10 +30,10 @@ import {
 // Per-lodge lobby display settings (LTV-035, #81). Relocated out of the retired
 // /admin/display/settings page into the lodge configuration hub so the controls
 // edit THE LODGE BEING VIEWED, not always the club default lodge (the MVP bug
-// from old backlog #64). The lodgeId of the hub is passed straight through to
+// from old backlog hoppers99/AlpineClubBookingsNZ#64). The lodgeId of the hub is passed straight through to
 // the existing GET/PUT /api/admin/display/lodge-config route — the route always
 // supported a lodgeId; the old surface just never sent it. Consolidates the
-// old backlog #62 "config belongs in lodge configuration" item.
+// old backlog hoppers99/AlpineClubBookingsNZ#62 "config belongs in lodge configuration" item.
 
 /* #2264 — ONE hint for the whole repeated config-key column, spelled once.
    The rows render inside a `.map()`, so a hook cannot be called per row; and a

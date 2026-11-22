@@ -203,7 +203,7 @@ describe("recordOtherLodgesDownload", () => {
   });
 });
 
-describe("the server's reported API version (#49)", () => {
+describe("the server's reported API version (triyder/AlpineClubBookingsNZ#49)", () => {
   it("reads the stored answer and when it was asked", async () => {
     mocks.findUnique.mockResolvedValue({
       otherLodgesEnabled: false,

@@ -15,7 +15,7 @@ const { mockPrisma, mockFlags, mockInstructions } = vi.hoisted(() => ({
     lodgeRoom: { findMany: vi.fn() },
     choreAssignment: { findMany: vi.fn() },
     // The route test below imports the state route, whose device path stamps
-    // lastSeenAt on success (issue #52).
+    // lastSeenAt on success (issue hoppers99/AlpineClubBookingsNZ#52).
     lodgeDisplayDevice: { findUnique: vi.fn(), update: vi.fn() },
     // Club branding for the header brand block (issue #56).
     clubTheme: { findUnique: vi.fn().mockResolvedValue(null) },
@@ -378,7 +378,7 @@ describe("buildDisplayState privacy matrix", () => {
     expect(JSON.stringify(state)).not.toContain("Student");
   });
 
-  it("keeps whole-lodge on a back-to-back handover: sole occupancy is measured on NIGHTS (issue #58)", async () => {
+  it("keeps whole-lodge on a back-to-back handover: sole occupancy is measured on NIGHTS (issue hoppers99/AlpineClubBookingsNZ#58)", async () => {
     // Group leaves Wednesday morning; a new booking arrives Wednesday evening.
     // Their departure-day visibility overlaps but their nights never do.
     const org = { firstName: "Harakeke", lastName: "College", ageTier: "NOT_APPLICABLE" as const };
@@ -475,7 +475,7 @@ describe("buildDisplayState privacy matrix", () => {
     // derived from its visible list again, the gap morning re-enters it as a
     // PHANTOM NIGHT on the 14th, the eight-guest booking stops being the sole
     // occupant, its whole-lodge blockout drops, and eight guest names appear on
-    // an unauthenticated public screen (INV-DATE-006, INV-DATE-023, issue #58).
+    // an unauthenticated public screen (INV-DATE-006, INV-DATE-023, issue hoppers99/AlpineClubBookingsNZ#58).
     const sparse = {
       ...guest("Gappy", "Guest", "ADULT", { start: "2026-04-13", end: "2026-04-16" }),
       // Nights 13 and 15 only — the 14th is NOT booked.
@@ -1089,7 +1089,7 @@ describe("buildDisplayState rules (#5345, INV-PUB-006)", () => {
 describe("GET /api/display/state (route)", () => {
   it("401s without a display token, 200s with one, and clamps the window", async () => {
     vi.resetModules();
-    // The route imports @/lib/auth for the admin preview path (issue #52);
+    // The route imports @/lib/auth for the admin preview path (issue hoppers99/AlpineClubBookingsNZ#52);
     // stub it so this Node-environment test never loads real next-auth.
     vi.doMock("@/lib/auth", () => ({
       auth: vi.fn().mockResolvedValue(null),
@@ -1408,7 +1408,7 @@ describe("buildDisplayState member-guest consent exclusion (D-12, #2307)", () =>
 //
 // The wall is UNAUTHENTICATED. It hangs in a public lobby and anyone standing
 // in front of it reads whatever the payload carries. The whole point of the
-// name gate (#58, design.md §10) is that some rows may not identify the people
+// name gate (hoppers99/AlpineClubBookingsNZ#58, design.md §10) is that some rows may not identify the people
 // on them, and an arrival time is a movement fact about identifiable people —
 // so it must ride the SAME gate the names ride, never a gate of its own.
 //

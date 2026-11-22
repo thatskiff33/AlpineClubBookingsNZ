@@ -17,7 +17,7 @@ const mockDeleteMany = vi.fn();
 const mockAmenityDeleteMany = vi.fn();
 const mockAmenityUpsert = vi.fn();
 
-// #77: the upload first refills this club's own lodge from its Fees page.
+// triyder/AlpineClubBookingsNZ#77: the upload first refills this club's own lodge from its Fees page.
 const mockFeesSync = vi.fn();
 vi.mock("@/lib/other-lodge-fees-sync", () => ({
   syncOwnOtherLodgesFromFees: (...args: unknown[]) => mockFeesSync(...args),
@@ -214,7 +214,7 @@ const WIRE_DETAILS = {
 };
 
 /**
- * The rates (#61) as this site holds them — integer cents under the `…Cents`
+ * The rates (triyder/AlpineClubBookingsNZ#61) as this site holds them — integer cents under the `…Cents`
  * columns — which is also what the pull hands the merge, because the wire
  * schema converts at the boundary. `RATES_DOLLARS` is the same set as the
  * upload sends it: the server's keys, in dollars.
@@ -370,7 +370,7 @@ describe("uploadOtherClubsToServer", () => {
     expect(mockRecordUpload).toHaveBeenCalledWith(newer, expect.objectContaining({ serverNzSettings: expect.anything() }));
   });
 
-  it("refills this club's own lodge from its Fees page BEFORE reading the changed rows (#77)", async () => {
+  it("refills this club's own lodge from its Fees page BEFORE reading the changed rows (triyder/AlpineClubBookingsNZ#77)", async () => {
     const order: string[] = [];
     mockFeesSync.mockImplementation(async () => {
       order.push("fees");
@@ -389,7 +389,7 @@ describe("uploadOtherClubsToServer", () => {
     expect(order).toEqual(["fees", "read"]);
   });
 
-  it("runs no refill while the owned list is unknown or unreadable (#77)", async () => {
+  it("runs no refill while the owned list is unknown or unreadable (triyder/AlpineClubBookingsNZ#77)", async () => {
     mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesOwnedLodges: null });
     await uploadOtherClubsToServer();
     mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesOwnedLodgesUnreadable: true });
@@ -750,7 +750,7 @@ describe("lodge details and amenities round trip", () => {
     expect(result).toMatchObject({ unchanged: 1 });
   });
 
-  it("writes a changed rate in cents (#61)", async () => {
+  it("writes a changed rate in cents (triyder/AlpineClubBookingsNZ#61)", async () => {
     mockPullOtherLodges.mockResolvedValue({
       lodges: [remoteLodge("Aorangi Ski Club", { winterRateAdultCents: 4800, summerRateAdultCents: null })],
       count: 1,
@@ -769,7 +769,7 @@ describe("lodge details and amenities round trip", () => {
     expect(result).toMatchObject({ updated: 1 });
   });
 
-  it("leaves the stored rates alone when the server sent none (#61)", async () => {
+  it("leaves the stored rates alone when the server sent none (triyder/AlpineClubBookingsNZ#61)", async () => {
     // A 2.1-shaped row as the wire schema hands it on: no rate keys at all.
     const noRates: Record<string, unknown> = remoteLodge("Aorangi Ski Club", { bedCapacity: 30 });
     for (const key of Object.keys(RATES_CENTS)) delete noRates[key];
@@ -2491,7 +2491,7 @@ describe("upload answers are matched by position and id, never by name (triyder/
   });
 });
 
-describe("upload leaves out a booking page address the server would refuse (#55)", () => {
+describe("upload leaves out a booking page address the server would refuse (triyder/AlpineClubBookingsNZ#55)", () => {
   it("sends the lodge without that address, keeps a good one, and names the lodge in a warning", async () => {
     mockFindMany.mockResolvedValue(
       ownAll([

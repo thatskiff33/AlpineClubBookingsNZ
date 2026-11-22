@@ -825,7 +825,7 @@ A correction moves no guest or night, so on a booking whose status already
 holds its beds the pricing pass skips the bed check (through
 `skipBookingLifecycleRules`, which there gates only capacity; a census pins
 that). A booking holding none yet takes the check, as a $0 settle makes it
-PAID. The money is fork #129's: no change fee, an Add's
+PAID. The money is triyder/AlpineClubBookingsNZ#129's: no change fee, an Add's
 reduction returned in full and untiered, a Remove's increase owed on the
 booking, with credit already given and refunds already paid left alone. Every
 other in-progress edit still refuses a promo change (`INV-MOD-019`).

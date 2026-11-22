@@ -12,7 +12,7 @@ import { clampPollSeconds } from "@/lib/lodge-display/poll-interval";
 //   active         — render the bound template from the latest good payload
 //   (stale)        — active with a stale-data flag when fetches keep failing
 //   preview-denied — ?preview/?previewDevice present but the caller is not a
-//                    signed-in full admin (the kiosk-preview pattern, #52)
+//                    signed-in full admin (the kiosk-preview pattern, hoppers99/AlpineClubBookingsNZ#52)
 //
 // PREVIEW MODE (?previewDevice=<id> or ?preview=1): the query string is
 // forwarded to the state API, which honours it only for a full admin; the

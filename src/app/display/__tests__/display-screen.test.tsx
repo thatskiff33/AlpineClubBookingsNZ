@@ -257,7 +257,7 @@ describe("DisplayScreen lifecycle", () => {
     expect(screen.getByText("Second Lodge")).toBeDefined();
   });
 
-  it("preview mode never pairs: denied shows the admin-login prompt, an admin session renders the board (issue #52)", async () => {
+  it("preview mode never pairs: denied shows the admin-login prompt, an admin session renders the board (issue hoppers99/AlpineClubBookingsNZ#52)", async () => {
     window.history.pushState({}, "", "/display?previewDevice=dev-9");
     try {
       // The preview query is forwarded verbatim to the state API.

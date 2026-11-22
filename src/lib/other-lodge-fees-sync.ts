@@ -27,7 +27,7 @@ import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { formatCentsPlain } from "@/lib/utils";
 
 /**
- * This club's own Other lodge, filled from its Fees page (#77, owner decisions
+ * This club's own Other lodge, filled from its Fees page (triyder/AlpineClubBookingsNZ#77, owner decisions
  * 16 Oct 2026). The **Non-Member** membership type's nightly rates on
  * **Admin → Fees** become the lodge's eight non-member rates, and the seasons
  * those rates belong to become its season start and end dates, so what other

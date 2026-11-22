@@ -19,7 +19,7 @@ import { isCapacityHoldingBookingStatus } from "@/lib/booking-status";
  *  - charges no change fee — an officer correction, not the member's change;
  *  - returns the reduction IN FULL (`calculateFullReductionSettlementOptions`,
  *    as #4533's), untiered: what ticking the box would have given. How it
- *    settles is `input.settlementMethod`, as any edit's (fork #129).
+ *    settles is `input.settlementMethod`, as any edit's (triyder/AlpineClubBookingsNZ#129).
  */
 export type OfficerWorkPartyCorrection = {
   readonly workPartyEventId: string;

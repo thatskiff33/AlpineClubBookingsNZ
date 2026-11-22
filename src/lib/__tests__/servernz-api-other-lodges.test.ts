@@ -273,7 +273,7 @@ const SERVER_UPLOAD_ITEM_KEYS = [
   "winterSeasonEnd",
   "summerSeasonStart",
   "summerSeasonEnd",
-  // Server API 2.2 (#61): the rates, under the SERVER's names, in dollars.
+  // Server API 2.2 (triyder/AlpineClubBookingsNZ#61): the rates, under the SERVER's names, in dollars.
   "winterRateUnder5",
   "winterRate5To11",
   "winterRate12To17",
@@ -399,9 +399,9 @@ describe("uploadOtherLodges — payload shape (triyder/AlpineClubBookingsNZ#50)"
   });
 });
 
-// ── Pull: the non-member rates (#61) ───────────────────────────────────────
+// ── Pull: the non-member rates (triyder/AlpineClubBookingsNZ#61) ───────────────────────────────────────
 
-describe("pullOtherLodges — non-member rates (#61, server API 2.2)", () => {
+describe("pullOtherLodges — non-member rates (triyder/AlpineClubBookingsNZ#61, server API 2.2)", () => {
   it("takes the server's dollars and hands the merge cents under this site's column names", async () => {
     respondWith({
       lodges: [remoteRow({ winterRateAdult: 45.5, winterRate5To11: 20, summerRateUnder5: 0, summerRateAdult: null })],

@@ -42,7 +42,7 @@ describe("the money an edit hands back (INV-SSOT, fork #132)", () => {
   });
 });
 
-describe("workPartyCreditBackCents (fork #129)", () => {
+describe("workPartyCreditBackCents (triyder/AlpineClubBookingsNZ#129)", () => {
   it("adds every credit route and never the refund", () => {
     const figures = {
       refundAmountCents: 9_000,

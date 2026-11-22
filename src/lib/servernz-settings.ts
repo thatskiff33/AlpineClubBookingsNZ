@@ -76,7 +76,7 @@ export interface ServerNzSettingsValues {
    */
   otherLodgesKeyedAt: string | null;
   /**
-   * The central server's API version as it last reported it (#49): `null`
+   * The central server's API version as it last reported it (triyder/AlpineClubBookingsNZ#49): `null`
    * until asked, `"unknown"` when the server answered 404 (it predates
    * versioning, a mismatch), otherwise a canonical `major.minor`. The mismatch
    * is computed from this and `SERVERNZ_EXPECTED_SERVER_VERSION`, never stored.
@@ -377,7 +377,7 @@ export async function recordOtherLodgesDownload(
 }
 
 /**
- * Record what the central server said its API version is (#49): a canonical
+ * Record what the central server said its API version is (triyder/AlpineClubBookingsNZ#49): a canonical
  * `major.minor`, or `SERVER_VERSION_UNKNOWN` when it answered 404. Written
  * AFTER the HTTP call has completed, only through `recordServerVersionIfCurrent`
  * (`servernz-version-record.ts`), whose short transaction passes `db` - there
@@ -405,7 +405,7 @@ export async function recordServerVersionCheck(
 
 /**
  * Forget everything the central server told this connection, in ONE write:
- * the owned-lodge list (triyder/AlpineClubBookingsNZ#52), transfer cursors and last reported version (#49).
+ * the owned-lodge list (triyder/AlpineClubBookingsNZ#52), transfer cursors and last reported version (triyder/AlpineClubBookingsNZ#49).
  * Called when the connection ends - the key is removed or replaced, or the
  * address moves - because all answers and sync positions belonged to it. One
  * upsert rather than separate writes, so a crash between them cannot

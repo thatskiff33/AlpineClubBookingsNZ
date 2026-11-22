@@ -372,7 +372,7 @@ export default function AdminDisplayTemplatesPage() {
   // directly: the host mints a signed grant and renders the authored template in
   // an `sandbox="allow-scripts"` iframe, so it can never execute against this
   // admin session. The lodge is passed explicitly so the preview is
-  // never a silent default (#64).
+  // never a silent default (hoppers99/AlpineClubBookingsNZ#64).
   function previewTemplate(item: TemplateListItem) {
     if (!previewLodgeId) {
       setMessage("Choose an explicit lodge before opening a preview.");

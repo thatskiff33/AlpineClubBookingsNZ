@@ -131,7 +131,7 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
     return { ...NOTHING_UPLOADED, ownedUnknown: true };
   }
 
-  // First bring this club's own lodge up to date with its Fees page (#77): a
+  // First bring this club's own lodge up to date with its Fees page (triyder/AlpineClubBookingsNZ#77): a
   // season that has rolled over, or a configuration import, moves its rates
   // here, and the row it rewrites is newer than the watermark, so it goes now.
   await syncOwnOtherLodgesFromFees("upload");
@@ -153,8 +153,8 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
   // server replaces its set for the lodge with what is sent, so a partial list
   // would delete the rest.
   // The rates leave as the server's dollar keys, never as the `…Cents`
-  // columns (#61): the server's item schema is strict and would refuse them.
-  // A booking page address the central server would refuse (#55: saved here
+  // columns (triyder/AlpineClubBookingsNZ#61): the server's item schema is strict and would refuse them.
+  // A booking page address the central server would refuse (triyder/AlpineClubBookingsNZ#55: saved here
   // before this site held it to the server's stricter rule) is LEFT OUT of
   // that lodge's item (owner decision), so the server keeps what it had and
   // the rest of the lodge, and every other lodge, still goes up. A refused
@@ -504,7 +504,7 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
       });
       // Another download recorded since this one started: its answer is newer,
       // so this one records nothing rather than write an older cursor back or
-      // forget ids that download has just keyed. Since #66 the buttons and the
+      // forget ids that download has just keyed. Since triyder/AlpineClubBookingsNZ#66 the buttons and the
       // nightly pass share the sync claim, so this guards the rarer case of a
       // claim reaped as stale under a pass still running.
       if (

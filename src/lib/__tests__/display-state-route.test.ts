@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Issue #52 (LTV-013): the /api/display/state auth matrix. The route serves
+// Issue hoppers99/AlpineClubBookingsNZ#52 (LTV-013): the /api/display/state auth matrix. The route serves
 // two callers — a paired device (whose poll doubles as the heartbeat) and an
 // admin preview (?previewDevice / ?preview) which must be read-only: it never
 // stamps lastSeenAt and is honoured only for a full-admin session.
@@ -194,7 +194,7 @@ describe("GET /api/display/state — device path", () => {
   });
 });
 
-describe("GET /api/display/state — admin preview (issue #52)", () => {
+describe("GET /api/display/state — admin preview (issue hoppers99/AlpineClubBookingsNZ#52)", () => {
   function loginAs(member: typeof ADMIN_MEMBER) {
     mockAuth.mockResolvedValue({ user: { id: member.id } });
     mockPrisma.member.findUnique.mockResolvedValue(member);
@@ -373,7 +373,7 @@ describe("GET /api/display/state — authored template preview (LTV-036)", () =>
       await stateRequest("?preview=1&templateId=tpl-7&previewLodge=lodge-b")
     );
     expect(res.status).toBe(200);
-    // The lodge is validated, never a silent default (#64).
+    // The lodge is validated, never a silent default (hoppers99/AlpineClubBookingsNZ#64).
     expect(mockResolveOptionalLodge).toHaveBeenCalledWith(
       expect.anything(),
       "lodge-b"

@@ -55,13 +55,13 @@ interface InitialState {
   otherLodgesEnabled: boolean;
   otherLodgesLastUploadAt: string | null;
   otherLodgesLastDownloadAt: string | null;
-  /** The stored server version (#49): null until asked, "unknown" for a 404. */
+  /** The stored server version (triyder/AlpineClubBookingsNZ#49): null until asked, "unknown" for a 404. */
   serverVersion: string | null;
   serverVersionCheckedAt: string | null;
 }
 
 /**
- * What the page knows about the server's version (#49): the stored answer at
+ * What the page knows about the server's version (triyder/AlpineClubBookingsNZ#49): the stored answer at
  * render, then whatever the version route reports. `couldNotCheck` is the
  * route's "the server could not be reached this time" - the last answer is
  * kept and shown as such, and it is NOT a mismatch. `missingBaseUrl` is a key
@@ -183,7 +183,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
   const describedByUnsaved = addressUnsaved ? addressUnsavedHint.fieldProps : {};
   const lodgeLinks = useLodgeLinkStep();
 
-  // The version check (#49): ONE call per page entry, from a mount effect,
+  // The version check (triyder/AlpineClubBookingsNZ#49): ONE call per page entry, from a mount effect,
   // and again only after a key or address is saved - never on re-render and
   // never on a timer, because the server rate-limits the version call per
   // token. The stored answer is shown while the call is in flight.
@@ -320,7 +320,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
       );
       const data = await res.json().catch(() => null);
       if (!res.ok) {
-        // The route refused for version (#49): it hands back both numbers, so
+        // The route refused for version (triyder/AlpineClubBookingsNZ#49): it hands back both numbers, so
         // the page shows them in the status block below without a second
         // server call - and the message points there rather than repeating
         // the same sentence twice.
@@ -334,7 +334,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
             `${direction === "upload" ? "Upload" : "Download"} paused: the server is on a different software version - see Server software version above.`,
           );
         }
-        // Another sync holds the claim (#66): nothing failed and nothing was
+        // Another sync holds the claim (triyder/AlpineClubBookingsNZ#66): nothing failed and nothing was
         // sent, so it is a notice, not an error.
         if (data?.code === OTHER_LODGES_SYNC_RUNNING_CODE && typeof data.error === "string") {
           setMessage({ kind: "warn", text: data.error });
@@ -500,7 +500,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
             ) : null}
           </div>
 
-          {/* The two software versions (#49), beside the address and the key
+          {/* The two software versions (triyder/AlpineClubBookingsNZ#49), beside the address and the key
               they describe. Asked once on entry; `0` with no key stored. One
               message inside this section on a mismatch - the section banner
               above is the ONLY banner, and this is a status, not a permission. */}

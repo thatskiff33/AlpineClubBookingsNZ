@@ -698,7 +698,7 @@ new ADR:
   a lodge on this row: it would be a restriction junction in the shape of
   `PromoCodeLodge` above.
 - Other lodges (`OtherLodge`, and `Amenity`, which hangs off it by
-  `otherLodgeId` with cascade delete, added by #50): the registry of **other
+  `otherLodgeId` with cascade delete, added by triyder/AlpineClubBookingsNZ#50): the registry of **other
   clubs'** lodges — the names the public booking-request form offers under "Are
   you a member of another lodge?", the counterpart a booking officer picks when
   charging a visiting club's members, and the entries the Alpine Central Server

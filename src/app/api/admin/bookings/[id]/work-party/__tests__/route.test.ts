@@ -191,7 +191,7 @@ describe("POST", () => {
   });
 });
 
-describe("POST settlement method (fork #129)", () => {
+describe("POST settlement method (triyder/AlpineClubBookingsNZ#129)", () => {
   const settlementOptions = { methods: ["credit", "card"], paidByOrganiser: false };
 
   it("returns the methods offered with the preview", async () => {

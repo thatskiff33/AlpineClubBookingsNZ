@@ -85,7 +85,7 @@ export class ServerNzApiError extends Error {
 
 /**
  * The central server is on a different API version from the one this site was
- * built for, so nothing is transferred (#49, `INV-INT-027`). Thrown by
+ * built for, so nothing is transferred (triyder/AlpineClubBookingsNZ#49, `INV-INT-027`). Thrown by
  * `resolveConnection` BEFORE any request is built, so no caller can reach the
  * server past it. Carries only the two numbers - never the key or the URL.
  */
@@ -122,7 +122,7 @@ interface ServerNzConnection {
 
 /**
  * The connection every request is built from, and THE ONE PLACE the version
- * gate lives (#49, `INV-INT-027`). Every server-bound function in this module
+ * gate lives (triyder/AlpineClubBookingsNZ#49, `INV-INT-027`). Every server-bound function in this module
  * calls it, so a caller cannot reach the server past the gate; the only opt-out
  * is `skipVersionGate`, used by `fetchServerVersion` alone, because the version
  * call is how a paused site finds out it may resume.
@@ -197,11 +197,11 @@ async function resolveConnection(
 }
 
 /**
- * Throw the version pause (#49) when the RECORDED server version differs from
+ * Throw the version pause (triyder/AlpineClubBookingsNZ#49) when the RECORDED server version differs from
  * the one this site is built for; a version never recorded passes (the gate in
  * `resolveConnection` asks the server then). The one throw site, used by that
  * gate and by the Upload and Download buttons BEFORE they take the sync claim
- * (#66), so a pause neither takes the claim nor is answered as "a sync is
+ * (triyder/AlpineClubBookingsNZ#66), so a pause neither takes the claim nor is answered as "a sync is
  * running".
  */
 export function assertStoredServerVersionMatches(stored: string | null): void {
@@ -230,7 +230,7 @@ function authHeaders(apiKey: string): HeadersInit {
 }
 
 /**
- * Ask the central server its API version (#49).
+ * Ask the central server its API version (triyder/AlpineClubBookingsNZ#49).
  *
  * `GET /api/v1/version` always answers 200 with the server's number, even when
  * the two differ - a 409 here would hide the very thing this asks for. A 404
@@ -259,7 +259,7 @@ export async function fetchServerVersion(
 }
 
 /**
- * THE ONE PATH THAT WRITES THE VERSION COLUMN (#49 review items 3 and 4,
+ * THE ONE PATH THAT WRITES THE VERSION COLUMN (triyder/AlpineClubBookingsNZ#49 review items 3 and 4,
  * #4366): the answer is normalised (`storableServerVersion`) and recorded only
  * if the connection it was obtained on - the stored address and the API key's
  * credential version, captured before the request - is STILL the stored one,
@@ -367,7 +367,7 @@ function remoteErrorMessage(status: number, body: { error?: unknown }): string {
 }
 
 /**
- * THE ONE WAY A FAILED RESPONSE BECOMES AN ERROR (#49 review item 1). The body
+ * THE ONE WAY A FAILED RESPONSE BECOMES AN ERROR (triyder/AlpineClubBookingsNZ#49 review item 1). The body
  * is parsed once. A 409 carrying the server's `API_VERSION_MISMATCH` code is
  * the server refusing the transfer for version - the same fact the local gate
  * refuses for - so it RECORDS the server's number (through the one write path,

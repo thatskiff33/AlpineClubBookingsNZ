@@ -5848,7 +5848,7 @@ model OtherLodge {
   bookingOfficerEmail String?  @db.VarChar(320)
   bookingOfficerPhone String?  @db.VarChar(50)
   bedCapacity         Int?
-  // Lodge details shared with the Alpine Central Server (#50). Text is capped to
+  // Lodge details shared with the Alpine Central Server (triyder/AlpineClubBookingsNZ#50). Text is capped to
   // the server's lengths, yes/no fields default to no for every existing row, and
   // the season starts are calendar dates (INV-DATE-026), never instants.
   // `siteUrl` is the lodge's non-member booking page; the free-text
@@ -5872,18 +5872,18 @@ model OtherLodge {
   dinnerIncluded         Boolean   @default(false)
   cancellationPeriod     String?   @db.VarChar(200)
   winterSeasonStart      DateTime? @db.Date
-  // A season's LAST day (#75, server API 2.6). Seasons recur: only day and
+  // A season's LAST day (triyder/AlpineClubBookingsNZ#75, server API 2.6). Seasons recur: only day and
   // month count. Unset, the season runs up to the other season's start.
   winterSeasonEnd        DateTime? @db.Date
   summerSeasonStart      DateTime? @db.Date
   summerSeasonEnd        DateTime? @db.Date
-  // This club's own lodge only (#77): when true, its non-member rates and
+  // This club's own lodge only (triyder/AlpineClubBookingsNZ#77): when true, its non-member rates and
   // season dates are filled from the Fees page (the Non-Member type's rates and
   // their seasons) and are read-only in the editor. A LOCAL setting: never
   // sent to or taken from the central server. Ignored for another club's lodge.
   ratesFromFees          Boolean   @default(true)
-  // Server API 2.2 (#61): non-member rates per person per night, NZD incl.
-  // GST, a winter and a summer rate for each age group (#77). INTEGER
+  // Server API 2.2 (triyder/AlpineClubBookingsNZ#61): non-member rates per person per night, NZD incl.
+  // GST, a winter and a summer rate for each age group (triyder/AlpineClubBookingsNZ#77). INTEGER
   // CENTS (INV-MONEY-001), 0..9999999 (a CHECK in the migration), null = not
   // set; the central server carries dollars and `@/lib/servernz-rate` is the
   // one conversion. Display only: nothing is charged from them.
@@ -5913,7 +5913,7 @@ enum OtherLodgeRoomType {
 }
 
 // A free-form extra an other lodge offers (name plus optional description),
-// mirrored from the Alpine Central Server's Amenity table (#50). Many per lodge,
+// mirrored from the Alpine Central Server's Amenity table (triyder/AlpineClubBookingsNZ#50). Many per lodge,
 // name unique within the lodge, deleted with the lodge. The sync and the admin
 // routes replace a lodge's whole set at once, keyed on (otherLodgeId, name).
 model Amenity {
@@ -6009,7 +6009,7 @@ model ServerNzSettings {
   commsPoisonCount    Int      @default(0)
 
   // The central server's API version as last reported by GET /api/v1/version
-  // (#49), and when it was asked. THREE states: NULL means never checked (no
+  // (triyder/AlpineClubBookingsNZ#49), and when it was asked. THREE states: NULL means never checked (no
   // key stored, or the key was replaced and the old answer forgotten); the
   // literal "unknown" means the server answered 404 - it predates versioning -
   // which this site treats as a mismatch; otherwise a canonical `major.minor`.
@@ -7830,7 +7830,7 @@ model NotificationPreference {
   // (ADMIN_NOTIFICATION_PREFERENCE_REQUIREMENT), so "the maintenance officer" is
   // whoever the club has given that area to — never a hard-coded address.
   adminMaintenanceReport     Boolean  @default(true)
-  // #49: the Alpine Central Server is on a different API version, so syncing
+  // triyder/AlpineClubBookingsNZ#49: the Alpine Central Server is on a different API version, so syncing
   // is paused. Rides the Daily digest template; audience is Lodge Operations
   // edit (ADMIN_NOTIFICATION_PREFERENCE_REQUIREMENT) in ADDITION to the
   // digest's own audience, and a lodge-only recipient gets the version entry
@@ -8754,7 +8754,7 @@ model LodgeDisplayDevice {
   tokenHash            String?   @unique
   templateId           String?
   // Per-device state-poll cadence in seconds (LTV-039, issue #85; consolidates
-  // #66). null = the client default (~60s). Clamped server-side to 15–600 on
+  // triyder/AlpineClubBookingsNZ#66). null = the client default (~60s). Clamped server-side to 15–600 on
   // read and write. The poll doubles as the device heartbeat, so this also
   // governs how often lastSeenAt refreshes.
   pollSeconds          Int?

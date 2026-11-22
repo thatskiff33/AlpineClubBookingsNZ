@@ -86,7 +86,7 @@ export function OtherLodgesPanel({
   // `null` until it has said anything, `[]` when it said none. Only an owned
   // lodge gets an Edit button; both read-only states are explained below.
   const [ownedNames, setOwnedNames] = useState<OwnedOtherLodgeNames>(null);
-  // Whether syncing with the central server is paused for version (#49): the
+  // Whether syncing with the central server is paused for version (triyder/AlpineClubBookingsNZ#49): the
   // list on screen may be stale while it is, so the panel says so and links
   // to setup, where the two numbers are shown.
   const [syncPaused, setSyncPaused] = useState(false);
@@ -238,7 +238,7 @@ export function OtherLodgesPanel({
   const hiding = useHideUnlistedLodge({ reload: () => loadLodges(), afterHide: () => headingRef.current?.focus() });
   const showForm = editingId !== null;
   const editingLodge = lodges.find((l) => l.id === editingId);
-  // An odd address the lodge was SAVED with (#55), flagged as the form opens.
+  // An odd address the lodge was SAVED with (triyder/AlpineClubBookingsNZ#55), flagged as the form opens.
   const siteUrlFlagged = siteUrlBroken(form.text.siteUrl) && form.text.siteUrl.trim() === (editingLodge?.siteUrl ?? "").trim();
   // The owned rows actually ON SCREEN. A name the server lists that has no
   // local row yet (not downloaded) has no button, so the label counts what the
@@ -531,7 +531,7 @@ export function OtherLodgesPanel({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Syncing paused for version (#49): the rows below may be stale and
+          {/* Syncing paused for version (triyder/AlpineClubBookingsNZ#49): the rows below may be stale and
               an edit saved here will not leave this site until it resumes. */}
           {!loading && syncPaused ? (
             <p className="text-sm text-destructive" role="status" data-testid="server-version-paused">
@@ -634,7 +634,7 @@ export function OtherLodgesPanel({
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {/* A link only for an address that passes the central
-                            server's stricter rule (#55); anything else is text. */}
+                            server's stricter rule (triyder/AlpineClubBookingsNZ#55); anything else is text. */}
                         {lodge.siteUrl && isSafeHttpUrl(lodge.siteUrl) ? (
                           <a
                             href={lodge.siteUrl}

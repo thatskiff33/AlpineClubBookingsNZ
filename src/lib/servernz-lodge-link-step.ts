@@ -72,7 +72,7 @@ export interface LodgeLinkStepResult {
 export async function runLodgeLinkStep(actorMemberId: string): Promise<LodgeLinkStepResult> {
   const settings = await loadServerNzSettings();
   if (!settings.otherLodgesEnabled) return { step: { kind: "sharing-off" }, download: "skipped" };
-  // The recorded version first, as the Download button does (#66).
+  // The recorded version first, as the Download button does (triyder/AlpineClubBookingsNZ#66).
   if (settings.baseUrl) assertStoredServerVersionMatches(settings.serverVersion);
   const pulled = await withOtherLodgesSyncClaim(() => downloadOtherClubsFromServer());
   if (pulled !== null) {

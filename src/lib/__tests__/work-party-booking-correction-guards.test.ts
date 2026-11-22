@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * Fork #129: the service's own guards around the canonical edit, with the edit
+ * triyder/AlpineClubBookingsNZ#129: the service's own guards around the canonical edit, with the edit
  * itself (`modifyBookingBatch`) doubled so each guard can be handed a shape the
  * real pipeline would not produce:
  *

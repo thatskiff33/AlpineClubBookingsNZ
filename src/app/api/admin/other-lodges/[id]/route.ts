@@ -46,13 +46,13 @@ const patchSchema = z
     name: otherLodgeNameSchema.optional(),
     ...otherLodgeDataShape,
     // Stricter than the pull's: the address must be one the central server
-    // accepts (#55). A request that leaves it out leaves the stored one alone.
+    // accepts (triyder/AlpineClubBookingsNZ#55). A request that leaves it out leaves the stored one alone.
     siteUrl: otherLodgeDataShape.siteUrl.refine(
       (v) => v == null || isSafeHttpUrl(v),
       SAFE_HTTP_URL_MESSAGE,
     ),
     amenities: amenitiesInputSchema.optional(),
-    // This club's own lodge only (#77): fill its rates and season dates from
+    // This club's own lodge only (triyder/AlpineClubBookingsNZ#77): fill its rates and season dates from
     // the Fees page. While on, rates and dates sent here are ignored.
     ratesFromFees: z.boolean().optional(),
   })
@@ -128,14 +128,14 @@ export async function PATCH(
       { status: 403 },
     );
   }
-  // While the switch is on (#77) the Fees page owns the rates and dates, so the
+  // While the switch is on (triyder/AlpineClubBookingsNZ#77) the Fees page owns the rates and dates, so the
   // ones the form sends (shown read-only) are dropped, not saved over them.
   const { ratesFromFees, ...input } = parsed.data;
   const fromFees = ratesFromFees ?? existing.ratesFromFees;
   if (fromFees) {
     for (const field of [...OTHER_LODGE_RATE_FIELDS, ...OTHER_LODGE_DATE_FIELDS]) delete input[field];
   }
-  // The seasons as this save would leave them (#75): the dates it sends over
+  // The seasons as this save would leave them (triyder/AlpineClubBookingsNZ#75): the dates it sends over
   // the stored ones. The central server applies the same rule to the upload.
   const stored = serializeOtherLodge(existing);
   const seasons = Object.fromEntries(
@@ -216,7 +216,7 @@ export async function PATCH(
       summary: "Other lodge updated",
       metadata: {
         changedFields,
-        // A local setting, so not in the serialized lodge (#77): recorded here.
+        // A local setting, so not in the serialized lodge (triyder/AlpineClubBookingsNZ#77): recorded here.
         ratesFromFees: { previous: existing.ratesFromFees, next: updated.ratesFromFees },
         previousOtherLodge: serializeOtherLodge(existing),
         newOtherLodge: serializeOtherLodge(updated),
@@ -235,7 +235,7 @@ async function respondSaved(body: { otherLodge: unknown }, user: Parameters<type
 }
 
 /**
- * Fill the lodge from the Fees page (#77; audited there), then answer with the
+ * Fill the lodge from the Fees page (triyder/AlpineClubBookingsNZ#77; audited there), then answer with the
  * row as it is now, and why it could not be filled, when it could not.
  */
 async function filledFromFees(id: string, owned: Parameters<typeof serializeOtherLodgeForAdmin>[1], actor: string) {

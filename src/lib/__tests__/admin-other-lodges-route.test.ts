@@ -25,14 +25,14 @@ vi.mock("@/lib/servernz-upload-after-save", () => ({
   uploadOtherClubsAfterSave: mocks.uploadOtherClubsAfterSave,
 }));
 
-// #77: the Fees-page fill has its own tests; here only that the save runs it.
+// triyder/AlpineClubBookingsNZ#77: the Fees-page fill has its own tests; here only that the save runs it.
 vi.mock("@/lib/other-lodge-fees-sync", () => ({
   syncOwnOtherLodgesFromFees: mocks.syncOwnOtherLodgesFromFees,
   otherLodgeFeesProblem: mocks.otherLodgeFeesProblem,
   FEES_FILL_PROBLEM_TEXT: { "no-local-lodge": "Not filled: not linked." },
 }));
 
-// #49: the list read reports the STORED version status; the check itself
+// triyder/AlpineClubBookingsNZ#49: the list read reports the STORED version status; the check itself
 // (a network call) is never made from here, so only the reader is mocked.
 vi.mock("@/lib/servernz-version-check", () => ({
   readStoredServerVersion: mocks.readStoredServerVersion,
@@ -340,7 +340,7 @@ describe("GET /api/admin/other-lodges", () => {
     expect(data.otherLodges[0].owned).toBe(false);
   });
 
-  it("reports the STORED server-version status so the panel can say syncing is paused (#49)", async () => {
+  it("reports the STORED server-version status so the panel can say syncing is paused (triyder/AlpineClubBookingsNZ#49)", async () => {
     mocks.findMany.mockResolvedValue([record()]);
     expect((await (await GET()).json()).serverVersionStatus).toBe("match");
 
@@ -601,7 +601,7 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
     expect(mocks.auditLogCreate).not.toHaveBeenCalled();
   });
 
-  it("writes the rates it was sent, in cents, and only those (#61)", async () => {
+  it("writes the rates it was sent, in cents, and only those (triyder/AlpineClubBookingsNZ#61)", async () => {
     mocks.findUnique.mockResolvedValue(record());
     mocks.update.mockResolvedValue(record({ winterRateAdultCents: 4550, summerRateUnder5Cents: null }));
     const response = await PATCH(
@@ -661,12 +661,12 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
 
   it.each([
     ["an unknown key", { distribute: true }],
-    // #75: seasons that would share a day.
+    // triyder/AlpineClubBookingsNZ#75: seasons that would share a day.
     ["overlapping seasons", { winterSeasonStart: "2026-06-01", winterSeasonEnd: "2026-12-15", summerSeasonStart: "2026-12-01" }],
     ["a season end with no start", { summerSeasonEnd: "2027-03-31" }],
     ["a site URL that is not http(s)", { siteUrl: "javascript:alert(1)" }],
     ["a site URL with no scheme", { siteUrl: "lodge.test" }],
-    // #55: the central server's stricter rule.
+    // triyder/AlpineClubBookingsNZ#55: the central server's stricter rule.
     ["a site URL with a login before the host", { siteUrl: "https://ruapehu.test@evil.test" }],
     ["a site URL with a backslash", { siteUrl: "http:\\\\evil.test" }],
     ["a site URL with a tab", { siteUrl: "https:/\t/evil.test" }],
@@ -681,7 +681,7 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
       { amenities: Array.from({ length: 51 }, (_, i) => ({ name: `A${i}` })) },
     ],
     ["malformed JSON", "{not json"],
-    // #61: rates arrive as integer cents, 0..9999999.
+    // triyder/AlpineClubBookingsNZ#61: rates arrive as integer cents, 0..9999999.
     ["a rate in dollars rather than cents", { winterRateAdultCents: 45.5 }],
     ["a negative rate", { summerRate5To11Cents: -1 }],
     ["a rate over the server's bound", { winterRate12To17Cents: 10_000_000 }],
@@ -705,7 +705,7 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
   });
 });
 
-describe("PATCH /api/admin/other-lodges/[id]: season end dates (#75)", () => {
+describe("PATCH /api/admin/other-lodges/[id]: season end dates (triyder/AlpineClubBookingsNZ#75)", () => {
   it("checks the seasons as the save would leave them: the sent end over the stored starts", async () => {
     mocks.findUnique.mockResolvedValue(
       record({ winterSeasonStart: new Date("2026-06-01T00:00:00.000Z"), summerSeasonStart: new Date("2026-12-01T00:00:00.000Z") }),
@@ -722,7 +722,7 @@ describe("PATCH /api/admin/other-lodges/[id]: season end dates (#75)", () => {
   });
 });
 
-describe("PATCH /api/admin/other-lodges/[id]: rates and dates from the Fees page (#77)", () => {
+describe("PATCH /api/admin/other-lodges/[id]: rates and dates from the Fees page (triyder/AlpineClubBookingsNZ#77)", () => {
   const sentRatesAndDates = { winterRateAdultCents: 9900, summerSeasonStart: "2026-12-01", winterSeasonEnd: "2026-09-30" };
 
   beforeEach(() => {

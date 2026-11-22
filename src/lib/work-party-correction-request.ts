@@ -8,7 +8,7 @@ import { z } from "zod";
 
 const centsField = z.number().int().min(-100_000_000).max(100_000_000);
 
-// The officer's settlement choice (fork #129); absent is the default (club credit,
+// The officer's settlement choice (triyder/AlpineClubBookingsNZ#129); absent is the default (club credit,
 // or the organiser's disposition). The service refuses one it does not offer.
 const settlementMethodField = z.enum(["credit", "card"]).optional();
 

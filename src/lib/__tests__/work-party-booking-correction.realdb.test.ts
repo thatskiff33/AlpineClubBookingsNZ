@@ -27,7 +27,7 @@
  *  6. Members still cannot enter the internal code: not as the owner, not as an
  *     officer without the argument, and not with the argument naming another
  *     work party's promo.
- *  7. Fork #129. Paid by card with the officer's "Refund to card": the whole
+ *  7. triyder/AlpineClubBookingsNZ#129. Paid by card with the officer's "Refund to card": the whole
  *     reduction, untiered, is the pipeline's own card refund (its after-commit
  *     Stripe leg, doubled to fail here, leaves a REFUND_BOOKING_MODIFICATION
  *     recovery row), with no credit. Paid by Internet Banking (upstream owner
@@ -1294,7 +1294,7 @@ async function batchRefusal(params: {
     settlementMethod: "credit",
   });
 
-  it("fork #129 card-paid, Refund to card: the whole reduction is the pipeline's own card refund, untiered, with no credit", async () => {
+  it("triyder/AlpineClubBookingsNZ#129 card-paid, Refund to card: the whole reduction is the pipeline's own card refund, untiered, with no credit", async () => {
     await seed("paid");
     stripeRefundsFail();
 
@@ -1348,7 +1348,7 @@ async function batchRefusal(params: {
     ).toBeGreaterThan(0);
   }, 60_000);
 
-  it("fork #129 card-paid, Club credit chosen: as the default, the whole reduction as credit and no refund", async () => {
+  it("triyder/AlpineClubBookingsNZ#129 card-paid, Club credit chosen: as the default, the whole reduction as credit and no refund", async () => {
     await seed("paid");
     stripeRefundsFail();
     const figures = await quote({ settlementMethod: "credit" });
@@ -1360,7 +1360,7 @@ async function batchRefusal(params: {
     expect(await prisma.paymentRefund.count({ where: { paymentId: PAYMENT_ID } })).toBe(0);
   }, 60_000);
 
-  it("fork #129 paid by Internet Banking, Refund to bank account: the ordinary edit's bank-transfer hand-back, in full, with no credit", async () => {
+  it("triyder/AlpineClubBookingsNZ#129 paid by Internet Banking, Refund to bank account: the ordinary edit's bank-transfer hand-back, in full, with no credit", async () => {
     // Upstream owner decision (15 Nov 2026): the officer chooses a refund (card
     // or bank, as on an ordinary edit) or account credit. The ordinary edit's
     // "card" method on a bank-paid booking is a refund the treasurer sends back
@@ -1398,7 +1398,7 @@ async function batchRefusal(params: {
     expect(await prisma.memberCredit.count({ where: { memberId: OWNER_ID } })).toBe(0);
   }, 60_000);
 
-  it("fork #129 paid by Internet Banking, Club credit: as the default, the whole reduction as credit, no hand-back", async () => {
+  it("triyder/AlpineClubBookingsNZ#129 paid by Internet Banking, Club credit: as the default, the whole reduction as credit, no hand-back", async () => {
     await seed("bank-paid");
     const figures = await quote({ settlementMethod: "credit" });
     expect(figures).toEqual(paidCreditFigures());
@@ -1409,7 +1409,7 @@ async function batchRefusal(params: {
     expect(await refundOperations()).toEqual([]);
   }, 60_000);
 
-  it("fork #129 organiser-paid joiner: allowed, and the reduction goes back to the organiser's card", async () => {
+  it("triyder/AlpineClubBookingsNZ#129 organiser-paid joiner: allowed, and the reduction goes back to the organiser's card", async () => {
     await seed("organiser-paid");
     stripeRefundsFail();
 

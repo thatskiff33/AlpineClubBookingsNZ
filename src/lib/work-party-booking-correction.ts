@@ -15,7 +15,7 @@
  *    receives beside `tx`; no request body can carry it), and the money rule
  *    that comes with it — no change fee, and the reduction returned in full;
  *  - the settlement (`workPartySettlementOptions`; upstream owner decision of
- *    15 Nov 2026 on #5149, fork #129 decision 5): account credit by default;
+ *    15 Nov 2026 on #5149, triyder/AlpineClubBookingsNZ#129 decision 5): account credit by default;
  *    wherever the ordinary edit offers a refund (any paid booking: card, or
  *    Internet Banking), the officer may choose that refund instead, which goes
  *    back the way the booking was paid — to the card, or by the bank-transfer
@@ -167,7 +167,7 @@ function workPartyStayRefusal(
  * refusal is one the canonical edit would make anyway, stated up front in an
  * officer's words rather than discovered at the preview. A started stay is
  * allowed (fork #127); a finished one is not. An organiser-paid joiner is allowed
- * (fork #129 decision 5); the officer's own or family's booking never is (owner
+ * (triyder/AlpineClubBookingsNZ#129 decision 5); the officer's own or family's booking never is (owner
  * decision 3). A disputed card payment is refused on the edit's own answer,
  * only where it would really hold money back (`refundHeldForDispute`, #5151),
  * so it is not a fact this rule reads. The event answer is
@@ -336,7 +336,7 @@ export type WorkPartyCorrectionMode =
 
 /**
  * Every money figure the officer sees, and how it settles; any that moved
- * refuses the save — a changed method too (fork #129), so a save is never refunded
+ * refuses the save — a changed method too (triyder/AlpineClubBookingsNZ#129), so a save is never refunded
  * where the officer was shown credit, or the reverse. A superset of the edit's
  * own four (`editQuotedFiguresSchema`, `INV-MOD-062`), which the save also runs:
  * `quotedFigures` below hands the edit the preview's price, difference and fee.
@@ -373,7 +373,7 @@ export type WorkPartyCorrectionParams = {
 export function addBookingToWorkParty(
   params: WorkPartyCorrectionParams & {
     /**
-     * The officer's choice (fork #129 decision 1); absent means the default — club
+     * The officer's choice (triyder/AlpineClubBookingsNZ#129 decision 1); absent means the default — club
      * credit, or the organiser's disposition. `card` (a refund, to the card or
      * by bank transfer) is refused (409) unless `workPartySettlementOptions`
      * offers it.
@@ -581,7 +581,7 @@ async function correctWorkParty(
           throw new ApiError(WORK_PARTY_REMOVAL_MONEY_BACK_MESSAGE, 409);
         }
       } else {
-        // fork #129: a refund only where it was meant — the officer chose the card
+        // triyder/AlpineClubBookingsNZ#129: a refund only where it was meant — the officer chose the card
         // (`resolveWorkPartySettlementMethod` admits `card` only where offered),
         // or the organiser's money goes back to them. Any other refund is a path
         // the options missed; refuse rather than pay it.

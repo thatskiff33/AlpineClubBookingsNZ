@@ -63,7 +63,7 @@ describe("freeBedsForStay", () => {
   });
 });
 
-describe("freeBedsForStay night by night (#79)", () => {
+describe("freeBedsForStay night by night (triyder/AlpineClubBookingsNZ#79)", () => {
   it("lists every night of the stay in order, check-out night excluded, each the calendar's own number", async () => {
     occupancy({ "2026-07-31": 4, "2026-08-01": 15, "2026-08-02": 1 });
     expect((await answer("2026-07-30", "2026-08-02")).nights).toEqual([

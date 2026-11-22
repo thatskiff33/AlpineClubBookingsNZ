@@ -121,7 +121,7 @@ describe("config-transfer club-settings", () => {
       strFromU8(files.get("club-settings/email-message-setting.json")!),
     );
     expect(email.clubName).toBe("Grads");
-    // doorCode was dropped from EmailMessageSetting (fork #15); it must never be
+    // doorCode was dropped from EmailMessageSetting (triyder/AlpineClubBookingsNZ#15); it must never be
     // emitted here — the lodge door code travels in lodge.json instead.
     expect("doorCode" in email).toBe(false);
   });
@@ -521,7 +521,7 @@ describe("club-module-settings singleton reads use the explicit column select", 
 // Guard against the class of bug where an upstream schema change drops/renames a
 // column that a singleton allowlist still names — the club-settings apply uses an
 // untyped delegate, so typecheck can't catch it and it only fails at write time
-// on the server (as EmailMessageSetting.doorCode did after fork #15). This
+// on the server (as EmailMessageSetting.doorCode did after triyder/AlpineClubBookingsNZ#15). This
 // validates every singleton field against the real Prisma model columns.
 describe("club-settings allowlists match the Prisma schema", () => {
   it("every singleton field is a real column on its model", () => {

@@ -44,11 +44,11 @@ import { OtherLodgesPanel } from "./other-lodges-panel";
 
 // triyder/AlpineClubBookingsNZ#52: a site changes only the lodge(s) the central server says it owns. The
 // list has no Add, Edit or Delete; each OWNED lodge gets one "Edit my Lodge"
-// button (named when there are several) that opens the #51 popup with the name
+// button (named when there are several) that opens the triyder/AlpineClubBookingsNZ#51 popup with the name
 // read-only; the panel is read-only with a note while the owned list is
 // unknown or empty; and no booking officer's phone is shown in the list.
 //
-// The #51 popup pins (opens over the list, error INSIDE the dialog above Save,
+// The triyder/AlpineClubBookingsNZ#51 popup pins (opens over the list, error INSIDE the dialog above Save,
 // background click does not close, Escape and Cancel do, Escape ignored while
 // saving, focus returns to the opener, newest refresh wins, view-only admin
 // cannot open it) are kept, now opened through Edit my Lodge.
@@ -259,7 +259,7 @@ describe("Other lodges: only the site's own lodge is editable (triyder/AlpineClu
     expect(screen.queryByTestId("owned-unknown")).toBeNull();
   });
 
-  it("says syncing is paused, linking to setup, while the server version differs (#49)", async () => {
+  it("says syncing is paused, linking to setup, while the server version differs (triyder/AlpineClubBookingsNZ#49)", async () => {
     stubFetch({ ...oneOwned(), serverVersionStatus: "mismatch" });
     await renderPanel();
 
@@ -274,7 +274,7 @@ describe("Other lodges: only the site's own lodge is editable (triyder/AlpineClu
     expect(screen.getByRole("button", { name: /^edit/i })).toBeTruthy();
   });
 
-  it("shows no paused note while the versions match, are unchecked, or no key is stored (#49)", async () => {
+  it("shows no paused note while the versions match, are unchecked, or no key is stored (triyder/AlpineClubBookingsNZ#49)", async () => {
     for (const status of ["match", "unchecked", "no-key"] as const) {
       cleanup();
       stubFetch({ ...oneOwned(), serverVersionStatus: status });
@@ -369,7 +369,7 @@ describe("Other lodges: only the site's own lodge is editable (triyder/AlpineClu
   });
 });
 
-describe("Other lodges edit popup (#51, opened through Edit my Lodge)", () => {
+describe("Other lodges edit popup (triyder/AlpineClubBookingsNZ#51, opened through Edit my Lodge)", () => {
   it("shows a validation error inside the dialog, not on the page behind it", async () => {
     stubFetch(oneOwned());
     await renderPanel();
@@ -494,7 +494,7 @@ describe("Other lodges edit popup (#51, opened through Edit my Lodge)", () => {
     expect(body).not.toHaveProperty("bookingPath");
   });
 
-  it("edits the non-member rates (#61): a stored rate loads as dollars, typed dollars save as cents, blank clears", async () => {
+  it("edits the non-member rates (triyder/AlpineClubBookingsNZ#61): a stored rate loads as dollars, typed dollars save as cents, blank clears", async () => {
     stubFetch({
       ...oneOwned(),
       otherLodges: [lodge({ winterRateAdultCents: 4550, summerRateUnder5Cents: 0 }), theirs()],
@@ -528,7 +528,7 @@ describe("Other lodges edit popup (#51, opened through Edit my Lodge)", () => {
     });
   });
 
-  it("names every rate cell and its step buttons by season AND age group (#61)", async () => {
+  it("names every rate cell and its step buttons by season AND age group (triyder/AlpineClubBookingsNZ#61)", async () => {
     stubFetch(oneOwned());
     await renderPanel();
     fireEvent.click(editMyLodge());
@@ -925,7 +925,7 @@ describe("Other lodges: hiding a lodge the central server does not list (triyder
   });
 });
 
-describe("Other lodges: the booking page address (#55)", () => {
+describe("Other lodges: the booking page address (triyder/AlpineClubBookingsNZ#55)", () => {
   const withSiteUrl = (siteUrl: string): AdminOtherLodgesResponse => ({
     ...oneOwned(),
     otherLodges: [lodge({ siteUrl }), theirs()],
@@ -982,7 +982,7 @@ describe("Other lodges: the booking page address (#55)", () => {
   });
 });
 
-describe("Other lodges: season start and end dates (#75)", () => {
+describe("Other lodges: season start and end dates (triyder/AlpineClubBookingsNZ#75)", () => {
   it("offers each season's start and end date in the editor", async () => {
     stubFetch(oneOwned());
     await renderPanel();
@@ -1000,7 +1000,7 @@ describe("Other lodges: season start and end dates (#75)", () => {
   });
 });
 
-describe("rates and season dates from the Fees page (#77)", () => {
+describe("rates and season dates from the Fees page (triyder/AlpineClubBookingsNZ#77)", () => {
   function fromFees(on: boolean): AdminOtherLodgesResponse {
     return { ...oneOwned(), otherLodges: [lodge({ ratesFromFees: on, winterRateAdultCents: 4500 }), theirs()] };
   }

@@ -64,7 +64,7 @@ export async function GET() {
       select: otherLodgeSelect,
     }),
     loadServerNzSettings(),
-    // The STORED answer (#49): no network call from a list read.
+    // The STORED answer (triyder/AlpineClubBookingsNZ#49): no network call from a list read.
     readStoredServerVersion(),
   ]);
   const owned = settings.otherLodgesOwnedLodges;
@@ -77,7 +77,7 @@ export async function GET() {
     otherLodges: await Promise.all(
       otherLodges.map(async (lodge) => {
         const row = serializeOtherLodgeForAdmin(lodge, owned, notOnCentralServer.get(lodge.id));
-        // Why the Fees page cannot fill our own lodge now (#77), for its editor.
+        // Why the Fees page cannot fill our own lodge now (triyder/AlpineClubBookingsNZ#77), for its editor.
         const feesProblem = row.owned ? await otherLodgeFeesProblem(lodge, owned) : null;
         return feesProblem ? { ...row, feesProblem } : row;
       }),

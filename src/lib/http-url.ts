@@ -29,7 +29,7 @@ export function isHttpUrl(value: string | null | undefined): boolean {
 }
 
 /**
- * The STRICTER rule for an address shown to other people as a link (#55): an
+ * The STRICTER rule for an address shown to other people as a link (triyder/AlpineClubBookingsNZ#55): an
  * Other lodge's booking page, which the Alpine Central Server hands to every
  * club. A copy (another repository) of the central server's `isSafeHttpUrl`
  * in AlpineClubServerNZ `src/lib/other-lodges.ts`, which refuses anything else

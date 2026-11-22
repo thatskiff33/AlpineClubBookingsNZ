@@ -20,7 +20,7 @@ import type { ServerNzConnectionIdentity } from "@/lib/servernz-version-record";
 
 /**
  * The Alpine Central Server's WIRE SHAPES, as `servernz-api.ts` validates them
- * (#49 review split). Declarative only: every schema here is what one of that
+ * (triyder/AlpineClubBookingsNZ#49 review split). Declarative only: every schema here is what one of that
  * module's request functions parses a response with, and the long comments
  * are the contract each shape carries. Nothing here makes a request, reads a
  * setting or touches the version gate, which is why this module can sit
@@ -33,11 +33,11 @@ import type { ServerNzConnectionIdentity } from "@/lib/servernz-version-record";
  * set for that lodge. The server's item schema is `.strict()`, so this must
  * carry exactly the keys it knows — `serializeOtherLodgeData` is the one list,
  * except the rates: those leave as the server's dollar keys (`ServerRates`,
- * from `ratesToServer`), never as this site's `…Cents` columns (#61).
+ * from `ratesToServer`), never as this site's `…Cents` columns (triyder/AlpineClubBookingsNZ#61).
  * `distribute` and provenance are never sent by clients. `id` (API 2.3, triyder/AlpineClubBookingsNZ#64)
  * is the lodge's central id, once known: the server matches the item by it, so
  * a changed `name` renames the lodge there rather than creating a second one.
- * `siteUrl` may be left out (#55): the server leaves a field it is not sent
+ * `siteUrl` may be left out (triyder/AlpineClubBookingsNZ#55): the server leaves a field it is not sent
  * alone, and an address it would refuse is not sent.
  */
 export type OtherLodgeUploadItem = Omit<SerializedOtherLodgeData, OtherLodgeRateField | "siteUrl"> &
@@ -80,7 +80,7 @@ export type OtherLodgesUploadResult = z.infer<typeof uploadResultSchema>;
  * 0..100000, room type `ROOM` or `DORMITORY`, booking page URL 500 and
  * `http(s)` only, cancellation period 200, season starts a real `YYYY-MM-DD`
  * calendar date, at most 50 amenities of name 120 / description 1000 with names
- * unique ignoring case). The rates (#61) are the one difference in FORM, not in
+ * unique ignoring case). The rates (triyder/AlpineClubBookingsNZ#61) are the one difference in FORM, not in
  * bound: the admin route takes them as integer cents, the server sends dollars,
  * so they are checked against the same 0..99999.99 here and converted to cents
  * by `@/lib/servernz-rate` before the row leaves this schema.
@@ -113,7 +113,7 @@ export const distributedLodgeSchema = z
     id: z.string().max(64),
     name: otherLodgeNameSchema,
     ...otherLodgeCommonDataShape,
-    // The rates arrive as dollars under the server's names (#61) and leave this
+    // The rates arrive as dollars under the server's names (triyder/AlpineClubBookingsNZ#61) and leave this
     // schema as cents under this site's column names: the conversion happens
     // HERE, at the wire, so nothing downstream ever holds dollars.
     ...serverRateWireShape,

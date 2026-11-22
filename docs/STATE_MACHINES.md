@@ -4799,7 +4799,7 @@ as `cooldownDeferred` and the run carries a `warning`, shown amber. A failed
 row warns the same way and points at Xero Operations. To verify:
 `xero-cron-runner.test.ts`, `xero-outbox-fail-fast.test.ts`.
 
-### Alpine Central Server version pause (#49)
+### Alpine Central Server version pause (triyder/AlpineClubBookingsNZ#49)
 
 ```text
 alpine-server-other-lodges-sync (03:00) -> module on -> base URL set

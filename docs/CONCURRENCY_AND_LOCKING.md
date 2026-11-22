@@ -2955,7 +2955,7 @@ mispricing a booking.
 #### Owned-lodge list, Other lodges and central lodge link writers (#4485)
 
 - **Owned-lodge list writer, and every Other lodges download write** —
-  `src/lib/servernz-settings.ts` (`lockServerNzSettings`, #64), through the
+  `src/lib/servernz-settings.ts` (`lockServerNzSettings`, triyder/AlpineClubBookingsNZ#64), through the
   connection fence above (#4262 review): `downloadOtherClubsFromServer` builds
   one `serverNzAnswerWriter` for the identity its pull was sent on
   (`OtherLodgesPullResult.sentOn`: the stored address and API-key credential
@@ -6898,7 +6898,7 @@ refund of the same booking holds `lock(1)`, and two concurrent applies serialise
 on it — the second re-reads a booking that already carries the work party (or,
 for a removal, no longer does) and is refused, so the discount and its credit,
 refund or amount owed apply once. A refund the
-officer chose (fork #129) is the edit's own: its ledger lines (and, for an
+officer chose (triyder/AlpineClubBookingsNZ#129) is the edit's own: its ledger lines (and, for an
 organiser-paid joiner, the organiser-child refund debt; for Internet Banking,
 the edit's bank-transfer hand-back task, `raiseEditRefundHandBackIfOwed`) are
 written in this transaction; a card refund's Stripe call runs after commit, and
