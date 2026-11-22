@@ -1,7 +1,7 @@
 x-app-environment: &app-environment
   TZ: Pacific/Auckland
   # The Alpine Central Server this deployment pairs with, offered on the setup
-  # page while no address is saved (#81). Empty = nothing offered.
+  # page while no address is saved (triyder/AlpineClubBookingsNZ#81). Empty = nothing offered.
   SERVERNZ_DEFAULT_BASE_URL: ${SERVERNZ_DEFAULT_BASE_URL:-}
   # How long the Next.js server holds an idle keep-alive connection open, in ms
   # (#3293). It MUST outlive Caddy's upstream connection pool, which
@@ -440,6 +440,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+      # The TCP probe fails for the whole first-start initialisation, so failures in
+      # this window do not count toward `retries`; a success inside it still marks
+      # the container healthy at once.
+      start_period: 60s
 
   app:
     <<: *app-service
