@@ -357,6 +357,20 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     expect(mcpPermanentExclusion("src/app/api/notices/[id]/acknowledge/route.ts", "DELETE")).toBeNull();
     expect(mcpPermanentExclusion("src/app/api/contact/route.ts", "POST")).toBe("public-visitor");
     expect(mcpPermanentExclusion("src/app/api/contact/extra/route.ts", "POST")).toBeNull();
+    // ALP-795: confirming a partnership is the member's own; reading and ending one are actions.
+    expect(mcpPermanentExclusion("src/app/api/members/partner-link/route.ts", "PUT")).toBe("declaration");
+    expect(classifyMcpRoute("src/app/api/members/partner-link/route.ts", "DELETE").kind).toBe("action");
+    expect(mcpPermanentExclusion("src/app/api/member/membership-cancellation-requests/route.ts", "POST")).toBe(
+      "declaration",
+    );
+    expect(
+      mcpPermanentExclusion("src/app/api/member/membership-cancellation-requests/confirm/route.ts", "POST"),
+    ).toBe("needs-browser");
+  });
+
+  it("leaves nothing under the member family and cancellation routes undecided", () => {
+    // ALP-795 removed their not-yet rule: a new route there fails the census until decided.
+    expect(classifyMcpRoute("src/app/api/members/brand-new/route.ts", "GET")).toEqual({ kind: "unclassified" });
   });
 
   it("keeps the lodge door codes website-only for good", () => {
