@@ -166,6 +166,8 @@ import {
   withDefaultNzCountry,
   normalizeAddressValue,
   NZ_COUNTRY_NAME,
+  pickMemberAddressValues,
+  pickMemberPhoneValues,
 } from "@/lib/member-address";
 import { DEPENDENT_PARENT_CREATE_ERRORS } from "@/lib/dependent-link-eligibility";
 import { NO_INHERITABLE_EMAIL_SOURCE_MESSAGE } from "@/lib/member-parent-links";
@@ -344,6 +346,20 @@ describe("member-address utilities", () => {
     expect(normalizeAddressValue("  test  ")).toBe("test");
     expect(normalizeAddressValue(null)).toBe("");
     expect(normalizeAddressValue(undefined)).toBe("");
+  });
+
+  // #5398: the pickers copy exactly the member's columns, never a wider
+  // source's extra keys (an application's postalSameAsPhysical, a contact's id).
+  it("pickMemberAddressValues and pickMemberPhoneValues copy only the member columns", () => {
+    const address = {
+      streetAddressLine1: "1 Main", streetAddressLine2: null, streetCity: "Ohakune",
+      streetRegion: "Manawatu-Whanganui", streetPostalCode: "4625", streetCountry: "New Zealand",
+      postalAddressLine1: "PO Box 1", postalAddressLine2: null, postalCity: "Ohakune",
+      postalRegion: null, postalPostalCode: "4660", postalCountry: "New Zealand",
+    };
+    const phone = { phoneCountryCode: "64", phoneAreaCode: "27", phoneNumber: "123 4567" };
+    expect(pickMemberAddressValues({ ...address, postalSameAsPhysical: true })).toEqual(address);
+    expect(pickMemberPhoneValues({ ...phone, contactId: "c-1" })).toEqual(phone);
   });
 });
 

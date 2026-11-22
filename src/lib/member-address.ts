@@ -134,3 +134,33 @@ export function pickStreetAddressValues<T>(
     streetCountry: values.streetCountry,
   };
 }
+
+/**
+ * All twelve address columns, picked from a wider object (#5398): the street
+ * and postal lists above, so a source carrying extra keys (an application's
+ * `postalSameAsPhysical`) never spreads them into a member write.
+ */
+export function pickMemberAddressValues<T>(
+  values: Record<MemberAddressField, T>
+): Record<MemberAddressField, T> {
+  return Object.fromEntries(
+    MEMBER_ADDRESS_FIELDS.map((field) => [field, values[field]]),
+  ) as Record<MemberAddressField, T>;
+}
+
+const MEMBER_PHONE_FIELDS = [
+  "phoneCountryCode",
+  "phoneAreaCode",
+  "phoneNumber",
+] as const;
+
+export type MemberPhoneField = (typeof MEMBER_PHONE_FIELDS)[number];
+
+/** The member's three phone columns, picked from a wider object (#5398). */
+export function pickMemberPhoneValues<T>(
+  values: Record<MemberPhoneField, T>
+): Record<MemberPhoneField, T> {
+  return Object.fromEntries(
+    MEMBER_PHONE_FIELDS.map((field) => [field, values[field]]),
+  ) as Record<MemberPhoneField, T>;
+}
