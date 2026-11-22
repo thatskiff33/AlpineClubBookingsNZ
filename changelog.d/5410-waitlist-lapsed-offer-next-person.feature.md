@@ -7,10 +7,13 @@
   Now the place is offered to the next party behind them that fits. The member
   whose offer lapsed goes back to their original place and keeps their number,
   and is considered last for that place, so a member alone on the waitlist is
-  still offered it again. If offers keep lapsing, the place moves on down the
-  queue and only returns to the front once everyone has had a turn. When two
-  offers lapse in the same run, both places go to the people behind. A lapsed
-  cross-lodge offer passes on at the lodge that was offered.
+  still offered it again. Anyone else whose offer lapsed in the same run is
+  considered just before them, after everyone who has not just had a turn, so
+  two members who let offers lapse together do not swap the places while the
+  people behind them wait. If offers keep lapsing, the place moves on down the
+  queue and only returns to the front once everyone has had a turn.
+
+  A lapsed cross-lodge offer passes on at the lodge that was offered.
 
   Nothing is stored about the lapse. When a different place frees on the same
   nights later (a cancellation, say), the member who let an offer lapse is

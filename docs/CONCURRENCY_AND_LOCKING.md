@@ -212,6 +212,22 @@ pure), and the offer write is unchanged. A sweep can now run more passes, each
 its own short transaction, so none holds a lock for longer. No key, tier,
 order, guarded claim or budget changed.
 
+Three consequences, stated as limits. (a) One offer per lapsed offer means
+several lapses on the same nights can put out more offers than there are free
+beds. Offers never held capacity (`INV-CAP-011`), the number out never rises
+above what it was before those lapses, and a later confirm re-checks capacity
+under the lodge key and, finding the place gone, returns the member to the
+waitlist with a message saying so. (b) The passes take the global and lodge
+keys one at a time, after the revert commits, so two sweeps running at the same
+moment each know only their own lapses: for one round, two members who lapsed
+can be offered each other's places, and the next sweep that expires those
+offers sees both. Production runs one cron instance, and within it
+`isWaitlistCronRunning` stops a run overlapping the one before. (c) A pass that throws (its pre-transaction
+reads included) is logged and counted and the remaining passes still run; the
+cron then fails the run after its other steps, with a message its
+transaction-start retry does not match, because the reverts are committed and a
+retried sweep would find nothing left to re-offer.
+
 ### Tier 2 — global booking-status / money serialisation
 
 `pg_advisory_xact_lock(1)` (the literal global lock) serialises **status
