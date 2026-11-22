@@ -1,11 +1,11 @@
 import type { DisplayState } from "@/lib/lodge-display-state";
 import type { DisplayPanelOptions } from "./module-options";
 
-// Lodge rules / arrival information (fork issue #31): renders the sanitised
+// Lodge rules / arrival information (fork issue hoppers99/AlpineClubBookingsNZ#31): renders the sanitised
 // lodge-instructions documents the serialiser provided. The HTML was
 // sanitised server-side by getSanitizedLodgeInstructions before it entered
-// the payload (issue #28); this module renders that payload verbatim and
-// nothing else (issue #31 AC2).
+// the payload (issue hoppers99/AlpineClubBookingsNZ#28); this module renders that payload verbatim and
+// nothing else (issue hoppers99/AlpineClubBookingsNZ#31 AC2).
 
 export function LodgeRules({
   state,
@@ -14,7 +14,7 @@ export function LodgeRules({
   options?: DisplayPanelOptions;
 }) {
   // Instruction docs arrive as a fixed keyed set; only the ones with actual
-  // content earn a card (issue #56 — no empty cards on a lobby wall).
+  // content earn a card (issue hoppers99/AlpineClubBookingsNZ#56 — no empty cards on a lobby wall).
   const docs = (state.rules ?? []).filter((doc) => doc.html.trim().length > 0);
   if (docs.length === 0) {
     return <div className="display-lodge-rules display-lodge-rules-empty" />;

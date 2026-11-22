@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * Hiding an Other lodges row (#58, owner decision): only a row the central
+ * Hiding an Other lodges row (triyder/AlpineClubBookingsNZ#58, owner decision): only a row the central
  * server does not list (unkeyed after a whole download keyed the registry),
  * whatever cites it — hidden, never removed — by an administrator with lodge
  * edit, audited by id and name only.
@@ -61,7 +61,7 @@ beforeEach(() => {
   mocks.auditLogCreate.mockResolvedValue({});
 });
 
-describe("POST /api/admin/other-lodges/:id/hide (#58)", () => {
+describe("POST /api/admin/other-lodges/:id/hide (triyder/AlpineClubBookingsNZ#58)", () => {
   it("HIDES an unlisted lodge, guarded and without moving updatedAt, and audits it by id and name only", async () => {
     const response = await call();
 

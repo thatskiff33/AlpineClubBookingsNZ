@@ -23,7 +23,7 @@ vi.mock("@/lib/prisma", () => ({
       update: vi.fn(),
     },
     // Booking Officer → OtherLodge sync (runs inside the assignment routes'
-    // transaction). Default to no lodges and no owned-lodge list (#52: the sync
+    // transaction). Default to no lodges and no owned-lodge list (triyder/AlpineClubBookingsNZ#52: the sync
     // reads the settings row first) so it is a harmless no-op here; the sync
     // itself is covered by committee-booking-officer-sync.test.ts.
     serverNzSettings: { findUnique: vi.fn().mockResolvedValue(null) },

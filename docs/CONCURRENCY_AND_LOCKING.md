@@ -200,6 +200,37 @@ cancel or an expiry revert there; (c) two creates at the same lodge storing
 before #5402 as well). Screens are right on the next read, and nothing branches
 on the number. No writer's key, order, participant or transaction changed.
 
+**The re-offer after a lapsed offer changes no lock** (#5410, `INV-CAP-042`).
+`expireStaleOffers` still reverts every stale offer in one `lock(1)` transaction
+under each offer's own lodge key, then, after that commit, runs the offer pass
+once per lapsed offer, in join order, where it used to run once per distinct
+range. Each pass is the same `processWaitlistForDates` transaction as before:
+`lock(1)`, then every active lodge's capacity key in sorted order, inside
+`LOCK1_HOLDER_TRANSACTION_BUDGET`. The lapse it is handed only reorders the
+candidates it has already read under those locks (`orderWaitlistOffers` is
+pure), and the offer write is unchanged. A sweep can now run more passes, each
+its own short transaction, so none holds a lock for longer. No key, tier,
+order, guarded claim or budget changed.
+
+Three consequences, stated as limits. (a) One offer per lapsed offer means
+several lapses on the same nights can put out more offers than there are free
+beds. Offers never held capacity (`INV-CAP-011`), the number out never rises
+above what it was before those lapses, and a later confirm re-checks capacity
+under the lodge key and, finding the place gone, returns the member to the
+waitlist with a message saying so. (b) The passes take the global and lodge
+keys one at a time, after the revert commits, so two sweeps running at the same
+moment each know only their own lapses: for one round, two members who lapsed
+can be offered each other's places, and the next sweep that expires those
+offers sees both. Production runs one cron instance, and within it
+`isWaitlistCronRunning` stops a run overlapping the one before. (c) A pass that
+fails, by throwing before its transaction or by its transaction failing
+(`processWaitlistForDates` returns `failed: true`), is logged and counted and
+the remaining passes still run. The cron adds the count to a tally kept across
+its transaction-start retry attempts, recorded before its next step, and throws
+`WaitlistReofferFailedError` only after the retry loop, so a retried attempt
+cannot lose the failure and the failure itself is never retried: the reverts are
+committed, and a retried sweep would find nothing left to re-offer.
+
 ### Tier 2 — global booking-status / money serialisation
 
 `pg_advisory_xact_lock(1)` (the literal global lock) serialises **status
@@ -2955,7 +2986,7 @@ mispricing a booking.
 #### Owned-lodge list, Other lodges and central lodge link writers (#4485)
 
 - **Owned-lodge list writer, and every Other lodges download write** —
-  `src/lib/servernz-settings.ts` (`lockServerNzSettings`, #64), through the
+  `src/lib/servernz-settings.ts` (`lockServerNzSettings`, triyder/AlpineClubBookingsNZ#64), through the
   connection fence above (#4262 review): `downloadOtherClubsFromServer` builds
   one `serverNzAnswerWriter` for the identity its pull was sent on
   (`OtherLodgesPullResult.sentOn`: the stored address and API-key credential
@@ -2974,7 +3005,7 @@ mispricing a booking.
   writer takes the settings row before its `Lodge` row, so none inverts it.
   The record step also re-reads the cursor and keyed
   marker under the lock, so a download that ran while another recorded writes
-  nothing back. Since #69 the owned list is stored by central id as the server
+  nothing back. Since triyder/AlpineClubBookingsNZ#69 the owned list is stored by central id as the server
   sent it, so an admin's rename of the club's own lodge no longer rewrites it
   and no longer takes this lock. Singleton-keyed; no advisory lock; disjoint
   from the booking/capacity/credit and money clusters. A missing settings row
@@ -2991,7 +3022,7 @@ mispricing a booking.
 - **Central lodge link writer** — `saveCentralLodgeLinks` in
   `src/lib/central-lodge-link.ts`, called by `PUT /api/admin/lodges/[id]/central-lodge`
   and by the setup page's link step (`/api/admin/alpine-server/lodge-links`)
-  (#62; #4262 review): in one transaction it first takes the settings row lock
+  (triyder/AlpineClubBookingsNZ#62; #4262 review): in one transaction it first takes the settings row lock
   (`lockServerNzSettings`) and re-reads the owned-lodge list under it, so a
   download recording a new list (which unlinks deleted ids under the same
   lock) cannot land between the ownership check and the write; then it takes
@@ -3918,7 +3949,7 @@ The `lock(1)` writers take a booking's two rows in both orders:
 | Order | Writers |
 | --- | --- |
 | Payment → booking | a card settle (W1: its PAID claim and R01's owner read), the back-post. A manual settle takes the booking row first since #4840 |
-| booking → Payment | the edit doors (after their lodge key), an edit review, an approved appeal |
+| booking → Payment | the edit doors (after their lodge key), an edit review, an approved appeal and its `release_claim` (#5191) |
 
 Two `lock(1)` holders never interleave, so neither order is a defect between
 them. Merge is not a `lock(1)` holder, so neither fixed place for the Payment
@@ -6424,8 +6455,9 @@ recorded four nulls and presented them as evidence.
 
 The post-commit sweep is keyed on `Booking.lodgeId`, **not**
 `waitlistOfferedLodgeId`, and this is where it deliberately differs from
-`expireStaleOffers`. That path's entry is still `WAITLIST_OFFERED` and holds a
-bed at the OFFERED lodge, so the offered lodge is what its revert frees. Here the
+`expireStaleOffers`. That path's entry is still `WAITLIST_OFFERED`, and the place
+it was offered is at the OFFERED lodge (an offer holds no capacity, `INV-CAP-011`), so
+the offered lodge is where its re-offer goes. Here the
 lodge key held above, the allocations the reconcile prunes, and any admin hold
 released are all `Booking.lodgeId`. Sweeping the offered lodge instead would
 process a queue this repair freed nothing at while leaving the nights it did free
@@ -6880,13 +6912,13 @@ finished) claims on `status: REQUESTED` and now bumps `version`, so it and an
 execution cannot both win. Proved against PostgreSQL in
 `booking-change-request-execution.realdb.test.ts`.
 
-### Adding an existing booking to a work party (fork #119)
+### Adding an existing booking to a work party (fork triyder/AlpineClubBookingsNZ#119)
 
 An officer's "Add to work party" (`addBookingToWorkParty`,
 `src/lib/work-party-booking-correction.ts`) composes only existing keys and adds
 one registered global site, `correctWorkParty#1` (`INV-LOCK-002`,
 `INV-LOCK-003`). It is the #3750 execution's shape without a request row.
-Fork #130's "Remove from work party" (`removeBookingFromWorkParty`) is the same
+Fork triyder/AlpineClubBookingsNZ#130's "Remove from work party" (`removeBookingFromWorkParty`) is the same
 writer in the other direction: it adds no key, site or participant, and the
 steps below are its steps too (its eligibility rule is
 `workPartyRemovalEligibility`). Order, in one transaction:
@@ -6917,7 +6949,7 @@ refund of the same booking holds `lock(1)`, and two concurrent applies serialise
 on it — the second re-reads a booking that already carries the work party (or,
 for a removal, no longer does) and is refused, so the discount and its credit,
 refund or amount owed apply once. A refund the
-officer chose (fork #129) is the edit's own: its ledger lines (and, for an
+officer chose (triyder/AlpineClubBookingsNZ#129) is the edit's own: its ledger lines (and, for an
 organiser-paid joiner, the organiser-child refund debt; for Internet Banking,
 the edit's bank-transfer hand-back task, `raiseEditRefundHandBackIfOwed`) are
 written in this transaction; a card refund's Stripe call runs after commit, and
@@ -7178,7 +7210,8 @@ writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
 - **A kept late capture** (the approval task dismissed) takes the same
   `lock(1)`, booking row and Payment row before its claim, reverses an unpaid,
   unreserved capture-return R05 an automatic refund posted (review M5), then
-  posts the keep.
+  posts the keep. The reversal reads the owner under the booking row it already
+  holds (#5191; taken again, a no-op).
 - **A #2700 hand-back** of a late capture (no approval intent) takes the same
   Payment row before it reads what its capture still holds, then claims
   (#4838). Nothing between takes a lodge, member-credit or task-row lock: the
@@ -7190,11 +7223,27 @@ writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
   identifies (`isLateCaptureHandBackTask`, #4843): the same order, and the
   same two routes return before locking for a NULL kind; the suite runs every
   case on one.
-- **An appeal's `release_claim`** takes global → the request's row → its
-  hand-back task → Payment, releases the approval's open reservations under its
-  own keys with their funding and reverses its R05 in the same transaction. A
-  reservation another sender holds, or a journal refusal, is thrown, never
-  caught.
+- **An appeal's `release_claim`** takes global → booking row → the request's
+  row → its hand-back task → Payment, releases the approval's open reservations
+  under its own keys with their funding and reverses its R05 in the same
+  transaction. A reservation another sender holds, or a journal refusal, is
+  thrown, never caught. The booking row comes right after `lock(1)`, as the
+  approval takes it (review F1, #5191): the reversal reads the owner under it,
+  and taken after the request's claim it would wait on a merge's owner move
+  while the merge waited on that request.
+- **A whole R05 reversal after a member merge** (#5191): the release, the keep
+  and a part to check's dismissal post the exact mirror of the R05 on the
+  debtor it named, then carry any receivable that leaves on a merged-away
+  member along the committed merge chain to the owner they read under the
+  booking row, one `merge-residue` transfer per hop, as a reversed receipt does
+  (D4). The R05 itself is carried first when the merge's snapshot missed it:
+  the reservation step reads its debtor without a lock, so its R05 can land on
+  a member after that member's snapshot. Merge first, the owner move has
+  committed, so the door reads the survivor and moves the residue; door first,
+  the merge waits on the booking row and its snapshot nets the reversal, so
+  nothing moves. No new key or site; `release_claim` adds the booking row after
+  `lock(1)`. Proven in both orders against the real merge by
+  `member-money-refund-appeal-merge.realdb.test.ts`.
 - **The reservation step** runs in its own short transaction on the root client,
   before each keyed slice is sent, taking only the Payment row. It releases the
   same sender's superseded reservations with their funding (review F3: never
@@ -7918,7 +7967,9 @@ hold the Payment row. A cancellation hand-back's completion holds `lock(1)`,
 then the booking row, then the Payment row (#4516 M4d), so its cash posts
 against the owner. A card shortfall part to check's dismissal, and a disputed
 card payment's hand-back's, take the same three before the claim, then withdraw
-the R05 (owner decisions, 15 Nov 2026); a lost claim withdraws nothing. The
+the R05 (owner decisions, 15 Nov 2026), reading the owner its reversal's
+merged-debtor residue moves to under the booking row they hold (#5191); a lost
+claim withdraws nothing. The
 disputed one re-reads its booking's disputes after the Payment row and answers
 them as recorded at that read: the dispute writer takes none of these locks and
 serialises only on its own `StripeDispute` row, so no cycle exists. An open,

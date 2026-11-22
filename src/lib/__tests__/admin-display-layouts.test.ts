@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Prisma } from "@prisma/client";
 import { BUILT_IN_DISPLAY_LAYOUT_KEYS } from "@/lib/lodge-display/built-in-seeds";
 
-// Issue #78 (LTV-032): admin lobby-display LAYOUT CRUD — admin guard on every
+// Issue hoppers99/AlpineClubBookingsNZ#78 (LTV-032): admin lobby-display LAYOUT CRUD — admin guard on every
 // method, save-contract validation on create/update (structural errors surface
 // the contract's path+message; CSS-sanitiser warnings ride along on an accepted
 // save), unique-key 409, immutable key on update, and Restrict-FK-aware delete

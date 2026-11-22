@@ -939,7 +939,7 @@ describe("#2320 review — per-template preview samples match the real sends", (
     expect(rendered).toContain("This was not something you did wrong");
     expect(rendered).toContain("your offer did not run out");
     expect(rendered).toContain("You do not need to do anything");
-    expect(rendered).toContain("New Position: #");
+    expect(rendered).toContain("Your Position: #");
 
     // And never the expiry template's story — that is the defect this template
     // exists to fix, in the subject as well as the body.

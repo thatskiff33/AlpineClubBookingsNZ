@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-time";
 
 /**
- * Fork #121: the food-order access rules, one case per rule.
+ * Fork triyder/AlpineClubBookingsNZ#121: the food-order access rules, one case per rule.
  *
  * The committee and hut-leader reads run against small in-memory tables that
  * evaluate the REAL where-clauses the module builds (the committee assignment's

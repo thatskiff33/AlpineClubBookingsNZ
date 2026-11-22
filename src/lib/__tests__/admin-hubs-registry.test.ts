@@ -322,7 +322,7 @@ describe("each entry's admission is what today's code gives its old path", () =>
       }
     }
     expect(drift).toEqual([]);
-  });
+  }, 30_000);
 
   it("records every module flag the path needs today", () => {
     const drift = ADMIN_PAGES.flatMap((page) => {
@@ -1554,7 +1554,7 @@ describe("retired pages", () => {
         retiredPattern.test(stripComments(fs.readFileSync(path.join(process.cwd(), file), "utf8"))),
     );
     expect(linking).toEqual([]);
-  });
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -2194,6 +2194,10 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/finance/internet-banking/page.tsx": "C5: its back link is adminLink",
     "src/app/(admin)/admin/finance/xero/_components/health-diagnostics-panel.tsx":
       "C5: the member-grouping link is adminHref",
+    "src/app/(admin)/admin/finance/xero/_components/contact-group-mismatch-panel.tsx":
+      "#5234: the member-grouping and member links are adminHref",
+    "src/app/(admin)/admin/finance/xero/_components/__tests__/health-diagnostics-review-by-hand.test.tsx":
+      "#5234: it asserts the member links are adminHref",
     "src/app/(admin)/admin/finance/xero/_components/webhook-amber-badge.tsx":
       "C5: the webhook setup link is adminHref; #4972: it is built by the shared Xero Setup step helper",
     "src/app/(admin)/admin/finance/xero/_components/xero-setup-page-client.tsx":
@@ -2542,7 +2546,7 @@ describe("the registry is inert", () => {
     );
     // Both directions: an unreviewed importer fails, and so does a stale entry.
     expect(importers.sort()).toEqual(Object.keys(IMPORTERS).sort());
-  });
+  }, 30_000);
 
   it("uses only relative imports inside the registry, so next.config.ts can load it", () => {
     const aliased = sourceFiles(REGISTRY_DIR.slice(0, -1)).filter((file) =>

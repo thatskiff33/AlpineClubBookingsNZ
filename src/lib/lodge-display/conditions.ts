@@ -142,7 +142,7 @@ const CORE_CONDITIONS: DisplayConditionDefinition[] = [
 // --- Capability `<module>:enabled` conditions (generated) ------------------
 // Generated from DISPLAY_RELEVANT_MODULE_KEYS + MODULE_DEFINITIONS so each
 // inherits its module's label and stays in sync automatically — no
-// hand-maintained list (issue #71 AC2). Evaluated against the flags the
+// hand-maintained list (issue hoppers99/AlpineClubBookingsNZ#71 AC2). Evaluated against the flags the
 // serialiser copied onto DisplayState.capabilities.
 const CAPABILITY_CONDITIONS: DisplayConditionDefinition[] = (
   Object.entries(DISPLAY_RELEVANT_MODULE_KEYS) as Array<[ModuleKey, string]>

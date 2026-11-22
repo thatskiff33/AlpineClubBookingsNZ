@@ -15,11 +15,11 @@ const SCHEMA = readFileSync(
   "utf8",
 );
 
-// Issue #26 (LTV-001): the lobby-display data model and module flag exist and
+// Issue hoppers99/AlpineClubBookingsNZ#26 (LTV-001): the lobby-display data model and module flag exist and
 // the key is registered at every module-key enumeration point, defaulting OFF
 // so no club sees the surface without opting in.
 
-describe("lobbyDisplay module registration (issue #26)", () => {
+describe("lobbyDisplay module registration (issue hoppers99/AlpineClubBookingsNZ#26)", () => {
   it("registers the module key, defaulting OFF", () => {
     expect(MODULE_KEYS).toContain("lobbyDisplay");
     expect(DEFAULT_MODULE_SETTINGS.lobbyDisplay).toBe(false);
@@ -120,7 +120,7 @@ describe("display authoring v2 Prisma models (LTV-024)", () => {
     // The old data-only model and its enum are gone.
     expect(SCHEMA).not.toContain("enum DisplayTemplateSource");
     // The device drops regionConfig and the vestigial templateKey (removed in
-    // #86 / LTV-040), keeping only the templateId SetNull FK.
+    // hoppers99/AlpineClubBookingsNZ#86 / LTV-040), keeping only the templateId SetNull FK.
     const deviceBlock = SCHEMA.slice(
       SCHEMA.indexOf("model LodgeDisplayDevice {"),
     );

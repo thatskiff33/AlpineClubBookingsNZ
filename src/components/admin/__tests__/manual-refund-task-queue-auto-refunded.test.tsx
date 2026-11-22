@@ -12,6 +12,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
 }));
 
 import { ManualRefundTaskQueue } from "@/components/admin/manual-refund-task-queue";
+import { waitForManualRefundQueueLoaded } from "@/lib/__tests__/support/manual-refund-task-queue-loaded";
 
 /**
  * #2750 — the operator surface for a refund nobody decided.
@@ -199,9 +200,7 @@ describe("ManualRefundTaskQueue — automatically refunded late captures (#2750)
 
     render(<ManualRefundTaskQueue />);
 
-    await waitFor(() =>
-      expect(screen.getByTestId("manual-refund-task-queue")).toBeInTheDocument(),
-    );
+    await waitForManualRefundQueueLoaded();
     const queue = screen.getByTestId("manual-refund-task-queue");
     const notices = screen.getByTestId("automatic-refund-notices");
     // The hand-back row keeps its controls; the record has none, and neither
@@ -236,9 +235,7 @@ describe("ManualRefundTaskQueue — automatically refunded late captures (#2750)
 
     render(<ManualRefundTaskQueue />);
 
-    await waitFor(() =>
-      expect(screen.getByTestId("manual-refund-task-queue")).toBeInTheDocument(),
-    );
+    await waitForManualRefundQueueLoaded();
     expect(
       screen.queryByTestId("automatic-refund-notices"),
     ).not.toBeInTheDocument();

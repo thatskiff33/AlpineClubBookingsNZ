@@ -15,7 +15,7 @@ import { BookingWorkPartyControls } from "@/components/admin/booking-work-party-
 import { WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE } from "@/lib/work-party-figures-changed";
 
 /**
- * Fork #129: the settlement part of the "Add to work party" dialog. The
+ * triyder/AlpineClubBookingsNZ#129: the settlement part of the "Add to work party" dialog. The
  * credit-or-refund choice appears only where there is one to make (a paid
  * booking, as on an ordinary edit); the refund is named for where it goes — the
  * card, or a bank transfer for Internet Banking (upstream owner decision,
@@ -89,7 +89,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("BookingWorkPartyControls settlement (fork #129)", () => {
+describe("BookingWorkPartyControls settlement (triyder/AlpineClubBookingsNZ#129)", () => {
   it("#5149 B-L1: says the discount cancels what is still owed, offering no choice and no credit line", async () => {
     serve(() => ({
       outcome: "quoted",
@@ -327,7 +327,7 @@ describe("BookingWorkPartyControls after a refused apply", () => {
   });
 });
 
-describe("Remove from work party (fork #130)", () => {
+describe("Remove from work party (fork triyder/AlpineClubBookingsNZ#130)", () => {
   const removal = figures({
     previousFinalPriceCents: 15_000,
     newFinalPriceCents: 20_000,

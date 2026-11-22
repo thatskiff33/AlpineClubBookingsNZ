@@ -54,6 +54,17 @@ does not record a refund (#4315).
    > what did and did not reach Xero. A booking whose records hold neither is
    > listed, and **Trigger All Missing** raises an invoice for it.
 
+   > **Group mismatches** counts two kinds of entry (#5234). One *to re-sync*
+   > is a member a grouping rule matches whose Xero contact sits in the wrong
+   > managed group; the bulk re-sync on **Xero member grouping** repairs it.
+   > One *to review by hand* is a member no rule matches (often an
+   > organisation) whose contact still sits in a managed group. The re-sync
+   > never touches those, so the panel names each one with the group it sits
+   > in: remove the contact from that group in Xero, or add a grouping rule
+   > that covers the member, then press the panel's **Refresh**, which
+   > re-fetches both kinds from Xero. Stuck States counts both kinds and its
+   > link opens the panel.
+
    > The whole Xero area (`/admin/xero`, `/admin/xero/*`, `/admin/internet-banking`)
    > is gated by the **Xero integration** module (`src/config/feature-routes.ts`)
    > and returns *Not Found* when it is off. The demo seed leaves Xero disabled,

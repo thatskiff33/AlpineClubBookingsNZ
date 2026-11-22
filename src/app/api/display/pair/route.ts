@@ -12,7 +12,7 @@ import {
 } from "@/lib/lodge-display-auth";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 
-// Lobby display pairing (fork issue #27, ADR-001 §2). Two anonymous actions:
+// Lobby display pairing (fork issue hoppers99/AlpineClubBookingsNZ#27, ADR-001 §2). Two anonymous actions:
 //
 //  - "start": issue a fresh pairing code inside an HMAC-signed, httpOnly
 //    cookie blob. Persists NOTHING — anonymous traffic cannot create rows.
