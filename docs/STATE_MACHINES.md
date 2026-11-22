@@ -2002,11 +2002,17 @@ capture new money whatever its row's status, so a capture whose caller stopped
 or threw before the settle is still kept and alerted on its next arrival on a
 booking paid another way. A flag nothing consumes is checked by the same cron
 task an hour on: cleared for a capture gone, holding no money, or recorded as
-the settler; on a PAID or COMPLETED booking it becomes an owed `new-capture`
-alert, sent in that run; on any other booking it waits, unstamped, for the
-webhook, and at seven days it is cleared with an error logged for a person to
-check. Every due flag is read on each run, a page at a time, so waiting flags
-never hide a newer one. A duplicate-capture refund the retry finishes records the settler then
+the settler. On a PAID or COMPLETED booking the guard judges it as its arrival
+would; only where that arrival would keep it and tell the admins `new-capture`
+does the flag become that owed alert, sent in that run. Any other verdict does
+not depend on the flag (for example another card is the settlement, so the arrival refunds
+it), so the flag waits for the webhook, as it does on an unpaid booking. A
+waiting flag is never re-stamped; at seven days the error is logged for a person
+to check, and only then is the flag cleared, so a crash between the two repeats
+the log rather than losing it. Every due flag is read on each run, a page at a
+time, so waiting flags never hide a newer one, and a failure of this step as a
+whole is logged and recorded in the run's result while the owed alerts are
+still drained. A duplicate-capture refund the retry finishes records the settler then
 recorded on the payment in its history entry, as the inline refund does.
 
 Every other status the
