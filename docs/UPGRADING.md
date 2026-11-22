@@ -22,10 +22,12 @@ It complements the two documents next to it and does not repeat them:
    post-upgrade actions. If you must catch up several releases, apply each
    release's notes in order.
 
-   The deploy script enforces this (#4978): it refuses a commit that no
-   annotated `vX.Y.Z` tag on `origin` points at, unless
+   The deploy script enforces the first half of this (#4978): it refuses a
+   commit that no annotated `vX.Y.Z` tag on `origin` points at, unless
    `ALLOW_UNTAGGED_DEPLOY_COMMIT=1` and a written
-   `UNTAGGED_DEPLOY_COMMIT_REASON` are set. Deploy with
+   `UNTAGGED_DEPLOY_COMMIT_REASON` are set. It checks that the target is a
+   published release, not that it is the next one after the release you run,
+   so it does not stop you skipping releases. Deploy with
    `DEPLOY_REF=<tag>` after `git fetch origin tag <tag>`. **A fork** checks
    tags on its own `origin`, so a fork that does not tag either tags its own
    releases (`pnpm run release:cut` works in a fork) or sets the override on
@@ -54,6 +56,18 @@ It complements the two documents next to it and does not repeat them:
    migrations are written to stay old-code-compatible so the old color keeps
    working during the drain. A few are not (see below) — those need a quiet
    window or a deferral.
+5. **A one-off upgrade tool leaves `main` two releases after the upgrade it
+   serves** (owner decision, #5404). A tool that serves only the upgrade from
+   release A to release B is still in B and in the release after it, and is
+   removed before the second release after B. Two releases rather than one
+   because a club can skip a release, and the deploy script does not stop it
+   (principle 1). When the tool goes, its documentation becomes a short note
+   naming the release tag that still carries it, and any invariant that names
+   it is reworded in the same change. A club that still needs it runs it from
+   that tag; it was tested against that release's schema only. The rule does
+   not apply to a tool that is still a current remedy, a rollback check, or a
+   step to run before switching a setting on: those stay while the remedy,
+   rollback or setting does.
 
 ## How to read `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`
 

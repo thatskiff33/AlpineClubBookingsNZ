@@ -1212,6 +1212,14 @@ were off by two orders of magnitude.
 
 ## Operational Repair Tools
 
+### When a one-off tool leaves `main` (#5404)
+
+When a one-off upgrade tool leaves `main`, what it excludes and what replaces
+its documentation are set once, in principle 5 of
+[`docs/UPGRADING.md` → Principles](UPGRADING.md#principles). Removing such a tool takes
+everything that exists only for it: the script, its library module, tests,
+package script, lint exceptions and census entries.
+
 ### Run these through `pnpm run`, never `pnpm exec tsx`
 
 Every repair tool below is published as a `pnpm run` command, and that is the
