@@ -7,6 +7,7 @@ import { deriveIssueReportScreenshotOrigin } from "@/lib/issue-report-screenshot
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import { sendAdminIssueReportAlert } from "@/lib/email";
 import { getIssueReportSensitiveDataExpiresAt } from "@/lib/issue-report-retention";
 import logger from "@/lib/logger";
@@ -244,8 +245,7 @@ export async function POST(request: NextRequest) {
         pageTitle,
         hasScreenshot: Boolean(screenshot),
       }),
-      ipAddress:
-        request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown",
+      ipAddress: getClientIp(request),
     });
 
     sendAdminIssueReportAlert({

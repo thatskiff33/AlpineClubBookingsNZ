@@ -26,6 +26,9 @@ const { mockPrisma, mockFlags, mockInstructions } = vi.hoisted(() => ({
     // covering the window's current day. Default null = nobody in residence,
     // which is every pre-#2286 case in this file.
     hutLeaderAssignment: { findFirst: vi.fn().mockResolvedValue(null) },
+    // Read only by the one case that lets the real instructions reader run
+    // (#5345); every other case stubs the reader below.
+    lodgeInstruction: { findMany: vi.fn() },
   },
   mockFlags: vi.fn(),
   mockInstructions: vi.fn(),
@@ -106,6 +109,10 @@ vi.mock("@/lib/club-time/server", async () => {
 import { parseDateOnly } from "@/lib/date-only";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 
+import {
+  expectStoredHeadingOneDemoted,
+  storedInstructionWithH1,
+} from "./support/stored-heading-one";
 import { stripComments } from "./support/strip-comments";
 
 const LODGE = {
@@ -1058,6 +1065,24 @@ describe("buildDisplayState privacy matrix", () => {
     const state = await buildDisplayState("lodge-a");
     expect(state!.capabilities).toEqual({ bedAllocation: true, chores: false });
     expect(Object.keys(state!.capabilities)).toEqual(["bedAllocation", "chores"]);
+  });
+});
+
+describe("buildDisplayState rules (#5345, INV-PUB-006)", () => {
+  it("hands the wall an author's h1 demoted, through the real instructions reader", async () => {
+    // The rules card draws this HTML as it arrives, so the state must carry
+    // the reader's HTML and never the stored HTML.
+    const reader = (await vi.importActual(
+      "@/lib/lodge-instructions",
+    )) as typeof import("@/lib/lodge-instructions");
+    mockInstructions.mockImplementation(reader.getSanitizedLodgeInstructions);
+    mockPrisma.lodgeInstruction.findMany.mockResolvedValue([storedInstructionWithH1()]);
+
+    const { buildDisplayState } = await import("@/lib/lodge-display-state");
+    const state = await buildDisplayState("lodge-a");
+
+    expect(state?.rules).toHaveLength(3);
+    expectStoredHeadingOneDemoted(state?.rules?.[0]?.html ?? "");
   });
 });
 

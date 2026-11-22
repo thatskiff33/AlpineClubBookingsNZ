@@ -196,6 +196,8 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MemberCredit: "personal",
   MemberCreditNoteAllocation: "personal",
   AdminCreditAdjustmentRequest: "personal",
+  // #4988: names the officer who posted and reversed the batch, and a free-text reversal reason.
+  OpeningCreditBatch: "personal",
   // #5204: a contact's unallocated Xero money, and the backed-credit slices and returns.
   XeroCashCredit: "personal",
   MemberCreditCashAllocation: "personal",

@@ -273,8 +273,7 @@ export async function POST(
         contactAllowed &&
         Boolean(parsed.data.reporterName || parsed.data.reporterContact),
     }),
-    ipAddress:
-      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown",
+    ipAddress: getClientIp(request),
   });
 
   void resolveMaintenanceAlertPayload({

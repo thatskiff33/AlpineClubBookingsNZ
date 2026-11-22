@@ -213,6 +213,8 @@ describe("ClubIdentityPanel — staged Edit → Save/Cancel (#3976)", () => {
       shortName: "",
       hutLeaderLabel: "Hut Leader",
       facebookUrl: "",
+      legalName: "",
+      postalAddress: "",
     });
     // The box shows what the server STORED (trimmed), not the typed draft.
     expect(field("Club name")).toHaveValue("Renamed Club");
@@ -372,5 +374,56 @@ describe("ClubIdentityPanel — staged Edit → Save/Cancel (#3976)", () => {
       expect(field("Club name")).toHaveValue("Alpine Sports Club"),
     );
     expect(screen.queryByText("Could not load club identity settings.")).toBeNull();
+  });
+});
+
+describe("ClubIdentityPanel — invoice supplier fields (#5066)", () => {
+  const LOADED = {
+    name: "Alpine Sports Club",
+    shortName: null,
+    hutLeaderLabel: null,
+    facebookUrl: null,
+    legalName: "Alpine Sports Club Incorporated",
+    postalAddress: "PO Box 7\nOhakune 4625",
+  };
+
+  beforeEach(() => {
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") return new Response(JSON.stringify({ settings: { ...LOADED, ...JSON.parse(String(init.body)) } }));
+      return new Response(JSON.stringify({ settings: LOADED }));
+    });
+  });
+
+  it("shows the legal name and a multi-line postal address read-only until Edit", async () => {
+    render(<ClubIdentityPanel />);
+    await screen.findByDisplayValue("Alpine Sports Club Incorporated");
+    const address = screen.getByLabelText("Postal address");
+    expect(address.tagName).toBe("TEXTAREA");
+    expect(address).toHaveValue("PO Box 7\nOhakune 4625");
+    expect(address).toBeDisabled();
+    expect(screen.getByLabelText("Legal name")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(address).toBeEnabled();
+    expect(screen.getByLabelText("Legal name")).toBeEnabled();
+  });
+
+  it("keeps Save disabled for an address the route would store unchanged, and sends a real change", async () => {
+    render(<ClubIdentityPanel />);
+    await screen.findByDisplayValue("Alpine Sports Club Incorporated");
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const save = () => screen.getByRole("button", { name: "Save club identity" });
+
+    fireEvent.change(screen.getByLabelText("Postal address"), { target: { value: " PO Box 7 \n\nOhakune 4625  " } });
+    expect(save()).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Postal address"), { target: { value: "PO Box 8\nOhakune 4625" } });
+    expect(save()).toBeEnabled();
+    fireEvent.click(save());
+    await screen.findByText("Club identity updated.");
+    const put = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "PUT");
+    expect(JSON.parse(String(put?.[1]?.body))).toMatchObject({
+      legalName: "Alpine Sports Club Incorporated",
+      postalAddress: "PO Box 8\nOhakune 4625",
+    });
   });
 });

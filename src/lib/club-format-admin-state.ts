@@ -13,7 +13,7 @@ import "server-only";
  * WHAT IS DELIBERATELY NOT HERE. The currency selector list: an option list is
  * a list of CHOICES the browser may render, and it has no business on the
  * payload that states what the club's currency actually IS. Nor the changer's
- * email — see `MEMBER_NAME_SELECT`.
+ * email — see `readChangedByName` (`setting-changed-by.ts`).
  */
 
 import type {
@@ -21,17 +21,7 @@ import type {
   PersistedClubFormatSettings,
   ResolvedClubFormat,
 } from "@/lib/club-format-settings";
-import { prisma } from "@/lib/prisma";
-
-/**
- * Name fields ONLY. The panel says WHO last changed the format, so it needs a
- * display name and nothing else — selecting the email, or the whole row, would
- * put a contact address into a configuration payload with no use for one.
- */
-const MEMBER_NAME_SELECT = {
-  firstName: true,
-  lastName: true,
-} as const;
+import { readChangedByName } from "@/lib/setting-changed-by";
 
 /** The row this module turns into a payload. */
 export type PersistedRow = PersistedClubFormatSettings;
@@ -63,29 +53,6 @@ export type ClubFormatState = {
   unusableStoredCurrency: string | null;
   unusableStoredLocale: string | null;
 };
-
-/**
- * The display name of the member who last saved, or `null`. Defensive because
- * the column carries no foreign key (the house shape for a settings singleton),
- * so the member may since have been merged or deleted: a missing member, a blank
- * name and an unreachable database all mean "we cannot name them", never a
- * failed read of the setting.
- */
-async function readChangedByName(
-  memberId: string | null,
-): Promise<string | null> {
-  if (!memberId) return null;
-  try {
-    const member = await prisma.member.findUnique({
-      where: { id: memberId },
-      select: MEMBER_NAME_SELECT,
-    });
-    if (!member) return null;
-    return `${member.firstName} ${member.lastName}`.trim() || null;
-  } catch {
-    return null;
-  }
-}
 
 /** The state a READ produces, provenance and all. */
 export async function stateFromResolved(

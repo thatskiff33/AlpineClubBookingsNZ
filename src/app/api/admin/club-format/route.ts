@@ -14,6 +14,7 @@ import {
 import { resolveClubFormatWithSource } from "@/lib/club-format-settings";
 import { writeClubFormat } from "@/lib/club-format-write";
 import logger from "@/lib/logger";
+import { isSingletonUpsertContention } from "@/lib/prisma-errors";
 import { primeEmailClubTimeZone } from "@/lib/email-templates-club-time";
 import { requireAdmin } from "@/lib/session-guards";
 import { isFullAdmin } from "@/lib/access-roles";
@@ -44,7 +45,7 @@ import { isFullAdmin } from "@/lib/access-roles";
  * advisory lock are stated there, beside the code they describe.
  */
 
-/**
+/*
  * Retryable failures of the transaction below, answered 503 rather than 500.
  * P2028 (transaction API error, including an exhausted `maxWait`/`timeout`) and
  * P2034 (write conflict, deadlock, or the serialisation failure Serializable
@@ -56,13 +57,10 @@ import { isFullAdmin } from "@/lib/access-roles";
  * being `AuditLog` (a per-row `cuid`, no other unique constraint) and the AI rate
  * it only ever DELETES from — add a unique constraint or an insert, and a real
  * bug starts being answered "try again shortly", which retrying cannot fix.
+ *
+ * The set and the predicate are `isSingletonUpsertContention`
+ * (`@/lib/prisma-errors`); this comment is why `P2002` is safe for this writer.
  */
-const TRANSACTION_CONTENTION_CODES = new Set(["P2002", "P2028", "P2034"]);
-
-function isTransactionContentionError(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === "string" && TRANSACTION_CONTENTION_CODES.has(code);
-}
 
 export async function GET() {
   const guard = await requireAdmin({ permission: "any-admin" });
@@ -190,7 +188,9 @@ export async function PUT(request: Request) {
       nothing, so retrying is safe. Anything else rethrows: this route cannot tell what
       a broken database means, and a friendly "try again shortly" would hide it.
     */
-    if (!isTransactionContentionError(error)) throw error;
+    // P2002 counts as contention for this writer; the reason is the
+    // "Retryable failures" comment near the top of this file.
+    if (!isSingletonUpsertContention(error)) throw error;
     logger.warn({ err: error }, "Club format save hit write contention");
     return NextResponse.json(
       { error: "Another update is in progress — try again shortly." },

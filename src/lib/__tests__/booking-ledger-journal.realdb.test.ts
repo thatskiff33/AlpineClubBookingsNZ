@@ -16,7 +16,7 @@
  * releasing the immutable journal rows through the teardown support.
  */
 import type { PrismaClient } from "@prisma/client";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, onTestFailed, vi } from "vitest";
 
 import type { BookingJournalContext } from "@/lib/member-money/doors";
 import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
@@ -29,6 +29,7 @@ import {
   seedHistoryFixtures,
   settleHistoryByCard,
 } from "./support/booking-ledger-history";
+import { realElapsedMs } from "./helpers/clock";
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { arrivingWhilePaused, clearPauses, expectFulfilled, pauseIn, previewMerge } from "./support/member-merge-race";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
@@ -121,6 +122,38 @@ async function receivable(bookingId: string): Promise<Record<string, number>> {
     out[who] = (out[who] ?? 0) + (leg.side === "DEBIT" ? leg.amountCents : -leg.amountCents);
   }
   return out;
+}
+
+/** A phase with no figure reads "not finished": it had not completed, or never began, so a stall shows which step it was in (#5350). */
+function describeSettlePhases(phases: { startMs?: number; lockWaitMs?: number; bodyMs?: number }, totalMs: number): string {
+  const ms = (value: number | undefined) => (value === undefined ? "not finished" : `${Math.round(value)} ms`);
+  return `start ${ms(phases.startMs)}; wait for lock(1) ${ms(phases.lockWaitMs)}; body ${ms(phases.bodyMs)}; total ${Math.round(totalMs)} ms`;
+}
+
+/**
+ * Every other backend holding `pg_advisory_xact_lock(1)` in this database
+ * right now, for a failure message only (#5350): pid, application name, state,
+ * how long its transaction has been open and the start of its current query.
+ * Advisory locks are per database, so a lock(1) held in another database on
+ * the same server is left out. It never throws, so a diagnostic read cannot
+ * change the test's verdict.
+ */
+async function lock1HoldersOtherThan(pid: number): Promise<string> {
+  try {
+    const rows = await prisma.$queryRaw<{ pid: number; application_name: string; state: string | null; xact_ms: number | null; query: string }[]>`
+      SELECT a.pid, a.application_name, a.state,
+        (extract(epoch FROM clock_timestamp() - a.xact_start) * 1000)::float8 AS xact_ms,
+        left(a.query, 200) AS query
+      FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+      WHERE l.locktype = 'advisory' AND l.classid = 0 AND l.objid = 1 AND l.objsubid = 1
+        AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+        AND l.granted AND l.pid <> ${pid}`;
+    if (rows.length === 0) return "none";
+    return rows.map((row) => `pid ${row.pid} (${row.application_name || "no application_name"}, ${row.state ?? "no state"}, `
+      + `transaction open ${row.xact_ms === null ? "?" : Math.round(row.xact_ms)} ms): ${row.query}`).join("; ");
+  } catch (error) {
+    return `could not read pg_locks: ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 
 /**
@@ -549,15 +582,55 @@ async function expectAgreed(bookingId: string) {
     const { LOCK1_HOLDER_TRANSACTION_BUDGET } = await import("@/lib/db-transaction");
     // The judge is the settle's own budget, not a stopwatch (#5213). Prisma
     // rolls back a transaction whose body outruns `timeout` (P2028), so this
-    // resolving with 40 R01s committed is the proof that they fit. A wall-clock
-    // bound measured around the call also counted the `maxWait` queue for a
-    // connection, and failed busy runners (40.5 s) with nothing wrong.
-    await expect(prisma.$transaction(async (tx) => {
+    // committing with 40 R01s proves the 40 R01 postings fit that budget under
+    // lock(1). It is not a proof that the whole settle fits: the real settle
+    // also upserts payments, flips each child to PAID and reconciles beds in
+    // the same transaction (#5350). A wall-clock bound measured around the call
+    // also counted the `maxWait` queue for a connection, and failed busy
+    // runners (40.5 s) with nothing wrong.
+    //
+    // The verdict is only whether the transaction commits. The timings and the
+    // lock(1) holders below are diagnostics for a failure (#5350): they say how
+    // long the transaction took to start, how long it waited for lock(1) and how
+    // long the postings ran, and which other backends held lock(1) as it began
+    // to wait. They never decide the result. In a local probe on Prisma 7.10.1,
+    // `timeout` did not interrupt a blocked lock wait, so if Vitest's own
+    // timeout ends the test first, `onTestFailed` prints the same diagnostics.
+    const calledAt = process.hrtime.bigint();
+    const phases: { startMs?: number; lockWaitMs?: number; bodyMs?: number } = {};
+    let holdersAtWait: Promise<string> = Promise.resolve("not read: the transaction never reached its lock(1) wait");
+    let diagnosed = false;
+    onTestFailed(async () => {
+      if (diagnosed) return;
+      console.error(`The 40-child group settle test failed (#5350). Where the time went: ${describeSettlePhases(phases, realElapsedMs(calledAt))}`
+        + `\nOther lock(1) holders as it began to wait: ${await holdersAtWait}`);
+    });
+    const failure = await prisma.$transaction(async (tx) => {
+      phases.startMs = realElapsedMs(calledAt);
+      const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+      // Read on another pooled connection while this one waits, so the read
+      // adds nothing to the wait it describes.
+      holdersAtWait = lock1HoldersOtherThan(pid);
+      const waitFrom = process.hrtime.bigint();
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      phases.lockWaitMs = realElapsedMs(waitFrom);
+      const bodyFrom = process.hrtime.bigint();
       await groupSync.postGroupSettlementLedgerLines({
         store: tx, journal: JOURNAL, settlement: { id: `${PREFIX}settlement`, source: "STRIPE", amountCents: 40 * PRICE }, children,
       });
-    }, LOCK1_HOLDER_TRANSACTION_BUDGET)).resolves.toBeUndefined();
+      phases.bodyMs = realElapsedMs(bodyFrom);
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET).then(() => undefined, (error: unknown) => ({ error }));
+    const totalMs = realElapsedMs(calledAt);
+    const holders = await holdersAtWait;
+    if (failure) {
+      diagnosed = true;
+      const reason = failure.error instanceof Error ? failure.error.message : String(failure.error);
+      throw new Error([
+        `The 40-child group settle's transaction did not commit on LOCK1_HOLDER_TRANSACTION_BUDGET (${JSON.stringify(LOCK1_HOLDER_TRANSACTION_BUDGET)}): ${reason}`,
+        `Where the time went (#5350): ${describeSettlePhases(phases, totalMs)}`,
+        `Other lock(1) holders as it began to wait: ${holders}`,
+      ].join("\n"), { cause: failure.error });
+    }
     expect(await prisma.memberMoneyEvent.count({ where: { eventKey: { in: ids.map((id) => `booking-charge:${id}`) } } })).toBe(40);
   });
 

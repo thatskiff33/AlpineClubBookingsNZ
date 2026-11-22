@@ -66,7 +66,6 @@ import { createAdminGrantCreditNote } from "@/lib/xero-admin-grant-credit-note";
 import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
 import { deallocateExcessAppliedCreditForBooking } from "@/lib/xero-applied-credit-deallocation";
 import { outboxScanLeavesAwaitingOwnNote, OWN_NOTE_EXPECTED_KEY } from "@/lib/unpaid-ask-billed-offset-order";
-import { isXeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import {
   findResolvedBookingInvoiceCreate,
   findResolvedSiblingSince,
@@ -81,6 +80,7 @@ import { XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE } from "@/lib/xero-card-r
 import { recordAdditionalCaptureReceipt } from "@/lib/additional-capture-xero-receipt";
 import { outboxScanSpacesWaitingReceipts } from "@/lib/additional-capture-receipt-gate";
 import { scanSpacesRefundNotesAwaitingResolve } from "@/lib/xero-refund-note-in-flight";
+import { scanSpacesTaxCategoriesAwaitingMapping, xeroOutboxWaitOf } from "@/lib/xero-tax-category-hold";
 import { XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE } from "@/lib/admin-grant-credit-note-payload";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { returnOutboxRowToPending, UNCLAIMED } from "@/lib/xero-outbox-pending-request";
@@ -2171,8 +2171,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
     // after a handler saved its execution request over the queued one (#5228).
     where: {
       ...OUTBOX_PENDING_WHERE,
-      // Rows waiting their turn are looked at only every few minutes, not on every kick (#3954, #3953, #4692 `INV-INT-035`); an owed group invoice email every minute (#4919).
-      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date()), scanSpacesRefundNotesAwaitingResolve(new Date()), scanSpacesAdminGrantNotesAwaitingRetry(new Date()), scanSpacesGroupInvoiceEmailsDeferred(new Date())],
+      // Rows waiting their turn are looked at only every few minutes, not on every kick (#3954, #3953, #4692 `INV-INT-035`); an owed group invoice email every minute (#4919); a line whose tax category is not mapped yet, every five (#4988).
+      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date()), scanSpacesRefundNotesAwaitingResolve(new Date()), scanSpacesAdminGrantNotesAwaitingRetry(new Date()), scanSpacesGroupInvoiceEmailsDeferred(new Date()), scanSpacesTaxCategoriesAwaitingMapping(new Date())],
       // #5228: never a row whose request names no queue type - it is not sent
       // from a guess, and must not fill the batch ahead of the work behind it.
       NOT: NAMES_NO_QUEUE_TYPE,
@@ -2469,20 +2469,20 @@ export async function processQueuedXeroOutboxOperations(options?: {
         result.skipped += 1;
         continue;
       }
-      if (isXeroAppliedCreditOperationBusyError(error)) {
+      const wait = xeroOutboxWaitOf(error);
+      if (wait) {
         // Two independent outbox runners can claim allocation and deallocation
         // for the same Payment before either handler observes the other. That
         // collision is transient: return this row to PENDING so the next scan
-        // serializes them, rather than stranding both rows as FAILED.
-        // #3791: the reason stays on the row, so a note waiting on a
-        // deallocation says what it is waiting for.
+        // serializes them, rather than stranding both rows as FAILED. #3791: the
+        // reason stays on the row. #4988: a tax category Xero cannot carry yet waits the same way.
         // #5228: with a request the next pass can claim, else it fails below.
         const busy = await returnOutboxRowToPending({
           operationId: queuedOperation.id,
           // #4356: never take back a repair's marked claim; #4373: nor any claim but this dispatch's (`INV-INT-029`).
           where: { ...ownRunningClaim(outcomeClaim), ...NOT_A_XERO_REPAIR_CLAIM },
           // #3954 round 8: a wait the scan spaces out names itself here.
-          data: { startedAt: null, lastErrorCode: error.waitCode, lastErrorMessage: error.message },
+          data: { startedAt: null, lastErrorCode: wait.code, lastErrorMessage: wait.message },
           request: { keep: true, fallback: claimedRequest },
         });
         if (busy.outcome !== "unclaimable") {

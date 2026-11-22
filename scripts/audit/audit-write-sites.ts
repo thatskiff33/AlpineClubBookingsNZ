@@ -12,7 +12,7 @@
 import type { AuditWriteSiteLedgerEntry } from "./audit-writer-census";
 
 export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntry>> = {
-  "src/app/(authenticated)/bookings/[id]/_lib/booking-invoice-download.ts::prepareBookingInvoiceDownload#0": {"category":"booking","sink":"createAuditLog","action":"(dynamic) creditNote ? \"booking.credit_note.downloaded\" : \"booking.invoice.downloaded\""},
+  "src/app/(authenticated)/bookings/[id]/_lib/booking-invoice-download.ts::prepareBookingInvoiceDownload#0": {"category":"booking","sink":"createAuditLog","action":"(dynamic) isCreditNote ? \"booking.credit_note.downloaded\" : \"booking.invoice.downloaded\""},
   "src/app/api/admin/access-roles/[id]/route.ts::DELETE#0": {"category":"admin","sink":"auditLog.create","action":"ACCESS_ROLE_DEFINITION_DELETED"},
   "src/app/api/admin/access-roles/[id]/route.ts::PATCH.updated#0": {"category":"admin","sink":"auditLog.create","action":"ACCESS_ROLE_DEFINITION_UPDATED"},
   "src/app/api/admin/access-roles/route.ts::POST.created#0": {"category":"admin","sink":"auditLog.create","action":"ACCESS_ROLE_DEFINITION_CREATED"},
@@ -168,7 +168,7 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/app/api/admin/members/bulk-update/route.ts::POST#0": {"category":"admin","sink":"logAudit","action":"(dynamic) `member.bulk-${action}`","reviewed":["2581-applied","2755-member-record"]},
   "src/app/api/admin/members/bulk-update/route.ts::POST#1": {"category":"admin","sink":"logAudit","action":"(dynamic) `member.bulk-${action}`","reviewed":["2581-applied","2755-member-record"]},
   "src/app/api/admin/members/export/route.ts::GET#0": {"category":"privacy","sink":"createAuditLog","action":"member.exported","reviewed":["2755-officer-visible"]},
-  "src/app/api/admin/members/import/route.ts::POST.createdMembers#0": {"category":"admin","sink":"createAuditLog","action":"member.imported"},
+  "src/app/api/admin/members/import/route.ts::POST.createdImport#0": {"category":"admin","sink":"createAuditLog","action":"member.imported"},
   "src/app/api/admin/members/send-password-reset/route.ts::POST#0": {"category":"security","sink":"logAudit","action":"member.password-reset-sent","reviewed":["2581-applied","2755-officer-visible"]},
   "src/app/api/admin/members/send-setup-invite/route.ts::POST.batchResults#0": {"category":"security","sink":"logAudit","action":"member.setup-invite-sent","reviewed":["2581-applied","2755-officer-visible"]},
   "src/app/api/admin/members/subject-access/route.ts::GET#0": {"category":"privacy","sink":"createAuditLog","action":"member.subject_access_exported","reviewed":["2755-officer-visible"]},
@@ -466,6 +466,7 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/member-guest-find-service.ts::auditMemberGuestSearch#0": {"category":"privacy","sink":"createStructuredAuditLog","action":"(dynamic) MEMBER_GUEST_SEARCH_AUDIT_ACTION","reviewed":["2581-wrapper"]},
   "src/lib/member-guest-probe-guard.ts::recordMemberGuestAddRefusal#0": {"category":"privacy","sink":"createStructuredAuditLog","action":"(dynamic) MEMBER_GUEST_REFUSAL_AUDIT_ACTION"},
   "src/lib/member-guest-probe-guard.ts::recordMemberGuestAddRefusal#1": {"category":"privacy","sink":"createStructuredAuditLog","action":"(dynamic) MEMBER_GUEST_REPEATED_REFUSAL_AUDIT_ACTION"},
+  "src/lib/member-import-type-family.ts::createImportFamilyGroups#0": {"category":"family","sink":"createAuditLog","action":"FAMILY_GROUP_CREATED","reviewed":["2755-officer-visible"]},
   "src/lib/member-lifecycle-actions.ts::createMemberArchiveRequest.request#0": {"category":"admin","sink":"createAuditLog","action":"member_lifecycle.archive_requested"},
   "src/lib/member-lifecycle-actions.ts::createMemberDeleteRequest.request#0": {"category":"admin","sink":"createAuditLog","action":"member_lifecycle.delete_requested"},
   "src/lib/member-lifecycle-actions.ts::reviewMemberArchiveRequest.approved#0": {"category":"admin","sink":"createAuditLog","action":"member_lifecycle.archive_approved"},
@@ -502,6 +503,8 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/nomination.ts::sendDueNominationReminders#0": {"category":"communication","sink":"logAudit","action":"membership_application.nomination_reminder_sent"},
   "src/lib/non-member-contact.ts::createNonMemberContact#0": {"category":"booking","sink":"logAudit","action":"admin.non_member_contact.created"},
   "src/lib/notices-email.ts::sendNoticePublishedEmails#0": {"category":"communication","sink":"createAuditLog","action":"notice.emailSent"},
+  "src/lib/opening-credit-batch.ts::postOpeningCreditBatch.batch#0": {"category":"payment","sink":"createAuditLog","action":"member.credit.opening_batch.post"},
+  "src/lib/opening-credit-batch.ts::reverseOpeningCreditBatch.result#0": {"category":"payment","sink":"createAuditLog","action":"member.credit.opening_batch.reverse"},
   "src/lib/organiser-child-refund-executor.ts::finishRecordedOrganiserChildRefund#0": {"category":"booking","sink":"logAudit","action":"booking.payment.refund_recovered"},
   "src/lib/organiser-extra-note-record.ts::recordCreatedOrganiserNote#0": {"category":"xero","sink":"createAuditLog","action":"(dynamic) LATE_ORGANISER_NOTE_NOT_RECORDED_ACTION"},
   "src/lib/organiser-extra-note-record.ts::traceStandDown#0": {"category":"xero","sink":"createAuditLog","action":"(dynamic) ORGANISER_RUN_STOOD_DOWN_ACTION"},

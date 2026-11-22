@@ -488,7 +488,9 @@ describe("booking change requests", () => {
         method: "PATCH",
         headers: {
           "content-type": "application/json",
-          "x-forwarded-for": "127.0.0.1",
+          // #5399: the first address is the caller's claim; the last is the
+          // one the proxy saw, and is the one recorded.
+          "x-forwarded-for": "203.0.113.250, 198.51.100.42",
         },
         body: JSON.stringify({
           status: "APPROVED",
@@ -520,6 +522,7 @@ describe("booking change requests", () => {
       expect.objectContaining({
         action: "booking-change-request.approve",
         subjectMemberId: "member-1",
+        ipAddress: "198.51.100.42",
       })
     );
   });
