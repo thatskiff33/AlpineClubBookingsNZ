@@ -237,6 +237,29 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
     );
   });
 
+  // #5234: a POST with no body must not re-fetch the whole flagged
+  // population; it is capped at the panel's 200 like the Refresh button.
+  it("caps a POST that sends no limit at 200 contacts", async () => {
+    mockGroupSnapshot.mockResolvedValue({
+      cacheReady: true,
+      lastRefreshedAt: "2026-07-01T00:00:00.000Z",
+      mismatchCount: 0,
+      mismatches: [],
+      informational: [],
+    });
+    mockFetchContactsByIds.mockResolvedValue([]);
+
+    const res = await resyncGroupMismatches(
+      postRequest("http://localhost/api/admin/xero/contact-group-mismatches")
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockGroupSnapshot).toHaveBeenCalledTimes(2);
+    for (const call of mockGroupSnapshot.mock.calls) {
+      expect(call[0]).toEqual({ limit: 200 });
+    }
+  });
+
   it("returns 409 without calling Xero when the cache has never been synced", async () => {
     mockGroupSnapshot.mockResolvedValue({
       cacheReady: false,

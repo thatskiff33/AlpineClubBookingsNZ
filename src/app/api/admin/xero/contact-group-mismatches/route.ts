@@ -38,8 +38,13 @@ export async function GET(request: NextRequest) {
   }
 }
 
+// #5234: the Refresh re-fetches every listed contact from Xero, so a POST
+// that sends no limit is capped at the panel's own 200 rather than fetching
+// the whole flagged population.
+const DEFAULT_RESYNC_LIMIT = 200;
+
 const resyncBodySchema = z.object({
-  limit: z.number().int().min(1).max(500).optional(),
+  limit: z.number().int().min(1).max(500).default(DEFAULT_RESYNC_LIMIT),
 });
 
 // Resync-from-Xero (#1441): re-fetch the currently flagged contacts from
@@ -72,7 +77,7 @@ export async function POST(request: NextRequest) {
 
     // #5234: information-only entries too, so a contact removed from a
     // managed group in Xero drops off the panel on Refresh. Both lists are
-    // already capped by the request's `limit`.
+    // capped by `limit` (sent, or DEFAULT_RESYNC_LIMIT).
     const resync = await resyncXeroContactCachesByIds(
       [
         ...before.mismatches.map((mismatch) => mismatch.xeroContactId),
