@@ -152,7 +152,7 @@ only the rules.
 
 - **Every method of every route under `src/app/api` is a catalogue
   action or has a stated exclusion reason.** `classifyMcpRoute` in
-  [`exclusions.ts`](../../src/lib/mcp/exclusions.ts) answers for each;
+  [`exclusions.ts`](../../src/lib/mcp/exclusions.ts) answers;
   [`mcp-route-census.test.ts`](../../src/lib/__tests__/mcp-route-census.test.ts)
   fails on anything unclassified, a catalogue entry whose route method is
   missing, and an action on a permanently excluded route.
@@ -162,26 +162,27 @@ only the rules.
   `public-visitor`, `website-flow`, `access-secrets`, `site-helper`. A member
   route's reason names its exact method and path. A permanent exclusion beats
   a catalogue entry.
-- **A `not-yet:` reason names the follow-on task** from `MCP_NOT_YET_TASKS`
-  that brings the route in; that task adds its catalogue entries and
-  removes its rule in one change. A route in an undecided area stays
-  unclassified and fails the census.
+- **A `not-yet:` reason names the follow-on task** from `MCP_NOT_YET_TASKS`;
+  that task adds its entries and removes its rule in one change. A route in
+  an undecided area, or a new route in a `MCP_DECIDED_ADMIN_AREAS` area, is
+  unclassified.
 - **The catalogue adds no behaviour or permission.** An action's request
-  schemas and its `returns` shape are its route's, imported from
-  lib modules ([`connection-shapes.ts`](../../src/lib/connection-shapes.ts)
-  for shapes, `INV-SSOT-001`).
+  schemas and `returns` shape are its route's, imported from lib modules
+  (`INV-SSOT-001`).
 - **A connection is sent only what its action returns.** A route the website
-  also reads answers a request carrying the principal header through
-  `connectionJson` or `projectForConnection`, which keep only the shape's
-  fields, at every depth; a refusal passes unchanged. Only a `POST` the
-  census pins as side-effect free may run as a `preview` read.
-- **A connection acts as a member, never as an officer.** A route with an
-  officer branch decides with `memberOnlySessionUser`: role `USER`, no other
-  access role, an empty permission matrix. An on-behalf target or officer
-  override flag from a connection is refused. A reused member page keeps its
-  audience, as privacy register row `ai-apps` discloses: committee-role
-  notices (`notices.ts`) and the person's own actions in their account
-  history. Officer actions come with ALP-719.
+  also reads answers the principal header through `connectionJson` or
+  `projectForConnection`, keeping only the shape's fields at every depth; a
+  refusal passes unchanged. Only a `POST` the census pins as side-effect free
+  may run as a `preview` read.
+- **A member action acts as a member.** A route with an officer branch
+  decides with `memberOnlySessionUser` (role `USER`, empty permission matrix)
+  and refuses an on-behalf target or officer override flag from a
+  connection. A reused member page keeps its audience, as privacy register
+  row `ai-apps` discloses.
+- **An officer action is one whose route resolves to an admin area**
+  (`mcpActionAdminRequirement`, read from `getAdminRouteRequirement`). Only
+  someone holding that area at that level is offered or can run it; its
+  route decides with the officer's own permissions and must project.
 
 ## INV-MCP-007
 
@@ -210,6 +211,8 @@ only the rules.
   not answer (`MCP_ACTION_CALLED`).
 - **A row never carries an action's arguments or its result**
   (`INV-PRIV-011`); it names the action, the app, the member and the outcome.
+  A member action's row names the member as its subject; an officer action's
+  names none; the route writes its own audit rows, as for the admin screen.
 - **Not audited, as built:** `read` action calls, and ends the system or the
   app causes (`app-revoked`, `replaced`, `refresh-reuse`, `code-reuse`,
   `session-ended`, `never-completed`), which are recorded only on the
