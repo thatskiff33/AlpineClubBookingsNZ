@@ -28,6 +28,7 @@ const caller: McpCaller = {
   userAgent: "example-agent/1.0",
 };
 const viewOnly: McpCaller = { ...caller, scope: "READ" };
+const officer: McpCaller = { ...caller, memberId: "officer-1" };
 
 function action(id: string): McpAction {
   const found = findMcpAction(id);
@@ -92,6 +93,15 @@ describe("runMcpAction: the request it sends", () => {
       expect(send).not.toHaveBeenCalled();
     },
   );
+
+  it("refuses an id spelt like the static route beside the record route", async () => {
+    // `/api/admin/members/export` is the fresh-proof export, not a member record.
+    for (const id of ["export", "subject-access", "send-password-reset"]) {
+      const outcome = await runMcpAction(action("get_member"), { id }, officer);
+      expect(outcome.isError, id).toBe(true);
+    }
+    expect(send).not.toHaveBeenCalled();
+  });
 
   it("sends a record id as the one path segment it is", async () => {
     await runMcpAction(action("get_my_booking"), { id: "cm0booking_1-a" }, caller);
@@ -208,6 +218,14 @@ describe("runMcpAction: what it returns and records", () => {
     expect(written).not.toContain("booking-1");
     expect(written).not.toContain("refundMethod");
     expect(written).not.toContain("refunded");
+  });
+
+  it("names no subject on an officer action's row: the route's own row names the record", async () => {
+    send.mockResolvedValue(answer(200, { ok: true }));
+    await runMcpAction(action("remove_member_partner_link"), { id: "member-2", linkId: "link-1" }, officer);
+
+    expect(audit).toHaveBeenCalledTimes(1);
+    expect(audit.mock.calls[0][0]).toMatchObject({ actorMemberId: "officer-1", subjectMemberId: undefined });
   });
 
   it("passes the site's refusal back as an error and records it as a failure", async () => {
