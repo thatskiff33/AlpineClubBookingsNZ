@@ -10,6 +10,13 @@
  *
  * Pure text functions only: no file system, git or network access.
  */
+import {
+  AFTER_DEPLOY_TITLE,
+  appendDeploySteps,
+  DEPLOY_STEPS_INTRO,
+  deployStepsBlock,
+  findDeploySteps,
+} from "../lib/deploy-fragments.mjs";
 import { githubHeadingAnchor } from "../lib/github-heading-anchor.mjs";
 import { locateSection, toLines } from "./compile-changelog.mjs";
 
@@ -38,12 +45,22 @@ export function releaseNotesPath(version) {
   return `${RELEASE_NOTES_DIR}/v${version}.md`;
 }
 
+/** The notes page's section for the release's after-deploy steps (#5379). */
+export const NOTES_DEPLOY_STEPS_HEADING = `## ${AFTER_DEPLOY_TITLE}`;
+
+/** The notes page's after-deploy section for `items` (rendered steps), as lines. */
+function notesDeploySection(items) {
+  return [NOTES_DEPLOY_STEPS_HEADING, "", DEPLOY_STEPS_INTRO, "", ...deployStepsBlock(items), ""];
+}
+
 /**
  * The stub `docs/releases/v<version>.md` starts as: the version, date and
  * release type, links to its changelog and upgrade-guide sections, and
- * `RELEASE_NOTES_UNFINISHED_MARKER` until someone writes the overview.
+ * `RELEASE_NOTES_UNFINISHED_MARKER` until someone writes the overview. With
+ * `deployItems` (rendered after-deploy steps, #5379) it ends with
+ * `NOTES_DEPLOY_STEPS_HEADING`, which `release:cut publish` reads.
  */
-export function releaseNotesStub({ version, previousTag, date, bump, changelogHeading, upgradeHeading }) {
+export function releaseNotesStub({ version, previousTag, date, bump, changelogHeading, upgradeHeading, deployItems = [] }) {
   const after = previousTag ? `, the first release after \`${previousTag}\`` : "";
   const changelogTitle = changelogHeading.replace(/^##\s+/, "");
   const upgradeTitle = upgradeHeading.replace(/^##\s+/, "");
@@ -69,7 +86,18 @@ export function releaseNotesStub({ version, previousTag, date, bump, changelogHe
     `${STUB_PLACEHOLDER_LEAD} what operators, treasurers and committees need to know,`,
     "from the changelog section linked above.",
     "",
+    ...(deployItems.length > 0 ? notesDeploySection(deployItems) : []),
   ].join("\n");
+}
+
+/**
+ * `notes` (a written or stub notes page) with `items` added to its
+ * after-deploy steps: inside its block when it has one, otherwise as a new
+ * `NOTES_DEPLOY_STEPS_HEADING` section at the end (#5379, `prepare --amend`).
+ */
+export function fileNotesDeploySteps(notes, items) {
+  if (findDeploySteps(notes) !== null) return appendDeploySteps(notes, items);
+  return `${notes.replace(/\s*$/, "")}\n\n${notesDeploySection(items).join("\n")}`;
 }
 
 /**

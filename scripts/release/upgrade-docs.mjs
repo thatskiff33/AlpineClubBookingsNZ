@@ -22,6 +22,13 @@
  * Pure text functions only: no file system, git or network access.
  */
 import { githubHeadingAnchor } from "../lib/github-heading-anchor.mjs";
+import {
+  AFTER_DEPLOY_TITLE,
+  DEPLOY_STEPS_INTRO,
+  DEPLOY_STEPS_START,
+  deployStepsBlock,
+  findDeploySteps,
+} from "../lib/deploy-fragments.mjs";
 import { scannableLines } from "../lib/markdown-blocks.mjs";
 import { UNRELEASED_TITLE } from "./compile-changelog.mjs";
 import { compareReleaseParts, formatReleaseParts, parseReleaseTag } from "./release-version.mjs";
@@ -405,4 +412,65 @@ export function releasedSectionStepsProblem({ guide, releasedGuide, untaggedHead
     `so move them under "${UNRELEASED_HEADING}" with a pull request. A title you only reworded is not a new step and is not ` +
     `counted: if one is listed here, a real new step sits beside it in that section.`
   );
+}
+
+/** The `###` heading a release section's after-deploy steps sit under (#5379). */
+export const UPGRADE_DEPLOY_STEPS_HEADING = `### ${AFTER_DEPLOY_TITLE}`;
+
+/** `{ start, end }` line numbers of the `## ` section headed exactly `heading`, or `null`. */
+function sectionBounds(text, heading) {
+  const headings = markdownHeadings(text);
+  const found = headings.find((candidate) => candidate.line === heading);
+  if (found === undefined) return null;
+  const next = headings.find((candidate) => candidate.level <= 2 && candidate.index > found.index);
+  return { start: found.index, end: next ? next.index : text.split("\n").length };
+}
+
+/**
+ * The guide without `heading`'s "After deploying this release" sub-section, and
+ * the step items it held (#5379). `release:cut prepare --amend` takes them out
+ * before folding late upgrade steps, so the fold sees the section's own steps,
+ * and files them back, with any late ones, at the section's end. A guide with
+ * no such section or sub-section comes back unchanged, with no items.
+ */
+export function takeUpgradeDeploySteps(text, heading) {
+  const bounds = sectionBounds(text, heading);
+  if (bounds === null) return { text, items: [] };
+  const lines = text.split("\n");
+  const sub = markdownHeadings(text).find(
+    (candidate) => candidate.index > bounds.start && candidate.index < bounds.end && candidate.line === UPGRADE_DEPLOY_STEPS_HEADING,
+  );
+  if (sub === undefined) return { text, items: [] };
+  const found = findDeploySteps(lines.slice(sub.index, bounds.end).join("\n"));
+  if (found === null) {
+    throw new Error(`"${UPGRADE_DEPLOY_STEPS_HEADING}" under "${heading}" in ${UPGRADING_PATH} has no "${DEPLOY_STEPS_START}" block.`);
+  }
+  let stop = sub.index + found.end + 1;
+  while (stop < bounds.end && lines[stop].trim() === "" && sub.index > 0 && lines[sub.index - 1].trim() === "") stop += 1;
+  lines.splice(sub.index, stop - sub.index);
+  return { text: lines.join("\n"), items: found.items };
+}
+
+/**
+ * The guide with `items` (rendered after-deploy steps) filed at the end of
+ * `heading`'s section, under `UPGRADE_DEPLOY_STEPS_HEADING`, above the `---`
+ * that closes it (#5379). Throws when the section is missing or already has
+ * the sub-section (take it out first with `takeUpgradeDeploySteps`).
+ */
+export function fileUpgradeDeploySteps(text, heading, items) {
+  const bounds = sectionBounds(text, heading);
+  if (bounds === null) throw new Error(`${UPGRADING_PATH} has no "${heading}" section to file after-deploy steps under.`);
+  const lines = text.split("\n");
+  const inside = lines.slice(bounds.start, bounds.end).map((line) => line.trimEnd());
+  if (inside.includes(UPGRADE_DEPLOY_STEPS_HEADING)) {
+    throw new Error(`"${heading}" in ${UPGRADING_PATH} already has "${UPGRADE_DEPLOY_STEPS_HEADING}".`);
+  }
+  let at = bounds.end;
+  while (at > bounds.start + 1 && ["", "---"].includes(lines[at - 1].trim())) at -= 1;
+  const carriageReturn = lines[bounds.start].endsWith("\r") ? "\r" : "";
+  const added = ["", UPGRADE_DEPLOY_STEPS_HEADING, "", DEPLOY_STEPS_INTRO, "", ...deployStepsBlock(items)].map(
+    (line) => `${line}${carriageReturn}`,
+  );
+  lines.splice(at, 0, ...added);
+  return lines.join("\n");
 }
