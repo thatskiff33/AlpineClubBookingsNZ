@@ -12,7 +12,7 @@ import { formatAgeTierName } from "@/lib/use-age-tier-options"
 import {
   contactGroupMismatchTotal,
   describeContactGroupMismatchCounts,
-  describeContactGroupResync,
+  describeContactResync,
   REVIEW_BY_HAND_REASON,
   reviewByHandFix,
   unexpectedManagedGroupRefs,
@@ -165,7 +165,7 @@ export function ContactGroupMismatchPanel({
               </p>
               {data.resync ? (
                 <p className="text-xs text-success">
-                  {describeContactGroupResync(data.resync, clubTime.instantTime(requireInstant(data.resync.resyncedAt)))}
+                  {describeContactResync(data.resync, clubTime.instantTime(requireInstant(data.resync.resyncedAt)))}
                 </p>
               ) : null}
             </div>

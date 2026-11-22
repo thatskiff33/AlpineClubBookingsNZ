@@ -82,11 +82,13 @@ export interface ContactGroupResyncCounts {
 }
 
 /**
- * The panel's line after a Refresh. Past the limit it counts out of the true
- * total and says to Refresh again, so a capped re-sync never reads as done.
+ * The line the group and link mismatch panels show after a Refresh. Past the
+ * limit it counts out of the true total and says to Refresh again, so a
+ * capped re-sync never reads as done; the link route sends no
+ * `overLimitContacts`, so its line never carries the hint.
  * `at` is the club-time the re-sync ran, already formatted.
  */
-export function describeContactGroupResync(resync: ContactGroupResyncCounts, at: string): string {
+export function describeContactResync(resync: ContactGroupResyncCounts, at: string): string {
   if (resync.requestedContacts === 0) {
     return `Nothing was flagged to re-sync; audit recomputed at ${at}.`;
   }
