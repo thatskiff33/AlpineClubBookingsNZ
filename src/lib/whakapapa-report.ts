@@ -10,12 +10,6 @@ export interface WhakapapaFacilityItem {
   status: string;
 }
 
-/**
- * @deprecated Retained as an alias for {@link WhakapapaFacilityItem}. The
- * Whakapapa report now groups items into Facilities, Food & Drink, and Lifts.
- */
-export type WhakapapaChairlift = WhakapapaFacilityItem;
-
 export interface WhakapapaCondition {
   name: string;
   temperature: string;

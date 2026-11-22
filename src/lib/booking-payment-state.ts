@@ -455,7 +455,7 @@ export function stripeRefundMirrorShowsCapture(payment: {
  * #1473/#1491: THE capture evidence for a payment whose status cannot be taken
  * at its word - a captured ledger row (each caller's own read), else the STRIPE
  * mirror - or (#3949) an Internet Banking organiser child's settle mirror. One
- * home (`INV-SSOT-001`): `booking-cancel.ts`, the flattened-status backfill and
+ * home (`INV-SSOT-001`): `booking-cancel.ts`, `payment-capture-evidence.ts` and
  * every caller of it, and Net Collected (`netCollectedPaymentTookMoney`) all ask it.
  */
 export function paymentShowsCaptureEvidence(

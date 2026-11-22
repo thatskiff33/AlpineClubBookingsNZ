@@ -22,20 +22,21 @@ vi.mock("@/lib/xero-contact-create-recovery", () => {
   class XeroContactCreateBlocksDeletionError extends Error {
     readonly code = "XERO_CONTACT_CREATE_BLOCKS_DELETION";
     readonly statusCode = 409;
+    readonly operationId: string;
 
-    constructor() {
+    constructor(operationId: string) {
       super(
         "Member deletion was not completed because a Xero contact change is still in progress or awaiting recovery. Resolve that Xero operation, then retry the remaining deletion cleanup.",
       );
       this.name = "XeroContactCreateBlocksDeletionError";
+      this.operationId = operationId;
     }
   }
   return {
     XERO_CONTACT_CREATE_BLOCKS_DELETION_CODE:
       "XERO_CONTACT_CREATE_BLOCKS_DELETION",
-    // #2623 T7: the route also names where the remedy lives. The mocked error
-    // above carries no operation id, so the route never reads this — it is here
-    // so the factory matches every binding the route imports.
+    // #2623 T7: the route names the refusing operation and where its remedy
+    // lives, so the response carries this text beside the operation id.
     XERO_CONTACT_OPERATION_RESOLVE_REMEDY:
       "Open Admin → Xero → Operations, find the member's open CONTACT operation.",
     XeroContactCreateBlocksDeletionError,
@@ -115,7 +116,7 @@ describe("PATCH /api/admin/member-lifecycle-action-requests/[requestId] notify c
 
   it("returns the fixed safe 409 when an unresolved Xero contact change blocks hard delete", async () => {
     h.reviewMemberLifecycleActionRequest.mockRejectedValue(
-      new XeroContactCreateBlocksDeletionError(),
+      new XeroContactCreateBlocksDeletionError("operation-blocking"),
     );
 
     const res = await PATCH(req({ action: "approve" }), { params });
@@ -125,6 +126,8 @@ describe("PATCH /api/admin/member-lifecycle-action-requests/[requestId] notify c
       code: "XERO_CONTACT_CREATE_BLOCKS_DELETION",
       error:
         "Member deletion was not completed because a Xero contact change is still in progress or awaiting recovery. Resolve that Xero operation, then retry the remaining deletion cleanup.",
+      xeroOperationId: "operation-blocking",
+      remedy: "Open Admin → Xero → Operations, find the member's open CONTACT operation.",
     });
   });
 });

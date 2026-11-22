@@ -318,7 +318,7 @@ The script also does not create the database, the app role, or any view.
 The allowlist lives in `SELECT_GRANTS` (`src/lib/diagnostics/tools/provision-role.ts`),
 in public code, so "which relations — and which columns of them — can Diagnostics
 read" is answerable by reading one file. As of AID-6B (#2376) it names
-**twenty-six** relations and **244 columns**, and **every one of them is granted by
+**twenty-six** relations and **243 columns**, and **every one of them is granted by
 column, never wholesale**:
 
 | Relation | Granted | Read by |
@@ -336,7 +336,7 @@ column, never wholesale**:
 | `public."XeroObjectLink"` | 10 columns | the Xero invoice and contact linkage tools |
 | `public."XeroSyncOperation"` | 17 columns | the Xero invoice and contact linkage tools |
 | `public."Member"` | **24 columns** — widened by AID-6B from the two AID-6C granted. `email` is projected by one entry and is a search predicate; `deletedAt` is a deleted-account predicate only; `phoneCountryCode`, `phoneAreaCode` and `phoneNumber` are predicates only and are projected by nothing | the Xero contact linkage tool, the member search, the member summary, the family relationships ([tool-pack-booking-membership.md](tool-pack-booking-membership.md)) |
-| `public."Booking"` | 25 columns | the booking search, the booking summary, a member's booking involvement ([tool-pack-booking-membership.md](tool-pack-booking-membership.md)) |
+| `public."Booking"` | 24 columns | the booking search, the booking summary, a member's booking involvement ([tool-pack-booking-membership.md](tool-pack-booking-membership.md)) |
 | `public."Lodge"` | **2 columns**: `id`, `name` | the booking search, a member's booking involvement |
 | `public."BookingGuest"` | 15 columns (a guest's given and family name included; consent responder and expiry are classifier inputs only) | booking party state, guest counts, member-booking involvement and double-sharing evidence |
 | `public."MemberPartnerLink"` | 3 columns: canonical pair ids and status | the canonical double-bed-sharing verdict; raw pair ids are not projected |
@@ -371,7 +371,7 @@ public."XeroInboundEvent": id, eventCategory, eventType, resourceId, correlation
 public."XeroObjectLink": id, localModel, localId, xeroObjectType, xeroObjectId, xeroObjectNumber, role, active, createdAt, updatedAt
 public."XeroSyncOperation": id, direction, operationType, localModel, localId, status, attemptCount, replayable, lastErrorCode, xeroObjectType, xeroObjectId, xeroObjectNumber, manuallyResolvedAt, startedAt, completedAt, createdAt, updatedAt
 public."Member": id, email, deletedAt, firstName, lastName, ageTier, active, canLogin, cancelledAt, archivedAt, joinedDate, lifeMemberDate, requiresInduction, hutLeaderEligible, parentMemberId, secondaryParentId, familyGroupId, billingFamilyGroupId, phoneAreaCode, phoneNumber, phoneCountryCode, xeroContactId, createdAt, updatedAt
-public."Booking": id, memberId, lodgeId, status, checkIn, checkOut, totalPriceCents, discountCents, promoAdjustmentCents, finalPriceCents, creditElectionCents, hasNonMembers, nonMemberHoldUntil, parentBookingId, draftExpiresAt, requiresAdminReview, adminReviewStatus, adultMemberHostingReviewStatus, waitlistPosition, wholeLodgeHold, adminCapacityHoldAt, capacityOverriddenAt, deletedAt, createdAt, updatedAt
+public."Booking": id, memberId, lodgeId, status, checkIn, checkOut, totalPriceCents, discountCents, promoAdjustmentCents, finalPriceCents, creditElectionCents, hasNonMembers, nonMemberHoldUntil, parentBookingId, draftExpiresAt, requiresAdminReview, adminReviewStatus, adultMemberHostingReviewStatus, wholeLodgeHold, adminCapacityHoldAt, capacityOverriddenAt, deletedAt, createdAt, updatedAt
 public."Lodge": id, name
 public."BookingGuest": id, bookingId, firstName, lastName, ageTier, isMember, memberId, stayStart, stayEnd, priceCents, consentStatus, consentRequestedAt, consentRespondedAt, consentRespondedByMemberId, consentExpiresAt
 public."MemberPartnerLink": memberAId, memberBId, status
@@ -419,7 +419,7 @@ ran — the finance pack's suite built a correctly-keyed set of granted columns 
 never passed it to an assertion. `provision-role.test.ts` now reconciles the
 allowlist against **every registered statement in both directions**, with
 `alias -> relation` resolved per statement, and pins the census (twenty-six
-relations, 244 columns) so this page and the pack pages cannot drift from it again.
+relations, 243 columns) so this page and the pack pages cannot drift from it again.
 
 **And the same property is now proved a second time against PostgreSQL itself.**
 The real-database suite

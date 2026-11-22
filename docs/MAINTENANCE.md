@@ -1087,6 +1087,9 @@ and by how much in total — run `pnpm run quality:budget --report`, or read the
 from the tree through the same function, so neither can drift from the other or
 from the gate.
 
+A deployment fork syncing down from upstream judges upstream's own changes
+differently; see [Syncing a fork from upstream](#syncing-a-fork-from-upstream).
+
 ### Function-length ratchet
 
 The file-size budget measures whole files, so a 2,000-line function inside a
@@ -1150,6 +1153,78 @@ cover a new function or carry one over 300 for the first time. The hard ceiling
 is a file rule; a function allowance has no upper bound of its own.
 [`size-allowances.d/README.md`](../size-allowances.d/README.md) has the format.
 
+A deployment fork syncing down from upstream: see
+[Syncing a fork from upstream](#syncing-a-fork-from-upstream).
+
+### Syncing a fork from upstream
+
+Both ratchets judge one pull request at a time against its base. A deployment
+fork that syncs down from this repository's `main` moves its base across many
+upstream pull requests at once, so without help the gate refuses code upstream
+already reviewed: a function upstream took over 300 lines before the
+function ratchet existed reads as new, a file upstream moved under a heavy
+rewrite no longer reads as a rename, and every upstream `size-allowances.d/`
+fragment in the range arrives looking live (#5196).
+
+`pnpm run quality:budget --upstream-ref <ref>` names the upstream to trust.
+The rules, all in `scripts/lib/budget-upstream-ref.ts`:
+
+- **The trusted commit is the upstream `main` commit the checkout contains**:
+  the newest commit on `<ref>`'s first-parent history that `HEAD` contains,
+  not wherever upstream has got to since. An upstream tip the fork has not
+  merged adds no trust. First parent only, so a commit from the middle of a
+  merged upstream pull request's branch is never trusted: upstream's `main`
+  never carried it, and its gate never judged it on its own. That rests on
+  one assumption: first-parent history is what upstream's `main` carried only
+  while upstream lands every pull request with a merge commit, as `AGENTS.md`
+  -> "Completion and Merge" requires (step 4, merge with a merge commit). A
+  pull request that upstream fast-forwards or rebase-merges puts its
+  intermediate commits on `main`'s first-parent history, and a fork that
+  merged one of them would have it trusted. The module does not detect that,
+  so the rule is only as good as upstream's keeping to merge commits. If
+  `HEAD` contains no first-parent commit of `<ref>` at all, the run fails.
+- **Only the paths the sync brings in are trusted**: those upstream changed
+  between the fork's last meeting point with it and the trusted commit. Every
+  other path is judged against the fork's base as before.
+- **The longer of the two lengths is the previous length.** For a trusted
+  path, a file or function is judged against the longer of its length on the
+  fork's base and on the trusted commit, matched at the same path. So code
+  left as upstream wrote it passes with no allowance, while growth the fork
+  adds beyond upstream's length is judged as the fork's own and may need its
+  own allowance. A file past its hard ceiling upstream may stay as it is or
+  shrink, never grow.
+- **Upstream's fragments are spent.** A `size-allowances.d/` fragment whose
+  bytes equal the trusted commit's copy is not live, so it neither applies nor
+  fails as unused nor collides with the fork's own fragment for the same path.
+  A fragment the fork wrote or edited is judged as usual. Nothing upstream
+  merged has to be deleted or re-declared by hand.
+- The size-debt line still reports the change against the fork's base, so it
+  includes the debt the sync brings in.
+
+Every run with trust names the trusted commit, its subject, how many files or
+functions were judged against its length and how many fragments were ignored.
+When the trusted commit is `HEAD` itself (a fast-forward sync, or a push of
+one to the fork's `main`), there is no fork change to separate from upstream's,
+so the run prints `Trusted upstream ignored: resolves to HEAD` once and is
+otherwise exactly an ordinary run. An upstream ref that cannot be resolved
+fails the run, and so does `--upstream-ref` with no value.
+
+**In CI**, set the repository variable `QUALITY_BUDGET_UPSTREAM_REPO` to the
+upstream's `owner/repo` on the fork only; leave it unset here.
+`scripts/ci/run-budget-gate.mjs` then fetches that repository's `main`, without
+tags and needing no extra credentials, and passes it as `--upstream-ref`, on pull requests and on
+pushes. A malformed value or a failed fetch fails the step rather than falling
+back to an ordinary run. With the variable unset the step runs exactly
+`pnpm run quality:budget --base "$BUDGET_BASE"`. A private upstream cannot be
+fetched this way.
+
+A sync pull request merges upstream's `main` itself, and is merged with a merge
+commit, never a squash or rebase. The trusted commit has to be an upstream
+`main` commit among the fork's ancestors; a squash or rebase leaves none, so the
+push run on the fork's `main` judges upstream's code as the fork's own and goes
+red, and merging a single upstream pull request's commits trusts only the
+upstream `main` commit beneath them.
+
 ### Quality report
 
 Run the local maintainability report before opening broad refactor PRs, after
@@ -1211,6 +1286,14 @@ were off by two orders of magnitude.
 | `src/app/(admin)/admin/membership/family-groups/page.tsx` | Route-shell thinning completed (#1530, closes the #1524 C2 carry-over). The request-review duplication with `src/components/admin/family-group-editor.tsx` was extracted to a shared `FamilyGroupRequestReviewSection` (`src/components/admin/family-groups/request-review-section.tsx`) that both the admin page and the editor render; the per-request state and the approve/reject/search handlers now live there once (behaviour-preserving — the two prior copies differed only by a `member`/`adult` noun and their refresh callback, now props). jscpd (min-tokens 70) across the pair drops from the catalogued 225 duplicated lines / 7 clones to 29 lines / 3 clones — the residue is the unavoidable shared UI-import block plus the create/edit member-search combobox, left inline because its surrounding selected-member badges differ between the two forms. page.tsx thinned 786 → 565 LOC; editor 715 → 499 LOC. |
 
 ## Operational Repair Tools
+
+### When a one-off tool leaves `main` (#5404)
+
+When a one-off upgrade tool leaves `main`, what it excludes and what replaces
+its documentation are set once, in principle 5 of
+[`docs/UPGRADING.md` → Principles](UPGRADING.md#principles). Removing such a tool takes
+everything that exists only for it: the script, its library module, tests,
+package script, lint exceptions and census entries.
 
 ### Run these through `pnpm run`, never `pnpm exec tsx`
 
@@ -1851,6 +1934,23 @@ appearing after the refund is recorded by hand, and that is expected: recording
 a refund by hand in Xero writes no row the app can read, and the tool has no
 way to acknowledge a finding.
 
+**A capped late-capture refund note and the journal's export manifest**
+(#4383, #5343). A refund note capped at what the receipt recorded is for less
+than the refund's debt in the member-money journal. Where the note names its
+card refund (a card refund's own note, `cardRefundId`) and that refund's
+journal entry pays one live refund debt, its `REFUND_NOTE` export manifest is
+recorded as a `CENTS` conflict (`coverRefundExportComponent` in
+`refund-note-plan.ts`), and the app logs "A refund document does not match the
+journal; its manifest records a conflict and the document still sent". The
+note is still sent, and the conflict is accurate: Xero holds less than the
+debt. Nothing needs doing for it. Expect it until M13 (#4525). Where the
+refund's entry pays no debt (none is posted, or it is posted and not yet
+answered to one), pays more than one, or pays one since reversed, the conflict
+is `COMPONENT_UNUSABLE` instead (`resolveRefundNoteObligation`). So is that of
+a capped note that names no card refund or other door, as for every note sized
+on the payment's refunded watermark, capped or not
+([`member-money-ledger.md`](design/member-money-ledger.md), section 7).
+
 **Credit-paid card bookings invoiced before #3836.** A card booking paid
 entirely with account credit was invoiced at its full price, but the credit was
 never allocated against the invoice, so Xero shows the whole booking owing and
@@ -1913,40 +2013,15 @@ hand, then apply the same action: on that row it only reads the note back and
 records the payments Xero now shows, never paying, and the listing clears once
 the note is fully settled.
 
-### Backfill cancel-flattened payment statuses (#1473 / #1506)
+### Backfill cancel-flattened payment statuses (retired, #5404)
 
-`scripts/backfill-cancel-flattened-payments.ts` is a one-off, idempotent,
-local-only cleanup for the residual left by PR #1489. Before #1489,
-`cancelBooking` overwrote every non-SUCCEEDED payment's aggregate `status` to
-`FAILED` — including captured `(PARTIALLY_)REFUNDED` payments — while leaving
-`refundedAmountCents` and the `PaymentTransaction` ledger intact. #1489 stopped
-the overwrite going forward but did not backfill rows already flattened. The
-read path is already correct (the booking-vs-Xero repair pass synthesizes the
-captured status from the intact STRIPE mirror / ledger), so this only restores
-the stored `status` field for cleanliness.
-
-It identifies `FAILED` payments on `CANCELLED` bookings that carry capture
-evidence per the exact #1489 discriminator — a captured `PaymentTransaction`
-row, or (for pre-ledger STRIPE rows) `refundedAmountCents > 0` — and restores
-`status` to the same value the repair pass already derives
-(`PARTIALLY_REFUNDED` / `REFUNDED`, or `SUCCEEDED` for a captured-ledger row
-with no refund). It deliberately skips folded never-captured internet-banking
-payments (mirror refund with no captured ledger row: correctly `FAILED`) and
-the narrow unrecoverable residual (no ledger, `refundedAmountCents == 0`: no
-truth to restore). It makes ZERO Xero/Stripe calls, touches only `status`, and
-a second run finds nothing.
-
-Always start with a dry run (the default) against a non-production copy:
-
-```bash
-DATABASE_URL=<non-prod copy> pnpm run payments:backfill-cancel-flattened
-```
-
-Only after reviewing the dry-run report, apply inside a transaction:
-
-```bash
-DATABASE_URL=<non-prod copy> pnpm run payments:backfill-cancel-flattened --apply
-```
+`payments:backfill-cancel-flattened` restored the stored status of payments a
+pre-`v0.10.0` cancellation flattened to `FAILED` (#1473 / #1506). It served
+only clubs that ran `v0.9.0` or earlier and has left `main` under the one-off
+retirement rule ([`UPGRADING.md` → Principles](UPGRADING.md#principles)). It
+remains in the `v0.14.0` tag, with its instructions in this file there under
+"Backfill cancel-flattened payment statuses (#1473 / #1506)"; it was not tested
+against any later schema.
 
 ### Backfill orphaned applied credit (#1547)
 

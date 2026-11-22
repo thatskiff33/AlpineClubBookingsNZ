@@ -212,7 +212,7 @@ describe("member-facing reasons (#2533 requirement 2)", () => {
     // The two waitlist paths reject the offer WITHOUT consuming it, so answering
     // "confirm my offer" with the bare sentence read as though the member had lost
     // the offer AND their spot. They lost neither — both paths revert the entry to
-    // WAITLISTED and neither touches `waitlistPosition` — so the sentence is
+    // WAITLISTED and keeps its `createdAt` (#5402) — so the sentence is
     // literally true rather than reassuring padding.
     const waitlist = formatMissingPaidUpAdultWaitlistRefusal();
 

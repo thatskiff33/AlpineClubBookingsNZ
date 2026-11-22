@@ -1,4 +1,4 @@
-import type { AgeTier, Prisma, WaitlistCrossLodgeOrder } from "@prisma/client";
+import type { AgeTier, Prisma } from "@prisma/client";
 import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { BookingEventType, BookingStatus } from "@prisma/client";
 import {
@@ -58,36 +58,15 @@ import {
   carryBookingGuestDietaryFrom,
   resolveBookingGuestDietarySeeding,
 } from "@/lib/member-dietary-booking-writes";
-import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
 import type { ClubFormat } from "@/lib/club-format";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 // Cross-lodge waitlist support (ADR-004). The processor consults these
-// helpers when a member has opted into alternate lodges: the queue-order
-// policy decides who is considered first, and the quote decides whether an
-// alternate lodge can actually host the entry and at what price. The quoted
-// price is persisted on the offer and re-checked at confirm time, so both
-// sides must price the same way.
-
-type CrossLodgeDb = Pick<Prisma.TransactionClient, "bookingDefaults">;
-
-/**
- * Club-wide queue-order policy (ADR-004 owner decision 1). Missing settings
- * row falls back to the schema default so pre-seed databases behave like
- * OWN_LODGE_FIRST.
- */
-export async function getWaitlistCrossLodgeOrder(
-  db: CrossLodgeDb,
-): Promise<WaitlistCrossLodgeOrder> {
-  const defaults = await db.bookingDefaults.findUnique({
-    where: { id: "default" },
-    select: { waitlistCrossLodgeOrder: true },
-  });
-  return (
-    defaults?.waitlistCrossLodgeOrder ??
-    DEFAULT_BOOKING_DEFAULTS.waitlistCrossLodgeOrder
-  );
-}
+// helpers when a member has opted into alternate lodges: the quote decides
+// whether an alternate lodge can actually host the entry and at what price.
+// The quoted price is persisted on the offer and re-checked at confirm time,
+// so both sides must price the same way. The queue-order policy, which decides
+// who is considered first, lives in `waitlist-queue.ts` (#5402).
 
 export interface WaitlistQuoteGuest {
   ageTier: AgeTier;

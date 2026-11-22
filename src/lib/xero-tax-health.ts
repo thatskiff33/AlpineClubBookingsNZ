@@ -2,7 +2,10 @@ import { clubTaxPeriodOn, loadClubTaxSchedule } from "@/lib/club-tax-settings";
 import { clubToday } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { prisma } from "@/lib/prisma";
-import { openingCreditsExemptHealthProblem } from "@/lib/xero-opening-credits-exempt-guards";
+import {
+  openingCreditsExemptHealthProblem,
+  openingCreditsSharedAccountHealthProblem,
+} from "@/lib/xero-opening-credits-exempt-guards";
 import { getXeroConnectedOrganisation } from "@/lib/xero-organisation";
 import { xeroTaxCategoryLabel, xeroTaxCategoryRateProblem } from "@/lib/xero-tax-categories";
 import { loadXeroTaxCategoryMappings, type XeroTaxCategoryMappings } from "@/lib/xero-tax-category-mappings";
@@ -23,7 +26,11 @@ import { readXeroTaxRatesOrNull } from "@/lib/xero-tax-rates";
  *   Xero organisation from the one connected now;
  * - the Opening Credits account is mapped, a registered period applies today
  *   or is scheduled, and the Exempt category has no usable rate (#4988), so
- *   spent opening credits are waiting or will wait.
+ *   spent opening credits are waiting or will wait, and a card booking's
+ *   invoice operation fails;
+ * - the Opening Credits account is stored on the Xero account another mapping
+ *   uses (#4988), which the mapping screen and the config import refuse but two
+ *   writes at once can still leave (#5391).
  *
  * Read outside any transaction. `checked` is false when Xero could not be read
  * at all, so a screen says "not checked" rather than "fine".
@@ -59,6 +66,8 @@ export async function readXeroTaxHealth(): Promise<XeroTaxHealth> {
   // #4988: the state the settings screens refuse to create, reported when it arises another way.
   const openingCredits = await openingCreditsExemptHealthProblem({ schedule, today, mappings, rates });
   if (openingCredits) problems.push(openingCredits);
+  const sharedAccount = await openingCreditsSharedAccountHealthProblem(mappings);
+  if (sharedAccount) problems.push(sharedAccount);
   return { checked: rates !== null || paysTax !== null, problems };
 }
 

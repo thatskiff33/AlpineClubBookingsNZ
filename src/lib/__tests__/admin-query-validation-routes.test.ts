@@ -382,6 +382,60 @@ describe("admin query validation and pagination", () => {
       );
     });
 
+    it("shows each row's true place, read from the whole queue rather than this page (#5402)", async () => {
+      const queued = (id: string, day: string, extra: Record<string, unknown> = {}) => ({
+        ...waitlistBooking(id),
+        lodgeId: "lodge-a",
+        noEmails: false,
+        createdAt: new Date(`2026-05-${day}T00:00:00.000Z`),
+        ...extra,
+      });
+      // Page 2 of the board: one waiting entry, one silenced, one offered.
+      mocks.bookingFindMany
+        .mockResolvedValueOnce([
+          queued("booking-3", "03"),
+          queued("booking-4", "04", { noEmails: true }),
+          queued("booking-5", "05", { status: "WAITLIST_OFFERED" }),
+        ])
+        // The position read: the live queue, two older entries off this page.
+        .mockResolvedValueOnce(
+          ["booking-1", "booking-2", "booking-3"].map((id, index) => ({
+            id,
+            lodgeId: "lodge-a",
+            checkIn: new Date("2026-07-01T00:00:00.000Z"),
+            checkOut: new Date("2026-07-03T00:00:00.000Z"),
+            createdAt: new Date(`2026-05-0${index + 1}T00:00:00.000Z`),
+            waitlistAlternateLodges: [],
+          })),
+        );
+      mocks.bookingCount.mockResolvedValue(5);
+
+      const response = await getWaitlist(request("/api/admin/waitlist?page=2&pageSize=3"));
+      const body = await response.json();
+
+      expect(
+        body.entries.map((entry: { id: string; waitlistPosition: number | null }) => [
+          entry.id,
+          entry.waitlistPosition,
+        ]),
+      ).toEqual([
+        ["booking-3", 3],
+        ["booking-4", null],
+        ["booking-5", null],
+      ]);
+      // The board lists the queue in its own join order.
+      expect(mocks.bookingFindMany.mock.calls[0]![0]).toMatchObject({
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      });
+      // Only the shown entry is placed; the read is not limited to this page.
+      const queueRead = mocks.bookingFindMany.mock.calls[1]![0] as {
+        where: Record<string, unknown>;
+        take?: number;
+      };
+      expect(queueRead.take).toBeUndefined();
+      expect(queueRead.where).toMatchObject({ status: "WAITLISTED", noEmails: false });
+    });
+
     it("decorates offered bookings with waitlist offer email recovery state", async () => {
       mocks.bookingFindMany.mockResolvedValue([
         {

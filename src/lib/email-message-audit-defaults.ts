@@ -401,8 +401,8 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultBody": "Pending Bookings Approaching Deadline\n\n{{count}} pending booking(s) will reach their hold deadline within 48 hours.\n\nMember | Dates | Guests | Deadline | Remaining\n{{memberName}} | {{checkIn}} – {{checkOut}} | {{guestCount}} | {{deadline}} | {{hoursRemaining}}h\n...\n\nView Bookings: {{BASE_URL}}" + adminHref("bookings")
   },
   "admin-booking-bumped": {
-    "defaultSubject": "Booking Bumped: {{bumpedMemberName}}",
-    "defaultBody": "Booking Bumped\n\nA pending booking has been bumped due to a member booking.\n\nBumped Member: {{bumpedMemberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTriggered By: {{triggeringMemberName}}\n\nView Bookings: {{BASE_URL}}" + adminHref("bookings")
+    "defaultSubject": "Booking Bumped: {{bumpedMemberName}}, {{checkIn}} to {{checkOut}} ({{bookingReference}})",
+    "defaultBody": "Booking Bumped\n\nA pending booking was released at its hold deadline because there was no longer room for its party.\n\nBumped Member: {{bumpedMemberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nReason: {{reason}}\n\nView Bookings: {{BASE_URL}}" + adminHref("bookings")
   },
   "admin-capacity-warning": {
     "defaultSubject": "Capacity Warning: {{count}} high-occupancy day{{s}} ahead",

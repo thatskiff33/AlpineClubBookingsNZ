@@ -7,6 +7,8 @@ import { BookingEventType, BookingStatus, PaymentSource, PaymentStatus, PaymentT
 import { OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 import { bookingOwner } from "@/lib/booking-owner";
+import { alertOfficersOfBump } from "@/lib/booking-bump-alert";
+import { bookingBumpReason } from "@/lib/booking-bump-reason";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import {
@@ -1223,13 +1225,12 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         await recordBookingEvent({
           bookingId: resolution.booking.id,
           type: BookingEventType.BUMPED,
-          reason: resolution.flagged
-            ? "Released because the whole party could not be confirmed (only-if-guests-come)."
-            : "These dates filled up before the provisional guests were confirmed.",
+          reason: bookingBumpReason(resolution.flagged),
           snapshot: { flagged: resolution.flagged },
         });
         await sendBumpedEmail(resolution.booking, resolution.flagged);
         triggerWaitlistProcessing(resolution.booking, format);
+        await alertOfficersOfBump(resolution.booking, resolution.flagged);
         continue;
       }
 
