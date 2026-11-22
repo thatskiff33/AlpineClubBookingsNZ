@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { claimPartnerInviteToken } from "@/lib/partner-invite-token";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const claimSchema = z.object({
   token: z.string().min(1, "Invitation token required"),
@@ -28,12 +29,9 @@ export async function POST(req: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.familyGroupJoinRequest, req);
   if (rateLimited) return rateLimited;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = claimSchema.safeParse(body);
   if (!parsed.success) {

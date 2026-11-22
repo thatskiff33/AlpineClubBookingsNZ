@@ -35,6 +35,7 @@ import {
 } from "@/lib/age-tier-enforcement";
 import { reconcileEmailInheritanceForMemberChange } from "@/lib/member-email-inheritance";
 import { dateOfBirthStringSchema } from "@/lib/date-only-schema";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const delegatedDetailsSchema = z.object({
   firstName: nameField({ required: "First name required" }),
@@ -136,12 +137,9 @@ export async function PUT(
 
   const { memberId } = await params;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = delegatedDetailsSchema.safeParse(body);
   if (!parsed.success) {
