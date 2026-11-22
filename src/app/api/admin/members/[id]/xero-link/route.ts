@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
@@ -76,14 +77,11 @@ export async function POST(
     throw err;
   }
 
-  let body: unknown;
   let memberLinkCommitted = false;
   let subscriptionRefreshPending = false;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = linkSchema.safeParse(body);
   if (!parsed.success) {
