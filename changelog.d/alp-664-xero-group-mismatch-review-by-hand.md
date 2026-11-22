@@ -1,0 +1,5 @@
+- **A Xero contact-group mismatch that needs a person is now named where Stuck States sends you (#5234).** Stuck States could report "Contact group mismatches: 1" while the Xero page's mismatch panel said "0 mismatches" and named nobody. The entry was a member no grouping rule matches (often an organisation) whose Xero contact sits in a managed group; the re-sync never touches those, so they are still counted, but nothing said who or what to do.
+
+  The health tile, the Stuck States item and the panel now say how many entries are to re-sync and how many to review by hand. The panel lists each one to review by hand with the member, the managed group it sits in by name, and the fix: remove the contact from that group in Xero, or add a grouping rule that covers the member. The Stuck States links for contact group and contact link mismatches now open the Xero page at that section.
+
+  Pressing Refresh on the panel now re-fetches the contacts to review by hand as well, so one fixed in Xero drops off.

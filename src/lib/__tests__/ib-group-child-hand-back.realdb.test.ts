@@ -361,7 +361,7 @@ const money = async (bookingId: string) =>
       booking: (await tx.booking.findUniqueOrThrow({ where: { id: edited! }, include: { payment: true, guests: true } })) as never,
       priceDiffCents: -1_000, changeFeeCents: 0, reduction: noReductionAgainstUnpaidAsk(-1_000),
       settlementOptions: { basisAmountCents: 1_000, cardRefundAmountCents: 500, cardRefundPercentage: 50, accountCreditAmountCents: 1_000, accountCreditPercentage: 100,
-        daysUntilCheckIn: 30, requiresSettlementMethod: true, returnsToOrganiser: false, organiserRefundByBankTransfer: false, refundHeldForDispute: false },
+        daysUntilCheckIn: 30, requiresSettlementMethod: true, returnsToOrganiser: false, organiserRefundByBankTransfer: false, refundByBankTransfer: false, refundHeldForDispute: false },
       settlementMethod: "credit", todayAtClub: requireCalendarDate("2026-07-01"), format: CLUB_FORMAT_TEST,
     }))).rejects.toMatchObject({ status: 409, message: GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE });
     expect(await prisma.memberCredit.count({ where: { sourceBookingId: edited! } })).toBe(0);

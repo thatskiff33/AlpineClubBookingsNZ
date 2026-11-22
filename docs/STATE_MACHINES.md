@@ -3255,7 +3255,7 @@ contactable published assignment can receive server-routed contact form mail thr
 
 ## Food Order Lifecycle
 
-Fork #121 (`src/lib/food-orders.ts`, guide [Food Orders](guides/food-orders.md)).
+Fork triyder/AlpineClubBookingsNZ#121 (`src/lib/food-orders.ts`, guide [Food Orders](guides/food-orders.md)).
 
 ```text
 member places an order -> OPEN, every item unreceived (order, items and audit
@@ -3342,11 +3342,42 @@ The exclusion is not retroactive: a switch turned on while an offer is already
 live does not retract it, and the offer commits before its email is sent, so a
 flip in between leaves a live offer with a withheld send. An entry in
 `WAITLIST_OFFERED` whose offer is still unexpired therefore reports
-`suppressed_live_offer` with `needsOperatorAction: true` (a held bed the member
-was never told about); one whose offer has already lapsed reports the benign
+`suppressed_live_offer` with `needsOperatorAction: true` (a live offer the member
+was never told about; an offer holds no capacity, `INV-CAP-011`, though it can
+hold a bed allocation, `INV-CAP-006`); one whose offer has
+already lapsed reports the benign
 `suppressed`. A silenced entry still in `WAITLISTED` has no EmailLog row at all
-and is marked on the board from the flag; it keeps its queue place and still
-counts toward other members' positions.
+and is marked on the board from the flag. It shows no position and is not
+counted in anyone else's while silenced; it keeps its `createdAt`, so clearing
+the switch puts it back in its original place (`INV-LOCKOUT-060`).
+
+A waitlist position is never stored on a transition (#5402, `INV-CAP-041`). It
+is read from the live queue whenever it is shown, so every transition out of
+`WAITLISTED` (cancel, offer, force-confirm, the past-date cron) moves the entries
+behind it up without writing anything to them. An offered entry is already out
+of the count, so its accept (same-lodge, or the cross-lodge
+`WAITLIST_OFFERED -> CANCELLED` replacement) changes no one's number, and a
+revert to `WAITLISTED` (an expired offer, a capacity-lost or failed confirm,
+return-to-waitlist) puts the entry back at its original join time. Exits still
+write `waitlistPosition: null` until that column is dropped.
+
+**An expired offer's place goes on down the queue (#5410, `INV-CAP-042`).**
+`expireStaleOffers` reverts each stale `WAITLIST_OFFERED` entry to `WAITLISTED`,
+then makes one offer pass per lapsed offer, in join order. That pass starts just
+after the lapsed entry's place, wraps to the front, and reaches the lapsed entry
+last, with any opportunity of another booking whose offer lapsed in the same
+run, at any lodge, just before it. Under
+`OWN_LODGE_FIRST` the lapses go after the cross-lodge opt-ins as well (owner
+decision, 23 Nov 2026), the one exception to own lodge first. So the
+same run offers the place to the next party that fits, the lapsed entry keeps its
+original place and number, and a queue of one is offered again. Offers that
+lapse in turn walk the place down the queue and wrap to the front only after
+everyone has had a turn. Nothing is stored: every other offer pass (a
+cancellation, a date change, a payment-pending expiry, a group settlement, a
+return to the waitlist) walks the plain order, so it can offer a still-free place
+to a member who let it lapse earlier. In that one re-offer, a member ahead of
+the lapsed one who has not yet had the offer is considered after those behind
+it; they keep their place.
 
 ## Bed Allocation Lifecycle
 
@@ -4209,6 +4240,50 @@ template and booking change. Only the retry worker sends it, after its normal
 same email row; failure to persist that row leaves the invoice operation
 retryable. This avoids a synchronous send racing email recovery.
 
+The confirm-pending cron's bump notices (#5407) are owed before any row
+exists. The bump's transaction writes one `AlertCooldown` marker for the
+member's email (`booking-bumped` or `booking-guests-cancelled`) and one for the
+officers' `admin-booking-bumped` alert, each stamped with the moment of the bump.
+After the commit each marker is claimed by a stamp-guarded update, its notice
+sent at once, and the marker cleared when the notice is settled. A send that
+throws, or a job that stops first, leaves the marker. An officers' alert that
+reached nobody because every failed copy has no `EmailLog` row (it failed
+before the row was written, or its row write failed) leaves it too, held a day
+rather than an hour, as the once-only alerts are, so a lasting fault writes one
+undeliverable-alert escalation a day, not one an hour. A copy that failed
+after its row was written is the retry cron's, and no officer to tell is
+final. A later run of the same cron claims each marker whose stamp, the bump
+or its last attempt, is at least an hour old (a day, after an attempt that
+reached nobody), and sends it again (`booking-bump-notice-owed.ts`). It clears
+without sending when the booking is gone, is no longer cancelled, or has a
+`CANCELLED`, `MEMBER_PAID` or `NON_MEMBER_CONFIRMED` booking event after the
+bump (it was reinstated and moved on; the bump itself writes only `BUMPED`),
+or when the marker is more than seven days old, which it logs as an error. A
+settlement marker, a `CANCELLED` event that cancels nothing, does not count
+(`NOT_A_SETTLEMENT_MARKER_WHERE`). Most cancel and confirmation events are
+narrative, written best effort after their own commits; a few decision
+records commit with what they describe. A lost narrative event still leaves
+the booking told it was bumped, so this narrows the reinstated case rather
+than closing it.
+
+The member's email carries an id derived from the template, booking and bump
+time, so however often it is sent it has one row, and a provider failure
+leaves that row `FAILED` for the retry cron. The officers' alert has one row
+per officer and no such id, so it can arrive twice: after a crash between its
+send and the clear, or when a send is still running an hour after its claim
+(or two app instances' clocks differ by about that much) and a sweep claims the
+marker again. The member is still sent one email in both cases. A crash during
+the provider call itself leaves the member's row `QUEUED`, which nothing
+replays.
+
+```text
+bump commits + markers -> claim -> send settled -> marker cleared
+bump commits + markers -> claim -> send throws -> marker kept -> later run (an hour on) claims -> send -> cleared
+bump commits + markers -> claim -> officers' copies all lack a row -> marker held a day -> later run claims -> send -> cleared
+bump commits + markers -> job stops -> later run claims -> booking still CANCELLED, nothing since -> send -> cleared
+later run claims -> booking gone, reinstated, cancelled or confirmed since, or marker over 7 days old -> cleared, nothing sent
+```
+
 A message whose retry belongs entirely to something else keeps no body
 (`NON_RETRYABLE_EMAIL_LOG_TEMPLATES`), so its `FAILED` row is never replayed.
 
@@ -4788,7 +4863,7 @@ as `cooldownDeferred` and the run carries a `warning`, shown amber. A failed
 row warns the same way and points at Xero Operations. To verify:
 `xero-cron-runner.test.ts`, `xero-outbox-fail-fast.test.ts`.
 
-### Alpine Central Server version pause (#49)
+### Alpine Central Server version pause (triyder/AlpineClubBookingsNZ#49)
 
 ```text
 alpine-server-other-lodges-sync (03:00) -> module on -> base URL set

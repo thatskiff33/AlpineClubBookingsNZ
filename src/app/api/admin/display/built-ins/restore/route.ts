@@ -20,7 +20,7 @@ import {
 //
 // WHY IT IS AN EXPLICIT ADMIN ACTION AND NOT A DEPLOY STEP (owner decision,
 // #2247). The ensure is a CONVERGENT upsert: its update blocks rewrite the full
-// definition of every `builtin-*` row from code (owner decision A, #111). Wiring
+// definition of every `builtin-*` row from code (owner decision A, hoppers99/AlpineClubBookingsNZ#111). Wiring
 // it into the deploy would silently revert an operator's local edits to a
 // built-in on every release, and could overwrite customisations imported through
 // config-transfer. Behind a button it is deliberate, auditable, and only ever a

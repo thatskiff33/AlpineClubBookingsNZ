@@ -4,7 +4,7 @@ import { FoodOrderSettingsSection } from "@/components/admin/food-orders/food-or
 import { guardAdminLayout } from "@/lib/admin-layout-guard";
 
 /**
- * Food Orders — the admin settings page (fork #121). Lodge Operations: view to
+ * Food Orders — the admin settings page (fork triyder/AlpineClubBookingsNZ#121). Lodge Operations: view to
  * read the card, edit to change it.
  *
  * `guardAdminLayout()` is re-run here rather than trusted from the parent

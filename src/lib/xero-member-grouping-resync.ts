@@ -202,8 +202,14 @@ export interface MemberGroupingInformationalEntry {
   memberEmail: string;
   ageTier: AgeTier;
   xeroContactId: string;
-  /** Managed-universe groups the member sits in although no rule matches. */
+  /**
+   * Managed-universe group ids the member sits in although no rule matches.
+   * Kept beside `unexpectedManagedGroups` so a tab loaded before #5234, or an
+   * old server answering a new bundle, still works (blue-green, additive).
+   */
   unexpectedManagedGroupIds: string[];
+  /** The same groups, named (#5234). */
+  unexpectedManagedGroups: XeroGroupRef[];
 }
 
 export interface MemberGroupingSnapshot {
@@ -338,7 +344,7 @@ export async function getXeroMemberGroupingSnapshot(options?: {
   const memberships = contactIds.length
     ? await prisma.xeroContactGroupMembershipCache.findMany({
         where: { contactId: { in: contactIds }, group: { is: { status: "ACTIVE" } } },
-        select: { contactId: true, contactGroupId: true },
+        select: { contactId: true, contactGroupId: true, group: { select: { name: true } } },
       })
     : [];
   const groupIdsByContactId = new Map<string, string[]>();
@@ -347,6 +353,7 @@ export async function getXeroMemberGroupingSnapshot(options?: {
     list.push(row.contactGroupId);
     groupIdsByContactId.set(row.contactId, list);
   }
+  const groupNameById = new Map(memberships.map((row) => [row.contactGroupId, row.group.name]));
 
   // Re-read the FULL-refresh cursor AFTER the membership-cache read and anchor
   // the snapshot's freshness to THIS value, not the earlier one (#1961 FIX 2).
@@ -394,17 +401,18 @@ export async function getXeroMemberGroupingSnapshot(options?: {
     // touches them (it iterates `mismatches` only).
     if (resolution.skippedReason) {
       const universe = new Set(resolution.managedUniverse);
-      const unexpectedManagedGroupIds = currentGroupIds.filter((id) =>
-        universe.has(id),
-      );
-      if (unexpectedManagedGroupIds.length > 0) {
+      const unexpectedManagedGroups = currentGroupIds
+        .filter((id) => universe.has(id))
+        .map((id) => ({ id, name: groupNameById.get(id) ?? null }));
+      if (unexpectedManagedGroups.length > 0) {
         informational.push({
           memberId: member.id,
           memberName: memberName(member),
           memberEmail: member.email,
           ageTier: member.ageTier,
           xeroContactId: member.xeroContactId,
-          unexpectedManagedGroupIds,
+          unexpectedManagedGroupIds: unexpectedManagedGroups.map((group) => group.id),
+          unexpectedManagedGroups,
         });
       }
       continue;

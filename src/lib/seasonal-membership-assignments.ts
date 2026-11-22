@@ -20,6 +20,7 @@ import {
   type StructuredAuditEvent,
 } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
+import { getDisplayedWaitlistPositions } from "@/lib/waitlist-queue";
 import { getAuthSecret, requireAuthSecret } from "@/lib/runtime-config";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
@@ -175,7 +176,6 @@ type BookingPreviewRecord = {
   checkOut: Date;
   status: BookingStatus;
   finalPriceCents: number;
-  waitlistPosition?: number | null;
   waitlistOfferedAt?: Date | null;
   waitlistOfferExpiresAt?: Date | null;
   _count: { guests: number };
@@ -323,7 +323,7 @@ export function serializeSeasonalMembershipAssignment(
   };
 }
 
-function serializeBookingSummary(booking: BookingPreviewRecord) {
+function serializeBookingSummary(booking: BookingPreviewRecord, waitlistPosition: number | null) {
   return {
     id: booking.id,
     checkIn: formatDateOnly(booking.checkIn),
@@ -331,18 +331,18 @@ function serializeBookingSummary(booking: BookingPreviewRecord) {
     status: booking.status,
     finalPriceCents: booking.finalPriceCents,
     guestCount: booking._count.guests,
-    waitlistPosition: booking.waitlistPosition ?? null,
+    waitlistPosition, // #5402: read from the live queue by the caller
     waitlistOfferedAt: booking.waitlistOfferedAt?.toISOString() ?? null,
     waitlistOfferExpiresAt:
       booking.waitlistOfferExpiresAt?.toISOString() ?? null,
   };
 }
 
-function summarizeBookings(bookings: BookingPreviewRecord[]) {
+function summarizeBookings(bookings: BookingPreviewRecord[], positions: ReadonlyMap<string, number | null> = new Map()) {
   return {
     count: bookings.length,
     truncatedCount: Math.max(0, bookings.length - BOOKING_SUMMARY_LIMIT),
-    list: bookings.slice(0, BOOKING_SUMMARY_LIMIT).map(serializeBookingSummary),
+    list: bookings.slice(0, BOOKING_SUMMARY_LIMIT).map((b) => serializeBookingSummary(b, positions.get(b.id) ?? null)),
   };
 }
 
@@ -718,9 +718,9 @@ export async function getSeasonalMembershipChangePreview(params: {
     checkOut: true,
     status: true,
     finalPriceCents: true,
-    waitlistPosition: true,
     waitlistOfferedAt: true,
     waitlistOfferExpiresAt: true,
+    lodgeId: true, createdAt: true, noEmails: true, // #5402: the position reader's key
     _count: { select: { guests: true } },
   } satisfies Prisma.BookingSelect;
 
@@ -806,6 +806,8 @@ export async function getSeasonalMembershipChangePreview(params: {
     }),
   ]);
 
+  // #5402: live queue positions, one batch on this function's own (maybe transaction) client.
+  const waitlistPositions = await getDisplayedWaitlistPositions(db, waitlistRecords);
   const currentSubscription = subscriptions.find(
     (subscription) => subscription.seasonYear === params.seasonYear,
   );
@@ -864,9 +866,7 @@ export async function getSeasonalMembershipChangePreview(params: {
       futureConfirmedBookings as BookingPreviewRecord[],
     ),
     draftBookings: summarizeBookings(draftBookings as BookingPreviewRecord[]),
-    waitlistRecords: summarizeBookings(
-      waitlistRecords as BookingPreviewRecord[],
-    ),
+    waitlistRecords: summarizeBookings(waitlistRecords as BookingPreviewRecord[], waitlistPositions),
     currentSeasonSubscription: {
       seasonYear: params.seasonYear,
       status: currentSubscription?.status ?? "NO_RECORD",

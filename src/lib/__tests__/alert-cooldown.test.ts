@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 /*
  * #3672: the cross-instance alert claim, its give-back and its one-day hold.
- * The store is an in-memory `alertCooldown` table implementing exactly the
+ * The store is the shared in-memory `alertCooldown` table, which answers the
  * where shapes these helpers use, and every write is also pinned by its call,
  * so dropping the own-stamp guard from a release or a hold fails here.
  */
@@ -13,63 +13,20 @@ import {
   ALERT_NOBODY_ELIGIBLE_RETRY_MS,
   ALERT_ONCE_EVER_WINDOW_MS,
   claimAlertCooldown,
+  claimOwedAlert,
   deferAlertCooldown,
   listOwedAlertKeys,
   markAlertOwed,
   noteOwedAlertAttempt,
   releaseAlertCooldown,
+  settleOwedAlert,
 } from "@/lib/alert-cooldown";
+import { createAlertCooldownStore } from "./support/alert-cooldown-store";
 
-type Where = { key: string; lastAlertedAt?: Date | { lt: Date } };
-
-function stampMatches(stored: Date, filter: Where["lastAlertedAt"]): boolean {
-  if (filter === undefined) return true;
-  if (filter instanceof Date) return stored.getTime() === filter.getTime();
-  return stored.getTime() < filter.lt.getTime();
-}
-
+/** The shared in-memory table (`support/alert-cooldown-store.ts`), as a helper's `store`. */
 function memoryStore() {
-  const rows = new Map<string, Date>();
-  const matching = (where: Where) =>
-    [...rows.entries()].filter(
-      ([key, at]) => key === where.key && stampMatches(at, where.lastAlertedAt)
-    );
-  const alertCooldown = {
-    updateMany: vi.fn(async ({ where, data }: { where: Where; data: { lastAlertedAt: Date } }) => {
-      const hits = matching(where);
-      for (const [key] of hits) rows.set(key, data.lastAlertedAt);
-      return { count: hits.length };
-    }),
-    create: vi.fn(async ({ data }: { data: { key: string; lastAlertedAt: Date } }) => {
-      if (rows.has(data.key)) {
-        throw Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
-      }
-      rows.set(data.key, data.lastAlertedAt);
-      return data;
-    }),
-    // Only the owed-marker listing's shape: a prefix and a "due by" stamp.
-    findMany: vi.fn(
-      async ({
-        where,
-      }: {
-        where: { key: { startsWith: string }; lastAlertedAt: { lte: Date } };
-      }) =>
-        [...rows.entries()]
-          .filter(
-            ([key, at]) =>
-              key.startsWith(where.key.startsWith) &&
-              at.getTime() <= where.lastAlertedAt.lte.getTime()
-          )
-          .sort((a, b) => a[1].getTime() - b[1].getTime())
-          .map(([key]) => ({ key }))
-    ),
-    deleteMany: vi.fn(async ({ where }: { where: Where }) => {
-      const hits = matching(where);
-      for (const [key] of hits) rows.delete(key);
-      return { count: hits.length };
-    }),
-  };
-  return { rows, store: { alertCooldown } as never, alertCooldown };
+  const { rows, delegate } = createAlertCooldownStore();
+  return { rows, store: { alertCooldown: delegate } as never, alertCooldown: delegate };
 }
 
 const KEY = "group-joiner-started-stay:g1";
@@ -187,5 +144,56 @@ describe("owed alert markers (#3635 F1)", () => {
     // Fifteen minutes later is the next run, and the marker is already due.
     await expect(list(store, at(15 * 60 * 1000))).resolves.toEqual([OWED]);
     await expect(list(store, T0)).resolves.toEqual([OWED]);
+  });
+});
+
+describe("owed alert claims (#5407)", () => {
+  const OWED = "booking-bump-officers-owed:b1:0:b";
+  const WAIT = 60 * 60 * 1000;
+
+  function owedStore() {
+    const { rows, store, alertCooldown } = memoryStore();
+    rows.set(OWED, T0);
+    return { rows, delegate: alertCooldown, store };
+  }
+
+  it("lets exactly one of two callers claim a due marker", async () => {
+    const { store, rows } = owedStore();
+    const now = at(WAIT);
+    const claims = await Promise.all([
+      claimOwedAlert({ key: OWED, stampedNoLaterThan: at(0), now, store }),
+      claimOwedAlert({ key: OWED, stampedNoLaterThan: at(0), now, store }),
+    ]);
+    expect(claims.filter(Boolean)).toEqual([now]);
+    expect(rows.get(OWED)).toEqual(now);
+  });
+
+  it("stamps the claim strictly later than its bound, even on a frozen clock", async () => {
+    const { store, rows } = owedStore();
+    const claimedAt = await claimOwedAlert({ key: OWED, stampedNoLaterThan: T0, now: T0, store });
+    expect(claimedAt).toEqual(at(1));
+    expect(rows.get(OWED)).toEqual(at(1));
+    // A second caller with the same bound now loses.
+    await expect(claimOwedAlert({ key: OWED, stampedNoLaterThan: T0, now: T0, store })).resolves.toBeNull();
+  });
+
+  it("does not claim a marker stamped after the bound, or one that is gone", async () => {
+    const { store } = owedStore();
+    await expect(claimOwedAlert({ key: OWED, stampedNoLaterThan: at(-1), now: at(WAIT), store })).resolves.toBeNull();
+    await expect(claimOwedAlert({ key: "missing", stampedNoLaterThan: at(WAIT), now: at(WAIT), store })).resolves.toBeNull();
+  });
+
+  it("clears only its own claim when given one", async () => {
+    const { store, rows, delegate } = owedStore();
+    const mine = await claimOwedAlert({ key: OWED, stampedNoLaterThan: T0, now: at(WAIT), store });
+    // Someone else claimed after mine (my send outlived the wait).
+    rows.set(OWED, at(3 * WAIT));
+    await settleOwedAlert({ key: OWED, claimedAt: mine!, store });
+    expect(rows.get(OWED)).toEqual(at(3 * WAIT));
+    expect(delegate.deleteMany).toHaveBeenLastCalledWith({ where: { key: OWED, lastAlertedAt: mine } });
+    // Without a claim it clears whatever stands, as before.
+    await settleOwedAlert({ key: OWED, store });
+    expect(rows.has(OWED)).toBe(false);
+    expect(delegate.deleteMany).toHaveBeenLastCalledWith({ where: { key: OWED } });
   });
 });

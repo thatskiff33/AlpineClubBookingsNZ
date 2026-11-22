@@ -2,7 +2,7 @@ import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DisplayNameGranularity } from "@prisma/client";
 
-// Issue #28 (LTV-003): the lobby display privacy serialiser — the single
+// Issue hoppers99/AlpineClubBookingsNZ#28 (LTV-003): the lobby display privacy serialiser — the single
 // enforcement point for what a public screen shows. The matrix here covers
 // every granularity level × booking shape (adults / family-with-minors /
 // organisation / whole-lodge) plus scoping, clamping, config sanitisation,
@@ -15,9 +15,9 @@ const { mockPrisma, mockFlags, mockInstructions } = vi.hoisted(() => ({
     lodgeRoom: { findMany: vi.fn() },
     choreAssignment: { findMany: vi.fn() },
     // The route test below imports the state route, whose device path stamps
-    // lastSeenAt on success (issue #52).
+    // lastSeenAt on success (issue hoppers99/AlpineClubBookingsNZ#52).
     lodgeDisplayDevice: { findUnique: vi.fn(), update: vi.fn() },
-    // Club branding for the header brand block (issue #56).
+    // Club branding for the header brand block (issue hoppers99/AlpineClubBookingsNZ#56).
     clubTheme: { findUnique: vi.fn().mockResolvedValue(null) },
     // DB-first club name for the header (E3 #1929; leak fixed C5 #1984). Default
     // null → the display club name resolves from config, as before.
@@ -26,6 +26,9 @@ const { mockPrisma, mockFlags, mockInstructions } = vi.hoisted(() => ({
     // covering the window's current day. Default null = nobody in residence,
     // which is every pre-#2286 case in this file.
     hutLeaderAssignment: { findFirst: vi.fn().mockResolvedValue(null) },
+    // Read only by the one case that lets the real instructions reader run
+    // (#5345); every other case stubs the reader below.
+    lodgeInstruction: { findMany: vi.fn() },
   },
   mockFlags: vi.fn(),
   mockInstructions: vi.fn(),
@@ -106,6 +109,10 @@ vi.mock("@/lib/club-time/server", async () => {
 import { parseDateOnly } from "@/lib/date-only";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 
+import {
+  expectStoredHeadingOneDemoted,
+  storedInstructionWithH1,
+} from "./support/stored-heading-one";
 import { stripComments } from "./support/strip-comments";
 
 const LODGE = {
@@ -114,7 +121,7 @@ const LODGE = {
   active: true,
   displayConfig: null,
   displayNameGranularity: null as DisplayNameGranularity | null,
-  // #125 / #37: phone display defaults OFF on the lodge.
+  // hoppers99/AlpineClubBookingsNZ#125 / hoppers99/AlpineClubBookingsNZ#37: phone display defaults OFF on the lodge.
   showGuestPhonesOnScreens: false,
 };
 
@@ -130,7 +137,7 @@ function guest(
   ageTier: "ADULT" | "CHILD" | "YOUTH" | "INFANT",
   stay: { start: string; end: string },
   roomId?: string,
-  // #125 / #37: the guest's linked member (opt-in + phone). Omitted for the
+  // hoppers99/AlpineClubBookingsNZ#125 / hoppers99/AlpineClubBookingsNZ#37: the guest's linked member (opt-in + phone). Omitted for the
   // privacy/label matrix, which does not exercise phone.
   member?: {
     ageTier?: "ADULT" | "CHILD" | "YOUTH" | "INFANT";
@@ -160,7 +167,7 @@ function booking(
   member: { firstName: string; lastName: string; ageTier: string },
   guests: ReturnType<typeof guest>[],
   range = { checkIn: "2026-04-13", checkOut: "2026-04-15" },
-  // #122 / #116: an explicit exclusive hold drives the whole-lodge blockout.
+  // hoppers99/AlpineClubBookingsNZ#122 / hoppers99/AlpineClubBookingsNZ#116: an explicit exclusive hold drives the whole-lodge blockout.
   wholeLodgeHold = false,
   // #2621: the display-only expected arrival time. Null is the ordinary case
   // and the default, so every pre-existing case is unchanged by its presence.
@@ -371,7 +378,7 @@ describe("buildDisplayState privacy matrix", () => {
     expect(JSON.stringify(state)).not.toContain("Student");
   });
 
-  it("keeps whole-lodge on a back-to-back handover: sole occupancy is measured on NIGHTS (issue #58)", async () => {
+  it("keeps whole-lodge on a back-to-back handover: sole occupancy is measured on NIGHTS (issue hoppers99/AlpineClubBookingsNZ#58)", async () => {
     // Group leaves Wednesday morning; a new booking arrives Wednesday evening.
     // Their departure-day visibility overlaps but their nights never do.
     const org = { firstName: "Harakeke", lastName: "College", ageTier: "NOT_APPLICABLE" as const };
@@ -468,7 +475,7 @@ describe("buildDisplayState privacy matrix", () => {
     // derived from its visible list again, the gap morning re-enters it as a
     // PHANTOM NIGHT on the 14th, the eight-guest booking stops being the sole
     // occupant, its whole-lodge blockout drops, and eight guest names appear on
-    // an unauthenticated public screen (INV-DATE-006, INV-DATE-023, issue #58).
+    // an unauthenticated public screen (INV-DATE-006, INV-DATE-023, issue hoppers99/AlpineClubBookingsNZ#58).
     const sparse = {
       ...guest("Gappy", "Guest", "ADULT", { start: "2026-04-13", end: "2026-04-16" }),
       // Nights 13 and 15 only — the 14th is NOT booked.
@@ -732,7 +739,7 @@ describe("buildDisplayState privacy matrix", () => {
     expect(state!.bookings[0].guests).toHaveLength(1);
   });
 
-  it("treats an explicit exclusive hold as whole-lodge, below the heuristic threshold (#122, ADR-001 decision 4)", async () => {
+  it("treats an explicit exclusive hold as whole-lodge, below the heuristic threshold (hoppers99/AlpineClubBookingsNZ#122, ADR-001 decision 4)", async () => {
     // The SAME lone guest that the heuristic leaves un-blocked above becomes a
     // whole-lodge blockout when the booking carries the authoritative flag — no
     // headcount/sole-occupancy condition applies, and individual names are
@@ -752,7 +759,7 @@ describe("buildDisplayState privacy matrix", () => {
     expect(state!.bookings[0].guests).toBeNull();
   });
 
-  it("never leaks the exclusive nature of a hold to the public display (ADR-001 decision 6, #119/#120)", async () => {
+  it("never leaks the exclusive nature of a hold to the public display (ADR-001 decision 6, hoppers99/AlpineClubBookingsNZ#119/#120)", async () => {
     // A held booking presents EXACTLY as an ordinary whole-lodge blockout — the
     // public payload must carry no indication that the lodge is *exclusively*
     // held (no wholeLodgeHold flag, no conflict/overlap/exclusivity field).
@@ -872,7 +879,7 @@ describe("buildDisplayState privacy matrix", () => {
     ]);
   });
 
-  it("starts the window on a simulated windowStart instead of today (issue #60)", async () => {
+  it("starts the window on a simulated windowStart instead of today (issue hoppers99/AlpineClubBookingsNZ#60)", async () => {
     mockPrisma.booking.findMany.mockResolvedValue([
       booking(
         "b1",
@@ -924,7 +931,7 @@ describe("buildDisplayState privacy matrix", () => {
     expect(JSON.stringify(state!.chores)).not.toContain("Tama");
   });
 
-  it("applies the SAME namesAllowed decision to chore assignees as booking rows — whole-lodge and organisation bookings collapse to the group label too (#174)", async () => {
+  it("applies the SAME namesAllowed decision to chore assignees as booking rows — whole-lodge and organisation bookings collapse to the group label too (hoppers99/AlpineClubBookingsNZ#174)", async () => {
     mockFlags.mockResolvedValue({ bedAllocation: false, chores: true });
 
     // The whole-lodge booking also has to appear in the primary bookings
@@ -971,7 +978,7 @@ describe("buildDisplayState privacy matrix", () => {
         },
       },
       // Adult assignee whose booking is the whole-lodge blockout: group label
-      // (previously this leaked the individual reduced name — the #174 bug).
+      // (previously this leaked the individual reduced name — the hoppers99/AlpineClubBookingsNZ#174 bug).
       {
         date: parseDateOnly("2026-04-13"),
         choreTemplate: { name: "Firewood" },
@@ -1019,8 +1026,8 @@ describe("buildDisplayState privacy matrix", () => {
     const bookingArgs = mockPrisma.booking.findMany.mock.calls[0][0];
     expect(bookingArgs.where).toMatchObject(lodgeNullTolerantScope("lodge-a"));
     const selectJson = JSON.stringify(bookingArgs.select);
-    // No monetary or email field is ever selected. Phone IS selected (#125 /
-    // #37) but released per-guest only under the two-sided consent gate — see
+    // No monetary or email field is ever selected. Phone IS selected (hoppers99/AlpineClubBookingsNZ#125 /
+    // hoppers99/AlpineClubBookingsNZ#37) but released per-guest only under the two-sided consent gate — see
     // the "phone opt-in gate" block for the enforcement proof.
     expect(selectJson).not.toMatch(/price|amount|cents|payment|invoice|email/i);
   });
@@ -1046,7 +1053,7 @@ describe("buildDisplayState privacy matrix", () => {
 
   it("ships only the display-relevant module flags on capabilities, never the whole map", async () => {
     // The effective flags include unrelated club modules; the public payload
-    // must carry only DISPLAY_RELEVANT_MODULE_KEYS (ADR-003 §3, issue #71).
+    // must carry only DISPLAY_RELEVANT_MODULE_KEYS (ADR-003 §3, issue hoppers99/AlpineClubBookingsNZ#71).
     mockFlags.mockResolvedValue({
       bedAllocation: true,
       chores: false,
@@ -1061,10 +1068,28 @@ describe("buildDisplayState privacy matrix", () => {
   });
 });
 
+describe("buildDisplayState rules (#5345, INV-PUB-006)", () => {
+  it("hands the wall an author's h1 demoted, through the real instructions reader", async () => {
+    // The rules card draws this HTML as it arrives, so the state must carry
+    // the reader's HTML and never the stored HTML.
+    const reader = (await vi.importActual(
+      "@/lib/lodge-instructions",
+    )) as typeof import("@/lib/lodge-instructions");
+    mockInstructions.mockImplementation(reader.getSanitizedLodgeInstructions);
+    mockPrisma.lodgeInstruction.findMany.mockResolvedValue([storedInstructionWithH1()]);
+
+    const { buildDisplayState } = await import("@/lib/lodge-display-state");
+    const state = await buildDisplayState("lodge-a");
+
+    expect(state?.rules).toHaveLength(3);
+    expectStoredHeadingOneDemoted(state?.rules?.[0]?.html ?? "");
+  });
+});
+
 describe("GET /api/display/state (route)", () => {
   it("401s without a display token, 200s with one, and clamps the window", async () => {
     vi.resetModules();
-    // The route imports @/lib/auth for the admin preview path (issue #52);
+    // The route imports @/lib/auth for the admin preview path (issue hoppers99/AlpineClubBookingsNZ#52);
     // stub it so this Node-environment test never loads real next-auth.
     vi.doMock("@/lib/auth", () => ({
       auth: vi.fn().mockResolvedValue(null),
@@ -1101,11 +1126,11 @@ describe("GET /api/display/state (route)", () => {
   });
 });
 
-// #125 / #37: the lobby display is a PUBLIC screen, so the two-sided consent
+// hoppers99/AlpineClubBookingsNZ#125 / hoppers99/AlpineClubBookingsNZ#37: the lobby display is a PUBLIC screen, so the two-sided consent
 // gate is the whole point here — a phone must never enter the payload unless the
 // lodge enabled it AND the member opted in AND the guest is an adult on a row
 // that already shows individual names.
-describe("buildDisplayState phone opt-in gate (#125 / #37)", () => {
+describe("buildDisplayState phone opt-in gate (hoppers99/AlpineClubBookingsNZ#125 / hoppers99/AlpineClubBookingsNZ#37)", () => {
   const OPTED_IN_ADULT = {
     ageTier: "ADULT" as const,
     lodgeScreenPhoneOptIn: true,
@@ -1383,7 +1408,7 @@ describe("buildDisplayState member-guest consent exclusion (D-12, #2307)", () =>
 //
 // The wall is UNAUTHENTICATED. It hangs in a public lobby and anyone standing
 // in front of it reads whatever the payload carries. The whole point of the
-// name gate (#58, design.md §10) is that some rows may not identify the people
+// name gate (hoppers99/AlpineClubBookingsNZ#58, design.md §10) is that some rows may not identify the people
 // on them, and an arrival time is a movement fact about identifiable people —
 // so it must ride the SAME gate the names ride, never a gate of its own.
 //

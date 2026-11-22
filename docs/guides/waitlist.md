@@ -43,6 +43,58 @@ which by definition that booking is not. See
    for capacity" or "Offer expires {date}" — and flags an offer email that is
    missing or undeliverable, with a link to review email deliverability.
 
+3. **What the position means.** It is the entry's place in its own lodge's queue
+   right now, worked out each time the page loads, so it moves up as soon as
+   anyone ahead cancels, is offered a bed, is confirmed or drops off. It can
+   also move down: an entry whose offer lapsed, a silenced entry whose **No
+   emails** is turned off, or a booking returned to the waitlist takes its
+   original place again, and where the queues are ordered by join time alone,
+   an older opt-in from another lodge counts ahead. It counts
+   only entries at the same lodge whose nights overlap, so two entries can both
+   be #1 at different lodges or on stays that do not overlap. Where your club
+   lets members opt into another lodge and orders the queues by join time
+   alone, an older opt-in from another lodge counts ahead too. The number is
+   not a promise of who is offered next: a bed goes to the first entry whose
+   party fits, so a smaller party further back can be offered first. An entry
+   with an offer out shows the offer instead of a number.
+
+4. **When an offer lapses.** The entry goes back to its original place and
+   number, and in the same run the place is offered to the next party behind it
+   that fits. The member whose offer lapsed is considered last for that place,
+   so a lone entry is offered it again. Anyone else whose offer lapsed in the
+   same run is considered just before them, at whichever lodge, after everyone
+   who has not just had a turn. That holds even where your club serves the
+   lodge's own queue first:
+   members from other lodges who opted into this one and have not had the
+   offer come before the lodge's own member who just let it lapse. If offers
+   keep lapsing, the place moves on down the queue and only comes back to the
+   front once everyone has had a turn.
+
+   Things to know:
+
+   - Serving the lodge's own queue first gives way only in the re-offers of
+     that run. Every other offer still goes to the lodge's own waiting members
+     before anyone from another lodge.
+   - Nothing marks the entry, so when a different place frees on the same
+     nights (a cancellation, say), it is considered in its usual place and can
+     be offered that one.
+   - In the re-offer itself, an entry ahead of the lapsed one that has not yet
+     had this offer (its party did not fit an earlier opening, for example) is
+     considered after those behind it; it keeps its place.
+   - Each lapsed offer gets its own re-offer, so when several lapse on the same
+     nights there can briefly be more offers out than free beds. There are
+     never more out than before they lapsed, offers do not take a bed from the
+     lodge's capacity until accepted, and anyone who accepts after the beds have
+     gone is told so and stays on the waitlist.
+   - If one re-offer fails, for whatever reason, the others still go out, the
+     failure is logged, and the waitlist job reports that run as failed with
+     its counts, even if the job had to retry part of the run. That place is
+     not offered again until something else frees a place on those nights.
+   - The waitlist job runs one copy at a time. If two copies ever ran at the
+     same moment, each would know only the offers it expired, so two members
+     whose offers lapsed together could be offered each other's places for one
+     round.
+
 ### Filter the queue
 
 1. Use **From**, **To**, and **Page size**, then click **Apply**. Click
@@ -127,18 +179,20 @@ A booking with **No emails** switched on
 ([Bookings](bookings.md#turn-off-all-emails-for-one-booking)) behaves
 differently on this board, and the badges say which case you are looking at:
 
-- **"Position #N — silenced, will not be offered"** (or **"Silenced — will not
-  be offered while emails are off"** when it has no position yet) — the entry is
-  skipped when beds are handed out, so no offer is made at all. It keeps its
-  place in the queue and does not hold up the members behind it; the position
-  numbers everyone else sees are unchanged.
+- **"Silenced — will not be offered while emails are off"** — the entry is
+  skipped when beds are handed out, so no offer is made at all. It shows no
+  position, and it is not counted in anyone else's: the members behind it move
+  up while it is silenced. Turning **No emails** off puts it back in its
+  original place, and those behind it move back down.
 - **"Offer email withheld (No emails)"** — an offer email was withheld, and that
   offer has since lapsed. Nothing needs doing.
-- **"Offer live but emails are off — member not told"** — the entry is holding a
-  bed on an offer that is still running, and the member will get no expiry
-  warning and no confirmation if they accept. This one needs an officer: the
-  member was emailed the offer before the switch went on, so they **can** still
-  accept it. Do not reassign the bed — contact them.
+- **"Offer live but emails are off — member not told"** — the entry has an offer
+  that is still running, and the member will get no expiry warning and no
+  confirmation if they accept. An offer does not count against the lodge's
+  capacity until it is accepted, but it can already have a bed assigned on the
+  bed board. This one needs an officer: the member was emailed the offer before
+  the switch went on, so they **can** still accept it. Leave any bed it has been
+  assigned in place, and contact them.
 
 Force-confirming any of these skips the email choice, as described above.
 

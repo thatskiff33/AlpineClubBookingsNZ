@@ -363,6 +363,47 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > needing cleanup. Re-apply your wording to whichever of the two you want to
 > change.
 
+> **Upgrade note (#5403).** The officers' **Admin Booking Bumped** alert is sent
+> again. The pending-booking job sends it, once per booking, when it releases a
+> pending booking at its hold deadline because there is no longer room for its
+> party. Its subject names the member, the stay dates and the booking reference
+> (`{{bookingReference}}`), so officers can tell two bumps for the same member
+> apart. A subject your club saved on an earlier version has no booking
+> reference: restore the default subject, or add `{{bookingReference}}` to
+> yours. Since #5407 the Daily digest counts each alert once however many
+> officers receive it, and no longer folds alerts that share a subject, so a
+> saved subject does not change any digest count while the officers receiving
+> the alert stay the same. The built-in wording
+> gives the reason (`{{reason}}`), which also says when the member had asked
+> for the whole booking to be cancelled if their guests could not come.
+>
+> The built-in email also adds a Lodge line when the club has more than one
+> active lodge, or when the booking's lodge has been archived, as the capacity
+> warning does. That line is not part of the editable wording the editor shows,
+> so a saved copy of your own does not include it: a club with more than one
+> lodge should add `{{lodgeName}}` on a line of its own. It is empty in a
+> one-lodge club, which is why it should not sit after a label.
+>
+> The alert no longer offers `{{triggeringMemberName}}`, because the job has no
+> triggering booking to name. If a saved copy still uses that token, a warning
+> at the top of this page names the template and the token, and the template
+> itself says your saved copy uses a token it no longer supplies: swap it for
+> the chips now shown and save, or restore the default.
+
+> **Upgrade note (#5407).** A bump's notices are no longer lost if the
+> pending-booking job is interrupted, for example by a restart, between
+> releasing the booking and sending them. The member's email (subject
+> **Booking Update**, or **Booking Cancelled** when the booking was cancelled
+> because its guests could not come) and the officers' **Admin Booking Bumped**
+> alert are then sent by a later run of the same job, so a recovered notice arrives
+> a few hours late. When the officers' alert could not be recorded for any
+> of them (for example when writing the email log failed and sending then
+> failed too, or the message could not be built from a saved template), it is
+> tried again a day later. The member never receives it twice. Very rarely the officers may
+> receive their alert twice: when the interruption falls just after it was
+> sent, or when sending it takes longer than an hour. Nothing about the
+> wording changed.
+
 ## Settings reference
 
 Shared email variables (top card):

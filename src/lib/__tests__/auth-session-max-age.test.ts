@@ -272,7 +272,9 @@ describe("the maximum session age, end to end through the Auth.js handler (#4611
     expect(await hoursUntilEnded(await signIn("ordinary"), 1, 24 * 8)).toBe(
       168,
     );
-  });
+    // One handler round trip per simulated hour, so these loops carry their own
+    // budget (docs/TESTING.md, "Suites that time out under load and pass alone").
+  }, 30_000);
 
   it.each([[8], [24], [720]])(
     "ends a session refreshed every hour at a configured %i-hour cap",
@@ -284,6 +286,7 @@ describe("the maximum session age, end to end through the Auth.js handler (#4611
         await hoursUntilEnded(await signIn("officer"), 1, capHours + 2),
       ).toBe(capHours);
     },
+    30_000,
   );
 
   it("never moves sessionIssuedAt on a refresh, though iat moves every time", async () => {
@@ -303,7 +306,7 @@ describe("the maximum session age, end to end through the Auth.js handler (#4611
       lastIat = result.claims?.iat as number;
       token = result.reissuedToken;
     }
-  });
+  }, 30_000);
 
   it("applies a changed setting to an existing session on its next refresh", async () => {
     mockFindUnique.mockResolvedValue(memberRow("ordinary"));

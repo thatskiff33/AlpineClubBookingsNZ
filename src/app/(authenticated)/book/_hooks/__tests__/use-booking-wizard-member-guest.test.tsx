@@ -59,6 +59,10 @@ vi.mock("sonner", () => ({
 
 import { useBookingWizard } from "@/app/(authenticated)/book/_hooks/use-booking-wizard";
 import { MEMBER_GUEST_CROSS_FAMILY_REFUSAL_MESSAGE } from "@/lib/member-guest-refusal";
+import {
+  REVIEW_REASON_MISSING_MESSAGE,
+  REVIEW_REASON_MISSING_WAITLIST_MESSAGE,
+} from "@/app/(authenticated)/book/_lib/review-reason-missing";
 
 const SELF = {
   id: "member-1",
@@ -486,6 +490,45 @@ describe("the adult-supervision reason follows the server's rule (#3770)", () =>
     expect(createBody()).not.toBeNull();
     expect(createBody()?.memberReviewJustification).toBeUndefined();
   });
+
+  /*
+    #5398: the three create posts share one body builder, and a blank reason
+    never travels as "" (the schema's generic "Invalid input"). Submit and
+    waitlist stop it in the browser with their own sentence; a draft leaves it
+    out, so the route answers with its own refusal.
+  */
+  it("never posts a blank reason: submit and waitlist stop it, a draft leaves it out (#5398)", async () => {
+    const result = await childrenPlusOutsider(true);
+    act(() => result.current.setMemberReviewJustification("   "));
+
+    await act(async () => {
+      await result.current.handleSubmit();
+    });
+    expect(result.current.error).toBe(REVIEW_REASON_MISSING_MESSAGE);
+    await act(async () => {
+      await result.current.handleJoinWaitlist();
+    });
+    expect(result.current.error).toBe(REVIEW_REASON_MISSING_WAITLIST_MESSAGE);
+    expect(createBody()).toBeNull();
+
+    await act(async () => {
+      await result.current.handleSaveAsDraft();
+    });
+    expect(createBody()?.draft).toBe(true);
+    expect(createBody()).not.toHaveProperty("memberReviewJustification");
+  });
+
+  it.each(["handleSubmit", "handleJoinWaitlist", "handleSaveAsDraft"] as const)(
+    "%s sends the same trimmed reason (#5398)",
+    async (handler) => {
+      const result = await childrenPlusOutsider(true);
+      act(() => result.current.setMemberReviewJustification("  Grandad is coming  "));
+      await act(async () => {
+        await result.current[handler]();
+      });
+      expect(createBody()?.memberReviewJustification).toBe("Grandad is coming");
+    },
+  );
 });
 
 /*

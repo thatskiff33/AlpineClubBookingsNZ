@@ -582,7 +582,7 @@ model Member {
   phoneAreaCode    String? // e.g. "27"
   phoneNumber      String? // e.g. "4224115"
   // Per-member opt-in to show this member's phone number on lodge screens
-  // (kiosk + lobby display), default OFF (#37/#124). Only ever surfaced when the
+  // (kiosk + lobby display), default OFF (hoppers99/AlpineClubBookingsNZ#37/#124). Only ever surfaced when the
   // lodge also enables it (Lodge.showGuestPhonesOnScreens) AND the member is an
   // adult — enforced in the serving serialisers, never in templates.
   lodgeScreenPhoneOptIn Boolean @default(false)
@@ -749,6 +749,8 @@ model Member {
   credits                                    MemberCredit[]
   requestedCreditAdjustments                 MemberCredit[]                             @relation("RequestedAdminCredits")
   approvedCreditAdjustments                  MemberCredit[]                             @relation("ApprovedAdminCredits")
+  postedOpeningCreditBatches                 OpeningCreditBatch[]                       @relation("PostedOpeningCreditBatches")
+  reversedOpeningCreditBatches               OpeningCreditBatch[]                       @relation("ReversedOpeningCreditBatches")
   adminCreditAdjustmentRequestsRequested     AdminCreditAdjustmentRequest[]             @relation("AdminCreditAdjustmentRequestsRequested")
   adminCreditAdjustmentRequestsReviewed      AdminCreditAdjustmentRequest[]             @relation("AdminCreditAdjustmentRequestsReviewed")
   bookingsCreatedOnBehalf                    Booking[]                                  @relation("BookingsCreatedBy")
@@ -776,7 +778,7 @@ model Member {
   // onDelete: SetNull rather than Cascade — a deleted account must not take a
   // still-broken heater off the maintenance officer's queue.
   maintenanceReportsReported                 MaintenanceReport[]                        @relation("MaintenanceReportReporter")
-  // Fork #121: food orders this member placed. onDelete: SetNull, like the
+  // Fork triyder/AlpineClubBookingsNZ#121: food orders this member placed. onDelete: SetNull, like the
   // maintenance reporter — a deleted account must not take the club's record of
   // what food cost out of the history.
   foodOrdersPlaced                           FoodOrder[]                                @relation("FoodOrderMember")
@@ -2092,9 +2094,9 @@ model Booking {
   // cancelled booking never re-enters a re-check, so the audit fact is kept.
   capacityOverriddenAt         DateTime?
   capacityOverriddenByMemberId String?
-  // Exclusive whole-lodge hold (#117 / epic #116, ADR-001): when true this
+  // Exclusive whole-lodge hold (hoppers99/AlpineClubBookingsNZ#117 / epic hoppers99/AlpineClubBookingsNZ#116, ADR-001): when true this
   // booking reserves SOLE OCCUPANCY of the lodge for its nights. The capacity
-  // engine (#118) hard-blocks any other admission on a held night — independent
+  // engine (hoppers99/AlpineClubBookingsNZ#118) hard-blocks any other admission on a held night — independent
   // of headcount and bed allocation, and NOT bypassable by the admin
   // over-capacity override. Set by an admin (audited via the two fields below,
   // mirroring the capacity-override audit pattern) or by approving a
@@ -2756,7 +2758,7 @@ model BookingRequest {
   guests           Json
   message          String?              @db.VarChar(1000)
 
-  // Exclusive whole-lodge hold — request path (#117 / epic #116, ADR-001). A
+  // Exclusive whole-lodge hold — request path (hoppers99/AlpineClubBookingsNZ#117 / epic hoppers99/AlpineClubBookingsNZ#116, ADR-001). A
   // requester (school/group front-door, or — since #2263 — a signed-in member
   // through the member whole-lodge door) can ask for sole occupancy of the
   // lodge. This is only the REQUEST signal; an admin approving the request may
@@ -2991,10 +2993,10 @@ model BookingRequestSettings {
   quoteReminderLeadDays            Int      @default(3)
   // RETIRED by #3819: no runtime code reads or writes it. #3416's club-wide
   // switch, replaced by the per-lodge LodgeSettings.schoolHutLeader* kinds; the
-  // expand migration 20261114020000 copied its value into every lodge. Kept
-  // only so the draining colour can still read it; a later contract release
-  // drops it.
-  assignSchoolTeachersAsHutLeaders Boolean  @default(false)
+  // expand migration 20261114020000 copied its value into every lodge.
+  // `@ignore`d (#5396) so no query names the column before its contract DROP
+  // (INV-OPS-005); the column keeps its default meanwhile.
+  assignSchoolTeachersAsHutLeaders Boolean  @default(false) @ignore
   // Soft link for the phase-7 singleton-to-per-lodge conversion
   // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
   lodgeId                          String?
@@ -5585,7 +5587,9 @@ model ClubModuleSettings {
   hutLeaders              Boolean  @default(true)
   communications          Boolean  @default(true)
   skifieldConditions      Boolean  @default(true)
-  multiLodge              Boolean  @default(false)
+  // RETIRED (ADR-005). `@ignore`d (#5396) so no query names the column before
+  // its contract DROP, hoppers99/AlpineClubBookingsNZ#139 (INV-OPS-005).
+  multiLodge              Boolean  @default(false) @ignore
   twoFactor               Boolean  @default(false)
   magicLink               Boolean  @default(false)
   analytics               Boolean  @default(false)
@@ -5670,7 +5674,7 @@ model ClubModuleSettings {
   // cut-over. Safe to add as a defaulted column because every read narrows to
   // CLUB_MODULE_SETTINGS_COLUMN_SELECT.
   multiPromoCodes         Boolean  @default(false)
-  // Food orders (fork #121). Default OFF: it needs the food officer's email
+  // Food orders (fork triyder/AlpineClubBookingsNZ#121). Default OFF: it needs the food officer's email
   // address (FoodOrderSettings) before an order reaches anybody. Safe to add as
   // a defaulted column because every read narrows to
   // CLUB_MODULE_SETTINGS_COLUMN_SELECT, so a previously deployed client never
@@ -5701,8 +5705,9 @@ model ClubModuleSettings {
 // migration/seed). Multi-lodge is core (ADR-005): the Lodges admin UI is always
 // available (no module flag), and booking data scopes to this table. While
 // exactly one active lodge exists the per-page lodge selectors auto-resolve to
-// it (ADR-002 presentation rule); the vestigial ClubModuleSettings.multiLodge
-// column is retired in a follow-up (#129).
+// it (ADR-002 presentation rule). The vestigial ClubModuleSettings.multiLodge
+// column was retired by hoppers99/AlpineClubBookingsNZ#129 and is `@ignore`d
+// (#5396); its DROP is tracked as hoppers99/AlpineClubBookingsNZ#139.
 model Lodge {
   id         String   @id @default(cuid())
   name       String
@@ -5726,11 +5731,11 @@ model Lodge {
   // existing default lodge with the historical hardcoded string.
   address    String?  @db.VarChar(300)
   // Per-lodge config glob for the lobby display's {{config:<key>}}
-  // placeholders (docs/lobby-display/design.md §3, fork issue #26): free-form
+  // placeholders (docs/lobby-display/design.md §3, fork issue hoppers99/AlpineClubBookingsNZ#26): free-form
   // string key/value pairs, validated at the admin edit surface. Null = none.
   displayConfig Json?
   // Per-lodge override of the lobby display name granularity (fork issue
-  // #28, design.md §10). Null = the club-wide code default
+  // hoppers99/AlpineClubBookingsNZ#28, design.md §10). Null = the club-wide code default
   // (FIRST_NAME_SURNAME_INITIAL). Enum defined with the lobby-display
   // models at the end of this file.
   displayNameGranularity DisplayNameGranularity?
@@ -5744,16 +5749,16 @@ model Lodge {
   // FIRST_NAME_SURNAME_INITIAL. Both reduce through the one shared
   // implementation in src/lib/display-name-granularity.ts.
   rosterNameGranularity  DisplayNameGranularity?
-  // Committee notice board for the lobby display (fork issue #36): the one
+  // Committee notice board for the lobby display (fork issue hoppers99/AlpineClubBookingsNZ#36): the one
   // deliberately AUTHORED display surface — free text, admin-edited,
   // rendered as text nodes only ({{config:<key>}} placeholders resolve
   // inside it). Null = no notice.
   displayNotice          String?  @db.VarChar(2000)
   // Per-lodge toggle: show guest phone numbers on this lodge's screens (kiosk +
-  // lobby display), default OFF (#37/#124). Combined with the per-member opt-in
+  // lobby display), default OFF (hoppers99/AlpineClubBookingsNZ#37/#124). Combined with the per-member opt-in
   // and an adults-only rule, enforced in the serving serialisers.
   showGuestPhonesOnScreens Boolean @default(false)
-  // Which lodge in the Alpine Central Server's registry THIS lodge is (#62):
+  // Which lodge in the Alpine Central Server's registry THIS lodge is (triyder/AlpineClubBookingsNZ#62):
   // the central lodge's permanent id, chosen by an administrator from the
   // lodges the server says this club owns (`ServerNzSettings
   // .otherLodgesOwnedLodges`). By id, never by name, because a lodge can be
@@ -5805,7 +5810,7 @@ model Lodge {
   // QR token with it, because neither means anything without the building.
   maintenanceReports      MaintenanceReport[]
   maintenanceReportToken  LodgeMaintenanceReportToken?
-  // Fork #121: food orders for this lodge, by a direct NOT NULL lodgeId. CASCADE
+  // Fork triyder/AlpineClubBookingsNZ#121: food orders for this lodge, by a direct NOT NULL lodgeId. CASCADE
   // like the maintenance reports: an order means nothing without the building.
   foodOrders              FoodOrder[]
   memberMoneyLines MemberMoneyLine[]
@@ -5822,17 +5827,17 @@ model Lodge {
 // it (there is no active/inactive state — that was dropped as unneeded).
 model OtherLodge {
   id                  String   @id @default(cuid())
-  // Not unique (#69): two lodges may share a name, and the central id is what
+  // Not unique (triyder/AlpineClubBookingsNZ#69): two lodges may share a name, and the central id is what
   // makes them distinct. Drop-downs show the location beside it to tell two
   // apart.
   name                String
-  // The Alpine Central Server's PERMANENT id for this lodge (#64): the key the
+  // The Alpine Central Server's PERMANENT id for this lodge (triyder/AlpineClubBookingsNZ#64): the key the
   // download merges by, so a lodge renamed there is renamed here in place, and
   // the id an owned lodge is uploaded under (server API 2.3). Null until a
   // download has matched the row by name once; a row still null after a whole
   // registry download is one the central server no longer has.
   centralId           String?  @unique @db.VarChar(64)
-  // Hidden here (#58): set when the central server reports the lodge deleted,
+  // Hidden here (triyder/AlpineClubBookingsNZ#58): set when the central server reports the lodge deleted,
   // or when an administrator hides a lodge the server does not list. The row
   // and its data stay, so every booking and booking request that names it
   // keeps it; it is left out of the Other lodges list and every drop-down.
@@ -5843,7 +5848,7 @@ model OtherLodge {
   bookingOfficerEmail String?  @db.VarChar(320)
   bookingOfficerPhone String?  @db.VarChar(50)
   bedCapacity         Int?
-  // Lodge details shared with the Alpine Central Server (#50). Text is capped to
+  // Lodge details shared with the Alpine Central Server (triyder/AlpineClubBookingsNZ#50). Text is capped to
   // the server's lengths, yes/no fields default to no for every existing row, and
   // the season starts are calendar dates (INV-DATE-026), never instants.
   // `siteUrl` is the lodge's non-member booking page; the free-text
@@ -5867,18 +5872,18 @@ model OtherLodge {
   dinnerIncluded         Boolean   @default(false)
   cancellationPeriod     String?   @db.VarChar(200)
   winterSeasonStart      DateTime? @db.Date
-  // A season's LAST day (#75, server API 2.6). Seasons recur: only day and
+  // A season's LAST day (triyder/AlpineClubBookingsNZ#75, server API 2.6). Seasons recur: only day and
   // month count. Unset, the season runs up to the other season's start.
   winterSeasonEnd        DateTime? @db.Date
   summerSeasonStart      DateTime? @db.Date
   summerSeasonEnd        DateTime? @db.Date
-  // This club's own lodge only (#77): when true, its non-member rates and
+  // This club's own lodge only (triyder/AlpineClubBookingsNZ#77): when true, its non-member rates and
   // season dates are filled from the Fees page (the Non-Member type's rates and
   // their seasons) and are read-only in the editor. A LOCAL setting: never
   // sent to or taken from the central server. Ignored for another club's lodge.
   ratesFromFees          Boolean   @default(true)
-  // Server API 2.2 (#61): non-member rates per person per night, NZD incl.
-  // GST, a winter and a summer rate for each age group (#77). INTEGER
+  // Server API 2.2 (triyder/AlpineClubBookingsNZ#61): non-member rates per person per night, NZD incl.
+  // GST, a winter and a summer rate for each age group (triyder/AlpineClubBookingsNZ#77). INTEGER
   // CENTS (INV-MONEY-001), 0..9999999 (a CHECK in the migration), null = not
   // set; the central server carries dollars and `@/lib/servernz-rate` is the
   // one conversion. Display only: nothing is charged from them.
@@ -5908,7 +5913,7 @@ enum OtherLodgeRoomType {
 }
 
 // A free-form extra an other lodge offers (name plus optional description),
-// mirrored from the Alpine Central Server's Amenity table (#50). Many per lodge,
+// mirrored from the Alpine Central Server's Amenity table (triyder/AlpineClubBookingsNZ#50). Many per lodge,
 // name unique within the lodge, deleted with the lodge. The sync and the admin
 // routes replace a lodge's whole set at once, keyed on (otherLodgeId, name).
 model Amenity {
@@ -5950,11 +5955,11 @@ model ServerNzSettings {
   // across the central server's HTTP calls.
   otherLodgesSyncStartedAt DateTime?
 
-  // NO LONGER READ (#69, server API 2.5, which no longer sends the names):
+  // NO LONGER READ (triyder/AlpineClubBookingsNZ#69, server API 2.5, which no longer sends the names):
   // ownership is decided by `otherLodgesOwnedLodges` below, by central id. Kept,
   // and left as last written, for the draining colour of the upgrade that
   // stopped reading it; a later release drops it. As it was:
-  // The lodge NAMES the central server says this club owns (#52), as it sends
+  // The lodge NAMES the central server says this club owns (triyder/AlpineClubBookingsNZ#52), as it sends
   // them on every pull (`ownLodgeNames`): a JSON array of strings, keyed by name
   // because that is how the registry is keyed. THREE states, and the shape
   // carries all three: NULL means the server has never said (not connected,
@@ -5968,12 +5973,12 @@ model ServerNzSettings {
   otherLodgesOwnedNames   Json?
   otherLodgesOwnedNamesAt DateTime?
   // The same owned lodges with their PERMANENT central ids, `[{ id, name }]`
-  // (server API 2.2 `ownLodges`, #62). Same three states as the names and
+  // (server API 2.2 `ownLodges`, triyder/AlpineClubBookingsNZ#62). Same three states as the names and
   // written in the same download: NULL = never told (or an older server that
   // does not send it), [] = owns none. Read by the "Central lodge" setting and
   // the availability endpoint, which link by id because a name can change.
   otherLodgesOwnedLodges  Json?
-  // When a WHOLE-registry download last merged to the end (#64): until then
+  // When a WHOLE-registry download last merged to the end (triyder/AlpineClubBookingsNZ#64): until then
   // every download asks for the whole registry, so every Other lodges row is
   // matched by name once and keyed by its central id, and a row still unkeyed
   // after it is one the server does not list. NULL = not yet (a site just
@@ -6004,7 +6009,7 @@ model ServerNzSettings {
   commsPoisonCount    Int      @default(0)
 
   // The central server's API version as last reported by GET /api/v1/version
-  // (#49), and when it was asked. THREE states: NULL means never checked (no
+  // (triyder/AlpineClubBookingsNZ#49), and when it was asked. THREE states: NULL means never checked (no
   // key stored, or the key was replaced and the old answer forgotten); the
   // literal "unknown" means the server answered 404 - it predates versioning -
   // which this site treats as a mismatch; otherwise a canonical `major.minor`.
@@ -7792,7 +7797,9 @@ model NotificationPreference {
   bookingReminder            Boolean  @default(true)
   bookingBumped              Boolean  @default(true)
   bookingCancelled           Boolean  @default(true)
-  bookingWaitlist            Boolean  @default(true)
+  // RETIRED: never offered or read. `@ignore`d (#5396) so no query names the
+  // column before its contract DROP (INV-OPS-005); its default fills new rows.
+  bookingWaitlist            Boolean  @default(true) @ignore
   // #2284 (S2): FYI when a family co-member adds you (or someone you are the
   // login-holding adult for) to a booking. General family behaviour, sent
   // regardless of the memberGuests module; default on, personally opt-outable.
@@ -7823,7 +7830,7 @@ model NotificationPreference {
   // (ADMIN_NOTIFICATION_PREFERENCE_REQUIREMENT), so "the maintenance officer" is
   // whoever the club has given that area to — never a hard-coded address.
   adminMaintenanceReport     Boolean  @default(true)
-  // #49: the Alpine Central Server is on a different API version, so syncing
+  // triyder/AlpineClubBookingsNZ#49: the Alpine Central Server is on a different API version, so syncing
   // is paused. Rides the Daily digest template; audience is Lodge Operations
   // edit (ADMIN_NOTIFICATION_PREFERENCE_REQUIREMENT) in ADDITION to the
   // digest's own audience, and a lodge-only recipient gets the version entry
@@ -7841,7 +7848,7 @@ model NotificationPreference {
 
 model XeroAccountMapping {
   id        String   @id @default(cuid())
-  key       String   @unique // hutFeesIncome | hutFeeRefunds | goodwillWriteOffs | stripeBankAccount | stripeFees | subscriptionIncome | membershipCancellationCredit | hutFeeItem | hutFeeRefundItem | entranceFeeItem | entranceFeeAmountCents
+  key       String   @unique // hutFeesIncome | hutFeeRefunds | goodwillWriteOffs | openingCredits | stripeBankAccount | stripeFees | subscriptionIncome | membershipCancellationCredit | hutFeeItem | hutFeeRefundItem | entranceFeeItem | entranceFeeAmountCents
   code      String? // null = not configured, use application default (GL account code or amount string)
   itemCode  String? // Xero Item Code — when set, Xero auto-fills account from Item config
   createdAt DateTime @default(now())
@@ -8002,6 +8009,10 @@ model MemberCredit {
   // lot converted from one (no credit note is ever minted for it) and on a
   // deduction of such credit. Null on every other row.
   xeroCashCreditId            String?
+  // #4988: the opening-credit batch that posted (or reversed) this row. Null on
+  // every other credit. Nullable, so the previous colour keeps inserting rows
+  // that do not mention it.
+  openingCreditBatchId        String?
   createdAt                   DateTime   @default(now())
 
   member                    Member                        @relation(fields: [memberId], references: [id], onDelete: Restrict)
@@ -8025,6 +8036,7 @@ model MemberCredit {
   // a slice back.
   cashAllocations           MemberCreditCashAllocation[]  @relation("CreditLotCashAllocations")
   cashReturns               MemberCreditCashReturn[]      @relation("CreditCashReturnRestoration")
+  openingCreditBatch        OpeningCreditBatch?           @relation(fields: [openingCreditBatchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([memberId])
   @@index([requestedById])
@@ -8034,6 +8046,33 @@ model MemberCredit {
   @@unique([id, xeroCashCreditId], map: "MemberCredit_id_xeroCashCreditId_key")
   @@index([sourceBookingId])
   @@index([appliedToBookingId])
+  @@index([openingCreditBatchId])
+}
+
+/// #4988 — one approved opening-credit CSV batch: the balances a club carries
+/// over from its old system, posted once as ADMIN_ADJUSTMENT credit rows.
+/// `batchKey` is the SHA-256 of the batch's canonical rows, so the same file can
+/// be posted only once (a second confirm, concurrent or later, hits the unique
+/// key). Reversal stamps `reversedAt` once and posts negative rows linked here;
+/// nothing is deleted (`INV-PAY-162`).
+model OpeningCreditBatch {
+  id             String    @id @default(cuid())
+  batchKey       String    @unique
+  totalCents     Int
+  rowCount       Int
+  /// Negative ledger row count for the batch members, captured under their locks.
+  negativeCreditCountAtPost Int @default(0)
+  postedById     String?
+  postedAt       DateTime  @default(now())
+  reversedAt     DateTime?
+  reversedById   String?
+  reversalReason String?
+
+  postedBy   Member?        @relation("PostedOpeningCreditBatches", fields: [postedById], references: [id], onDelete: SetNull)
+  reversedBy Member?        @relation("ReversedOpeningCreditBatches", fields: [reversedById], references: [id], onDelete: SetNull)
+  credits    MemberCredit[]
+
+  @@index([postedAt])
 }
 
 /// #1620 — per-note credit-lot allocation ledger for "allocate-existing" applied
@@ -8653,7 +8692,7 @@ model MembershipLockoutSettings {
 }
 
 // ---------------------------------------------------------------------------
-// Lobby TV Display (docs/lobby-display/design.md, fork epic #25)
+// Lobby TV Display (docs/lobby-display/design.md, fork epic hoppers99/AlpineClubBookingsNZ#25)
 // ---------------------------------------------------------------------------
 
 // A page layout (ADR-003 §1, LTV-024): the structural HTML body with named
@@ -8714,8 +8753,8 @@ model LodgeDisplayDevice {
   pairingCodeExpiresAt DateTime?
   tokenHash            String?   @unique
   templateId           String?
-  // Per-device state-poll cadence in seconds (LTV-039, issue #85; consolidates
-  // #66). null = the client default (~60s). Clamped server-side to 15–600 on
+  // Per-device state-poll cadence in seconds (LTV-039, issue hoppers99/AlpineClubBookingsNZ#85; consolidates
+  // triyder/AlpineClubBookingsNZ#66). null = the client default (~60s). Clamped server-side to 15–600 on
   // read and write. The poll doubles as the device heartbeat, so this also
   // governs how often lastSeenAt refreshes.
   pollSeconds          Int?
@@ -8732,7 +8771,7 @@ model LodgeDisplayDevice {
 }
 
 // How guest names are reduced by the lobby display's privacy serialiser
-// (fork issue #28, docs/lobby-display/design.md §10). Enforcement lives in
+// (fork issue hoppers99/AlpineClubBookingsNZ#28, docs/lobby-display/design.md §10). Enforcement lives in
 // src/lib/lodge-display-state.ts — the single choke point for what a public
 // screen may show. Minors are never individually named at ANY level.
 enum DisplayNameGranularity {
@@ -10044,7 +10083,7 @@ enum XeroTaxCategory {
   ZERO_RATED
 }
 
-/// Food orders (fork #121). Whether an order is open or the food arrived.
+/// Food orders (fork triyder/AlpineClubBookingsNZ#121). Whether an order is open or the food arrived.
 /// Received closes it; there is no reopening (the price can still change).
 enum FoodOrderStatus {
   OPEN
@@ -10059,7 +10098,7 @@ model FoodOrderSettings {
 
   /// Where every new order is emailed. Checked only as a valid address, never
   /// against members or committee roles: keeping it current is the committee's
-  /// job (fork #121 owner decision 10). Null or empty means ordering is not set up.
+  /// job (fork triyder/AlpineClubBookingsNZ#121 owner decision 10). Null or empty means ordering is not set up.
   officerEmail String? @db.VarChar(254)
   /// What this club calls the person (INV-CONFIG-001): "Food officer" by default.
   officerLabel String  @default("Food officer") @db.VarChar(60)
@@ -10068,8 +10107,8 @@ model FoodOrderSettings {
   updatedByMemberId String?
 }
 
-/// A member's food order for a lodge (fork #121). Not linked to a booking
-/// (fork #121 owner decision 9): the officer matches it to a stay by lodge and neededBy.
+/// A member's food order for a lodge (fork triyder/AlpineClubBookingsNZ#121). Not linked to a booking
+/// (fork triyder/AlpineClubBookingsNZ#121 owner decision 9): the officer matches it to a stay by lodge and neededBy.
 model FoodOrder {
   id       String  @id @default(cuid())
   lodgeId  String
@@ -10087,7 +10126,7 @@ model FoodOrder {
   receivedById String?
 
   /// The whole order's cost in integer cents (INV-MONEY). A record only: never
-  /// charged, invoiced, posted to the ledger or sent to Xero (fork #121 owner decision 8).
+  /// charged, invoiced, posted to the ledger or sent to Xero (fork triyder/AlpineClubBookingsNZ#121 owner decision 8).
   priceCents       Int?
   priceUpdatedAt   DateTime?
   priceUpdatedById String?

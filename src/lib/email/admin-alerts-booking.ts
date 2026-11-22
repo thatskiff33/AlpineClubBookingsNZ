@@ -32,6 +32,7 @@ import {
   buildPublicBookingRequestsHref,
 } from "@/lib/admin-booking-requests-path";
 import { sendToAdmins } from "./admin-alerts-shared";
+import type { AdminAlertRecipientsResult } from "./admin-alert-send-result";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
@@ -203,23 +204,39 @@ export async function sendAdminPendingDeadlineAlert(
   });
 }
 
-// test seam
-// N-07: Admin alert - booking bumped
+// N-07: Admin alert - booking bumped. #5403: sent by the confirm-pending cron
+// when it releases a pending booking at its hold deadline because the dates
+// filled up. The cron has no "triggering" booking to name (the beds went to
+// whoever was confirmed first), so the alert names the reason instead, which
+// also says when it was the guests-cancelled variant. The subject carries the
+// stay and the booking reference so an officer can tell two bumps for one
+// owner apart. The Daily digest no longer depends on it: since #5407 it counts
+// each officer's copies, not distinct subjects. Returns `sendToAdmins`' result
+// so the bump's owed marker can tell an alert nobody got from one sent (#5407).
 export async function sendAdminBookingBumpedAlert(data: {
   bumpedMemberName: string;
+  bookingReference: string;
+  // Null when ADR-002 hides it (`bookingListLodgeLabel`).
+  lodgeName: string | null;
   checkIn: Date;
   checkOut: Date;
   guestCount: number;
-  triggeringMemberName: string;
-}) {
-  await sendToAdmins({
-    subject: `Booking Bumped: ${data.bumpedMemberName}`,
+  reason: string;
+}): Promise<AdminAlertRecipientsResult> {
+  const checkIn = emailCalendarDay(data.checkIn);
+  const checkOut = emailCalendarDay(data.checkOut);
+  return sendToAdmins({
+    subject: `Booking Bumped: ${data.bumpedMemberName}, ${checkIn} to ${checkOut} (${data.bookingReference})`,
     html: await renderEmailHtml(() => adminBookingBumpedTemplate(data)),
     templateName: "admin-booking-bumped",
     templateData: {
-      ...data,
-      checkIn: emailCalendarDay(data.checkIn),
-      checkOut: emailCalendarDay(data.checkOut),
+      bumpedMemberName: data.bumpedMemberName,
+      bookingReference: data.bookingReference,
+      lodgeName: data.lodgeName ?? "",
+      checkIn,
+      checkOut,
+      guestCount: data.guestCount,
+      reason: data.reason,
     },
     preferenceKey: "adminBookingBumped",
   });

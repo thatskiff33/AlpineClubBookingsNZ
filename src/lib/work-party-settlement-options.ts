@@ -1,5 +1,5 @@
 /**
- * The settlement choice "Add to work party" offers (fork #129) and the method
+ * The settlement choice "Add to work party" offers (triyder/AlpineClubBookingsNZ#129) and the method
  * it runs with: pure rules on the booking's payment, moved out of
  * `work-party-booking-correction.ts` to keep that service under its budget.
  * The service is their one caller under the locks; the route and the dialog

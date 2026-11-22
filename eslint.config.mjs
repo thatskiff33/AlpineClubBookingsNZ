@@ -397,12 +397,8 @@ const CENTS_DISPLAY_RESTRICTIONS = [
  * shipped; keeping the array separate is what makes the mistake unavailable
  * rather than merely noticed.
  *
- * It has no file-wide exemption. The rounding-drift report has one reviewed
- * dual-format annotation; its exact file overrides only the c-suffix arm with
- * a selector that excludes that function's direct return (see below).
+ * It has no file-wide exemption and no per-file override.
  */
-const CENTS_IN_PROSE_C_SUFFIX_SELECTOR =
-  'TemplateLiteral:not(TaggedTemplateExpression > TemplateLiteral) > TemplateElement[value.raw=/^c(?![-\\w])/i]';
 const CENTS_IN_PROSE_RESTRICTIONS = [
   {
     selector:
@@ -410,18 +406,11 @@ const CENTS_IN_PROSE_RESTRICTIONS = [
     message: CENTS_IN_PROSE_MESSAGE,
   },
   {
-    selector: CENTS_IN_PROSE_C_SUFFIX_SELECTOR,
+    selector:
+      'TemplateLiteral:not(TaggedTemplateExpression > TemplateLiteral) > TemplateElement[value.raw=/^c(?![-\\w])/i]',
     message: CENTS_IN_PROSE_MESSAGE,
   },
 ];
-
-// #3589: this replacement is installed only on the rounding-audit path. The
-// diagnostic deliberately shows formatted currency plus signed raw-cent drift;
-// another file with a same-named function still receives the global arm.
-const ROUNDING_AUDIT_C_SUFFIX_RESTRICTION = {
-  selector: `${CENTS_IN_PROSE_C_SUFFIX_SELECTOR}:not(FunctionDeclaration[id.name="formatDriftCents"] > BlockStatement > ReturnStatement > TemplateLiteral > TemplateElement)`,
-  message: CENTS_IN_PROSE_MESSAGE,
-};
 
 /** Bare selectors, for `cents-in-prose-guard.test.ts`, same mirror as above. */
 export const CENTS_IN_PROSE_GUARD_ARM = CENTS_IN_PROSE_RESTRICTIONS.map(
@@ -768,7 +757,7 @@ const RAW_SQL_RESTRICTIONS = [
 // a template literal — which was live in three files, and which no arm of this
 // rule could see until it was added.
 const DATE_TRUNCATION_MESSAGE =
-  "INV-DATE-019: Do not hand-write an ISO date truncation (#2684). New code goes to @/lib/club-time (CT-2, #2990): clubCalendarDateOf(instant, zone) for a real INSTANT such as `createdAt`, whose UTC day is the PREVIOUS club day all morning (#2697); calendarDateOfDateOnlyInstant(value) for a `@db.Date` column, whose UTC midnight IS the encoding of a club calendar day (INV-DATE-010); clubToday(zone) for today. The @/lib/date-only equivalents (formatDateOnly / formatMonthOnly / formatDateOnlyForTimeZone / getTodayDateOnly) are the compatibility adapters CT-6 retires.";
+  "INV-DATE-019: Do not hand-write an ISO date truncation (#2684). New code goes to @/lib/club-time (CT-2, #2990): clubCalendarDateOf(instant, zone) for a real INSTANT such as `createdAt`, whose UTC day is the PREVIOUS club day all morning (#2697); calendarDateOfDateOnlyInstant(value) for a `@db.Date` column, whose UTC midnight IS the encoding of a club calendar day (INV-DATE-010); clubToday(zone) for today. The @/lib/date-only equivalents (formatDateOnly / formatMonthOnly / formatDateOnlyForTimeZone / getTodayDateOnly) are compatibility adapters that #2991 closed with, kept as reviewed adapters.";
 
 const DATE_SPLIT_MESSAGE =
   "INV-DATE-019: Do not hand-write an ISO date truncation (#2684). Holding a Date? @/lib/club-time (CT-2, #2990): calendarDateOfDateOnlyInstant for a `@db.Date` value (INV-DATE-010) or clubCalendarDateOf(instant, zone) for a real instant. Holding a value already serialised to a string? parseCalendarDate, or dateOnlyFromIsoString from the @/lib/date-only adapter.";
@@ -991,7 +980,7 @@ const NO_HOST_CLOCK_FACE = [
 ].map((selector) => ({ selector, message: HOST_CLOCK_FACE_MESSAGE }));
 
 const ENVIRONMENT_ZONE_MESSAGE =
-  "INV-CONFIG-002: The environment's timezone is not the club's (CT-1, #2989; CT-6, #2991). `TZ` / `NEXT_PUBLIC_TZ` SEED the persisted `ClubTimeSettings.timeZone` row at setup and have no say afterwards, so a business or display decision taken from them follows whichever container the process happens to be in. Server component or route: clubTimeZone() / clubTime() from @/lib/club-time/server, which is request-scoped and memoised. A cron tick or a CLI, which `server-only` refuses: readClubTimeZoneOutsideRequest() from @/lib/club-time-zone-runtime. A client component: receive the zone as data through ClubTimeProvider — the browser never decides it. @/lib/date-only is the last compatibility adapter this issue retires, and it no longer DEFAULTS a zone: #3123 deleted its six `= APP_TIME_ZONE` defaults, so every helper there now demands one from its caller. The rendering adapter beside it, @/lib/nzst-date, is already deleted (#3123). Do not add a caller, and do not build a replacement.";
+  "INV-CONFIG-002: The environment's timezone is not the club's (CT-1, #2989; CT-6, #2991). `TZ` / `NEXT_PUBLIC_TZ` SEED the persisted `ClubTimeSettings.timeZone` row at setup and have no say afterwards, so a business or display decision taken from them follows whichever container the process happens to be in. Server component or route: clubTimeZone() / clubTime() from @/lib/club-time/server, which is request-scoped and memoised. A cron tick or a CLI, which `server-only` refuses: readClubTimeZoneOutsideRequest() from @/lib/club-time-zone-runtime. A client component: receive the zone as data through ClubTimeProvider — the browser never decides it. @/lib/date-only is the last compatibility adapter (#2991 closed with it kept as a reviewed adapter), and it no longer DEFAULTS a zone: #3123 deleted its six `= APP_TIME_ZONE` defaults, so every helper there now demands one from its caller. The rendering adapter beside it, @/lib/nzst-date, is already deleted (#3123). Do not add a caller, and do not build a replacement.";
 
 // `process.env.TZ` and `process.env.NEXT_PUBLIC_TZ`, read anywhere but the two
 // modules whose job is to read them once.
@@ -1051,6 +1040,35 @@ const ENVIRONMENT_FORMAT_ADAPTER_FILES = ["src/lib/club-format-env.ts"];
 
 /** The environment-format arm as bare selectors, read by its guard test. */
 export const ENVIRONMENT_FORMAT_ARMS = ENVIRONMENT_FORMAT_RESTRICTIONS.map((entry) => entry.selector);
+
+// #5399 — the caller's IP read anywhere but the one helper. The FIRST
+// `X-Forwarded-For` address is whatever the caller sent; 25 route sites read it
+// (three stored the raw header), so behind an appending proxy the audit log held
+// an address the caller chose. Any string naming a client-address header is
+// refused, which also catches a local alias, a bracket read, a destructured key
+// and a header written by hand: the one writer (`mcp/dispatch.ts`'s loopback)
+// uses `FORWARDED_FOR_HEADER` from the helper. The platform headers are named
+// too, so trusting one later is a decision made in the helper, not a quiet read.
+// `forwarded` (RFC 7239) is also an ordinary word and an audit-census kind in
+// `scripts/audit/`, so only a header-shaped read of it is refused.
+const CLIENT_IP_HEADER_NAME =
+  "/^(x-forwarded-for|x-real-ip|cf-connecting-ip|true-client-ip|x-vercel-forwarded-for|fly-client-ip)$/i";
+const RFC_FORWARDED_NAME = "/^forwarded$/i";
+const CLIENT_IP_HEADER_MESSAGE =
+  "#5399: Read the caller's IP with getClientIp(request), or getAuditRequestContext(request) for an audit context; clientIpFromHeaders(headers) where only headers are in hand. The first X-Forwarded-For address is whatever the caller sent, so the rule (last address, then X-Real-IP) lives once, in src/lib/rate-limit-http.ts; a platform header (CF-Connecting-IP, True-Client-IP, Forwarded and the like) is trusted there or nowhere.";
+const CLIENT_IP_HEADER_RESTRICTIONS = [
+  `Literal[value=${CLIENT_IP_HEADER_NAME}]`,
+  `TemplateElement[value.raw=${CLIENT_IP_HEADER_NAME}]`,
+  `CallExpression[callee.property.name=/^(get|has)$/] > Literal[value=${RFC_FORWARDED_NAME}]`,
+  `CallExpression[callee.property.name=/^(get|has)$/] > TemplateLiteral > TemplateElement[value.raw=${RFC_FORWARDED_NAME}]`,
+  `MemberExpression[computed=true][property.value=${RFC_FORWARDED_NAME}]`,
+].map((selector) => ({ selector, message: CLIENT_IP_HEADER_MESSAGE }));
+
+/** The one file allowed to name the client-address headers. */
+const CLIENT_IP_HEADER_ADAPTER_FILES = ["src/lib/rate-limit-http.ts"];
+
+/** The client-IP arm as bare selectors, read by its guard test. */
+export const CLIENT_IP_HEADER_ARMS = CLIENT_IP_HEADER_RESTRICTIONS.map((entry) => entry.selector);
 
 const HOST_CLOCK_RESTRICTIONS = [...NO_HOST_CLOCK_FACE];
 
@@ -1196,16 +1214,15 @@ export const DATE_FNS_ADAPTERS = [
  * `club-time-boundary-guard.test.ts` fails on an entry naming a file that no
  * longer exists precisely so the two cannot drift apart.
  *
- * `src/lib/date-only.ts` IS NOT HERE, AND NO LONGER NEEDS TO BE ANYWHERE. It has
- * a block of its own further down, which used to drop this group as well because
+ * `src/lib/date-only.ts` IS NOT HERE, AND NO LONGER NEEDS TO BE ANYWHERE. It still
+ * has a block of its own further down (#2991 closed with the module kept as a
+ * reviewed adapter), which used to drop this group as well because
  * six of its helpers defaulted their `timeZone` to `APP_TIME_ZONE`. #3123 removed
  * those defaults and the import, so that block drops only the ENCODING group now
  * and these arms reach the file like any other. Were it ever to need this group
  * again it would still belong in its own block rather than on this list: listing
  * it twice would give it two matching blocks, the later of which silently wins.
  */
-const ENVIRONMENT_ZONE_ADAPTER_FILES = ["src/lib/club-time-zone-env.ts"];
-
 export const ENVIRONMENT_ZONE_ADAPTERS = [
   {
     file: "src/lib/club-time-zone-env.ts",
@@ -1213,6 +1230,9 @@ export const ENVIRONMENT_ZONE_ADAPTERS = [
       "STRUCTURAL. CT-1's seed reader (#2989), and since #3567 the one read of `process.env.TZ` in the tree: exactly one module decides what the environment claims, and `client-server-boundary-census.test.ts` already keeps it out of the browser bundle.",
   },
 ];
+
+// Derived from the reasons list above so the two cannot name different files.
+const ENVIRONMENT_ZONE_ADAPTER_FILES = ENVIRONMENT_ZONE_ADAPTERS.map((entry) => entry.file);
 
 /**
  * The three `toLocale*` DATE-RENDERING arms (#2256, #2264), as a NAMED array
@@ -2637,6 +2657,7 @@ const ALWAYS_RESTRICTED_IN_SRC = [
   ...CLUB_FORMAT_PARAMETER_RESTRICTIONS,
   ...RETIRED_FORMAT_CONSTANT_RESTRICTIONS,
   ...ENVIRONMENT_FORMAT_RESTRICTIONS,
+  ...CLIENT_IP_HEADER_RESTRICTIONS,
 ];
 
 /**
@@ -2673,6 +2694,12 @@ export const SRC_RESTRICTION_EXEMPTIONS = [
       "The seed reader for the club's currency and locale (#3563; #3567 review): the one module whose job is to read CURRENCY / LOCALE once, for the first-boot backfill and the no-row fallback, and to warn when only a retired NEXT_PUBLIC_ twin is set. Every other file reads the stored setting.",
   },
   {
+    files: CLIENT_IP_HEADER_ADAPTER_FILES,
+    omits: CLIENT_IP_HEADER_RESTRICTIONS,
+    reason:
+      "The one home of the caller-IP rule (#5399): last X-Forwarded-For address, then X-Real-IP. The rule exists to make every other file call getClientIp() / clientIpFromHeaders() instead of reading a client-address header, and to take FORWARDED_FOR_HEADER from here when writing one; the helper has to name them somewhere.",
+  },
+  {
     files: ["prisma/**/*.{ts,tsx}"],
     omits: DATE_ONLY_ENCODING_RESTRICTIONS,
     reason:
@@ -2689,12 +2716,6 @@ export const SRC_RESTRICTION_EXEMPTIONS = [
     omits: MONEY_CENTS_RESTRICTIONS,
     reason:
       "The two reviewed money boundaries (#2685). They own the conversion every other file is sent here to use, so they are the one place allowed to write it; each carries its own written reason on MONEY_GUARD_EXEMPTIONS above.",
-  },
-  {
-    files: ["src/lib/xero-invoice-rounding-audit.ts"],
-    omits: [...MONEY_CENTS_RESTRICTIONS, CENTS_IN_PROSE_RESTRICTIONS[1]],
-    reason:
-      "#3589: the money-domain conversion arm remains replaced by its stricter counterpart, and the global c-suffix arm is replaced only here by the same arm excluding formatDriftCents's direct dual-format return. The formatter deliberately pairs currency with signed raw-cent drift; every other function and file remains guarded.",
   },
 ];
 
@@ -2920,13 +2941,24 @@ const eslintConfig = defineConfig([
     },
   },
   {
+    // The caller-IP helper is the one file that may read X-Forwarded-For and
+    // X-Real-IP (#5399). Only that group is dropped; the rendering arms are
+    // re-stated for the reason the zone block above gives.
+    files: CLIENT_IP_HEADER_ADAPTER_FILES,
+    rules: {
+      "no-restricted-syntax": srcRestrictedSyntaxWithout(
+        CLIENT_IP_HEADER_RESTRICTIONS,
+        ...DATE_RENDERING_RESTRICTIONS,
+      ),
+    },
+  },
+  {
     // The raw-SQL guard (#2289) is NOT an `src/`-only rule, even though the date
     // rules above are. Operator CLIs and seed/migration helpers are where
     // hand-written SQL is most likely — Prisma cannot express a bulk correlated
     // update, and these files run against production data with an operator
     // watching a row count. `scripts/` alone holds the money-adjacent
     // `backfill-orphaned-applied-credits.ts`,
-    // `backfill-cancel-flattened-payments.ts`,
     // `backfill-finance-monthly-facts.ts` and `xero-booking-repair.ts`. Neither
     // directory contains any raw SQL today, so this costs nothing now and is
     // purely about what may be written next — and it makes the unqualified
@@ -3084,20 +3116,6 @@ const eslintConfig = defineConfig([
       "no-restricted-syntax": srcRestrictedSyntaxWithout(
         CENTS_DISPLAY_RESTRICTIONS,
         ...DATE_RENDERING_RESTRICTIONS,
-      ),
-    },
-  },
-  {
-    // #3589: preserve the deliberate dual-format drift annotation in this one
-    // file and direct return only. Flat config replaces an earlier rule, so
-    // restate the Xero money-domain arm and every other mandatory restriction.
-    files: ["src/lib/xero-invoice-rounding-audit.ts"],
-    rules: {
-      "no-restricted-syntax": srcRestrictedSyntaxWithout(
-        [...MONEY_CENTS_RESTRICTIONS, CENTS_IN_PROSE_RESTRICTIONS[1]],
-        ...DATE_RENDERING_RESTRICTIONS,
-        ...MONEY_MODULE_RESTRICTIONS,
-        ROUNDING_AUDIT_C_SUFFIX_RESTRICTION,
       ),
     },
   },

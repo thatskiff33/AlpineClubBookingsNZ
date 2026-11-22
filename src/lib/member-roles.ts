@@ -135,14 +135,6 @@ export function isLodgeKioskAccount(
   );
 }
 
-export function isOperationalRole(
-  role: string | null | undefined,
-): role is (typeof OPERATIONAL_ROLE_VALUES)[number] {
-  return OPERATIONAL_ROLE_VALUES.includes(
-    role as (typeof OPERATIONAL_ROLE_VALUES)[number],
-  );
-}
-
 /**
  * Whether this record is an account holder at all — a real person, or an
  * organisation the club can hold a membership for — and so has a membership

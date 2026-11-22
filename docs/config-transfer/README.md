@@ -30,6 +30,16 @@ deeper reference for what each category contains and the import safety model.
   category: it replaces the complete exported minimum-stay and adult-member
   hosting sets and previews every deletion before Apply. The pre-apply backup is
   the true rollback.
+- **Xero account mappings keep the mapping screen's rule (#4988):** the plan
+  overlays the bundle's account codes on the stored ones, as the chosen write
+  mode would apply them, and an **Opening Credits** account that another
+  mapping would then share is an **error** that disables Apply, in the same
+  sentence the account mapping screen uses (owner decision, 21 Nov 2026). A
+  bundle that sets or changes Opening Credits on a club that is, or is
+  scheduled to be, GST-registered with no Exempt tax category mapped in the
+  connected Xero organisation gets a **warning** only. The plan asks Xero
+  nothing, so it does not judge a mapped rate's current percentage; the Xero
+  health check does.
 - **Validation blocks apply:** every row is strictly validated at plan time —
   malformed dates, unknown enum values, non-integer/negative money, and
   invalid or reserved page slugs (the same rules the admin page editor
@@ -106,8 +116,8 @@ deeper reference for what each category contains and the import safety model.
   someone classifies it as should-travel or deliberately-excluded. Deliberately
   excluded: the singleton primary key, the `updatedByMemberId` audit FK, and the
   `createdAt`/`updatedAt` timestamps (all instance-local, `COMMON_EXCLUDED_COLUMNS`);
-  the retired `ClubModuleSettings.multiLodge` flag; the phase-7 `lodgeId`
-  soft-links; `GroupDiscountSetting.rateMembershipTypeId` (an instance-local FK);
+  the phase-7 `lodgeId` soft-links; `GroupDiscountSetting.rateMembershipTypeId`
+  (an instance-local FK);
   and the two auth-provider sign-in toggles `ClubModuleSettings.magicLink` /
   `googleLogin` (a per-install auth decision; note the login/profile pages
   render these affordances off the flag alone, so an imported `true` on an
@@ -125,6 +135,9 @@ deeper reference for what each category contains and the import safety model.
   is ordinary portable policy and travels.
   `MembershipLockoutSettings.useFeeScheduleItemCodes` (#2109) is
   classified should-travel and now exports like the rest of that singleton.
+  The retired `ClubModuleSettings.multiLodge` column needs no entry: it is
+  `@ignore`d (#5396), so the generated client the guards read cannot see it.
+  Its drop is tracked as hoppers99/AlpineClubBookingsNZ#139.
 
   **Model-level completeness is audited too (#2200).** The field-level guard
   above proves no COLUMN inside a registered singleton is dropped; a second guard

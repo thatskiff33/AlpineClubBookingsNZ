@@ -33,6 +33,8 @@ import process from "node:process";
 
 import { githubHeadingAnchor } from "./lib/github-heading-anchor.mjs";
 import { isMainModule } from "./lib/is-main-module.mjs";
+import { scanMarkdownBlocks, scanMarkdownFenceLines } from "./lib/markdown-blocks.mjs";
+import { inlineLinkTargets, refDefTargets } from "./lib/markdown-links.mjs";
 
 const REPO_ROOT = path.resolve(path.join(import.meta.dirname, ".."));
 
@@ -60,12 +62,6 @@ function collectMarkdown(dir, out = []) {
   }
   return out;
 }
-
-// Inline links/images: ![alt](target) and [text](target). The target group
-// stops at whitespace or ')', so `[x](a.md "title")` yields `a.md`.
-const INLINE_LINK = /!?\[[^\]]*\]\(\s*(<[^>]+>|[^)\s]+)/g;
-// Reference definitions at line start: [label]: target
-const REF_DEF = /^\s*\[[^\]]+\]:\s*(\S+)/;
 
 function isExternal(target) {
   if (!target) return true;
@@ -121,16 +117,13 @@ function htmlAnchors(line, out) {
 export function collectAnchors(mdPath) {
   const anchors = new Set();
   const occurrences = new Map(); // base slug -> times seen (GitHub's counter)
-  const lines = fs.readFileSync(mdPath, "utf8").split(/\r?\n/);
+  // Code blocks are decided by the shared block scanner, as in the changelog
+  // compiler, so both agree where a fence ends (#5214).
+  // A raw HTML block is literal to Markdown, but its id/name anchors are live.
+  const { scannable, html } = scanMarkdownBlocks(fs.readFileSync(mdPath, "utf8"));
+  for (const { text } of html) htmlAnchors(text, anchors);
 
-  let inFence = false;
-  for (const line of lines) {
-    if (/^\s*(```|~~~)/.test(line)) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
-
+  for (const { text: line } of scannable) {
     // Explicit HTML anchors (scan the line minus inline code spans).
     htmlAnchors(line.replace(/`[^`]*`/g, " "), anchors);
 
@@ -151,28 +144,20 @@ export function collectAnchors(mdPath) {
 
 // -----------------------------------------------------------------------------
 
-function checkFile(mdPath, anchorsByFile, problems) {
+export function checkFile(mdPath, anchorsByFile, problems) {
   const rel = path.relative(REPO_ROOT, mdPath);
-  const lines = fs.readFileSync(mdPath, "utf8").split(/\r?\n/);
   const dir = path.dirname(mdPath);
 
-  let inFence = false;
-  lines.forEach((line, i) => {
-    const fenceToggle = /^\s*(```|~~~)/.test(line);
-    if (fenceToggle) {
-      inFence = !inFence;
-      return;
-    }
-    if (inFence) return;
+  // Same fence decision as the changelog compiler: the shared block scanner.
+  const { scannable: lines } = scanMarkdownFenceLines(fs.readFileSync(mdPath, "utf8"));
+  lines.forEach(({ number, text: line }) => {
+    const i = number - 1;
 
     // Strip inline-code spans (`...`) so example link syntax shown as code — e.g.
     // `![alt](images/x.png)` in a style guide — is not treated as a real link.
     const scannable = line.replace(/`[^`]*`/g, " ");
 
-    const targets = [];
-    for (const m of scannable.matchAll(INLINE_LINK)) targets.push(m[1]);
-    const refMatch = scannable.match(REF_DEF);
-    if (refMatch) targets.push(refMatch[1]);
+    const targets = [...inlineLinkTargets(scannable), ...refDefTargets(scannable)].map(({ target }) => target);
 
     for (const raw of targets) {
       if (isExternal(raw)) continue;

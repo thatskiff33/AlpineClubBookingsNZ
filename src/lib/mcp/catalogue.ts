@@ -8,7 +8,9 @@
  *
  * The request schemas here are the routes' own, imported from the lib modules
  * the routes import them from (`INV-SSOT`). A field described twice would let
- * the app be told one shape while the route enforces another.
+ * the app be told one shape while the route enforces another. So is each
+ * action's answer (`returns`): the shape the route projects a connection's
+ * answer onto, from `connection-shapes.ts`.
  *
  * `mcp-route-census.test.ts` holds every route method in `src/app/api` to
  * either an entry here or a reasoned exclusion (`exclusions.ts`).
@@ -18,6 +20,38 @@ import { z } from "zod";
 import { availabilityQuerySchema } from "@/lib/availability-query-schema";
 import { bookingIdParamsSchema, cancelBookingMutationSchema } from "@/lib/booking-cancel-schema";
 import { bookingCreateCoreShape } from "@/lib/booking-create-fields";
+import type { ConnectionShape } from "@/lib/connection-projection";
+import {
+  AGE_GROUPS_CONNECTION_SHAPE,
+  AVAILABILITY_CONNECTION_SHAPE,
+  BOOKING_MESSAGES_CONNECTION_SHAPE,
+  CANCEL_BOOKING_CONNECTION_SHAPE,
+  CANCEL_PREVIEW_CONNECTION_SHAPE,
+  COMMITTEE_CONNECTION_SHAPE,
+  CREDIT_BALANCE_CONNECTION_SHAPE,
+  LODGE_LIST_CONNECTION_SHAPE,
+  LODGE_ROSTER_CONNECTION_SHAPE,
+  MEMBER_ACCOUNT_ACTIVITY_CONNECTION_SHAPE,
+  MEMBER_BOOKING_CONNECTION_SHAPE,
+  MEMBER_BOOKING_LIST_CONNECTION_SHAPE,
+  MEMBER_DRAFT_LIST_CONNECTION_SHAPE,
+  MEMBER_DRAFT_SUMMARY_CONNECTION_SHAPE,
+  MEMBER_FAMILY_CONNECTION_SHAPE,
+  MEMBER_NOTICE_CONNECTION_SHAPE,
+  MEMBER_NOTICE_LIST_CONNECTION_SHAPE,
+  MEMBER_NOTIFICATION_PREFERENCES_CONNECTION_SHAPE,
+  MEMBER_PROFILE_CONNECTION_SHAPE,
+  MEMBER_PROFILE_UPDATE_CONNECTION_SHAPE,
+  NOTICE_READ_CONNECTION_SHAPE,
+  SKIFIELD_REPORT_CONNECTION_SHAPE,
+  SUBSCRIPTION_STATUS_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes";
+import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
+import { ROSTER_WINDOW_DAYS } from "@/lib/lodge-roster-window";
+import { memberAuditLogQuerySchema } from "@/lib/member-audit-log-query";
+import { memberNotificationPreferencesConnectionUpdateSchema } from "@/lib/member-notification-preferences";
+import { memberProfileConnectionUpdateSchema } from "@/lib/member-profile-update-schema";
+import { noticeIdParamsSchema } from "@/lib/notices-shared";
 import type { StepUpHttpMethod } from "@/lib/step-up-routes";
 
 /**
@@ -45,6 +79,17 @@ export interface McpAction {
   /** Body fields the catalogue sets and the app cannot. */
   readonly fixedBody?: Readonly<Record<string, unknown>>;
   readonly kind: McpActionKind;
+  /**
+   * A `POST` that changes nothing, such as a quote, run as a `read`. The
+   * census pins every route allowed to be one.
+   */
+  readonly preview?: true;
+  /**
+   * The fields the action answers with: the shape the route projects a
+   * connection's answer onto (`connectionJson`), or, for a stage 1 route whose
+   * whole answer was chosen for the member, a complete description of it.
+   */
+  readonly returns: ConnectionShape;
   /** Listed as its own tool. The rest are reached through `find_actions`. */
   readonly core: boolean;
   /**
@@ -80,6 +125,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/availability",
     query: availabilityQuerySchema,
     kind: "read",
+    returns: AVAILABILITY_CONNECTION_SHAPE,
     core: true,
   },
   {
@@ -89,6 +135,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     method: "GET",
     path: "/api/lodges",
     kind: "read",
+    returns: LODGE_LIST_CONNECTION_SHAPE,
     core: true,
   },
   {
@@ -99,6 +146,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     method: "GET",
     path: "/api/bookings/mine",
     kind: "read",
+    returns: MEMBER_BOOKING_LIST_CONNECTION_SHAPE,
     core: true,
   },
   {
@@ -110,6 +158,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/bookings/[id]",
     params: bookingIdParams,
     kind: "read",
+    returns: MEMBER_BOOKING_CONNECTION_SHAPE,
     core: true,
   },
   {
@@ -120,6 +169,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     method: "GET",
     path: "/api/members/family",
     kind: "read",
+    returns: MEMBER_FAMILY_CONNECTION_SHAPE,
     core: true,
   },
   {
@@ -129,6 +179,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     method: "GET",
     path: "/api/profile/summary",
     kind: "read",
+    returns: MEMBER_PROFILE_CONNECTION_SHAPE,
     core: true,
   },
   {
@@ -138,6 +189,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     method: "GET",
     path: "/api/notices",
     kind: "read",
+    returns: MEMBER_NOTICE_LIST_CONNECTION_SHAPE,
     core: true,
   },
   {
@@ -150,6 +202,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     body: z.object(bookingCreateCoreShape),
     fixedBody: { draft: true },
     kind: "write",
+    returns: MEMBER_DRAFT_SUMMARY_CONNECTION_SHAPE,
     core: true,
     nextStep:
       "This is a draft. It holds no beds until the member confirms and pays at {origin}/bookings/{id}.",
@@ -163,6 +216,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/bookings/[id]/cancel-preview",
     params: bookingIdParams,
     kind: "read",
+    returns: CANCEL_PREVIEW_CONNECTION_SHAPE,
     core: true,
   },
   {
@@ -175,6 +229,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     params: bookingIdParams,
     body: cancelBookingMutationSchema.pick({ refundMethod: true }),
     kind: "destructive",
+    returns: CANCEL_BOOKING_CONNECTION_SHAPE,
     core: true,
   },
   {
@@ -184,6 +239,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     method: "GET",
     path: "/api/bookings/drafts",
     kind: "read",
+    returns: MEMBER_DRAFT_LIST_CONNECTION_SHAPE,
     core: false,
   },
   {
@@ -193,6 +249,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     method: "GET",
     path: "/api/member/credit-balance",
     kind: "read",
+    returns: CREDIT_BALANCE_CONNECTION_SHAPE,
     core: false,
   },
   {
@@ -202,6 +259,134 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     method: "GET",
     path: "/api/member/subscription-status",
     kind: "read",
+    returns: SUBSCRIPTION_STATUS_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "get_my_notification_preferences",
+    title: "Read my email preferences",
+    summary:
+      "Which emails the signed-in member has chosen to receive from the club: booking confirmations, reminders, bumps and cancellations, being added to a family member's booking, the chore roster, club notices and marketing. `true` means the email is sent.",
+    method: "GET",
+    path: "/api/notifications/preferences",
+    kind: "read",
+    returns: MEMBER_NOTIFICATION_PREFERENCES_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "update_my_notification_preferences",
+    title: "Change my email preferences",
+    summary:
+      "Turns emails from the club on (`true`) or off (`false`) for the signed-in member. Only the preferences sent change. Answers with all of them. Marketing email can only be turned off here: the member turns it on themselves on the website.",
+    method: "PUT",
+    path: "/api/notifications/preferences",
+    body: memberNotificationPreferencesConnectionUpdateSchema,
+    kind: "write",
+    returns: MEMBER_NOTIFICATION_PREFERENCES_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "update_my_profile",
+    title: "Change my profile",
+    summary:
+      "Saves the signed-in member's own name, phone number, date of birth, addresses and occupation. `firstName`, `lastName` and the three phone fields are always saved, so send their current values from `get_my_profile` to keep them; any other field not sent keeps its stored value. Dates are `YYYY-MM-DD`. Refused if the result would leave the profile incomplete. Email address, password and two-step sign-in change only on the website.",
+    method: "PUT",
+    path: "/api/profile",
+    // Dietary needs are never read by an app, so it is not offered a blind
+    // write; the lobby-screen phone opt-in is a consent the member gives on
+    // the website.
+    body: memberProfileConnectionUpdateSchema,
+    kind: "write",
+    returns: MEMBER_PROFILE_UPDATE_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "get_notice",
+    title: "Read a club notice",
+    summary:
+      "One club notice the signed-in member can see, with its text, by the `id` from `list_notices`. Reading it here does not mark it read: run `mark_notice_read` for that. A notice that asks to be acknowledged is acknowledged on the website.",
+    method: "GET",
+    path: "/api/notices/[id]",
+    params: noticeIdParamsSchema,
+    kind: "read",
+    returns: MEMBER_NOTICE_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "mark_notice_read",
+    title: "Mark a notice as read",
+    summary:
+      "Records that the signed-in member has read one club notice. Marking it again keeps the first time. This does not acknowledge a notice that asks for it.",
+    method: "POST",
+    path: "/api/notices/[id]/read",
+    params: noticeIdParamsSchema,
+    kind: "write",
+    returns: NOTICE_READ_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "list_my_account_activity",
+    title: "List my account activity",
+    summary: `The signed-in member's own account history, newest first: bookings, payments, profile and family changes, sign-in and AI app events. \`category\` is one of ${MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS.map(({ value }) => `\`${value}\``).join(", ")}. \`page\` counts from 1; \`pageSize\` is at most 50.`,
+    method: "GET",
+    path: "/api/member/audit-log",
+    query: memberAuditLogQuerySchema,
+    kind: "read",
+    returns: MEMBER_ACCOUNT_ACTIVITY_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "get_lodge_roster",
+    title: "See who is at the lodge",
+    summary:
+      `Who is staying over the next ${ROSTER_WINDOW_DAYS} nights at the lodges the signed-in member can book, as the club's roster page shows it: names, or a group label and head count, and their nights. \`to\` is the morning after the last night shown. Only when the club has the roster switched on.`,
+    method: "GET",
+    path: "/api/lodge-roster",
+    kind: "read",
+    returns: LODGE_ROSTER_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "get_age_groups",
+    title: "Read the club's age groups",
+    summary:
+      "The club's age groups (`tier`), their labels and age ranges, and whether each needs a paid subscription to book. Ages are as at the start of the season.",
+    method: "GET",
+    path: "/api/age-tier-settings",
+    kind: "read",
+    returns: AGE_GROUPS_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "get_booking_messages",
+    title: "Read the club's booking messages",
+    summary:
+      "The club's standard booking messages, such as payment instructions, by key. `{{TOKEN}}` placeholders take their values from `tokens`; others are filled in for a particular booking.",
+    method: "GET",
+    path: "/api/booking-messages",
+    kind: "read",
+    returns: BOOKING_MESSAGES_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "list_committee",
+    title: "List the club committee",
+    summary: "The club's published committee: each person's name, role and description.",
+    method: "GET",
+    path: "/api/committee",
+    kind: "read",
+    returns: COMMITTEE_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "get_skifield_report",
+    title: "Read the ski field report",
+    summary:
+      "The ski field's latest road, lift, facility, weather and trail status, as the club's website shows it. `visibility` says which sections the club shows. `stale` means the report could not be refreshed and is the last one fetched.",
+    method: "GET",
+    path: "/api/skifield-whakapapa",
+    kind: "read",
+    returns: SKIFIELD_REPORT_CONNECTION_SHAPE,
     core: false,
   },
 ];
