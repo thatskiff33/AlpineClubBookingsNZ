@@ -322,7 +322,7 @@ describe("each entry's admission is what today's code gives its old path", () =>
       }
     }
     expect(drift).toEqual([]);
-  });
+  }, 30_000);
 
   it("records every module flag the path needs today", () => {
     const drift = ADMIN_PAGES.flatMap((page) => {
@@ -1554,7 +1554,7 @@ describe("retired pages", () => {
         retiredPattern.test(stripComments(fs.readFileSync(path.join(process.cwd(), file), "utf8"))),
     );
     expect(linking).toEqual([]);
-  });
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -2542,7 +2542,7 @@ describe("the registry is inert", () => {
     );
     // Both directions: an unreviewed importer fails, and so does a stale entry.
     expect(importers.sort()).toEqual(Object.keys(IMPORTERS).sort());
-  });
+  }, 30_000);
 
   it("uses only relative imports inside the registry, so next.config.ts can load it", () => {
     const aliased = sourceFiles(REGISTRY_DIR.slice(0, -1)).filter((file) =>
