@@ -34,7 +34,8 @@ vi.mock("@/lib/prisma", () => ({
 
 // #5190: the liability clear-up and its season key.
 vi.mock("@/lib/club-time/server", () => ({ clubTimeZone: async () => "Pacific/Auckland" }));
-vi.mock("@/lib/subscription-billing-season-lock", () => ({
+vi.mock("@/lib/subscription-billing-season-lock", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/subscription-billing-season-lock")),
   lockSubscriptionBillingSeason: mocks.lockSeason,
 }));
 vi.mock("@/lib/subscription-liability-rule-lock", () => ({
@@ -57,6 +58,10 @@ import {
   GET as getLockoutSettings,
   PUT as putLockoutSettings,
 } from "@/app/api/admin/membership-lockout-settings/route";
+import {
+  SUBSCRIPTION_BILLING_CONFIRM_TIMEOUT_MS,
+  SUBSCRIPTION_BILLING_SEASON_WAITER_TIMEOUT_MS,
+} from "@/lib/subscription-billing-season-lock";
 
 const session = {
   user: {
@@ -318,6 +323,14 @@ describe("membership lockout settings route: the subscription liability rule (#5
     expect(response.status).toBe(200);
     // The frozen test clock is 1 July 2026: season 2026.
     expect(mocks.order).toEqual(["lock:2026", "rule-lock", "upsert", "clear:2026"]);
+    // The save waits on the season key, which a billing confirm may hold for
+    // its whole budget, so its transaction outlasts confirm's (P2028 otherwise).
+    expect(mocks.transaction.mock.calls[0]?.[1]).toEqual({
+      timeout: SUBSCRIPTION_BILLING_SEASON_WAITER_TIMEOUT_MS,
+    });
+    expect(SUBSCRIPTION_BILLING_SEASON_WAITER_TIMEOUT_MS).toBeGreaterThan(
+      SUBSCRIPTION_BILLING_CONFIRM_TIMEOUT_MS,
+    );
     expect(mocks.upsert.mock.calls[0]?.[0]?.update).toMatchObject(chosen);
     const audit = mocks.auditLogCreate.mock.calls[0]?.[0] as { data: { metadata: unknown } };
     expect(JSON.stringify(audit)).toContain("clearedStaleNotRequiredRows");

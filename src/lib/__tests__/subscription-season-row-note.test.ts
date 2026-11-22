@@ -134,7 +134,7 @@ describe("hasNotRequiredRowBillingNote", () => {
     ).toBe(false);
   });
 
-  it("returns the owner's wording", () => {
+  it("returns the note wording", () => {
     expect(NOT_REQUIRED_ROW_BILLING_NOTE).toBe(
       "Marked not required, but billing treats this member as owing",
     );

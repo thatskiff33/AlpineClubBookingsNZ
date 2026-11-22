@@ -510,7 +510,7 @@ home for that explanation and is not repeated here.
   row exempts nobody (age wins).
 - **The admin lists follow billing** (Q2): the members list, its export, the
   subscriptions list and their SQL filter read `ADMIN_LIST_LIABILITY_SIDE`; an
-  active member's saved `NOT_REQUIRED` row that billing ignores carries a note
+  active member's saved `NOT_REQUIRED` row whose member billing treats as owing carries a note
   (`hasNotRequiredRowBillingNote`).
 - **The pair is chosen whole and never returns to `NOT_CHOSEN`.** The settings
   `PUT` refuses a half pair, a move back and `CURRENT_AGE` (age today waits for

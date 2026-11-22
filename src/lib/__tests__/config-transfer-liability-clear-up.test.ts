@@ -81,6 +81,8 @@ function store() {
     }),
   };
   const tx = { membershipLockoutSettings, $executeRaw: vi.fn(async () => 0) };
+  // The second parameter types the transaction options the tests read back.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const $transaction = vi.fn(async (fn: (t: typeof tx) => Promise<unknown>, _options?: unknown) => fn(tx));
   return {
     tx,
