@@ -89,6 +89,17 @@ export const CHANGE_SCOPES = {
       /^\.env\.example$/,
       /^DEPLOYMENT\.md$/,
       /^scripts\/provision-database-roles\.ts$/,
+      // The browser-bundle assertion this job also runs (#5262): the build
+      // config that defines the version and the nonce seed for the compilers,
+      // the one client file that reads the version, and the modules that name
+      // and read the two values. A change to any of them can move what reaches
+      // a browser chunk, so it must build the image and run the assertion on
+      // the pull request, not first on the push to `main`. Not all of `src/`:
+      // that would build the image on almost every pull request.
+      /^next\.config\.ts$/,
+      /^src\/instrumentation-client\.ts$/,
+      /^src\/lib\/app-version\.ts$/,
+      /^src\/lib\/release-nonce(?:-seed)?\.ts$/,
       ...WORKFLOW_AND_CLASSIFIER,
     ],
   },
