@@ -72,7 +72,7 @@ async function plan(bundle: AccountRow[], target: ReadDb, mode: ImportMode = "me
 }
 
 const SHARED =
-  "xero-config/account-mappings.csv: Opening Credits cannot use the same Xero account as Hut Fee Refunds. Choose an account for Opening Credits that no other mapping uses, or change the other mapping first. Nothing was saved.";
+  "xero-config/account-mappings.csv: Opening Credits cannot use the same Xero account as Hut Fee Refunds. Choose an account for Opening Credits that no other mapping uses, or change the other mapping first. No account mapping was saved.";
 
 describe("an imported Opening Credits account never shares its Xero account with another role (#4988)", () => {
   it("MUTATION: blocks a bundle whose own rows put Opening Credits on another role's account", async () => {

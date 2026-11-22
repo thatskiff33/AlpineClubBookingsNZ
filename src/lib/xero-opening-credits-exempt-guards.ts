@@ -78,7 +78,7 @@ function openingCreditsSharedAccountProblem(rows: readonly MappingCodeRow[]): st
   });
   if (conflicts.length === 0) return null;
   const roles = listInWords(conflicts.map((key) => MAPPING_LABELS[key] ?? key));
-  return `Opening Credits cannot use the same Xero account as ${roles}. Choose an account for Opening Credits that no other mapping uses, or change the other mapping first. Nothing was saved.`;
+  return `Opening Credits cannot use the same Xero account as ${roles}. Choose an account for Opening Credits that no other mapping uses, or change the other mapping first. No account mapping was saved.`;
 }
 
 /** The stored codes as they would read once `updates` is saved over them. */

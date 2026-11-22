@@ -126,7 +126,7 @@ describe("Opening Credits never shares its Xero account with another mapped role
 
     expect(status).toBe(409);
     expect(error).toBe(
-      "Opening Credits cannot use the same Xero account as Hut Fee Refunds. Choose an account for Opening Credits that no other mapping uses, or change the other mapping first. Nothing was saved.",
+      "Opening Credits cannot use the same Xero account as Hut Fee Refunds. Choose an account for Opening Credits that no other mapping uses, or change the other mapping first. No account mapping was saved.",
     );
     expect(h.upsert).not.toHaveBeenCalled();
   });
