@@ -10,6 +10,7 @@ import { leavingDateForDeactivation } from "@/lib/member-leaving-date";
  * requires a reason.
  */
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
@@ -259,9 +260,10 @@ export async function POST(
   };
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    const raw = await request.json();
-    body = actionSchema.parse(raw);
+    body = actionSchema.parse(jsonBody.body);
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }

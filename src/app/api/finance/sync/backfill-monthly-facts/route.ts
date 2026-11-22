@@ -1,5 +1,6 @@
 import { FinanceSyncRunStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { requireFinanceManagerApiAccess } from "@/lib/finance-api-auth";
 import {
@@ -51,12 +52,18 @@ export async function POST(request: NextRequest) {
     return authResult.response;
   }
 
+  // The body is optional and read only when it says it is JSON; any other
+  // content type runs with the defaults, as before (#5407).
+  let body: unknown;
+  if (request.headers.get("content-type")?.includes("application/json")) {
+    const jsonBody = await parseOptionalJsonRequestBody(request);
+    if (!jsonBody.ok) return jsonBody.response;
+    body = jsonBody.body;
+  }
+
   let options: { fromMonth: string | null; maxChunks: number };
   try {
-    const body = request.headers.get("content-type")?.includes("application/json")
-      ? ((await request.json()) as BackfillRequestBody)
-      : {};
-    options = parseBody(body ?? {});
+    options = parseBody((body ?? {}) as BackfillRequestBody);
   } catch (error) {
     if (error instanceof FinanceBackfillRequestError) {
       return NextResponse.json({ error: error.message }, { status: 400 });

@@ -71,40 +71,6 @@ const directJsonReadAllowlist: Record<
   string,
   { reason: string; routes: string[] }
 > = {
-  oneAnswer: {
-    reason:
-      "The JSON fault and the schema fault get the same answer, in most routes because one try wraps the read and the parse, in admin/menu-role through one shared invalid() answer. The status or wording is often not the shared reader's, and a shared reader would split the two faults, which changes a response (#5407 item 27).",
-    routes: [
-      "src/app/api/admin/booking-policies/adult-member-hosting/route.ts",
-      "src/app/api/admin/booking-policies/minimum-stay/[id]/route.ts",
-      "src/app/api/admin/booking-policies/minimum-stay/route.ts",
-      "src/app/api/admin/booking-policies/periods/[id]/route.ts",
-      "src/app/api/admin/booking-policies/periods/route.ts",
-      "src/app/api/admin/deletion-requests/[id]/route.ts",
-      "src/app/api/admin/display/devices/[id]/pairing/route.ts",
-      "src/app/api/admin/display/devices/[id]/route.ts",
-      "src/app/api/admin/display/devices/route.ts",
-      "src/app/api/admin/display/layouts/[id]/route.ts",
-      "src/app/api/admin/display/layouts/route.ts",
-      "src/app/api/admin/display/lodge-config/route.ts",
-      "src/app/api/admin/display/preview-grant/route.ts",
-      "src/app/api/admin/display/templates/[id]/route.ts",
-      "src/app/api/admin/display/templates/route.ts",
-      "src/app/api/admin/lodges/[id]/central-lodge/route.ts",
-      "src/app/api/admin/lodges/[id]/roster-settings/route.ts",
-      "src/app/api/admin/member-lifecycle-action-requests/[requestId]/route.ts",
-      "src/app/api/admin/members/[id]/lifecycle/archive/route.ts",
-      "src/app/api/admin/members/[id]/lifecycle/delete/route.ts",
-      "src/app/api/admin/members/[id]/membership-cancellation/route.ts",
-      "src/app/api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]/route.ts",
-      "src/app/api/admin/menu-role/route.ts",
-      "src/app/api/auth/request-email-change/route.ts",
-      "src/app/api/display/pair/route.ts",
-      "src/app/api/finance/sync/backfill-monthly-facts/route.ts",
-      "src/app/api/member/membership-cancellation-requests/confirm/route.ts",
-      "src/app/api/member/membership-cancellation-requests/route.ts",
-    ],
-  },
   swallowedError: {
     reason:
       "The read swallows the failure and carries on with an empty or null body (`.catch(() => ...)`, or a catch that assigns a default), so invalid JSON is treated as no body. Converting it would turn that into a 400 (#5407 item 27).",

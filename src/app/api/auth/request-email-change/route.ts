@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -31,8 +32,10 @@ export async function POST(request: NextRequest) {
     return inactiveResponse;
   }
 
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    const body = await request.json();
+    const body = jsonBody.body;
     const parsed = requestSchema.safeParse(body);
 
     if (!parsed.success) {
