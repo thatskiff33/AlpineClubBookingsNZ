@@ -1,9 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { invalidJsonBodyResponse, parseJsonRequestBody } from "@/lib/api-json";
+import {
+  invalidJsonBodyResponse,
+  parseJsonRequestBody,
+  parseOptionalJsonRequestBody,
+} from "@/lib/api-json";
 
 function post(body: string) {
   return new Request("http://localhost/api/example", { method: "POST", body });
 }
+
+const DEFAULT_INVALID_JSON_BYTES = JSON.stringify({
+  error: "Invalid JSON",
+  details: { body: ["Request body must be valid JSON"] },
+});
 
 describe("API JSON parsing", () => {
   it("returns a controlled 400 response for malformed JSON", async () => {
@@ -88,5 +97,84 @@ describe("API JSON parsing", () => {
         inline.headers.get("content-type"),
       );
     });
+  });
+});
+
+describe("optional JSON body (#5407)", () => {
+  it("treats a request with no body as no body", async () => {
+    const result = await parseOptionalJsonRequestBody(
+      new Request("http://localhost/api/example", { method: "POST" }),
+    );
+    expect(result).toEqual({ ok: true, body: undefined });
+  });
+
+  it.each(["", " ", "\n", " \r\n\t "])(
+    "treats the body %j as no body",
+    async (raw) => {
+      const result = await parseOptionalJsonRequestBody(post(raw));
+      expect(result).toEqual({ ok: true, body: undefined });
+    },
+  );
+
+  it("treats an empty body sent with a JSON content type as no body", async () => {
+    const result = await parseOptionalJsonRequestBody(
+      new Request("http://localhost/api/example", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "",
+      }),
+    );
+    expect(result).toEqual({ ok: true, body: undefined });
+  });
+
+  it.each(["{not json", "{", "undefined", "'a'", "{}x"])(
+    "answers the body %j with the default invalid-JSON 400, byte for byte",
+    async (raw) => {
+      const result = await parseOptionalJsonRequestBody(post(raw));
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.response.status).toBe(400);
+        await expect(result.response.text()).resolves.toBe(
+          DEFAULT_INVALID_JSON_BYTES,
+        );
+      }
+    },
+  );
+
+  it("returns every valid JSON value as sent, null and falsy values included", async () => {
+    for (const raw of ['{"a":1}', "[1,2]", '"text"', '""', "null", "0", "false", ' {"a":1} ']) {
+      const result = await parseOptionalJsonRequestBody(post(raw));
+      expect(result).toEqual({ ok: true, body: JSON.parse(raw) });
+    }
+  });
+
+  it("answers a malformed body with a route's own wording when it passes one", async () => {
+    const result = await parseOptionalJsonRequestBody(post("{not json"), {
+      error: "Invalid JSON",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(400);
+      await expect(result.response.text()).resolves.toBe(
+        JSON.stringify({ error: "Invalid JSON" }),
+      );
+    }
+  });
+
+  it("answers exactly as the required reader does for the same malformed body", async () => {
+    const optional = await parseOptionalJsonRequestBody(post("{not json"));
+    const required = await parseJsonRequestBody(post("{not json"));
+
+    expect(optional.ok).toBe(false);
+    expect(required.ok).toBe(false);
+    if (!optional.ok && !required.ok) {
+      expect(optional.response.status).toBe(required.response.status);
+      expect(await optional.response.text()).toBe(await required.response.text());
+      expect(optional.response.headers.get("content-type")).toBe(
+        required.response.headers.get("content-type"),
+      );
+    }
   });
 });

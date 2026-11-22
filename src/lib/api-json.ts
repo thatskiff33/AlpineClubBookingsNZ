@@ -14,14 +14,15 @@ type InvalidJsonWording =
 
 export type InvalidJsonBodyOptions = { error: InvalidJsonWording };
 
+type JsonRequestBodyResult =
+  | { ok: true; body: unknown }
+  | { ok: false; response: NextResponse };
+
 /**
  * The 400 answer for a request body that is not valid JSON: the default body
  * with its `details`, or, when a route passes its own wording from the closed
  * list, exactly `{ error }`, byte-identical to the inline copy it replaced.
- * Three routes that read `text()` to accept an empty body and parse it
- * themselves (members joining-fee preview, members xero-push and
- * admin/mountain-conditions POST) answer an unparseable body through here, so
- * the answer is still defined once.
+ * Both readers below answer through here, so the answer is defined once.
  */
 export function invalidJsonBodyResponse(
   options?: InvalidJsonBodyOptions,
@@ -38,15 +39,40 @@ export function invalidJsonBodyResponse(
   );
 }
 
+/**
+ * Reads a body the route requires. Anything that is not valid JSON, an empty
+ * body included, answers the invalid-JSON 400.
+ */
 export async function parseJsonRequestBody(
   request: Request,
   options?: InvalidJsonBodyOptions,
-): Promise<
-  | { ok: true; body: unknown }
-  | { ok: false; response: NextResponse }
-> {
+): Promise<JsonRequestBodyResult> {
   try {
     return { ok: true, body: await request.json() };
+  } catch {
+    return { ok: false, response: invalidJsonBodyResponse(options) };
+  }
+}
+
+/**
+ * Reads a body the route accepts but does not require (#5407). An empty body,
+ * or one of only whitespace, means "no body": the result is `ok` with `body`
+ * `undefined`, and the route applies its defaults. A body that is present but
+ * is not valid JSON answers the same invalid-JSON 400 as
+ * `parseJsonRequestBody`, so a malformed body is never mistaken for an absent
+ * one. No JSON value parses to `undefined`, so a route can always tell "no
+ * body" from a body that was sent, `null` included.
+ */
+export async function parseOptionalJsonRequestBody(
+  request: Request,
+  options?: InvalidJsonBodyOptions,
+): Promise<JsonRequestBodyResult> {
+  try {
+    const text = await request.text();
+    return {
+      ok: true,
+      body: text.trim() === "" ? undefined : (JSON.parse(text) as unknown),
+    };
   } catch {
     return { ok: false, response: invalidJsonBodyResponse(options) };
   }
