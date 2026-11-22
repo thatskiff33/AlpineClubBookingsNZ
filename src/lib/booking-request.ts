@@ -2677,7 +2677,7 @@ export async function approveBookingRequest(input: {
         // A new Payment row (no recorded fee) on a booking no credit election
         // has reached yet, so what is owed is the price (#4058).
         amountDueCents: priceCents,
-        bookingReference: conversion.bookingId,
+        bookingId: conversion.bookingId,
         expiresAt: paymentLinkExpiresAt,
       }, format);
     } catch (err) {

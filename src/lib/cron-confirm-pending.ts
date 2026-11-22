@@ -1476,7 +1476,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               guestCount: resolution.booking.guests.length,
               priceCents: resolution.booking.finalPriceCents,
               amountDueCents: (await readBookingAmountOwed(resolution.booking)).dueCents,
-              bookingReference: resolution.booking.id,
+              bookingId: resolution.booking.id,
               expiresAt,
               lodgeId: resolution.booking.lodgeId ?? null,
             }, format);

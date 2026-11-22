@@ -1,7 +1,10 @@
 - **Small fixes found while simplifying the code (#5407).** The email a member
   gets when the confirm-pending job cancels their unpaid guests' provisional
   place now shows their own booking's short reference (eight characters, as on
-  their invoice) instead of its full internal id.
+  their invoice) instead of its full internal id. The same goes for the
+  booking-request approved email and the guest payment-link email: a club whose
+  own wording for either uses the booking reference token now sees the short
+  reference there too, as in other emails.
 
   The app stops writing `ServerNzSettings.otherLodgesOwnedNames` (it stopped
   reading it in v0.14.0), the lodge-name list older central-server versions

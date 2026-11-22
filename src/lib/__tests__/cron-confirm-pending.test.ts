@@ -2356,7 +2356,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     await confirmPendingBookings();
 
     expect(mockSendSplitGuestPaymentLinkEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ bookingReference: "child_1", priceCents: 12000, amountDueCents: 9000 }),
+      expect.objectContaining({ bookingId: "child_1", priceCents: 12000, amountDueCents: 9000 }),
       CLUB_FORMAT_TEST,
     );
   });
@@ -2405,7 +2405,7 @@ describe("Cron: Confirm Pending Bookings", () => {
         token: "tok_split_1",
         priceCents: 12000,
         guestCount: 2,
-        bookingReference: "child_1",
+        bookingId: "child_1",
         // #2870: the email states the instant the ROW holds. A second
         // derivation here is what let the page, the email and the stored value
         // mean three different moments.
