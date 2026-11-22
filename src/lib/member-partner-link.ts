@@ -40,11 +40,9 @@ type TransactionClient = Prisma.TransactionClient;
 
 // Pure pair-ordering + status vocabulary live in the leaf module so modules
 // outside this service graph (double-bed-sharing.ts) can import them without
-// dragging in "server-only"/email/audit (#1744); re-exported here so existing
-// importers keep working.
+// dragging in "server-only"/email/audit (#1744). Importers of the pair helper
+// reach it through here; the status constants come from the leaf module.
 export {
-  PARTNER_LINK_PENDING,
-  PARTNER_LINK_CONFIRMED,
   canonicalPartnerPair,
 } from "@/lib/member-partner-link-shared";
 import {
