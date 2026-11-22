@@ -17,6 +17,7 @@ import {
   FOOD_ORDER_ITEM_QUANTITY_MAX,
   FOOD_ORDER_MAX_ITEMS,
   FOOD_ORDER_NOTES_MAX_LENGTH,
+  FOOD_ORDER_UNITS,
   foodOrderItemsProblem,
   isFoodOrderUnit,
   parseFoodOrderQuantity,
@@ -84,6 +85,8 @@ export async function GET(request: NextRequest) {
     officerLabel: settings.officerLabel,
     lodges,
     today: club.today(),
+    // The item unit codes an order takes: fixed product values, not club data.
+    units: FOOD_ORDER_UNITS,
     limits: {
       maxItems: FOOD_ORDER_MAX_ITEMS,
       descriptionMaxLength: FOOD_ORDER_ITEM_DESCRIPTION_MAX_LENGTH,

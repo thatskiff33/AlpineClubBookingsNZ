@@ -358,12 +358,14 @@ export const FOOD_ORDER_OPTIONS_CONNECTION_SHAPE = connectionShapeFor<{
   officerLabel: string;
   lodges: Array<{ id: string; name: string }>;
   today: string;
+  units: readonly string[];
   limits: { maxItems: number; descriptionMaxLength: number; quantityMax: number; notesMaxLength: number };
 }>({
   ready: true,
   officerLabel: true,
   lodges: { id: true, name: true },
   today: true,
+  units: true,
   limits: { maxItems: true, descriptionMaxLength: true, quantityMax: true, notesMaxLength: true },
 });
 

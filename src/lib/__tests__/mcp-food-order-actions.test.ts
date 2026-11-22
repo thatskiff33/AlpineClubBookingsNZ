@@ -54,6 +54,7 @@ vi.mock("@/lib/logger", () => ({
 import { GET as historyGet } from "@/app/api/food-orders/history/route";
 import { GET as formGet, POST as orderPost } from "@/app/api/food-orders/route";
 import { expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
+import { FOOD_ORDER_UNITS } from "@/lib/food-order-rules";
 
 const OFFICER_ID = "officer-1";
 const day = (value: string) => dateOnlyInstantOf(requireCalendarDate(value));
@@ -155,6 +156,7 @@ describe("get_food_order_options", () => {
         { id: "lodge-a", name: "Lodge A" },
         { id: "lodge-b", name: "Lodge B" },
       ],
+      units: [...FOOD_ORDER_UNITS],
     });
     expect(JSON.stringify(connection)).not.toContain("food@club.test");
     expect(browser).toEqual(connection);

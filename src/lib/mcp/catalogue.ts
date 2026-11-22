@@ -24,7 +24,7 @@ import {
   clubPostListQuerySchema,
   MAX_CLUB_POST_LENGTH,
 } from "@/lib/club-post-schema";
-import { FOOD_ORDER_HISTORY_PAGE_SIZE, FOOD_ORDER_STATUSES } from "@/lib/food-order-rules";
+import { FOOD_ORDER_HISTORY_PAGE_SIZE, FOOD_ORDER_STATUSES, FOOD_ORDER_UNITS } from "@/lib/food-order-rules";
 import { foodOrderHistoryQuerySchema, foodOrderPlaceSchema } from "@/lib/food-order-schema";
 import { inductionIdParamsSchema } from "@/lib/induction-params";
 import { memberMaintenanceReportConnectionSchema } from "@/lib/maintenance-report-schema";
@@ -458,7 +458,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     id: "get_food_order_options",
     title: "Read the food order form",
     summary:
-      "What a food order needs: whether the club takes orders (`ready`), who receives them, the lodges the signed-in member may order for, the club's today, and the form's limits.",
+      "What a food order needs: whether the club takes orders (`ready`), who receives them, the lodges the signed-in member may order for, the club's today, the item unit codes (`units`), and the form's limits.",
     method: "GET",
     path: "/api/food-orders",
     kind: "read",
@@ -469,7 +469,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     id: "place_food_order",
     title: "Place a food order",
     summary:
-      "Sends the club a food order for a lodge, from `get_food_order_options`. `neededBy` is a club calendar day, `YYYY-MM-DD`, today or later. Each item has a `description`, a `quantity` as a decimal string such as `\"2\"` or `\"0.5\"`, and a `unit` (`Items` by default). Confirm the order with the member first: the club's food officer is emailed it.",
+      `Sends the club a food order for a lodge, from \`get_food_order_options\`. \`neededBy\` is a club calendar day, \`YYYY-MM-DD\`, today or later. Each item has a \`description\`, a \`quantity\` as a decimal string such as \`"2"\` or \`"0.5"\`, and a \`unit\` code, one of ${FOOD_ORDER_UNITS.map((unit) => `\`${unit}\``).join(", ")}. Confirm the order with the member first: the club's food officer is emailed it.`,
     method: "POST",
     path: "/api/food-orders",
     body: foodOrderPlaceSchema,
