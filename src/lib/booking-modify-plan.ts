@@ -15,7 +15,7 @@ import {
   requestedPromoCodeListFor,
   splitRequestedPromoCodes,
 } from "@/lib/booking-modify-promo-request";
-import { promoCodeListRefusal } from "@/lib/promo-code-list-rules";
+import { admittedWorkPartyCodeId, enteredPromoCodeAdmitted, promoCodeListRefusal, withoutRemovedWorkPartyCode, type WorkPartyCodeCorrection } from "@/lib/promo-code-list-rules";
 import {
   AdminReviewStatus,
   type AgeTier,
@@ -859,7 +859,7 @@ export async function prepareGuestPlan(
     linkedGuestIds: new Set(guestMemberLinks.map((link) => link.guestId)),
   });
   // Only when this edit CHANGES the lodge: the stored id was validated when it
-  // was set, and may since have been hidden (#58) — a booking keeps a hidden
+  // was set, and may since have been hidden (triyder/AlpineClubBookingsNZ#58) — a booking keeps a hidden
   // lodge, so re-checking it would refuse every unrelated modification.
   if (otherLodgeElection.otherLodgeIdChanged) {
     await assertOtherLodgeExists(tx, otherLodgeElection.otherLodgeId);
@@ -2081,11 +2081,13 @@ export async function applyPromoCodeChanges(
     newTotalPriceCents,
     guestNightRates,
     todayAtClub,
+    officerWorkPartyCorrection = null,
   }: {
     booking: LoadedBookingForModify;
     bookingId: string;
     input: BatchModifyInput;
     inProgressPlan: BookingEditGuestRangePlan | null;
+    officerWorkPartyCorrection?: WorkPartyCodeCorrection | null; // Fork triyder/AlpineClubBookingsNZ#119/triyder/AlpineClubBookingsNZ#130: the one internal code an Add admits or a Remove drops
     newCheckIn: Date;
     newTotalPriceCents: number;
     guestNightRates: Array<{
@@ -2156,7 +2158,7 @@ export async function applyPromoCodeChanges(
   const multiPromoCodes = promoRequestReadsMultiPromoSwitch(input, storedCodes)
     ? await multiPromoCodesEnabled(tx)
     : true;
-  const requested = requestedPromoCodeListFor(input, storedCodes, multiPromoCodes);
+  const requested = withoutRemovedWorkPartyCode(requestedPromoCodeListFor(input, storedCodes, multiPromoCodes), existing, officerWorkPartyCorrection);
 
   if (requested === null) {
     // No promo change asked for: re-price every code the booking carries
@@ -2253,9 +2255,7 @@ export async function applyPromoCodeChanges(
     }
     const id = incomingIds.find((row) => row.code === entry.code)?.id;
     const promoCode = incomingRows.find((row) => row.id === id && row.code === entry.code);
-    // Internal promos (work party events) cannot be entered as codes; a code
-    // renamed between the unlocked read and the lock is not found.
-    if (!promoCode || promoCode.internal) {
+    if (!enteredPromoCodeAdmitted(promoCode, admittedWorkPartyCodeId(officerWorkPartyCorrection))) {
       throw new ApiError("Promo code not found", 400);
     }
     applications.push({
@@ -2584,7 +2584,7 @@ export async function applyGuestChanges(
    *        parked call site passes an EMPTY future-night list on purpose, because
    *        a strand whose total is frozen is not buying anything, so a night the
    *        edit newly puts it on is unknown as well.
-   *      - `buildIdentityOnlyPricing` (`booking-batch-modification-service.ts`),
+   *      - `buildIdentityOnlyPricing` (`booking-identity-only-pricing.ts`),
    *        which echoes a strand's stored night prices back unchanged on a
    *        name-only correction — including the blanks, byte for byte. It
    *        creates no new blank; it declines to repair one.

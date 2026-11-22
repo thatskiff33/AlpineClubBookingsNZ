@@ -6,8 +6,8 @@ shipped); ADR-003 replaces the storage/editing layer with the Layout / Template 
 Module authoring model. The closed-registry validation *principle* and the
 data-only stance on *definitions* carry forward; admin-authored HTML/CSS
 (never JS) and code modules are the change.
-**Issue:** fork #29 (LTV-004), epic #25
-**Deciders:** fork owner (delivery authorisation on epic #25), implementation agent
+**Issue:** fork hoppers99/AlpineClubBookingsNZ#29 (LTV-004), epic hoppers99/AlpineClubBookingsNZ#25
+**Deciders:** fork owner (delivery authorisation on epic hoppers99/AlpineClubBookingsNZ#25), implementation agent
 
 ## Context
 
@@ -39,7 +39,7 @@ DisplayTemplateDefinition {
   validates its own options and falls back to defaults — LTV-005 rule).
 - No HTML, no expressions, no code paths of any kind exist in a definition —
   custom templates get exactly the same schema, so the authoring surface is
-  uniform and cannot introduce script execution (issue #29 AC7).
+  uniform and cannot introduce script execution (issue hoppers99/AlpineClubBookingsNZ#29 AC7).
 
 ### 2. Storage: code defaults + DB overrides (the `EmailTemplateOverride` pattern)
 
@@ -59,7 +59,7 @@ DisplayTemplateDefinition {
 ### 3. Rotation: template-level, condition-aware
 
 A region with more than one panel rotates (`rotateSeconds`, default 8) —
-unless it declares `layout: "stack"` (added in LTV-015, issue #56), which
+unless it declares `layout: "stack"` (added in LTV-015, issue hoppers99/AlpineClubBookingsNZ#56), which
 renders every eligible panel at once: the sidebar-card treatment from the
 approved mockups (chores + instruction cards beside the board). The default
 `layout: "rotate"` keeps every pre-existing definition valid unchanged.

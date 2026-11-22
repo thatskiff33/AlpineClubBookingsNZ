@@ -1,14 +1,16 @@
 // The batch edit's transaction result, moved verbatim from
 // `booking-batch-modification-service.ts` to keep that file under its size
-// ceiling (#5145). Types only. `ModifiedBooking` has one home for both edit
-// services, `booking-modification-modified-booking.ts` (#4516 merge, `INV-SSOT`);
-// it is re-exported here so each service keeps one import line.
+// ceiling (#5145). Types, and (#5149) two spreads that read off them, so that
+// file adds no line for the facts they carry. `ModifiedBooking` has one home for
+// both edit services, `booking-modification-modified-booking.ts` (#4516 merge,
+// `INV-SSOT`); it is re-exported here so each service keeps one import line.
 import type { BookingGuest, PaymentSource, PaymentStatus } from "@prisma/client";
 
 import type { ModifiedBooking } from "@/lib/booking-modification-modified-booking";
 import type { BookingModificationPaymentContext } from "@/lib/booking-modification-settlement";
 import type { BookingModificationSettlementMethod, ResolvedGuestNameUpdate } from "@/lib/booking-modify";
 import type { FinishedStayChangeFeeRule, FinishedStayCorrection } from "@/lib/booking-finished-stay-correction";
+import type { OfficerWorkPartyCorrection } from "@/lib/booking-batch-work-party-correction";
 import type { MemberGuestAddNotificationRow } from "@/lib/member-guest-add-policy";
 import type { PromoCoverageNotice } from "@/lib/promo-cap-coverage";
 import type { PromoChangeNotAppliedNotice } from "@/lib/promo-change-not-applied";
@@ -19,6 +21,8 @@ export type BatchModificationTransactionResult =
   BookingModificationPaymentContext & {
     /** #3954: the reduction cancelled the unpaid ask outright, for the member's email. */
     unpaidAskCancelled: boolean;
+    /** #3954 (#5149): how much of the reduction the unpaid ask took instead of coming back. */
+    unpaidAskOffsetCents: number;
     /**
      * The plain figure the emails, the response body and the Xero leg read.
      * Inherited from `BookingModificationPaymentContext` until #3371 replaced
@@ -82,6 +86,8 @@ export type BatchModificationTransactionResult =
           confirmOverCapacity: boolean;
         })
       | null;
+    /** Fork triyder/AlpineClubBookingsNZ#119: set only on an officer's work-party correction, for the audit. */
+    officerWorkPartyCorrection: OfficerWorkPartyCorrection | null;
     notifyMember: boolean;
     capacityOverridden: boolean;
     oldCheckIn: Date;
@@ -98,6 +104,7 @@ export type BatchModificationTransactionResult =
     xeroAdditionalAmountCents: number;
     xeroRefundAmountCents: number;
     appliedCreditGivenBackCents: number;
+    refundedExcessCreditCents: number; // F20 (#1887): an unpaid booking's applied credit the lower price freed
     settlementMethod: BookingModificationSettlementMethod | null;
     policyRetainedAmountCents: number;
     guestNameUpdates: ResolvedGuestNameUpdate[];
@@ -122,3 +129,36 @@ export type BatchModificationTransactionResult =
       context: "REQUEST_CANCELLED" | "TAKEN_OFF";
     }>;
   };
+
+/**
+ * #5149 (maintainers' review, 18 Nov 2026): what the edit's settlement did with
+ * a reduction, surfaced on the response beside `policyRetainedAmountCents` for
+ * a caller that must say where the money went rather than re-derive it
+ * (`INV-SSOT-001`): how much an unpaid ask took (#3954, `INV-PAY-120`),
+ * whether a dispute holds the refund for the treasurer (`INV-PAY-154`), and
+ * whether a reduction's refund goes back to the card rather than by bank
+ * transfer: the settlement's own `hasSucceededPayment`, which on a reduction
+ * is `editReductionRefundsToCard` (`INV-PAY-160`).
+ */
+export type BatchModificationSettlementFacts = {
+  unpaidAskOffsetCents: number;
+  refundHeldForDispute: boolean;
+  reductionRefundsToCard: boolean;
+};
+
+/** The response's settlement facts, read off the transaction result in one spread. */
+export function batchModificationSettlementFacts(
+  result: Pick<BatchModificationTransactionResult, "policyRetainedAmountCents" | "unpaidAskOffsetCents" | "refundHeldForDispute" | "hasSucceededPayment">,
+): BatchModificationSettlementFacts & { policyRetainedAmountCents: number } {
+  return {
+    policyRetainedAmountCents: result.policyRetainedAmountCents,
+    unpaidAskOffsetCents: result.unpaidAskOffsetCents,
+    refundHeldForDispute: result.refundHeldForDispute,
+    reductionRefundsToCard: result.hasSucceededPayment,
+  };
+}
+
+/** What the reduction did to the unpaid ask (#3954), as the transaction result records it. */
+export function unpaidAskResultFacts(settled: { unpaidAskCancelled: boolean; unpaidAskOffsetCents: number }) {
+  return { unpaidAskCancelled: settled.unpaidAskCancelled, unpaidAskOffsetCents: settled.unpaidAskOffsetCents };
+}

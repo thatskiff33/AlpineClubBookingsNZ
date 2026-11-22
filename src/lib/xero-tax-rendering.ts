@@ -1,5 +1,6 @@
 import { LineAmountTypes } from "xero-node";
 import type { ClubTaxTreatment } from "@/lib/club-tax-settings";
+import { XeroTaxCategoryUnavailableError, type XeroTaxCategoryKey } from "@/lib/xero-tax-categories";
 
 /**
  * THE ONE XERO TAX RENDERER (#4632). The only module under `src/` that names a
@@ -60,10 +61,42 @@ export function xeroLineTax(rendering: XeroTaxRendering): { taxType?: string } {
 }
 
 /**
+ * The tax field a line in one of the club's tax categories spreads in (#5209;
+ * `xero-tax-categories.ts`). An unregistered club's documents are `NoTax`, so
+ * no category names a tax type there and none needs mapping. Sales tax on
+ * income is the treatment's own code, exactly `xeroLineTax`. Any other category
+ * takes the tax type the club mapped for its connected Xero organisation, which
+ * the caller has already checked against Xero; unmapped, the line is refused
+ * before any provider write, never sent under a guessed code.
+ */
+export function xeroCategoryLineTax(
+  rendering: XeroTaxRendering,
+  category: XeroTaxCategoryKey,
+  mappedTaxType: string | null,
+): { taxType?: string } {
+  if (rendering.lineAmountTypes === LineAmountTypes.NoTax) return {};
+  if (category === "SALES_TAX_ON_INCOME") return xeroLineTax(rendering);
+  if (mappedTaxType === null) throw new XeroTaxCategoryUnavailableError(category, "unmapped");
+  return { taxType: mappedTaxType };
+}
+
+/**
  * Whether an existing Xero document already carries this treatment: its
  * line-amount basis, and the tax type on each revenue line. The subscription
  * adoption matcher's tax test (#4632), so a document raised under another
  * treatment is never adopted as this one.
+ *
+ * Why the literal "NONE" stays (#5375 item 8, asked when the Exempt category
+ * arrived in #5209): it is not a stand-in for the Exempt category's mapped
+ * code, so a club that maps Exempt to another code changes nothing here. The
+ * literal is read only when the treatment names no tax type (the club is not
+ * registered), and the document must then be `NoTax` as well. Under that
+ * treatment no mapping is read to render a line: `xeroCategoryLineTax` gives
+ * a `NoTax` rendering's line no tax type, and `resolveXeroCategoryLineTax`
+ * returns before it loads the mappings, so no document the app renders for
+ * such a club carries a mapped code on any line. A line of such a document is taken
+ * as untaxed when it names no tax type or names "NONE". A registered club's
+ * document is matched line by line on the treatment's own code instead.
  */
 export function xeroDocumentCarriesTax(
   document: { lineAmountTypes?: LineAmountTypes | string | null; lineItems?: ReadonlyArray<{ taxType?: string | null }> | null },

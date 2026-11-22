@@ -3,7 +3,12 @@ import { prisma } from "@/lib/prisma";
 import { KEPT_LATE_CAPTURE_INVOICE_ROLE, xeroCreateCallAttempted } from "@/lib/late-capture-kept-xero-rules";
 import { asRecord } from "@/lib/xero-json";
 import { readAdditionalCaptureReceiptLinkedInvoiceId } from "@/lib/additional-capture-receipt-link";
-import { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-capture-receipt-payload";
+import {
+  readAdditionalCaptureReceiptPayload,
+  receiptUnrecordedCents,
+  XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
+} from "@/lib/additional-capture-receipt-payload";
+import logger from "@/lib/logger";
 import { automaticCancelledBookingRefundTaskReasons } from "@/lib/deleted-booking-modification-payment";
 import {
   XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
@@ -12,7 +17,7 @@ import {
 
 type ReceiptStore = Pick<
   Prisma.TransactionClient,
-  "manualRefundTask" | "xeroObjectLink" | "xeroSyncOperation"
+  "manualRefundTask" | "paymentTransaction" | "xeroObjectLink" | "xeroSyncOperation"
 >;
 
 /**
@@ -68,11 +73,43 @@ type ReceiptStore = Pick<
  * `SUPPLEMENTARY_INVOICE` link (`findActiveSupplementaryInvoiceLink`), since
  * that invoice is the app's own document in Xero. Both run `readReceipt`, so
  * they differ only where `widenToKnownInvoice` says.
+ *
+ * HOW MUCH IS RECORDED (#4383, `INV-PAY-110`). A `recorded` answer carries
+ * `recordedCents`, the cents of the capture Xero holds. The capture's own
+ * receipt is capped at its invoices' room (`INV-PAY-139`), so it can record
+ * part of a capture: there it is the gross capture less the part its stored
+ * plan put on no invoice (`receiptUnrecordedCents`, every planned leg counted
+ * whether linked yet or not; the stated limit is a split receipt an older
+ * release completed with only its first leg, which the repair tool's dry run
+ * names). Every other recorder holds the gross capture.
+ * Null only where the capture's `PaymentTransaction` is missing: nothing caps
+ * it, as before #4383. Every refund-note sizing caps at it through
+ * `lateCaptureNotableRefundCents`, never by reading the field itself.
  */
 export type LateCaptureXeroReceipt =
   | { kind: "none" }
   | { kind: "resolved-by-hand" }
-  | { kind: "recorded"; invoiceId: string | null; invoiceFailed?: true; invoiceMayBeInXero?: true };
+  | {
+      kind: "recorded";
+      invoiceId: string | null;
+      recordedCents: number | null;
+      invoiceFailed?: true;
+      invoiceMayBeInXero?: true;
+    };
+
+type RecordedAt = Omit<Extract<LateCaptureXeroReceipt, { kind: "recorded" }>, "kind" | "recordedCents">;
+
+/**
+ * #4383: of a capture's refunds, the cents a refund note may answer - what
+ * was refunded, capped at what the receipt recorded; none without a receipt
+ * the app recorded. The one spelling of the cap (`INV-SSOT`): the eligible
+ * cash, the note's ask and the unnoted-refund reader all read it.
+ */
+export function lateCaptureNotableRefundCents(receipt: LateCaptureXeroReceipt, refundedCents: number): number {
+  if (receipt.kind !== "recorded") return 0;
+  const refunded = Math.max(0, refundedCents);
+  return receipt.recordedCents === null ? refunded : Math.min(refunded, receipt.recordedCents);
+}
 
 export async function readLateCaptureXeroReceipt(
   paymentIntentId: string,
@@ -94,6 +131,13 @@ async function readReceipt(
   store: ReceiptStore,
   { widenToKnownInvoice }: { widenToKnownInvoice: boolean },
 ): Promise<LateCaptureXeroReceipt> {
+  let gross: Promise<number | null> | undefined;
+  const grossCents = () => (gross ??= readGrossCaptureCents(paymentIntentId, store));
+  const recorded = async (at: RecordedAt): Promise<LateCaptureXeroReceipt> => ({
+    kind: "recorded",
+    ...at,
+    recordedCents: await grossCents(),
+  });
   const task = await store.manualRefundTask.findUnique({
     where: { lateCaptureApprovalIntentId: paymentIntentId },
     select: { id: true },
@@ -110,7 +154,7 @@ async function readReceipt(
       },
       select: { xeroObjectId: true },
     });
-    if (kept) return { kind: "recorded", invoiceId: kept.xeroObjectId };
+    if (kept) return recorded({ invoiceId: kept.xeroObjectId });
     const resolvedKept = await store.xeroSyncOperation.findMany({
       where: {
         direction: "OUTBOUND",
@@ -126,10 +170,10 @@ async function readReceipt(
     });
     // Paid another way only: resolved after the app had sent it.
     const keptSent = widenToKnownInvoice ? resolvedKept.find((row) => row.xeroObjectId) : undefined;
-    if (keptSent?.xeroObjectId) return { kind: "recorded", invoiceId: keptSent.xeroObjectId };
+    if (keptSent?.xeroObjectId) return recorded({ invoiceId: keptSent.xeroObjectId });
     resolvedByHand = resolvedKept.length > 0;
   }
-  const receipt = await readKeptCaptureReceipt(paymentIntentId, store);
+  const receipt = await readKeptCaptureReceipt(paymentIntentId, store, grossCents);
   if (receipt.kind === "recorded") return receipt;
   resolvedByHand ||= receipt.kind === "resolved-by-hand";
   const released = await store.xeroSyncOperation.findMany({
@@ -154,16 +198,16 @@ async function readReceipt(
   const sent =
     live.find((row) => row.xeroObjectId) ??
     (widenToKnownInvoice ? released.find((row) => row.xeroObjectId) : undefined);
-  if (sent?.xeroObjectId) return { kind: "recorded", invoiceId: sent.xeroObjectId };
+  if (sent?.xeroObjectId) return recorded({ invoiceId: sent.xeroObjectId });
   // Paid another way only: a change whose invoice is linked in Xero though
   // its row FAILED after the link (or was resolved by hand after it).
   const linked = widenToKnownInvoice ? await findActiveSupplementaryInvoiceLink(released, store) : null;
-  if (linked) return { kind: "recorded", invoiceId: linked };
+  if (linked) return recorded({ invoiceId: linked });
   if (live.length > 0) {
-    if (!live.every((row) => row.status === "FAILED")) return { kind: "recorded", invoiceId: null };
+    if (!live.every((row) => row.status === "FAILED")) return recorded({ invoiceId: null });
     return live.some((row) => xeroCreateCallAttempted(row.requestPayload))
-      ? { kind: "recorded", invoiceId: null, invoiceFailed: true, invoiceMayBeInXero: true }
-      : { kind: "recorded", invoiceId: null, invoiceFailed: true };
+      ? recorded({ invoiceId: null, invoiceFailed: true, invoiceMayBeInXero: true })
+      : recorded({ invoiceId: null, invoiceFailed: true });
   }
   if (resolvedByHand || released.length > 0) return { kind: "resolved-by-hand" };
   return { kind: "none" };
@@ -174,26 +218,71 @@ async function readReceipt(
  * verdict above reads it: its payment link on the capture's
  * `PaymentTransaction` (`readAdditionalCaptureReceiptLinkedInvoiceId`, the one
  * read of it; every receipt row is keyed on that row), else how its rows stand.
+ * #4383: recorded for the gross capture less what its plan left for an officer.
  */
-async function readKeptCaptureReceipt(paymentIntentId: string, store: ReceiptStore): Promise<LateCaptureXeroReceipt> {
+async function readKeptCaptureReceipt(
+  paymentIntentId: string,
+  store: ReceiptStore,
+  grossCents: () => Promise<number | null>,
+): Promise<LateCaptureXeroReceipt> {
   const rows = await store.xeroSyncOperation.findMany({
     where: {
       queueType: XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
       requestPayload: { path: ["paymentIntentId"], equals: paymentIntentId },
     },
-    select: { localId: true, status: true, manuallyResolvedAt: true, requestPayload: true },
+    select: { localId: true, status: true, manuallyResolvedAt: true, requestPayload: true, responsePayload: true },
   });
   const transactionId = rows.find((row) => row.localId)?.localId;
   if (!transactionId) return { kind: "none" };
+  const recorded = async (at: RecordedAt): Promise<LateCaptureXeroReceipt> => {
+    const gross = await grossCents();
+    const recordedCents = gross === null ? null : Math.max(0, gross - unrecordedOfReceiptRows(rows));
+    return { kind: "recorded", ...at, recordedCents };
+  };
   const linkedInvoiceId = await readAdditionalCaptureReceiptLinkedInvoiceId(transactionId, store);
-  if (linkedInvoiceId) return { kind: "recorded", invoiceId: linkedInvoiceId };
+  if (linkedInvoiceId) return recorded({ invoiceId: linkedInvoiceId });
   const live = rows.filter((row) => row.status !== "CANCELLED");
   if (live.some((row) => row.manuallyResolvedAt !== null)) return { kind: "resolved-by-hand" };
   const decided = live.filter((row) => asRecord(row.requestPayload)?.plan != null && row.status !== "SUCCEEDED");
   if (decided.length === 0) return { kind: "none" };
   return decided.every((row) => row.status === "FAILED")
-    ? { kind: "recorded", invoiceId: null, invoiceFailed: true, invoiceMayBeInXero: true }
-    : { kind: "recorded", invoiceId: null };
+    ? recorded({ invoiceId: null, invoiceFailed: true, invoiceMayBeInXero: true })
+    : recorded({ invoiceId: null });
+}
+
+/**
+ * #4383: what the capture's own receipt left on no invoice
+ * (`receiptUnrecordedCents`), from the first live row whose stored plan
+ * reads - the plan the worker stores on the row before its Xero call, else
+ * the copy its completion writes to the response. None without a readable
+ * plan: a receipt that never planned capped nothing.
+ */
+function unrecordedOfReceiptRows(
+  rows: ReadonlyArray<{ status: string; requestPayload: unknown; responsePayload: unknown }>,
+): number {
+  for (const row of rows) {
+    if (row.status === "CANCELLED") continue;
+    const plan =
+      readAdditionalCaptureReceiptPayload(row.requestPayload)?.plan ??
+      readAdditionalCaptureReceiptPayload({ ...asRecord(row.requestPayload), plan: asRecord(row.responsePayload)?.plan })?.plan;
+    if (plan) return receiptUnrecordedCents(plan);
+  }
+  return 0;
+}
+
+/**
+ * #4383: the capture's gross cents, from its `PaymentTransaction` (one row
+ * per intent). Null, with a warning, where the row is missing: the receipt's
+ * refunds are then noted uncapped, as before #4383.
+ */
+async function readGrossCaptureCents(paymentIntentId: string, store: ReceiptStore): Promise<number | null> {
+  const capture = await store.paymentTransaction.findUnique({
+    where: { stripePaymentIntentId: paymentIntentId },
+    select: { amountCents: true },
+  });
+  if (capture) return Math.max(0, capture.amountCents);
+  logger.warn({ paymentIntentId }, "A late capture's Xero receipt has no capture row to size it by; its refund notes are not capped");
+  return null;
 }
 
 /**
@@ -222,14 +311,6 @@ export async function findActiveSupplementaryInvoiceLink(
     select: { xeroObjectId: true },
   });
   return link?.xeroObjectId ?? null;
-}
-
-/** A receipt the app recorded, so a refund of it gets the app's own note. */
-export async function hasXeroReceiptForLateCapture(
-  paymentIntentId: string,
-  store: ReceiptStore = prisma,
-): Promise<boolean> {
-  return (await readLateCaptureXeroReceipt(paymentIntentId, store)).kind === "recorded";
 }
 
 /**

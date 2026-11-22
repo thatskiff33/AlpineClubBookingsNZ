@@ -819,13 +819,18 @@ echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u <owner> --password-stdin
 
 Do not store that token in the repository or `.env`.
 
-Every push to `main` gets a CI run of its own that runs to completion; a later
-merge never cancels or replaces it (`INV-OPS-021`). So a `main` commit has
-images exactly when its run's `Publish GHCR images` job succeeded — not merely
-because it is on `main`. A run whose `Publish GHCR images` job did not succeed
-(skipped after a failed gate, failed, or cancelled by hand) published nothing;
-re-run it with `gh run rerun <run-id>`. `pnpm run release:cut publish`
-asks GitHub for that job's result and will not tag a commit without images.
+A `main` commit has images exactly when its CI run's `Publish GHCR images`
+job succeeded, not merely because it is on `main`. A newer merge may replace
+`main`'s queued run, so an intermediate `main` commit can have no run and no
+images; a run that has started always finishes, and the newest `main` commit
+normally gets one (a manual re-run can replace its pending run; `INV-OPS-021`,
+#5356). A run whose `Publish GHCR images` job did not succeed (replaced while
+queued, skipped after a failed gate, failed, or cancelled by hand) published
+nothing; re-run it with `gh run rerun <run-id>`. A re-run joins `main`'s queue
+and replaces whatever is pending there, so start it only when nothing is
+pending on `main` (`gh run list --workflow ci.yml --branch main --status pending`).
+`pnpm run release:cut publish` tags `origin/main` by default, asks GitHub for
+that job's result, and will not tag a commit without images.
 
 ### Supply chain
 
@@ -835,9 +840,9 @@ workflow and composite-action references, including `docker://` actions.
 External images in the Dockerfile and Compose files keep readable tags and pin
 the multi-architecture index digest. Dependabot proposes Action and Docker
 updates for review. The pnpm minimum release age matches the npm Dependabot
-cooldown: seven days (`10080` minutes).
-The already-locked `nodemailer@10.2.1` has an exact-version exception so frozen
-installs work during rollout; remove it after the next Nodemailer update.
+cooldown: seven days (`10080` minutes). No version is exempt from it: the
+exact-version exception made during rollout, for the already-locked
+`nodemailer@10.2.1`, was removed once `main` had moved to a later Nodemailer.
 
 Both published images include a BuildKit SBOM and maximum build provenance,
 plus a GitHub build provenance attestation tied to the pushed image digest.
@@ -1290,7 +1295,7 @@ image stops the engine before image inspection; it never guesses a local tag.
 ## Public Rate Limits And Proxy Headers
 
 Public route rate limits are process-local sliding windows keyed by
-`getClientIp()` in `src/lib/rate-limit.ts`. This is acceptable for the supported
+`getClientIp()` in `src/lib/rate-limit-http.ts`. This is acceptable for the supported
 production shape because Caddy is the only public listener and routes traffic to
 one active web slot at a time.
 
@@ -1319,15 +1324,32 @@ connections and the TLS certificate cache. If `validate` fails, fix the file
 before reloading — the running config stays in place until a reload succeeds.
 
 The app trusts proxy-derived client IP headers only under that Caddy boundary.
-`getClientIp()` uses the rightmost `X-Forwarded-For` value, which is the peer
-Caddy appended closest to the app container, then falls back to `X-Real-IP`.
+Caddy replaces `X-Forwarded-For` with its resolved client IP (`header_up
+X-Forwarded-For {client_ip}` in `deploy/caddy/tacbookings-active.caddy`), which
+is the connecting peer when Caddy is the edge and, in `CADDY_TLS_MODE=local`,
+the address the trusted proxy forwarded — see "Client IPs behind the proxy"
+below. The app therefore normally sees one address. `getClientIp()` takes the
+last `X-Forwarded-For` address, or `X-Real-IP` when that header is absent. The
+last-address rule is for a proxy that appends to the header instead of
+replacing it, where the first address is whatever the caller sent.
+
+The audit log records the same address as the rate limits: every route that
+writes a caller's IP takes it from `getClientIp()`, and lint refuses a direct
+read of a client-address header anywhere else (#5399). It is the address the hop
+nearest the app saw, so it is the visitor's only in the supported shape:
+
+- **Behind more than one proxy** (a CDN in front of another proxy, say), the
+  hop nearest the app must resolve the visitor's address and overwrite the
+  header. That is the reference Caddy in local mode, with
+  `CADDY_TRUSTED_PROXIES` covering every hop in front of it. Otherwise the last
+  address is the next hop's own peer, such as a CDN edge address many visitors
+  share, and both the audit log and the per-address rate limits see that.
+- **With no proxy at all**, the caller sets `X-Forwarded-For` and `X-Real-IP`
+  freely, so neither the audit address nor a rate-limit key can be trusted.
+
 Do not expose app containers directly to the Internet or through another proxy
 that preserves attacker-supplied `X-Forwarded-For` values without appending its
 own trusted peer address.
-Caddy sets that header to its resolved client IP (`header_up X-Forwarded-For
-{client_ip}` in `deploy/caddy/tacbookings-active.caddy`), which is the connecting
-peer when Caddy is the edge and, in `CADDY_TLS_MODE=local`, the address the
-trusted proxy forwarded — see "Client IPs behind the proxy" below.
 
 ### Hostnames and DNS records
 
@@ -2698,6 +2720,12 @@ before deployment; Admin Modules do not replace that safety check.
 Preferred rollback is to route Caddy back to the previous healthy color while it
 is still running. If schema changes have already applied, rollback must respect
 the migration policy and any compatibility constraints in the migration PR.
+
+**Not below v0.14.0 once it has run (#5270).** Routing back to a colour older
+than v0.14.0 can let an old copy retry a saved-card charge under a different key
+and charge a member twice, and a backup cannot undo a charge at Stripe. Recover
+on v0.14.0 or later. The boundary and the checks to run if it was crossed are in
+the [saved-card upgrade and rollback boundary](docs/UPGRADING.md#saved-card-upgrade-and-rollback-boundary-5270).
 
 **Not once a data-encryption key is in use (#4456).** Rows written under
 `DATA_ENCRYPTION_KEYS` cannot be read by an older release or by a colour started

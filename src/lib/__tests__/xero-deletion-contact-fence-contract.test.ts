@@ -6,6 +6,22 @@ function source(relativePath: string): string {
   return readFileSync(resolve(process.cwd(), relativePath), "utf8");
 }
 
+/**
+ * #5394: a member CONTACT completion must run the recovery module's fenced
+ * completer, not a local function that happens to share its name. Pins that the
+ * file imports it from there and defines nothing of that name itself.
+ */
+function expectSharedContactCompleter(relativePath: string): void {
+  const text = source(relativePath);
+  expect(text, relativePath).toMatch(
+    /import\s*\{[^}]*\bcompleteMemberContactOperation\b[^}]*\}\s*from\s*"(?:@\/lib|\.)\/xero-contact-create-recovery";/,
+  );
+  expect(text, relativePath).not.toMatch(
+    /\b(?:function|const|let|var|class)\s+completeMemberContactOperation\b/,
+  );
+  expect(text, relativePath).not.toMatch(/\bas\s+completeMemberContactOperation\b/);
+}
+
 function between(
   input: string,
   startMarker: string,
@@ -213,18 +229,12 @@ describe("Xero contact/account-deletion lock topology mutation pins (#2597)", ()
       "try {",
       "getAuthenticatedXeroClient()",
       "accountingApi.updateContact(",
-      "completeMemberContactUpdateOperation(",
+      "completeMemberContactOperation(",
       "failXeroSyncOperation(operation, error)",
     ]);
-    const completion = between(
-      contactSource,
-      "export async function completeMemberContactUpdateOperation(",
-      "export interface XeroContactUpdateData",
-    );
-    expectOrdered(completion, [
-      "lockMemberForXeroContactLink(tx, memberId)",
-      "completeXeroSyncOperation(operation, completion, { store: tx })",
-    ]);
+    // #5394: the update path completes through the one shared completer below.
+    expect(contactSource).not.toContain("async function completeMemberContactUpdateOperation(");
+    expectSharedContactCompleter("src/lib/xero-contacts.ts");
 
     const genericCompletion = between(
       source("src/lib/xero-contact-create-recovery.ts"),
@@ -341,8 +351,9 @@ describe("Xero contact/account-deletion lock topology mutation pins (#2597)", ()
       "getXeroContactNameOrderRepair(locked",
       "requestPayload: payload",
       "accountingApi.updateContact(",
-      "completeMemberContactUpdateOperation(",
+      "completeMemberContactOperation(",
     ]);
+    expectSharedContactCompleter("src/lib/xero-bulk-contact-sync.ts");
   });
 
   it("claims each deletion decision before its status-specific mutation or email", () => {

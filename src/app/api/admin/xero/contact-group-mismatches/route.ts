@@ -8,6 +8,7 @@ import {
 } from "@/lib/xero-mismatch-resync";
 import { XeroDailyLimitError } from "@/lib/xero-api-client";
 import logger from "@/lib/logger";
+import { CONTACT_GROUP_MISMATCH_LIMIT } from "@/lib/xero-contact-group-mismatch-summary";
 
 const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).optional(),
@@ -39,7 +40,7 @@ export async function GET(request: NextRequest) {
 }
 
 const resyncBodySchema = z.object({
-  limit: z.number().int().min(1).max(500).optional(),
+  limit: z.number().int().min(1).max(500).default(CONTACT_GROUP_MISMATCH_LIMIT),
 });
 
 // Resync-from-Xero (#1441): re-fetch the currently flagged contacts from
@@ -70,8 +71,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // #5234: information-only entries too, so a contact removed from a
+    // managed group in Xero drops off the panel on Refresh. Both lists are
+    // capped by `limit` (sent, or CONTACT_GROUP_MISMATCH_LIMIT).
     const resync = await resyncXeroContactCachesByIds(
-      before.mismatches.map((mismatch) => mismatch.xeroContactId),
+      [
+        ...before.mismatches.map((mismatch) => mismatch.xeroContactId),
+        ...before.informational.map((entry) => entry.xeroContactId),
+      ],
       "adminXeroContactGroupMismatchResync"
     );
     const snapshot = await getXeroMemberGroupingSnapshot(parsed.data);

@@ -103,6 +103,29 @@ describe("durable email event identity", () => {
     expect(mocks.sendMail).toHaveBeenCalledTimes(1);
   });
 
+  // #5407: the confirm-pending cron's bump notice, keyed per booking and bump
+  // time, sent right after the bump commits and again by a later run's sweep
+  // when the first attempt's owed marker was left standing.
+  it("keeps one row per bump for a bump notice the cron sends twice", async () => {
+    const bump = {
+      ...params,
+      to: "member@example.org",
+      subject: "Booking Update",
+      templateName: "booking-bumped",
+      idempotencyKey: "booking-1:1783555200000",
+      bookingContext: { bookingId: "booking-1", recipient: { kind: "member" as const, memberId: "member-1" } },
+    };
+    const BUMP_LOG_ID = "email:booking-bumped:booking-1:1783555200000";
+    mocks.create.mockResolvedValueOnce({ id: BUMP_LOG_ID }).mockRejectedValueOnce({ code: "P2002" });
+    mocks.findUnique.mockResolvedValue({ id: BUMP_LOG_ID });
+
+    await expect(sendEmail(bump)).resolves.toMatchObject({ status: "sent", emailLogId: BUMP_LOG_ID });
+    await expect(sendEmail(bump)).resolves.toEqual({ status: "already_recorded", emailLogId: BUMP_LOG_ID });
+
+    expect(mocks.create.mock.calls.map(([call]) => call.data.id)).toEqual([BUMP_LOG_ID, BUMP_LOG_ID]);
+    expect(mocks.sendMail).toHaveBeenCalledTimes(1);
+  });
+
   it("sends only once when concurrent invoice re-drives race for the event row", async () => {
     mocks.create.mockResolvedValueOnce({ id: LOG_ID }).mockRejectedValueOnce({ code: "P2002" });
     const outcomes = await Promise.all([sendEmail(params), sendEmail(params)]);

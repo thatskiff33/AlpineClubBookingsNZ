@@ -125,9 +125,32 @@ Two behaviours were pinned down during implementation:
   other lodges' queues. This is consistent with the per-lodge queue model
   above and does not conflict with the club-wide *queue-order enum* under
   Configuration (that setting governs cross-lodge ordering policy, not how
-  a single lodge's positions are numbered). Applies to the offer-time
-  count, the initial `createWaitlistedBooking` count,
-  `getWaitlistPosition`, `updateWaitlistPositions`, and `getWaitlistForDates`.
+  a single lodge's positions are numbered). Amended by #5402: positions are
+  no longer counted at each site or stored; one reader in
+  `src/lib/waitlist-queue.ts` places an entry in its own lodge's queue by the
+  same order the offer pass walks, so under `MERGED` an older opt-in from
+  another lodge that named this lodge now counts ahead (as it is offered
+  ahead), and a silenced entry is not counted. The three uncalled helpers this
+  note once listed (`getWaitlistPosition`, `updateWaitlistPositions`,
+  `getWaitlistForDates`) were deleted (`INV-CAP-041`).
+- **A lapsed cross-lodge offer passes on at the offered lodge** (#5410,
+  `INV-CAP-042`). The pass that re-offers a lapsed place starts just after the
+  lapsed opportunity and reaches it last. For a cross-lodge offer only the
+  opportunity at the offered lodge is the lapse; the entry's own-lodge
+  opportunity is not moved as one. Under `MERGED` the one list rotates, and an
+  own-lodge opportunity that was ahead of the lapsed place wraps round with
+  everyone else who was.
+- **A stated exception to `OWN_LODGE_FIRST`: a lapsed offer goes behind the
+  opt-ins** (#5410, owner decision 23 Nov 2026). Each part still rotates on its
+  own, but the lapsed opportunity, and any opportunity of another booking whose
+  offer lapsed in the same run, goes after the cross-lodge part as well as the
+  own-lodge one. So if a lodge's
+  own member lets an offer lapse and an opt-in from another lodge that fits is
+  waiting, the opt-in is offered the place before that member is offered it
+  again. The reason: the member has just had their turn, and "own lodge first"
+  is there so nobody is overtaken in the queue they joined, not to hand the same
+  place straight back to someone who did not take it. It applies to the
+  re-offers of that run only; every other pass walks own lodge first as before.
 - **Confirm rejects a duplicate stay at the offered lodge.** If Phase 3
   (cancel the waitlist entry) failed on an earlier confirm, the entry is
   stranded in `WAITLIST_OFFERED` with a booking already created at the

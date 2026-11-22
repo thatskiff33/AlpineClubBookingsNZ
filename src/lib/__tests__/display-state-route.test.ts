@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Issue #52 (LTV-013): the /api/display/state auth matrix. The route serves
+// Issue hoppers99/AlpineClubBookingsNZ#52 (LTV-013): the /api/display/state auth matrix. The route serves
 // two callers — a paired device (whose poll doubles as the heartbeat) and an
 // admin preview (?previewDevice / ?preview) which must be read-only: it never
 // stamps lastSeenAt and is honoured only for a full-admin session.
@@ -194,7 +194,7 @@ describe("GET /api/display/state — device path", () => {
   });
 });
 
-describe("GET /api/display/state — admin preview (issue #52)", () => {
+describe("GET /api/display/state — admin preview (issue hoppers99/AlpineClubBookingsNZ#52)", () => {
   function loginAs(member: typeof ADMIN_MEMBER) {
     mockAuth.mockResolvedValue({ user: { id: member.id } });
     mockPrisma.member.findUnique.mockResolvedValue(member);
@@ -260,7 +260,7 @@ describe("GET /api/display/state — admin preview (issue #52)", () => {
       windowStart: null,
     });
     // The legacy fallback `template` field always resolves to the club default
-    // now (the device templateKey column is gone, #86).
+    // now (the device templateKey column is gone, hoppers99/AlpineClubBookingsNZ#86).
     expect(mockResolveForDevice).toHaveBeenCalledWith({ templateKey: null });
     // Read-only by construction: a preview must never look like a live screen.
     expect(mockPrisma.lodgeDisplayDevice.update).not.toHaveBeenCalled();
@@ -286,7 +286,7 @@ describe("GET /api/display/state — admin preview (issue #52)", () => {
       days: null,
       windowStart: null,
     });
-    // The legacy templateKey preview param was removed in #86 (LTV-040); a
+    // The legacy templateKey preview param was removed in hoppers99/AlpineClubBookingsNZ#86 (LTV-040); a
     // bare ?preview=1 always renders the club-default board.
     expect(mockResolveForDevice).toHaveBeenCalledWith({ templateKey: null });
     expect(mockPrisma.lodgeDisplayDevice.update).not.toHaveBeenCalled();
@@ -305,7 +305,7 @@ describe("GET /api/display/state — admin preview (issue #52)", () => {
     });
   });
 
-  it("?previewDate simulates the window start for an admin preview (issue #60)", async () => {
+  it("?previewDate simulates the window start for an admin preview (issue hoppers99/AlpineClubBookingsNZ#60)", async () => {
     loginAs(ADMIN_MEMBER);
     const { GET } = await import("@/app/api/display/state/route");
 
@@ -373,7 +373,7 @@ describe("GET /api/display/state — authored template preview (LTV-036)", () =>
       await stateRequest("?preview=1&templateId=tpl-7&previewLodge=lodge-b")
     );
     expect(res.status).toBe(200);
-    // The lodge is validated, never a silent default (#64).
+    // The lodge is validated, never a silent default (hoppers99/AlpineClubBookingsNZ#64).
     expect(mockResolveOptionalLodge).toHaveBeenCalledWith(
       expect.anything(),
       "lodge-b"
@@ -450,7 +450,7 @@ describe("GET /api/display/state — sandboxed preview grant (LTV-036, ADR-003 �
     expect(res.headers.get("access-control-allow-origin")).toBe("*");
   });
 
-  it("a signed windowStart wins: a conflicting ?previewDate does NOT shift the served window (issue #176)", async () => {
+  it("a signed windowStart wins: a conflicting ?previewDate does NOT shift the served window (issue hoppers99/AlpineClubBookingsNZ#176)", async () => {
     // The grant is a signed, single-purpose, per-preview capability. When it
     // carries a windowStart, that signed value is authoritative — an unsigned
     // ?previewDate on the (sandbox-rewritable) iframe URL must not widen/shift
@@ -534,7 +534,7 @@ describe("GET /api/display/state — sandboxed preview grant (LTV-036, ADR-003 �
   });
 });
 
-describe("GET /api/display/state — Cache-Control: no-store on every payload path (issue #176)", () => {
+describe("GET /api/display/state — Cache-Control: no-store on every payload path (issue hoppers99/AlpineClubBookingsNZ#176)", () => {
   // The payload is the privacy-reduced wall feed but can still carry guest names
   // and opted-in phone numbers, so no shared/browser cache may hold it.
   it("the device path sets no-store", async () => {

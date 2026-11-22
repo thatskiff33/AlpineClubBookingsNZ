@@ -8,7 +8,13 @@ import {
   cleanup,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import "@testing-library/jest-dom/vitest";
 import { ADMIN_FORBIDDEN_SAVE_REASON } from "@/components/admin/view-only-action";
+import {
+  htmlErrorPage,
+  itShowsEveryRefusal,
+} from "@/lib/__tests__/support/failed-write-cases";
+import { recentAuthRefusalBody } from "@/lib/recent-auth";
 
 const hookMock = vi.hoisted(() => ({ canEdit: true as boolean | undefined }));
 vi.mock("@/hooks/use-admin-area-edit-access", () => ({
@@ -248,22 +254,97 @@ describe("PasswordPolicyCard (#2103)", () => {
     });
   });
 
-  it("surfaces the forbidden-save reason on a 403 from the PUT", async () => {
-    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
-      init?.method === "PUT"
-        ? new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 })
-        : policyResponse(12),
-    );
-    await renderLoaded(fetchMock);
-    fireEvent.click(editButton());
-    fireEvent.change(minLengthInput(), { target: { value: "20" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  describe("a refused save (ALP-749)", () => {
+    async function saveAnswered(answer: () => Response | Promise<Response>) {
+      const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
+        init?.method === "PUT" ? answer() : policyResponse(12),
+      );
+      await renderLoaded(fetchMock);
+      fireEvent.click(editButton());
+      fireEvent.change(minLengthInput(), { target: { value: "20" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    }
 
-    await waitFor(() =>
-      expect(screen.getByText(ADMIN_FORBIDDEN_SAVE_REASON)).toBeTruthy(),
-    );
-    // Still editing; the change did not persist.
-    expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
+    async function expectRefusal(sentence: string) {
+      expect(await screen.findByRole("alert")).toHaveTextContent(sentence);
+      // Still editing; the change did not persist.
+      expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
+    }
+
+    it("shows the forbidden-save reason for the guard's bare 403", async () => {
+      await saveAnswered(() => Response.json({ error: "Forbidden" }, { status: 403 }));
+      await expectRefusal(ADMIN_FORBIDDEN_SAVE_REASON);
+    });
+
+    it("shows the forbidden-save reason for a 403 whose body is an HTML page", async () => {
+      await saveAnswered(() => htmlErrorPage(403));
+      await expectRefusal(ADMIN_FORBIDDEN_SAVE_REASON);
+    });
+
+    it("keeps a 403's own worded refusal", async () => {
+      await saveAnswered(() =>
+        Response.json({ error: "Two-factor verification required" }, { status: 403 }),
+      );
+      await expectRefusal("Two-factor verification required");
+      expect(screen.queryByText(ADMIN_FORBIDDEN_SAVE_REASON)).toBeNull();
+    });
+
+    // #5347: the recent-proof refusal is a 403 too. No confirm dialog is
+    // mounted here, so `fetchWithRecentAuth` hands the refusal straight back
+    // and the card must show the server's sentence, not the role reason. The
+    // body comes from the server's own helper; the sentence is pinned as text.
+    it("keeps the recent-proof refusal's own sentence", async () => {
+      await saveAnswered(() =>
+        Response.json(recentAuthRefusalBody(), { status: 403 }),
+      );
+      await expectRefusal("Confirm it's you before continuing.");
+      expect(screen.queryByText(ADMIN_FORBIDDEN_SAVE_REASON)).toBeNull();
+    });
+
+    itShowsEveryRefusal({
+      submit: saveAnswered,
+      fallback: "Failed to save password policy",
+    });
+  });
+
+  // #5347: a load the server refuses, or that the web server in front of the
+  // app answers with an HTML page, shows one alert and no editor.
+  describe("a failed load (#5347)", () => {
+    async function loadAnswered(answer: () => Response | Promise<Response>) {
+      vi.stubGlobal("fetch", vi.fn(async () => answer()));
+      render(<PasswordPolicyCard />);
+      return screen.findByRole("alert");
+    }
+
+    function expectNoEditor() {
+      expect(screen.queryByLabelText(/minimum password length/i)).toBeNull();
+      expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    }
+
+    it("shows the load fallback, not the page or a parse error, for an HTML 502", async () => {
+      const alert = await loadAnswered(() => htmlErrorPage(502));
+      // The whole alert: no markup from the page and no JSON parse error.
+      expect(alert.textContent).toBe("Failed to load password policy");
+      expectNoEditor();
+    });
+
+    it("keeps a 403's own worded refusal", async () => {
+      const alert = await loadAnswered(() =>
+        Response.json({ error: "Two-factor verification required" }, { status: 403 }),
+      );
+      expect(alert.textContent).toBe("Two-factor verification required");
+      expectNoEditor();
+    });
+
+    // The sentence for the guard's bare 403 is deliberately not pinned: #5347
+    // has decided to replace the raw word with the card's own sentence.
+    it("shows an alert and no editor for the guard's bare 403", async () => {
+      const alert = await loadAnswered(() =>
+        Response.json({ error: "Forbidden" }, { status: 403 }),
+      );
+      expect(alert.textContent?.trim()).not.toBe("");
+      expectNoEditor();
+    });
   });
 
   it("canEdit=false disables Edit and shows the view-only notice", async () => {

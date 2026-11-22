@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { buildStructuredAuditLogCreateArgs, getAuditRequestContext } from "@/lib/audit";
 import { DEFAULT_PUBLIC_CONTENT_SETTINGS } from "@/config/club-settings-defaults";
 import { prisma } from "@/lib/prisma";
@@ -102,10 +103,11 @@ export async function GET() {
 export async function PUT(request: Request) {
   const guard = await requireAdmin({ permission: { area: "content", level: "edit" } });
   if (!guard.ok) return guard.response;
-  let body: unknown;
-  try { body = await request.json(); } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = settingsSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid settings" }, { status: 400 });
 

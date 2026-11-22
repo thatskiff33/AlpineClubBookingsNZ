@@ -27,11 +27,7 @@ vi.mock("next/navigation", () => ({
   redirect: mockRedirect,
 }));
 
-import {
-  loadFinanceAccessMember,
-  requireFinanceManager,
-  requireFinanceViewer,
-} from "@/lib/finance-auth";
+import { loadFinanceAccessMember, requireFinanceViewer } from "@/lib/finance-auth";
 
 describe("finance auth helpers", () => {
   beforeEach(() => {
@@ -105,11 +101,9 @@ describe("finance auth helpers", () => {
 
     mockFindUnique.mockResolvedValue({ ...treasurer, canLogin: false });
     await expect(requireFinanceViewer("/finance")).rejects.toThrow("redirect:/dashboard");
-    await expect(requireFinanceManager("/finance")).rejects.toThrow("redirect:/dashboard");
 
     mockFindUnique.mockResolvedValue({ ...treasurer, canLogin: true });
     await expect(requireFinanceViewer("/finance")).resolves.toMatchObject({ id: "treasurer-1" });
-    await expect(requireFinanceManager("/finance")).resolves.toMatchObject({ id: "treasurer-1" });
   });
 
   it("returns the active finance viewer member", async () => {
@@ -131,26 +125,6 @@ describe("finance auth helpers", () => {
       accessRoles: [{ role: "FINANCE_USER" }],
     });
     expect(mockRedirect).not.toHaveBeenCalled();
-  });
-
-  it("redirects finance viewers away from manager-only actions", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "viewer-1", role: "USER", accessRoles: [{ role: "USER" }] } });
-    mockFindUnique.mockResolvedValue({
-      id: "viewer-1",
-      email: "viewer@example.com",
-      firstName: "View",
-      lastName: "Only",
-      role: "USER",
-      financeAccessLevel: "MANAGER",
-      accessRoles: [{ role: "FINANCE_USER" }],
-      active: true,
-      forcePasswordChange: false,
-      twoFactorEnabled: false,
-    });
-
-    await expect(requireFinanceManager("/finance")).rejects.toThrow(
-      "redirect:/finance"
-    );
   });
 
   it("redirects non-finance members away from finance dashboard views", async () => {

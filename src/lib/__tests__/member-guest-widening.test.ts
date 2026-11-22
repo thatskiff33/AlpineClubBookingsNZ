@@ -913,6 +913,11 @@ describe("consent columns have exactly one writer", () => {
     // owed. A null status means no message was ever sent about that row.
     "src/lib/booking-batch-modification-service.ts":
       "the batch edit reads a removed guest's consent state to decide who is owed a withdrawal notice",
+    // #5149: the identity-only pricing echo, moved verbatim out of the batch
+    // service. A READER: it carries each guest's stored `consentStatus` into
+    // the echoed night rates unchanged, and writes nothing.
+    "src/lib/booking-identity-only-pricing.ts":
+      "the identity-only pricing echo carries each guest's stored consent status through unchanged; it writes nothing",
     // The same read on the single-guest removal route. It is the ONE of the
     // three callers of removeBookingGuestInTransaction that owes a withdrawal
     // notice — the decline endpoint and the expiry sweep each have their own
@@ -971,6 +976,10 @@ describe("consent columns have exactly one writer", () => {
       "the create route states each planned row's consent for the adult-supervision pre-flight",
     "src/lib/booking-create-guests.ts":
       "the create services' review gate states each planned row's consent for the adult-supervision rule",
+    // #5005: a READER of nothing stored. The import planner states every
+    // imported row consent-free (null) for the adult-supervision rule.
+    "src/lib/booking-import/plan.ts":
+      "the paid-booking import planner states each imported row consent-free for the adult-supervision rule; writes nothing",
     // The edit PREVIEW. A READER: it maps the rows already on the booking to
     // their stored `consentStatus` so the preview refuses exactly what the save
     // refuses. It persists nothing at all — it is a quote.
@@ -1308,6 +1317,7 @@ describe("the module flag now gates the widening, and says so", () => {
     for (const file of [
       "src/lib/module-settings.ts",
       "src/app/(admin)/admin/modules/page.tsx",
+      "src/app/(admin)/admin/modules/_components/module-card.tsx",
     ]) {
       expect(readRepoFile(file), file).not.toMatch(
         /status:\s*["']not_available_yet["']/,
@@ -1338,13 +1348,19 @@ describe("the admin Modules card renders memberGuests as an ordinary module (D-1
   // badge a working feature amber and label it unavailable, and no behavioural
   // test would notice that either. So the same three helpers are pinned
   // structurally, in the opposite direction.
-  const PAGE = "src/app/(admin)/admin/modules/page.tsx";
+  // getReadiness stays on the page; the card's two badge helpers moved into the
+  // card component in #5243.
+  const SOURCES = [
+    "src/app/(admin)/admin/modules/page.tsx",
+    "src/app/(admin)/admin/modules/_components/module-card.tsx",
+  ];
 
   /** The text of a top-level `function name(...) {...}` declaration. */
   function functionBody(name: string): string {
-    const source = readRepoFile(PAGE);
+    const source =
+      SOURCES.map((file) => readRepoFile(file)).find((text) => text.includes(`function ${name}(`)) ?? "";
     const at = source.indexOf(`function ${name}(`);
-    expect(at, `${name} is not declared in the Modules page`).toBeGreaterThan(-1);
+    expect(at, `${name} is not declared in the Modules page or its card`).toBeGreaterThan(-1);
     // Top-level declarations close on a brace in column one.
     const end = source.indexOf("\n}", at);
     expect(end, `${name} has no closing brace`).toBeGreaterThan(at);

@@ -117,6 +117,75 @@ What the file contains, and what it leaves out:
   adviser before relying on it.
 - Money is in integer cents, labelled with the currency.
 
+## Hidden details in uploaded images
+
+Photos and drawings can carry hidden details: where a photo was taken, the
+camera or phone, the owner's name, the author's file paths. The app removes them
+before it stores any uploaded image, on every upload path: the image library,
+the Image Manager, member photos, the club logo and a configuration restore
+(#2242, #5244).
+
+| Type | Removed | Kept |
+| --- | --- | --- |
+| JPEG, PNG, WebP | Everything not needed to draw the picture: EXIF (GPS, camera, owner, dates), XMP, IPTC, Content Credentials, comments, text chunks, embedded thumbnails, extra pictures appended after the main one | The picture, its colour profile, any animation, and the EXIF rotation alone so portraits stay upright |
+| GIF | Comments, plain-text blocks, XMP and every other application block, anything after the end of the file | The frames, their timing and transparency, and the looping setting |
+| AVIF (still) | EXIF and XMP items, every property and box not needed to draw the picture, the handler name, data-reference paths, unknown brand names | The picture and its colour information (`colr`, which can hold a colour profile); removed parts are blanked in place so the picture's bytes are unchanged |
+| SVG | Metadata, comments, `title` and `desc`, editor attributes and file paths, scripts, event handlers, outside links, any text outside the drawing's text elements | The drawing: shapes, gradients, clips, masks, patterns, filters, styles, drawn text, and embedded photos cleaned the same way |
+
+Two limits remain, because removing them would mean decoding or redrawing the
+picture:
+
+- **GIF picture data is copied as it is.** Each frame's compressed data is kept
+  byte for byte, so bytes hidden after a frame's end-of-picture code, but
+  inside its data blocks, survive. A normal image editor never writes any.
+- **JPEG, PNG, WebP and AVIF keep their colour profile** (ICC profile). A profile is
+  needed to show colours correctly, but its description and copyright text
+  can name the device or the software that made it.
+
+An upload is **refused**, with a plain message asking for a fresh copy from an
+image editor, when the app cannot confirm it is clean: a damaged or truncated
+file, an animated AVIF, a file that opens like an SVG but is not an SVG drawing
+(for example, its root is not in the SVG namespace), or an
+SVG that reaches outside itself (an `@import` or an outside `url()`). Nothing is stored in that case. A configuration restore
+stops at its dry run and names the file.
+
+**Images uploaded before this release are not altered** (owner decision,
+20 Nov 2026, #5244). Anything already in the image library, the Image Manager's
+folders, the club logo or a member photo may still carry hidden details until
+it is uploaded again; [`image-manager.md`](guides/image-manager.md#cleaning-an-older-image)
+says how.
+
+**A photo stored sideways needs its original file.** JPEG, PNG and WebP
+photos were already cleaned before #5244, and that earlier cleaning removed a
+photo's rotation setting with the rest of its EXIF, so a phone portrait could
+be stored sideways. The stored copy no longer has the setting, so uploading
+that copy again leaves it sideways; uploading the original file keeps the
+setting, and the photo shows upright.
+
+**Uploading an image again does not reach older copies.** A library image
+uploaded again is stored as a new image: the older one stays in the app, still
+served at its old link, until it is deleted from the picker. An Image Manager
+image, the club logo and a member photo are replaced. Older copies of these
+kinds stay as they were either way:
+
+- **Copies in browsers.** A browser that has already downloaded an image can go
+  on showing its own copy. Library images and the club logo are served to be
+  kept for up to a year under their link; uploading one again gives it a new
+  link, so a page pointed at the new copy fetches the cleaned file. Image
+  Manager images keep their link, and are served to be checked again after five
+  minutes. Publicly shown member photos are served the same way; the committee
+  page's link to a photo changes when the photo is replaced, so the page fetches
+  the new one. A member photo that is not shown publicly is served with an
+  instruction not to keep it.
+- **Copies in backups.** A [database backup](guides/backups.md) holds library
+  images, club logos and member photos as they were when it was taken, until it
+  is pruned or deleted. Image Manager images are files on the server's disk,
+  not in the database, so the database backup never holds them; any copy the
+  host keeps of that folder is outside the app.
+- **Copies in configuration exports.** A configuration export made earlier
+  holds the library images and club logo it carried, as they were when it was
+  made. A restore cleans them as it loads them.
+
 ## Model schedule
 
 | Prisma model | Purpose / personal data | Retention period or retained purpose | End action |
@@ -155,6 +224,8 @@ What the file contains, and what it leaves out:
 | `BookingGuest.dietaryRequirements` | Per-stay dietary/allergy note for the kitchen and hut leader during the stay | Default 30 days after the stay's departure date (`stayEnd`), configurable 1–365, while the switch is on (ships on) | Clear the value; the guest row is kept |
 | `BookingGuestNight` | Stay participants, guest details, stay history and financial evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `BookingGuestNightAdjustment` | Stay participants, guest details, stay history and financial evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `BookingImportBatch` | Which officer confirmed or reversed an import of paid bookings, as a plain member id; no names or emails | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `BookingImportRow` | Each imported or refused Booking Ref, its line number, refusal reason and booking; no names or emails (`INV-PRIV-011`) | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `GroupBooking` | Group organiser, joining contacts, guest snapshots and settlement | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `GroupBookingJoin` | Group organiser, joining contacts, guest snapshots and settlement | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `GroupBookingSettlement` | Group organiser, joining contacts, guest snapshots and settlement | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
@@ -218,6 +289,7 @@ What the file contains, and what it leaves out:
 | `ClubTimeSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `ClubFormatSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `ClubTaxSettings` | Club tax schedule and the officer who scheduled each period | While the period can render a Xero document; keep attribution for the tax record | Keep |
+| `XeroTaxCategoryMapping` | Club tax categories mapped to Xero tax rates, and the officer who last mapped each | While Xero is connected; keep attribution for the tax record | Keep |
 | `LoginSecuritySetting` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `AnalyticsSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `EmailTemplateOverride` | Published / configured content and editor attribution | While published / configured and for content administration | Keep |
@@ -261,6 +333,10 @@ What the file contains, and what it leaves out:
 | `MemberCredit` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `MemberCreditNoteAllocation` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `AdminCreditAdjustmentRequest` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `OpeningCreditBatch` | Opening-credit batch: the posting and reversing officer, totals and the reversal reason (#4988) | Kept with the credit rows it tags, for reconciliation and evidence; no new automatic deletion | Keep |
+| `XeroCashCredit` | Snapshot of a Xero contact's unallocated overpayment or prepayment, for the finance queue and backed credit | Kept with financial records while credit may name it; refreshed from Xero, never deleted automatically | Keep |
+| `MemberCreditCashAllocation` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `MemberCreditCashReturn` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `PublicContentSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `RefundRequest` | Payment, refund, recovery and officer decision evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `CommitteeRole` | Committee contact details, member roles and public biographies | While committee / contact administration and role history requires it | Keep |
@@ -275,6 +351,9 @@ What the file contains, and what it leaves out:
 | `MaintenanceReportSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `MaintenanceReport` | Reporter / contact, fault description, answers and supporting evidence | Photo / IP hash: stamped expiry from maintenance settings; report / answers retained for maintenance history | Anonymise expired photo / IP fields; keep report and answers |
 | `MaintenanceReportAnswer` | Reporter / contact, fault description, answers and supporting evidence | Photo / IP hash: stamped expiry from maintenance settings; report / answers retained for maintenance history | Anonymise expired photo / IP fields; keep report and answers |
+| `FoodOrderSettings` | Club configuration (food officer email) and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
+| `FoodOrder` | Ordering member, needed-by date, note, receiving and pricing officers, recorded price (fork triyder/AlpineClubBookingsNZ#121) | Retained as the club's food-cost history; a deleted member's orders keep their cost with the member link cleared | Keep; member link set null when the member is deleted |
+| `FoodOrderItem` | The ordering member's item descriptions and quantities, and who received each item and when | Retained with its order | Keep with the order |
 | `LodgeMaintenanceReportToken` | Report access token and creating / rotating officer | While token / report intake administration requires it; rotation revokes old access | Keep |
 | `EnvironmentSafetySettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `XeroSandboxContactContainment` | Provider contact identity, membership and grouping / containment evidence | While provider contact / grouping administration requires it | Keep |
@@ -294,6 +373,10 @@ What the file contains, and what it leaves out:
 | `MemberMoneySourcePosting` | Exact financial source and journal-line coverage | Kept for financial records | Keep |
 | `MemberMoneyExportManifest` | Booking, sent Xero invoice id and what its lines cover | Kept for financial records | Keep |
 | `MemberMoneyExportCoverage` | Journal components a sent invoice bills | Kept for financial records | Keep |
+| `McpGrant` | A member's connection to an AI app: which app, what it may do, when it was approved and last used | While the connection is in use, and after it ends as the member's connection history; deleted with the member. A connection whose app stopped renewing leaves the connected lists once its last refresh token lapses (30 days), and its row is kept as history. No scheduled sweep | Delete on member erasure or merge |
+| `McpAuthCode` | Single-use sign-in code for an AI app connection, stored as a hash, with its PKCE challenge and return address | Usable for five minutes; kept for the life of the connection, marked used once the app collects it, because it records the approved return address that every use is checked against and the connection lists show; deleted when the connection ends or with the member. No scheduled sweep | Delete with the connection |
+| `McpToken` | Access and refresh tokens for an AI app connection, stored as hashes | An access token lasts one hour and a refresh token a fixed 30 days; a refresh token is marked used when it is renewed. Expired tokens are deleted at the connection's next token issue, and every token when the connection ends or with the member. No scheduled sweep | Delete with the connection |
+| `McpSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `StripeBalanceTransactionEvidence` | Stripe balance-transaction figures and the payment intent, refund and payout they belong to | Kept for financial records | Keep |
 
 ## Maintaining coverage

@@ -27,6 +27,7 @@ import {
 import { ApiRefusalError } from "@/lib/api-error-message";
 import {
   ForbiddenSaveError,
+  saveRefusalFromResponse,
   useSectionEditState,
 } from "../use-section-edit-state";
 
@@ -836,5 +837,51 @@ describe("useSectionEditState", () => {
         removeScrollIntoViewSpy();
       }
     });
+  });
+});
+
+describe("saveRefusalFromResponse (ALP-749)", () => {
+  const htmlPage = (status: number) =>
+    new Response("<!DOCTYPE html><html><body>Forbidden</body></html>", {
+      status,
+      headers: { "Content-Type": "text/html" },
+    });
+
+  it("reads an HTML 403 as the shared permission refusal", async () => {
+    const err = await saveRefusalFromResponse(htmlPage(403), SAVE_FALLBACK);
+    expect(err).toBeInstanceOf(ForbiddenSaveError);
+  });
+
+  it("reads the bare word Forbidden as the shared permission refusal", async () => {
+    const err = await saveRefusalFromResponse(
+      Response.json({ error: "Forbidden" }, { status: 403 }),
+      SAVE_FALLBACK,
+    );
+    expect(err).toBeInstanceOf(ForbiddenSaveError);
+  });
+
+  it("keeps a worded JSON 403's own sentence", async () => {
+    const err = await saveRefusalFromResponse(
+      Response.json({ error: "Two-factor verification required" }, { status: 403 }),
+      SAVE_FALLBACK,
+    );
+    expect(err).toBeInstanceOf(ApiRefusalError);
+    expect(err).not.toBeInstanceOf(ForbiddenSaveError);
+    expect(err.message).toBe("Two-factor verification required");
+  });
+
+  it("reads an HTML 5xx as the fallback, never the page's text", async () => {
+    const err = await saveRefusalFromResponse(htmlPage(502), SAVE_FALLBACK);
+    expect(err).toBeInstanceOf(ApiRefusalError);
+    expect(err.message).toBe(SAVE_FALLBACK);
+  });
+
+  it("keeps a JSON 5xx's own error sentence", async () => {
+    const err = await saveRefusalFromResponse(
+      Response.json({ error: "Settings store unavailable" }, { status: 500 }),
+      SAVE_FALLBACK,
+    );
+    expect(err).toBeInstanceOf(ApiRefusalError);
+    expect(err.message).toBe("Settings store unavailable");
   });
 });

@@ -1,5 +1,4 @@
 import type { EntranceFeeCategory } from "@prisma/client";
-import type { EntranceFeeContext } from "@/lib/xero-mappings";
 import { readAdminGrantCreditNotePayload, XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE, type AdminGrantCreditNotePayload } from "@/lib/admin-grant-credit-note-payload";
 import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, type OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
@@ -279,6 +278,26 @@ export function readQueueType(value: unknown): string | null {
   }
 
   return readString(payload.queueType);
+}
+
+/**
+ * THE REQUEST A PENDING OUTBOX ROW MUST HOLD (#5228, `INV-INT-025`): a queued
+ * request the outbox can read, naming the row's own `queueType` column. The
+ * column never changes after enqueue, so the outbox builds its claim from it;
+ * this says whether the stored request can then be sent under that claim.
+ * Null for anything else - a handler's execution request (`invoices`,
+ * `creditNotes`, no `queueType`), a request for another queue type, one too
+ * incomplete to read, or a row with no outbox queue type. Every writer that
+ * puts an outbound row with a queue type back on PENDING checks the request it
+ * leaves there with this one reading (`docs/xero/ARCHITECTURE.md`).
+ */
+export function readQueuedOutboxRequestFor(
+  queueType: string | null,
+  requestPayload: unknown,
+): QueuedOutboxPayload | null {
+  if (!queueType || !(XERO_OUTBOX_QUEUE_TYPES as readonly string[]).includes(queueType)) return null;
+  const payload = readQueuedOutboxPayload(requestPayload);
+  return payload?.queueType === queueType ? payload : null;
 }
 
 export function readQueuedOutboxPayload(
@@ -654,29 +673,3 @@ export function getQueuedOutboxExpectedOperation(
   };
 }
 
-/** The entrance-fee context a queued invoice carries, so the worker need not re-read the fee. */
-export function buildPrecomputedEntranceFeeContext(
-  payload: QueuedOutboxPayload
-): EntranceFeeContext | null {
-  if (
-    payload.queueType !== XERO_OUTBOX_ENTRANCE_FEE_TYPE ||
-    !payload.category ||
-    payload.feeAmountCents === null ||
-    payload.feeAmountCents === undefined
-  ) {
-    return null;
-  }
-
-  const entranceFeeContext: EntranceFeeContext = {
-    category: payload.category,
-    feeMapping: {
-      itemCode: payload.itemCode ?? null,
-      amountCents: payload.feeAmountCents,
-    },
-  };
-  if (payload.description) {
-    entranceFeeContext.description = payload.description;
-  }
-
-  return entranceFeeContext;
-}

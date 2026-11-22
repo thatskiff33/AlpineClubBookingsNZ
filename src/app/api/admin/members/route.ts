@@ -5,6 +5,7 @@ import {
   createMemberSchema,
   listAdminMembers,
 } from "@/lib/admin-members-service";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   grantMembershipAdminDietaryAccess,
@@ -81,14 +82,11 @@ export async function POST(req: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = createMemberSchema.safeParse(body);
   if (!parsed.success) {

@@ -18,6 +18,7 @@ import { GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE, organiserBankChildPriceChangeRe
 import { ORGANISER_COMBINED_INVOICE_MISSING_MESSAGE, organiserCombinedInvoiceRefusal } from "@/lib/organiser-billing";
 import type { BookingModificationSettlementOptions } from "@/lib/booking-modify-settlement";
 import { noReductionAgainstUnpaidAsk, readReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
+import { editRefundGoesBackByHand } from "@/lib/edit-refund-hand-back";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /** #3809: the club's day and format the shared settlement now takes, resolved before its transaction. */
@@ -80,6 +81,7 @@ const ORGANISER_OPTIONS: BookingModificationSettlementOptions = {
   requiresSettlementMethod: false,
   returnsToOrganiser: true,
   organiserRefundByBankTransfer: false,
+  refundByBankTransfer: false,
   refundHeldForDispute: false,
 };
 
@@ -130,6 +132,25 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     });
   });
 
+  it("MUTATION (#5212): the child's own mirror holds no Stripe intent, and the refund is still the organiser's card's", async () => {
+    // Drop `paidByOrganiserCard` from `editRefundHasCardToReturnTo` and this
+    // reduction is handed to the treasurer although the combined payment can refund it.
+    const booking = child();
+    expect(booking.payment?.stripePaymentIntentId).toBeNull();
+    const tx = txWithSettlement(CARD_SETTLEMENT);
+    Object.assign(tx.payment, { findUnique: vi.fn(async () => ({ id: booking.payment!.id, stripePaymentIntentId: null, transactions: [] })) });
+    const result = await applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk(-1500),
+      ...SETTLEMENT_DAY,
+      booking,
+      priceDiffCents: -1500,
+      changeFeeCents: 0,
+      settlementOptions: ORGANISER_OPTIONS,
+    });
+    expect(result.hasSucceededPayment).toBe(true);
+    expect(editRefundGoesBackByHand(result)).toBe(false);
+    expect(result.organiserChildRefund).toEqual({ settlement: CARD_SETTLEMENT, amountCents: 1500 });
+  });
+
   it("refuses account credit for a booking the organiser paid for, before the edit commits", async () => {
     await expect(
       applyPaymentAdjustments(txWithSettlement(CARD_SETTLEMENT), { reduction: noReductionAgainstUnpaidAsk(-1500),
@@ -159,9 +180,11 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
 
   it("leaves an ordinary booking's refund on the ordinary path", async () => {
     const tx = txWithSettlement(CARD_SETTLEMENT);
+    const own = child({ organiserSettled: false, parentBookingId: null });
     const result = await applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk(-1500),
       ...SETTLEMENT_DAY,
-      booking: child({ organiserSettled: false, parentBookingId: null }),
+      // #5212: an ordinary card booking refunds against its own Stripe intent.
+      booking: editDoorBooking({ ...own, payment: { ...own.payment!, stripePaymentIntentId: "pi_own" } }),
       priceDiffCents: -1500,
       changeFeeCents: 0,
       settlementOptions: { ...ORGANISER_OPTIONS, returnsToOrganiser: false, requiresSettlementMethod: true },
@@ -240,7 +263,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     expect(ib).toMatchObject({ returnsToOrganiser: true, organiserRefundByBankTransfer: true, requiresSettlementMethod: false, accountCreditAmountCents: 0, accountCreditPercentage: 0 });
     expect(ib?.cardRefundAmountCents).toBe(card?.cardRefundAmountCents);
     // The untiered options (a guest's acceptance) answer the same way.
-    const full = calculateFullReductionSettlementOptions({ booking: ibChild(), netChargeCents: -1500, refundableCashCents: 4500, todayAtClub, refundHeldForDispute: false });
+    const full = calculateFullReductionSettlementOptions({ booking: ibChild(), netChargeCents: -1500, refundableCashCents: 4500, todayAtClub, refundHeldForDispute: false, hasCardToReturnTo: false });
     expect(full).toMatchObject({ returnsToOrganiser: true, organiserRefundByBankTransfer: true, requiresSettlementMethod: false, accountCreditAmountCents: 0, cardRefundAmountCents: 1500 });
   });
 

@@ -455,7 +455,7 @@ export function stripeRefundMirrorShowsCapture(payment: {
  * #1473/#1491: THE capture evidence for a payment whose status cannot be taken
  * at its word - a captured ledger row (each caller's own read), else the STRIPE
  * mirror - or (#3949) an Internet Banking organiser child's settle mirror. One
- * home (`INV-SSOT-001`): `booking-cancel.ts`, the flattened-status backfill and
+ * home (`INV-SSOT-001`): `booking-cancel.ts`, `payment-capture-evidence.ts` and
  * every caller of it, and Net Collected (`netCollectedPaymentTookMoney`) all ask it.
  */
 export function paymentShowsCaptureEvidence(
@@ -656,6 +656,15 @@ export function recordedChangeFeeCents(
   payment: { changeFeeCents: number | null } | null | undefined,
 ): number {
   return Math.max(0, payment?.changeFeeCents ?? 0);
+}
+
+/** #5039 (`INV-MOD-042`): the fee an edit's credit clamp keeps credit for - the
+ * payment's fee read before the edit's write, plus this edit's own. Both doors. */
+export function feeOwedAfterEditCents(
+  paymentBeforeEdit: { changeFeeCents: number | null } | null | undefined,
+  feeRecordedByThisEditCents: number,
+): number {
+  return recordedChangeFeeCents(paymentBeforeEdit) + feeRecordedByThisEditCents;
 }
 
 /**

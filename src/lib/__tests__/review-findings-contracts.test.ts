@@ -500,6 +500,10 @@ describe("review finding source/schema contracts", () => {
         "public/school booking requests: admin-facing, no member reads the answer",
       ],
       [
+        "src/lib/booking-import/plan.ts",
+        "#5005 paid-booking import: officer-only (finance edit and bookings edit), calls the guard as ADMIN, and its refusal names a file line number and nights, never a member's name",
+      ],
+      [
         "src/lib/booking-member-night-conflicts.ts",
         "the guard itself",
       ],
@@ -1889,10 +1893,11 @@ describe("review finding source/schema contracts", () => {
 
   it("serializes stale waitlist-offer expiry and re-offer selection behind a transaction", () => {
     const source = readRepoFile("src/lib/waitlist.ts");
+    // #5402: the last function in the file since the uncalled
+    // `updateWaitlistPositions` after it was deleted, so it runs to the end.
     const expireStaleOffersBlock = sliceFrom(
       source,
       "export async function expireStaleOffers",
-      "// test seam"
     );
 
     expect(expireStaleOffersBlock).toContain("prisma.$transaction");

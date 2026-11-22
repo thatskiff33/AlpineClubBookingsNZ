@@ -33,6 +33,8 @@ import { useWorkingBeeDiscount } from "./use-working-bee-discount";
 import { useSelectionCancellationSchedule } from "./use-selection-cancellation-schedule";
 import { useWizardWorkPersistence } from "./use-wizard-work-persistence";
 import type { SavedWizardWork } from "@/lib/booking-wizard-work";
+import { readWorkPartyJoinId, useWorkPartyPrefill } from "./use-work-party-prefill";
+import { fetchStayWorkParties, reconcileWorkPartySelection } from "./stay-work-parties";
 import {
   getBookingErrorPaymentTargets,
   type BookingErrorPaymentTarget,
@@ -274,6 +276,8 @@ export function useBookingWizard() {
    */
   const replaceExceptionRequestId =
     searchParams?.get("replaceRequest")?.trim() || null;
+  // #5148: a "Join Work Party" link's work party: a fresh entry (see useWizardWorkPersistence).
+  const workPartyJoinId = readWorkPartyJoinId(searchParams);
   const { lodgeCapacity } = useClubIdentity();
   const [step, setStep] = useState<BookingWizardStep>("dates");
   // Lodge being booked (multi-lodge phase 8). /api/lodges only returns
@@ -918,6 +922,7 @@ export function useBookingWizard() {
   }
   const workPersistence = useWizardWorkPersistence({
     enabled: replaceExceptionRequestId === null,
+    freshEntry: workPartyJoinId !== null,
     memberId: session?.user?.id ?? null,
     lodges,
     lodgesLoading,
@@ -1751,56 +1756,35 @@ export function useBookingWizard() {
           .then((codes) => setAvailablePromoCodes(codes))
           .catch(() => {});
 
-        // Fetch active working bee events that overlap these dates; events
-        // bound to another lodge are filtered out server-side.
-        const workPartySequence = ++workPartySequenceRef.current;
-        workPartyAbortRef.current?.abort();
-        const workPartyController = new AbortController();
-        workPartyAbortRef.current = workPartyController;
-        const ownsWorkPartyRequest = () =>
-          workPartySequence === workPartySequenceRef.current &&
-          activeScopedLodgeIdRef.current === requestedLodgeId;
-        fetch(
-          `/api/work-parties/active?checkIn=${checkInStr}&checkOut=${checkOutStr}${
-            `&lodgeId=${encodeURIComponent(requestedLodgeId)}`
-          }`,
-          { signal: workPartyController.signal },
-        )
-          .then((r) => r.ok ? r.json() : { events: [] })
-          .then((data) => {
-            const events: WorkPartyEvent[] = data.events || [];
-            if (!ownsWorkPartyRequest()) return;
+        // Fetch active working bee events that overlap these dates.
+        fetchStayWorkParties({
+          checkIn: checkInStr,
+          checkOut: checkOutStr,
+          lodgeId: requestedLodgeId,
+          sequenceRef: workPartySequenceRef,
+          abortRef: workPartyAbortRef,
+          stillCurrent: () => activeScopedLodgeIdRef.current === requestedLodgeId,
+          onFailure: () => setActiveWorkPartyEvents([]),
+          onEvents: (events) => {
             setActiveWorkPartyEvents(events);
-            if (
-              selectedWorkPartyEventId &&
-              !events.some((e) => e.id === selectedWorkPartyEventId)
-            ) {
-              const previous = activeWorkPartyEvents.find(
-                (e) => e.id === selectedWorkPartyEventId
-              );
-              setSelectedWorkPartyEventId(null);
-              setAttendingWorkParty(false);
-              if (previous) {
-                setWorkPartyClearedNotice(previous.name);
-              }
-              // Combined, the codes stay and the working-bee effect re-prices
-              // them without it; alone, the discount just goes.
-              setAppliedPromos((current) =>
-                current.some((promo) => promo.workPartyEvent) && !combineWorkPartyWithCodesRef.current
-                  ? []
-                  : current
-              );
-            }
-          })
-          .catch((requestError) => {
-            if (requestError instanceof DOMException && requestError.name === "AbortError") return;
-            if (ownsWorkPartyRequest()) setActiveWorkPartyEvents([]);
-          })
-          .finally(() => {
-            if (workPartyAbortRef.current === workPartyController) {
-              workPartyAbortRef.current = null;
-            }
-          });
+            reconcileWorkPartySelection(
+              events,
+              {
+                selectedId: selectedWorkPartyEventId,
+                previousEvents: activeWorkPartyEvents,
+                // #5148: the hook declared below is initialised by now.
+                joinedId: workPartyPrefill.takePendingWorkPartySelection(events),
+              },
+              {
+                select: setSelectedWorkPartyEventId,
+                setAttending: setAttendingWorkParty,
+                noticeCleared: setWorkPartyClearedNotice,
+                setAppliedPromos,
+                combineWithCodesRef: combineWorkPartyWithCodesRef,
+              },
+            );
+          },
+        });
       } else {
         handleBookingApiError((await readJsonOrNull(res)) ?? {}, "Failed to calculate price");
       }
@@ -1875,6 +1859,48 @@ export function useBookingWizard() {
     resumeRestoredQuote();
   }, [restoredRequotePending, step, familyMembersLoaded, familyMembersLoadFailed]);
 
+  /**
+   * The fields every create-booking POST carries (#5398): submit, join waitlist
+   * and save draft each add only their own. One builder, so a field cannot again
+   * travel on one path and not another.
+   *
+   * #2930 fix round: the applied credit travels with the waitlist post too. THAT
+   * POST CAN CREATE A REAL BOOKING: `POST /api/bookings` runs the ordinary create
+   * first and only falls through to `createWaitlistedBooking` when capacity
+   * refuses, so a member who pressed Join Waitlist with the credit on screen got
+   * the booking without it when beds freed up. On the waitlist arm it is simply
+   * ignored: a waitlist place moves no money.
+   *
+   * #5398: a blank review reason is left out, never sent as an empty string. The
+   * schema refuses `""` with a generic "Invalid input"; left out, a draft reaches
+   * the route's own refusal. Submit and waitlist stop a blank reason in the
+   * browser before this is built.
+   */
+  function buildCreateBookingBody(guestPayload: GuestData[]) {
+    return {
+      checkIn: checkIn!,
+      checkOut: checkOut!,
+      lodgeId: scopedLodgeId,
+      guests: guestPayload,
+      // #2721: only the declarations that still describe a live collision
+      // travel; see `declarationsPayload`.
+      dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
+      notes: notes || undefined,
+      ...createRequestPromoFields(appliedPromos),
+      workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
+      expectedArrivalTime: expectedArrivalTime || undefined,
+      requestedRoomId: requestedRoomId || undefined,
+      cancelIfGuestsBumped:
+        guests.some((g) => !g.isMember) && cancelIfGuestsBumped
+          ? true
+          : undefined,
+      applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
+      memberReviewJustification: requiresAdminReviewLocal
+        ? memberReviewJustification.trim() || undefined
+        : undefined,
+    };
+  }
+
   async function handleSubmit() {
     /*
      * #2701, owner decision 1: A MEMBER CANNOT COMPLETE A BOOKING WHOSE LODGE
@@ -1925,8 +1951,6 @@ export function useBookingWizard() {
     // A fresh attempt retires the previous refusal's offer: the payload may have
     // changed, so the rules the server would freeze may have too (#2562).
     setExceptionOffer(null);
-    const checkInStr = checkIn!;
-    const checkOutStr = checkOut!;
 
     let navigating = false;
     try {
@@ -1934,28 +1958,9 @@ export function useBookingWizard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          checkIn: checkInStr,
-          checkOut: checkOutStr,
-          lodgeId: scopedLodgeId,
-          guests: guestPayload,
-          // #2721: only the declarations that still describe a live collision
-          // travel; see `declarationsPayload`.
-          dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
-          notes: notes || undefined,
-          ...createRequestPromoFields(appliedPromos),
-          workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
-          expectedArrivalTime: expectedArrivalTime || undefined,
-          requestedRoomId: requestedRoomId || undefined,
-          cancelIfGuestsBumped:
-            guests.some((g) => !g.isMember) && cancelIfGuestsBumped
-              ? true
-              : undefined,
-          applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
+          ...buildCreateBookingBody(guestPayload),
           paymentMethod:
             paymentMethod === "internet_banking" ? paymentMethod : undefined,
-          memberReviewJustification: requiresAdminReviewLocal
-            ? memberReviewJustification.trim()
-            : undefined,
         }),
       });
 
@@ -2076,8 +2081,6 @@ export function useBookingWizard() {
     // changes a real booking, so offering it as the answer to a refused
     // waitlist join would answer a different question than the member asked.
     setExceptionOffer(null);
-    const checkInStr = checkIn!;
-    const checkOutStr = checkOut!;
 
     let navigating = false;
     try {
@@ -2085,48 +2088,12 @@ export function useBookingWizard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          checkIn: checkInStr,
-          checkOut: checkOutStr,
-          guests: guestPayload,
-          // #2721: only the declarations that still describe a live collision
-          // travel; see `declarationsPayload`.
-          dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
-          notes: notes || undefined,
-          ...createRequestPromoFields(appliedPromos),
-          workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
-          expectedArrivalTime: expectedArrivalTime || undefined,
-          requestedRoomId: requestedRoomId || undefined,
-          cancelIfGuestsBumped:
-            guests.some((g) => !g.isMember) && cancelIfGuestsBumped
-              ? true
-              : undefined,
-          lodgeId: scopedLodgeId,
-          /**
-           * #2930 fix round: the credit the member applied on the review step
-           * travels with the waitlist post too.
-           *
-           * THIS POST CAN CREATE A REAL BOOKING. `POST /api/bookings` runs the
-           * ordinary create first and only falls through to
-           * `createWaitlistedBooking` when capacity refuses — `waitlist: true`
-           * says "and if it refuses, waitlist me", not "do not book me". Since
-           * this became the review step's PRIMARY action rather than a fallback
-           * after a 409, the member reaches it with the credit control on screen
-           * and the total reading as covered; if beds freed up between the
-           * advisory and the press, they got the booking without the credit and
-           * owed more than the screen quoted. `handleSubmit` has always sent it.
-           *
-           * On the waitlist arm it is simply ignored: `createWaitlistedBooking`
-           * takes no `applyCreditCents` and a waitlist place moves no money.
-           */
-          applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
+          ...buildCreateBookingBody(guestPayload),
           waitlist: true,
           alternateLodgeIds:
             waitlistAlternateLodgeIds.length > 0
               ? waitlistAlternateLodgeIds
               : undefined,
-          memberReviewJustification: requiresAdminReviewLocal
-            ? memberReviewJustification.trim()
-            : undefined,
         }),
       });
 
@@ -2171,8 +2138,6 @@ export function useBookingWizard() {
     setGuestProfileBlocks([]);
     setMemberNightConflicts([]);
     setExceptionOffer(null);
-    const checkInStr = checkIn!;
-    const checkOutStr = checkOut!;
 
     let navigating = false;
     try {
@@ -2180,27 +2145,8 @@ export function useBookingWizard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          checkIn: checkInStr,
-          checkOut: checkOutStr,
-          guests: guestPayload,
-          // #2721: only the declarations that still describe a live collision
-          // travel; see `declarationsPayload`.
-          dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
-          notes: notes || undefined,
-          ...createRequestPromoFields(appliedPromos),
-          workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
-          expectedArrivalTime: expectedArrivalTime || undefined,
-          requestedRoomId: requestedRoomId || undefined,
-          cancelIfGuestsBumped:
-            guests.some((g) => !g.isMember) && cancelIfGuestsBumped
-              ? true
-              : undefined,
-          applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
-          lodgeId: scopedLodgeId,
+          ...buildCreateBookingBody(guestPayload),
           draft: true,
-          memberReviewJustification: requiresAdminReviewLocal
-            ? memberReviewJustification.trim() || undefined
-            : undefined,
         }),
       });
 
@@ -2514,6 +2460,20 @@ export function useBookingWizard() {
     setWorkPartyError,
   });
 
+  // #5148: the Join prefill, after every existing effect so their order is unchanged.
+  const workPartyPrefill = useWorkPartyPrefill({
+    workPartyId: workPartyJoinId,
+    lodgeIds: lodges.map((lodge) => lodge.id),
+    lodgesSettled: !lodgesLoading && !lodgesFailed && !lodgesForbidden,
+    lodgeId,
+    scopedLodgeId,
+    onDatesStep: step === "dates",
+    memberStarted: checkIn !== null || step !== "dates",
+    bookingBlocked: subscriptionLoading ? null : bookingBlockedBySubscription,
+    selectLodge: handleLodgeChange,
+    selectDates: (ci, co) => void handleDateSelect(ci, co),
+  });
+
   const wizardSteps: Array<{ id: BookingWizardStep; label: string }> = [
     { id: "dates", label: "Select Dates" },
     { id: "guests", label: "Add Guests" },
@@ -2624,6 +2584,7 @@ export function useBookingWizard() {
     // #2562 — the member-facing exception-request surface.
     exceptionOffer,
     replaceExceptionRequestId,
+    workPartyPrefillNotice: workPartyPrefill.workPartyPrefillNotice,
     submitExceptionRequest,
     getGuestProfileBlockMessage,
     getGuestProfileActionLabel,

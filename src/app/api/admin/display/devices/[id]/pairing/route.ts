@@ -4,10 +4,10 @@ import { requireAdmin } from "@/lib/session-guards";
 import { confirmDevicePairing } from "@/lib/lodge-display-auth";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 
-// Admin bind step of lobby display pairing (fork issue #27, ADR-001 §2.2):
+// Admin bind step of lobby display pairing (fork issue hoppers99/AlpineClubBookingsNZ#27, ADR-001 §2.2):
 // the admin reads the code off the TV and enters it against a device record;
 // this persists pairingCode + expiry on that row, arming the device's claim
-// poll. LTV-008 (#33) builds the device-management UI that calls this.
+// poll. LTV-008 (hoppers99/AlpineClubBookingsNZ#33) builds the device-management UI that calls this.
 
 const bodySchema = z.object({
   code: z.string().min(1).max(16),

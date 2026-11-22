@@ -135,3 +135,63 @@ describe("admin club-identity route — facebookUrl (C5 #1984)", () => {
     expect(mocks.upsert).not.toHaveBeenCalled();
   });
 });
+
+describe("admin club-identity route — invoice supplier (#5066)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.requireAdmin.mockResolvedValue({ ok: true, session: { user: { id: "admin-1" } } });
+    mocks.findUnique.mockResolvedValue({ ...existing, legalName: "Existing Club Inc", postalAddress: "PO Box 1\nTown" });
+    mocks.upsert.mockImplementation(async ({ create, update }: {
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    }) => ({ ...create, ...update }));
+  });
+
+  it("GET returns the legal name and postal address", async () => {
+    const response = await GET();
+    expect(await response.json()).toMatchObject({
+      settings: { legalName: "Existing Club Inc", postalAddress: "PO Box 1\nTown" },
+    });
+  });
+
+  it("stores a trimmed legal name and the address one trimmed line per line, blank lines dropped", async () => {
+    const response = await put({ ...validBody, legalName: "  New Club Incorporated ", postalAddress: " PO Box 7 \r\n\n  Ohakune 4625 \n" });
+    expect(response.status).toBe(200);
+    expect(mocks.upsert.mock.calls[0][0].update).toMatchObject({
+      legalName: "New Club Incorporated",
+      postalAddress: "PO Box 7\nOhakune 4625",
+    });
+    expect(mocks.auditCreate.mock.calls[0][0].metadata.after).toMatchObject({
+      legalName: "New Club Incorporated",
+      postalAddress: "PO Box 7\nOhakune 4625",
+    });
+  });
+
+  it("clears either to null when sent blank (the club name and no address are printed)", async () => {
+    await put({ ...validBody, legalName: " ", postalAddress: "\n \n" });
+    expect(mocks.upsert.mock.calls[0][0].update).toMatchObject({ legalName: null, postalAddress: null });
+  });
+
+  it("leaves both as stored when a body from before this release omits them", async () => {
+    const response = await put(validBody);
+    expect(response.status).toBe(200);
+    const { update, create } = mocks.upsert.mock.calls[0][0];
+    expect("legalName" in update).toBe(false);
+    expect("postalAddress" in update).toBe(false);
+    expect("legalName" in create).toBe(false);
+  });
+
+  it("refuses a legal name with a line break with 400 and writes nothing", async () => {
+    for (const legalName of ["Alpine Club\nIncorporated", "Alpine Club\rIncorporated"]) {
+      expect((await put({ ...validBody, legalName })).status).toBe(400);
+    }
+    expect((await put({ ...validBody, legalName: "x".repeat(201) })).status).toBe(400);
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses an over-long address with 400 and writes nothing", async () => {
+    const response = await put({ ...validBody, postalAddress: "x".repeat(501) });
+    expect(response.status).toBe(400);
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+});

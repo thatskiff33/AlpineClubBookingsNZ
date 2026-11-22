@@ -61,7 +61,7 @@ export function isMinorAgeTier(
  * Below this, a booking alone in the lodge is just a small party and its people
  * are named normally; at or above it, a booking that had the building to itself
  * is reduced to its group label. An organisation booking is a group at any size.
- * Documented in the lobby display's design.md §10 and review-flagged on epic #25.
+ * Documented in the lobby display's design.md §10 and review-flagged on epic hoppers99/AlpineClubBookingsNZ#25.
  *
  * Shared with the member lodge roster (#2942), which applies the same gate.
  */
@@ -105,7 +105,7 @@ interface OrganiserShape {
 
 /**
  * Whether a booking's guests may be individually named on a surface other
- * people read (design.md §10 settled rules; issue #174): sole occupancy of the
+ * people read (design.md §10 settled rules; issue hoppers99/AlpineClubBookingsNZ#174): sole occupancy of the
  * lodge, any minor in the booking, an organisation organiser, or counts-only
  * granularity all suppress individual names in favour of the booking's reduced
  * group label. This is the SINGLE definition of that condition — every surface

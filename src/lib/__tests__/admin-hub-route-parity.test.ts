@@ -147,6 +147,8 @@ const ORACLE_ROUTE_AREAS: ReadonlyArray<{
       "/admin/calendar",
       "/admin/display",
       "/admin/maintenance-reports",
+      // Fork triyder/AlpineClubBookingsNZ#121: the Food Orders settings card.
+      "/admin/food-orders",
     ],
   },
   {
@@ -186,6 +188,9 @@ const ORACLE_ROUTE_AREAS: ReadonlyArray<{
       "/admin/issue-reports",
       "/admin/audit-log",
       "/admin/ai-assistant",
+      // ALP-653: AI app connections, added after C2 in a new directory. The
+      // reviewed answer is support, the area its /api/admin/mcp routes use.
+      "/admin/ai-connections",
     ],
   },
   { area: "overview", prefixes: ["/admin"] },
@@ -245,6 +250,8 @@ const ORACLE_MODULE_GATES: ReadonlyArray<{
   { flag: "aiAssistant", prefixes: ["/admin/ai-assistant"] },
   { flag: "aiDiagnostics", prefixes: ["/admin/ai-diagnostics"] },
   { flag: "maintenanceReports", prefixes: ["/admin/maintenance-reports"] },
+  { flag: "foodOrders", prefixes: ["/admin/food-orders"] },
+  { flag: "mcpServer", prefixes: ["/admin/ai-connections"] },
   { flag: "commsPortal", prefixes: ["/admin/message-board"] },
   { flag: "alpineCentralServer", prefixes: ["/admin/alpine-server"] },
 ];
@@ -1087,6 +1094,7 @@ describe("the Lodge hub's Lobby Display and Lodges pages keep their admission (C
     "maintenance-reports",
     "lockers",
     "calendar",
+    "food-orders", // #5143: the Food Orders settings page, not yet moved into the hub
   ];
 
   const only = (area: AdminPermissionArea, level: "view" | "edit"): AdminPermissionInput => ({

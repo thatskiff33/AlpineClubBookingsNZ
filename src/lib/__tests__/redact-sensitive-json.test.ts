@@ -38,6 +38,12 @@ describe("redact-sensitive-json", () => {
     });
   });
 
+  it("redacts the AI app connection's internal sign-in header (ALP-653)", () => {
+    expect(
+      redactSensitiveJson({ headers: { "x-mcp-principal": "payload.signature", "X-Mcp-Principal": "p.s" } }),
+    ).toEqual({ headers: { "x-mcp-principal": "[REDACTED]", "X-Mcp-Principal": "[REDACTED]" } });
+  });
+
   it("redacts JSON-shaped error text that includes an authorization header", () => {
     expect(
       redactSensitiveText(

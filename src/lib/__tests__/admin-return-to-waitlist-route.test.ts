@@ -15,8 +15,9 @@ const mocks = vi.hoisted(() => {
     booking: {
       findUnique: vi.fn(),
       updateMany: vi.fn(),
-      count: vi.fn(),
+      findMany: vi.fn(),
     },
+    bookingDefaults: { findUnique: vi.fn().mockResolvedValue(null) },
     auditLog: {
       findFirst: vi.fn(),
       create: vi.fn(),
@@ -121,6 +122,7 @@ function strandedRow(overrides: Record<string, unknown> = {}) {
     wholeLodgeHold: false,
     wholeLodgeHoldAt: null,
     wholeLodgeHoldByMemberId: null,
+    noEmails: false,
     member: { email: "member@example.com", firstName: "Alex" },
     payment: null,
     ...overrides,
@@ -169,7 +171,18 @@ describe("POST /api/admin/bookings/[id]/return-to-waitlist (#2649)", () => {
     );
     bookingReads(strandedRow());
     mocks.tx.booking.updateMany.mockResolvedValue({ count: 1 });
-    mocks.tx.booking.count.mockResolvedValue(2);
+    // #5402: the live queue the position is read from. Two entries joined
+    // earlier at the same lodge on overlapping nights, so the booking is #3.
+    mocks.tx.booking.findMany.mockResolvedValue(
+      ["waiting-1", "waiting-2"].map((id, index) => ({
+        id,
+        lodgeId: "lodge-1",
+        checkIn: CHECK_IN,
+        checkOut: CHECK_OUT,
+        createdAt: new Date(`2026-05-0${index + 1}T00:00:00.000Z`),
+        waitlistAlternateLodges: [],
+      })),
+    );
     mocks.tx.auditLog.findFirst.mockResolvedValue(strandReport());
     mocks.tx.auditLog.create.mockResolvedValue({});
     mocks.reconcile.mockResolvedValue(undefined);
@@ -218,6 +231,29 @@ describe("POST /api/admin/bookings/[id]/return-to-waitlist (#2649)", () => {
       db: mocks.tx,
       previousRange: { checkIn: CHECK_IN, checkOut: CHECK_OUT },
     });
+  });
+
+  it("shows no number for a silenced booking, while the audit row and email still quote its place (#5402)", async () => {
+    bookingReads(strandedRow({ noEmails: true }));
+
+    const response = await POST(returnRequest(), routeParams());
+    const body = await response.json();
+
+    expect(body).toEqual({
+      success: true,
+      status: "WAITLISTED",
+      waitlistPosition: null,
+    });
+    expect(mocks.tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        metadata: expect.objectContaining({ waitlistPosition: 3 }),
+      }),
+    });
+    // Read from the live queue under both locks, after the claim.
+    const queueRead = mocks.tx.booking.findMany.mock.invocationCallOrder[0]!;
+    expect(mocks.tx.booking.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      queueRead,
+    );
   });
 
   it("takes the global lock before the lodge lock, and re-reads mutable state after both", async () => {
@@ -414,7 +450,8 @@ describe("POST /api/admin/bookings/[id]/return-to-waitlist (#2649)", () => {
     // is the lock this route takes, the rows the reconcile prunes, and therefore
     // the queue the freed beds belong to. `expireStaleOffers` reads
     // `waitlistOfferedLodgeId` because ITS entry is still WAITLIST_OFFERED and
-    // holds a bed at the offered lodge — copying that rule here would sweep a
+    // the place it was offered is at the offered lodge (an offer holds no
+    // capacity, INV-CAP-011) — copying that rule here would sweep a
     // lodge this repair freed nothing at and leave the freed beds unoffered.
     // Structural, not conditional: the mutable re-read no longer SELECTS the
     // offered lodge at all, so there is nothing to key off by mistake.

@@ -96,6 +96,10 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
   "src/lib/admin-payments-service.ts > listAdminPayments":
     "the payments board reads each row's updatedAt for the latest activity (a max) and sums for the " +
     "ledger gap; neither depends on the order.",
+  "src/lib/booking-cash-evidence.ts > cashEvidencePaymentSelect":
+    "#4069 (INV-PAY-159): the cash-cover reader sums the captured rows and their refunds, asks whether ANY " +
+    "row is back-filled, a stored-figure receipt or over-refunded (`.some`), and looks a superseded charge up " +
+    "by its id (`supersededCaptureHeldBack`); none depends on the order.",
   "src/lib/booking-ledger-settlement-sync.ts > syncBookingLedgerSettlements":
     "the settlement sync posts one line per captured row and per refund, keyed by the row's id " +
     "(planSettlementLines); the set of lines, not their order, is what is posted.",
@@ -105,8 +109,6 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
   "src/lib/booking-payment-cleanup.ts > queueSupersededPrimaryIntentCancellations":
     "queues a durable cancellation for EVERY superseded pending PRIMARY intent; each is keyed by its own " +
     "intent, so the order only changes the order they are queued in.",
-  "src/lib/cancel-flattened-payment-backfill.ts > CANDIDATE_PAYMENT_SELECT":
-    "reads only each row's status to ask whether ANY row was captured (`.some`).",
   "src/lib/cron-confirm-pending.ts > cancelSupersededLinkIntentsBestEffort":
     "cancels EVERY other in-flight link intent, best effort, each by its own intent id; the order only " +
     "changes the order the cancellations are sent in.",

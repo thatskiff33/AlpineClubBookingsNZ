@@ -107,6 +107,14 @@ than as an edit nobody made. Bundles are accepted only at the exact format versi
 that wrote them, so an older bundle is refused outright rather than importing this
 column as empty.
 
+**Images are cleaned on import.** Every image a bundle carries, and an inline
+club logo, has its hidden details (location, device, owner) removed before it
+is stored, as on every upload ([Image Manager](image-manager.md#hidden-details-are-removed)).
+An image the app cannot confirm clean is a validation **error** naming the file,
+so Apply stays disabled: replace that image in the source club with a fresh
+copy from an image editor, export again, and re-preview. Images already stored
+on the target before this cleaning existed are not changed (#5244).
+
 **Connected provider credentials never travel.** A bundle never carries the
 Xero/Stripe/Google/backup secrets your club has connected — not the encrypted
 values, and not even a note of which providers are configured. This is permanent
@@ -152,8 +160,8 @@ new target receives the built-in on default. If the whole per-lodge settings
 file is absent, that lodge's existing row is left alone.
 
 Club identity and email message settings work slightly differently. Their fields
-— club name, short name, hut-leader label, Facebook URL, support and contact
-addresses, public URL — are optional overrides on top of the values in the
+— club name, short name, hut-leader label, Facebook URL, legal name and postal
+address (#5066), support and contact addresses, public URL — are optional overrides on top of the values in the
 install's own configuration file. When the source club **has** set them they are
 exported and imported like any other setting, so a transfer does move the
 source's club name and addresses onto the target; that is intended, and it is
@@ -175,6 +183,8 @@ where there was none.
 | A fresh install came up **unconfigured** and the logs say nothing was written | The boot-time bundle at `CONFIG_BUNDLE_IMPORT_PATH` failed validation, so the auto-import refused (`refused-invalid`) and wrote nothing — a legacy bundle is the usual cause | Read the boot log line, which names the first validation error; replace the file with a current-shape export (or hand-fix and reseal it) and reboot, or import the bundle interactively on this page |
 | "This bundle was edited since export" warning | Manifest checksums don't match the files | Advisory only — apply anyway, or **Reseal** to refresh the manifest |
 | Xero org mismatch warning | The Xero config came from a different connected org | Verify the codes, or untick the Xero category before applying |
+| Error: "Opening Credits cannot use the same Xero account as …", with Apply disabled | Applied over what this club stores, the bundle would put **Opening Credits** on an account another mapping uses, the same rule the account mapping screen enforces | Change the Opening Credits code (or the other mapping's) in `xero-config/account-mappings.csv`, **Reseal** and re-preview, or untick the Xero category |
+| Warning: "Opening Credits needs the Exempt tax category …" | The bundle sets or changes **Opening Credits**, the club is, or is scheduled to be, GST-registered, and no Exempt tax category is mapped in the connected Xero organisation | Advisory only. A Full Admin maps **Exempt** on the Tax categories card, before or after applying; until then spent opening credits wait in the Xero queue. On a card booking, the booking's Xero invoice operation fails instead; retry it from the **Xero Operations** list once Exempt is mapped ([Xero](xero.md#map-the-clubs-tax-categories-xero-setup)) |
 | A door-code change warning appears | The bundle would set/change a lodge door code | Confirm it's intended before applying |
 | A "restore" didn't remove stale rows | Ordinary categories never delete; only the booking-policy sets are replaced | Remove stale ordinary rows on the owning admin page; the backup is the true rollback |
 | An older bundle is refused | The current app requires exact config-transfer format version 4: booking-policy replace semantics are destructive, and version 4 added a second required file to that category | Re-export from the current app; resealing an older bundle does not upgrade its meaning |

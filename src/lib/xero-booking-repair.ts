@@ -3,24 +3,11 @@
 // and its test, not on any live route/cron/webhook path). #1208 item 2 split
 // its ~2,700 lines of private helpers into cohesive xero-booking-repair-*
 // sub-modules; this module keeps the orchestrator + human-summary formatter and
-// re-exports the exact public surface so external importers still resolve.
+// re-exports the types its consumers name.
 // Import xero source modules directly, never the @/lib/xero facade (#1208).
-export {
-  XERO_BOOKING_REPAIR_ACTION_TYPES,
-  XERO_BOOKING_REPAIR_FINDING_CODES,
-} from "./xero-booking-repair-types";
 export type {
-  BookingXeroRepairAction,
-  BookingXeroRepairBookingSummary,
-  BookingXeroRepairFinding,
-  BookingXeroRepairPassReport,
   BookingXeroRepairRunReport,
-  BookingXeroRepairRunSummary,
   BookingXeroRepairScope,
-  XeroBookingRepairActionStatus,
-  XeroBookingRepairActionType,
-  XeroBookingRepairFindingCode,
-  XeroBookingRepairSeverity,
 } from "./xero-booking-repair-types";
 
 import type {
@@ -95,7 +82,8 @@ async function withPaidAnotherWayCloses(
  * #3924 round 12 (`LATE_CAPTURE_CARD_REFUND_RECORD_BY_HAND`): on a cancelled
  * booking, each late capture's card refunds no note will answer
  * (`readLateCaptureCardRefundsByHand`), named in the club's format - round
- * 14: with, apart, those a card note sent without a reply may answer.
+ * 14: with, apart, those a card note sent without a reply may answer; #4383:
+ * and those above what a capped receipt recorded.
  */
 async function withLateCaptureCardRefundsByHand(
   contexts: Awaited<ReturnType<typeof loadAuditData>>,
@@ -111,13 +99,15 @@ async function withLateCaptureCardRefundsByHand(
     if (intents.length === 0) continue;
     const byHand = await deps.readLateCaptureCardRefundsByHand(payment.id, intents);
     context.lateCaptureCardRefundsByHand = new Map(
-      [...byHand].map(([intent, { byHandCents, mayBeInXeroCents }]) => [
+      [...byHand].map(([intent, { byHandCents, mayBeInXeroCents, aboveRecordedCents }]) => [
         intent,
         {
           cents: byHandCents,
           amountLabel: formatCents(byHandCents, format),
           mayBeInXeroCents,
           mayBeInXeroLabel: formatCents(mayBeInXeroCents, format),
+          aboveRecordedCents,
+          aboveRecordedLabel: formatCents(aboveRecordedCents, format),
         },
       ]),
     );

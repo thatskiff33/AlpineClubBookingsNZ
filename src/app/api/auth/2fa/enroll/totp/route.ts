@@ -16,6 +16,7 @@ import {
   requireTwoFactorApiSession,
   twoFactorLockoutResponse,
 } from "@/lib/two-factor-api";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const enrollTotpSchema = z
   .object({
@@ -50,12 +51,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: blocked.error }, { status: blocked.status });
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = enrollTotpSchema.safeParse(body);
   if (!parsed.success) {

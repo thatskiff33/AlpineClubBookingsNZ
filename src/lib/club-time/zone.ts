@@ -48,7 +48,7 @@ export function requireClubTimeZone(
 
 /**
  * THE COMPATIBILITY SEAM, AND THE ONLY PLACE THAT BRANDS WITHOUT VALIDATING.
- * Retired with the last legacy adapter by CT-6 (#2991).
+ * Stays while the last legacy adapter (`date-only.ts`) does: #2991 (CT-6) closed with it kept.
  *
  * `src/lib/date-only.ts` passes `APP_TIME_ZONE` straight to
  * `Intl.DateTimeFormat` today, and `APP_TIME_ZONE` is

@@ -2,6 +2,7 @@
 
 import {
   formatLinkedMoveMoneySentence,
+  linkedMoveCombinedMoney,
   linkedMoveAllBookingsPhrase,
   linkedMoveDeclineConsequence,
   linkedMoveHeading,
@@ -138,16 +139,7 @@ export function HostingCoverageLinkedMovePrompt({
                 {prompt.linkedMoveAvailable ? (
                   <span className="block text-xs text-muted-foreground">
                     {formatLinkedMoveMoneySentence({
-                      combinedAmountDueCents: prompt.combinedAmountDueCents,
-                      combinedRefundCents: prompt.combinedRefundCents,
-                      combinedChangeFeeCents: prompt.combinedChangeFeeCents,
-                      combinedPolicyRetainedCents:
-                        prompt.combinedPolicyRetainedCents,
-                      combinedOrganiserRefundCents: prompt.combinedOrganiserRefundCents,
-                      combinedOrganiserBankTransferRefundCents: prompt.combinedOrganiserBankTransferRefundCents,
-                      settlementMethodRequired: prompt.settlementMethodRequired,
-                      settlementMethodChosen: prompt.settlementMethodChosen,
-                      bothChangeFeesCharged: prompt.bothChangeFeesCharged,
+                      ...linkedMoveCombinedMoney(prompt),
                       linkedCount: prompt.linkedBookings.length,
                     }, format)}
                   </span>

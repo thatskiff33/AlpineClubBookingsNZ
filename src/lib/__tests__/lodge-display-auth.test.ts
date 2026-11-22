@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Issue #27 (LTV-002, ADR-001): the display pairing/auth library. These tests
+// Issue hoppers99/AlpineClubBookingsNZ#27 (LTV-002, ADR-001): the display pairing/auth library. These tests
 // pin the security-critical behaviour: tamper-proof pairing blobs, single-use
 // admin-bound codes, hash-at-rest tokens, and a guard that rejects revoked
 // devices and inactive lodges.

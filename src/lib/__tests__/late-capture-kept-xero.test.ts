@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   enqueueXeroKeptLateCaptureInvoiceOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: vi.fn(),
+  alertInvoiceNotIssuedOnCapture: vi.fn(),
   creditBackLateCaptureRefunds: vi.fn(),
   transactionFindUnique: vi.fn(),
   taskFindUnique: vi.fn(),
@@ -66,6 +67,7 @@ vi.mock("@/lib/xero-supplementary-invoice-late-capture", async (importOriginal) 
     ...actual,
     releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: (...a: unknown[]) =>
       mocks.releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(...a),
+    alertInvoiceNotIssuedOnCapture: (...a: unknown[]) => mocks.alertInvoiceNotIssuedOnCapture(...a),
   };
 });
 vi.mock("@/lib/kept-late-capture-receipt-rows", () => ({
@@ -103,6 +105,7 @@ import type { ClubTimeZone } from "@/lib/club-time";
 import logger from "@/lib/logger";
 import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
 import { supplementaryInvoicesMovedOffIntentWhere } from "@/lib/supplementary-invoice-parked-from";
+import { SUPPLEMENTARY_INVOICE_CREATE_WHERE } from "@/lib/xero-supplementary-invoice-statuses";
 
 /**
  * #3635 (owner decision 29 Sep 2026): a late capture a treasurer KEPT on a
@@ -172,6 +175,7 @@ beforeEach(() => {
   });
   mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue(undefined);
   mocks.creditBackLateCaptureRefunds.mockResolvedValue(undefined);
+  mocks.alertInvoiceNotIssuedOnCapture.mockResolvedValue(undefined);
   mocks.releaseXeroSupplementaryInvoiceForCapturedPaymentIntent.mockResolvedValue({
     released: 1,
     queueOperationIds: ["op_supp"],
@@ -746,15 +750,21 @@ describe("#4324: a kept change capture on an invoiced booking", () => {
       });
     };
 
+    const unpaidReceipt = {
+      store,
+      keptLateCapture: true,
+      requireUnpaidChangeInvoice: true,
+      createdByMemberId: "treasurer-1",
+    };
+
     it("MUTATION #4382: a STALE_WAITING_PAYMENT change invoice is re-queued on the keep's transaction, guarded, and a row already PENDING is not written again", async () => {
       const retired = changeInvoice("CANCELLED", "STALE_WAITING_PAYMENT");
       answerWith(retired);
-      await expect(plan()).resolves.toEqual({ kind: "change-payment", paymentIntentId: "pi_late" });
+      await expect(plan()).resolves.toEqual({ kind: "change-payment", paymentIntentId: "pi_late", receiptQueueOperationId: "op_receipt" });
       expect(mocks.enqueueXeroKeptLateCaptureInvoiceOperation).not.toHaveBeenCalled();
-      expect(mocks.enqueueAdditionalCaptureReceiptOperation).not.toHaveBeenCalled();
       expect(mocks.operationUpdateMany).toHaveBeenCalledTimes(1);
       expect(mocks.operationUpdateMany).toHaveBeenCalledWith({
-        where: { id: "op_retired", status: "CANCELLED", lastErrorCode: "STALE_WAITING_PAYMENT" },
+        where: { ...SUPPLEMENTARY_INVOICE_CREATE_WHERE, id: "op_retired", status: "CANCELLED", lastErrorCode: "STALE_WAITING_PAYMENT" },
         data: {
           status: "PENDING",
           startedAt: null,
@@ -763,23 +773,76 @@ describe("#4324: a kept change capture on an invoiced booking", () => {
           lastErrorMessage: null,
         },
       });
+      // #5220: the receipt asks on the keep's transaction, after the revival, and only follows an unpaid change invoice.
+      expect(mocks.enqueueAdditionalCaptureReceiptOperation).toHaveBeenCalledWith("pi_late", unpaidReceipt);
+      expect(mocks.operationUpdateMany.mock.invocationCallOrder[0])
+        .toBeLessThan(mocks.enqueueAdditionalCaptureReceiptOperation.mock.invocationCallOrder[0]!);
       // Dropping either guard from that where, or reviving a row that is no longer retired, writes it again.
       retired.status = "PENDING";
       retired.lastErrorCode = null;
       mocks.operationUpdateMany.mockClear();
+      mocks.enqueueAdditionalCaptureReceiptOperation.mockClear();
       await expect(plan()).resolves.toEqual({ kind: "change-payment", paymentIntentId: "pi_late" });
       expect(mocks.operationUpdateMany).not.toHaveBeenCalled();
       expect(mocks.enqueueXeroKeptLateCaptureInvoiceOperation).not.toHaveBeenCalled();
       expect(mocks.enqueueAdditionalCaptureReceiptOperation).not.toHaveBeenCalled();
     });
 
-    it("a retired change invoice the capture does not cover is left for the after-commit release: no stamp inside the keep", async () => {
-      answerWith(changeInvoice("CANCELLED", "STALE_WAITING_PAYMENT", 20_000));
+    it("#5220: a revived invoice the recorder says needs no receipt keeps the keep, with nothing queued beside it", async () => {
+      answerWith(changeInvoice("CANCELLED", "STALE_WAITING_PAYMENT"));
+      mocks.enqueueAdditionalCaptureReceiptOperation.mockResolvedValue({ outcome: "not-eligible", reason: "recorded-by-supplementary-invoice" });
       await expect(plan()).resolves.toEqual({ kind: "change-payment", paymentIntentId: "pi_late" });
-      expect(mocks.operationUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.operationUpdateMany).toHaveBeenCalledTimes(1);
       expect(mocks.enqueueXeroKeptLateCaptureInvoiceOperation).not.toHaveBeenCalled();
-      expect(mocks.enqueueAdditionalCaptureReceiptOperation).not.toHaveBeenCalled();
     });
+
+    it("#5220: a database failure queueing the receipt rolls the keep back, never swallowed", async () => {
+      answerWith(changeInvoice("CANCELLED", "STALE_WAITING_PAYMENT"));
+      mocks.enqueueAdditionalCaptureReceiptOperation.mockRejectedValue(new Error("connection lost"));
+      await expect(plan()).rejects.toThrow("connection lost");
+    });
+
+    const capturedStamp = {
+      where: { id: "op_retired", status: "CANCELLED", lastErrorCode: "STALE_WAITING_PAYMENT" },
+      data: {
+        lastErrorCode: "STALE_WAITING_PAYMENT_CAPTURED",
+        lastErrorMessage: expect.stringContaining("not re-issued"),
+      },
+    };
+
+    for (const [reason, arrange] of [
+      ["short-of-ask", () => answerWith(changeInvoice("CANCELLED", "STALE_WAITING_PAYMENT", 20_000))],
+      ["invoice-already-linked", () => {
+        answerWith(changeInvoice("CANCELLED", "STALE_WAITING_PAYMENT"));
+        mocks.linkFindFirst.mockImplementation(async ({ where }: { where?: { role?: string } } = {}) =>
+          where?.role === "SUPPLEMENTARY_INVOICE" ? { id: "link_other" } : null);
+      }],
+    ] as const) {
+      it(`MUTATION #5220: a retired change invoice refused (${reason}) is stamped captured inside the keep, and only the claim's winner carries the alert`, async () => {
+        arrange();
+        await expect(plan()).resolves.toEqual({
+          kind: "change-payment",
+          paymentIntentId: "pi_late",
+          refusalAlert: {
+            operationId: "op_retired",
+            localModel: "BookingModification",
+            localId: "mod_change",
+            paymentIntentId: "pi_late",
+            reason,
+            wasRetired: true,
+          },
+        });
+        expect(mocks.operationUpdateMany).toHaveBeenCalledWith(capturedStamp);
+        expect(mocks.enqueueXeroKeptLateCaptureInvoiceOperation).not.toHaveBeenCalled();
+        expect(mocks.enqueueAdditionalCaptureReceiptOperation).not.toHaveBeenCalled();
+        // No email inside the transaction.
+        expect(mocks.alertInvoiceNotIssuedOnCapture).not.toHaveBeenCalled();
+
+        // A racing release stamped it first: the guarded claim matches nothing, so no second alert.
+        mocks.operationUpdateMany.mockResolvedValue({ count: 0 });
+        await expect(plan()).resolves.toEqual({ kind: "change-payment", paymentIntentId: "pi_late" });
+      });
+    }
 
     for (const code of ["STALE_WAITING_PAYMENT_CAPTURED", "STALE_WAITING_PAYMENT_COVERED"]) {
       it(`MUTATION: a change invoice the reaper retired (${code}) still answers it, and is not revived`, async () => {
@@ -1104,6 +1167,43 @@ describe("finishKeptLateCaptureXeroRecord", () => {
 
   it("kicks the outbox for a queued kept invoice", async () => {
     await finishKeptLateCaptureXeroRecord({ kind: "kept-invoice-queued", queueOperationId: "op_kept" });
+    expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledTimes(1);
+  });
+
+  const refusalAlert = {
+    operationId: "op_retired",
+    localModel: "BookingModification",
+    localId: "mod_change",
+    paymentIntentId: "pi_late",
+    reason: "short-of-ask" as const,
+    wasRetired: true,
+  };
+
+  it("#5220: emails the officer for a revival the keep stamped refused, once, even when the release fails", async () => {
+    mocks.releaseXeroSupplementaryInvoiceForCapturedPaymentIntent.mockRejectedValue(new Error("db down"));
+    await expect(
+      finishKeptLateCaptureXeroRecord({ kind: "change-payment", paymentIntentId: "pi_late", refusalAlert }),
+    ).resolves.toBeUndefined();
+    expect(mocks.alertInvoiceNotIssuedOnCapture).toHaveBeenCalledTimes(1);
+    expect(mocks.alertInvoiceNotIssuedOnCapture).toHaveBeenCalledWith(refusalAlert);
+  });
+
+  it("#5220: a failing alert does not stop the release", async () => {
+    mocks.alertInvoiceNotIssuedOnCapture.mockRejectedValue(new Error("smtp down"));
+    await finishKeptLateCaptureXeroRecord({ kind: "change-payment", paymentIntentId: "pi_late", refusalAlert });
+    expect(mocks.releaseXeroSupplementaryInvoiceForCapturedPaymentIntent).toHaveBeenCalledWith("pi_late");
+  });
+
+  it("#5220: sends no alert for a plan that stamped nothing", async () => {
+    await finishKeptLateCaptureXeroRecord({ kind: "change-payment", paymentIntentId: "pi_late" });
+    await finishKeptLateCaptureXeroRecord({ kind: "receipt-queued", queueOperationId: "op_receipt" });
+    expect(mocks.alertInvoiceNotIssuedOnCapture).not.toHaveBeenCalled();
+  });
+
+  it("#5220: kicks the outbox for the receipt the keep queued, even when the release queues nothing new", async () => {
+    mocks.releaseXeroSupplementaryInvoiceForCapturedPaymentIntent.mockResolvedValue({ outcome: "already-released", released: 0, queueOperationIds: [] });
+    mocks.enqueueAdditionalCaptureReceiptOperation.mockResolvedValue({ outcome: "already-queued", queueOperationId: "op_receipt" });
+    await finishKeptLateCaptureXeroRecord({ kind: "change-payment", paymentIntentId: "pi_late", receiptQueueOperationId: "op_receipt" });
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledTimes(1);
   });
 

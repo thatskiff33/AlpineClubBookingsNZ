@@ -99,10 +99,12 @@ vi.mock("@/lib/stripe-cash-refund-evidence", () => ({
   resolveStripeCashRefundEvidence: vi.fn(),
 }));
 
+import { BOOKING_EXTERNAL_SETTLEMENT_WHERE } from "@/lib/booking-external-settlement";
 import {
   getMissingXeroInvoiceBookings,
   getXeroAdminHealthSnapshot,
 } from "@/lib/xero-admin-health";
+import { getXeroMemberGroupingSnapshot } from "@/lib/xero-member-grouping-resync";
 
 function paidBooking(id: string, payment: { id: string; xeroInvoiceId: string | null }) {
   return {
@@ -218,16 +220,24 @@ describe("getMissingXeroInvoiceBookings reads the #3001 evidence rule (#3467)", 
     expect(result.count).toBe(1);
   });
 
-  it("keeps the B5 candidate filter: PAID, with a payment, not manually settled", async () => {
+  it("keeps the B5 candidate filter: PAID, with a payment, not manually settled, not an imported free stay", async () => {
     mocks.bookingFindMany.mockResolvedValue([]);
 
     await getMissingXeroInvoiceBookings();
 
-    expect(mocks.bookingFindMany.mock.calls[0][0].where).toEqual({
+    const where = mocks.bookingFindMany.mock.calls[0][0].where;
+    expect(where).toEqual({
       status: "PAID",
       payment: { isNot: null },
-      NOT: { payment: { manuallyMarkedPaidAt: { not: null } } },
+      NOT: {
+        OR: [
+          { payment: { manuallyMarkedPaidAt: { not: null } } },
+          { importRow: { is: { amountCents: 0 } } },
+        ],
+      },
     });
+    // The fence's own filter, not a copy (#5167 review).
+    expect(where.NOT).toBe(BOOKING_EXTERNAL_SETTLEMENT_WHERE);
     expect(mocks.linkFindMany).not.toHaveBeenCalled();
   });
 
@@ -288,5 +298,25 @@ describe("the club-wide count moves with the same rule", () => {
         `${relativePath} must not re-derive the missing-invoice rule (INV-SSOT-001, #3467)`,
       ).not.toMatch(/xeroSyncOperation|PRIMARY_INVOICE/);
     }
+  });
+});
+
+describe("contact group mismatches on the health snapshot (#5234)", () => {
+  it("counts an information-only entry and says it is one to review by hand, not to re-sync", async () => {
+    mocks.bookingFindMany.mockResolvedValue([]);
+    vi.mocked(getXeroMemberGroupingSnapshot).mockResolvedValueOnce({
+      mismatchCount: 0,
+      informationalCount: 1,
+      cacheReady: true,
+    } as Awaited<ReturnType<typeof getXeroMemberGroupingSnapshot>>);
+
+    const snapshot = await getXeroAdminHealthSnapshot();
+
+    expect(snapshot.contactGroupMismatches).toEqual({
+      count: 1,
+      resyncCount: 0,
+      reviewByHandCount: 1,
+      cacheReady: true,
+    });
   });
 });

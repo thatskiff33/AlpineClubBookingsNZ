@@ -2,15 +2,16 @@ import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
+import { shallowChangedFields } from "@/lib/audit-changed-fields";
 import {
   normalizeSubscriptionCategoryText,
   serializeSubscriptionCategory,
   subscriptionCategoryAuditActionForUpdate,
-  subscriptionCategoryChangedFields,
   subscriptionCategorySelect,
 } from "@/lib/subscription-categories";
 import { prisma } from "@/lib/prisma";
@@ -49,12 +50,11 @@ export async function PATCH(
     );
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
@@ -141,7 +141,7 @@ export async function PATCH(
         outcome: "success",
         summary: auditAction.summary,
         metadata: {
-          changedFields: subscriptionCategoryChangedFields(existing, data as Record<string, unknown>),
+          changedFields: shallowChangedFields(existing, data as Record<string, unknown>),
           previousSubscriptionCategory: serializeSubscriptionCategory(existing),
           newSubscriptionCategory: serializeSubscriptionCategory(subscriptionCategory),
         },

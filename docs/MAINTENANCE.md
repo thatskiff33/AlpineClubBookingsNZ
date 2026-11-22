@@ -222,11 +222,12 @@ altogether.
 ### The override register
 
 Every row below was verified by removing that entry and re-resolving (#2863),
-and re-checked for #3673 against the ranges the installed parents declare. Four
+and re-checked for #3673 against the ranges the installed parents declare. Five
 bind today: `postcss` (`next` pins 8.5.23 exactly), the `nodemailer` pair
 (`next-auth`'s optional peer stops at `^8`), and, since #5252, `qs` and
 `minimatch`, which hold development tooling outside its parents' declared
-ranges and say why in their rows. The `mysql2` override retired in
+ranges and say why in their rows, and, since #5293, `effect`, held above
+`@prisma/config`'s exact pin. The `mysql2` override retired in
 #4363, once `prisma` 7.10.1 pinned mysql2 3.24.4.
 `eslint-plugin-react-hooks` is a deliberate hold that is currently non-binding.
 `browserslist` is a security floor its parents' ranges do not guarantee
@@ -258,7 +259,8 @@ than the last install. Scope an override to its parent (`parent>name`) instead.
 | `browserslist` (`^4.28.7`) | **Security.** Two high advisories against `browserslist <= 4.28.6` — unbounded memory growth with no cache eviction (GHSA-c83g-rgw3-j3cx), and an uncaught crash / prototype write via untrusted `browserslist-stats.json` (GHSA-73wf-gq98-2v4g). Transitive only; nothing declares it directly. A **range**, not a pin, so it keeps floating with future patches. | every package that depends on browserslist (today `webpack` `^4.28.1`, `@babel/helper-compilation-targets` `^4.24.0`, and `update-browserslist-db`'s peer `>= 4.21.0`) *requires* 4.28.7 or later, meaning the lowest version its range accepts is 4.28.7 or higher (e.g. `^4.28.7`). A range that only *includes* 4.28.7 does not count, and `pnpm audit` cannot show this because highest-version resolution clears the advisory with or without the override. |
 | `ajv>fast-uri` (`^3.1.9`) | **Security, in build tooling only.** `fast-uri < 3.1.9` carries four advisories (GHSA-w74x-v6f9-j3xg, GHSA-xhq7-xmqj-769h, GHSA-wjr9-j795-jxcr, GHSA-333x-w4r6-6crp). It arrives only through `ajv@8` under Prisma's dev tooling (`prisma > @prisma/dev > @prisma/streams-local`), which the running application never loads. `ajv@8.20.0` accepts any `fast-uri@^3.0.1`, so the pin does not conflict with its range; remove it when the resolved version is at least 3.1.9 without it (#4326). |
 | `typed-rest-client>qs` (`^6.16.1`) | **Security, in development tooling only.** `qs 6.15.1` carries four moderate advisories (GHSA-q8mj-m7cp-5q26, GHSA-x5fp-wj9c-mxmx, GHSA-4mjr-xmp4-gh2g, GHSA-6pq8-jhm2-2vcw; all fixed by 6.16.1). It arrives only through `@stryker-mutator/core > typed-rest-client@2.3.1`, which pins qs at **exactly** 6.15.1, so this override sits outside the parent's declared range. Checked for #5252: typed-rest-client calls qs only in `Util.getUrlWithParsedQueryParams` (`qs.stringify` with standard options), reached by Stryker's dashboard reporter (not configured here) and `stryker init`; qs's changelog from 6.15.1 to 6.17.1 lists fixes and one new opt-in format, no breaking change; the call returns the same query strings on 6.17.1; and typed-rest-client 3.1.x itself declares `^6.16.1`. Cleared with the overrides that let the #5252 mitigation record apply. | `@stryker-mutator/core` depends on a `typed-rest-client` whose own qs range requires 6.16.1 or later (3.1.x does; Stryker 10.1.1 asks for `~2.3.0`). |
-| `minimatch@>=7.0.0 <11.0.1` (`^11.0.5`) | **Security, in development tooling only.** GHSA-g3hv-75wg-m249 (moderate) covers minimatch `>=7.0.0 <11.0.1` with no 10.x fix. The selector is the advisory's own range, so `minimatch@3.1.5` (under `eslint-plugin-import`, `-jsx-a11y` and `-react`, outside the range and on a different API) is untouched. It moves `eslint@10.14.0` (`^10.2.6`), `@eslint/config-array@0.23.5` (`^10.2.4`), `@typescript-eslint/typescript-estree@8.62.1` (`^10.2.2`) and `@stryker-mutator/core@10.1.1` (`~10.2.4`) **outside their declared ranges** onto the 11.0.5 that `glob` already used. Checked for #5252: 11.0's breaking changes remove `makeRe`, `Minimatch#regexp`, `AST`, `debug` and `matchOne` and change what `Minimatch.set` holds; none of the four parents uses any of them (they call `minimatch()`, `new Minimatch()`, `.match(path[, partial])`, `.negate`, `.pattern` and `.hasMagic()`); a differential of 10.2.6 against 11.0.5 over every glob in the repository's tool configs and every tracked path, in each parent's call shape, found no difference; and eslint, knip, vitest and the production build ran. | Each of those four parents requires 11.0.1 or later. eslint 10.15.0, `@eslint/config-array` 0.23.6 and typescript-eslint 8.73.0 already do, but were younger than the seven-day release age on 18 Nov 2026; Stryker 10.1.1 does not. |
+| `minimatch@>=7.0.0 <11.0.1` (`^11.0.5`) | **Security, in development tooling only.** GHSA-g3hv-75wg-m249 (moderate) covers minimatch `>=7.0.0 <11.0.1` with no 10.x fix. The selector is the advisory's own range, so `minimatch@3.1.5` (under `eslint-plugin-import`, `-jsx-a11y` and `-react`, outside the range and on a different API) is untouched. Today it moves two parents **outside their declared ranges** onto the 11.0.5 that `glob` already used: `@typescript-eslint/typescript-estree@8.62.1` (`^10.2.2`) and `@stryker-mutator/core@10.1.1` (`~10.2.4`). When it was added it also moved `eslint@10.14.0` (`^10.2.6`) and `@eslint/config-array@0.23.5` (`^10.2.4`); since #5414 `main` is on `eslint@10.15.0` and `@eslint/config-array@0.23.6`, which both declare `^11.0.5` themselves, so the override no longer changes what they resolve to (parents and ranges re-read from the lockfile and the installed packages on 22 Nov 2026). Checked for #5252, over the four parents it moved then: 11.0's breaking changes remove `makeRe`, `Minimatch#regexp`, `AST`, `debug` and `matchOne` and change what `Minimatch.set` holds; none of the four parents uses any of them (they call `minimatch()`, `new Minimatch()`, `.match(path[, partial])`, `.negate`, `.pattern` and `.hasMagic()`); a differential of 10.2.6 against 11.0.5 over every glob in the repository's tool configs and every tracked path, in each parent's call shape, found no difference; and eslint, knip, vitest and the production build ran. | Both remaining parents require 11.0.1 or later. typescript-eslint 8.73.0 does (`^11.0.1`), but `main` still resolves 8.62.1; Stryker 10.1.1 does not. |
+| `@prisma/config>effect` (`^3.22.1`) | **Security, in Prisma's configuration tooling.** GHSA-7589-6fvf-x4pw (high, CVE-2026-121707): `effect <=3.22.0` compiles `Schema.TemplateLiteral` templates with two or more string spans to a backtracking regular expression; fixed in 3.22.1. The installed `effect` arrives only through `prisma > @prisma/config`, and `@prisma/config@7.10.1`, the newest 7.x release, pins it at **exactly** 3.20.0, so this override takes `effect` **outside its parent's exact pin** (to 3.22.4). Checked for #5293: `@prisma/config` imports only `Schema.Struct`, `String`, `optional`, `Array`, `Boolean`, `NullOr`, `NonEmptyString`, `Any`, `mutable`, `decodeUnknownEither` and a schema's `make`, plus `Either` and `pipe` from `effect/Function`, never `Schema.TemplateLiteral`, and decodes only this repository's `prisma.config.ts`; Effect's changelog from 3.20.0 to 3.22.4 changes none of them (its one behaviour change, how a serialised `Cause.Fail` is named, is not used: `@prisma/config` throws the `ParseError` itself); the config still loads, an excess key is still refused with Effect's parse message, and Prisma generate, `migrate deploy`, the drift check, `prisma validate`, the data-migration verification suite and four real-database suites passed on PostgreSQL 16. **Not reached by this override:** the `prisma` command-line tool also bundles its own copy of `effect` 3.20.0 inside `build/cli.js`, which neither this override nor `pnpm audit` can reach. It loads `prisma.config.ts` through the installed `@prisma/config` (on 3.22.4), and the security review for #5293 found its bundled copy never builds a `Schema.TemplateLiteral` schema, so the weakness is not reachable through it. It is replaced when Prisma ships a release built on a fixed `effect`. | Prisma ships a release whose `@prisma/config` requires, and whose command-line tool bundles, `effect` 3.22.1 or later (keep `prisma`, `@prisma/client`, `@prisma/config` and `@prisma/adapter-pg` on one version). |
 
 ### The direct-dependency hold register
 
@@ -931,9 +933,11 @@ production files changed" whatever the tree holds. Two branches that each add
 sixty lines to a six-hundred-line file both pass their own pull-request run,
 merge cleanly to 720 against a 700 budget, and nothing would ever say so — after
 which the next change to that file is measured against 720. The workflow
-therefore passes the push event's own pre-push commit as `--base`, and keys that
-on the event name, because a `pull_request` payload carries a `before` field too
-and it means something else entirely.
+therefore passes the last judged `main` commit as `--base` (`INV-OPS-021`: the
+push event's own pre-push commit, unless a newer merge replaced that commit's
+run or its run stopped before the ratchet), and keys that on the event name,
+because a `pull_request` payload carries a `before` field too and it means
+something else entirely.
 
 Most of the time that run says exactly what the pull-request run already said,
 against exactly the same base — for a branch that was up to date, the merge
@@ -1085,6 +1089,9 @@ and by how much in total — run `pnpm run quality:budget --report`, or read the
 from the tree through the same function, so neither can drift from the other or
 from the gate.
 
+A deployment fork syncing down from upstream judges upstream's own changes
+differently; see [Syncing a fork from upstream](#syncing-a-fork-from-upstream).
+
 ### Function-length ratchet
 
 The file-size budget measures whole files, so a 2,000-line function inside a
@@ -1148,6 +1155,78 @@ cover a new function or carry one over 300 for the first time. The hard ceiling
 is a file rule; a function allowance has no upper bound of its own.
 [`size-allowances.d/README.md`](../size-allowances.d/README.md) has the format.
 
+A deployment fork syncing down from upstream: see
+[Syncing a fork from upstream](#syncing-a-fork-from-upstream).
+
+### Syncing a fork from upstream
+
+Both ratchets judge one pull request at a time against its base. A deployment
+fork that syncs down from this repository's `main` moves its base across many
+upstream pull requests at once, so without help the gate refuses code upstream
+already reviewed: a function upstream took over 300 lines before the
+function ratchet existed reads as new, a file upstream moved under a heavy
+rewrite no longer reads as a rename, and every upstream `size-allowances.d/`
+fragment in the range arrives looking live (#5196).
+
+`pnpm run quality:budget --upstream-ref <ref>` names the upstream to trust.
+The rules, all in `scripts/lib/budget-upstream-ref.ts`:
+
+- **The trusted commit is the upstream `main` commit the checkout contains**:
+  the newest commit on `<ref>`'s first-parent history that `HEAD` contains,
+  not wherever upstream has got to since. An upstream tip the fork has not
+  merged adds no trust. First parent only, so a commit from the middle of a
+  merged upstream pull request's branch is never trusted: upstream's `main`
+  never carried it, and its gate never judged it on its own. That rests on
+  one assumption: first-parent history is what upstream's `main` carried only
+  while upstream lands every pull request with a merge commit, as `AGENTS.md`
+  -> "Completion and Merge" requires (step 4, merge with a merge commit). A
+  pull request that upstream fast-forwards or rebase-merges puts its
+  intermediate commits on `main`'s first-parent history, and a fork that
+  merged one of them would have it trusted. The module does not detect that,
+  so the rule is only as good as upstream's keeping to merge commits. If
+  `HEAD` contains no first-parent commit of `<ref>` at all, the run fails.
+- **Only the paths the sync brings in are trusted**: those upstream changed
+  between the fork's last meeting point with it and the trusted commit. Every
+  other path is judged against the fork's base as before.
+- **The longer of the two lengths is the previous length.** For a trusted
+  path, a file or function is judged against the longer of its length on the
+  fork's base and on the trusted commit, matched at the same path. So code
+  left as upstream wrote it passes with no allowance, while growth the fork
+  adds beyond upstream's length is judged as the fork's own and may need its
+  own allowance. A file past its hard ceiling upstream may stay as it is or
+  shrink, never grow.
+- **Upstream's fragments are spent.** A `size-allowances.d/` fragment whose
+  bytes equal the trusted commit's copy is not live, so it neither applies nor
+  fails as unused nor collides with the fork's own fragment for the same path.
+  A fragment the fork wrote or edited is judged as usual. Nothing upstream
+  merged has to be deleted or re-declared by hand.
+- The size-debt line still reports the change against the fork's base, so it
+  includes the debt the sync brings in.
+
+Every run with trust names the trusted commit, its subject, how many files or
+functions were judged against its length and how many fragments were ignored.
+When the trusted commit is `HEAD` itself (a fast-forward sync, or a push of
+one to the fork's `main`), there is no fork change to separate from upstream's,
+so the run prints `Trusted upstream ignored: resolves to HEAD` once and is
+otherwise exactly an ordinary run. An upstream ref that cannot be resolved
+fails the run, and so does `--upstream-ref` with no value.
+
+**In CI**, set the repository variable `QUALITY_BUDGET_UPSTREAM_REPO` to the
+upstream's `owner/repo` on the fork only; leave it unset here.
+`scripts/ci/run-budget-gate.mjs` then fetches that repository's `main`, without
+tags and needing no extra credentials, and passes it as `--upstream-ref`, on pull requests and on
+pushes. A malformed value or a failed fetch fails the step rather than falling
+back to an ordinary run. With the variable unset the step runs exactly
+`pnpm run quality:budget --base "$BUDGET_BASE"`. A private upstream cannot be
+fetched this way.
+
+A sync pull request merges upstream's `main` itself, and is merged with a merge
+commit, never a squash or rebase. The trusted commit has to be an upstream
+`main` commit among the fork's ancestors; a squash or rebase leaves none, so the
+push run on the fork's `main` judges upstream's code as the fork's own and goes
+red, and merging a single upstream pull request's commits trusts only the
+upstream `main` commit beneath them.
+
 ### Quality report
 
 Run the local maintainability report before opening broad refactor PRs, after
@@ -1209,6 +1288,14 @@ were off by two orders of magnitude.
 | `src/app/(admin)/admin/membership/family-groups/page.tsx` | Route-shell thinning completed (#1530, closes the #1524 C2 carry-over). The request-review duplication with `src/components/admin/family-group-editor.tsx` was extracted to a shared `FamilyGroupRequestReviewSection` (`src/components/admin/family-groups/request-review-section.tsx`) that both the admin page and the editor render; the per-request state and the approve/reject/search handlers now live there once (behaviour-preserving — the two prior copies differed only by a `member`/`adult` noun and their refresh callback, now props). jscpd (min-tokens 70) across the pair drops from the catalogued 225 duplicated lines / 7 clones to 29 lines / 3 clones — the residue is the unavoidable shared UI-import block plus the create/edit member-search combobox, left inline because its surrounding selected-member badges differ between the two forms. page.tsx thinned 786 → 565 LOC; editor 715 → 499 LOC. |
 
 ## Operational Repair Tools
+
+### When a one-off tool leaves `main` (#5404)
+
+When a one-off upgrade tool leaves `main`, what it excludes and what replaces
+its documentation are set once, in principle 5 of
+[`docs/UPGRADING.md` → Principles](UPGRADING.md#principles). Removing such a tool takes
+everything that exists only for it: the script, its library module, tests,
+package script, lint exceptions and census entries.
 
 ### Run these through `pnpm run`, never `pnpm exec tsx`
 
@@ -1825,10 +1912,46 @@ invoice resolved before the app sent it, and a close whose note row exists.
 Record those by hand in Xero, except a card note sent with no reply, which it
 names apart for you to check in Xero first (round 14), as the kept invoice's
 finding does. Each capture is named by one record-by-hand finding at most, and
-by none when the app raises its card note. Each record-by-hand finding keeps
+by none when the app raises its card note. One exception (#4383): where the
+app recorded only part of a late card payment in Xero (its invoice had less
+room than the payment, and the receipt's alert told you about the rest), its
+refund note stops at that part, and the same finding names the refund above it
+with its own sentence. Record that amount by hand only if you recorded the rest
+of the payment by hand; otherwise record nothing. A note raised before this
+change for the whole refund is left as it is: the finding does not name what it
+already credits, and the Xero reconciliation report may now list the payment as
+refund coverage above the refunded total. If you recorded the rest of the
+payment by hand, Xero is right and that line can be ignored; if not, reduce the
+note in Xero by the part above what the receipt recorded. One case is not
+right even when you recorded the rest by hand: the over-noted refund itself
+later failed in Stripe. A "Paid another way" close of it reverses only up to
+what the receipt recorded, so reverse the part above that by hand in Xero,
+unless a close made before this change already reversed the whole refund (its
+reversal invoice is for the whole amount). The app never reads
+that part as a card refund that failed later: closing a failed refund on the
+payment as "Paid another way" queues no Stripe reversal for it, and the inbound
+credit-note recount takes nothing off for it, so your correction in Xero is the
+only one. Each record-by-hand finding keeps
 appearing after the refund is recorded by hand, and that is expected: recording
 a refund by hand in Xero writes no row the app can read, and the tool has no
 way to acknowledge a finding.
+
+**A capped late-capture refund note and the journal's export manifest**
+(#4383, #5343). A refund note capped at what the receipt recorded is for less
+than the refund's debt in the member-money journal. Where the note names its
+card refund (a card refund's own note, `cardRefundId`) and that refund's
+journal entry pays one live refund debt, its `REFUND_NOTE` export manifest is
+recorded as a `CENTS` conflict (`coverRefundExportComponent` in
+`refund-note-plan.ts`), and the app logs "A refund document does not match the
+journal; its manifest records a conflict and the document still sent". The
+note is still sent, and the conflict is accurate: Xero holds less than the
+debt. Nothing needs doing for it. Expect it until M13 (#4525). Where the
+refund's entry pays no debt (none is posted, or it is posted and not yet
+answered to one), pays more than one, or pays one since reversed, the conflict
+is `COMPONENT_UNUSABLE` instead (`resolveRefundNoteObligation`). So is that of
+a capped note that names no card refund or other door, as for every note sized
+on the payment's refunded watermark, capped or not
+([`member-money-ledger.md`](design/member-money-ledger.md), section 7).
 
 **Credit-paid card bookings invoiced before #3836.** A card booking paid
 entirely with account credit was invoiced at its full price, but the credit was
@@ -1892,40 +2015,15 @@ hand, then apply the same action: on that row it only reads the note back and
 records the payments Xero now shows, never paying, and the listing clears once
 the note is fully settled.
 
-### Backfill cancel-flattened payment statuses (#1473 / #1506)
+### Backfill cancel-flattened payment statuses (retired, #5404)
 
-`scripts/backfill-cancel-flattened-payments.ts` is a one-off, idempotent,
-local-only cleanup for the residual left by PR #1489. Before #1489,
-`cancelBooking` overwrote every non-SUCCEEDED payment's aggregate `status` to
-`FAILED` — including captured `(PARTIALLY_)REFUNDED` payments — while leaving
-`refundedAmountCents` and the `PaymentTransaction` ledger intact. #1489 stopped
-the overwrite going forward but did not backfill rows already flattened. The
-read path is already correct (the booking-vs-Xero repair pass synthesizes the
-captured status from the intact STRIPE mirror / ledger), so this only restores
-the stored `status` field for cleanliness.
-
-It identifies `FAILED` payments on `CANCELLED` bookings that carry capture
-evidence per the exact #1489 discriminator — a captured `PaymentTransaction`
-row, or (for pre-ledger STRIPE rows) `refundedAmountCents > 0` — and restores
-`status` to the same value the repair pass already derives
-(`PARTIALLY_REFUNDED` / `REFUNDED`, or `SUCCEEDED` for a captured-ledger row
-with no refund). It deliberately skips folded never-captured internet-banking
-payments (mirror refund with no captured ledger row: correctly `FAILED`) and
-the narrow unrecoverable residual (no ledger, `refundedAmountCents == 0`: no
-truth to restore). It makes ZERO Xero/Stripe calls, touches only `status`, and
-a second run finds nothing.
-
-Always start with a dry run (the default) against a non-production copy:
-
-```bash
-DATABASE_URL=<non-prod copy> pnpm run payments:backfill-cancel-flattened
-```
-
-Only after reviewing the dry-run report, apply inside a transaction:
-
-```bash
-DATABASE_URL=<non-prod copy> pnpm run payments:backfill-cancel-flattened --apply
-```
+`payments:backfill-cancel-flattened` restored the stored status of payments a
+pre-`v0.10.0` cancellation flattened to `FAILED` (#1473 / #1506). It served
+only clubs that ran `v0.9.0` or earlier and has left `main` under the one-off
+retirement rule ([`UPGRADING.md` → Principles](UPGRADING.md#principles)). It
+remains in the `v0.14.0` tag, with its instructions in this file there under
+"Backfill cancel-flattened payment statuses (#1473 / #1506)"; it was not tested
+against any later schema.
 
 ### Backfill orphaned applied credit (#1547)
 
@@ -2678,9 +2776,11 @@ that way offers refundable headroom that is not there, so a later cancel or
 refund could pay the same money out twice.
 `scripts/audit-refunded-total-shortfall.ts` lists each captured payment whose
 stored refunded total is below its counted card refunds plus its account-credit
-settlements plus (#4280, `INV-PAY-141`) the bank cash its "Paid another way"
-closes recorded, with the shortfall; each line shows that cash as `paid another
-way`. It is READ-ONLY and repairs nothing: whether and how to repair is the
+settlements plus (`INV-PAY-141`) the bank cash its card refunds' bank records
+hold - "Paid another way" closes (#4280) and completed card refund shortfalls, a
+cancel's or a capacity race's (#4488) - with the shortfall; each line shows that
+cash as `paid another way` and `card refund shortfall paid back`, and `--json`
+carries them as `paidAnotherWayCents` and `shortfallPaybackCents`. It is READ-ONLY and repairs nothing: whether and how to repair is the
 owner's decision, taken on this report.
 
 ```bash
@@ -2695,16 +2795,18 @@ the part the old arithmetic can explain (at most the smaller of a payment's card
 refunds and its credit, and only with a card refund), and a shortfall with
 another cause - typically a credit that was never folded into the total, such as
 internet-banking cash that became credit on an already-cancelled booking, or
-(#4280) a late card refund that failed after a "Paid another way" close and took
-the close's bank cash out of the total. Attribution to #3640 is measured against
-the floor without the closes' cash, so a payment whose shortfall only that cash
-explains shows 0 attributable to #3640. Only the first section is the #3640
+a late card refund that failed after a "Paid another way" close (#4280) or a
+paid-back card refund shortfall (#4488) and took that bank cash out of the total.
+Attribution to #3640 is measured against the floor without either kind of bank
+cash, so a payment whose shortfall only that cash explains shows 0 attributable
+to #3640. Only the first section is the #3640
 repair question. The arithmetic and its caveats are in
 `src/lib/refunded-total-shortfall-audit.ts`.
 
-Rolling the application back past #4280 restores the old subtraction: a late
-card refund failing after a close could again take the total below the close's
-cash. This audit still lists any such payment.
+Rolling the application back past #4280 or #4488 restores the old subtraction:
+a late card refund failing after a close, or after a shortfall was paid back,
+could again take the total below that cash. The same holds for a failure the old
+version handles during a deploy. This audit still lists any such payment.
 
 Do not run it while a migration runs. It reads every captured payment in ONE
 read-only `RepeatableRead` snapshot, held for up to 120 seconds, and on a very
@@ -2961,6 +3063,46 @@ The sync may answer **Already in step** even when it changed a link, because it
 compares money records, not links. Run the report again afterwards: a handled
 line no longer appears. **Sync everything from Xero now** does not revisit
 these notes.
+
+### Release Xero outbox rows stuck without a queued request (#5228)
+
+Before #5228, a Xero outbox row that a pre-HTTP cooldown (the "Xero is down"
+pause, the daily limit, the environment gate) refused after its handler had
+saved its execution request went back to PENDING without its queued request.
+The outbox then skipped it on every pass: the refund note, invoice or credit
+note never reached Xero, and nothing failed or alerted. Fixed builds never
+leave a row so. Any an older build left are kept out of the outbox's scan, so
+they never hold up other work, and counted (`unclaimableRequest` in the outbox
+run's result, shown as an amber warning on the Xero cron run).
+
+**When to run it:** once, on the live deployment, after upgrading to a build
+with #5228; and whenever the outbox's `unclaimableRequest` count is not zero.
+Running the report is safe at any time. **`--release` on a live site is the
+owner's to run.**
+
+```bash
+pnpm run xero:stuck-queued-report             # read-only: lists the rows, changes nothing
+pnpm run xero:stuck-queued-report --release   # fails exactly the rows it has just listed
+```
+
+1. **Inspect.** Run the report. Each line names the row, its queue type, the
+   record it belongs to (`Payment:<id>`, `GroupBookingSettlement:<id>`, ...),
+   and when it was queued; every row listed holds a request that names no
+   queue type. Look the records up before going on. The output
+   names members' payments, so never post it publicly.
+2. **Release.** Run it again with `--release`. It lists the rows again and
+   moves exactly those from PENDING to FAILED with
+   `QUEUED_REQUEST_RELEASED`, each only while it is still an unclaimed,
+   unresolved PENDING row with the same queue type and stored request; any
+   other is skipped and named. It keeps each row's request, response, Xero ids
+   and keys, makes no Xero call and rewrites nothing already posted.
+3. **Check the counts.** "Released N; skipped M." A second run lists nothing
+   and releases nothing.
+4. **Retry.** The rows are now in Xero Operations as Failed. For each, an
+   officer checks Xero for the document, then uses Retry (or resolves it by
+   hand if it is there). A refund note's Retry bills only what the payment
+   still shows uncovered, so cover added since the row was queued is not billed
+   twice.
 
 ### Audit bank-transfer receipts settled at a stale figure (#3979)
 
@@ -3522,11 +3664,17 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
      "Published release notes". The documentation hub links the index, not a
      version, so it needs no edit.
    - **The runbook stays release-agnostic.**
-     `docs/PRODUCTION_UPGRADE_RUNBOOK.md` names no release pair; its §7 and §8
-     are blank templates an operator fills in offline. If it has been
-     re-scoped to one release, re-scope it to the new tag, templates included.
-     Never write a rehearsal date, result or "confirmed by" into it: only the
-     owner attests a rehearsal, and not in the public repository.
+     `docs/PRODUCTION_UPGRADE_RUNBOOK.md` names no release pair and keeps
+     reusable operator templates. If it has been re-scoped to one release,
+     re-scope it to the new tag, templates included.
+     It may record example rehearsal transcripts, including their dates and
+     results. Record nothing that the public-writing rule bars
+     ([writing in the open](agents/ISSUE_WORKFLOW.md#writing-in-the-open)):
+     in particular secrets, credentials, production data, personal data, IP
+     addresses, hostnames, and anything else identifying a club's production
+     environment. An example does not attest any operator's upgrade, so it
+     carries no "Confirmed by" owner confirmation. Operators fill in their own
+     §7 and §8 records offline.
    - **Every windowed migration is reached.** A census
      (`src/lib/__tests__/upgrade-docs-scope.test.ts`) fails a pull request when
      a windowed ledger row is not named in the runbook's
@@ -3575,12 +3723,18 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
      release-prep branch commit inside a merge never was);
    - its `ci.yml` push run on `main` has not published its images: GitHub
      reports no run whose `Publish GHCR images` job succeeded, because the run
-     is still going, failed, was cancelled by hand, or never started
-     (`INV-OPS-021`). The refusal names the commit and the run. Wait for the
-     run, or re-run it with `gh run rerun <run-id>` and publish once that job
-     succeeds. The check runs in the dry run too, on the commit that would be
-     tagged (on a resume, the tagged commit), and refuses when GitHub's
-     answer cannot be read — a fine-grained token needs **Actions: Read**;
+     is still going, failed, was cancelled by hand, never started, or was
+     replaced while queued by a newer merge (`INV-OPS-021`, #5356; normally
+     only an intermediate commit given with `--commit`, since the default
+     `origin/main` loses its pending run only to a manual re-run). The refusal
+     names the commit and the run. Wait for the run, or re-run it with
+     `gh run rerun <run-id>` and publish once that job succeeds. A re-run joins
+     `main`'s queue and replaces whatever is pending there, so start it only
+     when nothing is pending on `main`
+     (`gh run list --workflow ci.yml --branch main --status pending`). The
+     check runs in the dry run too, on the commit that would be tagged (on a
+     resume, the tagged commit), and refuses when GitHub's answer cannot be
+     read — a fine-grained token needs **Actions: Read**;
    - `origin` already has the version's tag on another commit, or the version
      is not newer than `origin`'s latest tag — nothing new was prepared;
    - `CHANGELOG.md` has no section for the version, or still has entries

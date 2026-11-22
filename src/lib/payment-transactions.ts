@@ -25,7 +25,7 @@ import { alertCardRefundCapOverflow, readCardRefundCapOverflow, type CardRefundC
 import logger from "@/lib/logger";
 import { IntentLedgerRowOnAnotherPaymentError, writePaymentIntentTransaction } from "@/lib/payment-intent-ledger-row-write";
 import { accountCreditDispositionCents } from "@/lib/stripe-cash-refund-evidence";
-import { readPaidAnotherWayCloseBankCashByPayment } from "@/lib/card-refund-paid-another-way-cash";
+import { readCardRefundBankCashByPayment } from "@/lib/card-refund-paid-another-way-cash";
 import type { ClubFormat } from "@/lib/club-format";
 import { DisputedCaptureRefundRefusedError, disputedCaptureCents } from "@/lib/stripe-dispute-hold";
 import { MemberMoneyReservationRefused, postBookingReceipts, postCardRefundCash, reserveCardRefundSlice, resolveBookingMoneyPostingContext,
@@ -49,7 +49,7 @@ import {
   isRefusedRefundStatus,
   LEGACY_ADDITIONAL_BACKFILL_REASON,
   LEGACY_PRIMARY_BACKFILL_REASON,
-  latestTransactionOfKind, STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE,
+  latestTransactionOfKind, NO_CARD_REFUND_BANK_CASH, STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE,
 } from "@/lib/payment-transaction-status";
 
 export { isCapturedTransactionStatus };
@@ -101,7 +101,7 @@ function mapAdditionalSummaryStatus(status: PaymentStatus | null): string | null
   return "PENDING";
 }
 
-function mapLegacyAdditionalStatus(status: string | null | undefined): PaymentStatus {
+export function mapLegacyAdditionalStatus(status: string | null | undefined): PaymentStatus {
   switch (status) {
     case "FAILED":
       return PaymentStatus.FAILED;
@@ -115,7 +115,7 @@ function mapLegacyAdditionalStatus(status: string | null | undefined): PaymentSt
   }
 }
 
-function applyRefundStatus(
+export function applyRefundStatus(
   baseStatus: PaymentStatus,
   amountCents: number,
   refundedAmountCents: number
@@ -675,8 +675,8 @@ export async function lockPaymentForRefundedTotal(
 /**
  * #3640 (delta review, D2): the lowest a counted -> failed subtraction may take
  * one transaction's mirror to. The payment as a whole must still hold its
- * account-credit dispositions plus the card refunds still counted plus (#4280)
- * the bank cash its "Paid another way" closes recorded - the same floor the
+ * account-credit dispositions plus the card refunds still counted plus the
+ * bank cash of its card refund's bank records (#4280, #4488) - the same floor the
  * refunded-total audit reports against (`expectedRefundedFloorCents`), capped
  * at what it captured - less what its other transactions already carry.
  *
@@ -693,8 +693,8 @@ export async function lockPaymentForRefundedTotal(
  * of headroom. The close's cash is read payment-wide, like the rest - a close
  * records no per-charge link the floor could trust - so the other charges'
  * mirrors, which may already hold it, come off it rather than count it twice.
- * Read on the caller's client, under the Payment row it holds: a close takes
- * that row before it writes its record.
+ * Read under the Payment row the caller holds, which a close (and, #4488, a
+ * shortfall's completion) takes before writing its record (`INV-PAY-141`).
  */
 async function reversalFloorForTransaction(
   db: PaymentStore,
@@ -718,7 +718,7 @@ async function reversalFloorForTransaction(
       .reduce((sum, transaction) => sum + transaction.amountCents, 0),
     cardRefundCents: counted._sum.amountCents ?? 0,
     accountCreditCents: await accountCreditDispositionCents(db, payment.bookingId),
-    paidAnotherWayCents: (await readPaidAnotherWayCloseBankCashByPayment(db, { paymentId })).get(paymentId) ?? 0,
+    bankCash: (await readCardRefundBankCashByPayment(db, { paymentId })).get(paymentId) ?? NO_CARD_REFUND_BANK_CASH,
   });
   const otherTransactionsCents = payment.transactions
     .filter((transaction) => transaction.id !== paymentTransactionId)
@@ -795,8 +795,8 @@ async function resolveCardRefundJournalBeforeTransaction(store: PaymentStore, gi
  *   no money went back after all. Exactly one writer sees the transition (a
  *   guarded write in `recordStripeRefundLedgerEntry`), and the subtraction never
  *   takes the payment below its account credit plus the card refunds still
- *   counted plus its "Paid another way" closes' bank cash
- *   (`reversalFloorForTransaction`, #4280) - so a refund the OLD arithmetic,
+ *   counted plus its card refund's bank cash (`reversalFloorForTransaction`,
+ *   #4280, #4488) - so a refund the OLD arithmetic,
  *   or the cap, never added cannot be taken out of money that was never its.
  *
  * The card refunds on record remain a FLOOR, never the value (#4104: Stripe's
