@@ -135,3 +135,62 @@ describe("the allocation write and its removal through the real floor and status
     expect(mocks.sendFloorAlert).not.toHaveBeenCalled();
   });
 });
+
+// #4444 (plan deviation, step 3): the count-once rule sits in the shared figure,
+// so it reaches the bank allocation write too. Here that figure runs for real,
+// on the write's own transaction.
+describe("the allocation write with a note the payment also links as its refund note (#4444)", () => {
+  /** Every read the real figure makes that this case does not set answers nothing. */
+  const emptyModel = (overrides: Record<string, unknown> = {}) =>
+    new Proxy(overrides, {
+      get: (target, method: string) =>
+        method in target ? target[method] : vi.fn(async () => (method === "findMany" ? [] : method === "aggregate" ? { _sum: {} } : null)),
+    });
+
+  it("MUTATION: a bank note linked as the payment's refund note and allocated to its invoice is written once, $30 not $60", async () => {
+    const { decideLinkedRefundedTotalCents } = await vi.importActual<typeof import("@/lib/xero-inbound/linked-refunded-total")>(
+      "@/lib/xero-inbound/linked-refunded-total",
+    );
+    mocks.decideLinked.mockImplementation(decideLinkedRefundedTotalCents);
+    arrange({ refundedAmountCents: 0, status: "SUCCEEDED", detailCents: 0 });
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const payment = {
+      id: "pay-1", bookingId: "booking-1", amountCents: 30_000, refundedAmountCents: 0, status: "SUCCEEDED",
+      source: "INTERNET_BANKING", xeroInvoiceId: "inv-1", updatedAt: STORED_AT, booking: { organiserSettled: false },
+    };
+    const refundNoteLink = { localId: "pay-1", xeroObjectId: NOTE, metadata: { amountCents: 3_000, status: "AUTHORISED", total: 30 } };
+    const linkReads = vi.fn(async ({ where }: { where: { xeroObjectType?: string; role?: unknown; localModel?: string } }) => {
+      if (where.xeroObjectType === "ALLOCATION") {
+        // The payment's own allocation links: none. By its invoice: the note's allocation, on the edit.
+        return where.localModel === "Payment" ? [] : [{ ...allocation, updatedAt: STORED_AT }];
+      }
+      if (where.role === "MODIFICATION_CREDIT_NOTE") return [{ xeroObjectId: NOTE, metadata: { status: "AUTHORISED" } }];
+      const roles = (where.role as { in?: string[] } | undefined)?.in;
+      if (where.localModel === "Payment" && roles?.includes("REFUND_CREDIT_NOTE")) return [refundNoteLink];
+      return [];
+    });
+    const tx = new Proxy(
+      {
+        $executeRaw: vi.fn().mockResolvedValue(1),
+        xeroObjectLink: emptyModel({
+          createMany: vi.fn().mockResolvedValue({ count: 0 }),
+          findUnique: vi.fn().mockResolvedValue({ active: true, metadata: allocation.metadata }),
+          findMany: linkReads,
+        }),
+        payment: emptyModel({ findUnique: vi.fn().mockResolvedValue(payment), count: vi.fn().mockResolvedValue(1), updateMany }),
+        paymentTransaction: emptyModel({
+          aggregate: vi.fn().mockResolvedValue({ _sum: { refundedAmountCents: 0 } }),
+          findMany: vi.fn().mockResolvedValue([{ kind: "PRIMARY", status: "SUCCEEDED", createdAt: new Date("2026-06-01T00:00:00.000Z"), insertionSeq: 1 }]),
+        }),
+        // A cash note: neither a give-back nor an invoice correction.
+        xeroSyncOperation: emptyModel({ findMany: vi.fn().mockResolvedValue([{ xeroObjectId: NOTE, requestPayload: { refundMethod: "internet-banking" } }]) }),
+      } as Record<string, unknown>,
+      { get: (target, model: string) => (model in target ? target[model] : emptyModel()) },
+    );
+    mocks.transaction.mockImplementation(async (fn: (client: unknown) => Promise<unknown>) => fn(tx));
+
+    await writeCurrentCreditNoteAllocations([allocation], { isModificationNote: true });
+
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ refundedAmountCents: 3_000 }) }));
+  });
+});
