@@ -192,7 +192,7 @@ if (isMainModule(import.meta.url)) {
     process.stderr.write(
       `::error::${message}\n` +
         "Nothing was judged. If GitHub's API failed, re-run this job. If no earlier main run reached these gates, " +
-        "re-run the newest replaced one with `gh run rerun <run-id>`, and once it has finished re-run this job.\n",
+        "re-run the newest replaced one with `gh run rerun <run-id>` when nothing is pending on main (CONTRIBUTING.md, \"Finding which merge broke main\"), and once it has finished re-run this job.\n",
     );
     process.exitCode = 1;
   }

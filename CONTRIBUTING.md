@@ -582,8 +582,12 @@ may cover several merges. To find the one that broke it:
 2. Take the cancelled runs whose commits sit between the last green `main`
    commit and the first red one (`git log --first-parent --oneline <green>..<red>`).
 3. Re-run them oldest first with `gh run rerun <run-id>`. A re-run joins the
-   same queue, so start the next once the previous one has started. The first
-   commit whose re-run goes red is the merge that broke `main`.
+   same queue as new merges and replaces whatever is pending there, including
+   the newest `main` commit's run. So start each re-run only when no run of
+   that workflow is pending on `main`
+   (`gh run list --workflow ci.yml --branch main --status pending`), and if one
+   was replaced anyway, re-run it last. The first commit whose re-run goes red
+   is the merge that broke `main`.
 
 The push-only gates in `verify` and `Migration drift check` already judge
 those merges together: a push to `main` is judged from the last commit whose
