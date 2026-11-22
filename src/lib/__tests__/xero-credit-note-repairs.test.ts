@@ -716,6 +716,26 @@ describe("a modification note's allocations are summed per note, each allocation
       });
       expect(refundedWrites()).toEqual([5000]);
     });
+
+    it("MUTATION: a card note being synced whose refund-note link has no readable amount still counts once, by its allocation", async () => {
+      mocks.paymentFindMany.mockResolvedValue([payment({ amountCents: 40_000, xeroInvoiceId: "inv-1" })]);
+      invoiceLinks = [];
+      const findLinks = mocks.xeroObjectLinkFindMany.getMockImplementation()!;
+      // The payment's own refund-note row for the note being synced, its amount unreadable.
+      mocks.xeroObjectLinkFindMany.mockImplementation(async (args: { where: { role?: unknown; xeroObjectId?: string } }) =>
+        args.where.role === "REFUND_CREDIT_NOTE" && args.where.xeroObjectId === "cn-current"
+          ? [{ localId: "pay-1", xeroObjectId: "cn-current", active: true, metadata: { status: "AUTHORISED" } }]
+          : findLinks(args),
+      );
+
+      await repairRefundedPaymentBusinessState({
+        creditNoteId: "cn-current",
+        creditNote: { status: "AUTHORISED", total: 50 } as never,
+        directPaymentIds: ["pay-1"],
+        modificationRefundAmountsByPaymentId: new Map([["pay-1", 5000]]),
+      });
+      expect(refundedWrites()).toEqual([5000]);
+    });
   });
 
   // #4786: an older repair could link a note's allocation role-less
