@@ -1,5 +1,5 @@
 /**
- * "Add booking to work party" (fork #119): an officer attaches an existing
+ * "Add booking to work party" (fork triyder/AlpineClubBookingsNZ#119): an officer attaches an existing
  * booking to a work party the member was entitled to and missed, so the booking
  * gets the working-bee discount exactly as if the member had ticked "I am
  * attending a working bee" when booking.
@@ -33,8 +33,8 @@
  *  - a dry run for the confirm dialog and a figures check on the save, so the
  *    officer is charged-or-credited exactly what they were shown (#4030 C4),
  *    the edit's own quoted-figures check (`INV-MOD-062`) included;
- *  - a started stay (fork #127) priced whole (`INV-MOD-063`), so every night in the
- *    window is discounted, slept or not; and Remove (fork #130), the same edit with
+ *  - a started stay (fork triyder/AlpineClubBookingsNZ#127) priced whole (`INV-MOD-063`), so every night in the
+ *    window is discounted, slept or not; and Remove (fork triyder/AlpineClubBookingsNZ#130), the same edit with
  *    the code taken off, its increase owed on the booking.
  *
  * LOCKS (`INV-LOCK-001`/`-002`), the order #4533's executor and every booking
@@ -166,7 +166,7 @@ function workPartyStayRefusal(
  * list, the service (again, under the locks) and so the dialog all use. Each
  * refusal is one the canonical edit would make anyway, stated up front in an
  * officer's words rather than discovered at the preview. A started stay is
- * allowed (fork #127); a finished one is not. An organiser-paid joiner is allowed
+ * allowed (fork triyder/AlpineClubBookingsNZ#127); a finished one is not. An organiser-paid joiner is allowed
  * (triyder/AlpineClubBookingsNZ#129 decision 5); the officer's own or family's booking never is (owner
  * decision 3). A disputed card payment is refused on the edit's own answer,
  * only where it would really hold money back (`refundHeldForDispute`, #5151),
@@ -214,7 +214,7 @@ export function workPartyBookingEligibility(
   }
 }
 
-/** What "Remove from work party" (fork #130) reads about the booking. */
+/** What "Remove from work party" (fork triyder/AlpineClubBookingsNZ#130) reads about the booking. */
 export interface WorkPartyRemovalEligibilityBooking {
   status: string;
   checkOut: Date;
@@ -230,7 +230,7 @@ export interface WorkPartyRemovalEligibilityBooking {
 export const WORK_PARTY_NOT_ON_BOOKING_MESSAGE = "This booking is not on that work party.";
 
 /**
- * Whether this booking may be taken off this work party (fork #130; kept by
+ * Whether this booking may be taken off this work party (fork triyder/AlpineClubBookingsNZ#130; kept by
  * owner decision 2 of 18 Nov 2026): the stay rules Add has, owner decision 3
  * included, and the booking must carry exactly this work party. The event's
  * own state does not matter: an inactive work party can still be removed from
@@ -385,7 +385,7 @@ export function addBookingToWorkParty(
 }
 
 /**
- * fork #130, kept by owner decision 2 of 18 Nov 2026 (maintainers' comment
+ * fork triyder/AlpineClubBookingsNZ#130, kept by owner decision 2 of 18 Nov 2026 (maintainers' comment
  * https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6951626920):
  * Add with the work party's code left out. The difference is owed like any
  * price rise (paid: the ordinary additional ask, `INV-ADDPAY`); credit given
@@ -474,7 +474,7 @@ async function correctWorkParty(
 
       // (4) The canonical edit, on THIS transaction. Add: the booking's codes in
       // their order, then the work party's (the promotion engine applies an
-      // internal code first regardless). Remove (fork #130): the booking's
+      // internal code first regardless). Remove (fork triyder/AlpineClubBookingsNZ#130): the booking's
       // codes without the work party's. Its refusals throw and roll back. An
       // Add's settlement is the officer's choice among those the edit itself
       // offers (checked on its answer below); a refund it picks is the
@@ -575,7 +575,7 @@ async function correctWorkParty(
         settlementMethod,
       };
       if (direction === "remove") {
-        // fork #130: the money goes one way. Anything handed back is a path the
+        // fork triyder/AlpineClubBookingsNZ#130: the money goes one way. Anything handed back is a path the
         // plan missed; refuse rather than pay it.
         if (editTotalMoneyBackCents(figures) > 0) {
           throw new ApiError(WORK_PARTY_REMOVAL_MONEY_BACK_MESSAGE, 409);

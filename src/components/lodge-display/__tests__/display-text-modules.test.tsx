@@ -12,7 +12,7 @@ import { ChoresBoard } from "@/components/lodge-display/modules/chores-board";
 import { LodgeRules } from "@/components/lodge-display/modules/lodge-rules";
 import { DISPLAY_MODULE_COMPONENTS } from "@/components/lodge-display/modules";
 
-// Issue #31 (LTV-006): chores/rules modules and the display text-placeholder
+// Issue hoppers99/AlpineClubBookingsNZ#31 (LTV-006): chores/rules modules and the display text-placeholder
 // resolver. Chores render exactly the serialiser's privacy-reduced labels;
 // rules render only the sanitised payload HTML; config placeholders resolve
 // with a VISIBLE marker for unset keys.
@@ -92,7 +92,7 @@ describe("ChoresBoard (AC1/AC7)", () => {
     expect(screen.getByText("Organiser family")).toBeDefined();
   });
 
-  it("renders no card at all when there are no chores (issue #56)", () => {
+  it("renders no card at all when there are no chores (issue hoppers99/AlpineClubBookingsNZ#56)", () => {
     const { container } = render(<ChoresBoard state={state({})} />);
     expect(container.querySelector(".display-chores-board-empty")).not.toBeNull();
     expect(container.querySelector(".display-card")).toBeNull();

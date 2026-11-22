@@ -55,7 +55,7 @@ type WorkPartyOption = {
 };
 
 /**
- * "Add booking to work party" (fork #119), on the admin tools card of a
+ * "Add booking to work party" (fork triyder/AlpineClubBookingsNZ#119), on the admin tools card of a
  * booking. For a member who forgot to tick "I am attending a working bee": the
  * officer picks the work party, sees what the booking will cost and how much
  * comes back (a dry run of the real change), and confirms. On a paid booking
@@ -65,7 +65,7 @@ type WorkPartyOption = {
  * the organiser. The figures shown are the figures saved — the route refuses
  * if they, or the choice, moved.
  * Bookings edit; a bookings-view admin sees the button disabled. A booking
- * already on a work party is offered "Remove from work party" instead (fork #130).
+ * already on a work party is offered "Remove from work party" instead (fork triyder/AlpineClubBookingsNZ#130).
  */
 export function BookingWorkPartyControls({
   bookingId,

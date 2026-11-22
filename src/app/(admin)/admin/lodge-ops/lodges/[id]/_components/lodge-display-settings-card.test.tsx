@@ -31,7 +31,7 @@ vi.mock("next-auth/react", () => ({
 
 import { LodgeDisplaySettingsCard } from "./lodge-display-settings-card";
 
-// LTV-035 (#81): the per-lodge display settings card edits THE LODGE BEING
+// LTV-035 (hoppers99/AlpineClubBookingsNZ#81): the per-lodge display settings card edits THE LODGE BEING
 // VIEWED. The old /admin/display/settings surface never sent a lodgeId, so it
 // always read and wrote the club default lodge — the MVP bug (old backlog hoppers99/AlpineClubBookingsNZ#64)
 // where editing a second lodge's config silently edited the default lodge. These
@@ -181,7 +181,7 @@ describe("LodgeDisplaySettingsCard", () => {
     expect(sent.lodgeId).not.toBe("lodge-default");
   });
 
-  it("loads and round-trips the guest phone-display toggle (#126 / #37)", async () => {
+  it("loads and round-trips the guest phone-display toggle (hoppers99/AlpineClubBookingsNZ#126 / hoppers99/AlpineClubBookingsNZ#37)", async () => {
     stubFetch({
       "lodge-whakapapa": lodge({
         lodgeId: "lodge-whakapapa",

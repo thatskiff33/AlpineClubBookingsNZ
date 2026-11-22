@@ -27,7 +27,7 @@ import {
 import type { WorkPartyCorrectionFigures } from "@/lib/work-party-booking-correction";
 
 /**
- * "Remove from work party" (fork #130), beside where Add sits on the admin
+ * "Remove from work party" (fork triyder/AlpineClubBookingsNZ#130), beside where Add sits on the admin
  * tools card, for a booking added to the wrong work party or by mistake. The
  * dialog runs the real change as a dry run and shows the new total; the
  * difference is owed on the booking, like any edit that raises the price.

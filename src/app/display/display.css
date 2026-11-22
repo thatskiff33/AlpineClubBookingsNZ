@@ -1,4 +1,4 @@
-/* Lobby TV display stylesheet (fork issues #32/#56). Dedicated to the
+/* Lobby TV display stylesheet (fork issues hoppers99/AlpineClubBookingsNZ#32/#56). Dedicated to the
  * /display surface: designed for a 16:9 screen read across a room, dark by
  * default, sized with viewport units so a TV, a Pi, or a browser window all
  * render sensibly. Palette and treatments ported from the approved mockup
@@ -78,7 +78,7 @@
   min-height: 0;
 }
 
-/* Two-column layout when the template declares a side rail (issue #56).
+/* Two-column layout when the template declares a side rail (issue hoppers99/AlpineClubBookingsNZ#56).
  * Browsers without :has() degrade to the rail below the board. */
 .display-screen:has(.display-region-side) {
   grid-template-columns: 1fr 27vw;
@@ -99,7 +99,7 @@
   gap: 1.8vmin;
 }
 
-/* --- authored template scope (issue #75, LTV-029) ----------------------- */
+/* --- authored template scope (issue hoppers99/AlpineClubBookingsNZ#75, LTV-029) ----------------------- */
 
 /* Authored template CSS is server-prefixed with `.display-authored-root ` so it
  * only styles the editable body/footer, never the fixed header clock/brand.
@@ -141,7 +141,7 @@
 }
 
 /* position:relative anchors the visually-hidden simulate <input>, now a SIBLING
- * of the picker button (#65 fix), and the absolutely-positioned "previewing
+ * of the picker button (hoppers99/AlpineClubBookingsNZ#65 fix), and the absolutely-positioned "previewing
  * against" line — neither shifts the header layout. */
 .display-header-clock { position: relative; text-align: right; min-height: 6vmin; }
 
@@ -156,7 +156,7 @@
 .display-clock-date { font-size: 2vmin; color: var(--display-muted); }
 .display-clock-date b { font-weight: 700; }
 
-/* --- admin preview date simulation (issue #60) -------------------------- */
+/* --- admin preview date simulation (issue hoppers99/AlpineClubBookingsNZ#60) -------------------------- */
 
 /* The date line becomes a clickable affordance only in preview mode: a
  * dotted underline hints it is editable; the hidden date input drives the
@@ -325,7 +325,7 @@
   max-width: 100%;
 }
 
-/* --- side rail cards (issue #56) ----------------------------------------- */
+/* --- side rail cards (issue hoppers99/AlpineClubBookingsNZ#56) ----------------------------------------- */
 
 .display-card {
   background: var(--display-panel);
@@ -710,7 +710,7 @@
 
 .display-module-placeholder { min-height: 4vmin; }
 
-/* --- committee notice board (#36) ---------------------------------------- */
+/* --- committee notice board (hoppers99/AlpineClubBookingsNZ#36) ---------------------------------------- */
 
 .display-notice-board {
   height: 100%;
@@ -799,7 +799,7 @@
   font-weight: 600;
 }
 
-/* --- shared status dot (issue #115) --------------------------------------- */
+/* --- shared status dot (issue hoppers99/AlpineClubBookingsNZ#115) --------------------------------------- */
 
 /* A status dot for the tonight / look-ahead boards, coloured by data-status.
  * Green arriving, muted staying, amber departing — the same semantic tokens
@@ -824,7 +824,7 @@
   background: var(--display-departing);
 }
 
-/* --- tonight's rooms (issue #115; mock O2) -------------------------------- */
+/* --- tonight's rooms (issue hoppers99/AlpineClubBookingsNZ#115; mock O2) -------------------------------- */
 
 .display-room-cards {
   display: grid;
@@ -897,7 +897,7 @@
   white-space: nowrap;
 }
 
-/* --- next nights look-ahead (issue #115; mocks O3 / C1a) ------------------ */
+/* --- next nights look-ahead (issue hoppers99/AlpineClubBookingsNZ#115; mocks O3 / C1a) ------------------ */
 
 .display-night-columns {
   display: grid;
@@ -978,7 +978,7 @@
   font-style: italic;
 }
 
-/* --- status board, allocation off (issue #115; mock O4) ------------------- */
+/* --- status board, allocation off (issue hoppers99/AlpineClubBookingsNZ#115; mock O4) ------------------- */
 
 .display-status-board {
   display: grid;
@@ -1040,7 +1040,7 @@
   font-style: italic;
 }
 
-/* --- room-cards allocation-off fallback (issue #115) ---------------------- */
+/* --- room-cards allocation-off fallback (issue hoppers99/AlpineClubBookingsNZ#115) ---------------------- */
 
 .display-room-cards-fallback {
   display: flex;

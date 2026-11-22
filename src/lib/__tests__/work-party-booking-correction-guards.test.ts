@@ -507,7 +507,7 @@ describe("the settlement method is a checked figure", () => {
   });
 });
 
-describe("Remove from work party (fork #130): the service's own guards", () => {
+describe("Remove from work party (fork triyder/AlpineClubBookingsNZ#130): the service's own guards", () => {
   const ON_WORK_PARTY = [
     { id: "r-1", applicationOrder: 0, promoCode: { code: "WP-1", workPartyEvent: { id: "wp-1" } } },
   ];

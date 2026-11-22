@@ -3255,7 +3255,7 @@ contactable published assignment can receive server-routed contact form mail thr
 
 ## Food Order Lifecycle
 
-Fork #121 (`src/lib/food-orders.ts`, guide [Food Orders](guides/food-orders.md)).
+Fork triyder/AlpineClubBookingsNZ#121 (`src/lib/food-orders.ts`, guide [Food Orders](guides/food-orders.md)).
 
 ```text
 member places an order -> OPEN, every item unreceived (order, items and audit

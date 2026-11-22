@@ -327,7 +327,7 @@ describe("BookingWorkPartyControls after a refused apply", () => {
   });
 });
 
-describe("Remove from work party (fork #130)", () => {
+describe("Remove from work party (fork triyder/AlpineClubBookingsNZ#130)", () => {
   const removal = figures({
     previousFinalPriceCents: 15_000,
     newFinalPriceCents: 20_000,

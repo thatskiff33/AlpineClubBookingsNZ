@@ -325,7 +325,7 @@ export async function buildBookingDetailEditorData({
       // This is the member (non-override) policy, so mode is never
       // "admin-override" here — nor "finished-stay-correction" (#3750), which
       // only the change-request executor asks for, nor "work-party-correction"
-      // (fork #127), which only the work-party correction asks for; the ternary only
+      // (fork triyder/AlpineClubBookingsNZ#127), which only the work-party correction asks for; the ternary only
       // narrows the widened union.
       mode:
         editPolicy.mode === "admin-override" ||

@@ -1,7 +1,7 @@
 /**
  * Is `value` an absolute `http:` or `https:` URL?
  *
- * THE ONE DEFINITION (`INV-SSOT-001`, #50). Before this module the identical
+ * THE ONE DEFINITION (`INV-SSOT-001`, triyder/AlpineClubBookingsNZ#50). Before this module the identical
  * seven-line function existed five times — the club config schema, the club
  * identity route, setup readiness, the runtime-config check and the other-lodges
  * registry — each written out by hand and each one a place the rule could drift.

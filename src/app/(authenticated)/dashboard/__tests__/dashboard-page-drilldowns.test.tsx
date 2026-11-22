@@ -285,7 +285,7 @@ describe("DashboardPage summary card drill-downs", () => {
     expect(html).not.toContain('href="/lodge/kiosk"');
   });
 
-  // Fork #121: the Order food card sits beside "Report an issue" only while the
+  // Fork triyder/AlpineClubBookingsNZ#121: the Order food card sits beside "Report an issue" only while the
   // foodOrders module is on, and never for an organisation account.
   it("offers Order food while the food orders module is on", async () => {
     mocks.loadEffectiveModuleFlags.mockResolvedValue({

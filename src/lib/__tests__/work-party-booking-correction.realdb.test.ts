@@ -1,5 +1,5 @@
 /**
- * Real-PostgreSQL proof for fork #119: an officer adds an existing booking to a
+ * Real-PostgreSQL proof for fork triyder/AlpineClubBookingsNZ#119: an officer adds an existing booking to a
  * work party the member forgot to tick ("Add booking to work party").
  *
  * Every step is the REAL code — `addBookingToWorkParty`, which runs the
@@ -146,7 +146,7 @@ const ASK_CENTS = 3_000;
 const UNPAID_CREDIT_APPLIED_CENTS = 18_000;
 const FREED_CREDIT_CENTS = UNPAID_CREDIT_APPLIED_CENTS - (PRICE_CENTS - DISCOUNT_CENTS);
 /**
- * fork #127: a stay that began two nights before the frozen today (1 July 2026). Its
+ * fork triyder/AlpineClubBookingsNZ#127: a stay that began two nights before the frozen today (1 July 2026). Its
  * work party covers one night already slept and tonight; the first and last
  * nights are outside it.
  */
@@ -252,7 +252,7 @@ async function clean(): Promise<void> {
   await prisma.familyGroupMember.deleteMany({ where: { familyGroupId: FAMILY_ID } });
   await prisma.familyGroup.deleteMany({ where: { id: FAMILY_ID } });
   if (enqueueErrors.length > 0) {
-    throw new AggregateError(enqueueErrors, "fork #119: real Xero fixture enqueues failed; owned fixtures cleaned");
+    throw new AggregateError(enqueueErrors, "fork triyder/AlpineClubBookingsNZ#119: real Xero fixture enqueues failed; owned fixtures cleaned");
   }
 }
 
@@ -640,7 +640,7 @@ async function apply(expectedFigures: Figures, method: Method = {}, workPartyEve
   });
 }
 
-/** fork #130: the removal's dry run. */
+/** fork triyder/AlpineClubBookingsNZ#130: the removal's dry run. */
 async function removalQuote(workPartyEventId = EVENT_ID): Promise<Figures> {
   const result = await correction.removeBookingFromWorkParty({ ...(await common(workPartyEventId)), dryRun: true });
   expect(result.outcome).toBe("quoted");
@@ -767,7 +767,7 @@ async function batchRefusal(params: {
   );
 }
 
-(RUN ? describe : describe.skip)("adding a booking to a work party, on PostgreSQL (fork #119)", () => {
+(RUN ? describe : describe.skip)("adding a booking to a work party, on PostgreSQL (fork triyder/AlpineClubBookingsNZ#119)", () => {
   beforeAll(async () => {
     assertSafeRaceDbUrl(RACE_DB_URL, "Work party booking correction");
     process.env.DATABASE_URL = RACE_DB_URL;
@@ -1699,7 +1699,7 @@ async function batchRefusal(params: {
 
   const STORED_NIGHTS = { priceCents: PRICE_CENTS, nights: STARTED_STAY.nights.map(() => ({ priceCents: NIGHT_CENTS })) };
 
-  it("fork #127 started stay, card-paid, Refund to card: every in-window night, slept or not, is discounted; refund untiered", async () => {
+  it("fork triyder/AlpineClubBookingsNZ#127 started stay, card-paid, Refund to card: every in-window night, slept or not, is discounted; refund untiered", async () => {
     await seed("paid", STARTED_STAY);
     stripeRefundsFail();
 
@@ -1733,7 +1733,7 @@ async function batchRefusal(params: {
     });
   }, 60_000);
 
-  it("fork #127 started stay, Club credit: the whole in-window discount as credit, no refund", async () => {
+  it("fork triyder/AlpineClubBookingsNZ#127 started stay, Club credit: the whole in-window discount as credit, no refund", async () => {
     await seed("paid", STARTED_STAY);
     stripeRefundsFail();
     const figures = await quote({}, STARTED_EVENT_ID);
@@ -1818,7 +1818,7 @@ async function batchRefusal(params: {
     });
   }, 60_000);
 
-  it("fork #127 every other in-progress edit still refuses a promo change", async () => {
+  it("fork triyder/AlpineClubBookingsNZ#127 every other in-progress edit still refuses a promo change", async () => {
     await seed("paid", STARTED_STAY);
     const before = await snapshot();
     const ordinary = await batchService
@@ -1838,7 +1838,7 @@ async function batchRefusal(params: {
     expect(await snapshot()).toEqual(before);
   }, 60_000);
 
-  it("fork #130 future card-paid booking: removal owes the discount back, and leaves the credit already given alone", async () => {
+  it("fork triyder/AlpineClubBookingsNZ#130 future card-paid booking: removal owes the discount back, and leaves the credit already given alone", async () => {
     await seed("paid");
     const added = await apply(await quote());
     expect(added.outcome).toBe("applied");
@@ -1879,7 +1879,7 @@ async function batchRefusal(params: {
     expect(await prisma.paymentRefund.count({ where: { paymentId: PAYMENT_ID } })).toBe(0);
   }, 60_000);
 
-  it("fork #130 unpaid booking: removal puts the price and the amount owed back up", async () => {
+  it("fork triyder/AlpineClubBookingsNZ#130 unpaid booking: removal puts the price and the amount owed back up", async () => {
     await seed("unpaid");
     await apply(await quote());
     expect((await amountOwed.readBookingAmountOwed(await bookingRow())).owedCents).toBe(PRICE_CENTS - DISCOUNT_CENTS);
@@ -1893,7 +1893,7 @@ async function batchRefusal(params: {
     expect(await memberCredit.getMemberCreditBalance(OWNER_ID)).toBe(0);
   }, 60_000);
 
-  it("fork #130 started stay: removal takes the discount off the same in-window nights", async () => {
+  it("fork triyder/AlpineClubBookingsNZ#130 started stay: removal takes the discount off the same in-window nights", async () => {
     await seed("paid", STARTED_STAY);
     await apply(await quote({}, STARTED_EVENT_ID), {}, STARTED_EVENT_ID);
     expect(await discountedNights(STARTED_PROMO_ID)).toEqual(["2026-06-30", "2026-07-01"]);
@@ -1910,7 +1910,7 @@ async function batchRefusal(params: {
     expect(await memberCredit.getMemberCreditBalance(OWNER_ID)).toBe(DISCOUNT_CENTS);
   }, 60_000);
 
-  it("fork #130 with several codes switched on, the work party is dropped, not carried", async () => {
+  it("fork triyder/AlpineClubBookingsNZ#130 with several codes switched on, the work party is dropped, not carried", async () => {
     await withSeveralCodes(async () => {
       await seed("unpaid");
       await apply(await quote());
@@ -1921,7 +1921,7 @@ async function batchRefusal(params: {
     });
   }, 60_000);
 
-  it("fork #130 refuses a booking that is not on that work party, writing nothing", async () => {
+  it("fork triyder/AlpineClubBookingsNZ#130 refuses a booking that is not on that work party, writing nothing", async () => {
     await seed("paid");
     const before = await snapshot();
     expect(await removalRefusal()).toEqual({ status: 409, message: correction.WORK_PARTY_NOT_ON_BOOKING_MESSAGE });
@@ -2367,7 +2367,7 @@ async function batchRefusal(params: {
     }
   }, 90_000);
 
-  it("fork #130 organiser-paid joiner: Remove is refused like any rise on a card-paid joiner, with nothing written", async () => {
+  it("fork triyder/AlpineClubBookingsNZ#130 organiser-paid joiner: Remove is refused like any rise on a card-paid joiner, with nothing written", async () => {
     await seed("organiser-paid");
     stripeRefundsFail();
     const added = await apply(await quote());

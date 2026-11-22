@@ -7,9 +7,9 @@ import { createAuditLog } from "@/lib/audit";
 import { DISPLAY_CONFIG_KEY_PATTERN } from "@/lib/lodge-display/display-token-catalogue";
 import { DISPLAY_NAME_GRANULARITY_VALUES } from "@/lib/display-name-granularity";
 
-// Per-lodge display settings (fork issue #34): the {{config:<key>}} glob and
+// Per-lodge display settings (fork issue hoppers99/AlpineClubBookingsNZ#34): the {{config:<key>}} glob and
 // the name-granularity override. Validation mirrors the serialiser's
-// sanitiser exactly (issue #31 note): keys lower-case slugs <= 64 chars,
+// sanitiser exactly (issue hoppers99/AlpineClubBookingsNZ#31 note): keys lower-case slugs <= 64 chars,
 // string values <= 500 chars — violations are explicit 400s, never silently
 // dropped at the edit surface (AC4).
 //
@@ -36,7 +36,7 @@ const putSchema = z.object({
     .max(2000, "The notice must be 2000 characters or fewer")
     .nullable()
     .optional(),
-  // #126 / #37: per-lodge config for whether opted-in adult phone numbers may
+  // hoppers99/AlpineClubBookingsNZ#126 / hoppers99/AlpineClubBookingsNZ#37: per-lodge config for whether opted-in adult phone numbers may
   // appear on the PUBLIC lobby display. The serialiser also requires the
   // member's opt-in; this is the lodge (config) side of the two-sided gate.
   showGuestPhonesOnScreens: z.boolean().optional(),

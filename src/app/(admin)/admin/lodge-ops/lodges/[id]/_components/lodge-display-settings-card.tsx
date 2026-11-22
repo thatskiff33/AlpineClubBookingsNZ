@@ -27,7 +27,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
-// Per-lodge lobby display settings (LTV-035, #81). Relocated out of the retired
+// Per-lodge lobby display settings (LTV-035, hoppers99/AlpineClubBookingsNZ#81). Relocated out of the retired
 // /admin/display/settings page into the lodge configuration hub so the controls
 // edit THE LODGE BEING VIEWED, not always the club default lodge (the MVP bug
 // from old backlog hoppers99/AlpineClubBookingsNZ#64). The lodgeId of the hub is passed straight through to

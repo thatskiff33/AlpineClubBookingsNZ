@@ -45,7 +45,7 @@ import {
   bookingOwnerHasNoAgeTier,
 } from "@/lib/booking-owner";
 
-// The lobby display's data contract and privacy serialiser (fork issue #28,
+// The lobby display's data contract and privacy serialiser (fork issue hoppers99/AlpineClubBookingsNZ#28,
 // docs/lobby-display/design.md §5 and §10). THIS FILE IS THE SINGLE
 // ENFORCEMENT POINT for what a public screen may show: names leave here
 // already reduced to the configured granularity, minors are never
@@ -53,7 +53,7 @@ import {
 // selected. Every display module renders as a pure function of the DisplayState
 // payload — templates cannot reach past it.
 //
-// The ONE contact exception (#125 / #37) is a member phone number, and it is
+// The ONE contact exception (hoppers99/AlpineClubBookingsNZ#125 / hoppers99/AlpineClubBookingsNZ#37) is a member phone number, and it is
 // released per-guest ONLY under the two-sided consent gate
 // (`canServeMemberPhoneOnLodgeSurface`): the lodge has enabled phone display
 // AND the member has opted in AND the guest is an adult AND the row already
@@ -88,7 +88,7 @@ export interface DisplayStateGuest {
    */
   nights: readonly string[];
   /** Adult member phone number — present ONLY when the two-sided consent gate
-   * allows it (#125 / #37); omitted otherwise, so the default payload carries
+   * allows it (hoppers99/AlpineClubBookingsNZ#125 / hoppers99/AlpineClubBookingsNZ#37); omitted otherwise, so the default payload carries
    * no contact field. */
   phone?: string;
 }
@@ -169,7 +169,7 @@ export function clubBrandingForDisplay(
 
 export interface DisplayState {
   lodge: { name: string };
-  /** Club branding for the header brand block (issue #56): the configured
+  /** Club branding for the header brand block (issue hoppers99/AlpineClubBookingsNZ#56): the configured
    * club name and the club-theme logo — presentation-only fields already public
    * on every website page. `logoUrl` (#2322) is the served-image form and wins
    * over the legacy inlined `logoDataUrl`. Both are sanitised in
@@ -191,7 +191,7 @@ export interface DisplayState {
   }>;
   chores: Array<{ date: string; title: string; assigneeLabels: string[] }>;
   rules: Array<{ title: string; html: string }> | null;
-  /** Committee notice board content (#36): admin-authored free text,
+  /** Committee notice board content (hoppers99/AlpineClubBookingsNZ#36): admin-authored free text,
    * rendered as text nodes only; {{config:<key>}} placeholders resolve
    * inside it at render. */
   notice: string | null;
@@ -252,14 +252,14 @@ export function clampDisplayWindowDays(requested: number | null): number {
 /**
  * Build the DisplayState payload for one lodge. `lodgeId` comes from the
  * display device's FK (checkDisplayAuth) — every query below is scoped to it
- * and nothing from any other lodge can appear (issue #28 AC5).
+ * and nothing from any other lodge can appear (issue hoppers99/AlpineClubBookingsNZ#28 AC5).
  */
 export async function buildDisplayState(
   lodgeId: string,
   options: { days?: number | null; windowStart?: Date | null } = {}
 ): Promise<DisplayState | null> {
   const days = clampDisplayWindowDays(options.days ?? null);
-  // `windowStart` is the admin-preview simulated date (issue #60); it only
+  // `windowStart` is the admin-preview simulated date (issue hoppers99/AlpineClubBookingsNZ#60); it only
   // reaches here from the preview branch of the state route — device fetches
   // never pass it, so a real screen always starts today.
   //
@@ -333,7 +333,7 @@ export async function buildDisplayState(
         // and read by NOTHING in the occupancy, night-count, whole-lodge or
         // chore logic in this file.
         expectedArrivalTime: true,
-        // Authoritative whole-lodge treatment (#122 / epic #116, ADR-001
+        // Authoritative whole-lodge treatment (hoppers99/AlpineClubBookingsNZ#122 / epic hoppers99/AlpineClubBookingsNZ#116, ADR-001
         // decision 4): an explicit exclusive hold drives the blockout board,
         // with the sole-occupancy heuristic as the fallback for un-flagged
         // bookings.
@@ -370,7 +370,7 @@ export async function buildDisplayState(
             stayStart: true,
             stayEnd: true,
             memberId: true, // #3821: matches a custodian; never in the payload
-            // #125 / #37: the member's opt-in + phone, released per-guest only
+            // hoppers99/AlpineClubBookingsNZ#125 / hoppers99/AlpineClubBookingsNZ#37: the member's opt-in + phone, released per-guest only
             // under `canServeMemberPhoneOnLodgeSurface` in the row builder.
             member: {
               select: {
@@ -421,7 +421,7 @@ export async function buildDisplayState(
             booking: {
               select: {
                 // `id` looks the booking up in `wholeLodgeBookingIds` below —
-                // the same whole-lodge decision the booking rows use (#174).
+                // the same whole-lodge decision the booking rows use (hoppers99/AlpineClubBookingsNZ#174).
                 id: true,
                 member: {
                   select: { firstName: true, lastName: true, ageTier: true },
@@ -533,7 +533,7 @@ export async function buildDisplayState(
   });
 
   // --- whole-lodge detection: an explicit exclusive hold is AUTHORITATIVE
-  // (#122 / epic #116, ADR-001 decision 4) — a flagged booking always gets the
+  // (hoppers99/AlpineClubBookingsNZ#122 / epic hoppers99/AlpineClubBookingsNZ#116, ADR-001 decision 4) — a flagged booking always gets the
   // blockout treatment regardless of headcount. The sole-occupancy heuristic
   // (design.md §10: sole occupancy on every NIGHT the booking covers AND a
   // genuine group — organisation or >= threshold) is the fallback for
@@ -836,7 +836,7 @@ export async function buildDisplayState(
   }
 
   // --- chores: assignee labels obey the SAME namesAllowed decision as the
-  // booking rows (#174) — a chore assignee is never named more precisely
+  // booking rows (hoppers99/AlpineClubBookingsNZ#174) — a chore assignee is never named more precisely
   // than that booking's own row on the wall.
   const chores = choreRows.map((assignment) => {
     const assignee = assignment.bookingGuest;

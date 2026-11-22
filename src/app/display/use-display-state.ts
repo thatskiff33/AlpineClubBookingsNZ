@@ -6,7 +6,7 @@ import type { DisplayTemplateDefinition } from "@/lib/lodge-display/template-reg
 import type { LayoutRenderPayload } from "@/lib/lodge-display/layout-registry";
 import { clampPollSeconds } from "@/lib/lodge-display/poll-interval";
 
-// Client lifecycle for the lobby display page (fork issues #32/#52):
+// Client lifecycle for the lobby display page (fork issues hoppers99/AlpineClubBookingsNZ#32/#52):
 //
 //   pairing        — no/invalid token: request a code, show it, poll claim
 //   active         — render the bound template from the latest good payload
@@ -18,7 +18,7 @@ import { clampPollSeconds } from "@/lib/lodge-display/poll-interval";
 // forwarded to the state API, which honours it only for a full admin; the
 // pairing flow never starts, and no banner is shown (owner's call — the
 // preview IS the real screen). A transient failure NEVER clears the screen
-// (issue #32 AC5); a 401 on a real device drops back to pairing within one
+// (issue hoppers99/AlpineClubBookingsNZ#32 AC5); a 401 on a real device drops back to pairing within one
 // poll (AC6).
 
 // The active-board cadence falls back to clampPollSeconds's own default

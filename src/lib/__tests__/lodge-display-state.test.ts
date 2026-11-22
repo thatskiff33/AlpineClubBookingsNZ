@@ -2,7 +2,7 @@ import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DisplayNameGranularity } from "@prisma/client";
 
-// Issue #28 (LTV-003): the lobby display privacy serialiser — the single
+// Issue hoppers99/AlpineClubBookingsNZ#28 (LTV-003): the lobby display privacy serialiser — the single
 // enforcement point for what a public screen shows. The matrix here covers
 // every granularity level × booking shape (adults / family-with-minors /
 // organisation / whole-lodge) plus scoping, clamping, config sanitisation,
@@ -17,7 +17,7 @@ const { mockPrisma, mockFlags, mockInstructions } = vi.hoisted(() => ({
     // The route test below imports the state route, whose device path stamps
     // lastSeenAt on success (issue hoppers99/AlpineClubBookingsNZ#52).
     lodgeDisplayDevice: { findUnique: vi.fn(), update: vi.fn() },
-    // Club branding for the header brand block (issue #56).
+    // Club branding for the header brand block (issue hoppers99/AlpineClubBookingsNZ#56).
     clubTheme: { findUnique: vi.fn().mockResolvedValue(null) },
     // DB-first club name for the header (E3 #1929; leak fixed C5 #1984). Default
     // null → the display club name resolves from config, as before.
@@ -121,7 +121,7 @@ const LODGE = {
   active: true,
   displayConfig: null,
   displayNameGranularity: null as DisplayNameGranularity | null,
-  // #125 / #37: phone display defaults OFF on the lodge.
+  // hoppers99/AlpineClubBookingsNZ#125 / hoppers99/AlpineClubBookingsNZ#37: phone display defaults OFF on the lodge.
   showGuestPhonesOnScreens: false,
 };
 
@@ -137,7 +137,7 @@ function guest(
   ageTier: "ADULT" | "CHILD" | "YOUTH" | "INFANT",
   stay: { start: string; end: string },
   roomId?: string,
-  // #125 / #37: the guest's linked member (opt-in + phone). Omitted for the
+  // hoppers99/AlpineClubBookingsNZ#125 / hoppers99/AlpineClubBookingsNZ#37: the guest's linked member (opt-in + phone). Omitted for the
   // privacy/label matrix, which does not exercise phone.
   member?: {
     ageTier?: "ADULT" | "CHILD" | "YOUTH" | "INFANT";
@@ -167,7 +167,7 @@ function booking(
   member: { firstName: string; lastName: string; ageTier: string },
   guests: ReturnType<typeof guest>[],
   range = { checkIn: "2026-04-13", checkOut: "2026-04-15" },
-  // #122 / #116: an explicit exclusive hold drives the whole-lodge blockout.
+  // hoppers99/AlpineClubBookingsNZ#122 / hoppers99/AlpineClubBookingsNZ#116: an explicit exclusive hold drives the whole-lodge blockout.
   wholeLodgeHold = false,
   // #2621: the display-only expected arrival time. Null is the ordinary case
   // and the default, so every pre-existing case is unchanged by its presence.
@@ -739,7 +739,7 @@ describe("buildDisplayState privacy matrix", () => {
     expect(state!.bookings[0].guests).toHaveLength(1);
   });
 
-  it("treats an explicit exclusive hold as whole-lodge, below the heuristic threshold (#122, ADR-001 decision 4)", async () => {
+  it("treats an explicit exclusive hold as whole-lodge, below the heuristic threshold (hoppers99/AlpineClubBookingsNZ#122, ADR-001 decision 4)", async () => {
     // The SAME lone guest that the heuristic leaves un-blocked above becomes a
     // whole-lodge blockout when the booking carries the authoritative flag — no
     // headcount/sole-occupancy condition applies, and individual names are
@@ -759,7 +759,7 @@ describe("buildDisplayState privacy matrix", () => {
     expect(state!.bookings[0].guests).toBeNull();
   });
 
-  it("never leaks the exclusive nature of a hold to the public display (ADR-001 decision 6, #119/#120)", async () => {
+  it("never leaks the exclusive nature of a hold to the public display (ADR-001 decision 6, hoppers99/AlpineClubBookingsNZ#119/#120)", async () => {
     // A held booking presents EXACTLY as an ordinary whole-lodge blockout — the
     // public payload must carry no indication that the lodge is *exclusively*
     // held (no wholeLodgeHold flag, no conflict/overlap/exclusivity field).
@@ -879,7 +879,7 @@ describe("buildDisplayState privacy matrix", () => {
     ]);
   });
 
-  it("starts the window on a simulated windowStart instead of today (issue #60)", async () => {
+  it("starts the window on a simulated windowStart instead of today (issue hoppers99/AlpineClubBookingsNZ#60)", async () => {
     mockPrisma.booking.findMany.mockResolvedValue([
       booking(
         "b1",
@@ -931,7 +931,7 @@ describe("buildDisplayState privacy matrix", () => {
     expect(JSON.stringify(state!.chores)).not.toContain("Tama");
   });
 
-  it("applies the SAME namesAllowed decision to chore assignees as booking rows — whole-lodge and organisation bookings collapse to the group label too (#174)", async () => {
+  it("applies the SAME namesAllowed decision to chore assignees as booking rows — whole-lodge and organisation bookings collapse to the group label too (hoppers99/AlpineClubBookingsNZ#174)", async () => {
     mockFlags.mockResolvedValue({ bedAllocation: false, chores: true });
 
     // The whole-lodge booking also has to appear in the primary bookings
@@ -978,7 +978,7 @@ describe("buildDisplayState privacy matrix", () => {
         },
       },
       // Adult assignee whose booking is the whole-lodge blockout: group label
-      // (previously this leaked the individual reduced name — the #174 bug).
+      // (previously this leaked the individual reduced name — the hoppers99/AlpineClubBookingsNZ#174 bug).
       {
         date: parseDateOnly("2026-04-13"),
         choreTemplate: { name: "Firewood" },
@@ -1026,8 +1026,8 @@ describe("buildDisplayState privacy matrix", () => {
     const bookingArgs = mockPrisma.booking.findMany.mock.calls[0][0];
     expect(bookingArgs.where).toMatchObject(lodgeNullTolerantScope("lodge-a"));
     const selectJson = JSON.stringify(bookingArgs.select);
-    // No monetary or email field is ever selected. Phone IS selected (#125 /
-    // #37) but released per-guest only under the two-sided consent gate — see
+    // No monetary or email field is ever selected. Phone IS selected (hoppers99/AlpineClubBookingsNZ#125 /
+    // hoppers99/AlpineClubBookingsNZ#37) but released per-guest only under the two-sided consent gate — see
     // the "phone opt-in gate" block for the enforcement proof.
     expect(selectJson).not.toMatch(/price|amount|cents|payment|invoice|email/i);
   });
@@ -1053,7 +1053,7 @@ describe("buildDisplayState privacy matrix", () => {
 
   it("ships only the display-relevant module flags on capabilities, never the whole map", async () => {
     // The effective flags include unrelated club modules; the public payload
-    // must carry only DISPLAY_RELEVANT_MODULE_KEYS (ADR-003 §3, issue #71).
+    // must carry only DISPLAY_RELEVANT_MODULE_KEYS (ADR-003 §3, issue hoppers99/AlpineClubBookingsNZ#71).
     mockFlags.mockResolvedValue({
       bedAllocation: true,
       chores: false,
@@ -1126,11 +1126,11 @@ describe("GET /api/display/state (route)", () => {
   });
 });
 
-// #125 / #37: the lobby display is a PUBLIC screen, so the two-sided consent
+// hoppers99/AlpineClubBookingsNZ#125 / hoppers99/AlpineClubBookingsNZ#37: the lobby display is a PUBLIC screen, so the two-sided consent
 // gate is the whole point here — a phone must never enter the payload unless the
 // lodge enabled it AND the member opted in AND the guest is an adult on a row
 // that already shows individual names.
-describe("buildDisplayState phone opt-in gate (#125 / #37)", () => {
+describe("buildDisplayState phone opt-in gate (hoppers99/AlpineClubBookingsNZ#125 / hoppers99/AlpineClubBookingsNZ#37)", () => {
   const OPTED_IN_ADULT = {
     ageTier: "ADULT" as const,
     lodgeScreenPhoneOptIn: true,

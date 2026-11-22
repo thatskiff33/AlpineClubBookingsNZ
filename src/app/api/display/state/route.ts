@@ -20,7 +20,7 @@ import logger from "@/lib/logger";
 import { clubFormatValues } from "@/lib/club-format-server";
 
 // GET /api/display/state?days=N — the lobby display's single data feed
-// (fork issues #28/#32/#52, design.md §5). Two callers:
+// (fork issues hoppers99/AlpineClubBookingsNZ#28/#32/#52, design.md §5). Two callers:
 //
 //  - a PAIRED DEVICE (display-token cookie): the device's bound lodge and
 //    template; a successful fetch stamps lastSeenAt so admins can see a dead
@@ -34,7 +34,7 @@ import { clubFormatValues } from "@/lib/club-format-server";
 //    through the SAME privacy-reduced serialiser, so a preview can never show
 //    more than a lobby wall would. The parameter is honoured ONLY for a full
 //    admin; anyone else gets the normal 401. A preview may also carry
-//    ?previewDate=YYYY-MM-DD (issue #60) to start the window on a simulated
+//    ?previewDate=YYYY-MM-DD (issue hoppers99/AlpineClubBookingsNZ#60) to start the window on a simulated
 //    date instead of today — preview-only; device fetches never honour it.
 //  - a SANDBOXED PREVIEW GRANT (LTV-036, ADR-003 §5): ?previewGrant=<token> —
 //    an HMAC-signed, 5-minute, single-purpose blob minted by the admin-only
@@ -66,7 +66,7 @@ function grantJson(body: unknown, status = 200) {
 
 // Every display-state payload can carry guest names and opted-in phone numbers
 // (the privacy-reduced wall feed), so no shared/browser cache may ever hold one
-// (issue #176). All three response paths set Cache-Control: no-store — the grant
+// (issue hoppers99/AlpineClubBookingsNZ#176). All three response paths set Cache-Control: no-store — the grant
 // path via GRANT_CORS_HEADERS above (which also carries the opaque-origin CORS
 // header the sandboxed iframe needs), and the device + session-preview paths via
 // this shared header.
@@ -232,7 +232,7 @@ function layoutFields(
   return result.ok ? { layoutRender: result.render } : { layoutRenderError: true };
 }
 
-// The simulated preview start date (issue #60): a real calendar day as
+// The simulated preview start date (issue hoppers99/AlpineClubBookingsNZ#60): a real calendar day as
 // YYYY-MM-DD. Anything else, including a right-shaped day that does not exist,
 // falls back to today silently (null → the serialiser starts from today).
 // Preview-only; the caller must never reach this from the device path.
@@ -261,7 +261,7 @@ export async function GET(req: NextRequest) {
     if (!grant) {
       return grantJson({ error: "Unauthorised" }, 401);
     }
-    // Window start for the grant render (issue #176). The grant is a signed,
+    // Window start for the grant render (issue hoppers99/AlpineClubBookingsNZ#176). The grant is a signed,
     // single-purpose, per-preview capability: when it carries a windowStart, that
     // SIGNED value is authoritative and an unsigned `?previewDate` on the
     // (sandbox-rewritable) iframe URL must not shift or widen the served window

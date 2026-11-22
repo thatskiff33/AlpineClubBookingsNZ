@@ -23,7 +23,7 @@ import {
   NIGHT_COLUMNS_MAX_DAYS,
 } from "@/components/lodge-display/modules/module-options";
 
-// Issue #30 (LTV-005): the booking/occupancy display modules — pure functions
+// Issue hoppers99/AlpineClubBookingsNZ#30 (LTV-005): the booking/occupancy display modules — pure functions
 // of the privacy-reduced DisplayState. Fixtures mirror the payload the
 // serialiser emits; no module ever queries anything.
 
@@ -111,7 +111,7 @@ function state(overrides: Partial<DisplayState>): DisplayState {
 }
 
 describe("bar layout maths (clipping regression surface)", () => {
-  // stayEnd is the CHECK-OUT date (issue #56): a bar occupies nights
+  // stayEnd is the CHECK-OUT date (issue hoppers99/AlpineClubBookingsNZ#56): a bar occupies nights
   // stayStart .. stayEnd-1, matching the approved mock.
   it("places an in-window stay on its nights only (checkout morning excluded)", () => {
     expect(

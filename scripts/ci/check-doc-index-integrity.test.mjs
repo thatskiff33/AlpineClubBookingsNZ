@@ -1470,7 +1470,7 @@ describe("tracked citation source extensions", () => {
     // and its recovery replay send one Stripe request.
     // Moved up again by #4924, which shipped INV-MOD-062: an edit settles only
     // the figures its preview showed the member.
-    // Moved up again by fork #133, which shipped INV-MOD-063: an officer's
+    // Moved up again by fork triyder/AlpineClubBookingsNZ#133, which shipped INV-MOD-063: an officer's
     // work-party correction on a started stay, and its Remove.
     const planted = "INV-MOD-064";
     // The precondition the fixture rests on. When this fails, `planted` has been

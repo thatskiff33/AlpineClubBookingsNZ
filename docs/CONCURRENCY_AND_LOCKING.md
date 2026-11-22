@@ -6861,13 +6861,13 @@ finished) claims on `status: REQUESTED` and now bumps `version`, so it and an
 execution cannot both win. Proved against PostgreSQL in
 `booking-change-request-execution.realdb.test.ts`.
 
-### Adding an existing booking to a work party (fork #119)
+### Adding an existing booking to a work party (fork triyder/AlpineClubBookingsNZ#119)
 
 An officer's "Add to work party" (`addBookingToWorkParty`,
 `src/lib/work-party-booking-correction.ts`) composes only existing keys and adds
 one registered global site, `correctWorkParty#1` (`INV-LOCK-002`,
 `INV-LOCK-003`). It is the #3750 execution's shape without a request row.
-Fork #130's "Remove from work party" (`removeBookingFromWorkParty`) is the same
+Fork triyder/AlpineClubBookingsNZ#130's "Remove from work party" (`removeBookingFromWorkParty`) is the same
 writer in the other direction: it adds no key, site or participant, and the
 steps below are its steps too (its eligibility rule is
 `workPartyRemovalEligibility`). Order, in one transaction:

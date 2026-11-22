@@ -24,7 +24,7 @@ import {
 import { DISPLAY_GLOSSARY } from "@/lib/lodge-display/display-terminology";
 import { adminLink, getAdminPage } from "@/lib/admin-hubs";
 
-// LTV-034 (#80) — read-only Modules / Conditions / CSS-tokens reference (ADR-003
+// LTV-034 (hoppers99/AlpineClubBookingsNZ#80) — read-only Modules / Conditions / CSS-tokens reference (ADR-003
 // §3, "Navigation & terminology"). Everything on this page is presentation over
 // three CLIENT-SAFE registries: `listDisplayModules()`, `listDisplayConditions()`,
 // and `listDisplayCssTokens()`. The only server call is the conditions status

@@ -805,7 +805,7 @@ and promo codes (`INV-REQ-011`, `INV-REQ-013`) are applied the same way.
 
 ## INV-MOD-063
 
-**Officer work-party correction on a started stay (fork #127, fork #130; owner
+**Officer work-party correction on a started stay (fork triyder/AlpineClubBookingsNZ#127, fork triyder/AlpineClubBookingsNZ#130; owner
 decisions 1 and 2 of 18 Nov 2026, maintainers' comments on #5149:
 https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6951626920
 and https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6952444211).** An officer's "Add to work party" or "Remove from work party"

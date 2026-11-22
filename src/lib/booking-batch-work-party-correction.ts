@@ -1,7 +1,7 @@
 import { isCapacityHoldingBookingStatus } from "@/lib/booking-status";
 
 /**
- * Fork #119: the batch service's work-party correction argument — its type,
+ * Fork triyder/AlpineClubBookingsNZ#119: the batch service's work-party correction argument — its type,
  * the money rule recorded with it, and the guard that keeps it on its one
  * path. Moved out of `booking-batch-modification-service.ts` (#5149: that file
  * is past its hard size ceiling); the service is still the only reader, and
@@ -9,7 +9,7 @@ import { isCapacityHoldingBookingStatus } from "@/lib/booking-status";
  * `work-party-booking-correction.test.ts`.
  *
  * What the argument names: the work party an officer is adding the booking
- * to (or, fork #130, removing it from), and its internal promo, for a work party the member was entitled to and
+ * to (or, fork triyder/AlpineClubBookingsNZ#130, removing it from), and its internal promo, for a work party the member was entitled to and
  * missed ("Add booking to work party"). A SERVICE argument, like
  * `waiveChangeFee` and for the same reason: `input` is a parsed request body
  * on the member routes.
@@ -24,11 +24,11 @@ import { isCapacityHoldingBookingStatus } from "@/lib/booking-status";
 export type OfficerWorkPartyCorrection = {
   readonly workPartyEventId: string;
   readonly promoCodeId: string;
-  /** Fork #130: "remove" drops the code instead, and the difference is owed. */
+  /** Fork triyder/AlpineClubBookingsNZ#130: "remove" drops the code instead, and the difference is owed. */
   readonly direction: "add" | "remove";
 };
 
-/** The money rule a work-party correction carries, recorded with it: an Add's, or (fork #130) a Remove's. */
+/** The money rule a work-party correction carries, recorded with it: an Add's, or (fork triyder/AlpineClubBookingsNZ#130) a Remove's. */
 const OFFICER_WORK_PARTY_MONEY_RULE = {
   add: { changeFee: "none", reduction: "returned in full" },
   remove: { changeFee: "none", increase: "owed on the booking" },
@@ -76,7 +76,7 @@ export function workPartyCorrectionRecord(correction: OfficerWorkPartyCorrection
 }
 
 /**
- * Fork #127: the day a correction's codes are judged on. On a started stay it
+ * Fork triyder/AlpineClubBookingsNZ#127: the day a correction's codes are judged on. On a started stay it
  * is the check-in day, as a finished stay's are (#3750) — on the real today an
  * expired second code would be released and its discount billed back.
  */
@@ -89,7 +89,7 @@ export function workPartyCorrectionCodeDay<T extends string>(
 }
 
 /**
- * Fork #127/#130: whether the pricing pass may skip the bed check. A
+ * Fork triyder/AlpineClubBookingsNZ#127/triyder/AlpineClubBookingsNZ#130: whether the pricing pass may skip the bed check. A
  * correction moves no guest or night, so a booking whose status already holds
  * its beds claims none (a started stay's slept nights, or an officer's
  * overbooking, would otherwise fail it). A booking that holds none yet, such

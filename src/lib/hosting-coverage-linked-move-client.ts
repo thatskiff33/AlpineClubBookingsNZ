@@ -77,7 +77,7 @@ export interface HostingCoverageLinkedMovePromptData {
   linkedBookings: HostingCoverageLinkedMoveBooking[];
   combinedAmountDueCents: number;
   combinedRefundCents: number;
-  /** fork #132: the freed applied credit inside `combinedRefundCents`, for the wording only. */
+  /** fork triyder/AlpineClubBookingsNZ#132: the freed applied credit inside `combinedRefundCents`, for the wording only. */
   combinedFreedCreditCents: number;
   combinedChangeFeeCents: number;
   combinedPolicyRetainedCents: number;
@@ -101,11 +101,11 @@ export interface HostingCoverageLinkedMovePromptData {
  */
 export interface LinkedMoveMoneyFacts {
   combinedAmountDueCents: number;
-  /** Every cent coming back to the member, freed applied credit included (`combineLinkedMoveQuote`, fork #132). */
+  /** Every cent coming back to the member, freed applied credit included (`combineLinkedMoveQuote`, fork triyder/AlpineClubBookingsNZ#132). */
   combinedRefundCents: number;
   /**
    * The part of `combinedRefundCents` that is an unpaid booking's applied credit
-   * freed by a lower price (fork #132). It always returns to account credit, so it is
+   * freed by a lower price (fork triyder/AlpineClubBookingsNZ#132). It always returns to account credit, so it is
    * never part of the card-or-credit choice; the sentences below say so. Copy only:
    * the one total the member consents to stays `combinedRefundCents`.
    */
@@ -216,7 +216,7 @@ export function formatLinkedMoveMoneySentence(
 ): string {
   const all = linkedMoveAllBookingsPhrase(facts.linkedCount);
   const parts: string[] = [];
-  // fork #132: the settlement's share (`editMoneyBackCents`) is what the card-or-credit
+  // fork triyder/AlpineClubBookingsNZ#132: the settlement's share (`editMoneyBackCents`) is what the card-or-credit
   // choice covers; freed applied credit goes back to account credit regardless.
   const settlementShareCents = facts.combinedRefundCents - facts.combinedFreedCreditCents;
   const freed =

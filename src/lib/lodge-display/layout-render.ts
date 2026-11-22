@@ -23,7 +23,7 @@ import type { ClubDateFormat } from "@/lib/club-time";
 //
 //  1. Every admin-authored HTML field (the layout body, each authored slot's
 //     html, the footer) passes through the website content sanitiser with its
-//     display img-src restriction (issue #161, ADR-003 residual: an <img> src
+//     display img-src restriction (issue hoppers99/AlpineClubBookingsNZ#161, ADR-003 residual: an <img> src
 //     is constrained to relative/self paths or data: URIs, matching the
 //     display CSP's img-src 'self' data: — src/lib/csp.ts), and the
 //     CSS blocks (defaultCss + cssOverrides) are hardened by sanitiseDisplayCss
@@ -53,7 +53,7 @@ import type { ClubDateFormat } from "@/lib/club-time";
 // is server-only.
 
 /**
- * Harden one authored CSS field for the unattended wall (LTV-029, #75):
+ * Harden one authored CSS field for the unattended wall (LTV-029, hoppers99/AlpineClubBookingsNZ#75):
  * lexically neutralise the exfiltration/injection vectors, THEN scope every
  * selector to the display's authored root so it can only style the editable
  * body/footer. Order matters — scoping runs over the already-sanitised text so
@@ -63,7 +63,7 @@ function prepareAuthoredCss(css: string): string {
   return scopeDisplayCss(sanitiseDisplayCss(css));
 }
 
-// Marker replacement (LTV-041, issue #96): once an authored surface has been
+// Marker replacement (LTV-041, issue hoppers99/AlpineClubBookingsNZ#96): once an authored surface has been
 // sanitised AND value-resolved, each `{{area:key}}` / `{{module:name}}` token is
 // swapped for an INERT marker element the client portals its Area/module into.
 // The token syntax never reaches the client, so a placeholder nested inside an
@@ -103,7 +103,7 @@ function replaceModuleEmbeds(html: string): string {
  * both steps; the caller swaps them for inert markers as the final step.
  */
 function renderAuthoredHtml(html: string, state: DisplayState, format: ClubDateFormat): string {
-  // restrictImgSrc: true (issue #161, ADR-003 residual) — the display's own
+  // restrictImgSrc: true (issue hoppers99/AlpineClubBookingsNZ#161, ADR-003 residual) — the display's own
   // img-src CSP is 'self' data:, so an <img src="https://…"> an author saved
   // before this change (or hand-edited around the save-time warning) has its
   // src stripped here too rather than being served to fail silently against
@@ -190,7 +190,7 @@ export function buildLayoutRender(
     // both — they carry no angle brackets), THEN swap each `{{area:key}}` for an
     // inert `<div data-display-area="key">` marker the client portals its Area
     // into. Shipping the body WHOLE (not split into sibling fragments) keeps an
-    // area nested inside an authored container in place (LTV-041, issue #96).
+    // area nested inside an authored container in place (LTV-041, issue hoppers99/AlpineClubBookingsNZ#96).
     bodyHtml: replaceAreaPlaceholders(renderAuthoredHtml(input.bodyHtml, state, format)),
     // Non-authored club-theme variables, unscoped so `:root { --brand-* }`
     // cascades to the whole page; injected BEFORE the authored CSS.

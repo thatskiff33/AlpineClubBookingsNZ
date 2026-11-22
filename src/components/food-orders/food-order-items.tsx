@@ -8,7 +8,7 @@ import { requireInstant } from "@/lib/club-time";
 import { formatFoodOrderItemLine, type FoodOrderUnitValue } from "@/lib/food-order-rules";
 
 /**
- * A food order's item lines (fork #121; owner change, 13 Nov 2026: food can
+ * A food order's item lines (fork triyder/AlpineClubBookingsNZ#121; owner change, 13 Nov 2026: food can
  * arrive in parts, so receipt is ticked item by item).
  *
  * With `selectable` (the server said `canManage` and the order is still Open)

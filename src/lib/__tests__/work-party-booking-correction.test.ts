@@ -25,7 +25,7 @@ import { editTotalMoneyBackCents, workPartyAskAbsorbedSentence, workPartyAskPart
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /**
- * Fork #119: the eligibility rule for "Add booking to work party", one case per
+ * Fork triyder/AlpineClubBookingsNZ#119: the eligibility rule for "Add booking to work party", one case per
  * refusal, and the census that keeps the officer-only internal-code admission
  * reachable from exactly one place. The money paths are proved on real
  * PostgreSQL in `work-party-booking-correction.realdb.test.ts`. Today is the
@@ -65,7 +65,7 @@ const refusal = (pattern: RegExp | string) => ({
   reason: typeof pattern === "string" ? pattern : expect.stringMatching(pattern),
 });
 
-describe("workPartyRemovalEligibility (fork #130)", () => {
+describe("workPartyRemovalEligibility (fork triyder/AlpineClubBookingsNZ#130)", () => {
   const onBooking = {
     status: BookingStatus.PAID,
     checkOut: d("2026-08-04"),
@@ -158,7 +158,7 @@ describe("workPartyBookingEligibility", () => {
     );
   });
 
-  it("fork #127: accepts a stay that has started, nights already slept included", () => {
+  it("fork triyder/AlpineClubBookingsNZ#127: accepts a stay that has started, nights already slept included", () => {
     expect(
       workPartyBookingEligibility(
         { ...booking, checkIn: d("2026-06-28"), checkOut: d("2026-07-03") },
@@ -168,7 +168,7 @@ describe("workPartyBookingEligibility", () => {
     ).toEqual({ ok: true });
   });
 
-  it("fork #127: accepts a stay on its check-out day (still in progress)", () => {
+  it("fork triyder/AlpineClubBookingsNZ#127: accepts a stay on its check-out day (still in progress)", () => {
     expect(
       workPartyBookingEligibility(
         { ...booking, checkIn: d("2026-06-28"), checkOut: d("2026-07-01") },
@@ -474,7 +474,7 @@ describe("the officer-only internal-code admission (census)", () => {
     expect(callers).toEqual(["src/lib/work-party-booking-correction.ts"]);
   });
 
-  it("only the batch service hands the correction to the promo engine (Add admits, fork #130 Remove drops)", () => {
+  it("only the batch service hands the correction to the promo engine (Add admits, fork triyder/AlpineClubBookingsNZ#130 Remove drops)", () => {
     const service = readFileSync(path.join(root, "lib", "booking-batch-modification-service.ts"), "utf8");
     const plan = readFileSync(path.join(root, "lib", "booking-modify-plan.ts"), "utf8");
     expect(service).toContain("officerWorkPartyCorrection: officerWorkPartyCorrection ?? null,");

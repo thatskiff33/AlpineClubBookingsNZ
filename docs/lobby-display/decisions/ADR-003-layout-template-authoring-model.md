@@ -15,7 +15,7 @@ as raw JSON in the admin. The MVP shipped on that model (LTV-001…017) but only
 to the owner's **staging** box with seed/test data — it has never reached
 production and never gone upstream, so **there is no real data to preserve.**
 
-Owner review produced a different authoring vision (largely backlog #63):
+Owner review produced a different authoring vision (largely backlog hoppers99/AlpineClubBookingsNZ#63):
 admins should compose displays from an HTML **layout** with named areas, fill
 those areas with content or embedded modules, and style with CSS — closer to
 the website CMS than to a JSON definition. This ADR records that model and the
@@ -139,7 +139,7 @@ A display specifies a lodge, so preview is **display-scoped** (kiosk-style — i
 renders that display's lodge; already correct via `previewDevice`). The
 template-editor quick preview must render against a **clearly-indicated lodge**,
 not silently the default (shrinks backlog hoppers99/AlpineClubBookingsNZ#64). The **simulated date** (LTV-017)
-is retained; its **picker markup is fixed** (backlog #65). Because previews now
+is retained; its **picker markup is fixed** (backlog hoppers99/AlpineClubBookingsNZ#65). Because previews now
 render admin HTML/CSS, preview renders in a **sandboxed iframe** so a template
 authored by one admin cannot run against another admin's session.
 
@@ -189,7 +189,7 @@ a forward "drop old display tables + create new" migration or — preferred, sin
 nothing shipped — **consolidate the branch's display migrations into one clean
 schema for the eventual upstream PR and reset staging.** The whole branch is
 **re-layered onto a clean history** before the single upstream PR (as done for
-multi-lodge), so the upstream diff reflects the end-state. *(Implemented in #86 /
+multi-lodge), so the upstream diff reflects the end-state. *(Implemented in hoppers99/AlpineClubBookingsNZ#86 /
 LTV-040: the six branch migrations were consolidated into the single
 `20260712130000_add_lobby_display` expand migration and the vestigial
 `LodgeDisplayDevice.templateKey` column was removed; staging/dev databases that
@@ -223,8 +223,8 @@ applied the superseded migrations are reset with a fresh `migrate deploy`.)*
   built-in, the state route flags a broken binding (`layoutRenderError`) and logs
   it, and `authoring-validation.ts` is the shared save contract — structural
   invalidity refuses the save, sanitiser-blocked content warns. Preview-before-
-  save **enforcement** lives in the authoring UIs, #78/#79. Hardened in issue
-  #176: **every** render branch is now wrapped, not just the authored one — the
+  save **enforcement** lives in the authoring UIs, hoppers99/AlpineClubBookingsNZ#78/#79. Hardened in issue
+  hoppers99/AlpineClubBookingsNZ#176: **every** render branch is now wrapped, not just the authored one — the
   legacy `ActiveScreen` and the already-degraded `FallbackBoard` branches drop to
   a minimal, zero-data shell if they throw, and a route-segment `error.tsx` is the
   framework-level last resort for a throw that escapes the React tree entirely, so
@@ -232,8 +232,8 @@ applied the superseded migrations are reset with a fresh `migrate deploy`.)*
 - **Token scope.** Authored content resolves only the display's own token set,
   never the full site token catalogue — a wall must not surface data beyond the
   privacy-reduced payload the serialiser already guards. *(Value resolution runs
-  AFTER the sanitiser, so issue #176 adds a URL-scheme guard, hardened against
-  split-token composition in issue #186. Enforcement is **two-phase**, both
+  AFTER the sanitiser, so issue hoppers99/AlpineClubBookingsNZ#176 adds a URL-scheme guard, hardened against
+  split-token composition in issue hoppers99/AlpineClubBookingsNZ#186. Enforcement is **two-phase**, both
   phases scoped to token-bearing `href`/`src` attributes: (1) a token-level fast
   path scheme-validates a resolved value that OPENS an authored `href`/`src` as
   it is injected; (2) a composition-closing pass then re-validates the COMPLETE
@@ -245,7 +245,7 @@ applied the superseded migrations are reset with a fresh `migrate deploy`.)*
   live scheme past the gate, whether it carries the scheme whole or splices it
   together across tokens. Only token-bearing attributes are checked; literal
   authored URLs keep the sanitiser's verdict (preserving the display's allowed
-  literal `data:` <img> srcs, issue #161), and CMS/page-content behaviour is
+  literal `data:` <img> srcs, issue hoppers99/AlpineClubBookingsNZ#161), and CMS/page-content behaviour is
   untouched.)*
 - **Privacy unchanged.** All name reduction / minors / no-sensitive-field rules
   remain solely in `buildDisplayState`; the authoring layer only arranges what

@@ -121,7 +121,7 @@ export const ROUTE_AREA_PREFIXES: Array<{
       // audience is `{ area: "lodge", level: "edit" }` — see
       // ADMIN_NOTIFICATION_PREFERENCE_REQUIREMENT.
       "/api/admin/maintenance-reports",
-      // Food orders settings (fork #121), Lodge Operations like maintenance.
+      // Food orders settings (fork triyder/AlpineClubBookingsNZ#121), Lodge Operations like maintenance.
       "/api/admin/food-orders",
     ],
   },
