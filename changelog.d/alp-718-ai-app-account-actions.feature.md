@@ -13,5 +13,6 @@
   the website's screens use, and a connection never acts with an officer's
   powers. Acknowledging a notice, confirming details at onboarding, asking for
   account deletion, turning marketing email on, dietary needs, the lobby-screen
-  phone opt-in, the help assistant and the visitor forms stay on the website. If you named what an AI app receives in your privacy notice, the
-  recipient register's `ai-apps` row now lists the new information.
+  phone opt-in, the help assistant and the visitor forms stay on the website.
+  If you named what an AI app receives in your privacy notice, the recipient
+  register's `ai-apps` row now lists the new information.

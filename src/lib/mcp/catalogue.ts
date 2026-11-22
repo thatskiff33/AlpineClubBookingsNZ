@@ -46,6 +46,8 @@ import {
   SKIFIELD_REPORT_CONNECTION_SHAPE,
   SUBSCRIPTION_STATUS_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes";
+import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
+import { ROSTER_WINDOW_DAYS } from "@/lib/lodge-roster-window";
 import { memberAuditLogQuerySchema } from "@/lib/member-audit-log-query";
 import { memberNotificationPreferencesConnectionUpdateSchema } from "@/lib/member-notification-preferences";
 import { memberProfileConnectionUpdateSchema } from "@/lib/member-profile-update-schema";
@@ -325,8 +327,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
   {
     id: "list_my_account_activity",
     title: "List my account activity",
-    summary:
-      "The signed-in member's own account history, newest first: bookings, payments, profile and family changes, sign-in and AI app events. `category` is `all` or one of `account`, `booking`, `payment`, `family`, `security`, `communication`, `privacy`. `page` counts from 1; `pageSize` is at most 50.",
+    summary: `The signed-in member's own account history, newest first: bookings, payments, profile and family changes, sign-in and AI app events. \`category\` is one of ${MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS.map(({ value }) => `\`${value}\``).join(", ")}. \`page\` counts from 1; \`pageSize\` is at most 50.`,
     method: "GET",
     path: "/api/member/audit-log",
     query: memberAuditLogQuerySchema,
@@ -338,7 +339,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     id: "get_lodge_roster",
     title: "See who is at the lodge",
     summary:
-      "Who is staying over the next 30 nights at the lodges the signed-in member can book, as the club's roster page shows it: names, or a group label and head count, and their nights. `to` is the morning after the last night shown. Only when the club has the roster switched on.",
+      `Who is staying over the next ${ROSTER_WINDOW_DAYS} nights at the lodges the signed-in member can book, as the club's roster page shows it: names, or a group label and head count, and their nights. \`to\` is the morning after the last night shown. Only when the club has the roster switched on.`,
     method: "GET",
     path: "/api/lodge-roster",
     kind: "read",

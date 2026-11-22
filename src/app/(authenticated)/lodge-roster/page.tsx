@@ -6,11 +6,8 @@ import { auth } from "@/lib/auth";
 import { type ClubDateFormat, formatStayDate } from "@/lib/club-time";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { collapseNightRuns } from "@/lib/bed-allocation-board-window";
-import {
-  buildMemberLodgeRoster,
-  ROSTER_WINDOW_DAYS,
-  type LodgeRoster,
-} from "@/lib/member-lodge-roster";
+import { ROSTER_WINDOW_DAYS } from "@/lib/lodge-roster-window";
+import { buildMemberLodgeRoster, type LodgeRoster } from "@/lib/member-lodge-roster";
 import { MEMBER_LODGE_ROSTER_LINK } from "@/lib/member-lodge-roster-link";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 

@@ -194,11 +194,11 @@ member's own record only.
 | --- | --- | --- | --- |
 | `get_my_notification_preferences` | Which club emails the member receives | read | `GET /api/notifications/preferences` |
 | `update_my_notification_preferences` | Turns club emails on or off; only the ones sent change. Marketing email can only be turned off: the member opts in on the website (`INV-PRIV-026`) | write | `PUT /api/notifications/preferences` |
-| `update_my_profile` | Saves the member's name, phone, date of birth, addresses and occupation. Name and phone are always saved; any other field not sent is kept. Dietary needs and the lobby-screen phone opt-in are website-only and refused. Answers with the `get_my_profile` fields | write | `PUT /api/profile` |
+| `update_my_profile` | Saves the member's name, phone, date of birth, addresses and occupation. Name and phone are always saved; any other field not sent is kept. Dietary needs and the lobby-screen phone opt-in are website-only: they are not accepted, so an app that sends them has them ignored (the route itself refuses them from a connection). Answers with the `get_my_profile` fields | write | `PUT /api/profile` |
 | `get_notice` | One notice the member can see, its body as plain text. Does not mark it read | read | `GET /api/notices/[id]` (new) |
 | `mark_notice_read` | Records that the member read a notice. Never acknowledges one | write | `POST /api/notices/[id]/read` |
 | `list_my_account_activity` | The member's own account history: when, what kind, what happened | read | `GET /api/member/audit-log` |
-| `get_lodge_roster` | Who is at the lodges the member can book over the next 30 nights, as the roster page shows it. Only while the roster module is on | read | `GET /api/lodge-roster` (new) |
+| `get_lodge_roster` | Who is at the lodges the member can book over the roster window (`ROSTER_WINDOW_DAYS` nights, in `src/lib/lodge-roster-window.ts`), as the roster page shows it. Only while the roster module is on | read | `GET /api/lodge-roster` (new) |
 | `get_age_groups` | The club's age groups, their ranges and whether each needs a paid subscription | read | `GET /api/age-tier-settings` |
 | `get_booking_messages` | The club's standard booking messages and the club values their placeholders take | read | `GET /api/booking-messages` |
 | `list_committee` | The published committee: name, role, description | read | `GET /api/committee` |
@@ -321,26 +321,31 @@ Every action sends the connected person's own records, except
 - `get_my_subscription_status`: this season's status and why, the invoice
   number, the membership type and any member-rate notice. Not the invoice link.
 - `list_notices`: the notices the person can see, each body as plain text,
-  with whether they read and acknowledged each.
+  with whether they read and acknowledged each. That includes notices
+  addressed to a committee role the person holds, so an officer's connection
+  receives committee notices from their own inbox.
 - `get_availability` and `list_lodges`: free beds per night and the lodges the
   person can book. No personal information.
 - `get_my_notification_preferences` and `update_my_notification_preferences`:
   which club emails the person receives.
 - `update_my_profile`: what `get_my_profile` sends, after the save. Never the
-  date of birth, role, sign-in or accounting fields the save reads.
+  date of birth, role, sign-in or accounting fields the save reads. A date of
+  birth the app saves can move the person's age group, and so the prices of
+  their future bookings.
 - `get_notice` and `mark_notice_read`: one notice the person can see, as
   plain text, and whether they read and acknowledged it.
 - `list_my_account_activity`: for each entry in the person's own history, when
   it happened, its category, its outcome and its one-line summary. No
-  addresses, devices or details.
+  addresses, devices or details. A summary can name other people the entry
+  involves.
 - `get_lodge_roster`: **other members' names** and nights at the lodges the
   person can book, reduced exactly as the roster page reduces them
   (`INV-PRIV-017`): a booking with a child names nobody, and the club's name
   setting applies. Only while the club has the roster switched on.
 - `get_age_groups`, `get_booking_messages`, `list_committee` and
-  `get_skifield_report`: information the club already publishes. The
-  committee list carries names, roles and descriptions, not photos or phone
-  numbers.
+  `get_skifield_report`: information the club already publishes. Each
+  committee entry carries a name, a role and the free-text description the
+  club wrote, not photos or phone numbers.
 
 The app also holds whatever the person typed to it, such as the guest names
 for a draft. Disconnecting stops new calls; it does not remove what the
