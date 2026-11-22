@@ -10,7 +10,7 @@
  * flags are sent only for a damaged row (whose lists are then empty), and an
  * approval answers one of three shapes by kind of request. Those run through
  * `runAsConnectionAndBrowser`, which builds the request from the catalogue
- * entry the same way and checks the connection got exactly the projection
+ * entry the same way (`buildActionRequest`) and checks the connection got exactly the projection
  * onto the action's shape, with the dropped fields named.
  */
 import { NextRequest } from "next/server";
@@ -137,15 +137,14 @@ import { POST as resendAttendees } from "@/app/api/admin/booking-requests/[id]/r
 import { POST as resolvePendingAdults } from "@/app/api/admin/booking-requests/[id]/resolve-pending-adults/route";
 import { GET as schoolRecord } from "@/app/api/admin/booking-requests/[id]/school-record/route";
 import { POST as sendQuote } from "@/app/api/admin/booking-requests/[id]/send-quote/route";
-import { expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
+import {
+  buildActionRequest,
+  expectActionContract,
+  officerMemberSession,
+} from "@/lib/__tests__/helpers/mcp-action-contract";
 import { getAdminRouteRequirement } from "@/lib/admin-permissions";
 import { projectForConnection } from "@/lib/connection-projection";
-import {
-  findMcpAction,
-  mcpActionInputSchema,
-  splitMcpActionArguments,
-  type McpAction,
-} from "@/lib/mcp/catalogue";
+import { findMcpAction, type McpAction } from "@/lib/mcp/catalogue";
 import { BOOKINGS_REQUEST_MCP_ACTIONS } from "@/lib/mcp/catalogue/bookings-requests";
 import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
 
@@ -169,30 +168,16 @@ type Handler = (request: never, context: never) => Promise<Response>;
 
 /**
  * Runs an action's route as a connection and as a browser, the request built
- * from the catalogue entry, and checks the connection got exactly the
+ * from the catalogue entry (`buildActionRequest`), and checks the connection got exactly the
  * projection of the browser's answer onto the action's `returns`.
  */
 async function runAsConnectionAndBrowser(actionId: string, handler: Handler, args: Record<string, unknown>) {
   const action = findMcpAction(actionId) as McpAction;
   expect(action, `${actionId} is in the catalogue`).toBeDefined();
-  expect(mcpActionInputSchema(action).safeParse(args).success, `${actionId} accepts the arguments`).toBe(true);
-  const { params, query, body } = splitMcpActionArguments(action, args);
   const run = async (viaConnection: boolean) => {
-    const url = new URL(
-      action.path.replace(/\[([A-Za-z]+)\]/g, (_match, key: string) => encodeURIComponent(String(params[key]))),
-      "https://club.example.test",
-    );
-    for (const [key, value] of Object.entries(query)) url.searchParams.set(key, String(value));
-    const headers: Record<string, string> = { accept: "application/json" };
-    if (viaConnection) headers[MCP_PRINCIPAL_HEADER] = "contract-test-principal";
-    if (body !== null) headers["content-type"] = "application/json";
-    const request = new NextRequest(url, {
-      method: action.method,
-      headers,
-      body: body === null ? undefined : JSON.stringify(body),
-    });
+    const { request, context } = buildActionRequest(action, args, viaConnection);
     const call = handler as unknown as (r: Request, c: unknown) => Promise<Response>;
-    const response = await call(request, { params: Promise.resolve(params) });
+    const response = await call(request, context);
     expect(response.status, `${actionId} succeeds`).toBeLessThan(300);
     return response.json() as Promise<Record<string, unknown>>;
   };

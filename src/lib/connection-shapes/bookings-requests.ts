@@ -36,6 +36,7 @@ import {
   type ConnectionShapeFor,
   type EveryFieldOf,
 } from "@/lib/connection-projection";
+import { HOLD_CONFLICT_CONNECTION_FIELDS } from "@/lib/connection-shapes/bookings-bookings";
 import type { SchoolRecordPreview } from "@/lib/school-organisation-preview";
 
 // ── One request ─────────────────────────────────────────────────────────────
@@ -252,16 +253,6 @@ export const ADMIN_BOOKING_REQUEST_CONTACTS_CONNECTION_SHAPE = connectionShapeFo
   },
 });
 
-const HOLD_CONFLICT_FIELDS = {
-  id: true,
-  memberName: true,
-  checkIn: true,
-  checkOut: true,
-  guestCount: true,
-  status: true,
-  overridden: true,
-} as const satisfies ConnectionShapeFor<HoldConflictBooking>;
-
 /** `GET /api/admin/booking-requests/[id]/hold-conflicts`. */
 export interface AdminBookingRequestHoldConflictsAnswer {
   lodgeId: string;
@@ -280,7 +271,7 @@ export const ADMIN_BOOKING_REQUEST_HOLD_CONFLICTS_CONNECTION_SHAPE =
     lodgeId: true,
     lodgeCapacity: true,
     nights: { date: true, availableBeds: true, occupiedBeds: true, wholeLodgeHeld: true },
-    conflicts: HOLD_CONFLICT_FIELDS,
+    conflicts: HOLD_CONFLICT_CONNECTION_FIELDS,
   });
 
 /**
@@ -381,7 +372,7 @@ export const ADMIN_BOOKING_REQUEST_APPROVAL_CONNECTION_SHAPE = connectionShapeFo
   teacherHutLeaderAssignmentsCreated: true,
   alreadyConverted: true,
   paymentLinkExpiresAt: true,
-  exclusiveHoldConflicts: HOLD_CONFLICT_FIELDS,
+  exclusiveHoldConflicts: HOLD_CONFLICT_CONNECTION_FIELDS,
 });
 
 /** `POST /api/admin/booking-requests/[id]/resend-attendee-confirmation`. */

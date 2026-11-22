@@ -19,7 +19,7 @@ import type { BookingStatus } from "@prisma/client";
 import type { copyBookingToDraft } from "@/lib/admin-booking-copy";
 import type { BookingFreshCopyTemplate } from "@/lib/booking-fresh-email-copy-templates";
 import type { HoldConflictBooking } from "@/lib/capacity";
-import { connectionShapeFor, eachEntry } from "@/lib/connection-projection";
+import { connectionShapeFor, eachEntry, type ConnectionShapeFor } from "@/lib/connection-projection";
 import type { PartnerSharingCandidate } from "@/lib/double-bed-sharing";
 import type { MemberGuestCandidateResponse } from "@/lib/member-guest-find";
 import type { NonMemberContactResult, NonMemberContactSuggestion } from "@/lib/non-member-contact";
@@ -225,6 +225,21 @@ export const ADMIN_CAPACITY_HOLD_RELEASE_CONNECTION_SHAPE = connectionShapeFor<A
   success: true,
 });
 
+/**
+ * One booking overlapping a whole-lodge hold (`HoldConflictBooking`), as every
+ * action that lists hold conflicts sends it: this one and the booking-request
+ * hold and approval actions (`INV-SSOT`).
+ */
+export const HOLD_CONFLICT_CONNECTION_FIELDS = {
+  id: true,
+  memberName: true,
+  checkIn: true,
+  checkOut: true,
+  guestCount: true,
+  status: true,
+  overridden: true,
+} as const satisfies ConnectionShapeFor<HoldConflictBooking>;
+
 /** `POST /api/admin/bookings/[id]/exclusive-hold`. */
 export interface AdminExclusiveHoldAnswer {
   success: true;
@@ -243,15 +258,7 @@ export const ADMIN_EXCLUSIVE_HOLD_CONNECTION_SHAPE = connectionShapeFor<AdminExc
   success: true,
   wholeLodgeHold: true,
   wholeLodgeHoldAt: true,
-  conflicts: {
-    id: true,
-    memberName: true,
-    checkIn: true,
-    checkOut: true,
-    guestCount: true,
-    status: true,
-    overridden: true,
-  },
+  conflicts: HOLD_CONFLICT_CONNECTION_FIELDS,
   bedAllocationReconcile: { enabled: true, deletedCount: true, createdCount: true, promotedCount: true },
 });
 

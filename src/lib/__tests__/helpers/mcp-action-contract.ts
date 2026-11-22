@@ -41,7 +41,15 @@ export function officerMemberSession(id = "officer-1") {
 
 type RouteHandler = (request: never, context: never) => Promise<Response>;
 
-function requestFor(
+/**
+ * The request and route context the dispatcher's loopback call hands
+ * `action`'s handler for `args`, built from the catalogue entry alone (method,
+ * path, and where each argument goes), with the principal header only when
+ * `viaConnection`. The arguments must pass the action's own schema. For a
+ * test that cannot use `expectActionContract`, such as an answer whose keys
+ * vary by outcome, so it still sends only what the app could send.
+ */
+export function buildActionRequest(
   action: McpAction,
   args: Readonly<Record<string, unknown>>,
   viaConnection: boolean,
@@ -115,7 +123,7 @@ export async function expectActionContract(options: {
   const action = findMcpAction(options.actionId);
   expect(action, `${options.actionId} is in the catalogue`).toBeDefined();
   const run = async (viaConnection: boolean) => {
-    const { request, context } = requestFor(action!, options.args ?? {}, viaConnection);
+    const { request, context } = buildActionRequest(action!, options.args ?? {}, viaConnection);
     const call = options.handler as unknown as (r: Request, c: unknown) => Promise<Response>;
     const response = await call(request, context);
     expect(response.status, `${options.actionId} succeeds`).toBeLessThan(300);

@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { buildLockedPeriodChangeRequestListWhere } from "@/lib/booking-request-queue-where";
 import { requireAdmin } from "@/lib/session-guards";
-import { z } from "zod";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { isFinishedStay } from "@/lib/booking-edit-policy";
 import {
@@ -14,24 +13,23 @@ import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { loadMemberGuestFindGate } from "@/lib/member-guest-find-service";
 import { carriedPromoCodes } from "@/lib/booking-change-request-promo";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
+import { adminListPage, adminQueueCreatedOrder } from "@/lib/admin-list-page";
+import { adminBookingChangeRequestQueueQuerySchema } from "@/lib/admin-bookings-schemas/review-queues";
 import {
-  adminListPage,
-  adminQueueCreatedOrder,
-  adminListPageQueryFields,
-  adminQueueFocusIdField,
-} from "@/lib/admin-list-page";
+  ADMIN_CHANGE_REQUEST_QUEUE_CONNECTION_SHAPE,
+  type AdminChangeRequestQueueAnswer,
+} from "@/lib/connection-shapes/bookings-review-queues";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
-const querySchema = z.object({
-  status: z.enum(["REQUESTED", "APPROVED", "REJECTED", "ALL"]).optional().default("REQUESTED"),
-  ...adminListPageQueryFields,
-  requestId: adminQueueFocusIdField,
-});
-
+/**
+ * GET /api/admin/booking-change-requests — the locked-period change queue.
+ * Also the AI app action `list_booking_change_requests` (ALP-719).
+ */
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
-  const parsed = querySchema.safeParse(Object.fromEntries(req.nextUrl.searchParams));
+  const parsed = adminBookingChangeRequestQueueQuerySchema.safeParse(Object.fromEntries(req.nextUrl.searchParams));
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid query parameters", details: parsed.error.flatten() },
@@ -209,9 +207,10 @@ export async function GET(req: NextRequest) {
       : null
     : null;
 
-  return NextResponse.json({
+  const answer: AdminChangeRequestQueueAnswer = {
     data,
     ...adminListPage({ page, pageSize, total }),
     memberGuestFind,
-  });
+  };
+  return connectionJson(req, answer, ADMIN_CHANGE_REQUEST_QUEUE_CONNECTION_SHAPE);
 }

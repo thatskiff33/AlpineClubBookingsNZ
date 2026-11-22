@@ -1,54 +1,42 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import { parseDateOnly } from "@/lib/date-only";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import { BENEFICIAL_PROMO_ALLOCATION_FILTER } from "@/lib/promo-usage-counts";
+import {
+  adminPromoCodeListQuerySchema,
+  promoCodeCreateBodySchema,
+} from "@/lib/admin-bookings-schemas/promo-codes";
+import {
+  ADMIN_PROMO_CODE_CONNECTION_SHAPE,
+  ADMIN_PROMO_CODE_LIST_CONNECTION_SHAPE,
+  type AdminPromoCodeListRow,
+  type AdminPromoCodeView,
+} from "@/lib/connection-shapes/bookings-review-queues";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
-const promoCodeSchema = z.object({
-  code: z.string().min(1, "Code is required").transform((s) => s.toUpperCase().trim()),
-  description: z.string().optional().nullable(),
-  type: z.enum(["PERCENTAGE", "FIXED_AMOUNT", "FREE_NIGHTS", "FIXED_NIGHTLY_PRICE"]),
-  valueCents: z.number().int().min(0).optional().nullable(),
-  percentOff: z.number().int().min(0).max(100).optional().nullable(),
-  freeNightsPerIndividual: z.number().int().min(0).optional().nullable(),
-  lifetimeFreeNightsCap: z.number().int().min(1).optional().nullable(),
-  fixedNightlyPriceCents: z.number().int().min(0).optional().nullable(),
-  fixedNightlyMode: z.enum(["SET_PRICE", "CAP_ONLY"]).optional().nullable(),
-  maxNightlyValueCents: z.number().int().min(0).optional().nullable(),
-  maxGuestsPerBooking: z.number().int().min(1).optional().nullable(),
-  maxRedemptionsTotal: z.number().int().min(1).optional().nullable(),
-  maxUniqueMembersTotal: z.number().int().min(1).optional().nullable(),
-  maxUsesPerMember: z.number().int().min(1).optional().nullable(),
-  validFrom: dateOnlyStringSchema.optional().nullable(),
-  validUntil: dateOnlyStringSchema.optional().nullable(),
-  bookingStartFrom: dateOnlyStringSchema.optional().nullable(),
-  bookingStartUntil: dateOnlyStringSchema.optional().nullable(),
-  membersOnly: z.boolean().default(false),
-  memberGuestsOnly: z.boolean().default(false),
-  // Omitted: defaults per type below (group fixed-nightly codes default to
-  // false so they price the whole booking; everything else defaults to true).
-  assignedMembersOnlyOwnNights: z.boolean().optional(),
-  xeroItemCode: z.string().trim().min(1).max(30).optional().nullable(),
-  xeroAccountCode: z.string().trim().min(1).max(10).optional().nullable(),
-  active: z.boolean().default(true),
-  assignedMemberIds: z.array(z.string()).optional(),
-  // Optional per-lodge restriction (multi-lodge phase 6, ADR-001 resolved
-  // question 4). Empty/omitted clears the restriction (redeemable at every
-  // lodge); a non-empty list restricts redemption to those lodges.
-  lodgeIds: z.array(z.string()).max(20).optional(),
-});
+// The query and body schemas live in admin-bookings-schemas/promo-codes.ts so
+// the AI app actions `list_promo_codes` and `create_promo_code` offer the same
+// fields (ALP-719).
 
+/**
+ * GET /api/admin/promo-codes — the promo code list (`?archived=true` for the
+ * archive). Also the AI app action `list_promo_codes` (ALP-719).
+ */
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "bookings", level: "view" },
   });
   if (!guard.ok) return guard.response;
   const { searchParams } = new URL(req.url);
-  const showArchived = searchParams.get("archived") === "true";
+  // Anything but `true` reads the live codes, as the page always has, so a
+  // value the schema refuses is not an error here.
+  const query = adminPromoCodeListQuerySchema.safeParse({
+    archived: searchParams.get("archived") ?? undefined,
+  });
+  const showArchived = query.success && query.data.archived === "true";
 
   const promoCodes = await prisma.promoCode.findMany({
     // Internal promos (work party events) are managed from the Work
@@ -103,20 +91,31 @@ export async function GET(req: NextRequest) {
     benefitFreeGroups.map((group) => [group.promoCodeId, group._count._all])
   );
 
-  return NextResponse.json(
-    promoCodes.map(({ allocations, lodges, _count, ...promoCode }) => ({
-      ...promoCode,
-      redemptions: allocations,
-      // Every recorded application of the code, including the ones that
-      // delivered no benefit and so consume no cap (#2299).
-      totalRedemptionCount: _count.redemptions,
-      // How many of those applications gave nobody anything.
-      benefitFreeRedemptionCount: benefitFreeByPromoCodeId.get(promoCode.id) ?? 0,
-      lodgeIds: lodges.map((row) => row.lodgeId),
-    }))
+  const list = promoCodes.map(({ allocations, lodges, _count, ...promoCode }) => ({
+    ...promoCode,
+    redemptions: allocations,
+    // Every recorded application of the code, including the ones that
+    // delivered no benefit and so consume no cap (#2299).
+    totalRedemptionCount: _count.redemptions,
+    // How many of those applications gave nobody anything.
+    benefitFreeRedemptionCount: benefitFreeByPromoCodeId.get(promoCode.id) ?? 0,
+    lodgeIds: lodges.map((row) => row.lodgeId),
+  }));
+  const rows: AdminPromoCodeListRow[] = list;
+
+  // A connection's answer must be an object, so it gets the list under
+  // `promoCodes`; the browser keeps the bare array.
+  return connectionJson(
+    req,
+    arrivesAsMcpConnection(req) ? { promoCodes: rows } : rows,
+    ADMIN_PROMO_CODE_LIST_CONNECTION_SHAPE,
   );
 }
 
+/**
+ * POST /api/admin/promo-codes — create a promo code.
+ * Also the AI app action `create_promo_code` (ALP-719).
+ */
 export async function POST(req: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "bookings", level: "edit" },
@@ -126,7 +125,7 @@ export async function POST(req: NextRequest) {
   const json = await parseJsonRequestBody(req);
   if (!json.ok) return json.response;
 
-  const parsed = promoCodeSchema.safeParse(json.body);
+  const parsed = promoCodeCreateBodySchema.safeParse(json.body);
 
   if (!parsed.success) {
     return NextResponse.json(
@@ -212,7 +211,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const promoCode = await prisma.$transaction(async (tx) => {
+  const promoCode: AdminPromoCodeView | null = await prisma.$transaction(async (tx) => {
     const created = await tx.promoCode.create({
       data: {
         code: data.code,
@@ -292,5 +291,5 @@ export async function POST(req: NextRequest) {
     details: `Created promo code: ${data.code}${data.assignedMemberIds?.length ? ` (assigned to ${data.assignedMemberIds.length} member(s))` : ""}${requestedLodgeIds.length ? ` (restricted to ${requestedLodgeIds.length} lodge(s))` : ""}`,
   });
 
-  return NextResponse.json(promoCode, { status: 201 });
+  return connectionJson(req, promoCode, ADMIN_PROMO_CODE_CONNECTION_SHAPE, { status: 201 });
 }
