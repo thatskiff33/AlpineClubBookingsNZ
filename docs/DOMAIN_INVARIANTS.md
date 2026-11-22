@@ -199,6 +199,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-CAP-037` | At most one live payment link per booking; never both settle |
 | `INV-CAP-038` | A whole-lodge hold excludes custodian-held bed-nights; the reverse asks, then amends atomically |
 | `INV-CAP-040` | An import claims beds under the lodge lock, never overbooks |
+| `INV-CAP-041` | A waitlist position is read from the live queue, never stored |
 | `INV-CAP-011` | Waitlisted and offered bookings hold no capacity until confirmed |
 | `INV-CAP-012` | A waitlist offer reprices at current rates and states what is payable |
 | `INV-CAP-013` | A member is present on only one live booking per lodge night |
@@ -381,6 +382,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-159` | Cash cover is read from cash records by one reader |
 | `INV-PAY-160` | An edit refunds a card only where Stripe holds a record |
 | `INV-PAY-161` | An imported paid booking is settled manually in its creating transaction |
+| `INV-PAY-162` | An opening-credit file posts once, from one approval; reversal needs it unspent |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -655,7 +657,7 @@ Prefix `INV-LOCKOUT`.
 | `INV-LOCKOUT-057` | Every withhold writes a `SKIPPED_NO_EMAILS` `EmailLog` row with no retained body |
 | `INV-LOCKOUT-058` | The retry cron re-reads the switch and booking authority before every replay |
 | `INV-LOCKOUT-059` | Waitlist candidacy excludes a silenced booking; two residual cases surfaced, not denied |
-| `INV-LOCKOUT-060` | A silenced waitlist entry keeps its place and quoted position |
+| `INV-LOCKOUT-060` | A silenced waitlist entry shows no position and is not counted |
 | `INV-LOCKOUT-061` | Xero-sent invoice emails are gated too, superseding the #1705 always-send carve-out |
 | `INV-LOCKOUT-062` | Enabling the switch requires an acknowledgement; both set and clear are audited |
 | `INV-LOCKOUT-063` | The acknowledgement is a two-button dialog, never a checkbox; `bookings:edit` |

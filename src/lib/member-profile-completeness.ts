@@ -228,5 +228,3 @@ export function evaluateMemberProfileCompleteness(
     confirmationMode,
   };
 }
-
-export const getMemberProfileCompleteness = evaluateMemberProfileCompleteness;

@@ -273,6 +273,33 @@ describe("AdditionalPaymentCard amount source", () => {
     expect(screen.getByText(/\$365\.00/)).toBeVisible();
   });
 
+  // The whole fallback sentence, as the member reads it, for each cause: the
+  // copy pin that used to sit on a plain-text join helper no screen called.
+  it.each([
+    [
+      "edit",
+      "A recent booking modification means $365.00 is still owing on this booking according to our records.",
+    ],
+    [
+      "credit-release",
+      "Account credit applied to your booking was used elsewhere in the club's accounts, so $365.00 is still owing on this booking according to our records.",
+    ],
+    [
+      "mixed",
+      "A recent booking change, and account credit applied to your booking that was used elsewhere in the club's accounts, mean $365.00 is still owing on this booking according to our records.",
+    ],
+  ] as const)("renders the whole %s fallback sentence when the form cannot load", async (askCause, sentence) => {
+    fetchMock.mockResolvedValue({ ok: false, status: 404, json: async () => ({ error: "No pending additional payment" }) });
+
+    render(
+      <AdditionalPaymentCard bookingId="booking_1" additionalAmountCents={36500} askCause={askCause} />,
+    );
+
+    const fallback = await screen.findByText(/according to our records/);
+    expect(fallback.textContent).toContain(sentence);
+    expect(fallback.querySelector("strong")).toHaveTextContent("$365.00");
+  });
+
   /*
     #3641 / #3635: THE CARD TELLS THE ROUTE'S 409s APART BY `code`.
 

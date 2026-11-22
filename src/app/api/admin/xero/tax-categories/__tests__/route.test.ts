@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 */
 
 const h = vi.hoisted(() => {
-  const delegates = ["clubTaxSettings", "auditLog", "member", "xeroConnection", "xeroTaxCategoryMapping"];
+  const delegates = ["clubTaxSettings", "auditLog", "member", "xeroConnection", "xeroTaxCategoryMapping", "xeroAccountMapping"];
   const methods = ["findUnique", "findFirst", "findMany", "create", "update", "upsert", "delete", "deleteMany", "count"];
 
   function makeClient() {
@@ -184,6 +184,21 @@ describe("PUT and DELETE", () => {
     h.readXeroTaxRates.mockRejectedValue(new Error("down"));
     expect((await put(MAP_EXEMPT)).status).toBe(503);
     expect((await del({ category: "EXEMPT" })).status).toBe(404);
+  });
+
+  it("refuse to clear Exempt while the Opening Credits account is mapped, with the writer's own sentence (#4988)", async () => {
+    h.tx.behaviour.set("xeroTaxCategoryMapping.findUnique", () => ({ taxType: "EXEMPTOUTPUT" }));
+    h.root.behaviour.set("xeroAccountMapping.findUnique", () => ({ code: "2100" }));
+    h.root.behaviour.set("xeroTaxCategoryMapping.findMany", () => [
+      { category: "EXEMPT", taxType: "EXEMPTOUTPUT", xeroTenantId: TENANT },
+    ]);
+    const response = await del({ category: "EXEMPT" });
+    expect(response.status).toBe(409);
+    expect(((await response.json()) as { error: string }).error).toMatch(/Unmap the Opening Credits account/);
+    expect(h.tx.client.xeroTaxCategoryMapping.delete).not.toHaveBeenCalled();
+    // Unmapped, the same request clears it.
+    h.root.behaviour.set("xeroAccountMapping.findUnique", () => null);
+    expect((await del({ category: "EXEMPT" })).status).toBe(200);
   });
 
   it("answer write contention with a retryable 503", async () => {

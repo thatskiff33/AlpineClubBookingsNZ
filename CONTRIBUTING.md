@@ -430,10 +430,17 @@ gets a runner.
 | `Playwright E2E`, shards 2-3 | 25 | 45 (`E2E shard`) | 75 | 165 |
 
 The numbers are set in the workflows. `scripts/ci/require-test-shards.test.mjs`
-fails if a run allowance stops matching its jobs' `timeout-minutes` or a gate
-job's limit is too short for its wait. Before this, `verify` waited a flat 45
-minutes. `Real-PostgreSQL suites (all)` once queued 37 minutes for a runner
-and then passed, but `verify` had already gone red.
+fails if a run allowance stops matching its jobs' `timeout-minutes`, a gate
+job's limit is too short for its wait, or this table stops matching the gate
+steps' flags and the gate jobs' `timeout-minutes` (#5362). Before #5222,
+`verify` waited a flat 45 minutes. `Real-PostgreSQL suites (all)` once queued
+37 minutes for a runner and then passed, but `verify` had already gone red.
+
+The long wait has a cost: a gate job holds its hosted runner for the whole
+of it, up to its total wait in the table above, so on a backlog day the
+waiting gates take runner slots the jobs they wait for could use, and can
+lengthen the queue. That cost arises only in a run that would once have timed out; a run
+whose jobs start promptly releases the gate as soon as they finish.
 
 **The PR-body gates read the description from a file, never an environment
 variable** (#4053). `verify` writes `.pull_request.body` from

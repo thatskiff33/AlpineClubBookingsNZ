@@ -10,6 +10,11 @@
 # the host network so the service's published port is reachable as is.
 #
 #   bash scripts/ci/postgres-client-from-service.sh <service container id>
+#
+# Callers pass a connection URL and feed SQL through stdin or -c (#5374).
+# Host file paths (-f file, \i, \copy to a file) and PGHOST, PGUSER,
+# PGDATABASE and PGPORT do not reach the container, which sees only the
+# environment variables the shim forwards below.
 set -euo pipefail
 
 container="${1:?usage: postgres-client-from-service.sh <service container id>}"

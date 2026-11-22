@@ -1,7 +1,7 @@
 import type { AgeTier, Prisma, PrismaClient } from "@prisma/client";
 import {
   formatMemberProfileMissingField,
-  getMemberProfileCompleteness,
+  evaluateMemberProfileCompleteness,
   type MemberProfileCompletenessResult,
 } from "@/lib/member-profile-completeness";
 import {
@@ -674,7 +674,7 @@ export async function assertLinkedBookingMembersCanBeBooked(
       isActiveLoginAdult(member.detailsConfirmedByMemberId!) &&
       sharesFamilyGroup(member.id, member.detailsConfirmedByMemberId!);
 
-    const status = getMemberProfileCompleteness(member, {
+    const status = evaluateMemberProfileCompleteness(member, {
       delegatedConfirmationValid,
     });
 

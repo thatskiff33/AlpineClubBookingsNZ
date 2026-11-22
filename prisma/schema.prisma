@@ -749,6 +749,8 @@ model Member {
   credits                                    MemberCredit[]
   requestedCreditAdjustments                 MemberCredit[]                             @relation("RequestedAdminCredits")
   approvedCreditAdjustments                  MemberCredit[]                             @relation("ApprovedAdminCredits")
+  postedOpeningCreditBatches                 OpeningCreditBatch[]                       @relation("PostedOpeningCreditBatches")
+  reversedOpeningCreditBatches               OpeningCreditBatch[]                       @relation("ReversedOpeningCreditBatches")
   adminCreditAdjustmentRequestsRequested     AdminCreditAdjustmentRequest[]             @relation("AdminCreditAdjustmentRequestsRequested")
   adminCreditAdjustmentRequestsReviewed      AdminCreditAdjustmentRequest[]             @relation("AdminCreditAdjustmentRequestsReviewed")
   bookingsCreatedOnBehalf                    Booking[]                                  @relation("BookingsCreatedBy")
@@ -2991,10 +2993,10 @@ model BookingRequestSettings {
   quoteReminderLeadDays            Int      @default(3)
   // RETIRED by #3819: no runtime code reads or writes it. #3416's club-wide
   // switch, replaced by the per-lodge LodgeSettings.schoolHutLeader* kinds; the
-  // expand migration 20261114020000 copied its value into every lodge. Kept
-  // only so the draining colour can still read it; a later contract release
-  // drops it.
-  assignSchoolTeachersAsHutLeaders Boolean  @default(false)
+  // expand migration 20261114020000 copied its value into every lodge.
+  // `@ignore`d (#5396) so no query names the column before its contract DROP
+  // (INV-OPS-005); the column keeps its default meanwhile.
+  assignSchoolTeachersAsHutLeaders Boolean  @default(false) @ignore
   // Soft link for the phase-7 singleton-to-per-lodge conversion
   // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
   lodgeId                          String?
@@ -5585,7 +5587,9 @@ model ClubModuleSettings {
   hutLeaders              Boolean  @default(true)
   communications          Boolean  @default(true)
   skifieldConditions      Boolean  @default(true)
-  multiLodge              Boolean  @default(false)
+  // RETIRED (ADR-005). `@ignore`d (#5396) so no query names the column before
+  // its contract DROP, hoppers99/AlpineClubBookingsNZ#139 (INV-OPS-005).
+  multiLodge              Boolean  @default(false) @ignore
   twoFactor               Boolean  @default(false)
   magicLink               Boolean  @default(false)
   analytics               Boolean  @default(false)
@@ -5701,8 +5705,9 @@ model ClubModuleSettings {
 // migration/seed). Multi-lodge is core (ADR-005): the Lodges admin UI is always
 // available (no module flag), and booking data scopes to this table. While
 // exactly one active lodge exists the per-page lodge selectors auto-resolve to
-// it (ADR-002 presentation rule); the vestigial ClubModuleSettings.multiLodge
-// column is retired in a follow-up (#129).
+// it (ADR-002 presentation rule). The vestigial ClubModuleSettings.multiLodge
+// column was retired by hoppers99/AlpineClubBookingsNZ#129 and is `@ignore`d
+// (#5396); its DROP is tracked as hoppers99/AlpineClubBookingsNZ#139.
 model Lodge {
   id         String   @id @default(cuid())
   name       String
@@ -7792,7 +7797,9 @@ model NotificationPreference {
   bookingReminder            Boolean  @default(true)
   bookingBumped              Boolean  @default(true)
   bookingCancelled           Boolean  @default(true)
-  bookingWaitlist            Boolean  @default(true)
+  // RETIRED: never offered or read. `@ignore`d (#5396) so no query names the
+  // column before its contract DROP (INV-OPS-005); its default fills new rows.
+  bookingWaitlist            Boolean  @default(true) @ignore
   // #2284 (S2): FYI when a family co-member adds you (or someone you are the
   // login-holding adult for) to a booking. General family behaviour, sent
   // regardless of the memberGuests module; default on, personally opt-outable.
@@ -7841,7 +7848,7 @@ model NotificationPreference {
 
 model XeroAccountMapping {
   id        String   @id @default(cuid())
-  key       String   @unique // hutFeesIncome | hutFeeRefunds | goodwillWriteOffs | stripeBankAccount | stripeFees | subscriptionIncome | membershipCancellationCredit | hutFeeItem | hutFeeRefundItem | entranceFeeItem | entranceFeeAmountCents
+  key       String   @unique // hutFeesIncome | hutFeeRefunds | goodwillWriteOffs | openingCredits | stripeBankAccount | stripeFees | subscriptionIncome | membershipCancellationCredit | hutFeeItem | hutFeeRefundItem | entranceFeeItem | entranceFeeAmountCents
   code      String? // null = not configured, use application default (GL account code or amount string)
   itemCode  String? // Xero Item Code — when set, Xero auto-fills account from Item config
   createdAt DateTime @default(now())
@@ -8002,6 +8009,10 @@ model MemberCredit {
   // lot converted from one (no credit note is ever minted for it) and on a
   // deduction of such credit. Null on every other row.
   xeroCashCreditId            String?
+  // #4988: the opening-credit batch that posted (or reversed) this row. Null on
+  // every other credit. Nullable, so the previous colour keeps inserting rows
+  // that do not mention it.
+  openingCreditBatchId        String?
   createdAt                   DateTime   @default(now())
 
   member                    Member                        @relation(fields: [memberId], references: [id], onDelete: Restrict)
@@ -8025,6 +8036,7 @@ model MemberCredit {
   // a slice back.
   cashAllocations           MemberCreditCashAllocation[]  @relation("CreditLotCashAllocations")
   cashReturns               MemberCreditCashReturn[]      @relation("CreditCashReturnRestoration")
+  openingCreditBatch        OpeningCreditBatch?           @relation(fields: [openingCreditBatchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([memberId])
   @@index([requestedById])
@@ -8034,6 +8046,33 @@ model MemberCredit {
   @@unique([id, xeroCashCreditId], map: "MemberCredit_id_xeroCashCreditId_key")
   @@index([sourceBookingId])
   @@index([appliedToBookingId])
+  @@index([openingCreditBatchId])
+}
+
+/// #4988 — one approved opening-credit CSV batch: the balances a club carries
+/// over from its old system, posted once as ADMIN_ADJUSTMENT credit rows.
+/// `batchKey` is the SHA-256 of the batch's canonical rows, so the same file can
+/// be posted only once (a second confirm, concurrent or later, hits the unique
+/// key). Reversal stamps `reversedAt` once and posts negative rows linked here;
+/// nothing is deleted (`INV-PAY-162`).
+model OpeningCreditBatch {
+  id             String    @id @default(cuid())
+  batchKey       String    @unique
+  totalCents     Int
+  rowCount       Int
+  /// Negative ledger row count for the batch members, captured under their locks.
+  negativeCreditCountAtPost Int @default(0)
+  postedById     String?
+  postedAt       DateTime  @default(now())
+  reversedAt     DateTime?
+  reversedById   String?
+  reversalReason String?
+
+  postedBy   Member?        @relation("PostedOpeningCreditBatches", fields: [postedById], references: [id], onDelete: SetNull)
+  reversedBy Member?        @relation("ReversedOpeningCreditBatches", fields: [reversedById], references: [id], onDelete: SetNull)
+  credits    MemberCredit[]
+
+  @@index([postedAt])
 }
 
 /// #1620 — per-note credit-lot allocation ledger for "allocate-existing" applied

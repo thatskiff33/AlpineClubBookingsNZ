@@ -5,6 +5,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import { sendAdminRefundRequestAlert } from "@/lib/email";
 import {
   getRemainingRefundableCents,
@@ -226,7 +227,7 @@ export async function POST(
       requestedAmountCents: requestedAmountCents ?? null,
       maxRefundableCents: maxRefundable,
     },
-    ipAddress: req.headers.get("x-forwarded-for") ?? "unknown",
+    ipAddress: getClientIp(req),
   });
 
   // Notify admins

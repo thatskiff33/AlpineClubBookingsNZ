@@ -661,6 +661,13 @@ about at all. Removing the field outright now does the same thing permanently:
 generated client has no such field to put in a `SELECT`, an `INSERT` column
 list, a `RETURNING` or a `WHERE`.
 
+The rule for every retired column follows. An explicit `select` narrows a read
+and a write's `RETURNING`, never an `INSERT`'s column list, so it does not make
+a drop safe. A contract `DROP COLUMN` is old-code compatible only once a release
+that marks the field `@ignore` is the draining colour (#5396 applies this to
+`ClubModuleSettings.multiLodge`, `NotificationPreference.bookingWaitlist` and
+`BookingRequestSettings.assignSchoolTeachersAsHutLeaders`).
+
 ## INV-OPS-006
 
 How that is enforced, measured in the rehearsal rather than asserted, because

@@ -5,6 +5,7 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
+import { shallowChangedFields } from "@/lib/audit-changed-fields";
 import {
   committeeRoleSelect,
   normalizeCommitteeEmail,
@@ -18,13 +19,6 @@ import { requireAdmin } from "@/lib/session-guards";
 const paramsSchema = z.object({
   id: z.string().min(1),
 });
-
-function changedFields(
-  before: Record<string, unknown>,
-  after: Record<string, unknown>,
-) {
-  return Object.keys(after).filter((key) => before[key] !== after[key]);
-}
 
 function auditActionForUpdate(
   before: { isActive: boolean },
@@ -133,7 +127,7 @@ export async function PATCH(
         outcome: "success",
         summary: auditAction.summary,
         metadata: {
-          changedFields: changedFields(existing, data as Record<string, unknown>),
+          changedFields: shallowChangedFields(existing, data as Record<string, unknown>),
           previousCommitteeRole: serializeCommitteeRole(existing),
           newCommitteeRole: serializeCommitteeRole(role),
         },
