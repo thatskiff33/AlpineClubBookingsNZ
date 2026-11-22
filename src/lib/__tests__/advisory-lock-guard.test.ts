@@ -1557,7 +1557,7 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // advisory lock; disjoint from booking/money writers. See
   // docs/CONCURRENCY_AND_LOCKING.md → "Member photo writer".
   "src/app/api/members/[id]/photo/route.ts": 2,
-  // Central lodge link writer (#62, #4262 review): `saveCentralLodgeLinks`,
+  // Central lodge link writer (triyder/AlpineClubBookingsNZ#62, #4262 review): `saveCentralLodgeLinks`,
   // shared by the lodge's Central lodge card PUT and the setup page's link
   // step, takes the settings row (`lockServerNzSettings`, counted under
   // servernz-settings.ts) and re-checks the owned list under it, then locks
@@ -1576,7 +1576,7 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // touching credentials (settings -> credential -> audit). No advisory key;
   // disjoint from booking/money writers. See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Alpine Central Server connection and version recorder".
-  // Other lodges download writes (triyder/AlpineClubBookingsNZ#64, #69; #4262
+  // Other lodges download writes (triyder/AlpineClubBookingsNZ#64, triyder/AlpineClubBookingsNZ#69; #4262
   // review): the same one statement, reached through the same fence
   // (`withCurrentServerNzConnection` / `serverNzAnswerWriter`), takes the
   // settings row before EVERY write the download makes from an answer (hides

@@ -282,7 +282,7 @@ export async function buildBookingDetailEditorData({
     otherLodgeId: booking.otherLodgeId,
     ...(viewerAuthorizationRole === "ADMIN"
       ? {
-          // The lodge this booking already names stays offered even when hidden (#58).
+          // The lodge this booking already names stays offered even when hidden (triyder/AlpineClubBookingsNZ#58).
           otherLodges: await getPublicOtherLodges(prisma, booking.otherLodgeId),
           // #2978: which guests may be ticked. Resolved server-side because the
           // answer needs membership types and the unpaid-subscription set, and

@@ -228,7 +228,7 @@ describe("POST /api/admin/integrations/credentials", () => {
     expect(mocks.withXeroVerifyReset).not.toHaveBeenCalled();
   });
 
-  it("forgets the owned-lodge list when the Alpine Central Server key is replaced (#52)", async () => {
+  it("forgets the owned-lodge list when the Alpine Central Server key is replaced (triyder/AlpineClubBookingsNZ#52)", async () => {
     asFullAdmin();
     mocks.setIntegrationCredential.mockResolvedValue({
       provider: "servernz",

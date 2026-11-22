@@ -1414,7 +1414,7 @@ export const LODGE_GATED_ADMIN_CATEGORIES_2765: Readonly<
   // but that writer is in the DISPLAY subsystem, which was #2730's split to
   // close; importing its answer here would open a new split inside this one.
   "src/app/api/admin/lodges/[id]/roster-settings/route.ts::PUT#0": "admin",
-  // The Central lodge link (#62): which lodge in the Alpine Central Server's
+  // The Central lodge link (triyder/AlpineClubBookingsNZ#62): which lodge in the Alpine Central Server's
   // registry a local lodge is, written by `/api/admin/lodges/[id]/central-lodge`
   // PUT, before and after. Classified under INV-PRIV-013's uniformity rule, not
   // re-decided: a fifth writer in the same lodge-records subsystem, which files
@@ -1435,10 +1435,10 @@ export const LODGE_GATED_ADMIN_CATEGORIES_2765: Readonly<
   // records (`admin/lodges/**`), files `admin` — so filing this registry `lodge`
   // would itself OPEN a split of exactly the kind the rule exists to close.
   // Gated `lodge:view`/`lodge:edit`, filing `admin`. Pinned on arrival so the
-  // next change is deliberate. #52 removed the create and delete handlers (a
+  // next change is deliberate. triyder/AlpineClubBookingsNZ#52 removed the create and delete handlers (a
   // site changes only its own lodge), so of the trio only the update remains.
   "src/app/api/admin/other-lodges/[id]/route.ts::PATCH#0": "admin",
-  // #58: hiding a row the central server does not list, gated `lodge:edit`,
+  // triyder/AlpineClubBookingsNZ#58: hiding a row the central server does not list, gated `lodge:edit`,
   // in the same registry, so `admin` by the same rule.
   "src/app/api/admin/other-lodges/[id]/hide/route.ts::POST#0": "admin",
 };
@@ -1508,7 +1508,7 @@ export const LODGE_GATED_ADMIN_ACTIONS_2765: readonly string[] = [
   "LODGE_ACTIVATED",
   "LODGE_DEACTIVATED",
   "LODGE_MEMBER_ROSTER_SETTINGS_UPDATED",
-  // #62: no access-shaped word, so the seven-year retention class (INV-OPS-012).
+  // triyder/AlpineClubBookingsNZ#62: no access-shaped word, so the seven-year retention class (INV-OPS-012).
   "LODGE_CENTRAL_LINK_UPDATED",
   "workparty.create",
   "workparty.update",
@@ -1516,7 +1516,7 @@ export const LODGE_GATED_ADMIN_ACTIONS_2765: readonly string[] = [
   // #5148: no access-shaped word, so the seven-year retention class (INV-OPS-012).
   "workparty.calendar.add",
   "OTHER_LODGE_UPDATED",
-  // #58: no access-shaped word, so the seven-year retention class (INV-OPS-012).
+  // triyder/AlpineClubBookingsNZ#58: no access-shaped word, so the seven-year retention class (INV-OPS-012).
   "OTHER_LODGE_HIDDEN",
 ];
 

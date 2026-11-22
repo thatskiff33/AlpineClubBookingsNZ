@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Free beds for a stay (#62, decision D2): the member calendar's number, night
+// Free beds for a stay (triyder/AlpineClubBookingsNZ#62, decision D2): the member calendar's number, night
 // by night, the smallest of them, never below 0. The calendar function is the
 // source, so it is mocked here and its own tests cover the occupancy terms.
 

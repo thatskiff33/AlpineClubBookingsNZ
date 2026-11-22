@@ -22,7 +22,7 @@ export interface CentralStayAvailability {
 
 /**
  * Free beds for a stay, as the Alpine Central Server's public lodge search is
- * told them (#62, owner decision D2; night by night since #79, owner decision
+ * told them (triyder/AlpineClubBookingsNZ#62, owner decision D2; night by night since #79, owner decision
  * 17 Oct 2026): THE MEMBER CALENDAR'S OWN NUMBER for each night, and the
  * smallest of them — the most guests the whole stay can take. Counts only:
  * what every member already sees on the calendar, nothing about who.

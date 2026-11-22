@@ -42,7 +42,7 @@ import { formatCentsPlain } from "@/lib/utils";
  *    tier, else the type's flat rate (a type without age groups), the same
  *    fallback booking prices use (`matchSeasonRate`).
  *  - WHICH ROWS: only this club's own lodges, through the Central lodge link
- *    (#62), and only those whose "from the Fees page" switch is on. A lodge
+ *    (triyder/AlpineClubBookingsNZ#62), and only those whose "from the Fees page" switch is on. A lodge
  *    the Fees page gives no Non-Member rate at all is left as it is, rather
  *    than cleared (`no-rates`).
  *  - WHEN: after a season is added, changed or removed (Fees and Seasons

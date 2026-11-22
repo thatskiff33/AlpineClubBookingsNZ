@@ -48,7 +48,7 @@ interface InitialState {
   apiKeyUpdatedAt: string | null;
   baseUrl: string | null;
   /**
-   * The deployment's default server address (`SERVERNZ_DEFAULT_BASE_URL`, #81),
+   * The deployment's default server address (`SERVERNZ_DEFAULT_BASE_URL`, triyder/AlpineClubBookingsNZ#81),
    * present only while no address is saved. Pre-fills the field; Save stores it.
    */
   defaultBaseUrl?: string | null;
@@ -109,8 +109,8 @@ function downloadStopText(reason: DownloadStopReason): string {
 }
 
 /**
- * The Download result in one line. Renames (#64) are counted, and a lodge the
- * download could not place is named (#69): one sent without an id whose name
+ * The Download result in one line. Renames (triyder/AlpineClubBookingsNZ#64) are counted, and a lodge the
+ * download could not place is named (triyder/AlpineClubBookingsNZ#69): one sent without an id whose name
  * several lodges here share, or a new one whose id a concurrent download held.
  */
 function downloadSummaryText(data: {
@@ -129,7 +129,7 @@ function downloadSummaryText(data: {
   const conflictText = conflicts.length
     ? ` Not added, because they could not be matched to one lodge here (the next Download tries again): ${conflicts.join(", ")}.`
     : "";
-  // Lodges the central server deleted (#58): hidden here, kept for the
+  // Lodges the central server deleted (triyder/AlpineClubBookingsNZ#58): hidden here, kept for the
   // bookings and requests that name them.
   const hidden = data.hiddenLodges ?? [];
   const hiddenText = hidden.length
@@ -343,7 +343,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
         throw new Error(data?.error ?? `Failed to ${direction}`);
       }
       if (direction === "upload" && data.ownedUnknown) {
-        // Nothing was sent or recorded (#69): the last-upload time stays.
+        // Nothing was sent or recorded (triyder/AlpineClubBookingsNZ#69): the last-upload time stays.
         setMessage({
           kind: "warn",
           text: "Nothing uploaded: press Download first, so this site knows which lodge is yours.",

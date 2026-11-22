@@ -28,13 +28,13 @@ import {
 } from "@/lib/servernz-signature";
 
 /**
- * The Alpine Central Server asks how many beds are free (#62).
+ * The Alpine Central Server asks how many beds are free (triyder/AlpineClubBookingsNZ#62).
  *
  * Its public lodge search shows non-members which lodges have room before they
  * click through to book on the lodge's own site. This answers, for ONE lodge
  * and stay, the free beds on each night of it as the member calendar counts
  * them (`nights`, #79: the server's bed planner shows them night by night) and
- * the fewest of them (`freeBeds`, #62), from `freeBedsForStay` — and nothing
+ * the fewest of them (`freeBeds`, triyder/AlpineClubBookingsNZ#62), from `freeBedsForStay` — and nothing
  * else: no guest, member, booking or hold detail.
  *
  * Unauthenticated by nature, so the request proves itself with the push secret

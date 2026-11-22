@@ -42,7 +42,7 @@ import {
 } from "@/lib/other-lodges";
 import { OtherLodgesPanel } from "./other-lodges-panel";
 
-// #52: a site changes only the lodge(s) the central server says it owns. The
+// triyder/AlpineClubBookingsNZ#52: a site changes only the lodge(s) the central server says it owns. The
 // list has no Add, Edit or Delete; each OWNED lodge gets one "Edit my Lodge"
 // button (named when there are several) that opens the #51 popup with the name
 // read-only; the panel is read-only with a note while the owned list is
@@ -162,7 +162,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("Other lodges: only the site's own lodge is editable (#52)", () => {
+describe("Other lodges: only the site's own lodge is editable (triyder/AlpineClubBookingsNZ#52)", () => {
   it("offers no Add, Edit or Delete, and one Edit my Lodge for the one owned lodge", async () => {
     stubFetch(oneOwned());
     await renderPanel();
@@ -196,7 +196,7 @@ describe("Other lodges: only the site's own lodge is editable (#52)", () => {
     expect(screen.getAllByRole("button", { name: /^edit/i })).toHaveLength(2);
   });
 
-  it("opens the popup for the owned lodge with its name READ-ONLY until it is keyed (#64)", async () => {
+  it("opens the popup for the owned lodge with its name READ-ONLY until it is keyed (triyder/AlpineClubBookingsNZ#64)", async () => {
     stubFetch(oneOwned());
     await renderPanel();
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -800,7 +800,7 @@ describe("Other lodges edit popup (#51, opened through Edit my Lodge)", () => {
   });
 });
 
-describe("Other lodges: renaming our own lodge and lodges the server no longer has (#64)", () => {
+describe("Other lodges: renaming our own lodge and lodges the server no longer has (triyder/AlpineClubBookingsNZ#64)", () => {
   it("lets a keyed owned lodge be renamed, and sends the new name", async () => {
     stubFetch(
       { ...oneOwned(), otherLodges: [lodge({ renamable: true }), theirs()] },
@@ -860,7 +860,7 @@ describe("Other lodges: renaming our own lodge and lodges the server no longer h
   });
 });
 
-describe("Other lodges: hiding a lodge the central server does not list (#58)", () => {
+describe("Other lodges: hiding a lodge the central server does not list (triyder/AlpineClubBookingsNZ#58)", () => {
   it("offers Hide on every not-found lodge, cited or not, and never on a listed one", async () => {
     stubFetch({
       ...oneOwned(),

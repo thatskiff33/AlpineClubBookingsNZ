@@ -669,7 +669,7 @@ export async function pullOtherLodges(
     else ownLodgesRefused = true;
   }
 
-  // Deletions (#58): each entry on its own, like the rows; one malformed entry
+  // Deletions (triyder/AlpineClubBookingsNZ#58): each entry on its own, like the rows; one malformed entry
   // costs that deletion, not the rest.
   const deletedLodgeIds = envelope.deletedLodges?.flatMap((raw) => {
     const entry = deletedLodgeSchema.safeParse(raw);

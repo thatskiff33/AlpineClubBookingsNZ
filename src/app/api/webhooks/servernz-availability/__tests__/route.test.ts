@@ -4,7 +4,7 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * The central server's availability question (#62).
+ * The central server's availability question (triyder/AlpineClubBookingsNZ#62).
  *
  * Unauthenticated, so the signature is most of the story; then the shape of
  * the stay, then which lodge — and every "which lodge" refusal must look the
@@ -92,7 +92,7 @@ beforeEach(() => {
   });
 });
 
-describe("GET /api/webhooks/servernz-availability (#62)", () => {
+describe("GET /api/webhooks/servernz-availability (triyder/AlpineClubBookingsNZ#62)", () => {
   it("answers the free beds for a signed question, night by night (#79), with exactly these keys and no caching", async () => {
     const res = await GET(request());
     expect(res.status).toBe(200);

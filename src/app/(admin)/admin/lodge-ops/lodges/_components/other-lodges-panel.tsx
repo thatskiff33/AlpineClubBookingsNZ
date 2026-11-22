@@ -82,7 +82,7 @@ export function OtherLodgesPanel({
   // so a lodge:view admin sees this panel read-only.
   const canEdit = useAdminAreaEditAccess("lodge");
   const [lodges, setLodges] = useState<OtherLodgeRecord[]>([]);
-  // Which lodges are THIS club's own, as the central server last said (#52):
+  // Which lodges are THIS club's own, as the central server last said (triyder/AlpineClubBookingsNZ#52):
   // `null` until it has said anything, `[]` when it said none. Only an owned
   // lodge gets an Edit button; both read-only states are explained below.
   const [ownedNames, setOwnedNames] = useState<OwnedOtherLodgeNames>(null);
@@ -267,7 +267,7 @@ export function OtherLodgesPanel({
           error is shown inside it, directly above Save and Cancel (the form is
           long, and Save is where the administrator's attention is when it
           fails). This one is for everything outside it: a list that could not
-          load. A Hide reports in its own line, announced, below it (#58). */}
+          load. A Hide reports in its own line, announced, below it (triyder/AlpineClubBookingsNZ#58). */}
       <p role="status" className={`text-sm ${hiding.message?.kind === "ok" ? "text-success-11" : "text-destructive"}`}>{hiding.message?.text}</p>
       {uploadNotice && !showForm ? (
         <p role="status" data-testid="other-lodge-upload-notice" className={`text-sm ${uploadNotice.kind === "ok" ? "text-success-11" : "text-warning-11"}`}>
@@ -618,7 +618,7 @@ export function OtherLodgesPanel({
                       <TableCell className="text-muted-foreground">
                         {/* Name and email only. The phone is private: it is
                             not shown for any lodge, and for another club's
-                            lodge it is not sent to the browser at all (#52). */}
+                            lodge it is not sent to the browser at all (triyder/AlpineClubBookingsNZ#52). */}
                         {lodge.bookingOfficerName ? (
                           <div>
                             <div>{lodge.bookingOfficerName}</div>

@@ -29,8 +29,8 @@ import {
 
 // The API's own shape, not a hand-copied one: a column added to the shared
 // field list in `@/lib/other-lodges` fails to compile here until the form
-// carries it, instead of being silently dropped from the editor (#50). The
-// list row is the ADMIN shape (#52): another club's officer phone is not in
+// carries it, instead of being silently dropped from the editor (triyder/AlpineClubBookingsNZ#50). The
+// list row is the ADMIN shape (triyder/AlpineClubBookingsNZ#52): another club's officer phone is not in
 // it, and `owned` is the route's answer to whether this site may edit it.
 export type OtherLodgeRecord = AdminOtherLodge;
 type OtherLodgePayload = Omit<SerializedOtherLodge, "id" | "createdAt" | "updatedAt"> & {
@@ -251,7 +251,7 @@ export function siteUrlBroken(value: string): boolean {
 }
 
 export function formProblem(form: OtherLodgeFormState): string | null {
-  // The name is editable for a lodge that can be renamed (#64) and read-only,
+  // The name is editable for a lodge that can be renamed (triyder/AlpineClubBookingsNZ#64) and read-only,
   // so always the stored one, otherwise; either way it must be there and fit.
   const name = form.name.trim();
   if (name === "") return "The lodge needs a name.";

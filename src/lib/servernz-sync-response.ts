@@ -34,7 +34,7 @@ export function respondSyncRunning(): NextResponse {
 /**
  * The audit row for a download an administrator started, by the Download
  * button or by the setup page's step after a key save. A download that
- * stopped (#4262 review) is its own outcome, with the reason. Hidden (#58):
+ * stopped (#4262 review) is its own outcome, with the reason. Hidden (triyder/AlpineClubBookingsNZ#58):
  * lodges the central server deleted, now kept only for what names them.
  */
 export async function auditDownload(

@@ -2974,7 +2974,7 @@ mispricing a booking.
   writer takes the settings row before its `Lodge` row, so none inverts it.
   The record step also re-reads the cursor and keyed
   marker under the lock, so a download that ran while another recorded writes
-  nothing back. Since #69 the owned list is stored by central id as the server
+  nothing back. Since triyder/AlpineClubBookingsNZ#69 the owned list is stored by central id as the server
   sent it, so an admin's rename of the club's own lodge no longer rewrites it
   and no longer takes this lock. Singleton-keyed; no advisory lock; disjoint
   from the booking/capacity/credit and money clusters. A missing settings row
@@ -2991,7 +2991,7 @@ mispricing a booking.
 - **Central lodge link writer** — `saveCentralLodgeLinks` in
   `src/lib/central-lodge-link.ts`, called by `PUT /api/admin/lodges/[id]/central-lodge`
   and by the setup page's link step (`/api/admin/alpine-server/lodge-links`)
-  (#62; #4262 review): in one transaction it first takes the settings row lock
+  (triyder/AlpineClubBookingsNZ#62; #4262 review): in one transaction it first takes the settings row lock
   (`lockServerNzSettings`) and re-reads the owned-lodge list under it, so a
   download recording a new list (which unlinks deleted ids under the same
   lock) cannot land between the ownership check and the write; then it takes

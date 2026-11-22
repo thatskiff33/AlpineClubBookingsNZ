@@ -92,7 +92,7 @@ afterEach(() => {
 // `distributedLodgeSchema` is the SAME shape the admin routes validate with.
 // A row that breaks it is dropped on its own and counted; the pull never aborts.
 
-describe("pullOtherLodges — lodge details and amenities (#50)", () => {
+describe("pullOtherLodges — lodge details and amenities (triyder/AlpineClubBookingsNZ#50)", () => {
   it("keeps a fully-detailed row intact, dates as the calendar-day string it was sent", async () => {
     respondWith({ lodges: [remoteRow()], cursor: "c-1", count: 1 });
 
@@ -218,7 +218,7 @@ describe("pullOtherLodges — lodge details and amenities (#50)", () => {
 
   it("accepts an envelope that also carries keys this client does not read yet", async () => {
     // A later server release adds to the envelope (as the owned-lodge list,
-    // #52, once did); a pull must not reject the whole page for a key it has no
+    // triyder/AlpineClubBookingsNZ#52, once did); a pull must not reject the whole page for a key it has no
     // opinion on.
     respondWith({
       lodges: [remoteRow()],
@@ -285,7 +285,7 @@ const SERVER_UPLOAD_ITEM_KEYS = [
   "amenities",
 ].sort();
 
-describe("uploadOtherLodges — payload shape (#50)", () => {
+describe("uploadOtherLodges — payload shape (triyder/AlpineClubBookingsNZ#50)", () => {
   it("sends exactly the key set the server's strict item schema knows", () => {
     // A complete item of the client's type: every key present, none extra. The
     // type is `SerializedOtherLodgeData & { name; amenities }`, so a field added
@@ -461,9 +461,9 @@ describe("pullOtherLodges — non-member rates (#61, server API 2.2)", () => {
   });
 });
 
-// ── Pull: the owned list (#52) ─────────────────────────────────────────────
+// ── Pull: the owned list (triyder/AlpineClubBookingsNZ#52) ─────────────────────────────────────────────
 
-describe("pullOtherLodges — ownLodges, the owned lodges with their ids (#52, #62, #69)", () => {
+describe("pullOtherLodges — ownLodges, the owned lodges with their ids (triyder/AlpineClubBookingsNZ#52, triyder/AlpineClubBookingsNZ#62, triyder/AlpineClubBookingsNZ#69)", () => {
   it("carries the owned lodges with their permanent ids", async () => {
     respondWith({
       lodges: [],
@@ -478,7 +478,7 @@ describe("pullOtherLodges — ownLodges, the owned lodges with their ids (#52, #
     expect(result.ownLodgesRefused).toBe(false);
   });
 
-  it("carries two owned lodges of the same name: the ids tell them apart (#69)", async () => {
+  it("carries two owned lodges of the same name: the ids tell them apart (triyder/AlpineClubBookingsNZ#69)", async () => {
     const ownLodges = [
       { id: "ol_a", name: "Ruapehu Lodge" },
       { id: "ol_b", name: "Ruapehu Lodge" },
@@ -504,7 +504,7 @@ describe("pullOtherLodges — ownLodges, the owned lodges with their ids (#52, #
     expect(result.ownLodgesRefused).toBe(false);
   });
 
-  it("no longer reads the name-only list a 2.4 server sent (#69)", async () => {
+  it("no longer reads the name-only list a 2.4 server sent (triyder/AlpineClubBookingsNZ#69)", async () => {
     respondWith({ lodges: [], cursor: "c-1", count: 0, ownLodgeNames: ["Aorangi Ski Club"] });
 
     const result = await pullOtherLodges(null);
@@ -538,7 +538,7 @@ describe("pullOtherLodges — ownLodges, the owned lodges with their ids (#52, #
   });
 });
 
-describe("pullOtherLodges — deletedLodges, lodges deleted on the server (#58, API 2.4)", () => {
+describe("pullOtherLodges — deletedLodges, lodges deleted on the server (triyder/AlpineClubBookingsNZ#58, API 2.4)", () => {
   it("carries the deleted lodges' central ids, in the order sent", async () => {
     respondWith({
       lodges: [],

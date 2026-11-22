@@ -859,7 +859,7 @@ export async function prepareGuestPlan(
     linkedGuestIds: new Set(guestMemberLinks.map((link) => link.guestId)),
   });
   // Only when this edit CHANGES the lodge: the stored id was validated when it
-  // was set, and may since have been hidden (#58) — a booking keeps a hidden
+  // was set, and may since have been hidden (triyder/AlpineClubBookingsNZ#58) — a booking keeps a hidden
   // lodge, so re-checking it would refuse every unrelated modification.
   if (otherLodgeElection.otherLodgeIdChanged) {
     await assertOtherLodgeExists(tx, otherLodgeElection.otherLodgeId);

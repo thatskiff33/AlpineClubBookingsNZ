@@ -37,10 +37,10 @@ const paramsSchema = z.object({ id: z.string().min(1) });
 // shared `otherLodgeDataShape` (the one field list) to be accepted here. A key
 // left out leaves that column alone; `amenities`, when present, replaces the
 // lodge's whole set. `name` may be sent (the panel sends the whole form); a
-// DIFFERENT name renames the lodge (#64), but only once the row carries the
+// DIFFERENT name renames the lodge (triyder/AlpineClubBookingsNZ#64), but only once the row carries the
 // central server's id: the upload then sends that id, and the server renames
 // its lodge. Before the id is known a new name would reach the server as a
-// second lodge and strand the first (#52), so it is refused.
+// second lodge and strand the first (triyder/AlpineClubBookingsNZ#52), so it is refused.
 const patchSchema = z
   .object({
     name: otherLodgeNameSchema.optional(),
@@ -58,10 +58,10 @@ const patchSchema = z
   })
   .strict();
 
-// The delete handler that lived here was removed by #52 along with create: a
+// The delete handler that lived here was removed by triyder/AlpineClubBookingsNZ#52 along with create: a
 // site changes only the lodge(s) the central server says it owns, and it never
 // removes an entry from the shared registry. A DELETE now answers 405. Nothing
-// removes a row: `./hide` (#58) hides one the server does NOT list.
+// removes a row: `./hide` (triyder/AlpineClubBookingsNZ#58) hides one the server does NOT list.
 
 export async function PATCH(
   request: Request,
@@ -93,7 +93,7 @@ export async function PATCH(
     );
   }
 
-  // A hidden lodge (#58) is kept only for the bookings that name it: not edited.
+  // A hidden lodge (triyder/AlpineClubBookingsNZ#58) is kept only for the bookings that name it: not edited.
   const existing = await prisma.otherLodge.findFirst({
     where: { id: parsedParams.data.id, ...visibleOtherLodgeWhere },
     select: otherLodgeSelect,
@@ -102,7 +102,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Lodge not found" }, { status: 404 });
   }
 
-  // OWNERSHIP, enforced here and not only by hiding buttons (#52). The one rule
+  // OWNERSHIP, enforced here and not only by hiding buttons (triyder/AlpineClubBookingsNZ#52). The one rule
   // is `ownsOtherLodge` over the list the central server last sent; an unknown
   // list (never received) refuses everything, because "we have not been told"
   // is not "we own it". The `code` lets the panel show this text rather than
@@ -183,7 +183,7 @@ export async function PATCH(
   // column, so the edit would never be sent. Moved explicitly.
   if (amenitiesChanged) data.updatedAt = new Date();
 
-  // A plain edit, a rename included, is one write (#69: the owned list is kept
+  // A plain edit, a rename included, is one write (triyder/AlpineClubBookingsNZ#69: the owned list is kept
   // by central id, so a rename touches nothing else). With amenities, one
   // transaction: the lodge row FIRST (its lock makes a concurrent amenity
   // replacement of the same lodge — the nightly download, an admin's Download

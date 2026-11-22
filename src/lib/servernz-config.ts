@@ -213,7 +213,7 @@ export async function setServerNzApiKey(
 /**
  * Remove the stored ServerNZ API key. Its caller is the address move in
  * `saveServerNzConnectionSettings`. The owned-lodge list the server issued for
- * that key goes with it (#52): it was THAT connection's answer, and a key
+ * that key goes with it (triyder/AlpineClubBookingsNZ#52): it was THAT connection's answer, and a key
  * issued later, or by a different server, may own different lodges. The panel
  * is read-only until the next download records a fresh list. The server's last
  * reported API version goes for the same reason (#49): it was that server's

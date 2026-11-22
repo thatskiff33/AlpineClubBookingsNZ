@@ -48,8 +48,8 @@ import {
  * the Alpine Central Server. Upload pushes this club's entries up; download
  * pulls the centrally-distributed set down and merges it into the local
  * registry, keyed by the central server's permanent lodge id once known and by
- * the lodge name, once, before that (#64, `@/lib/servernz-other-lodges-merge`).
- * Names are not unique (#69): the id is what tells two lodges apart.
+ * the lodge name, once, before that (triyder/AlpineClubBookingsNZ#64, `@/lib/servernz-other-lodges-merge`).
+ * Names are not unique (triyder/AlpineClubBookingsNZ#69): the id is what tells two lodges apart.
  */
 
 export interface UploadSummary extends OtherLodgesUploadResult {
@@ -60,7 +60,7 @@ export interface UploadSummary extends OtherLodgesUploadResult {
    * An answer that does not line up with the rows sent accepts none of them.
    */
   accepted: number;
-  /** Nothing was sent: the central server has not yet said which lodges are ours (#69). */
+  /** Nothing was sent: the central server has not yet said which lodges are ours (triyder/AlpineClubBookingsNZ#69). */
   ownedUnknown?: true;
   /** Nothing was sent: the stored owned-lodge list cannot be read until the next download. */
   ownedUnreadable?: true;
@@ -94,11 +94,11 @@ const LODGE_DATA_SELECT = {
  * nothing has changed, no request is made and the watermark is left untouched.
  *
  * ONLY THE CLUB'S OWN LODGES ARE SENT once the central server has said which
- * those are (#52): the stored owned list, through the one `ownsOtherLodge`
- * rule (by central id, #69) the admin PATCH route and the panel also apply.
+ * those are (triyder/AlpineClubBookingsNZ#52): the stored owned list, through the one `ownsOtherLodge`
+ * rule (by central id, triyder/AlpineClubBookingsNZ#69) the admin PATCH route and the panel also apply.
  * Every row sent is therefore keyed and goes up under its id. While the list
  * is UNKNOWN (never received: a new connection, or one just forgotten) NOTHING
- * is sent (#69): names may repeat, so an unkeyed copy of another club's lodge
+ * is sent (triyder/AlpineClubBookingsNZ#69): names may repeat, so an unkeyed copy of another club's lodge
  * sent without an id would be CREATED on the server as this club's. The
  * nightly pass's download records the list, and the next upload sends. A row
  * the server reports as `skipped` is held below the watermark (INV-INT-004).
@@ -136,7 +136,7 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
   // here, and the row it rewrites is newer than the watermark, so it goes now.
   await syncOwnOtherLodgesFromFees("upload");
 
-  // A hidden lodge (#58) is never uploaded: it is a deleted lodge kept here.
+  // A hidden lodge (triyder/AlpineClubBookingsNZ#58) is never uploaded: it is a deleted lodge kept here.
   const changed = await prisma.otherLodge.findMany({
     where: { ...visibleOtherLodgeWhere, ...(since ? { updatedAt: { gt: since } } : {}) },
     select: { id: true, name: true, centralId: true, updatedAt: true, ...LODGE_DATA_SELECT },
@@ -168,7 +168,7 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
       if (!keepSiteUrl) oddSiteUrls.push(l.name);
       const commonData = keepSiteUrl ? { ...rest, siteUrl } : rest;
       return {
-        // The central id, once known (#64, API 2.3): the server matches the
+        // The central id, once known (triyder/AlpineClubBookingsNZ#64, API 2.3): the server matches the
         // item by it, so a name changed here renames the lodge there.
         ...(l.centralId ? { id: l.centralId } : {}),
         name: l.name,
@@ -196,7 +196,7 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
   // retries it — and `skipped` is surfaced in the summary so an operator can see
   // a row that keeps bouncing.
   //
-  // Each result answers the item AT ITS POSITION (#69): names may repeat, so a
+  // Each result answers the item AT ITS POSITION (triyder/AlpineClubBookingsNZ#69): names may repeat, so a
   // name cannot say which row a result is for, and an item sent without an id
   // only learns its id from the answer. A result whose name, or (for an item
   // that quoted one) id, is not its item's means the answer does not line up:
@@ -266,17 +266,17 @@ export interface DownloadSummary {
    * that read and the guarded write.
    */
   keptLocal: number;
-  /** Of `updated`, rows renamed in place to the server's new name (#64). */
+  /** Of `updated`, rows renamed in place to the server's new name (triyder/AlpineClubBookingsNZ#64). */
   renamed: number;
   /**
-   * Lodges this download could not place (#69): one sent without a usable id
+   * Lodges this download could not place (triyder/AlpineClubBookingsNZ#69): one sent without a usable id
    * whose name several local lodges share, or a new one whose central id a
    * concurrent writer held on the final pass. `lodge` is `null` (not added);
    * `wanted` is the server's name.
    */
   nameConflicts: NameConflict[];
   /**
-   * Lodges the central server deleted that this download HID here (#58), by
+   * Lodges the central server deleted that this download HID here (triyder/AlpineClubBookingsNZ#58), by
    * name: kept for the bookings and requests that name them, and gone from
    * the lists and drop-downs.
    */
@@ -306,7 +306,7 @@ export interface DownloadSummary {
  * lodge row, after the pull has finished.
  *
  * Each lodge is merged by `mergeDistributedLodge` (`@/lib/servernz-other-lodges-merge`):
- * which row it is (central id, else name), the rename rules (#64), and the two
+ * which row it is (central id, else name), the rename rules (triyder/AlpineClubBookingsNZ#64), and the two
  * rules that keep `updatedAt` honest as the upload watermark's signal.
  *
  * EVERY WRITE IS FENCED on the connection the pull was sent on (#4262 review):
@@ -332,7 +332,7 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // why removing it re-opens a permanent skip, and what an opaque cursor means.
   // The stored cursor itself is untouched here.
   //
-  // Until a whole-registry download has merged to the end (#64: a site just
+  // Until a whole-registry download has merged to the end (triyder/AlpineClubBookingsNZ#64: a site just
   // upgraded, a new connection, or a keying download that failed part-way),
   // every download asks for the WHOLE registry instead, so every row is
   // matched by name once and keyed — not only the lodges that happen to change.
@@ -356,7 +356,7 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // sent on (see above).
   const write = serverNzAnswerWriter(pull.sentOn);
 
-  // Lodges the server DELETED (#58, API 2.4) are hidden here FIRST, and a
+  // Lodges the server DELETED (triyder/AlpineClubBookingsNZ#58, API 2.4) are hidden here FIRST, and a
   // pulled lodge the server also reports deleted (its reads are not one
   // snapshot) is left out of the merge, so it ends hidden. Hidden, never
   // removed (owner decision): the row stays for the bookings and requests that
@@ -412,7 +412,7 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     wholeRegistry && pull.dropped === 0
       ? new Set(lodges.flatMap((l) => usableCentralId(l.id) ?? []))
       : null;
-  // Keying by name (#69: names may repeat) only on a whole download, which
+  // Keying by name (triyder/AlpineClubBookingsNZ#69: names may repeat) only on a whole download, which
   // sees every lodge of the name, and only when the name is ONE lodge's alone.
   // When two lodges on the server share it, an unkeyed local row of that name
   // could be either, so it is keyed to neither, whichever of them is ours
@@ -477,10 +477,10 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     // Reached only after every row above merged, so a throw part-way leaves the
     // old cursor standing and the next run re-fetches.
     //
-    // The owned list rides in the same write (#52), and only when the server
+    // The owned list rides in the same write (triyder/AlpineClubBookingsNZ#52), and only when the server
     // sent a valid one: `undefined` leaves the stored list alone. A lodge in the
     // list with no local row is simply absent locally until a download creates
-    // it. It is stored by central id (#62, #69), so a lodge renamed here stays
+    // it. It is stored by central id (triyder/AlpineClubBookingsNZ#62, triyder/AlpineClubBookingsNZ#69), so a lodge renamed here stays
     // ours whatever it is called.
     //
     // A whole-registry download that got this far, with no row dropped by the
@@ -516,7 +516,7 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
       const keyed = wholeRegistry && everyLodgeKeyed;
       // A club lodge linked to a deleted central lodge in the moments since the
       // hide above (an administrator's Central lodge save) is unlinked again, now
-      // that the owned list recorded below no longer names it (#58).
+      // that the owned list recorded below no longer names it (triyder/AlpineClubBookingsNZ#58).
       await unlinkDeletedCentralLodges(tx, [...deletedIds]);
       if (keyed && knownIds !== null) {
         // One bound parameter per id (`Prisma.join`), as the rest of the code

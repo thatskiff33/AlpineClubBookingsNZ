@@ -54,12 +54,12 @@ vi.mock("@/lib/prisma", () => {
   // The interactive transaction hands the same fake back as `tx`, so a write
   // made inside one is observable through the same mocks as one made outside.
   // No `create` and no `delete`: the routes no longer have a handler that
-  // would call either (#52), and a fake without them proves it.
+  // would call either (triyder/AlpineClubBookingsNZ#52), and a fake without them proves it.
   const prisma = {
     otherLodge: {
       findMany: mocks.findMany,
       findUnique: mocks.findUnique,
-      // The PATCH reads a VISIBLE lodge by id (#58), with findFirst.
+      // The PATCH reads a VISIBLE lodge by id (triyder/AlpineClubBookingsNZ#58), with findFirst.
       findFirst: mocks.findUnique,
       findUniqueOrThrow: mocks.findUniqueOrThrow,
       update: mocks.update,
@@ -96,7 +96,7 @@ function record(overrides: Record<string, unknown> = {}) {
     id: "ol-1",
     name: "Ruapehu Ski Club",
     // Keyed to the owned lodge (`owning` gives the first name "c-1") unless a
-    // test says otherwise: ownership is by central id (#69).
+    // test says otherwise: ownership is by central id (triyder/AlpineClubBookingsNZ#69).
     centralId: "c-1",
     location: "Whakapapa",
     bookingOfficerName: "Jo Officer",
@@ -169,7 +169,7 @@ function params(id: string) {
 
 /**
  * The central server has said: this club owns these lodges, the first under
- * central id `c-1`, the next `c-2` and so on (#69: owned by id).
+ * central id `c-1`, the next `c-2` and so on (triyder/AlpineClubBookingsNZ#69: owned by id).
  */
 function owning(names: string[] | null) {
   mocks.loadServerNzSettings.mockResolvedValue({
@@ -199,7 +199,7 @@ beforeEach(() => {
   mocks.otherLodgeFeesProblem.mockResolvedValue(null);
 });
 
-describe("the create and delete handlers are gone (#52)", () => {
+describe("the create and delete handlers are gone (triyder/AlpineClubBookingsNZ#52)", () => {
   it("exports no POST from the list route and no DELETE from the item route", () => {
     // A site changes only the lodge(s) the central server says it owns; it
     // neither adds to nor removes from the shared registry. With no handler
@@ -211,7 +211,7 @@ describe("the create and delete handlers are gone (#52)", () => {
   });
 });
 
-describe("GET /api/admin/other-lodges marks lodges the central server no longer has (#64)", () => {
+describe("GET /api/admin/other-lodges marks lodges the central server no longer has (triyder/AlpineClubBookingsNZ#64)", () => {
   function keyed() {
     mocks.loadServerNzSettings.mockResolvedValue({
       otherLodgesOwnedLodges: [{ id: "c-1", name: "Ruapehu Ski Club" }],
@@ -233,7 +233,7 @@ describe("GET /api/admin/other-lodges marks lodges the central server no longer 
     expect(mocks.findMany.mock.calls[1][0].where).toEqual({ id: { in: ["ol-old"] } });
   });
 
-  it("never lists a HIDDEN lodge (#58): it is kept only for the bookings that name it", async () => {
+  it("never lists a HIDDEN lodge (triyder/AlpineClubBookingsNZ#58): it is kept only for the bookings that name it", async () => {
     mocks.findMany.mockResolvedValueOnce([record()]);
     await GET();
     expect(mocks.findMany.mock.calls[0][0].where).toEqual({ hiddenAt: null });
@@ -254,7 +254,7 @@ describe("GET /api/admin/other-lodges marks lodges the central server no longer 
       record({ id: "ol-1", centralId: "c-1" }),
     ]);
     expect((await (await GET()).json()).otherLodges[0]).toMatchObject({ owned: true, renamable: true });
-    // Not keyed yet: never ours, even under the owned lodge's name (#69).
+    // Not keyed yet: never ours, even under the owned lodge's name (triyder/AlpineClubBookingsNZ#69).
     mocks.findMany.mockResolvedValueOnce([record({ id: "ol-1", centralId: null })]);
     expect((await (await GET()).json()).otherLodges[0]).toMatchObject({ owned: false, renamable: false });
   });
@@ -478,7 +478,7 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
     expect(mocks.update).not.toHaveBeenCalled();
   });
 
-  it("will not edit a HIDDEN lodge (#58): it reads only visible lodges", async () => {
+  it("will not edit a HIDDEN lodge (triyder/AlpineClubBookingsNZ#58): it reads only visible lodges", async () => {
     mocks.findUnique.mockResolvedValue(null);
     const response = await PATCH(jsonRequest("PATCH", { bedCapacity: 12 }), params("ol-1"));
     expect(response.status).toBe(404);
@@ -486,7 +486,7 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
     expect(mocks.update).not.toHaveBeenCalled();
   });
 
-  it("refuses any edit of a row not yet keyed, even one with the owned lodge's name (#69)", async () => {
+  it("refuses any edit of a row not yet keyed, even one with the owned lodge's name (triyder/AlpineClubBookingsNZ#69)", async () => {
     // Another row of that name may be ours: the download keys it first.
     mocks.findUnique.mockResolvedValue(record({ centralId: null }));
     const response = await PATCH(
@@ -499,7 +499,7 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
     expect(mocks.auditLogCreate).not.toHaveBeenCalled();
   });
 
-  it("renames a keyed owned lodge in one write; it stays ours by its id (#64, #69)", async () => {
+  it("renames a keyed owned lodge in one write; it stays ours by its id (triyder/AlpineClubBookingsNZ#64, triyder/AlpineClubBookingsNZ#69)", async () => {
     mocks.findUnique.mockResolvedValue(record({ centralId: "c-1" }));
     mocks.update.mockResolvedValue(record({ centralId: "c-1", name: "Ruapehu Alpine Lodge" }));
     const response = await PATCH(
@@ -521,7 +521,7 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
     expect(audit.metadata.changedFields).toContain("name");
   });
 
-  it("renames onto a name another lodge already has: names may repeat (#69)", async () => {
+  it("renames onto a name another lodge already has: names may repeat (triyder/AlpineClubBookingsNZ#69)", async () => {
     mocks.findUnique.mockResolvedValue(record({ centralId: "c-1" }));
     mocks.update.mockResolvedValue(record({ centralId: "c-1", name: "Tongariro Lodge" }));
     const response = await PATCH(jsonRequest("PATCH", { name: "Tongariro Lodge" }), params("ol-1"));
@@ -529,7 +529,7 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
     expect(mocks.update.mock.calls[0][0].data).toEqual({ name: "Tongariro Lodge" });
   });
 
-  it("refuses a lodge that shares the owned lodge's name but is keyed to another central lodge (#69)", async () => {
+  it("refuses a lodge that shares the owned lodge's name but is keyed to another central lodge (triyder/AlpineClubBookingsNZ#69)", async () => {
     mocks.findUnique.mockResolvedValue(record({ centralId: "c-other" }));
     const response = await PATCH(jsonRequest("PATCH", { bedCapacity: 12 }), params("ol-1"));
     expect(response.status).toBe(403);

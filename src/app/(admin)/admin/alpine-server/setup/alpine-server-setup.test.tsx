@@ -179,7 +179,7 @@ describe("AlpineServerSetup version display (#49)", () => {
   });
 });
 
-describe("AlpineServerSetup Download summary (#64)", () => {
+describe("AlpineServerSetup Download summary (triyder/AlpineClubBookingsNZ#64)", () => {
   function downloadAnswers(body: unknown) {
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (String(url).includes("/api/admin/alpine-server/version")) {
@@ -192,7 +192,7 @@ describe("AlpineServerSetup Download summary (#64)", () => {
     });
   }
 
-  it("counts renames and names each lodge that could not be placed, as a warning (#69)", async () => {
+  it("counts renames and names each lodge that could not be placed, as a warning (triyder/AlpineClubBookingsNZ#69)", async () => {
     downloadAnswers({
       fetched: 3,
       created: 0,
@@ -213,7 +213,7 @@ describe("AlpineServerSetup Download summary (#64)", () => {
     expect(message.className).toMatch(/text-warning-11/);
   });
 
-  it("says nothing was uploaded, and keeps the last-upload time, while the owned list is unknown (#69)", async () => {
+  it("says nothing was uploaded, and keeps the last-upload time, while the owned list is unknown (triyder/AlpineClubBookingsNZ#69)", async () => {
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (String(url).includes("/api/admin/alpine-server/version")) {
         return { ok: true, status: 200, json: async () => ({ status: "match", serverVersion: "2.6", expected: "2.6", checkedAt: null, couldNotCheck: false, missingBaseUrl: false }) };
@@ -273,7 +273,7 @@ describe("AlpineServerSetup when another sync is running (#66)", () => {
   });
 });
 
-describe("AlpineServerSetup Download summary: deletions (#58)", () => {
+describe("AlpineServerSetup Download summary: deletions (triyder/AlpineClubBookingsNZ#58)", () => {
   function downloadAnswers(body: unknown) {
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (String(url).includes("/api/admin/alpine-server/version")) {

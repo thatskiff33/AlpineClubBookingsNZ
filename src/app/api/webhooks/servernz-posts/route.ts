@@ -31,7 +31,7 @@ import {
  * request proves itself: an HMAC over `${timestamp}.${body}` with the secret
  * issued at registration, compared in constant time, with the timestamp bounded
  * to close the replay window — `verifyServerNzSignature`, shared with the
- * availability route (#62).
+ * availability route (triyder/AlpineClubBookingsNZ#62).
  */
 
 export const runtime = "nodejs";

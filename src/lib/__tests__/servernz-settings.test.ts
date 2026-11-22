@@ -248,7 +248,7 @@ describe("the server's reported API version (#49)", () => {
       commsLastSyncAt: null,
       commsPoisonChangeId: null,
       commsPoisonCount: 0,
-      // A new connection keys the registry again with a whole download (#64).
+      // A new connection keys the registry again with a whole download (triyder/AlpineClubBookingsNZ#64).
       otherLodgesKeyedAt: null,
       serverVersion: null,
       serverVersionCheckedAt: null,
@@ -260,7 +260,7 @@ describe("the server's reported API version (#49)", () => {
   });
 });
 
-describe("the owned lodge list, by central id (#52, #62, #69)", () => {
+describe("the owned lodge list, by central id (triyder/AlpineClubBookingsNZ#52, triyder/AlpineClubBookingsNZ#62, triyder/AlpineClubBookingsNZ#69)", () => {
   const AORANGI = [{ id: "ol_a", name: "Aorangi Ski Club" }];
 
   it("reads a stored list back", async () => {
@@ -280,7 +280,7 @@ describe("the owned lodge list, by central id (#52, #62, #69)", () => {
     expect((await loadServerNzSettings()).otherLodgesOwnedLodges).toEqual([]);
   });
 
-  it("ignores the name-only list stored by API 2.4 and earlier (#69)", async () => {
+  it("ignores the name-only list stored by API 2.4 and earlier (triyder/AlpineClubBookingsNZ#69)", async () => {
     mocks.findUnique.mockResolvedValue({
       otherLodgesOwnedNames: ["Aorangi Ski Club"],
       otherLodgesEnabled: false,
@@ -329,7 +329,7 @@ describe("the owned lodge list, by central id (#52, #62, #69)", () => {
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.update.otherLodgesOwnedLodges).toEqual(AORANGI);
     expect(args.update.otherLodgesOwnedNamesAt).toBeInstanceOf(Date);
-    // The draining colour of a blue/green deploy still reads it (#69).
+    // The draining colour of a blue/green deploy still reads it (triyder/AlpineClubBookingsNZ#69).
     expect(args.update).not.toHaveProperty("otherLodgesOwnedNames");
     expect(args.create.otherLodgesOwnedLodges).toEqual(AORANGI);
   });
@@ -364,7 +364,7 @@ describe("the version column has one writer (#4366)", () => {
     expect(callers).toEqual(["lib/servernz-settings.ts", "lib/servernz-version-record.ts"]);
   });
 });
-describe("recordOtherLodgesDownload: the keyed marker (#64)", () => {
+describe("recordOtherLodgesDownload: the keyed marker (triyder/AlpineClubBookingsNZ#64)", () => {
   it("sets otherLodgesKeyedAt only when told the whole registry merged", async () => {
     await recordOtherLodgesDownload("c-1", undefined, { keyed: true, db: answerTx });
     expect(mocks.upsert.mock.calls[0][0].update.otherLodgesKeyedAt).toBeInstanceOf(Date);
