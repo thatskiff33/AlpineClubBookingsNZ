@@ -74,9 +74,6 @@ export function refDefTargets(text) {
   }));
 }
 
-/** A line that opens or closes a fenced code block, whose links are examples. */
-export const FENCE_TOGGLE = /^\s*(```|~~~)/;
-
 /** An inline code span, which may wrap onto the next line but not past a blank one. */
 const CODE_SPAN = /`(?:[^`\n]|\n(?![ \t]*(?:\n|$)))*`/g;
 

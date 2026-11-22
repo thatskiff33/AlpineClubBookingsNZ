@@ -33,3 +33,24 @@ describe("check-doc-links: an image wrapped in a link (#5214)", () => {
     expect(brokenTargets("[![alt](img/a.png)](docs/A.md)\n", ["img/a.png", "docs/A.md"])).toEqual([]);
   });
 });
+
+describe("check-doc-links: fences close as the changelog compiler closes them (#5214)", () => {
+  it("keeps a `~~~` line inside a backtick fence as code", () => {
+    const text = "```md\n~~~\n[example](missing/inside.md)\n~~~\n```\n[real](missing/after.md)\n";
+    expect(brokenTargets(text)).toEqual(["missing/after.md"]);
+  });
+
+  it("keeps a `~~~` line inside a tilde fence's backtick content as code", () => {
+    const text = "~~~md\n```\n[example](missing/inside.md)\n```\n~~~\n[real](missing/after.md)\n";
+    expect(brokenTargets(text)).toEqual(["missing/after.md"]);
+  });
+
+  it("does not take headings inside a fence as anchors", () => {
+    expect(brokenTargets("```\n# Fenced\n```\n[a](#fenced)\n")).toEqual(["#fenced"]);
+    expect(brokenTargets("# Real\n[a](#real)\n")).toEqual([]);
+  });
+
+  it("still takes an id from a raw HTML block as an anchor", () => {
+    expect(brokenTargets('<a id="kept"></a>\n\n[a](#kept)\n')).toEqual([]);
+  });
+});
