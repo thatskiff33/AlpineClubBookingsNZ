@@ -44,7 +44,13 @@ const { rows, mockPrisma, mockBcryptCompare, mockLoadEffectiveModuleFlags, mockA
     };
     const mockPrisma: Record<string, unknown> = {
       loginThrottle,
-      member: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn().mockResolvedValue({}) },
+      member: {
+        findFirst: vi.fn(),
+        findUnique: vi.fn(),
+        update: vi.fn().mockResolvedValue({}),
+        // #5261: REAL_HASH reads as cost 12, so a good password upgrades it.
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
       auditLog: { create: vi.fn().mockResolvedValue({}) },
       magicLinkToken: { findUnique: vi.fn(), updateMany: vi.fn() },
       $executeRaw: vi.fn(async (_sql: TemplateStringsArray, id: string) =>

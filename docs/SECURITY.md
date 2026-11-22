@@ -206,10 +206,33 @@ if login is later enabled, a wrong password still spends a full compare until
 the screened setup/reset flow replaces it with a real password.
 
 Regression tests compare both constants' encoded cost with a newly generated
-hash; changing the cost requires regenerating both. Existing stored hashes keep
-their original cost until replaced, so older cost-12 accounts can still compare
-faster than unknown accounts. Standard bcrypt hashes remain readable by both
-old and new releases, with no migration or rehash.
+hash; changing the cost requires regenerating both.
+
+**Older stored hashes (#5261).** Passwords set before a cost rise stay at their
+original cost until the member proves them. After a successful password
+sign-in, or a password step-up, `src/lib/password-rehash.ts` hashes the same
+password at `PASSWORD_BCRYPT_COST` and saves it. It runs once the password is
+proved and before any second factor is asked for, so a sign-in that stops at
+the second step has still upgraded the hash. The save changes only
+`passwordHash`, so no session ends and the member notices nothing, and it
+matches only while the stored hash is still the one just proved: a password
+changed or reset at the same moment is never overwritten. A failed save is
+logged and retried at the next sign-in; a refused sign-in never writes. The
+new hash is standard bcrypt, so an older release running beside this one
+during an upgrade still reads it. Raising the constant again upgrades the same
+way.
+
+A wrong password against an older hash would otherwise be answered faster
+than an unknown email. Before refusing, sign-in therefore hashes the attempt
+at each cost from the stored one up to one below `PASSWORD_BCRYPT_COST`,
+discarding the results, which brings the total work to one compare at the
+current cost.
+
+What remains: an account that never signs in with a password again, such as a
+passkey, Google or email-link user, keeps its older cost. Its sign-in timing
+already matches an unknown email; the only difference is that its hash is
+cheaper to attack if the database itself is stolen. No password can be
+re-hashed without the password, so there is no background migration.
 
 The pinned native dependency ships Linux glibc and Alpine musl binaries for
 amd64 and arm64 without an install script. Next.js externalises it by default.
@@ -664,6 +687,99 @@ Admin lost their factor runs, on the server,
 **Stated limits.** The report lists who is required and not yet enrolled; it
 is a Full Admin view only. An emailed code still signs a member in where the
 club-wide module allows it; it just does not meet this rule.
+
+## AI app connections (ALP-653)
+
+Audience: Operator, Developer.
+
+**The threat.** A member can hand an AI app (an MCP client) the power to act
+as them on the club's live site. A stolen app credential, an app that is not
+what it says, or an app steered by text it reads could then read or change
+that member's club data, and whatever the app reads goes to its provider. The
+rules are `INV-MCP-001` … `INV-MCP-008`
+([`mcp-connections.md`](invariants/mcp-connections.md)); the operator view is
+[the guide](guides/mcp-server.md).
+
+**The controls.**
+
+- **Off by default.** The `mcpServer` module is the only switch; while it is
+  off every connection route, the approval screen and the discovery documents
+  answer 404, each handler checking the flag itself (`INV-MCP-001`).
+- **The club decides who may connect, and how far** (`McpSettings`): members on,
+  officers off, view only and three approved app hosts by default. The policy
+  is checked at approval and on every request, so changing it reaches existing
+  connections at once (`INV-MCP-002`). Saving it needs `support` edit and is on
+  the fresh-proof list (`INV-AUTH-010`).
+- **Approval only on the website, by a signed-in member.** Kiosk accounts and
+  unverified emails are refused; a forced password change or owed two-factor
+  step comes first. A connection can never approve, list or end connections,
+  or read or save the policy: those routes refuse the internal principal header
+  with 403.
+- **Bounded OAuth bodies:** registration JSON and token/revocation forms are
+  limited to 64 KiB before parsing, including requests without Content-Length.
+- **OAuth 2.1, public clients only** (`INV-MCP-003`): authorisation code with
+  PKCE S256; redirects only to an exact approved host or to loopback, checked at
+  registration and again at approval; five-minute single-use codes; one-hour
+  access tokens; single-use rotating refresh tokens; every code and token stored
+  as a SHA-256 hash ([`TOKEN_HASHING.md`](TOKEN_HASHING.md)) and bound to this
+  site's `/api/mcp`. Reusing a code or refresh token ends the connection.
+- **The connection is the member's sign-in, not a new identity**
+  (`INV-MCP-005`). `auth()` accepts a 30-second HMAC-signed `x-mcp-principal`
+  header (key derived from `AUTH_SECRET` with its own label) and builds the
+  session through the same `session-refresh.ts` code as a browser, from the
+  approving sign-in's time and two-factor result. The maximum session age,
+  password changes, disabled logins and role changes therefore end or narrow
+  a connection by the same code. A header that does not verify reads as
+  signed out and never falls back to a cookie. A value is honoured only while
+  the loopback call it was issued for is in flight in the issuing process, and
+  log redaction blanks the header, so a copied value cannot be replayed. `lastAuthenticatedAt` is never
+  set.
+- **Every action meets the route's own guards** (`INV-MCP-007`): it is sent to
+  the site over loopback, never by calling a handler. Fresh-proof, sign-in,
+  provider, scheduler, kiosk and browser-only routes are permanent exclusions,
+  refused before dispatch even if catalogued, and every API route method must
+  be classified or a census test fails (`INV-MCP-006`).
+- **Rate limits.** `mcpClientRegister` 20 an hour per address;
+  `mcpToken` 60 per 10 minutes per address (token and revoke);
+  `mcpUnauthenticated` 60 a minute per address for a request without a valid
+  token; `mcpCall` 120 a minute per connection; `mcpApprove` 20 an hour per
+  member. Calls are limited per connection, not per address, because every
+  member of one AI provider arrives from that provider's addresses. For the
+  same reason the route limiters an action reaches (`applyRateLimit` and the
+  address backstop of `applyMemberScopedRateLimit`) key a loopback call by
+  `mcp:<connection id>` once its principal header verifies
+  (`rateLimitSubject`); an unverified header is counted by address.
+- **Audit** (`INV-MCP-008`, category `security`): approvals, member and
+  officer disconnects, policy saves, and every call of a change action, never
+  its arguments or result.
+
+**Stated limits.**
+
+- **Prompt injection is not preventable here.** Text members type into
+  bookings, notices and profiles can try to steer the app. Mitigations: view
+  only by default, destructive actions marked for the app, payments and sign-in
+  out of reach, a draft booking that holds no beds, server instructions telling
+  the app that such text is information, and an audit row for every change.
+- **Officers' connections.** In stage 1 every action answers an officer's
+  connection as it would that person as a member: the cancel and
+  cancel-preview routes drop officer reach for a connection (`INV-MCP-006`).
+  Later stages add officer actions, which send other members' data to the
+  officer's AI provider, so `officersMayConnect` is a separate switch, off by
+  default; a club should cover it in its privacy notice first.
+- **Not audited:** read-only action calls, and connections ended by the app or
+  the system (app revocation, reuse, replacement, the approving sign-in
+  ending, an approval never collected). `McpGrant.endedReason` and
+  `lastUsedAt` are the record.
+- **The fresh-proof prompt is not shown yet.** `requireRecentAuth` does not read
+  the session while `OFFICER_SIGN_IN_ENFORCED` is false (#4620), so the policy
+  save goes through without a confirmation today. Connections still cannot
+  reach fresh-proof routes, because those are permanent exclusions.
+- **Loopback is assumed.** Actions go to `127.0.0.1:$PORT`; a server not
+  listening on loopback answers no action.
+- **No scheduled job sweeps MCP codes or tokens.** A connection's expired
+  tokens are deleted at its next token issue, and its codes and remaining
+  tokens when it ends; until then they stay as hashed rows that can no longer
+  be used.
 
 ## Data-encryption key ring (#4456)
 

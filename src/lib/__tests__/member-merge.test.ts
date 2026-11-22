@@ -784,6 +784,9 @@ describe("spec bucket integrity", () => {
         "SessionReauthChallenge",
         "WebAuthnCredential",
         "WebAuthnChallenge",
+        // ALP-653: an AI app connection signs in as the member (INV-MCP-005),
+        // so it is an auth identity like the tokens above and dies with the loser.
+        "McpGrant",
         "PartnerInviteToken",
         "SchoolMemberClassification",
       ]),

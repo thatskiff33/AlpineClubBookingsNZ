@@ -110,6 +110,9 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   spec("SessionReauthChallenge", "member", "memberId", "cascade"),
   spec("WebAuthnCredential", "member", "memberId", "cascade"),
   spec("WebAuthnChallenge", "member", "memberId", "cascade"),
+  spec("McpGrant", "member", "memberId", "cascade", {
+    note: "an AI app connection signs in as the loser (INV-MCP-005); it dies with the loser, and the master connects their own",
+  }),
   spec("PartnerInviteToken", "createdBy", "createdById", "cascade", {
     note: "single-use invite token created by loser; low-value ephemeral, dies with loser",
   }),
@@ -242,6 +245,11 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   spec("AdminCreditAdjustmentRequest", "member", "memberId", "move"),
   spec("AdminCreditAdjustmentRequest", "requestedBy", "requestedById", "move"),
   spec("AdminCreditAdjustmentRequest", "reviewedBy", "reviewedById", "move"),
+  // #4988: who posted and who reversed an opening-credit batch. Nullable
+  // SetNull actor back-refs with no Member unique, so `move` re-points the
+  // history onto the surviving member.
+  spec("OpeningCreditBatch", "postedBy", "postedById", "move"),
+  spec("OpeningCreditBatch", "reversedBy", "reversedById", "move"),
   spec("RefundRequest", "member", "memberId", "move"),
   // B5 (#2262): both are nullable SetNull actor back-refs with no Member unique
   // constraint, exactly like MemberSubscription.manuallyMarkedPaidBy above —

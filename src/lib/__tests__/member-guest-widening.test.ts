@@ -913,6 +913,11 @@ describe("consent columns have exactly one writer", () => {
     // owed. A null status means no message was ever sent about that row.
     "src/lib/booking-batch-modification-service.ts":
       "the batch edit reads a removed guest's consent state to decide who is owed a withdrawal notice",
+    // #5149: the identity-only pricing echo, moved verbatim out of the batch
+    // service. A READER: it carries each guest's stored `consentStatus` into
+    // the echoed night rates unchanged, and writes nothing.
+    "src/lib/booking-identity-only-pricing.ts":
+      "the identity-only pricing echo carries each guest's stored consent status through unchanged; it writes nothing",
     // The same read on the single-guest removal route. It is the ONE of the
     // three callers of removeBookingGuestInTransaction that owes a withdrawal
     // notice — the decline endpoint and the expiry sweep each have their own
@@ -971,6 +976,10 @@ describe("consent columns have exactly one writer", () => {
       "the create route states each planned row's consent for the adult-supervision pre-flight",
     "src/lib/booking-create-guests.ts":
       "the create services' review gate states each planned row's consent for the adult-supervision rule",
+    // #5005: a READER of nothing stored. The import planner states every
+    // imported row consent-free (null) for the adult-supervision rule.
+    "src/lib/booking-import/plan.ts":
+      "the paid-booking import planner states each imported row consent-free for the adult-supervision rule; writes nothing",
     // The edit PREVIEW. A READER: it maps the rows already on the booking to
     // their stored `consentStatus` so the preview refuses exactly what the save
     // refuses. It persists nothing at all — it is a quote.
