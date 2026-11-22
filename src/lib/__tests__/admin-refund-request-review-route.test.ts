@@ -714,7 +714,12 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       expect((mocks.executeRaw.mock.calls[2]?.[0] as TemplateStringsArray).join("?")).toContain(
         "pg_advisory_xact_lock(1)",
       );
-      expect(releaseLock).toBeLessThan(mocks.refundRequestUpdateMany.mock.invocationCallOrder[1]);
+      // MUTATION (#5191): then the booking row, before the release's claim, so its withdrawals read the owner under it.
+      const releaseRowLock = mocks.executeRaw.mock.invocationCallOrder[3];
+      expect((mocks.executeRaw.mock.calls[3]?.[0] as TemplateStringsArray).join("?")).toContain('FROM "Booking"');
+      expect(mocks.executeRaw.mock.calls[3]?.slice(1)).toEqual(["booking_1"]);
+      expect(releaseLock).toBeLessThan(releaseRowLock!);
+      expect(releaseRowLock).toBeLessThan(mocks.refundRequestUpdateMany.mock.invocationCallOrder[1]!);
       expect(mocks.refundRequestUpdateMany.mock.invocationCallOrder[1]).toBeLessThan(
         mocks.manualRefundTaskDeleteMany.mock.invocationCallOrder[0],
       );

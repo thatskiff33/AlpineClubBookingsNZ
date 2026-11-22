@@ -3949,7 +3949,7 @@ The `lock(1)` writers take a booking's two rows in both orders:
 | Order | Writers |
 | --- | --- |
 | Payment → booking | a card settle (W1: its PAID claim and R01's owner read), the back-post. A manual settle takes the booking row first since #4840 |
-| booking → Payment | the edit doors (after their lodge key), an edit review, an approved appeal |
+| booking → Payment | the edit doors (after their lodge key), an edit review, an approved appeal and its `release_claim` (#5191) |
 
 Two `lock(1)` holders never interleave, so neither order is a defect between
 them. Merge is not a `lock(1)` holder, so neither fixed place for the Payment
@@ -7191,7 +7191,8 @@ writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
 - **A kept late capture** (the approval task dismissed) takes the same
   `lock(1)`, booking row and Payment row before its claim, reverses an unpaid,
   unreserved capture-return R05 an automatic refund posted (review M5), then
-  posts the keep.
+  posts the keep. The reversal reads the owner under the booking row it already
+  holds (#5191; taken again, a no-op).
 - **A #2700 hand-back** of a late capture (no approval intent) takes the same
   Payment row before it reads what its capture still holds, then claims
   (#4838). Nothing between takes a lodge, member-credit or task-row lock: the
@@ -7203,11 +7204,27 @@ writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
   identifies (`isLateCaptureHandBackTask`, #4843): the same order, and the
   same two routes return before locking for a NULL kind; the suite runs every
   case on one.
-- **An appeal's `release_claim`** takes global → the request's row → its
-  hand-back task → Payment, releases the approval's open reservations under its
-  own keys with their funding and reverses its R05 in the same transaction. A
-  reservation another sender holds, or a journal refusal, is thrown, never
-  caught.
+- **An appeal's `release_claim`** takes global → booking row → the request's
+  row → its hand-back task → Payment, releases the approval's open reservations
+  under its own keys with their funding and reverses its R05 in the same
+  transaction. A reservation another sender holds, or a journal refusal, is
+  thrown, never caught. The booking row comes right after `lock(1)`, as the
+  approval takes it (review F1, #5191): the reversal reads the owner under it,
+  and taken after the request's claim it would wait on a merge's owner move
+  while the merge waited on that request.
+- **A whole R05 reversal after a member merge** (#5191): the release, the keep
+  and a part to check's dismissal post the exact mirror of the R05 on the
+  debtor it named, then carry any receivable that leaves on a merged-away
+  member along the committed merge chain to the owner they read under the
+  booking row, one `merge-residue` transfer per hop, as a reversed receipt does
+  (D4). The R05 itself is carried first when the merge's snapshot missed it:
+  the reservation step reads its debtor without a lock, so its R05 can land on
+  a member after that member's snapshot. Merge first, the owner move has
+  committed, so the door reads the survivor and moves the residue; door first,
+  the merge waits on the booking row and its snapshot nets the reversal, so
+  nothing moves. No new key or site; `release_claim` adds the booking row after
+  `lock(1)`. Proven in both orders against the real merge by
+  `member-money-refund-appeal-merge.realdb.test.ts`.
 - **The reservation step** runs in its own short transaction on the root client,
   before each keyed slice is sent, taking only the Payment row. It releases the
   same sender's superseded reservations with their funding (review F3: never
@@ -7931,7 +7948,9 @@ hold the Payment row. A cancellation hand-back's completion holds `lock(1)`,
 then the booking row, then the Payment row (#4516 M4d), so its cash posts
 against the owner. A card shortfall part to check's dismissal, and a disputed
 card payment's hand-back's, take the same three before the claim, then withdraw
-the R05 (owner decisions, 15 Nov 2026); a lost claim withdraws nothing. The
+the R05 (owner decisions, 15 Nov 2026), reading the owner its reversal's
+merged-debtor residue moves to under the booking row they hold (#5191); a lost
+claim withdraws nothing. The
 disputed one re-reads its booking's disputes after the Payment row and answers
 them as recorded at that read: the dispute writer takes none of these locks and
 serialises only on its own `StripeDispute` row, so no cycle exists. An open,
