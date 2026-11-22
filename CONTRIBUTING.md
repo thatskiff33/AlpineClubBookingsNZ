@@ -562,6 +562,60 @@ each required check present on the **exact current head SHA**: a conflicted
 PR gets no `pull_request` runs, so `gh pr checks` can read green off an older
 head, and an empty failure list is not a passing run (#2641).
 
+#### Finding which merge broke main
+
+A newer merge may replace `main`'s queued runs of CI, E2E, Money coverage and
+Docs link check (`INV-OPS-021`, #5356). A run that has started always
+finishes, and the newest `main` commit gets its full set (step 3 has the one
+exception), but the commits in between can have no run. So when `main` goes
+red, the first red run may cover several merges. To find the one that broke
+it:
+
+1. List the runs that were replaced or cancelled, with their commits:
+
+   ```bash
+   gh run list --workflow ci.yml --branch main --event push --status cancelled \
+     --json databaseId,headSha,createdAt,displayTitle
+   ```
+
+   Use the workflow that went red (`e2e.yml`, `money-coverage.yml` or
+   `docs-link-check.yml`) in place of `ci.yml` where it differs.
+2. Take the cancelled runs whose commits sit between the last green `main`
+   commit and the first red one (`git log --first-parent --oneline <green>..<red>`).
+3. Re-run them oldest first with `gh run rerun <run-id>`. A re-run joins the
+   same queue as new merges and replaces whatever is pending there, including
+   the newest `main` commit's run. So start each re-run only when no run of
+   that workflow is pending on `main`
+   (`gh run list --workflow ci.yml --branch main --status pending`), and if one
+   was replaced anyway, re-run it last. The first commit whose re-run goes red
+   is the merge that broke `main`. "Re-run failed jobs" on a `main` run, for
+   example after a flaky shard, has the same effect: it joins that queue and
+   replaces whatever is pending, so check for a pending run first there too.
+
+The push-only gates in `verify` and `Migration drift check` already judge
+those merges together: a push to `main` is judged from the last commit whose
+finished run reached those gate steps, and the step `Find the last judged main
+commit` says which commit that was. Judged together, they can fail where each
+merge alone passed: two merges that each declared a `size-allowances.d/` entry
+for the same file, an allowance a later merge made unnecessary, or an expand
+and its contract migration landing in the same window. To judge them one at a time,
+re-run the replaced run of the earlier merge, and once it has finished, re-run
+the failed job: it then judges from that commit.
+
+To rename a gate step or its job (`verify`'s `Check doc index integrity
+(reachability + invariant ids)` or `File-size budget ratchet`, or `Migration
+drift check`'s `Check migration safety ledger coverage`), keep the old name on
+the `Find the last judged main commit` step: add `--step-was "<old name>"`
+right after the `--step` it belongs to, or `--job-was "<old name>"` for the
+job. Earlier runs recorded only the old name, so without the alias no run
+matches, every push to `main` fails closed, and no re-run can fix it: the gates
+after the resolver are skipped, so the new name is never recorded. Remove the
+alias in a later pull request, once a `main` run has finished the gate under
+its new name, and update the recorded names pinned in
+`scripts/ci/resolve-main-push-base.test.ts` in the same pull request. That test
+fails a rename that drops a recorded name without an alias, and refuses an
+alias that is still a current step or job name.
+
 #### Rebuilding the code-owner configuration
 
 What is owned is `.github/CODEOWNERS` itself: the money surface (#3341) and,

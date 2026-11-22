@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { createMemberApplication } from "@/lib/nomination";
 import { MembershipApplicationError } from "@/lib/member-application-fields";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
@@ -93,12 +94,11 @@ export async function POST(req: NextRequest) {
     return rateLimited;
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = applicationSchema.safeParse(body);
   if (!parsed.success) {

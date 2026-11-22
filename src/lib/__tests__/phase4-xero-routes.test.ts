@@ -117,6 +117,43 @@ describe("Phase 4 Xero admin routes", () => {
     });
   });
 
+  it("answers an invalid JSON body with the plain 400 and skips the sync, and ignores a body of another content type", async () => {
+    mocks.syncContactsFromXero.mockResolvedValue({
+      created: [],
+      updated: [],
+      skippedNoChanges: 0,
+      skippedNoEmail: [],
+      skippedOther: [],
+      errors: [],
+      total: 0,
+    });
+    const { POST } = await import("@/app/api/admin/xero/sync-contacts/route");
+    const url = "http://localhost/api/admin/xero/sync-contacts";
+
+    const bad = await POST(
+      new NextRequest(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{not json",
+      }),
+    );
+    expect(bad.status).toBe(400);
+    await expect(bad.text()).resolves.toBe(
+      JSON.stringify({ error: "Invalid JSON" }),
+    );
+    expect(mocks.syncContactsFromXero).not.toHaveBeenCalled();
+
+    const other = await POST(
+      new NextRequest(url, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: "{not json",
+      }),
+    );
+    expect(other.status).toBe(200);
+    expect(mocks.syncContactsFromXero).toHaveBeenCalledTimes(1);
+  });
+
   it("passes the cached-import repair flag through the import members route", async () => {
     mocks.importMembersFromXeroGroups.mockResolvedValue({
       created: 0,
