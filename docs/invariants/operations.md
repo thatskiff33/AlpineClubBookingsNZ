@@ -900,7 +900,8 @@ successful `Publish GHCR images` job. `release:cut publish` asks GitHub for
 that job's result on the commit it would tag (on a resume, the tagged commit)
 and refuses before any tag or release unless GitHub's answer says that job
 succeeded. A dropped intermediate commit has no images; the default,
-`origin/main`, always has a run.
+`origin/main`, normally has a successful run; `release:cut publish` refuses
+otherwise.
 
 - Why: queuing a full CI run (about 48 minutes) per merge held every open
   pull request behind `main` (#5356, owner decision 22 Nov 2026, replacing

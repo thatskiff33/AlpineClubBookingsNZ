@@ -224,7 +224,33 @@ describe("ci.yml's wiring of the resolver", () => {
   type Step = Record<string, unknown>;
   const reads = (step: Step) => JSON.stringify(step.env ?? {}).includes("steps.main-push-base.outputs.sha");
 
+  /*
+    The gate job and step names that runs already on main have recorded. A
+    rename that updates --job/--step without the old name as --job-was or
+    --step-was leaves no earlier run to match, so every push to main fails
+    closed. Change a name here only once a main run has finished the gate
+    under its new name (CONTRIBUTING.md "Finding which merge broke main").
+  */
+  const RECORDED_ON_MAIN: Record<string, { job: string; steps: string[] }> = {
+    verify: { job: "verify", steps: ["Check doc index integrity (reachability + invariant ids)", "File-size budget ratchet"] },
+    "migration-drift": { job: "Migration drift check", steps: ["Check migration safety ledger coverage"] },
+  };
+
   for (const jobKey of ["verify", "migration-drift"]) {
+    it(`${jobKey}'s resolver still matches the names main's runs recorded`, () => {
+      const resolver = ((workflow.jobs[jobKey]?.steps ?? []) as Step[]).find((step) => step.id === "main-push-base");
+      const { job: jobName, jobWas, steps: gates } = parseArgs(shellWords(String(resolver?.run ?? "").slice(RESOLVER.length)));
+      const recorded = RECORDED_ON_MAIN[jobKey];
+      if (!recorded) throw new Error(`RECORDED_ON_MAIN has no entry for ${jobKey}`);
+      const hint = "a renamed gate keeps its old name as --job-was/--step-was; see CONTRIBUTING.md \"Finding which merge broke main\"";
+      expect([jobName, ...jobWas], `${jobKey}: job "${recorded.job}" is missing; ${hint}`).toContain(recorded.job);
+      for (const name of recorded.steps) {
+        const names = gates.filter((gate) => gate.name === name || gate.was.includes(name));
+        expect(names, `${jobKey}: step "${name}" is missing; ${hint}`).toHaveLength(1);
+      }
+    });
+
+
     it(`${jobKey} resolves the base before each gate it names, and every reader follows it`, () => {
       const job = workflow.jobs[jobKey];
       if (!job) throw new Error(`ci.yml has no ${jobKey} job`);
