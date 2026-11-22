@@ -11,10 +11,6 @@
 #
 # Usable memory is the smaller of /proc/meminfo's MemTotal and the cgroup
 # limit, because inside a container MemTotal can report the host's memory.
-#
-# Where it runs, tsc gets a heap sized to that memory less 2 GiB for the rest of
-# the runner: Node's default cap is about 2 GB on an 8 GB runner, under what a
-# cold run needs, so without this the job runs out of heap (22 Nov 2026, #5382).
 set -euo pipefail
 
 MIN_KB=$((6 * 1024 * 1024))
@@ -39,6 +35,4 @@ if [ "$mem_kb" -lt "$MIN_KB" ]; then
   exit 0
 fi
 
-heap_mb=$(((mem_kb - 2 * 1024 * 1024) / 1024))
-export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=$heap_mb"
 pnpm run typecheck:src
