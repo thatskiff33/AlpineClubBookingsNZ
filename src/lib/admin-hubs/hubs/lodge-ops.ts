@@ -137,7 +137,7 @@ export const LODGE_OPS_HUB = defineHub({
       moved: false,
     },
     {
-      // Fork #121: the Food Orders settings card (food officer email, label).
+      // Fork triyder/AlpineClubBookingsNZ#121: the Food Orders settings card (food officer email, label).
       id: "food-orders",
       label: "Food Orders",
       oldPath: "/admin/food-orders",

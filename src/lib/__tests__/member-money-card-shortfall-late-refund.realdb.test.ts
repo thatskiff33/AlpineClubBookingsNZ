@@ -23,7 +23,14 @@ import { resetStripeRaceHooks } from "./support/stripe-race-double";
  * journal population first (a synthetic R01, both charges collected by their receipts, as `chargedBooking` in
  * `member-money-hand-backs.realdb.test.ts` seeds one), so every step posts. The journal must then read: each debt
  * raised at the cancel (R05), each paid once by bank (R14), the late refund's R12 reversed exactly once by R13
- * without reopening either debt, the card capture unable to fund another refund, and the caps holding.
+ * without reopening either debt, the card capture unable to fund another refund, and the caps holding. Over the
+ * whole booking, debits equal credits and the bank account reads $100.00 in (B's receipt) less $300.00 paid back.
+ *
+ * MUTATION (#5373, each seen red on this suite against committed code, 22 Nov 2026, then undone):
+ * 1. `expectedRefundedFloorCents` (`payment-transaction-status.ts`) summing every bank-cash kind but
+ *    `shortfallPaybackCents`: the closing `mirrors()` line fails with charge A at 10000 and the payment at 20000.
+ * 2. `postCardRefundCash` (`member-money/internal/refund-cash.ts`) never calling `reverseFailedRefund`: the R13
+ *    count fails, 0 for 1.
  *
  * DATABASE_URL must point at the race database before any import builds the Prisma client (#4516 review).
  */
@@ -106,6 +113,7 @@ async function seedJournalledBooking() {
     expect(linesOf(await eventOf(handBackDebt))).toEqual([`CREDIT REFUND_PAYABLE ${EXAMPLE_BANK_CENTS}`, `DEBIT MEMBER_RECEIVABLE ${EXAMPLE_BANK_CENTS}`]);
     expect(await family(handBackDebt)).toMatchObject({ paid: 0 });
     expect(await db.memberMoneyObligation.findMany({ where: { obligationKey: cardDebt }, select: { faceCents: true } })).toEqual([{ faceCents: EXAMPLE_CARD_CENTS }]);
+    expect(linesOf(await eventOf(cardDebt))).toEqual([`CREDIT REFUND_PAYABLE ${EXAMPLE_CARD_CENTS}`, `DEBIT MEMBER_RECEIVABLE ${EXAMPLE_CARD_CENTS}`]);
     expect(await family(cardDebt)).toMatchObject({ paid: 0 });
 
     // Step 2: the shortfall waits for the card refund's close; then both are paid by bank.
@@ -170,6 +178,12 @@ async function seedJournalledBooking() {
       .rejects.toSatisfy((error) => error instanceof MemberMoneyReservationRefused
         && error.problems.length === 1 && error.problems[0]!.startsWith(`${MEMBER_MONEY_CAP_PROBLEMS.C1}: receipt line `));
     expect(await db.memberMoneyRefundReservation.count({ where: { attemptKey: { startsWith: senderKeyPrefix } } })).toBe(0);
+
+    // The whole booking in the journal. Debits equal credits over every line on it, and the bank cash is one figure:
+    // B's receipt came in by bank and both debts went back out by bank, so $300.00 was returned against $100.00 in.
+    const bookingLines = await db.memberMoneyLine.findMany({ where: { bookingId }, select: { account: true, side: true, amountCents: true } });
+    expect(balance(bookingLines)).toBe(0);
+    expect(balance(bookingLines.filter((l) => l.account === "BANK"))).toBe(EXAMPLE_BANK_CENTS - EXAMPLE_PRICE_CENTS);
 
     expect(memberMoneyConservationProblems(await state())).toEqual([]);
     expect(await example.mirrors()).toMatchObject({ a: EXAMPLE_CARD_CENTS, b: EXAMPLE_BANK_CENTS, payment: EXAMPLE_PRICE_CENTS });

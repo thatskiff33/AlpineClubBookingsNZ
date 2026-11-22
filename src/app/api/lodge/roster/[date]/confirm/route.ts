@@ -8,8 +8,8 @@ import { z } from "zod";
 import logger from "@/lib/logger";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { lockRosterEligibilityMutation } from "@/lib/roster-lock";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const allocationSchema = z.object({
   choreTemplateId: z.string().min(1),
@@ -43,21 +43,12 @@ export async function POST(
   if (tier !== "admin" && tier !== "hut-leader") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!dateOnlyStringSchema.safeParse(dateStr).success) {
-    return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
-  }
 
   const date = parseDateOnly(dateStr);
-  if (isNaN(date.getTime())) {
-    return NextResponse.json({ error: "Invalid date" }, { status: 400 });
-  }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {

@@ -99,8 +99,10 @@ function booking(overrides: Record<string, unknown> = {}) {
     checkOut: new Date("2099-08-03T00:00:00.000Z"),
     status: "PAID",
     finalPriceCents: 12345,
-    waitlistPosition: null,
     waitlistOfferedAt: null,
+    lodgeId: "lodge-1",
+    createdAt: new Date("2026-06-10T00:00:00.000Z"),
+    noEmails: false,
     waitlistOfferExpiresAt: null,
     _count: { guests: 2 },
     ...overrides,
@@ -131,9 +133,18 @@ function makePreviewDb() {
     booking({
       id: "waitlist-1",
       status: "WAITLISTED",
-      waitlistPosition: 1,
     }),
   ];
+  // #5402: the live queue the member record reads the position from. Two
+  // entries joined earlier at the same lodge on the same nights.
+  const waitlistQueue = ["queue-1", "queue-2"].map((id, index) => ({
+    id,
+    lodgeId: "lodge-1",
+    checkIn: new Date("2099-08-01T00:00:00.000Z"),
+    checkOut: new Date("2099-08-03T00:00:00.000Z"),
+    createdAt: new Date(`2026-06-0${index + 1}T00:00:00.000Z`),
+    waitlistAlternateLodges: [],
+  }));
   const subscriptions = [
     {
       id: "subscription-current",
@@ -219,6 +230,7 @@ function makePreviewDb() {
     booking: {
       findMany: vi.fn().mockImplementation(async ({ where }: any) => {
         if (where.status === "DRAFT") return draftBookings;
+        if (where.status === "WAITLISTED") return waitlistQueue;
         if (where.status?.in?.includes("WAITLISTED")) return waitlistBookings;
         return confirmedBookings;
       }),
@@ -380,6 +392,8 @@ describe("seasonal membership assignment preview and save", () => {
         hasInvoice: true,
         xeroInvoiceNumber: "INV-2026",
       },
+      // #5402: the true place in the queue, read now, on the preview's client.
+      waitlistRecords: { list: [{ id: "waitlist-1", waitlistPosition: 3 }] },
     });
     expect(preview.previewToken).toEqual(expect.any(String));
     expect(JSON.stringify(preview)).not.toContain("xero-invoice-id-not-returned");

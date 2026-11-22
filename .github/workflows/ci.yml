@@ -1089,10 +1089,21 @@ jobs:
       # above beside the full-history checkout it depends on; placing this
       # blocking quality gate here ensures every correctness and security gate
       # reports before a size-budget failure ends `verify`.
+      #
+      # #5196: the wrapper runs exactly `pnpm run quality:budget --base
+      # "$BUDGET_BASE"` unless the repository variable
+      # QUALITY_BUDGET_UPSTREAM_REPO is set, as only a deployment fork does.
+      # Then it fetches that repository's `main` and passes it as
+      # `--upstream-ref`, so a sync-down is not refused for upstream's own
+      # reviewed code. The upstream comes from a repository variable, never
+      # from anything a pull request controls; unset (upstream, or where a
+      # fork's variables are unavailable) it behaves as before, on pull
+      # requests and on pushes alike.
       - name: File-size budget ratchet
         env:
           BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false && !startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || 'origin/main' }}
-        run: pnpm run quality:budget --base "$BUDGET_BASE"
+          BUDGET_UPSTREAM_REPO: ${{ vars.QUALITY_BUDGET_UPSTREAM_REPO }}
+        run: node scripts/ci/run-budget-gate.mjs
 
   migration-drift:
     name: Migration drift check
@@ -1113,7 +1124,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -1127,7 +1138,7 @@ jobs:
           # Docker selects an available high port; never reserve one fixed host port.
           - 127.0.0.1:55442-65535:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d concurrency_race_1881"
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres -d concurrency_race_1881"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -1577,7 +1588,7 @@ jobs:
         ports:
           - 55443:5432
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -1697,7 +1708,7 @@ jobs:
           # Docker selects an available high port; never reserve one fixed host port.
           - 127.0.0.1:55442-65535:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d concurrency_race_1881"
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres -d concurrency_race_1881"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -1826,8 +1837,10 @@ jobs:
       # image is built and scanned only when the change can bring a new package
       # into it: the dependency manifests, `patches/`, the Dockerfile, a compose
       # file, `.dockerignore` or this workflow (`CHANGE_SCOPES.image` in
-      # scripts/ci/change-scope.mjs). A push - every merge to `main` - always
-      # scans in full, and so does any failure to classify the change.
+      # scripts/ci/change-scope.mjs). That list also holds the few files the
+      # first-install smoke and the browser-bundle assertion below depend on
+      # (#4977, #5262). A push - every merge to `main` - always scans in full,
+      # and so does any failure to classify the change.
       - name: Decide whether this change needs the image build and scan
         id: scope
         run: node scripts/ci/change-scope.mjs image
@@ -1878,6 +1891,36 @@ jobs:
             exit 1
           fi
           echo "RELEASE_ID is readable in the image and matches the built commit."
+
+      # #5262: browser Sentry's release tag is the package.json version, stamped
+      # into the client bundle at build time. The nonce seed (RELEASE_ID here) is
+      # defined for the same compilers and must never reach a browser chunk.
+      - name: Assert the browser bundle carries the version and not the nonce seed
+        if: steps.scope.outputs.needed != 'false'
+        run: |
+          APP_VERSION="$(node -p 'require("./package.json").version')"
+          docker run --rm --entrypoint node \
+            -e EXPECT_VERSION="${APP_VERSION}" -e FORBID_SEED="${GIT_COMMIT_SHA}" \
+            "${IMAGE_REF}" -e '
+              const fs = require("node:fs");
+              const path = require("node:path");
+              const files = fs.readdirSync(".next/static", { recursive: true })
+                .map((f) => path.join(".next/static", f))
+                .filter((f) => f.endsWith(".js") && fs.statSync(f).isFile());
+              const version = JSON.stringify(process.env.EXPECT_VERSION);
+              const seed = process.env.FORBID_SEED;
+              let found = false;
+              const leaks = [];
+              for (const file of files) {
+                const text = fs.readFileSync(file, "utf8");
+                if (text.includes(version)) found = true;
+                if (seed && text.includes(seed)) leaks.push(file);
+              }
+              if (!seed) { console.error("No nonce seed to check against."); process.exit(1); }
+              if (leaks.length) { console.error("Nonce seed found in browser chunks:", leaks); process.exit(1); }
+              if (!found) { console.error(`No browser chunk contains the version ${version}.`); process.exit(1); }
+              console.log(`Browser chunks carry ${version} and not the nonce seed (${files.length} files).`);
+            '
 
       # REQUIRED GATE. A CRITICAL finding fails this step, fails the job, and
       # therefore blocks the merge (#2686, owner decision 9 Aug 2026). The step

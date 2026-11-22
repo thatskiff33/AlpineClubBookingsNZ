@@ -35,6 +35,7 @@ import { bookingPaymentDueNote } from "@/lib/email-payment-due-note";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { BOOKING_URL_TEMPLATE_NAMES } from "@/lib/booking-email-template-contract";
 import { bookingModificationTypeLabel } from "@/lib/booking-money-lines";
+import { bookingBumpReason } from "@/lib/booking-bump-reason";
 import {
   organiserJoinerAppealRefundSentence,
   refundRequestApprovedRefundSentence,
@@ -96,8 +97,9 @@ const GLOBAL_EMAIL_TEMPLATE_TOKENS = [
 // #2268 keeps rendering and keeps re-saving.
 // Exported as a test seam (#2268): the supplied-token approval guard reads it.
 export const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
-  // Lodge the warning is about; empty for single-lodge clubs (ADR-002).
+  // The lodge the alert is about; empty for single-lodge clubs (ADR-002).
   "admin-capacity-warning": ["lodgeName"],
+  "admin-booking-bumped": ["lodgeName"],
   // #49: the raw numbers behind the composed {{serverVersionNote}} - the version
   // this site is built for and the one the server reports - both empty on a day
   // the versions match. A Lodge Operations editor who does not receive the
@@ -301,7 +303,7 @@ const REQUIRED_TOKEN_ALTERNATIVES: Partial<
 };
 
 const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
-  // Fork #121: an override that dropped the item list would send an empty order.
+  // Fork triyder/AlpineClubBookingsNZ#121: an override that dropped the item list would send an empty order.
   "food-order-placed": ["itemsText"],
   "booking-confirmed": [
     "CLUB_LODGE_TRAVEL_NOTE",
@@ -1709,10 +1711,9 @@ const TEMPLATE_SAMPLE_VALUE_OVERRIDES: Partial<
   "group-organiser-joiner-refund": {
     refundSentence: organiserJoinerAppealRefundSentence("$123.45", "Sam Joiner"),
   },
-  // #4911: Stripe's reason code as the sender words it, not the bare token name.
-  "admin-stripe-dispute": {
-    reason: "fraudulent",
-  },
+  // #4911 / #5403: each sender's own reason wording, not the bare token name.
+  "admin-stripe-dispute": { reason: "fraudulent" },
+  "admin-booking-bumped": { reason: bookingBumpReason(false) },
   "group-organiser-extra-invoice": {
     joinerName: "Sam Joiner",
     // The sender's own wording of a change (`bookingModificationTypeLabel`).
@@ -2194,7 +2195,6 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "totalDue",
   "paymentDueNote",
   "totalPaid",
-  "triggeringMemberName",
   // #2550: how many of the party still carry a generated placeholder name.
   "unnamedGuestCount",
   // #2576: the NZ lodge-nights on which a booking's non-member guests have no
@@ -2222,7 +2222,7 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "summary",
   "answersText",
   "maintenanceReportUrl",
-  // Fork #121: the food-order email's tokens; none carries a bearer token or secret.
+  // Fork triyder/AlpineClubBookingsNZ#121: the food-order email's tokens; none carries a bearer token or secret.
   "officerLabel",
   "neededBy",
   "orderedBy",

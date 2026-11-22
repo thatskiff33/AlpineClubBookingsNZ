@@ -1,5 +1,5 @@
-// Per-device lobby-display poll cadence bounds (LTV-039, issue #85; consolidates
-// #66). The state poll doubles as the device heartbeat, so this cadence also
+// Per-device lobby-display poll cadence bounds (LTV-039, issue hoppers99/AlpineClubBookingsNZ#85; consolidates
+// hoppers99/AlpineClubBookingsNZ#66). The state poll doubles as the device heartbeat, so this cadence also
 // governs how often a device's "last seen" refreshes. Shared by the state route
 // (clamp on read), the devices PATCH route (validate on write), and the display
 // client (drive the active-board tick). Deliberately free of server-only imports

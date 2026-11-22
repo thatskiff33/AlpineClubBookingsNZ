@@ -7,7 +7,7 @@ import { logAudit } from "@/lib/audit";
 import { validateLayoutForSave } from "@/lib/lodge-display/authoring-validation";
 import { isBuiltInDisplayLayoutKey } from "@/lib/lodge-display/built-in-seeds";
 
-// Admin lobby-display LAYOUT management (fork issue #78, LTV-032, ADR-003 §1):
+// Admin lobby-display LAYOUT management (fork issue hoppers99/AlpineClubBookingsNZ#78, LTV-032, ADR-003 §1):
 // list and create authored Layouts (an HTML body with `{{area:key}}`
 // placeholders, a default CSS block, and the area/slot descriptors). Every
 // authored field is judged by the shared save contract

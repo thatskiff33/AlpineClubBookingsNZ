@@ -282,7 +282,7 @@ export async function buildBookingDetailEditorData({
     otherLodgeId: booking.otherLodgeId,
     ...(viewerAuthorizationRole === "ADMIN"
       ? {
-          // The lodge this booking already names stays offered even when hidden (#58).
+          // The lodge this booking already names stays offered even when hidden (triyder/AlpineClubBookingsNZ#58).
           otherLodges: await getPublicOtherLodges(prisma, booking.otherLodgeId),
           // #2978: which guests may be ticked. Resolved server-side because the
           // answer needs membership types and the unpaid-subscription set, and
@@ -325,7 +325,7 @@ export async function buildBookingDetailEditorData({
       // This is the member (non-override) policy, so mode is never
       // "admin-override" here — nor "finished-stay-correction" (#3750), which
       // only the change-request executor asks for, nor "work-party-correction"
-      // (fork #127), which only the work-party correction asks for; the ternary only
+      // (fork triyder/AlpineClubBookingsNZ#127), which only the work-party correction asks for; the ternary only
       // narrows the widened union.
       mode:
         editPolicy.mode === "admin-override" ||

@@ -199,7 +199,7 @@ export async function readPersistedClubTimeZoneOutsideRequest(): Promise<ClubTim
  * The club's timezone AND where it came from. Always answers, never throws.
  *
  * Persisted value -> environment seed (`TZ` / `NEXT_PUBLIC_TZ`, seed-only,
- * retired by CT-6) -> `Pacific/Auckland`, which is CT-1's precedence unchanged.
+ * no say once the persisted row exists) -> `Pacific/Auckland`, which is CT-1's precedence unchanged.
  * The two legs use CT-1's two normalisers for CT-1's reasons, so `source` is
  * decided by the same judgement `resolveClubTimeZone` applies rather than by a
  * second opinion beside it.

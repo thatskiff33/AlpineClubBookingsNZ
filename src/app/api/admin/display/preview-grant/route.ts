@@ -210,7 +210,7 @@ export async function POST(req: NextRequest) {
 
   // The lodge id/name ride back so the authoring UI can label the preview
   // "previewing against <lodge>" without a second round-trip (the old silent
-  // default becomes explicit — shrinks #64).
+  // default becomes explicit — shrinks hoppers99/AlpineClubBookingsNZ#64).
   return NextResponse.json({
     token,
     lodgeId: lodge.id,

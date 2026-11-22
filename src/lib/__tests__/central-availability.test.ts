@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Free beds for a stay (#62, decision D2): the member calendar's number, night
+// Free beds for a stay (triyder/AlpineClubBookingsNZ#62, decision D2): the member calendar's number, night
 // by night, the smallest of them, never below 0. The calendar function is the
 // source, so it is mocked here and its own tests cover the occupancy terms.
 
@@ -63,7 +63,7 @@ describe("freeBedsForStay", () => {
   });
 });
 
-describe("freeBedsForStay night by night (#79)", () => {
+describe("freeBedsForStay night by night (triyder/AlpineClubBookingsNZ#79)", () => {
   it("lists every night of the stay in order, check-out night excluded, each the calendar's own number", async () => {
     occupancy({ "2026-07-31": 4, "2026-08-01": 15, "2026-08-02": 1 });
     expect((await answer("2026-07-30", "2026-08-02")).nights).toEqual([

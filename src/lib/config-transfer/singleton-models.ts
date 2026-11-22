@@ -183,7 +183,7 @@ export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
     "is this install's own run history and is meaningless on another -- " +
     "instance-local",
   FoodOrderSettings:
-    "the food officer's email address and label (fork #121): where THIS club's " +
+    "the food officer's email address and label (fork triyder/AlpineClubBookingsNZ#121): where THIS club's " +
     "food orders are emailed. Importing it would silently send a target club's " +
     "members' orders to the source club's officer, so a fresh import keeps the " +
     "target's own address, and a target with none stays not set up (orders " +

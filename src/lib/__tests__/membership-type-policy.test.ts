@@ -41,7 +41,7 @@ type PolicyMember = {
   firstName: string;
   lastName: string;
   email: string;
-  role: "MEMBER" | "LIFE" | "ADMIN";
+  role: "MEMBER" | "LIFE" | "LODGE" | "ADMIN";
   ageTier: "ADULT" | "YOUTH" | "CHILD";
 };
 
@@ -190,19 +190,19 @@ describe("membership type booking and subscription policy", () => {
 
   it("falls back to built-in role defaults when the type row is missing", async () => {
     const db = makePolicyDb({
-      members: [makeMember({ id: "life-1", role: "LIFE" })],
+      members: [makeMember({ id: "lodge-1", role: "LODGE" })],
       membershipTypes: [],
     });
 
     const policies = await resolveMembershipTypePoliciesForMembers(db, {
-      memberIds: ["life-1"],
+      memberIds: ["lodge-1"],
       seasonYear: 2026,
     });
 
-    expect(policies.get("life-1")).toMatchObject({
+    expect(policies.get("lodge-1")).toMatchObject({
       source: "built_in_default",
       subscriptionBehavior: "NOT_REQUIRED",
-      membershipType: { key: "LIFE" },
+      membershipType: { key: "LODGE" },
     });
   });
 

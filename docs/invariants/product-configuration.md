@@ -457,37 +457,37 @@ home for that explanation and is not repeated here.
 ## INV-CONFIG-008
 
 - **A Xero line's tax comes from one of four club tax categories, mapped to the
-  club's own Xero tax rates, never a code in the source** (#5209, owner
-  decision 17 Nov 2026): Sales tax on income, Sales tax on expenses, Exempt and
-  Zero rated ([`xero-tax-categories.ts`](../../src/lib/xero-tax-categories.ts)).
-  `xeroCategoryLineTax` in
-  [`xero-tax-rendering.ts`](../../src/lib/xero-tax-rendering.ts) renders all
-  four; `resolveXeroCategoryLineTax` resolves one for a document's anchor.
+  club's own Xero tax rates, never a code in the source** (#5209, owner,
+  17 Nov 2026): Sales tax on income, Sales tax on expenses, Exempt and
+  Zero rated (`xero-tax-categories.ts`). `xeroCategoryLineTax` in
+  `xero-tax-rendering.ts` renders all four; `resolveXeroCategoryLineTax`
+  resolves one for a document's anchor.
 - **Sales tax on income is `INV-CONFIG-007`'s dated schedule**, never stored
-  again: the mapping enum has no income value. The other three are undated rows
-  of `XeroTaxCategoryMapping`, each stamped with the Xero organisation it was
-  chosen in; a row from another organisation reads as unmapped.
-- **An unregistered period renders no tax type in any category.** While a
-  registered period applies, a line whose category is unmapped, mapped in
-  another organisation, or mapped to a rate failing `xeroTaxCategoryRateFault`
-  (the writer's own test), or whose rates cannot be read, throws `XeroTaxCategoryUnavailableError` before
-  any provider write; there is no fallback code.
-- **The one writer is behind Full Admin, audited:** `mapXeroTaxCategory`/
-  `clearXeroTaxCategory`
-  ([`xero-tax-category-write.ts`](../../src/lib/xero-tax-category-write.ts)),
-  through `PUT`/`DELETE /api/admin/xero/tax-categories`, refusing a rate the
-  connected organisation does not carry active and fit for the category.
+  again: the mapping enum has no income value. The other three are undated
+  `XeroTaxCategoryMapping` rows, each stamped with the organisation it was
+  chosen in; another's row reads as unmapped.
+- **An unregistered period renders no tax type in any category.** In a
+  registered one, a line whose category is unmapped, mapped in another
+  organisation or to a rate failing `xeroTaxCategoryRateFault` (the writer's
+  test), or whose rates cannot be read, throws
+  `XeroTaxCategoryUnavailableError` before any provider write, with no
+  fallback code.
+- **Sends read cached rates up to 15 minutes old** (owner, #5375), so one
+  changed or archived in Xero can be used that long.
+- **One writer, behind Full Admin, audited:** `mapXeroTaxCategory`/
+  `clearXeroTaxCategory` (`xero-tax-category-write.ts`), through
+  `PUT`/`DELETE /api/admin/xero/tax-categories`, refusing a rate not active
+  and fit for the category in the connected organisation.
   `xero-tax-category-one-writer-census.test.ts` holds every other path to
-  reads; the Xero health check reports a mapping that stops passing.
+  reads; the health check reports a mapping that stops passing.
 - **The first Exempt line is the spent opening credit** on the mapped Opening
   Credits account (#4988, `INV-PAY-162`), resolved for the booking's own
   period before any provider write; the outbox holds it
   (`xero-tax-category-hold.ts`). Settings and config import refuse it shared
   with another role (owner, 21 Nov 2026); settings refuse it before Exempt,
-  and Exempt cleared under it
-  ([`xero-opening-credits-exempt-guards.ts`](../../src/lib/xero-opening-credits-exempt-guards.ts)).
+  and Exempt cleared under it (`xero-opening-credits-exempt-guards.ts`).
   Registration is allowed (owner, 22 Nov 2026); the health check warns, by
-  today's date.
+  today's date, and reports a stored shared account (#5391).
 
 ## INV-CONFIG-009
 

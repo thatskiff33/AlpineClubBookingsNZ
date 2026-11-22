@@ -111,11 +111,11 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "waitlist-offer-expired": {
     "defaultSubject": "Waitlist Offer Expired - {{CLUB_LODGE_NAME}}",
-    "defaultBody": "Waitlist Offer Expired\n\nHi {{firstName}}, your waitlist offer for the dates below has expired.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nNew Position: #{{position}}\n\nYou've been returned to the waitlist. We'll notify you again if another spot opens up.\n\nView Booking: {{BASE_URL}}/bookings"
+    "defaultBody": "Waitlist Offer Expired\n\nHi {{firstName}}, your waitlist offer for the dates below has expired.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nYour Position: #{{position}}\n\nA place that is not taken up is offered to the next person on the waitlist, so this one may go to someone behind you. You keep your place in the queue, and we'll email you again if a place opens up for you.\n\nView Booking: {{BASE_URL}}/bookings"
   },
   "waitlist-place-restored": {
     "defaultSubject": "Your Waitlist Place Is Back - {{CLUB_LODGE_NAME}}",
-    "defaultBody": "Your Waitlist Place Is Back\n\nHi {{firstName}}, your booking for the dates below could not be finished, so we have put you back on the waitlist. This was not something you did wrong, and your offer did not run out — you confirmed in time and our system could not complete it.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nNew Position: #{{position}}\n\nYou do not need to do anything. We will email you again as soon as a spot opens up for these nights.\n\nView Booking: {{BASE_URL}}/bookings"
+    "defaultBody": "Your Waitlist Place Is Back\n\nHi {{firstName}}, your booking for the dates below could not be finished, so we have put you back on the waitlist. This was not something you did wrong, and your offer did not run out — you confirmed in time and our system could not complete it.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nYour Position: #{{position}}\n\nYou do not need to do anything. We will email you again as soon as a spot opens up for these nights.\n\nView Booking: {{BASE_URL}}/bookings"
   },
   "admin-waitlist-offer": {
     "defaultSubject": "Waitlist Offer: {{memberName}}",
@@ -401,8 +401,8 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultBody": "Pending Bookings Approaching Deadline\n\n{{count}} pending booking(s) will reach their hold deadline within 48 hours.\n\nMember | Dates | Guests | Deadline | Remaining\n{{memberName}} | {{checkIn}} – {{checkOut}} | {{guestCount}} | {{deadline}} | {{hoursRemaining}}h\n...\n\nView Bookings: {{BASE_URL}}" + adminHref("bookings")
   },
   "admin-booking-bumped": {
-    "defaultSubject": "Booking Bumped: {{bumpedMemberName}}",
-    "defaultBody": "Booking Bumped\n\nA pending booking has been bumped due to a member booking.\n\nBumped Member: {{bumpedMemberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTriggered By: {{triggeringMemberName}}\n\nView Bookings: {{BASE_URL}}" + adminHref("bookings")
+    "defaultSubject": "Booking Bumped: {{bumpedMemberName}}, {{checkIn}} to {{checkOut}} ({{bookingReference}})",
+    "defaultBody": "Booking Bumped\n\nA pending booking was released at its hold deadline because there was no longer room for its party.\n\nBumped Member: {{bumpedMemberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nReason: {{reason}}\n\nView Bookings: {{BASE_URL}}" + adminHref("bookings")
   },
   "admin-capacity-warning": {
     "defaultSubject": "Capacity Warning: {{count}} high-occupancy day{{s}} ahead",

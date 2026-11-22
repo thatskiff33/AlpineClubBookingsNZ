@@ -6,7 +6,7 @@ import {
   DEFAULT_MEMBERSHIP_TYPE_AGE_TIERS,
   MEMBERSHIP_TYPE_AGE_TIERS,
   backfillCurrentSeasonMembershipAssignments,
-  canonicalMembershipTypeKey,
+  buildUniqueMembershipTypeKey,
   defaultMembershipTypeKeyForRole,
   effectiveSubscriptionBehavior,
   ensureBuiltInMembershipTypes,
@@ -14,7 +14,6 @@ import {
   membershipTypeAgeExemption,
   membershipTypeForcedEditOffendingTiers,
   normalizeMembershipTypeAgeTiers,
-  normalizeMembershipTypeKey,
   validateMembershipTypeRuleConfiguration,
 } from "@/lib/membership-types";
 import { ROLE_VALUES } from "@/lib/member-roles";
@@ -47,14 +46,12 @@ function makeDb() {
         { id: "member-1", role: "USER" },
         { id: "admin-1", role: "ADMIN" },
         { id: "lodge-1", role: "LODGE" },
-        { id: "associate-1", role: "ASSOCIATE" },
-        { id: "life-1", role: "LIFE" },
         { id: "school-1", role: "SCHOOL" },
         { id: "non-member-1", role: "NON_MEMBER" },
       ]),
     },
     seasonalMembershipAssignment: {
-      createMany: vi.fn().mockResolvedValue({ count: 7 }),
+      createMany: vi.fn().mockResolvedValue({ count: 5 }),
     },
   };
 }
@@ -155,7 +152,7 @@ describe("built-in membership type seed helpers", () => {
 
     const result = await backfillCurrentSeasonMembershipAssignments(db, 2026);
 
-    expect(result).toEqual({ createdCount: 7, seasonYear: 2026 });
+    expect(result).toEqual({ createdCount: 5, seasonYear: 2026 });
     expect(db.seasonalMembershipAssignment.createMany).toHaveBeenCalledWith({
       data: [
         { memberId: "member-1", seasonYear: 2026, membershipTypeId: "type-full" },
@@ -163,12 +160,6 @@ describe("built-in membership type seed helpers", () => {
         // NOT_REQUIRED types rather than the billable FULL type.
         { memberId: "admin-1", seasonYear: 2026, membershipTypeId: "type-admin" },
         { memberId: "lodge-1", seasonYear: 2026, membershipTypeId: "type-lodge" },
-        {
-          memberId: "associate-1",
-          seasonYear: 2026,
-          membershipTypeId: "type-associate",
-        },
-        { memberId: "life-1", seasonYear: 2026, membershipTypeId: "type-life" },
         {
           memberId: "school-1",
           seasonYear: 2026,
@@ -190,12 +181,8 @@ describe("built-in membership type seed helpers", () => {
     // #2149: operational roles fall back to their own NOT_REQUIRED types.
     expect(defaultMembershipTypeKeyForRole("ADMIN")).toBe("ADMIN");
     expect(defaultMembershipTypeKeyForRole("LODGE")).toBe("LODGE");
-    expect(defaultMembershipTypeKeyForRole("ASSOCIATE")).toBe("ASSOCIATE");
-    expect(defaultMembershipTypeKeyForRole("RESERVE")).toBe("ASSOCIATE");
-    expect(defaultMembershipTypeKeyForRole("LIFE")).toBe("LIFE");
     expect(defaultMembershipTypeKeyForRole("SCHOOL")).toBe("SCHOOL");
     expect(defaultMembershipTypeKeyForRole("NON_MEMBER")).toBe("NON_MEMBER");
-    expect(canonicalMembershipTypeKey("RESERVE")).toBe("ASSOCIATE");
   });
 
   describe("shared subscription-required derivation (#2149)", () => {
@@ -337,9 +324,12 @@ describe("built-in membership type seed helpers", () => {
     });
   });
 
-  it("derives stable custom keys without relying on display words for policy", () => {
-    expect(normalizeMembershipTypeKey(" Social member ")).toBe("SOCIAL_MEMBER");
-    expect(normalizeMembershipTypeKey("")).toBe("CUSTOM");
+  it("derives stable custom keys without relying on display words for policy", async () => {
+    const freeKeys = { membershipType: { findUnique: vi.fn().mockResolvedValue(null) } };
+    await expect(buildUniqueMembershipTypeKey(freeKeys, " Social member ")).resolves.toBe(
+      "SOCIAL_MEMBER",
+    );
+    await expect(buildUniqueMembershipTypeKey(freeKeys, "")).resolves.toBe("CUSTOM");
   });
 
   it("validates age-tier eligibility (Xero grouping moved to the grouping surface, #1934)", () => {

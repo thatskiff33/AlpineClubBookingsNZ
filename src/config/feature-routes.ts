@@ -319,7 +319,7 @@ const HAND_WRITTEN_FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     prefixes: ["/lodge-roster"],
   },
   {
-    // Food orders (fork #121, owner decision 14). The module is the only switch:
+    // Food orders (fork triyder/AlpineClubBookingsNZ#121, owner decision 14). The module is the only switch:
     // with it off the member order page, the history page, their API and the
     // admin settings API all 404. "/food-order" and "/food-orders" are listed
     // separately because a prefix matches only itself and its children, never a

@@ -131,6 +131,13 @@ access settings as part of that disclosure. Ordinary error reporting and
 session replay are separate decisions; enabling error reporting does not
 constitute the club's Replay opt-in.
 
+Sentry's session tracking is a third thing, and it is off on the server and in
+the browser (#5262): the server sends Sentry no count of requests and no session
+record for the server process, and the browser sends no session record for a
+page load. Error events and performance traces, tagged with the installed
+version, are unaffected. [CONFIGURATION.md](../CONFIGURATION.md#sentry) says
+what was sent before.
+
 Open tabs recheck the Replay setting every minute and when they regain focus
 or become visible. Saving retention settings refreshes the current tab
 immediately on the process handling that save. Other processes may retain the
@@ -968,6 +975,26 @@ this section records how it is enforced.
 - **Backups contain it**, like every other column; see
   [`guides/backups.md`](guides/backups.md). Backups taken before the after-stay
   clear still hold a cleared value until they age out.
+
+## Caller IP address (#5399)
+
+Audience: Operator, Developer.
+
+For a visitor's request, the per-address rate limits, the lodge PIN lockout and
+the audit log all take the caller's IP from one helper, `getClientIp()` in
+`src/lib/rate-limit-http.ts`: the last `X-Forwarded-For` address, or
+`X-Real-IP` when that header is absent, else `unknown`. The first address is
+whatever the caller sent, so a route that read it would let an audit row show an
+address the caller chose behind a proxy that appends to the header. A lint arm
+refuses a read of a client-address header anywhere else, platform headers such
+as `CF-Connecting-IP` included.
+
+The address is the one the hop nearest the app saw. It is the visitor's only
+where [`DEPLOYMENT.md`](../DEPLOYMENT.md#public-rate-limits-and-proxy-headers)'s
+conditions hold: behind more than one proxy the nearest hop must resolve and
+overwrite the header, and with no proxy the caller sets both headers freely.
+Not every audit row holds a visitor's address in that column: a scheduled job
+can record its own tag there, and a row written without a request has none.
 
 ## Token-bearing URL paths
 

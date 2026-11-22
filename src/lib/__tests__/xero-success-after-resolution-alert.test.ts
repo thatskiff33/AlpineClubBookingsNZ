@@ -307,9 +307,10 @@ describe("#4374 census: a completion inside its caller's transaction delivers th
   });
 
   it("pins the files that complete a Xero operation inside their own transaction", () => {
+    // #5394: xero-contacts.ts left this list when its copy of the member
+    // contact completer was deleted; it now calls the recovery module's one.
     expect([...new Set(storeSites.map((site) => site.file))].sort()).toEqual([
       "src/lib/xero-contact-create-recovery.ts",
-      "src/lib/xero-contacts.ts",
       "src/lib/xero-kept-late-capture-invoice.ts",
     ]);
   });

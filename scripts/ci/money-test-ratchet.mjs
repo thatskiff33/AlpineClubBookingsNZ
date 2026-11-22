@@ -96,7 +96,8 @@ export function worstFiles(summary, limit = 10, cwd = process.cwd()) {
   return Object.entries(summary)
     .filter(([file]) => file !== "total")
     .map(([file, entry]) => ({
-      file: path.isAbsolute(file) ? path.relative(cwd, file) : file,
+      // POSIX separators, so the report reads the same on Windows and Linux.
+      file: (path.isAbsolute(file) ? path.relative(cwd, file) : file).split(path.sep).join("/"),
       uncovered: (entry.lines?.total ?? 0) - (entry.lines?.covered ?? 0),
       pct: pct(entry.lines),
     }))

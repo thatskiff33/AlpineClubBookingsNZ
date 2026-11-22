@@ -20,7 +20,7 @@ when the flag is off, and the sidebar filters by that. Consequences:
 
 - Single-lodge clubs (flag off) lose the lodge hub entirely — and with it the
   only route to some lodge-scoped editors (`rooms-beds`, `lodge-settings`),
-  which have no standalone sidebar entry (root cause of #100, assessed in #123).
+  which have no standalone sidebar entry (root cause of hoppers99/AlpineClubBookingsNZ#100, assessed in hoppers99/AlpineClubBookingsNZ#123).
 - Config surfaces are split: some lodge-scoped editors sit as scattered
   standalone sidebar entries, others only under the (gated) hub.
 
@@ -38,10 +38,11 @@ only "add lodge"; the maintainer went further and approved making multi-lodge
 
 - **No flag.** Remove `multiLodge` from the module registry (`src/config/modules.ts`),
   the feature-route gating (`src/config/feature-routes.ts` — lodge routes always
-  available), and all code reads of `modules.multiLodge` (done in #128). The
+  available), and all code reads of `modules.multiLodge` (done in hoppers99/AlpineClubBookingsNZ#128). The
   `ClubModuleSettings.multiLodge` **column is left vestigial** (`@default(false)`,
-  no longer read or written) rather than dropped in this release — see the schema
-  decision below.
+  no longer read or set by code, though every INSERT still named it until #5396;
+  see the correction under the schema decision) rather than dropped in this
+  release — see the schema decision below.
 - **Start with one, Add Lodge as needed.** Every install has ≥1 lodge; the "Add
   Lodge" action is always available. The UI assumes N lodges regardless of count.
 - **Lodge hub is the single home for lodge config** (ADR-003): all lodge-scoped
@@ -56,8 +57,8 @@ only "add lodge"; the maintainer went further and approved making multi-lodge
 
 ## Consequences
 
-- Single-lodge clubs gain the full, structured lodge config UI; #100 is resolved
-  and #123's unification is fully realised.
+- Single-lodge clubs gain the full, structured lodge config UI; hoppers99/AlpineClubBookingsNZ#100 is resolved
+  and hoppers99/AlpineClubBookingsNZ#123's unification is fully realised.
 - Admin nav simplifies (one Lodges entry; no scattered lodge-config items).
 - This is an **upstream** change to the multi-lodge module Jordan owns; it must
   follow upstream conventions and merge upstream (owner-approved PR only).
@@ -84,22 +85,30 @@ explicit test focus (Jordan's caveat).
   A column DROP is not old-colour-compatible under blue/green: the release
   immediately prior to this change still writes `ClubModuleSettings.multiLodge`,
   so dropping it in the same release that removes the code would break old-colour
-  instances mid-deploy. #128 therefore keeps the column (`@default(false)`,
+  instances mid-deploy. hoppers99/AlpineClubBookingsNZ#128 therefore keeps the column (`@default(false)`,
   now unread/unwritten — `normalizeClubModuleSettings` iterates `MODULE_KEYS`
   only, and upserts rely on the default). The physical `DROP COLUMN` is a
   **separate contract migration to run one release later**, once the
-  multi-lodge-core release is deployed everywhere — tracked in **#139** and
-  blocked until then. This keeps the multi-lodge-core change expand-only.
+  multi-lodge-core release is deployed everywhere — tracked in
+  **hoppers99/AlpineClubBookingsNZ#139** and blocked until then. This keeps the
+  multi-lodge-core change expand-only.
+  Correction (#5396): "upserts rely on the default" does not keep the column
+  out of the SQL. Prisma sends a static `@default` in every INSERT's column
+  list, so the drop is old-colour-compatible only after a release that marks
+  the field `@ignore` has shipped (`INV-OPS-005`). #5396 adds that `@ignore`.
 - **Backward-compat is the risk.** A single-lodge install must not regress;
   cover it explicitly in tests before any upstream PR.
 
-## Implementation surface (see #123 children)
+## Implementation surface (see hoppers99/AlpineClubBookingsNZ#123 children)
 
-1. Remove the flag + gating (module registry, feature-routes; lodge routes on). ✅ #128
-2. `ClubModuleSettings.multiLodge`: left vestigial this release (#129); physical
-   `DROP COLUMN` deferred to a later contract migration (#139, blue/green-safe).
+1. Remove the flag + gating (module registry, feature-routes; lodge routes on). ✅ hoppers99/AlpineClubBookingsNZ#128
+2. `ClubModuleSettings.multiLodge`: left vestigial this release
+   (hoppers99/AlpineClubBookingsNZ#129); `@ignore`d by #5396; physical
+   `DROP COLUMN` deferred to a later contract migration
+   (hoppers99/AlpineClubBookingsNZ#139, blue/green-safe once the `@ignore` has
+   shipped).
 3. Sidebar/nav: single Lodges entry; one-item lodge list; Add Lodge always;
-   retire scattered lodge-config entries into the hub. ✅ #130 (Chores, Lockers,
+   retire scattered lodge-config entries into the hub. ✅ hoppers99/AlpineClubBookingsNZ#130 (Chores, Lockers,
    Hut Fees & Seasons retired; Bed Allocation kept as operational).
 4. Lodge hub: every lodge-scoped editor as a Configure card; `LodgeSelect`
    hidden/auto for a single lodge. ✅ Satisfied by ADR-003 (the hub at
@@ -107,7 +116,7 @@ explicit test focus (Jordan's caveat).
    Chores, Lobby display, and Capacity/Identity) and ADR-002 (`LodgeSelect`
    renders nothing and reports the sole lodge when <2 lodges exist —
    `src/components/lodge-select.tsx`, tested in `lodge-select.test.tsx`).
-   Verified for #131: rooms-beds (via `RoomsBedsManager`), seasons, chores,
+   Verified for hoppers99/AlpineClubBookingsNZ#131: rooms-beds (via `RoomsBedsManager`), seasons, chores,
    lockers, and bed-allocation all consume `LodgeSelect`/`useLodgeOptions`, so
    each auto-resolves to the single lodge with no picker shown.
 5. Tests + backward-compat verification (single-lodge install; frozen

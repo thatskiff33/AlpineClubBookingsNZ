@@ -607,7 +607,7 @@ column**, never wholesale.
 | `XeroObjectLink` | 10 columns | AID-6C | What is linked in Xero. |
 | `XeroSyncOperation` | 17 columns | AID-6C | What the platform tried in Xero. |
 | `Member` | 24 columns | AID-6C (2), **widened by AID-6B** | Identity and membership lifecycle for a selected member; the name on a family row; the deleted-account predicate; the search predicates, including predicate-only country/area/number mobile parts. Argued below. |
-| `Booking` | 25 columns | **AID-6B** | The pack's booking spine: searched by `booking_search`, returned by `booking_diagnostic_summary`, and the two legs of `member_booking_summary`. |
+| `Booking` | 24 columns | **AID-6B** | The pack's booking spine: searched by `booking_search`, returned by `booking_diagnostic_summary`, and the two legs of `member_booking_summary`. |
 | `Lodge` | 2 columns (`id`, `name`) | **AID-6B** | The lodge **name** beside a booking. Nothing else about a lodge — its capacity numbers, settings, instructions or door codes — is a question this pack has. |
 | `BookingGuest` | 15 columns | **AID-6B** | The party, guest counts, member-booking leg and canonical consent/double-sharing inputs. Responder and expiry values are never projected. |
 | `MemberPartnerLink` | 3 columns | **AID-6B** | Canonical pair and current status for the double-bed-sharing verdict; raw pair ids are never projected by that entry. |
@@ -621,13 +621,13 @@ column**, never wholesale.
 | `FamilyGroupMember` | 4 explicitly named columns — all current columns | **AID-6B** | The authoritative family-group membership join. It has only four columns and **no `role` column**, but remains a column ACL: table-wide SELECT is refused so a future column cannot become readable silently. |
 | `FamilyGroup` | 2 columns (`id`, `name`) | **AID-6B** | The group's name beside a co-member. Member-supplied text, stripped and bounded on the way out. Nothing on `FamilyGroupJoinRequest` is granted at all — it carries requester free text and children's dates of birth. |
 
-Twenty-six relations, 244 granted columns, and every omitted column is a
+Twenty-six relations, 243 granted columns, and every omitted column is a
 decision. The operator CLI prints the declared grants, columns and all, on every
 run and on `--dry-run`. The canonical exact per-relation column sets are published
 in the [deployment guide](deployment.md#what-the-diagnostics-role-may-read-today),
 not just their counts. `provision-role.test.ts` parses that reviewed block and
 compares it bidirectionally with `SELECT_GRANTS`, so replacing one documented
-column with another while preserving 26 / 244 fails.
+column with another while preserving 26 / 243 fails.
 
 **Both directions of that claim are tested, and one of them against PostgreSQL
 itself.** `provision-role.test.ts` reconciles the allowlist against every
@@ -1270,16 +1270,14 @@ booking still holds the lodge got `bookingStatus: CANCELLED`, a deletion instant
 the next step, chasing other bookings off those nights or refusing a new one, is
 wrong. The banned name is banned outright now, in every entry.
 
-**`waitlistPosition` is one-based, so `booking_search` reports it as absent rather
-than 0.** Every writer assigns from 1 (`booking-create.ts` counts the queue ahead
-and adds one; `waitlist.ts` renumbers each lodge's queue from 1) and every exit —
-force-confirm, return-to-waitlist, cancellation, the cross-lodge mover, the
-waitlist cron — writes `null`. There is no position 0 in this platform, so
-`countOf`'s absent-becomes-zero was wrong in both directions: it printed a position
-on every ordinary booking, and on a genuinely waitlisted booking whose position had
-not been recomputed it read as **the front of the queue**. `countOrNull` is the
-helper; the entry's scope line tells the model that an absent position is not a
-place in a queue.
+**`booking_search` reports no waitlist position (#5402).** A booking's place in
+the waitlist queue is derived on read from the live queue the offer pass walks
+(`src/lib/waitlist-queue.ts`, `INV-CAP-041`), and nothing stores it. The old
+`Booking."waitlistPosition"` column was written once, when a booking joined, and
+never updated, so it was wrong as soon as anyone ahead left; it is now null on
+every new entry and is being retired. Deriving the position in this pack's SQL would
+be a second copy of the queue order (`INV-SSOT-001`), so the field and its grant were
+removed instead. Admin > Waitlist shows the live position.
 
 Two more fields are worth reading carefully. `exceptionHeldNightCount` is the
 **only** reliable test of whether an open request is holding beds — never infer it

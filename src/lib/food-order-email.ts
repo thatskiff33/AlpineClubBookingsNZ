@@ -8,7 +8,7 @@ import { storedQuantity } from "@/lib/food-orders";
 import { prisma } from "@/lib/prisma";
 
 /**
- * Email the food officer about an order that is ALREADY STORED (fork #121).
+ * Email the food officer about an order that is ALREADY STORED (fork triyder/AlpineClubBookingsNZ#121).
  *
  * The order is re-read rather than passed in, so the email shows exactly what
  * the history will show — every item line as saved, in order — and not what the

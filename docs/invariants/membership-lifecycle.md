@@ -449,9 +449,7 @@ each gated on `bookings:edit` and returning exactly one member's family group
 via the shared `resolveMemberFamily` helper. This decoupling means a club that
 customises the Booking Officer role to drop `membership:view` can still attach
 the correct member identity — and therefore correct member pricing — instead of
-silently re-adding the member as a mispriced non-member. The member-scoped
-`GET /api/admin/members/[id]/family` remains gated on `membership:view` for
-membership surfaces.
+silently re-adding the member as a mispriced non-member.
 
 ## INV-LIFE-068
 

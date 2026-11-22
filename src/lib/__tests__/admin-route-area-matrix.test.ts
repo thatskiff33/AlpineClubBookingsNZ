@@ -405,7 +405,6 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/members/[id]/dependent-email-source": "membership",
   "/api/admin/members/[id]/dependents/[dependentId]": "membership",
   "/api/admin/members/[id]/dependents/link": "membership",
-  "/api/admin/members/[id]/family": "membership",
   // #2253: read-only derived family tree; intentionally membership like the
   // member detail page it renders inside.
   "/api/admin/members/[id]/family-tree": "membership",

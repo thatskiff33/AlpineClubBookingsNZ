@@ -835,9 +835,9 @@ workflow and composite-action references, including `docker://` actions.
 External images in the Dockerfile and Compose files keep readable tags and pin
 the multi-architecture index digest. Dependabot proposes Action and Docker
 updates for review. The pnpm minimum release age matches the npm Dependabot
-cooldown: seven days (`10080` minutes).
-The already-locked `nodemailer@10.2.1` has an exact-version exception so frozen
-installs work during rollout; remove it after the next Nodemailer update.
+cooldown: seven days (`10080` minutes). No version is exempt from it: the
+exact-version exception made during rollout, for the already-locked
+`nodemailer@10.2.1`, was removed once `main` had moved to a later Nodemailer.
 
 Both published images include a BuildKit SBOM and maximum build provenance,
 plus a GitHub build provenance attestation tied to the pushed image digest.
@@ -1290,7 +1290,7 @@ image stops the engine before image inspection; it never guesses a local tag.
 ## Public Rate Limits And Proxy Headers
 
 Public route rate limits are process-local sliding windows keyed by
-`getClientIp()` in `src/lib/rate-limit.ts`. This is acceptable for the supported
+`getClientIp()` in `src/lib/rate-limit-http.ts`. This is acceptable for the supported
 production shape because Caddy is the only public listener and routes traffic to
 one active web slot at a time.
 
@@ -1319,15 +1319,32 @@ connections and the TLS certificate cache. If `validate` fails, fix the file
 before reloading — the running config stays in place until a reload succeeds.
 
 The app trusts proxy-derived client IP headers only under that Caddy boundary.
-`getClientIp()` uses the rightmost `X-Forwarded-For` value, which is the peer
-Caddy appended closest to the app container, then falls back to `X-Real-IP`.
+Caddy replaces `X-Forwarded-For` with its resolved client IP (`header_up
+X-Forwarded-For {client_ip}` in `deploy/caddy/tacbookings-active.caddy`), which
+is the connecting peer when Caddy is the edge and, in `CADDY_TLS_MODE=local`,
+the address the trusted proxy forwarded — see "Client IPs behind the proxy"
+below. The app therefore normally sees one address. `getClientIp()` takes the
+last `X-Forwarded-For` address, or `X-Real-IP` when that header is absent. The
+last-address rule is for a proxy that appends to the header instead of
+replacing it, where the first address is whatever the caller sent.
+
+The audit log records the same address as the rate limits: every route that
+writes a caller's IP takes it from `getClientIp()`, and lint refuses a direct
+read of a client-address header anywhere else (#5399). It is the address the hop
+nearest the app saw, so it is the visitor's only in the supported shape:
+
+- **Behind more than one proxy** (a CDN in front of another proxy, say), the
+  hop nearest the app must resolve the visitor's address and overwrite the
+  header. That is the reference Caddy in local mode, with
+  `CADDY_TRUSTED_PROXIES` covering every hop in front of it. Otherwise the last
+  address is the next hop's own peer, such as a CDN edge address many visitors
+  share, and both the audit log and the per-address rate limits see that.
+- **With no proxy at all**, the caller sets `X-Forwarded-For` and `X-Real-IP`
+  freely, so neither the audit address nor a rate-limit key can be trusted.
+
 Do not expose app containers directly to the Internet or through another proxy
 that preserves attacker-supplied `X-Forwarded-For` values without appending its
 own trusted peer address.
-Caddy sets that header to its resolved client IP (`header_up X-Forwarded-For
-{client_ip}` in `deploy/caddy/tacbookings-active.caddy`), which is the connecting
-peer when Caddy is the edge and, in `CADDY_TLS_MODE=local`, the address the
-trusted proxy forwarded — see "Client IPs behind the proxy" below.
 
 ### Hostnames and DNS records
 

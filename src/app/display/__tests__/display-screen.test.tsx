@@ -41,7 +41,7 @@ import { clubIdentity } from "@/config/club-identity";
  */
 const CLUB_ZONE = "Pacific/Auckland";
 
-// Issue #32 (LTV-007): the display page lifecycle — pairing (code shown,
+// Issue hoppers99/AlpineClubBookingsNZ#32 (LTV-007): the display page lifecycle — pairing (code shown,
 // claim polled), active (template rendered from the payload), transient
 // failure (last good payload retained, stale badge past the threshold), and
 // revocation (back to pairing within one poll).
@@ -139,7 +139,7 @@ const isPairClaim = (url: string, init?: RequestInit) =>
   url.includes("/api/display/pair") && String(init?.body).includes("claim");
 
 describe("display page render mode", () => {
-  it("forces dynamic rendering so inline scripts carry the CSP nonce (issue #54)", async () => {
+  it("forces dynamic rendering so inline scripts carry the CSP nonce (issue hoppers99/AlpineClubBookingsNZ#54)", async () => {
     // A statically prerendered /display ships Next's inline bootstrap
     // scripts without the per-request nonce; the production nonce-only CSP
     // then blocks hydration and the page renders blank on real TVs.
@@ -257,7 +257,7 @@ describe("DisplayScreen lifecycle", () => {
     expect(screen.getByText("Second Lodge")).toBeDefined();
   });
 
-  it("preview mode never pairs: denied shows the admin-login prompt, an admin session renders the board (issue #52)", async () => {
+  it("preview mode never pairs: denied shows the admin-login prompt, an admin session renders the board (issue hoppers99/AlpineClubBookingsNZ#52)", async () => {
     window.history.pushState({}, "", "/display?previewDevice=dev-9");
     try {
       // The preview query is forwarded verbatim to the state API.
@@ -285,7 +285,7 @@ describe("DisplayScreen lifecycle", () => {
     }
   });
 
-  it("marks the header clock as simulated (amber, in place) when a previewDate is active (issue #60)", async () => {
+  it("marks the header clock as simulated (amber, in place) when a previewDate is active (issue hoppers99/AlpineClubBookingsNZ#60)", async () => {
     window.history.pushState({}, "", "/display?previewDevice=dev-9&previewDate=2026-08-01");
     try {
       const isPreviewState = (url: string) =>
@@ -304,7 +304,7 @@ describe("DisplayScreen lifecycle", () => {
       expect(container.querySelector('input[type="date"]')).not.toBeNull();
       // Accessible-only hint, but no visible layout-shifting marker element.
       expect(screen.getByText(/Simulating/)).toBeDefined();
-      // #109 follow-up: the lodge is identified on the admin preview host page
+      // hoppers99/AlpineClubBookingsNZ#109 follow-up: the lodge is identified on the admin preview host page
       // around the frame, so there is no in-frame "previewing against" line.
       expect(screen.queryByText(/Previewing against/)).toBeNull();
     } finally {
@@ -312,8 +312,8 @@ describe("DisplayScreen lifecycle", () => {
     }
   });
 
-  it("applies a selected date via the sibling input (the #65 picker fix)", async () => {
-    // #65: the date input used to be nested inside the <button>, where a native
+  it("applies a selected date via the sibling input (the hoppers99/AlpineClubBookingsNZ#65 picker fix)", async () => {
+    // hoppers99/AlpineClubBookingsNZ#65: the date input used to be nested inside the <button>, where a native
     // date selection did not reliably fire change, so picking a date never
     // applied. It is now a SIBLING of the button; selecting a date must rewrite
     // ?previewDate on the URL. jsdom cannot navigate on a location write, so we
@@ -402,7 +402,7 @@ describe("DisplayScreen lifecycle", () => {
 
 // LTV-027/LTV-041: the layout engine. A device bound to a v2 Layout+Template
 // arrives as a `layoutRender` payload (already validated + sanitised server-side).
-// Since LTV-041 (issue #96) the SERVER swaps each `{{area:key}}`/`{{module:name}}`
+// Since LTV-041 (issue hoppers99/AlpineClubBookingsNZ#96) the SERVER swaps each `{{area:key}}`/`{{module:name}}`
 // token for an inert `<div data-display-*>` marker; the client renders the html
 // whole and portals its Area/module into each marker. These tests author the
 // readable token form and `markerize` mimics that final server step, so the
@@ -613,7 +613,7 @@ describe("DisplayScreen layout engine (LTV-027)", () => {
     ).not.toBeNull();
   });
 
-  it("mounts areas INSIDE authored container elements — the 2+1 grid case (issue #96)", async () => {
+  it("mounts areas INSIDE authored container elements — the 2+1 grid case (issue hoppers99/AlpineClubBookingsNZ#96)", async () => {
     // The regression: two placeholders nested two containers deep. Before the
     // marker+portal fix the areas broke out to siblings and the grid was empty.
     const { container } = await renderLayout({
@@ -777,13 +777,13 @@ describe("DisplayScreen layout engine — embedded module tokens (LTV-028)", () 
   });
 });
 
-// Issue #176 (ADR-003 §5 "Unattended surface"): a throwing module/board must
+// Issue hoppers99/AlpineClubBookingsNZ#176 (ADR-003 §5 "Unattended surface"): a throwing module/board must
 // NEVER blank the wall. Every render branch (authored LayoutScreen, legacy
 // ActiveScreen, layoutRenderError→FallbackBoard) is wrapped so a render-time
 // throw drops to a fallback shell, and `error.tsx` is the framework-level last
 // resort. React logs a caught render error to console.error; that is expected
 // here, so silence it to keep the run readable.
-describe("DisplayScreen render-branch error boundaries (issue #176)", () => {
+describe("DisplayScreen render-branch error boundaries (issue hoppers99/AlpineClubBookingsNZ#176)", () => {
   beforeEach(() => {
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
@@ -844,7 +844,7 @@ describe("DisplayScreen render-branch error boundaries (issue #176)", () => {
     // assert the properties that make the shell non-blank in a real browser:
     // the branded `.display-shell` class and the inlined background gradient
     // pinned full-viewport (position:fixed + inset:0). Without these the
-    // boundary would mount an unstyled, effectively blank div (issue #186 F1).
+    // boundary would mount an unstyled, effectively blank div (issue hoppers99/AlpineClubBookingsNZ#186 F1).
     expect(shell!.className).toContain("display-shell");
     expect(shell!.style.background).toContain("linear-gradient");
     expect(shell!.style.position).toBe("fixed");

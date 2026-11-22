@@ -30,8 +30,11 @@ import { readXeroTaxRates } from "@/lib/xero-tax-rates";
  * account is mapped and the club is, or is scheduled to be, GST-registered,
  * clearing Exempt is refused with a message telling the officer to unmap that
  * account first: the reverse of the account-mapping save's own refusal
- * (`xero-opening-credits-exempt-guards.ts`). Read before the transaction, like
- * the rate list. The account-mapping save is not Serializable, so a clear and
+ * (`xero-opening-credits-exempt-guards.ts`). A mapping chosen in another Xero
+ * organisation than the one connected now is not in use and clears; while Xero
+ * is disconnected no mapping can be told to be that, so the refusal stands
+ * (`DELETE` has no connection check of its own). Read before the transaction,
+ * like the rate list. The account-mapping save is not Serializable, so a clear and
  * a mapping that race can both land; the sender's refusal, held by the outbox,
  * covers that.
  */
