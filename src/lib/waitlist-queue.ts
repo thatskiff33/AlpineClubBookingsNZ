@@ -222,9 +222,12 @@ export function orderWaitlistOffers<T extends WaitlistQueueEntry>(
  * An opportunity is matched by booking and offered lodge, so a cross-lodge
  * lapse moves only the opportunity at the offered lodge. Under
  * `OWN_LODGE_FIRST` each part (own-lodge, then cross-lodge) is rotated on its
- * own; under `MERGED` the list is one part. A key that matches nothing leaves
- * the order as it is. Never applied by the position reader: positions
- * (`INV-CAP-041`) do not change when an offer lapses.
+ * own, but the lapsed opportunities go after BOTH parts: a member who just
+ * lapsed is behind everyone who has not had the offer, opt-ins from other
+ * lodges included (owner decision, 23 Nov 2026, #5410). Under `MERGED` the list
+ * is one part. A key that matches nothing leaves the order as it is. Never
+ * applied by the position reader: positions (`INV-CAP-041`) do not change when
+ * an offer lapses.
  */
 function rotateWaitlistOpportunitiesAfterLapse<T extends WaitlistQueueEntry>(
   ordered: readonly WaitlistOpportunity<T>[],
@@ -241,15 +244,17 @@ function rotateWaitlistOpportunitiesAfterLapse<T extends WaitlistQueueEntry>(
     crossLodgeOrder === "MERGED"
       ? [ordered]
       : [ordered.filter((o) => !o.cross), ordered.filter((o) => o.cross)];
-  return parts.flatMap((part) => {
+  const walk = parts.flatMap((part) => {
     const at = part.findIndex(isPivot);
-    const walk = at === -1 ? part : [...part.slice(at + 1), ...part.slice(0, at + 1)];
-    return [
-      ...walk.filter((o) => !isPivot(o) && !isOtherLapse(o)),
-      ...walk.filter(isOtherLapse),
-      ...walk.filter(isPivot),
-    ];
+    return at === -1 ? part : [...part.slice(at + 1), ...part.slice(0, at + 1)];
   });
+  // The lapses leave their part for the end of the whole walk (owner decision,
+  // 23 Nov 2026): "own lodge first" does not protect a member who just lapsed.
+  return [
+    ...walk.filter((o) => !isPivot(o) && !isOtherLapse(o)),
+    ...walk.filter(isOtherLapse),
+    ...walk.filter(isPivot),
+  ];
 }
 
 /** What the position reader needs to place a booking in its lodge's queue. */

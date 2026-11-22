@@ -586,17 +586,54 @@ describe("the walk after a lapsed offer (#5410, INV-CAP-042)", () => {
       row({ id: "a2", minute: 3 }),
     ];
 
-    it("under OWN_LODGE_FIRST rotates only the part the lapsed opportunity is in", () => {
+    it("under OWN_LODGE_FIRST rotates each part, then puts the lapse after both parts", () => {
       const rows = mixed();
       expect(walk(rows, "OWN_LODGE_FIRST")).toEqual(["x1", "a1", "x2", "a2", "x1:cross", "x2:cross"]);
-      // An own-lodge lapse: the own-lodge part rotates; the cross-lodge part follows unchanged.
+      // An own-lodge lapse: the own-lodge part rotates, the cross-lodge part
+      // follows, and a1 comes after the opt-ins too (owner decision, 23 Nov
+      // 2026: "own lodge first" does not protect a member who just lapsed).
       expect(walk(rows, "OWN_LODGE_FIRST", lapseOf(keyOf(rows[1]!)))).toEqual([
-        "x2", "a2", "x1", "a1", "x1:cross", "x2:cross",
+        "x2", "a2", "x1", "x1:cross", "x2:cross", "a1",
       ]);
-      // A cross-lodge lapse at A: only the cross-lodge part rotates, and x1's
-      // own-lodge opportunity at B keeps its place.
+      // A cross-lodge lapse at A: the cross-lodge part rotates, x1's own-lodge
+      // opportunity at B keeps its place, and the lapsed opportunity is last.
       expect(walk(rows, "OWN_LODGE_FIRST", lapseOf(keyOf(rows[0]!, "lodge-a")))).toEqual([
         "x1", "a1", "x2", "a2", "x2:cross", "x1:cross",
+      ]);
+    });
+
+    it("under OWN_LODGE_FIRST, two own-lodge lapses go behind a waiting opt-in", () => {
+      // a1 and a2 wait at A and both lapsed in one run; a3 waits at A; x waits
+      // at B and named A.
+      const rows = [
+        row({ id: "a1", minute: 1 }),
+        row({ id: "a2", minute: 2 }),
+        row({ id: "x", minute: 3, lodgeId: "lodge-b", alternates: ["lodge-a"] }),
+        row({ id: "a3", minute: 4 }),
+      ];
+      const run = [keyOf(rows[0]!), keyOf(rows[1]!)];
+      expect(walk(rows, "OWN_LODGE_FIRST", lapseOf(run[0]!, run))).toEqual(["x", "a3", "x:cross", "a2", "a1"]);
+      expect(walk(rows, "OWN_LODGE_FIRST", lapseOf(run[1]!, run))).toEqual(["x", "a3", "x:cross", "a1", "a2"]);
+    });
+
+    it("under OWN_LODGE_FIRST, a lone own-lodge lapse goes behind the only opt-in", () => {
+      const rows = [
+        row({ id: "a1", minute: 1 }),
+        row({ id: "x", minute: 2, lodgeId: "lodge-b", alternates: ["lodge-a"] }),
+      ];
+      expect(walk(rows, "OWN_LODGE_FIRST")).toEqual(["a1", "x", "x:cross"]);
+      expect(walk(rows, "OWN_LODGE_FIRST", lapseOf(keyOf(rows[0]!)))).toEqual(["x", "x:cross", "a1"]);
+    });
+
+    it("under OWN_LODGE_FIRST, a cross-lodge lapse comes after the own-lodge entries and the other opt-ins", () => {
+      const rows = [
+        row({ id: "x1", minute: 1, lodgeId: "lodge-b", alternates: ["lodge-a"] }),
+        row({ id: "a1", minute: 2 }),
+        row({ id: "x2", minute: 3, lodgeId: "lodge-b", alternates: ["lodge-a"] }),
+        row({ id: "x3", minute: 4, lodgeId: "lodge-c", alternates: ["lodge-a"] }),
+      ];
+      expect(walk(rows, "OWN_LODGE_FIRST", lapseOf(keyOf(rows[2]!, "lodge-a")))).toEqual([
+        "x1", "a1", "x2", "x3", "x3:cross", "x1:cross", "x2:cross",
       ]);
     });
 
@@ -647,7 +684,7 @@ describe("the walk after a lapsed offer (#5410, INV-CAP-042)", () => {
   });
 
   it.each(["OWN_LODGE_FIRST", "MERGED"] as const)(
-    "is a reordering of the plain walk, never a filter, with the lapse last in its part (%s)",
+    "is a reordering of the plain walk, never a filter, with the lapse last in the whole walk (%s)",
     (mode) => {
       for (let seed = 1; seed <= 40; seed += 1) {
         const rows = randomTable(seed, 12, false).filter((r) => r.status === "WAITLISTED" && !r.noEmails);
@@ -656,8 +693,9 @@ describe("the walk after a lapsed offer (#5410, INV-CAP-042)", () => {
         const run = [keyOf(lapsed), keyOf(rows[(seed * 7) % rows.length]!)];
         const rotated = walk(rows, mode, lapseOf(run[0]!, run));
         expect([...rotated].sort()).toEqual(walk(rows, mode).sort());
-        const part = mode === "MERGED" ? rotated : rotated.filter((label) => !label.endsWith(":cross"));
-        expect(part.at(-1)).toBe(lapsed.id);
+        // Both modes since the owner decision of 23 Nov 2026 (was: last in its
+        // part under OWN_LODGE_FIRST).
+        expect(rotated.at(-1)).toBe(lapsed.id);
       }
     },
   );
