@@ -10,9 +10,13 @@
  *    column, so each guard in `UNTOUCHED_NOT_REQUIRED_ROW` is proved alone.
  * 2. THE SEASON KEY serialises a billing confirm with the settings save, in both
  *    orders: queued first, the confirm bills under the old rule; queued second,
- *    it re-previews under the new rule and refuses the stale token. The
- *    seasonal-assignment reconcile waits on the same key.
- * 3. THE SQL DATE-OF-BIRTH CHECK (`subscription-liability-where.ts`) agrees with
+ *    it re-previews under the new rule and refuses the stale token.
+ * 3. THE LIABILITY-RULE KEY orders the seasonal-assignment reconcile (shared)
+ *    against a rule writer (exclusive): the reconcile waits for a writer
+ *    holding it and reads the committed rule, but never waits on a billing
+ *    confirm — a real roll-forward, whose chunk holds lock(1), finishes while
+ *    the season key is held, and no lock(1) holder is ever seen waiting.
+ * 4. THE SQL DATE-OF-BIRTH CHECK (`subscription-liability-where.ts`) agrees with
  *    the TS rule on PostgreSQL's own `date` comparison, for members born either
  *    side of every tier birthday at the season's start and end — including a
  *    29 February birth against a 28 February season end.
@@ -92,6 +96,8 @@ let billing: typeof import("@/lib/membership-subscription-billing");
 let defaults: typeof import("@/lib/member-subscription-defaults");
 let settingsWrite: typeof import("@/lib/subscription-liability-settings-write");
 let seasonLock: typeof import("@/lib/subscription-billing-season-lock");
+let ruleLock: typeof import("@/lib/subscription-liability-rule-lock");
+let assignments: typeof import("@/lib/seasonal-membership-assignments");
 let where: typeof import("@/lib/subscription-liability-where");
 let membershipTypes: typeof import("@/lib/membership-types");
 let financialYear: typeof import("@/lib/financial-year");
@@ -307,6 +313,8 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
       defaults = await import("@/lib/member-subscription-defaults");
       settingsWrite = await import("@/lib/subscription-liability-settings-write");
       seasonLock = await import("@/lib/subscription-billing-season-lock");
+      ruleLock = await import("@/lib/subscription-liability-rule-lock");
+      assignments = await import("@/lib/seasonal-membership-assignments");
       where = await import("@/lib/subscription-liability-where");
       membershipTypes = await import("@/lib/membership-types");
       financialYear = await import("@/lib/financial-year");
@@ -492,7 +500,7 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
         expect(await storedRule()).toEqual(CHOSEN_EXEMPTS);
       });
 
-      it("the seasonal-assignment reconcile waits on the key, then reads the rule committed before it", async () => {
+      it("an opt-in queued behind a confirm never holds up the seasonal-assignment reconcile; its clear-up still moves the row", async () => {
         const memberId = `${PREFIX}reconciled`;
         await createMember(memberId, "ADULT");
         await assign(memberId, AGE_TYPE_ID);
@@ -500,10 +508,87 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
         await assertNoForeignUntouchedRows();
         const gate = await holdSeasonKey();
 
-        // Queued first, the opt-in commits first; the reconcile, queued behind
-        // it, must then find the row already cleared rather than read NOT_CHOSEN.
+        // The opt-in waits on the season key BEFORE it takes the rule key, so
+        // the reconcile is not queued behind it: it runs now, under NOT_CHOSEN
+        // (only a REQUIRED type flips the row), and commits.
         const saved = optIn(CHOSEN_ALWAYS);
         await untilAdvisoryWaiters(1);
+        await expect(
+          prisma.$transaction((tx) =>
+            defaults.reconcileSeasonSubscriptionForAssignment(tx, {
+              memberId,
+              seasonYear: SEASON_YEAR,
+              subscriptionBehavior: "BASED_ON_AGE_TIER",
+            }),
+          ),
+        ).resolves.toEqual({ reconciled: false });
+
+        gate.release();
+        await gate.done;
+        // The clear-up, after the reconcile committed, sees and moves the row.
+        await expect(saved).resolves.toMatchObject({ clearedStaleRows: { clearedCount: 1 } });
+        expect(
+          await prisma.memberSubscription.findUniqueOrThrow({
+            where: { memberId_seasonYear: { memberId, seasonYear: SEASON_YEAR } },
+            select: { status: true },
+          }),
+        ).toEqual({ status: "NOT_INVOICED" });
+      });
+    });
+
+    describe("the seasonal-assignment reconcile and the liability-rule key (#5190 review)", () => {
+      /**
+       * A transaction standing in for a rule writer mid-save: it holds the
+       * liability-rule key exclusive and has written the chosen rule, but has
+       * not committed until `release()`.
+       */
+      async function holdRuleKeyWhileChoosing(choice: typeof CHOSEN_ALWAYS) {
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let acquired!: () => void;
+        const isHeld = new Promise<void>((resolve) => {
+          acquired = resolve;
+        });
+        const done = prisma.$transaction(
+          async (tx) => {
+            await ruleLock.lockSubscriptionLiabilityRuleExclusive(tx);
+            await tx.membershipLockoutSettings.update({ where: { id: "default" }, data: choice });
+            acquired();
+            await released;
+          },
+          { timeout: 30_000 },
+        );
+        await isHeld;
+        return { release, done };
+      }
+
+      /**
+       * Backends holding the global key `lock(1)` while waiting on any other
+       * advisory lock: the stall the review found. A bigint key 1 is
+       * (classid 0, objid 1, objsubid 1) in `pg_locks`.
+       */
+      async function lock1HoldersWaitingOnAdvisory(): Promise<number> {
+        const rows = await prisma.$queryRaw<Array<{ count: number }>>`
+          SELECT COUNT(*)::int AS "count"
+          FROM pg_locks held
+          JOIN pg_locks waiting ON waiting.pid = held.pid
+          JOIN pg_database d ON d.oid = held.database
+          WHERE d.datname = current_database()
+            AND held.locktype = 'advisory' AND held.granted
+            AND held.classid = 0 AND held.objid = 1 AND held.objsubid = 1
+            AND waiting.locktype = 'advisory' AND NOT waiting.granted`;
+        return rows[0]?.count ?? 0;
+      }
+
+      it("the reconcile waits on the rule key while a rule writer holds it, then reads the rule that writer committed", async () => {
+        const memberId = `${PREFIX}rule-wait`;
+        await createMember(memberId, "ADULT");
+        await assign(memberId, AGE_TYPE_ID);
+        await prisma.memberSubscription.create({ data: { memberId, seasonYear: SEASON_YEAR, status: "NOT_REQUIRED" } });
+        const gate = await holdRuleKeyWhileChoosing(CHOSEN_ALWAYS);
+
         const reconciled = prisma.$transaction((tx) =>
           defaults.reconcileSeasonSubscriptionForAssignment(tx, {
             memberId,
@@ -511,13 +596,65 @@ let priorLockoutSettings: MembershipLockoutSettings | null = null;
             subscriptionBehavior: "BASED_ON_AGE_TIER",
           }),
         );
-        await untilAdvisoryWaiters(2);
+        // Released whatever happens, so a failure here cannot strand the
+        // rule key and the settings row for the tests after it.
+        try {
+          await untilAdvisoryWaiters(1);
+        } finally {
+          gate.release();
+          await gate.done;
+        }
 
+        // Under NOT_CHOSEN a BASED_ON_AGE_TIER row is never flipped; under the
+        // chosen ALWAYS_OWES rule this ADULT owes, so only a reconcile that
+        // waited for the commit flips it.
+        await expect(reconciled).resolves.toEqual({ reconciled: true });
+      });
+
+      it("a roll-forward runs to completion while a billing confirm holds the season key, and never holds lock(1) while waiting", async () => {
+        // Rolling forward from a season nothing else uses into the club's
+        // current season, so the chunk takes lock(1), lodge and member keys and
+        // then reconciles this member's untouched NOT_REQUIRED row.
+        const FROM_SEASON = 1990;
+        const memberId = `${PREFIX}roll-forward`;
+        await createMember(memberId, "ADULT");
+        await assign(memberId, REQUIRED_TYPE_ID, FROM_SEASON);
+        await prisma.memberSubscription.create({ data: { memberId, seasonYear: SEASON_YEAR, status: "NOT_REQUIRED" } });
+        expect(
+          await prisma.seasonalMembershipAssignment.count({ where: { seasonYear: FROM_SEASON, NOT: { memberId } } }),
+          "another suite's assignment in the source season would be rolled forward too",
+        ).toBe(0);
+        // A transaction standing in for a billing confirm: confirm holds the
+        // season key for its whole in-transaction re-preview.
+        const gate = await holdSeasonKey();
+
+        let rollDone = false;
+        const rolled = assignments
+          .rollForwardSeasonalMembershipAssignments({
+            fromSeasonYear: FROM_SEASON,
+            toSeasonYear: SEASON_YEAR,
+            adminMemberId: OFFICER_ID,
+          })
+          .finally(() => {
+            rollDone = true;
+          });
+
+        // Sample the lock table until the roll-forward finishes or 10 s pass,
+        // with the season key held throughout.
+        let worstStall = 0;
+        const startedAt = process.hrtime.bigint();
+        while (!rollDone && realElapsedMs(startedAt) < 10_000) {
+          worstStall = Math.max(worstStall, await lock1HoldersWaitingOnAdvisory());
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        const finishedWhileHeld = rollDone;
         gate.release();
         await gate.done;
-        await expect(saved).resolves.toMatchObject({ clearedStaleRows: { clearedCount: 1 } });
-        // The clear-up moved the row, so the reconcile has nothing left to do.
-        await expect(reconciled).resolves.toEqual({ reconciled: false });
+        const result = await rolled;
+
+        expect(worstStall, "a transaction held lock(1) while waiting on an advisory key").toBe(0);
+        expect(finishedWhileHeld, "the roll-forward waited for the billing confirm").toBe(true);
+        expect(result.init?.status ?? 200).toBe(200);
         expect(
           await prisma.memberSubscription.findUniqueOrThrow({
             where: { memberId_seasonYear: { memberId, seasonYear: SEASON_YEAR } },
