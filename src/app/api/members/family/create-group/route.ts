@@ -35,6 +35,7 @@ import { FAMILY_GROUP_CREATE_CONNECTION_SHAPE } from "@/lib/connection-shapes";
  * A partner email that matches no registered member is instead minted a
  * single-use PartnerInviteToken and emailed a claim link (#1682); the response
  * is identical to the registered-partner path so it cannot probe membership.
+ * Also the AI app action `request_family_group` (ALP-795).
  */
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -456,16 +457,10 @@ export async function POST(req: NextRequest) {
     );
   });
 
-  // Also the AI app action `request_family_group` (ALP-795).
-  return connectionJson(
-    req,
-    {
-      message: "Request submitted. An admin will review your new family group.",
-      requestId: createRequest.id,
-      familyGroupId: group.id,
-      childRequestIds,
-    },
-    FAMILY_GROUP_CREATE_CONNECTION_SHAPE,
-    { status: 201 }
-  );
+  return connectionJson(req, {
+    message: "Request submitted. An admin will review your new family group.",
+    requestId: createRequest.id,
+    familyGroupId: group.id,
+    childRequestIds,
+  }, FAMILY_GROUP_CREATE_CONNECTION_SHAPE, { status: 201 });
 }
