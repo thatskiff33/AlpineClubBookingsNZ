@@ -1290,7 +1290,7 @@ image stops the engine before image inspection; it never guesses a local tag.
 ## Public Rate Limits And Proxy Headers
 
 Public route rate limits are process-local sliding windows keyed by
-`getClientIp()` in `src/lib/rate-limit.ts`. This is acceptable for the supported
+`getClientIp()` in `src/lib/rate-limit-http.ts`. This is acceptable for the supported
 production shape because Caddy is the only public listener and routes traffic to
 one active web slot at a time.
 
@@ -1321,6 +1321,9 @@ before reloading — the running config stays in place until a reload succeeds.
 The app trusts proxy-derived client IP headers only under that Caddy boundary.
 `getClientIp()` uses the rightmost `X-Forwarded-For` value, which is the peer
 Caddy appended closest to the app container, then falls back to `X-Real-IP`.
+The audit log records the same address: every route that writes a caller's IP
+takes it from `getClientIp()`, and lint refuses a direct read of either header
+anywhere else (#5399).
 Do not expose app containers directly to the Internet or through another proxy
 that preserves attacker-supplied `X-Forwarded-For` values without appending its
 own trusted peer address.

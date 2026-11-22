@@ -10,6 +10,11 @@ actor who did it, the member it affected, the outcome, and (when present) the
 request ID, IP, and retention class. Find it at **Admin → Monitoring & Support → Audit Log**
 (`/admin/audit-log`).
 
+The IP is the address the club's reverse proxy saw, the same one the rate limits
+count, not one the visitor can choose by sending their own forwarding header
+(#5399). [`DEPLOYMENT.md`](../../DEPLOYMENT.md#public-rate-limits-and-proxy-headers)
+says what the proxy must do for that to hold.
+
 The audit log is read-only — you can filter, search, expand a row for its full
 detail, and drill through to the member or record it references, but you cannot
 edit or delete an entry. Retention and optional archival are governed by the

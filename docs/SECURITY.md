@@ -969,6 +969,19 @@ this section records how it is enforced.
   [`guides/backups.md`](guides/backups.md). Backups taken before the after-stay
   clear still hold a cleared value until they age out.
 
+## Caller IP address (#5399)
+
+Audience: Operator, Developer.
+
+The rate limits, the lockouts and the audit log all take a caller's IP from one
+helper, `getClientIp()` in `src/lib/rate-limit-http.ts`: the last
+`X-Forwarded-For` address, then `X-Real-IP`, else `unknown`. The first address is
+whatever the caller sent, so a route that read it would let an audit row show an
+address the caller chose behind a proxy that appends to the header. A lint arm
+refuses a read of either header anywhere else.
+[`DEPLOYMENT.md`](../DEPLOYMENT.md#public-rate-limits-and-proxy-headers) states
+what the proxy in front must do.
+
 ## Token-bearing URL paths
 
 ### Context
