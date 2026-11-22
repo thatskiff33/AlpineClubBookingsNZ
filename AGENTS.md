@@ -113,7 +113,8 @@ Add a row for a doc an agent must reach; cite ids, never line numbers
   `docs/COVERAGE_MATRIX.md` row.
 - An artifact every lane adds an entry to is a directory of per-lane fragments,
   never one shared file (#2452, #3111): `changelog.d/<pr-number>-<slug>.md`,
-  `size-allowances.d/<pr-number>-<slug>.md`.
+  `size-allowances.d/<pr-number>-<slug>.md`. A step to do after deploy is a
+  `changelog.d/<pr-number>-<slug>.deploy.md` the PR's author adds (#5379).
 
 ## Context, usage and failure control
 
@@ -247,10 +248,8 @@ implement → review → fix → verify-fix → validate → PR → CI-green →
   [`CODEX_WORKFLOW.md`](docs/agents/CODEX_WORKFLOW.md#5-split-fast-local-evidence-from-full-ci-gates).
 - **Drafts until ready:** reviewed, findings fixed, no residuals, CI green.
   Then one ready comment on the issue and PR — the merge gate's evidence
-  (#3959): what was built, lenses and findings, fixes, validation run and not
-  run, stated limits, that no production data or live providers were used,
-  residual risks and carry-forward issues
-  ([`ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md#the-ready-comment)).
+  (#3959), carrying everything
+  [`ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md#the-ready-comment) lists.
 
 ## Residual risks are resolved in the PR
 
