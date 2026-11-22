@@ -18,8 +18,11 @@ const h = vi.hoisted(() => ({
   cooldown: new Map<string, Date>(),
 }));
 
+// Like the real core, it says when it has written the copy's row
+// (`onAttemptLogged`): only a logged copy can be FAILED and replayed (#5407).
 vi.mock("@/lib/email/core", () => ({
-  sendEmail: vi.fn(async ({ to }: { to: string }) => {
+  sendEmail: vi.fn(async ({ to, onAttemptLogged }: { to: string; onAttemptLogged?: (id: string) => void }) => {
+    onAttemptLogged?.(`email-log-${h.emailLog.length + 1}`);
     if (!h.smtpUp) {
       h.emailLog.push({ to, status: "FAILED" });
       throw new Error("SMTP down");
