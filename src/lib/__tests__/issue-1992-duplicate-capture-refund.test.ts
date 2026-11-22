@@ -2180,13 +2180,17 @@ describe("#4285 a capture arriving on a COMPLETED booking is judged as on a PAID
 
     it("F4: any delivered alert for the capture answers its owed one - here the no-record alert, once another payment holds money", async () => {
       const owedKey = `duplicate-capture-new-capture-owed:booking-1:${OTHER_PI}`;
+      // #5240 review (23 Nov, item 5): and any the payments cron promoted, whatever reason its key carries.
+      const promotedKeys = ["not-recorded", "settler-released", "unsettled-saved-card"].map((reason) => `duplicate-capture-promoted-owed:${reason}:booking-1:${OTHER_PI}`);
       mocks.owedMarkers.add(owedKey);
+      for (const key of promotedKeys) mocks.owedMarkers.add(key);
       primeLedger([ledgerRow({ id: "txn-y", stripePaymentIntentId: "pi_since" }), ledgerRow({ id: "txn-z", stripePaymentIntentId: OTHER_PI })]);
 
       expect((await arriveAt(10000)).outcome).toBe("duplicate_capture_kept");
 
       expect(mocks.sendAdminDuplicateCaptureKeptAlert).toHaveBeenCalledWith(expect.objectContaining({ reason: "not-recorded", otherPaymentIntentId: "pi_since" }), CLUB_FORMAT_TEST);
       expect(mocks.owedMarkers.has(owedKey), "the delivered alert cleared the owed new-capture marker").toBe(false);
+      expect(promotedKeys.filter((key) => mocks.owedMarkers.has(key)), "and every promoted one").toEqual([]);
     });
 
     it("F2: a send that throws leaves the alert owed, so the capture's replay alerts again; once delivered, a replay is silent", async () => {
