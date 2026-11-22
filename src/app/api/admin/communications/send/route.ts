@@ -13,6 +13,7 @@
  * the POST spends the quota before it reads its body.
  */
 import { NextResponse, type NextRequest } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { z } from "zod";
 import { checkRateLimit, type RateLimitConfig } from "@/lib/rate-limit";
@@ -129,12 +130,11 @@ export async function POST(request: Request) {
     );
   }
 
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = sendSchema.safeParse(body);
   if (!parsed.success) {

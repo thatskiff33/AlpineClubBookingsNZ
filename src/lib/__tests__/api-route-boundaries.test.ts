@@ -166,14 +166,6 @@ const directJsonReadAllowlist: Record<
       "src/app/api/admin/xero/tax-categories/route.ts",
     ],
   },
-  undeclaredBody: {
-    reason:
-      "The block is the exact inline copy but its variable is declared without `: unknown` (implicitly `any`), so the shared reader's `unknown` body would change how the code below type-checks.",
-    routes: [
-      "src/app/api/admin/communications/send/route.ts",
-      "src/app/api/notifications/preferences/route.ts",
-    ],
-  },
 };
 
 // Shared cross-file wrappers that perform requireAdmin internally. Keep this
