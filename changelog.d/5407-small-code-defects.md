@@ -19,3 +19,7 @@
   The blue-green deploy's cron-registration check now recognises the Xero
   membership refresh line the app logs, so a deploy with the daily Xero
   membership refresh turned on no longer fails that check.
+
+  The promo-code redemptions list now shows the same booking reference as the
+  rest of the site (the first eight characters of the booking's id, rather
+  than the last eight).
