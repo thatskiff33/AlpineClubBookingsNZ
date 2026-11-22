@@ -68,15 +68,15 @@ vi.mock("@/lib/booking-exception-request-service", async (importOriginal) => {
 });
 
 import { POST, GET } from "@/app/api/bookings/exception-requests/route";
-
-/** The browser's list request, as the App Router hands it to the handler. */
-const listRequest = () => new Request("http://localhost/api/bookings/exception-requests");
 import { PATCH } from "@/app/api/bookings/exception-requests/[id]/route";
 import {
   NoEligiblePolicyExceptionError,
   OpenExceptionRequestConflictError,
 } from "@/lib/booking-exception-request-service";
 import { memberGuestCrossFamilyRefusal } from "@/lib/booking-guests";
+
+/** The browser's list request, as the App Router hands it to the handler. */
+const listRequest = () => new Request("http://localhost/api/bookings/exception-requests");
 
 const CREATED = {
   id: "req-1",
