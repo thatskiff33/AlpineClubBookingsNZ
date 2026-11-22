@@ -10,7 +10,7 @@
  * free text the screen does not need. Types only: nothing here reaches the
  * database.
  */
-import { connectionShapeFor } from "@/lib/connection-projection";
+import { connectionShapeFor, eachEntry } from "@/lib/connection-projection";
 
 /** `GET /api/admin/payments`: one page of payments and the filtered totals. */
 export const ADMIN_PAYMENTS_CONNECTION_SHAPE = connectionShapeFor<{
@@ -233,4 +233,490 @@ export const OPENING_CREDIT_BATCHES_CONNECTION_SHAPE = connectionShapeFor<{
     postedBy: true,
     reversedBy: true,
   },
+});
+
+/**
+ * `POST /api/admin/payments/[id]/generate-invoice`: the invoice raised, or
+ * queued for the Xero outbox. Xero's own invoice id stays behind; its number
+ * is what an officer quotes.
+ */
+export const PAYMENT_INVOICE_GENERATED_CONNECTION_SHAPE = connectionShapeFor<{
+  status: "generated" | "queued";
+  xeroInvoiceNumber: string | null;
+  queueOperationId: string | null;
+  message: string;
+}>({
+  status: true,
+  xeroInvoiceNumber: true,
+  queueOperationId: true,
+  message: true,
+});
+
+/** `POST /api/admin/payments/bank-refund-voids/[id]/answered`: the payment and booking the answered note was on. */
+export const BANK_REFUND_VOID_ANSWERED_CONNECTION_SHAPE = connectionShapeFor<{
+  success: boolean;
+  paymentId: string;
+  bookingId: string;
+}>({
+  success: true,
+  paymentId: true,
+  bookingId: true,
+});
+
+/**
+ * `GET /api/admin/payments/manual-refund-tasks`: the money the club owes back
+ * by hand, the late captures Stripe refunded itself, and the tasks dismissed
+ * lately. The screen's link flags (`viewerCanViewBookings`,
+ * `viewerOwnsBooking`) stay behind.
+ */
+export const MANUAL_REFUND_TASKS_CONNECTION_SHAPE = connectionShapeFor<{
+  tasks: Array<{
+    id: string;
+    bookingId: string;
+    amountCents: number | null;
+    raisedAmountCents: number | null;
+    kind: string | null;
+    awaitingLateCaptureApproval: boolean;
+    partPaymentReview: boolean;
+    editRefundHandBack: boolean;
+    refundRequestHandBack: boolean;
+    paidToGroupOrganiser: boolean;
+    groupOrganiserHandBack: boolean;
+    journalHandBackDismissRefusal: string | null;
+    disputedHandBackLost: boolean;
+    disputeReduction: { reducedByCents: number; stillOwedCents: number } | null;
+    markPaidRefusal: string | null;
+    cardShortfallHandBack: boolean;
+    cardShortfallCheck: boolean;
+    bankRefundVoidFollowUp: { voidedCreditNoteNumber: string | null; voidedAt: string } | null;
+    partPaymentReviewXeroPaid: { reportedAt: string; cashCents: number } | null;
+    reason: string;
+    createdAt: string;
+    memberName: string;
+    checkIn: string;
+    checkOut: string;
+  }>;
+  autoRefundedUnavailable: boolean;
+  autoRefunded: Array<{
+    id: string;
+    bookingId: string;
+    amountCents: number | null;
+    reason: string;
+    note: string | null;
+    refundedAt: string | null;
+    bookingDeleted: boolean;
+    memberName: string;
+    checkIn: string;
+    checkOut: string;
+  }>;
+  dismissedUnavailable: boolean;
+  dismissed: Array<{
+    id: string;
+    bookingId: string;
+    amountCents: number | null;
+    kind: string | null;
+    reason: string;
+    note: string | null;
+    dismissedAt: string | null;
+    bookingDeleted: boolean;
+    memberName: string;
+    checkIn: string;
+    checkOut: string;
+  }>;
+}>({
+  tasks: {
+    id: true,
+    bookingId: true,
+    amountCents: true,
+    raisedAmountCents: true,
+    kind: true,
+    awaitingLateCaptureApproval: true,
+    partPaymentReview: true,
+    editRefundHandBack: true,
+    refundRequestHandBack: true,
+    paidToGroupOrganiser: true,
+    groupOrganiserHandBack: true,
+    journalHandBackDismissRefusal: true,
+    disputedHandBackLost: true,
+    disputeReduction: { reducedByCents: true, stillOwedCents: true },
+    markPaidRefusal: true,
+    cardShortfallHandBack: true,
+    cardShortfallCheck: true,
+    bankRefundVoidFollowUp: { voidedCreditNoteNumber: true, voidedAt: true },
+    partPaymentReviewXeroPaid: { reportedAt: true, cashCents: true },
+    reason: true,
+    createdAt: true,
+    memberName: true,
+    checkIn: true,
+    checkOut: true,
+  },
+  autoRefundedUnavailable: true,
+  autoRefunded: {
+    id: true,
+    bookingId: true,
+    amountCents: true,
+    reason: true,
+    note: true,
+    refundedAt: true,
+    bookingDeleted: true,
+    memberName: true,
+    checkIn: true,
+    checkOut: true,
+  },
+  dismissedUnavailable: true,
+  dismissed: {
+    id: true,
+    bookingId: true,
+    amountCents: true,
+    kind: true,
+    reason: true,
+    note: true,
+    dismissedAt: true,
+    bookingDeleted: true,
+    memberName: true,
+    checkIn: true,
+    checkOut: true,
+  },
+});
+
+/**
+ * `GET /api/admin/refund-requests`: one page of refund appeals, with each
+ * booking's payment and the most an approval can give back. The requester's
+ * email, the Stripe payment id and the booking's email switch stay behind.
+ */
+export const REFUND_REQUESTS_CONNECTION_SHAPE = connectionShapeFor<{
+  data: Array<{
+    id: string;
+    bookingId: string;
+    memberId: string;
+    reason: string;
+    requestedAmountCents: number | null;
+    status: string;
+    adminNotes: string | null;
+    approvedAmountCents: number | null;
+    reviewedBy: string | null;
+    reviewedAt: Date | null;
+    createdAt: Date;
+    cardRefundState: string;
+    cardRefundOwedCents: number;
+    cardRefundRefusedCents: number;
+    cardRefundUnansweredCents: number;
+    handBackOwedCents: number;
+    handBackDismissedCents: number;
+    cardRefundClosedUnpaidCents: number;
+    member: { id: string; firstName: string; lastName: string };
+    booking: {
+      id: string;
+      checkIn: Date;
+      checkOut: Date;
+      finalPriceCents: number;
+      status: string;
+      organiserSettled: boolean;
+      parentBookingId: string | null;
+      creditsFromCancellation: Array<{ amountCents: number; description: string; type: string }>;
+      payment: {
+        id: string;
+        source: string;
+        status: string;
+        amountCents: number;
+        refundedAmountCents: number;
+      } | null;
+      appealCeilingCents: number;
+      appealCardRefundOwedCents: number;
+      organiserCardMaxRefundableCents: number;
+      organiserCardCombinedRefundPending: boolean;
+    };
+  }>;
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}>({
+  data: {
+    id: true,
+    bookingId: true,
+    memberId: true,
+    reason: true,
+    requestedAmountCents: true,
+    status: true,
+    adminNotes: true,
+    approvedAmountCents: true,
+    reviewedBy: true,
+    reviewedAt: true,
+    createdAt: true,
+    cardRefundState: true,
+    cardRefundOwedCents: true,
+    cardRefundRefusedCents: true,
+    cardRefundUnansweredCents: true,
+    handBackOwedCents: true,
+    handBackDismissedCents: true,
+    cardRefundClosedUnpaidCents: true,
+    member: { id: true, firstName: true, lastName: true },
+    booking: {
+      id: true,
+      checkIn: true,
+      checkOut: true,
+      finalPriceCents: true,
+      status: true,
+      organiserSettled: true,
+      parentBookingId: true,
+      creditsFromCancellation: { amountCents: true, description: true, type: true },
+      payment: { id: true, source: true, status: true, amountCents: true, refundedAmountCents: true },
+      appealCeilingCents: true,
+      appealCardRefundOwedCents: true,
+      organiserCardMaxRefundableCents: true,
+      organiserCardCombinedRefundPending: true,
+    },
+  },
+  page: true,
+  pageSize: true,
+  total: true,
+  totalPages: true,
+});
+
+/** `GET /api/admin/reports`: the report window's bookings, money, members and occupancy figures. */
+export const ADMIN_REPORTS_CONNECTION_SHAPE = connectionShapeFor<{
+  summary: {
+    totalBookings: number;
+    moneyReconciliation: {
+      totalBookings: number;
+      byState: { RECONCILED: number; UNRECONCILED: number };
+      byReason: Record<string, number>;
+    };
+    totalRevenueCents: number;
+    netCollectedCents: number;
+    refundsOwedCents: number;
+    creditsOwedCents: number;
+    additionalLedgerGapCents: number;
+    additionalLedgerGapBookings: number;
+    outstandingAdditionalCents: number;
+    outstandingAdditionalBookings: number;
+    totalGuests: number;
+    avgOccupancyRate: number;
+    memberGuests: number;
+    nonMemberGuests: number;
+  };
+  statusBreakdown: {
+    pending: number;
+    paymentPending: number;
+    confirmed: number;
+    paid: number;
+    awaitingReview: number;
+    completed: number;
+  };
+  memberStats: {
+    totalActiveMembers: number;
+    paidMembers: number;
+    unpaidMembers: number;
+    overdueMembers: number;
+    newMembers: number;
+    currentSeasonYear: number;
+    currentSeasonLabel: string;
+  };
+  occupancy: Array<{ date: string; occupiedBeds: number; availableBeds: number; occupancyRate: number }>;
+  revenueGranularity: string;
+  revenue: Array<{
+    periodStart: string;
+    periodEnd: string;
+    label: string;
+    tooltipLabel: string;
+    revenueCents: number;
+    bookingCount: number;
+  }>;
+  trends: Array<{
+    week: string;
+    total: number;
+    pending: number;
+    paymentPending: number;
+    confirmed: number;
+    paid: number;
+    awaitingReview: number;
+    completed: number;
+  }>;
+}>({
+  summary: {
+    totalBookings: true,
+    moneyReconciliation: {
+      totalBookings: true,
+      byState: { RECONCILED: true, UNRECONCILED: true },
+      byReason: eachEntry(true),
+    },
+    totalRevenueCents: true,
+    netCollectedCents: true,
+    refundsOwedCents: true,
+    creditsOwedCents: true,
+    additionalLedgerGapCents: true,
+    additionalLedgerGapBookings: true,
+    outstandingAdditionalCents: true,
+    outstandingAdditionalBookings: true,
+    totalGuests: true,
+    avgOccupancyRate: true,
+    memberGuests: true,
+    nonMemberGuests: true,
+  },
+  statusBreakdown: {
+    pending: true,
+    paymentPending: true,
+    confirmed: true,
+    paid: true,
+    awaitingReview: true,
+    completed: true,
+  },
+  memberStats: {
+    totalActiveMembers: true,
+    paidMembers: true,
+    unpaidMembers: true,
+    overdueMembers: true,
+    newMembers: true,
+    currentSeasonYear: true,
+    currentSeasonLabel: true,
+  },
+  occupancy: { date: true, occupiedBeds: true, availableBeds: true, occupancyRate: true },
+  revenueGranularity: true,
+  revenue: {
+    periodStart: true,
+    periodEnd: true,
+    label: true,
+    tooltipLabel: true,
+    revenueCents: true,
+    bookingCount: true,
+  },
+  trends: {
+    week: true,
+    total: true,
+    pending: true,
+    paymentPending: true,
+    confirmed: true,
+    paid: true,
+    awaitingReview: true,
+    completed: true,
+  },
+});
+
+/**
+ * `GET /api/admin/subscriptions`: one page of the season's member
+ * subscriptions and the status counts. Email addresses, the member's Xero
+ * contact id, the Xero invoice id and the Xero contact group ids stay behind;
+ * the invoice number and the group names are what an officer reads.
+ */
+export const ADMIN_SUBSCRIPTIONS_CONNECTION_SHAPE = connectionShapeFor<{
+  data: Array<{
+    id: string;
+    memberId: string;
+    seasonYear: number;
+    status: string;
+    xeroInvoiceNumber: string | null;
+    paidAt: Date | null;
+    manuallyMarkedPaidAt: Date | null;
+    manualPaymentNote: string | null;
+    xeroContactGroupsLoaded: boolean;
+    xeroContactGroups: Array<{ id: string; name: string }>;
+    member: { firstName: string; lastName: string; ageTier: string; role: string };
+  }>;
+  total: number;
+  page: number;
+  pageSize: number;
+  summary: {
+    total: number;
+    paid: number;
+    unpaid: number;
+    overdue: number;
+    notInvoiced: number;
+    notRequired: number;
+  };
+  xeroContactGroupsLoaded: boolean;
+}>({
+  data: {
+    id: true,
+    memberId: true,
+    seasonYear: true,
+    status: true,
+    xeroInvoiceNumber: true,
+    paidAt: true,
+    manuallyMarkedPaidAt: true,
+    manualPaymentNote: true,
+    xeroContactGroupsLoaded: true,
+    xeroContactGroups: { name: true },
+    member: { firstName: true, lastName: true, ageTier: true, role: true },
+  },
+  total: true,
+  page: true,
+  pageSize: true,
+  summary: {
+    total: true,
+    paid: true,
+    unpaid: true,
+    overdue: true,
+    notInvoiced: true,
+    notRequired: true,
+  },
+  xeroContactGroupsLoaded: true,
+});
+
+/** `POST /api/admin/subscriptions/[id]/manual-payment`: the subscription afterwards and what became of the receipt. */
+export const MANUAL_SUBSCRIPTION_PAYMENT_CONNECTION_SHAPE = connectionShapeFor<{
+  success: boolean;
+  subscription: {
+    id: string;
+    memberId: string;
+    seasonYear: number;
+    status: string;
+    direction: string;
+    memberNotified: boolean;
+    receipt: string;
+  };
+  message: string;
+}>({
+  success: true,
+  subscription: {
+    id: true,
+    memberId: true,
+    seasonYear: true,
+    status: true,
+    direction: true,
+    memberNotified: true,
+    receipt: true,
+  },
+  message: true,
+});
+
+/** `POST /api/admin/bookings/[id]/mark-paid`: the settlement recorded or reversed, in integer cents. */
+export const MANUAL_BOOKING_PAYMENT_CONNECTION_SHAPE = connectionShapeFor<{
+  success: boolean;
+  booking: {
+    bookingId: string;
+    paymentId: string;
+    direction: string;
+    memberNotified: boolean;
+    receipt: string;
+    amountCents: number;
+    bookingStatus: string;
+    creditElectionCents: number | null;
+    additional: {
+      outstandingCents: number;
+      settled: boolean;
+      recordedAmountCents: number;
+      payableOnline: boolean;
+    } | null;
+  };
+  message: string;
+}>({
+  success: true,
+  booking: {
+    bookingId: true,
+    paymentId: true,
+    direction: true,
+    memberNotified: true,
+    receipt: true,
+    amountCents: true,
+    bookingStatus: true,
+    creditElectionCents: true,
+    additional: {
+      outstandingCents: true,
+      settled: true,
+      recordedAmountCents: true,
+      payableOnline: true,
+    },
+  },
+  message: true,
 });

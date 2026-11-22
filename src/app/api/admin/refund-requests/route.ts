@@ -1,28 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { z } from "zod";
-import {
-  adminListPage,
-  adminQueueCreatedOrder,
-  adminListPageQueryFields,
-} from "@/lib/admin-list-page";
+import { adminListPage, adminQueueCreatedOrder } from "@/lib/admin-list-page";
+import { adminRefundRequestsQuerySchema } from "@/lib/admin-refund-requests-query";
+import { REFUND_REQUESTS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { OPEN_HAND_BACKS_FOR_REFUND_APPEAL_SELECT, refundAppealCeilingParts } from "@/lib/manual-refund-task-settlement-rules";
 import { netCollectedCardRefundSelect } from "@/lib/additional-ledger-gap";
 import { organiserCardAppealCeilingFor } from "@/lib/organiser-child-refund";
 import { readApprovedAppealOutcomes } from "@/lib/refund-appeal-outcome";
 import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 
-const querySchema = z.object({
-  status: z.enum(["PENDING", "APPROVED", "REJECTED", "ALL"]).optional().default("PENDING"),
-  ...adminListPageQueryFields,
-});
-
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const { searchParams } = new URL(req.url);
-  const parsed = querySchema.safeParse(Object.fromEntries(searchParams));
+  const parsed = adminRefundRequestsQuerySchema.safeParse(Object.fromEntries(searchParams));
 
   if (!parsed.success) {
     return NextResponse.json(
@@ -153,5 +146,5 @@ export async function GET(req: NextRequest) {
     }),
   );
 
-  return NextResponse.json({ data, ...adminListPage({ page, pageSize, total }) });
+  return connectionJson(req, { data, ...adminListPage({ page, pageSize, total }) }, REFUND_REQUESTS_CONNECTION_SHAPE);
 }

@@ -5,10 +5,7 @@ import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
-import {
-  MANUAL_PAYMENT_NOTE_MAX,
-  normaliseManualPaymentNote,
-} from "@/lib/manual-subscription-payment";
+import { normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import {
   markBookingPaymentManuallySettled,
   reverseManualBookingPayment,
@@ -53,7 +50,7 @@ import { clubFormatValues } from "@/lib/club-format-server";
  *    booking's whole worth. A booking with no extra sends nothing and behaves
  *    identically to before this feature existed.
  */
-export { MANUAL_PAYMENT_NOTE_MAX };
+
 
 export type ManualBookingPaymentDirection = "paid" | "unpaid";
 

@@ -1,5 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import { MANUAL_REFUND_TASKS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import {
@@ -48,7 +50,7 @@ import {
  * The flag matters as much as the fallback: an empty list means "no automatic
  * refunds", and a degraded read must not be allowed to say that.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "finance", level: "view" },
   });
@@ -219,7 +221,7 @@ export async function GET() {
 
   const disputes = await readOpenTaskDisputes(prisma, tasks);
 
-  return NextResponse.json({
+  return connectionJson(request, {
     // #3033: whether the "open the booking's payment and rate history" link is
     // offered at all. Sent as an explicit boolean, never inferred by the card
     // from the presence of anything else.
@@ -242,5 +244,5 @@ export async function GET() {
     // not entitled to make it.
     dismissedUnavailable: dismissedRead.unavailable,
     dismissed: dismissedRead.rows.map(toDismissedManualRefundTaskPayload),
-  });
+  }, MANUAL_REFUND_TASKS_CONNECTION_SHAPE);
 }
