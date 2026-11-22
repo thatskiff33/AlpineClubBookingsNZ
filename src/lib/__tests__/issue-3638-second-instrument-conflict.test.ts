@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BookingEventType,
@@ -174,7 +176,6 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { syncInternetBankingPaymentsForPaidInvoice } from "@/lib/xero-inbound/invoice-paid-effects";
-import * as settlementMarkerModule from "@/lib/manual-settlement-reversal-event";
 import {
   SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND,
   SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_REASON,
@@ -186,6 +187,7 @@ import {
 } from "@/lib/manual-settlement-reversal-event";
 import { duplicateCaptureRefundOperationWhere } from "@/lib/duplicate-capture-ownership";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { stripComments } from "./support/strip-comments";
 import { IB_RECEIPT_FROM_CASH_REASON } from "@/lib/xero-inbound/ib-receipt-reasons";
 import {
   isPaymentRecoveryOperationInFlight,
@@ -1855,9 +1857,20 @@ describe("the marker is admin-only (#3638)", () => {
   // the module's exports so a fourth marker kind declared without a registry
   // entry fails here rather than leaking into the narrative as a cancellation.
   it("derives the kind test and the reason filter from one registry that names every marker kind", () => {
-    const declaredKinds = Object.entries(settlementMarkerModule)
-      .filter(([name]) => name.endsWith("_EVENT_KIND"))
-      .map(([, value]) => value);
+    // Read from the module's source rather than through a namespace import: a
+    // `import * as` makes the dead-code gate count EVERY export of the module as
+    // used, hiding any that nothing else uses (#5407).
+    const moduleSource = stripComments(
+      fs.readFileSync(
+        path.join(process.cwd(), "src/lib/manual-settlement-reversal-event.ts"),
+        "utf8",
+      ),
+    );
+    const declaredKinds = [
+      ...moduleSource.matchAll(
+        /export const [A-Z0-9_]+_EVENT_KIND\s*=\s*"([^"]+)"/g,
+      ),
+    ].map((match) => match[1]);
     expect(declaredKinds.length).toBeGreaterThanOrEqual(3);
     expect(SETTLEMENT_MARKERS.map((marker) => marker.kind).sort()).toEqual(
       [...declaredKinds].sort(),
