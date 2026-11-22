@@ -1523,7 +1523,10 @@ limit: a void that commits after the locked re-read is the order "the recount,
 then the void, then the void's own recount". On a bank transfer that last recount
 lowers the total back. On a card the ledger is raise-only (`INV-ADDPAY-021`,
 #1353), so the recount's raise stands and the existing refund-ledger-divergence
-alert fires for a person to check. A recount that would need a second retry
+alert fires for a person to check. That needs Stripe's recorded refunds to back
+the raise: since #4444 a card recount never rises above them
+([Card recount Stripe cap](#card-recount-stripe-cap)), so with none beyond the
+ledger the recount writes nothing. A recount that would need a second retry
 fails its inbound event after every other write, and the stored event is
 retried after its backoff (#4095), not left until another note arrives.
 
@@ -2071,6 +2074,12 @@ sync, which raises it itself. The cap raises no alert; the raise-only floor
 (`INV-ADDPAY-021`) still alerts on a Xero total below the ledger. The kept
 settle and the allocation write are bank-transfer only and take no cap.
 
+A card refund Stripe failed later (#4370) is left out of Stripe's figure, and
+cash paid back by bank for it is in the ledger, so the cap is what went back:
+with its reversal voided in Xero the notes read $190 ($80 failed + $80 bank +
+$30), the cap holds the $110 returned. A recount racing a note's void (#4288)
+can only raise a card as far as Stripe's refunds back it.
+
 Stated limit: counting once is per payment. A note linked directly to one
 payment and allocated to another payment's invoice counts on both. The cap
 bounds that for a card payment; a bank transfer's is bounded only by its
@@ -2078,6 +2087,8 @@ amount paid, as before #4444.
 
 Pinned by `xero-credit-note-repairs.test.ts`,
 `card-recount-earlier-edit-note.realdb.test.ts`,
+`xero-recount-failed-later-refund.realdb.test.ts`,
+`xero-refund-note-stale-live-status.realdb.test.ts`,
 `allocation-write-real-rules.test.ts`,
 `account-credit-modification-notes.test.ts`,
 `xero-booking-edit-settlement.test.ts`,
