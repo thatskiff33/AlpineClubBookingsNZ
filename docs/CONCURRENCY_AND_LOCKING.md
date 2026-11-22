@@ -2729,6 +2729,9 @@ mispricing a booking.
   upgrade commits first, the other writer replaces the upgraded hash as it
   would have replaced the old one. Proved on PostgreSQL by
   `password-rehash.realdb.test.ts` (a forced interleaving behind a held row).
+  The same suite queues two upgrades of one older hash behind a held row
+  (#5342): exactly one writes, and the stored hash is at the current cost and
+  still verifies.
 
 #### Member photo writer (epic #171)
 
@@ -5720,8 +5723,10 @@ while it chooses its route (`cardShortfallSettlement`; a capacity race's again
 in `capacityRaceChargeForHandBack`), all before its claim; it takes no member
 key, since a shortfall gives nothing back as credit. So the writer sees either
 whole or waits for it. No key, order or registry entry is added. Proved in both
-orders by `card-refund-reversal-bank-cash-floor.realdb.test.ts` (closes) and,
-for a cancel's bank part, `card-refund-reversal-shortfall-floor.realdb.test.ts`.
+orders by `card-refund-reversal-bank-cash-floor.realdb.test.ts` (closes) and by
+`card-refund-reversal-shortfall-floor.realdb.test.ts`, for a cancel's bank part
+and for a capacity race's part to check against its late dashboard refund
+(#5344).
 
 **One order for the refunded total: `Payment` row, then refund rows, then
 transaction rows** — and, in a transaction that also takes the per-member
