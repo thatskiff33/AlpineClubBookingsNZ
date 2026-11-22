@@ -15,7 +15,7 @@ import {
 } from "@/lib/xero-contact-sync";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
-import { copyStreetAddressToPostal } from "@/lib/member-address";
+import { copyStreetAddressToPostal, MEMBER_PHONE_FIELDS } from "@/lib/member-address";
 import { parseDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
@@ -85,11 +85,6 @@ const profileSchema = z.object({
   postalSameAsPhysical: z.boolean().optional(),
 });
 
-const PHONE_FIELDS = [
-  "phoneCountryCode",
-  "phoneAreaCode",
-  "phoneNumber",
-] as const;
 const STREET_FIELDS = [
   "streetAddressLine1",
   "streetAddressLine2",
@@ -109,7 +104,7 @@ const POSTAL_FIELDS = [
 const PROFILE_AUDIT_FIELDS = [
   "firstName",
   "lastName",
-  ...PHONE_FIELDS,
+  ...MEMBER_PHONE_FIELDS,
   "dateOfBirth",
   "ageTier",
   ...STREET_FIELDS,
@@ -186,7 +181,7 @@ export async function PUT(req: NextRequest) {
   };
 
   // Phone fields
-  for (const f of PHONE_FIELDS) {
+  for (const f of MEMBER_PHONE_FIELDS) {
     updateData[f] = data[f]?.trim() || null;
   }
 
@@ -416,7 +411,7 @@ export async function PUT(req: NextRequest) {
             changedFieldCount: changedFields.length,
             fieldGroups: {
               name: hasAnyField(changedFields, ["firstName", "lastName"]),
-              phone: hasAnyField(changedFields, PHONE_FIELDS),
+              phone: hasAnyField(changedFields, MEMBER_PHONE_FIELDS),
               address: hasAnyField(changedFields, [
                 ...STREET_FIELDS,
                 ...POSTAL_FIELDS,

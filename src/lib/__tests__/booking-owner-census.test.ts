@@ -986,6 +986,12 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // `booking.findUniqueOrThrow`/`findMany` selects, and Booking declares
   // `organisation`.
   "src/lib/booking-owner-name.ts::organisation: { select: { name: true, email: true } },#0",
+  // #5398: the two hold-conflict readers' select, written once as
+  // `HOLD_CONFLICT_BOOKING_SELECT` (both copies were rooted `booking.findMany`
+  // selects before). Verified by hand: written `satisfies Prisma.BookingSelect`,
+  // read back through `Prisma.BookingGetPayload<{ select: typeof … }>`, passed as
+  // `select` to both `booking.findMany` calls; Booking declares `organisation`.
+  "src/lib/capacity.ts::organisation: { select: { name: true, email: true } },#0",
   "src/lib/cron-additional-payment-reminders.ts::organisation: { select: { name: true, email: true } },#0",
   "src/lib/cron-confirm-pending.ts::organisation: { select: { name: true, email: true } },#0",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts::organisation: { select: { name: true, email: true } },#0",

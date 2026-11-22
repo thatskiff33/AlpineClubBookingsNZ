@@ -14,7 +14,8 @@
  *
  * Behaviour-preserving: money stays integer cents, booking dates stay NZ
  * date-only, and every extracted region reproduces its original call sequence
- * and arguments exactly.
+ * and arguments exactly. Two more shared steps (the held-lodge read, the
+ * post-commit member-guest notices) are in `booking-request-approval-shared.ts`.
  */
 import {
   AgeTier,
