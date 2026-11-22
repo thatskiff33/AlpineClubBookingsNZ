@@ -32,17 +32,17 @@ export const AI_DIAGNOSTICS_DISCLOSURE = {
   providerName,
   providerPrivacyUrl: recipient.privacyUrl,
   heading: "Where your data goes",
-  summary: `To answer a question, AI Diagnostics sends excerpts of the club's data to ${providerName}, which processes them outside New Zealand.`,
+  summary: `To answer a question, AI Diagnostics sends excerpts of the club's data to ${providerName}, which may process them outside New Zealand.`,
   dataSentIntro: "Each question can send:",
   dataSent: [
     "the question, and the admin screen it was asked from, including that screen's filters and search",
     "earlier questions and answers in the same conversation",
     "excerpts of this application's code, its built-in guides, and any private notes this deployment adds",
     "records looked up to answer it, such as bookings, payments, settings and job runs",
-    "members' personal details only when the administrator ticks the personal-details box for that question, and a search for people only when the search box is ticked",
+    "personal details held in member records only when the administrator ticks the personal-details box for that question, and a search for people only when the search box is ticked; anything typed into the question or a screen's search, including a name, is sent as typed",
   ],
   retention: `This application sends ${providerName} no instruction about how long to keep the excerpts. Retention, including zero retention, is arranged between the club and ${providerName} on the club's own ${providerName} account — the one behind the Diagnostics key.`,
-  acknowledgementLabel: `I understand that switching on AI Diagnostics sends these excerpts to ${providerName} for processing outside New Zealand.`,
+  acknowledgementLabel: `I understand that switching on AI Diagnostics sends these excerpts to ${providerName}, which may process them outside New Zealand.`,
   acknowledgementRequired:
     "Tick the statement about where AI Diagnostics sends data before saving.",
 } as const;

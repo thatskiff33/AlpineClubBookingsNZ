@@ -59,6 +59,9 @@ function getReadiness(
   };
 }
 
+/** Ties the disabled Save button to the hint that says why (#5243). */
+const AI_DIAGNOSTICS_ACKNOWLEDGEMENT_HINT_ID = "ai-diagnostics-acknowledgement-hint";
+
 function cloneSettings(settings: ModuleSettingsValues): ModuleSettingsValues {
   return Object.fromEntries(
     MODULE_KEYS.map((key) => [key, settings[key]]),
@@ -273,6 +276,11 @@ export default function AdminModulesPage() {
                 draft === null ||
                 awaitingAiDiagnosticsAcknowledgement
               }
+              aria-describedby={
+                awaitingAiDiagnosticsAcknowledgement
+                  ? AI_DIAGNOSTICS_ACKNOWLEDGEMENT_HINT_ID
+                  : undefined
+              }
             >
               {saving ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -283,7 +291,10 @@ export default function AdminModulesPage() {
             </ViewOnlyActionButton>
           </div>
           {awaitingAiDiagnosticsAcknowledgement ? (
-            <p className="max-w-xs text-sm text-muted-foreground lg:text-right">
+            <p
+              id={AI_DIAGNOSTICS_ACKNOWLEDGEMENT_HINT_ID}
+              className="max-w-xs text-sm text-muted-foreground lg:text-right"
+            >
               {AI_DIAGNOSTICS_DISCLOSURE.acknowledgementRequired}
             </p>
           ) : null}

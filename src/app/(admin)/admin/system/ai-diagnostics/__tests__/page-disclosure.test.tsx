@@ -71,7 +71,7 @@ describe("AI Diagnostics page — where your data goes", () => {
     const text = section.textContent ?? "";
 
     expect(text).toContain("Anthropic");
-    expect(text).toContain("outside New Zealand");
+    expect(text).toContain("which may process them outside New Zealand");
     // What kinds of data go.
     expect(text).toContain("the question, and the admin screen it was asked from");
     expect(text).toContain("earlier questions and answers in the same conversation");
@@ -79,7 +79,8 @@ describe("AI Diagnostics page — where your data goes", () => {
       "excerpts of this application's code, its built-in guides, and any private notes this deployment adds",
     );
     expect(text).toContain("records looked up to answer it");
-    expect(text).toContain("members' personal details only when the administrator ticks");
+    expect(text).toContain("personal details held in member records only when the administrator ticks");
+    expect(text).toContain("including a name, is sent as typed");
     // Retention is the club's arrangement, not a setting here.
     expect(text).toContain("no instruction about how long to keep the excerpts");
     expect(text).toContain("zero retention, is arranged between the club and Anthropic");

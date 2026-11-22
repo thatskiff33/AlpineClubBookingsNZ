@@ -104,10 +104,15 @@ describe("Modules page — AI Diagnostics disclosure", () => {
     fireEvent.click(await screen.findByRole("checkbox", { name: "AI Diagnostics" }));
 
     expect(saveButton()).toBeDisabled();
-    expect(screen.getByText(AI_DIAGNOSTICS_DISCLOSURE.acknowledgementRequired)).toBeInTheDocument();
+    const hint = screen.getByText(AI_DIAGNOSTICS_DISCLOSURE.acknowledgementRequired);
+    // The disabled Save names the hint that says why, for screen-reader users.
+    expect(hint.id).not.toBe("");
+    expect(saveButton().getAttribute("aria-describedby")?.split(" ")).toContain(hint.id);
+    expect(saveButton()).toHaveAccessibleDescription(AI_DIAGNOSTICS_DISCLOSURE.acknowledgementRequired);
 
     fireEvent.click(acknowledgement()!);
     expect(saveButton()).toBeEnabled();
+    expect(saveButton()).not.toHaveAttribute("aria-describedby");
     fireEvent.click(saveButton());
 
     await screen.findByText("Module settings saved.");

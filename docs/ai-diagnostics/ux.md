@@ -30,7 +30,7 @@ which points at the page.
 ## Switching it on: where your data goes
 
 The AI Diagnostics card on Admin → Modules states, before it can be switched on,
-that each question sends excerpts to Anthropic for processing outside New Zealand,
+that each question sends excerpts to Anthropic, which may process them outside New Zealand,
 what those excerpts are, and that retention is arranged between the club and
 Anthropic on the club's own account. Ticking the module adds a second tick — "I
 understand…" — and Save stays disabled, with a one-line hint, until it is ticked.

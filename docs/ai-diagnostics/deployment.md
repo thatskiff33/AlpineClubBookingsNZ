@@ -608,17 +608,24 @@ provisions and drops a cluster role and temporarily revokes
 administrator decides to switch it on. It does (#5243):
 
 - **Admin → Modules.** The AI Diagnostics card states that each question sends
-  excerpts to Anthropic for processing outside New Zealand, and what those excerpts
-  are: the question and the screen it was asked from, excerpts of the
-  application's code and guides, records looked up to answer it, and members'
-  personal details only when the administrator ticks consent for that question.
-  A save that switches Diagnostics on needs the administrator to tick that
-  statement first.
+  excerpts to Anthropic, which may process them outside New Zealand, and what
+  those excerpts are: the question and the screen it was asked from, including
+  its filters and search; earlier questions and answers in the same
+  conversation; excerpts of the application's code, its built-in guides and any
+  private notes this deployment adds; records looked up to answer it; and
+  personal details held in member records only when the administrator ticks the
+  personal-details box for that question (a search for people only when the
+  search box is ticked). Anything typed into the question or a screen's search,
+  including a name, is sent as typed, whatever is ticked. The card's statement
+  (`src/lib/ai-diagnostics-disclosure.ts`) is the full list. A save that switches
+  Diagnostics on needs the administrator to tick that statement first.
 - **The server checks it.** `PUT /api/admin/modules` refuses (409) any save that
   would switch Diagnostics on without the current statement's version, whichever
   screen sent it, and writes nothing. A save that switches it on records an
   `AI_DIAGNOSTICS_DISCLOSURE_ACKNOWLEDGED` audit entry (category `admin`, with the
-  statement's version) in the same transaction as the change.
+  statement's version) in the same transaction as the change. The write only
+  lands if the Diagnostics flag is still what the route read; otherwise it is
+  refused (409) and nothing, audit entries included, is written.
 - **Admin → AI Diagnostics.** The same statement shows, read-only, under "Where
   your data goes", for every administrator who can open the page.
 
@@ -642,7 +649,7 @@ dedicated Diagnostics key. A club that needs zero retention arranges it there.
 | Path | What stops it switching on unacknowledged |
 | --- | --- |
 | Admin → Modules | The tick, and the route check above. |
-| Other admin screens that save the module set (magic-link and Google sign-in cards, public booking requests, lodge display setup) | The same route check: they never change the Diagnostics flag, and a save that would switch it on is refused. |
+| Other admin screens that save the module set (magic-link and Google sign-in cards, public booking requests, lodge display setup) | The same route check: they never change the Diagnostics flag, and a save that would switch it on is refused. The write is conditional on the Diagnostics flag the route read, so a save built from a stale read cannot switch it back on after someone switched it off; it gets a 409 and writes nothing. |
 | Admin configuration import, and the boot auto-import (`CONFIG_BUNDLE_IMPORT_PATH`) | `aiDiagnostics` never travels in a bundle, even one edited by hand ([below](#configuration-is-deployment-local)). |
 | Fresh install, migrations | The column and the application default are off, and no migration turns it on. |
 | Seeds, scripts, E2E setup | A census test pins the code that writes the module settings row, and the E2E setup never names the flag. |
