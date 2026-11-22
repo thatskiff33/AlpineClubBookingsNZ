@@ -1,3 +1,0 @@
-{ "extends": "./tsconfig.json", "compilerOptions": { "incremental": false, "skipLibCheck": true, "noEmit": true },
-  "include": ["next-env.d.ts", "src/types/**/*.d.ts"],
-  "files": ["src/app/api/bookings/[id]/cancel-preview/route.ts","src/lib/connection-shapes.ts","src/lib/mcp/catalogue.ts","src/app/api/lodge-roster/route.ts","src/app/api/notices/[id]/route.ts","src/app/api/profile/route.ts"] }

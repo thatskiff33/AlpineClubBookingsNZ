@@ -342,7 +342,7 @@ describe("list_notices, get_notice and mark_notice_read", () => {
   it("is absent for a kiosk-only account, which never reaches the member notices page", async () => {
     h.auth.mockResolvedValue(lodgeSession());
     h.getNoticeForMember.mockResolvedValue(notice);
-    for (const headers of [{}, { [MCP_PRINCIPAL_HEADER]: "p" }]) {
+    for (const headers of [{}, { [MCP_PRINCIPAL_HEADER]: "p" }] as Record<string, string>[]) {
       const res = await getNotice(new Request("https://club.example.test/api/notices/notice-1", { headers }), {
         params: Promise.resolve({ id: "notice-1" }),
       });
@@ -437,7 +437,7 @@ describe("get_lodge_roster", () => {
 
   it("is absent for a kiosk-only account, which never reaches the roster page (INV-PRIV-017)", async () => {
     h.auth.mockResolvedValue(lodgeSession());
-    for (const headers of [{}, { [MCP_PRINCIPAL_HEADER]: "p" }]) {
+    for (const headers of [{}, { [MCP_PRINCIPAL_HEADER]: "p" }] as Record<string, string>[]) {
       const res = await getRoster(new Request("https://club.example.test/api/lodge-roster", { headers }));
       expect(res.status).toBe(404);
     }

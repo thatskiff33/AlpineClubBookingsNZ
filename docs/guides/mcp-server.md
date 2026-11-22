@@ -174,7 +174,7 @@ calls an existing API route, and the route decides, exactly as for a browser.
 | `get_my_booking` | A summary of one of those bookings; the price and note only on a booking the member made, and whether the price is still being checked | read | `GET /api/bookings/[id]` |
 | `get_my_family_group` | The member and their family groups' active members: id, name, age group, relationship and whether they can be booked | read | `GET /api/members/family` |
 | `get_my_profile` | The member's own name, contact details, address and age group | read | `GET /api/profile/summary` |
-| `list_notices` | Club notices the member can see | read | `GET /api/notices` |
+| `list_notices` | Club notices the member can see, each body as plain text | read | `GET /api/notices` |
 | `create_draft_booking` | Saves a **draft** booking: holds no beds, takes no payment; the member finishes and pays on the website. Answers with the draft's summary | write | `POST /api/bookings` (always `draft: true`) |
 | `preview_cancel_booking` | What cancelling would refund, without cancelling | read | `GET /api/bookings/[id]/cancel-preview` |
 | `cancel_my_booking` | Cancels one of the member's own bookings and refunds it under the club's policy. An officer's connection is refused anyone else's booking | destructive | `POST /api/bookings/[id]/cancel` |
@@ -193,7 +193,7 @@ member's own record only.
 | Action | What it does | Kind | Route |
 | --- | --- | --- | --- |
 | `get_my_notification_preferences` | Which club emails the member receives | read | `GET /api/notifications/preferences` |
-| `update_my_notification_preferences` | Turns club emails on or off; only the ones sent change | write | `PUT /api/notifications/preferences` |
+| `update_my_notification_preferences` | Turns club emails on or off; only the ones sent change. Marketing email can only be turned off: the member opts in on the website (`INV-PRIV-026`) | write | `PUT /api/notifications/preferences` |
 | `update_my_profile` | Saves the member's name, phone, date of birth, addresses and occupation. Name and phone are always saved; any other field not sent is kept. Answers with the `get_my_profile` fields | write | `PUT /api/profile` |
 | `get_notice` | One notice the member can see, its body as plain text. Does not mark it read | read | `GET /api/notices/[id]` (new) |
 | `mark_notice_read` | Records that the member read a notice. Never acknowledges one | write | `POST /api/notices/[id]/read` |
@@ -320,8 +320,8 @@ Every action sends the connected person's own records, except
 - `get_my_credit_balance`: the balance in cents, not the credit history.
 - `get_my_subscription_status`: this season's status and why, the invoice
   number, the membership type and any member-rate notice. Not the invoice link.
-- `list_notices`: the notices the person can see, with whether they read and
-  acknowledged each.
+- `list_notices`: the notices the person can see, each body as plain text,
+  with whether they read and acknowledged each.
 - `get_availability` and `list_lodges`: free beds per night and the lodges the
   person can book. No personal information.
 - `get_my_notification_preferences` and `update_my_notification_preferences`:
