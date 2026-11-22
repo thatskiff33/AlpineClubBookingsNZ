@@ -267,7 +267,7 @@ describe("the legacy adapter is an adapter, not a second implementation", () => 
       cannot catch one whose shape is identical — which is the likelier
       regression, because the obvious way to "fix" a formatting bug in an adapter
       is to build a formatter there. Two implementations that agree today are two
-      implementations, and CT-6 has to delete one of them.
+      implementations, and the kernel exists to leave one of them.
     */
     for (const adapter of ["src/lib/date-only.ts"]) {
       const source = stripComments(
