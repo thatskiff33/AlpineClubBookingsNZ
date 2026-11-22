@@ -9,9 +9,14 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Button, type ButtonProps } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
+import { Pagination } from "@/components/admin/admin-pagination";
+import { fetchOffPageQueueRecord, useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
+import { PinnedQueueRecordNote } from "@/components/admin/pinned-queue-record-note";
+import { parseAdminListPageParam } from "@/lib/admin-list-page";
 import { bookingOwner } from "@/lib/booking-owner";
 import { ChangeRequestPaymentLine } from "@/components/admin/booking-requests/change-request-payment-line";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
+import { BOOKING_REQUESTS_STATUS_PARAM } from "@/lib/admin-booking-requests-path";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -45,11 +50,11 @@ import {
 import { DecidedChangeRequestSummary } from "@/components/admin/booking-requests/booking-change-request-decided";
 import { RequestedGuestNights } from "@/components/admin/booking-requests/requested-guest-nights";
 import {
-  EMPTY_DECISION_DRAFT,
   statusBadgeClass,
   type BookingChangeRequestData,
-  type DecisionDraft,
 } from "@/components/admin/booking-requests/booking-change-request-panel-model";
+import { useBookingChangeRequestDecisionDrafts } from "@/components/admin/booking-requests/use-booking-change-request-decision-drafts";
+import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 
 type RequestFilter = "REQUESTED" | "APPROVED" | "REJECTED" | "ALL";
 
@@ -75,7 +80,6 @@ function useInstantFormatter() {
     value ? clubTime.instantDateTime(new Date(value)) : null;
 }
 
-
 interface BookingChangeRequestsPanelProps {
   basePath?: string;
   fixedSearchParams?: Record<string, string>;
@@ -93,6 +97,7 @@ function buildBookingChangeRequestsPath(
   fixedSearchParams: Record<string, string>,
   status: RequestFilter,
   requestId: string | null,
+  page: number,
 ) {
   return buildBookingRequestDatasetPath({
     basePath,
@@ -102,6 +107,7 @@ function buildBookingChangeRequestsPath(
     defaultStatus: "REQUESTED",
     recordKey: "requestId",
     recordId: requestId,
+    page,
   });
 }
 
@@ -115,26 +121,23 @@ export function BookingChangeRequestsPanel({
   const formatDateTime = useInstantFormatter();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const initialFilter = searchParams.get("status");
+  const initialFilter = searchParams.get(BOOKING_REQUESTS_STATUS_PARAM);
   const requestId = searchParams.get("requestId");
   const defaultFilter: RequestFilter = requestId ? "ALL" : "REQUESTED";
   const [requests, setRequests] = useState<BookingChangeRequestData[]>([]);
   const [filter, setFilter] = useState<RequestFilter>(
     isRequestFilter(initialFilter) ? initialFilter : defaultFilter
   );
+  const pageParam = parseAdminListPageParam(searchParams.get("page"));
+  const { page, setPage, receive, beginLoad, pagination } = useAdminQueuePage({ filterKey: filter, initialPage: pageParam });
+  // INV-OPS-020: a deep-linked request off the loaded page is pinned above it.
+  const [pinnedRequest, setPinnedRequest] = useState<BookingChangeRequestData | null>(null);
+  const shownRequests = pinnedRequest ? [pinnedRequest, ...requests] : requests;
   const [loading, setLoading] = useState(true);
-  /**
-   * Every open decision draft, keyed by the request it belongs to.
-   *
-   * One entry per row the officer has typed into, so a row's fields, the guard on
-   * its buttons and the body it submits all read the SAME object and no row can
-   * read another's (#2562 review — see `DecisionDraft`). A row nobody has typed
-   * into has no entry, which is exactly the empty draft its buttons stay disabled
-   * on.
-   */
-  const [decisionDrafts, setDecisionDrafts] = useState<
-    Record<string, DecisionDraft>
-  >({});
+  // Every open decision draft, keyed by the request it belongs to (the state
+  // and its three helpers live in the hook, #2562 review).
+  const { decisionDraftFor, updateDecisionDraft, clearDecisionDraft } =
+    useBookingChangeRequestDecisionDrafts();
   /**
    * The ref is the synchronous claim; the state is only its rendered mirror.
    * React can batch two clicks before a disabled prop commits, so state alone lets
@@ -144,26 +147,6 @@ export function BookingChangeRequestsPanel({
   const [decisionInFlight, setDecisionInFlight] = useState<Set<string>>(
     () => new Set(),
   );
-  /** This row's draft as typed, or the empty one. Never another row's. */
-  function decisionDraftFor(id: string): DecisionDraft {
-    return decisionDrafts[id] ?? EMPTY_DECISION_DRAFT;
-  }
-  /** Patch one field of one row's draft, leaving every other row untouched. */
-  function updateDecisionDraft(id: string, patch: Partial<DecisionDraft>) {
-    setDecisionDrafts((current) => ({
-      ...current,
-      [id]: { ...(current[id] ?? EMPTY_DECISION_DRAFT), ...patch },
-    }));
-  }
-  /** Drop one row's draft — used on a SUCCESSFUL decision, and only then. */
-  function clearDecisionDraft(id: string) {
-    setDecisionDrafts((current) => {
-      if (!(id in current)) return current;
-      const next = { ...current };
-      delete next[id];
-      return next;
-    });
-  }
   const [error, setError] = useState("");
   // #3750 (P2 on #3955): each finished-stay card's dry-run figures, and any
   // over-capacity night its officer has to confirm, keyed by request id.
@@ -179,11 +162,7 @@ export function BookingChangeRequestsPanel({
   /** This row's officer entry as sent (#4030, #4533). */
   const entryOf = (request: BookingChangeRequestData) => officerEntryOf(request, decisionDraftFor(request.id));
   const currentPath = buildBookingChangeRequestsPath(
-    basePath,
-    searchParams.toString(),
-    fixedSearchParams,
-    filter,
-    requestId,
+    basePath, searchParams.toString(), fixedSearchParams, filter, requestId, page,
   );
 
   useEffect(() => {
@@ -191,24 +170,31 @@ export function BookingChangeRequestsPanel({
   }, [currentPath, router]);
 
   const fetchRequests = useCallback(async () => {
+    const isCurrent = beginLoad();
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`/api/admin/booking-change-requests?status=${filter}`);
+      const response = await fetch(`/api/admin/booking-change-requests?status=${filter}&page=${page}`);
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || "Failed to load booking change requests");
       }
-      setRequests(Array.isArray(data?.data) ? data.data : []);
+      const rows: BookingChangeRequestData[] = Array.isArray(data?.data) ? data.data : [];
+      const pinned = await fetchOffPageQueueRecord("/api/admin/booking-change-requests", "requestId", requestId, rows);
+      if (!isCurrent()) return;
+      setRequests(rows);
+      receive(data, rows.length);
+      setPinnedRequest(pinned);
       setMemberGuestFind(data?.memberGuestFind ?? null);
     } catch (err) {
+      if (!isCurrent()) return;
       setError(err instanceof Error ? err.message : "Failed to load booking change requests");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.
-  }, [filter, setError, setLoading, setRequests, setMemberGuestFind]);
+  }, [beginLoad, filter, page, receive, requestId, setError, setLoading, setRequests, setMemberGuestFind, setPinnedRequest]);
 
   useEffect(() => {
     fetchRequests();
@@ -295,6 +281,7 @@ export function BookingChangeRequestsPanel({
           linkedModificationId: trimmedModificationId,
         }),
       );
+      notifyAdminQueueChanged();
       await fetchRequests();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to review request");
@@ -366,20 +353,20 @@ export function BookingChangeRequestsPanel({
           </Button>
         ))}
         <DatasetResetButton
-          disabled={filter === defaultFilter}
-          onReset={() => setFilter(defaultFilter)}
+          disabled={filter === defaultFilter && page === 1}
+          onReset={() => { setFilter(defaultFilter); setPage(1); }}
         />
       </div>
 
       {loading ? (
         <div className="py-8 text-center">Loading...</div>
-      ) : requests.length === 0 ? (
+      ) : shownRequests.length === 0 ? (
         <div className="py-8 text-center text-muted-foreground">
           No {filter === "ALL" ? "" : filter.toLowerCase() + " "}booking change requests found.
         </div>
       ) : (
         <div className="space-y-4">
-          {requests.map((request) => {
+          {shownRequests.map((request) => {
             const summary =
               request.requestedChanges?.requested?.summary ||
               "Locked-period booking change";
@@ -404,6 +391,7 @@ export function BookingChangeRequestsPanel({
                 className={request.id === requestId ? "border-warning-6" : undefined}
               >
                 <CardHeader>
+                  {request === pinnedRequest ? <PinnedQueueRecordNote /> : null}
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <CardTitle className="text-lg">{owner.firstName} {owner.lastName}</CardTitle>
@@ -678,6 +666,7 @@ export function BookingChangeRequestsPanel({
           })}
         </div>
       )}
+      {pagination ? <Pagination {...pagination} aria-label="Booking change request pages" /> : null}
       </div>
     </div>
   );

@@ -1,10 +1,11 @@
 import { createHmac, randomInt, timingSafeEqual } from "crypto";
 import type { NextRequest } from "next/server";
 import { hashActionToken, issueActionToken } from "./action-tokens";
+import { isCalendarDate } from "./club-time";
 import { prisma } from "./prisma";
 import { requireAuthSecret } from "./runtime-config";
 
-// Lobby display device auth (fork issue #27, ADR-001): a deliberately
+// Lobby display device auth (fork issue hoppers99/AlpineClubBookingsNZ#27, ADR-001): a deliberately
 // weakest-privileged, sessionless credential. checkDisplayAuth() resolves
 // tokenHash → device → lodgeId and nothing else — it never maps to a Member
 // and shares no code path with checkLodgeAuth/KioskTier, so the display token
@@ -149,8 +150,6 @@ export async function confirmDevicePairing(
 // a pairing blob can never be replayed as a grant and vice versa.
 export const PREVIEW_GRANT_TTL_SECONDS = 5 * 60;
 
-const PREVIEW_GRANT_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
 export interface PreviewGrantPayload {
   /** The authored v2 template to preview (null → the lodge's legacy board, OR a
    * draft preview when `draftNonce` is set). */
@@ -218,7 +217,7 @@ export function decodePreviewGrant(raw: string): PreviewGrantPayload | null {
       (payload.windowStart != null &&
         !(
           typeof payload.windowStart === "string" &&
-          PREVIEW_GRANT_DATE_PATTERN.test(payload.windowStart)
+          isCalendarDate(payload.windowStart)
         ))
     ) {
       return null;
@@ -295,7 +294,7 @@ export interface DisplayAuthResult {
  * The display-surface guard. Authorises ONLY the display page shell, the
  * display-state API, and the heartbeat — resolved purely from the hashed
  * token to its device and the device's lodge FK. Rejections never update
- * lastSeenAt (issue #27 AC6).
+ * lastSeenAt (issue hoppers99/AlpineClubBookingsNZ#27 AC6).
  */
 export async function checkDisplayAuth(
   request: NextRequest

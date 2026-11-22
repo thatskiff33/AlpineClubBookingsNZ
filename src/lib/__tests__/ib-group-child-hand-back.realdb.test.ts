@@ -95,7 +95,7 @@ async function editHandBack(childId: string, key: string): Promise<string> {
         bookingId: childId,
         paymentId: booking.payment!.id,
         bookingModificationId: modificationId,
-        adjusted: { refundAmountCents: EDIT_CENTS, hasSucceededPayment: false },
+        adjusted: { refundAmountCents: EDIT_CENTS, hasSucceededPayment: false, refundHeldForDispute: false },
         editLabel: "date change",
         booking,
       }),
@@ -131,6 +131,15 @@ const complete = (taskId: string) =>
   );
 const dismiss = (taskId: string) =>
   resolution.resolveManualRefundTask({ taskId, resolution: "dismissed", note: "settled another way", actingMemberId: NAMES.officerId, recordedNightPrices: null }, CLUB_FORMAT_TEST);
+/**
+ * #4516 (owner decision, 14 Nov 2026): an officer's dismissal of a journal hand-back is refused for now. The reopen
+ * cases below start from a row an earlier release (or the old colour mid-deploy) dismissed, so it is written as that.
+ */
+const dismissedBeforeRefusal = async (taskId: string) => {
+  await expect(dismiss(taskId)).rejects.toMatchObject({ status: 409, message: copy.JOURNAL_HAND_BACK_DISMISS_REFUSAL });
+  expect((await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: taskId } })).status).toBe("OPEN");
+  await prisma.manualRefundTask.update({ where: { id: taskId }, data: { status: "DISMISSED", note: "settled another way", completedAt: new Date(), completedByMemberId: NAMES.officerId } });
+};
 const reopen = (taskId: string) => reopenDoor.reopenManualRefundTask({ taskId, actingMemberId: NAMES.officerId, note: "dismissed by mistake" });
 
 const payment = (bookingId: string) =>
@@ -181,11 +190,11 @@ const money = async (bookingId: string) =>
     expect((await payment(edited!)).refundedAmountCents).toBe(EDIT_CENTS);
   }, 300_000);
 
-  it("an edit's: dismissed and reopened on a live child; after the group cancel a dismissal is refused naming the organiser, and paying it closes it", async () => {
+  it("an edit's: dismissed (before #4516) and reopened on a live child; after the group cancel a dismissal is refused naming the organiser, and paying it closes it", async () => {
     const g = await settledGroup("cancel-edit");
     const [edited, other] = g.children;
     const live = await editHandBack(edited!, "m1");
-    await dismiss(live);
+    await dismissedBeforeRefusal(live);
     await reopen(live);
     expect((await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: live } })).status).toBe("OPEN");
 
@@ -213,7 +222,7 @@ const money = async (bookingId: string) =>
     const g = await settledGroup("reopen-after-cancel");
     const [edited] = g.children;
     const taskId = await editHandBack(edited!, "m1");
-    await dismiss(taskId);
+    await dismissedBeforeRefusal(taskId);
     await cancelGroupHistory(NAMES, g);
 
     await expect(reopen(taskId)).rejects.toMatchObject({ status: 409, message: copy.editRefundHandBackReopenAfterCancelMessage(GROUP_PAID) });
@@ -230,7 +239,7 @@ const money = async (bookingId: string) =>
     const remaining = GROUP_CHILD_CENTS - planned;
     const taskId = await appealHandBack(child!, remaining);
 
-    await dismiss(taskId);
+    await dismissedBeforeRefusal(taskId);
     await reopen(taskId);
     await complete(taskId);
 
@@ -335,7 +344,7 @@ const money = async (bookingId: string) =>
     const refused = { status: 409, message: GROUP_CANCEL_IN_PROGRESS_RAISE_MESSAGE };
     await expect(underLock((tx, booking) => raiseEditRefundHandBackIfOwed(tx, {
       bookingId: edited!, paymentId: booking.payment!.id, bookingModificationId: `${edited}-mid-edit`,
-      adjusted: { refundAmountCents: 1_000, hasSucceededPayment: false }, editLabel: "date change", booking,
+      adjusted: { refundAmountCents: 1_000, hasSucceededPayment: false, refundHeldForDispute: false }, editLabel: "date change", booking,
     }))).rejects.toMatchObject(refused);
     await expect(underLock((tx, booking) => raiseRefundRequestHandBack(tx, {
       bookingId: edited!, paymentId: booking.payment!.id, refundRequestId: `${edited}-mid-appeal`, amountCents: 1_000, booking,
@@ -352,7 +361,7 @@ const money = async (bookingId: string) =>
       booking: (await tx.booking.findUniqueOrThrow({ where: { id: edited! }, include: { payment: true, guests: true } })) as never,
       priceDiffCents: -1_000, changeFeeCents: 0, reduction: noReductionAgainstUnpaidAsk(-1_000),
       settlementOptions: { basisAmountCents: 1_000, cardRefundAmountCents: 500, cardRefundPercentage: 50, accountCreditAmountCents: 1_000, accountCreditPercentage: 100,
-        daysUntilCheckIn: 30, requiresSettlementMethod: true, returnsToOrganiser: false, organiserRefundByBankTransfer: false },
+        daysUntilCheckIn: 30, requiresSettlementMethod: true, returnsToOrganiser: false, organiserRefundByBankTransfer: false, refundByBankTransfer: false, refundHeldForDispute: false },
       settlementMethod: "credit", todayAtClub: requireCalendarDate("2026-07-01"), format: CLUB_FORMAT_TEST,
     }))).rejects.toMatchObject({ status: 409, message: GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE });
     expect(await prisma.memberCredit.count({ where: { sourceBookingId: edited! } })).toBe(0);

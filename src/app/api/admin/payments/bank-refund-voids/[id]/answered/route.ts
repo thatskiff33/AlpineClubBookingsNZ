@@ -1,8 +1,10 @@
 import { revalidateAdminPage } from "@/lib/admin-page-revalidation";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import { normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { isPostgresLockNotAvailable } from "@/lib/prisma-errors";
@@ -39,12 +41,11 @@ export async function POST(
 
   const { id } = await params;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON." }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON.",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
@@ -75,6 +76,12 @@ export async function POST(
         { status: 409 },
       );
     }
+    const contended = transactionContendedResponse(
+      error,
+      "Bank refund void answer contended for the lock(1) budget",
+      { context: { linkId: id } },
+    );
+    if (contended) return contended;
     logger.error({ err: error, linkId: id }, "Answering a voided bank-transfer refund note failed");
     return NextResponse.json({ error: "Could not record the answer." }, { status: 500 });
   }

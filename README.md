@@ -77,6 +77,13 @@ any code.
 | 📰 **Member notices** — committee-authored news targeted to member audiences (everyone, membership types, lodges, committee roles, or individuals), shown on the dashboard with per-member read and acknowledgement tracking and optional email-on-publish → [guide](docs/guides/member-notices.md) | 📣 **Bulk communications** — one-off admin email to opted-in members with send history and preference/suppression filtering → [guide](docs/guides/communications.md) |
 | 💬 **In-app help everywhere** — a chat-style help widget on every surface answers page-specific questions from a curated corpus and shows a full page guide; with the optional **AI help assistant** module on (a club-supplied Anthropic key + a hard monthly spend cap), authenticated members can also ask free-text questions grounded strictly in that corpus → [configuration](CONFIGURATION.md#ai-help-assistant) | 🐛 **One-click issue reporting** — members and staff capture the current view and report a problem from any page straight into the admin triage queue |
 
+**AI app connections** (the `mcpServer` module, off by default) let a member
+connect an AI app such as Claude or ChatGPT to their own account over the Model
+Context Protocol. The app signs in through the website, the member approves
+it, and it then acts with that member's permissions only, starting view-only;
+card payments and sign-in changes stay on the website →
+[guide](docs/guides/mcp-server.md).
+
 Every feature above ships with an illustrated operator guide, one per admin
 area, plus member-facing [user guides](docs/user-guide/README.md). They are
 indexed under [Run this for your club](docs/adopters/README.md#operating-a-live-club),
@@ -152,6 +159,11 @@ pnpm install --frozen-lockfile && pnpm exec prisma generate
 pnpm run setup:check                               # guided: pnpm run setup:wizard
 ```
 
+The copied `.env` declares `APP_ENVIRONMENT_ROLE=non-production`, which is right
+for a laptop. The club's live site sets `APP_ENVIRONMENT_ROLE=production`
+instead; [`DEPLOYMENT.md` → "First Bootstrap"](DEPLOYMENT.md#first-bootstrap)
+checks it before anything starts.
+
 Boot a full production-style stack (app + PostgreSQL) with Docker only:
 
 ```bash
@@ -161,7 +173,7 @@ docker compose --env-file .env.staging -p tacbookings-staging \
 docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml run --rm migrate
 docker compose --env-file .env.staging -p tacbookings-staging \
-  -f docker-compose.yml -f docker-compose.staging.yml exec app ./node_modules/.bin/tsx --conditions=react-server prisma/seed.ts
+  -f docker-compose.yml -f docker-compose.staging.yml run --rm seed
 ```
 
 Then open `http://localhost:3001` and sign in with your `SEED_ADMIN_*`
@@ -217,8 +229,8 @@ blue/green production setup is in [`DEPLOYMENT.md`](DEPLOYMENT.md).
   migration-drift, static-analysis, and E2E checks are all required on `main`
   ([`docs/MAINTENANCE.md`](docs/MAINTENANCE.md)).
 - **Backups are drilled, not assumed.** S3-backed PostgreSQL backups are
-  configured in-app at Admin → Integrations → Database Backups (no `.env`
-  edits), run on demand or nightly, and ship with a scripted quarterly restore
+  configured in-app, through the Backup Setup wizard at Admin → Integrations
+  (no `.env` edits), run on demand or nightly, and ship with a scripted quarterly restore
   drill ([`DEPLOYMENT.md`](DEPLOYMENT.md),
   [`docs/MAINTENANCE.md`](docs/MAINTENANCE.md)).
 

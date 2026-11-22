@@ -5,16 +5,8 @@ import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
-import { bookingAmountOwedCents, bookingWorthCents, recordedChangeFeeCents as feeOnPayment } from "@/lib/booking-payment-state";
-import {
-  type AgeTier,
-  type Booking,
-  type BookingGuest,
-  type Payment,
-  PaymentSource,
-  PaymentStatus,
-  type Role,
-} from "@prisma/client";
+import { bookingAmountOwedCents, bookingWorthCents, feeOwedAfterEditCents } from "@/lib/booking-payment-state";
+import { type AgeTier, type BookingStatus, PaymentStatus, type Role } from "@prisma/client";
 
 import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { repriceBookingPromotions } from "@/lib/booking-promotions";
@@ -48,7 +40,6 @@ import {
   createModificationAdditionalPaymentIntent,
   type ModificationAdditionalAskMint,
   executeBookingModificationRefund,
-  type BookingModificationPaymentContext,
 } from "@/lib/booking-modification-settlement";
 import {
   assertNoPendingEditFinancialReview,
@@ -117,7 +108,7 @@ import {
 } from "@/lib/date-only";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { sendBookingModifiedEmail } from "@/lib/email";
-import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
+import { reserveModificationRefundDebts } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
 import {
   recordBookingNightAdjustments,
@@ -167,6 +158,8 @@ import { unpaidAskOffsetHistory } from "@/lib/unpaid-ask-offset-marker";
 import { primaryInvoiceSettlementHistory } from "@/lib/booking-primary-invoice-claim";
 import { changeFeeAddedToAmountOwedHistory } from "@/lib/change-fee-owed";
 import type { BookingModifiedRefundDestination } from "@/lib/booking-modified-email-copy";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import type { DateModificationResponse, DateModificationTransactionResult } from "@/lib/booking-date-modification-transaction-result";
 
 export type ModifyBookingDatesInput = {
   checkIn?: string;
@@ -185,76 +178,49 @@ export type ModifyBookingDatesInput = {
   notifyMember?: boolean;
 };
 
-type ModifiedBooking = Booking & {
-  guests: BookingGuest[];
-  payment: Payment | null;
-};
-
-type DateModificationTransactionResult =
-  BookingModificationPaymentContext & {
-    /** #3954: the reduction cancelled the unpaid ask outright, for the member's email. */
-    unpaidAskCancelled: boolean;
-    /**
-     * The plain figure the emails, the response body and the Xero leg read.
-     * Inherited from `BookingModificationPaymentContext` until #3371 replaced
-     * that field with `additionalAsk`; it is restated here because those
-     * consumers want a number and the minter must not be handed one.
-     */
-    additionalAmountCents: number;
-    billedToOrganiserCents: number; // #4299: invoiced to the group organiser, not asked of this member
-    booking: ModifiedBooking;
-    priceDiffCents: number;
-    changeFeeCents: number;
-    refundAmountCents: number;
-    accountCreditAmountCents: number;
-    settlementMethod: BookingModificationSettlementMethod | null;
-    policyRetainedAmountCents: number;
-    promoRemoved: boolean;
-    // #2390: set only when a usage cap stopped the promotion reaching somebody
-    // on the repriced booking; null means everyone it applies to is covered.
-    promoCoverage: PromoCoverageNotice | null;
-    choreWarnings: string[];
-    datesChanged: boolean;
-    adminOverride: boolean;
-    notifyMember: boolean;
-    capacityOverridden: boolean;
-    oldCheckIn: Date;
-    oldCheckOut: Date;
-    hasIssuedXeroInvoice: boolean;
-    paymentStatus: PaymentStatus | null;
-    paymentSource: PaymentSource | null;
-    paymentReference: string | null;
-    xeroInvoiceNumber: string | null;
-    xeroRefundAmountCents: number;
-    appliedCreditGivenBackCents: number;
-    xeroAdditionalAmountCents: number;
-    // F20 (#1887): the reprice landed the booking fully credit-covered and it
-    // was auto-confirmed at $0, so the primary Xero invoice must be created.
-    zeroDollarAutoPaid: boolean;
-  };
-
-export type DateModificationResponse = {
-  booking: ModifiedBooking;
-  priceDiffCents: number;
-  changeFeeCents: number;
-  refundAmountCents: number;
-  accountCreditAmountCents: number;
-  /** #3809: applied credit the reduction gave back, as account credit. */
-  appliedCreditGivenBackCents: number;
-  settlementMethod: BookingModificationSettlementMethod | null;
-  policyRetainedAmountCents: number;
-  additionalAmountCents: number;
-  /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead of this member. */
-  billedToOrganiserCents: number;
-  additionalPaymentClientSecret: string | null;
-  stripeRefundId: string | null;
-  promoRemoved: boolean;
-  promoCoverage: PromoCoverageNotice | null;
-  choreWarnings: string[];
-  // Admin override (issue #1668): true when an over-capacity target was
-  // explicitly confirmed. Always false on the standard (hard-blocked) path.
-  capacityOverridden: boolean;
-};
+/**
+ * The non-member hold after a date change (#5398), shared by the member edit
+ * and the admin date shift: the hold window, and whether a PENDING booking is
+ * released to PAYMENT_PENDING, both key off the new check-in. A booking with no
+ * non-member guests holds nothing. The status itself is written by each caller,
+ * as a literal the sale-status census can read.
+ */
+async function recalculateNonMemberHold(
+  booking: {
+    guests: ReadonlyArray<{ isMember: boolean }>;
+    nonMemberHoldUntil: Date | null;
+    status: BookingStatus;
+    lodgeId: string | null;
+  },
+  newCheckIn: Date,
+  // Required: the policy read runs on the caller's transaction, never the
+  // module client while the global and lodge keys are held (INV-LOCK-004).
+  tx: NonNullable<Parameters<typeof getNonMemberHoldPolicy>[2]>,
+): Promise<{ nonMemberHoldUntil: Date | null; releasesToPaymentPending: boolean }> {
+  const hasNonMembers = booking.guests.some((guest) => !guest.isMember);
+  let newNonMemberHoldUntil = booking.nonMemberHoldUntil;
+  let releasesToPaymentPending = false;
+  if (hasNonMembers) {
+    const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId, tx);
+    const holdDecision = calculateBookingHoldDecision({
+      hasNonMembers,
+      checkIn: newCheckIn,
+      holdDays: holdPolicy.holdDays,
+      holdEnabled: holdPolicy.enabled,
+    });
+    if (holdDecision.shouldBePending) {
+      newNonMemberHoldUntil = new Date(
+        newCheckIn.getTime() - holdPolicy.holdDays * 24 * 60 * 60 * 1000,
+      );
+    } else {
+      newNonMemberHoldUntil = null;
+      releasesToPaymentPending = booking.status === "PENDING";
+    }
+  } else {
+    newNonMemberHoldUntil = null;
+  }
+  return { nonMemberHoldUntil: newNonMemberHoldUntil, releasesToPaymentPending };
+}
 
 export async function modifyBookingDates({
   bookingId,
@@ -824,37 +790,15 @@ export async function modifyBookingDates({
       unpaidAskCancelled,
       pendingRefundAmountCents,
       hasSucceededPayment,
+      refundHeldForDispute,
       hasIssuedXeroInvoice,
       xeroRefundAmountCents,
       xeroAdditionalAmountCents,
     } = payments;
 
-    const hasNonMembers = booking.guests.some((g) => !g.isMember);
-    let newNonMemberHoldUntil = booking.nonMemberHoldUntil;
-    let newStatus = booking.status;
-
-    if (hasNonMembers) {
-      const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId, tx);
-      const holdDecision = calculateBookingHoldDecision({
-        hasNonMembers,
-        checkIn: newCheckIn,
-        holdDays: holdPolicy.holdDays,
-        holdEnabled: holdPolicy.enabled,
-      });
-
-      if (holdDecision.shouldBePending) {
-        newNonMemberHoldUntil = new Date(
-          newCheckIn.getTime() - holdPolicy.holdDays * 24 * 60 * 60 * 1000,
-        );
-      } else {
-        newNonMemberHoldUntil = null;
-        if (booking.status === "PENDING") {
-          newStatus = "PAYMENT_PENDING";
-        }
-      }
-    } else {
-      newNonMemberHoldUntil = null;
-    }
+    const recalculatedHold = await recalculateNonMemberHold(booking, newCheckIn, tx);
+    const newNonMemberHoldUntil = recalculatedHold.nonMemberHoldUntil;
+    let newStatus = recalculatedHold.releasesToPaymentPending ? "PAYMENT_PENDING" : booking.status;
 
     // F20 (#1887): a date change that reduces the price can drop finalPriceCents
     // below the account credit applied at booking-create. Refund the
@@ -882,10 +826,10 @@ export async function modifyBookingDates({
     const appliedBeforeClamp = isRepriceablePrePayment
       ? await deriveBookingAppliedCreditCents(bookingId, tx)
       : 0;
-    // A change fee already recorded on the payment is owed with the price, so
-    // credit is kept up to the booking's worth. A new ordinary edit of an
-    // unpaid booking adds none (owner decision, 10 Nov 2026).
-    const recordedChangeFeeCents = feeOnPayment(booking.payment) + payments.changeFeeAddedToAmountOwedCents;
+    // A fee on the payment, this edit's own included (#5039: the snapshot predates
+    // its write), is owed with the price, so credit is kept up to the worth. An
+    // unpaid booking's edit records none (owner decision, 10 Nov 2026).
+    const recordedChangeFeeCents = feeOwedAfterEditCents(booking.payment, payments.feeRecordedHereCents);
     // #4661 review F1: what a card intent must now be for, as the batch lifecycle compares.
     let owedCents = bookingWorthCents({ finalPriceCents: newFinalPriceCents, changeFeeCents: recordedChangeFeeCents });
     if (appliedBeforeClamp > 0) {
@@ -1253,6 +1197,7 @@ export async function modifyBookingDates({
       bookingModificationId: bookingModification.id,
       adjusted: payments,
       editLabel: "date change", booking, // #3949: booking names the payee (a group organiser who paid by bank transfer)
+      journal, actorMemberId: actor.id, // #4516 (M4d): the R05 names the edit's actor, as its BookingModification does
     });
     // #3954, #4744: the re-issue, a folded increase's ask, and a billed-offset note are durable from this commit.
     await queueEditAskFollowUps(tx, {
@@ -1274,8 +1219,11 @@ export async function modifyBookingDates({
         booking.payment?.id,
       );
     }
-    // #3653: an organiser-settled child's refund debt, before this edit commits.
-    await reserveOrganiserChildModificationRefund(tx, {
+    // #3653, #4992: the card refund this edit owes (an organiser's, or the member's
+    // own with its frozen plan), written before this edit commits.
+    const ownCardRefund = await reserveModificationRefundDebts(tx, {
+      door: "dateChange",
+      pendingRefundAmountCents: payments.pendingRefundAmountCents,
       plan: payments.organiserChildRefund,
       bookingId,
       payment: booking.payment,
@@ -1348,6 +1296,7 @@ export async function modifyBookingDates({
       oldCheckIn,
       oldCheckOut,
       hasSucceededPayment,
+      refundHeldForDispute,
       hasIssuedXeroInvoice,
       paymentStatus: booking.payment?.status ?? null,
       paymentSource: booking.payment?.source ?? null,
@@ -1356,6 +1305,7 @@ export async function modifyBookingDates({
       xeroRefundAmountCents,
       appliedCreditGivenBackCents: payments.appliedCreditGivenBackCents,
       xeroAdditionalAmountCents,
+      ownCardRefund,
       organiserChildRefund: payments.organiserChildRefund,
       zeroDollarAutoPaid,
       paymentId: booking.payment?.id ?? null,
@@ -1367,16 +1317,14 @@ export async function modifyBookingDates({
       bookingModificationId: bookingModification.id,
       priceLines,
     } satisfies DateModificationTransactionResult;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   const refund = await executeBookingModificationRefund({
     format,
     bookingId,
     result,
-    idempotencyKeyPrefix: `mod_dates_refund_${bookingId}`,
-    failureMessage: "Stripe refund failed after date change - enqueueing recovery",
-    recoveryFailureMessage:
-      "Failed to enqueue payment recovery for Stripe refund failure after date change",
+    door: "dateChange",
+    failureMessage: "Stripe refund failed after date change; the pre-persisted debt stays owed",
   });
 
   const additionalMint = await createModificationAdditionalPaymentIntent({
@@ -1539,7 +1487,9 @@ async function dispatchDatePostTransactionSideEffects({
     // issued invoice falls back to the full delta inside classify when null.
     settlementAmountCents: result.xeroRefundAmountCents,
     settlementMethod: result.settlementMethod,
-    refundedThroughStripe: result.hasSucceededPayment, paymentId: result.paymentId,
+    // #5061 follow-up (`INV-PAY-154`): a disputed payment's reduction goes back by hand.
+    refundedThroughStripe: result.hasSucceededPayment && !result.refundHeldForDispute, paymentId: result.paymentId,
+    refundHeldForDispute: result.refundHeldForDispute,
     appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     // #3653: the organiser child refund raises the one note, after Stripe.
     organiserChildRefundOwnsCreditNote: result.organiserChildRefund !== null,
@@ -1961,33 +1911,12 @@ export async function adminShiftBookingDates({
       writer: "the admin date shift",
     });
 
-    // Non-member hold recalculation, mirroring modifyBookingDates: the hold
+    // Non-member hold recalculation, shared with modifyBookingDates: the hold
     // window and the PENDING → PAYMENT_PENDING release both key off the new
     // check-in. Status is otherwise unchanged.
-    const hasNonMembers = booking.guests.some((guest) => !guest.isMember);
-    let newNonMemberHoldUntil = booking.nonMemberHoldUntil;
-    let newStatus = booking.status;
-    if (hasNonMembers) {
-      const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId, tx);
-      const holdDecision = calculateBookingHoldDecision({
-        hasNonMembers,
-        checkIn: newCheckIn,
-        holdDays: holdPolicy.holdDays,
-        holdEnabled: holdPolicy.enabled,
-      });
-      if (holdDecision.shouldBePending) {
-        newNonMemberHoldUntil = new Date(
-          newCheckIn.getTime() - holdPolicy.holdDays * 24 * 60 * 60 * 1000,
-        );
-      } else {
-        newNonMemberHoldUntil = null;
-        if (booking.status === "PENDING") {
-          newStatus = "PAYMENT_PENDING";
-        }
-      }
-    } else {
-      newNonMemberHoldUntil = null;
-    }
+    const recalculatedHold = await recalculateNonMemberHold(booking, newCheckIn, tx);
+    const newNonMemberHoldUntil = recalculatedHold.nonMemberHoldUntil;
+    const newStatus = recalculatedHold.releasesToPaymentPending ? "PAYMENT_PENDING" : booking.status;
 
     // Update the booking envelope ONLY — every price field is left as booked.
     const updatedBooking = await tx.booking.update({
@@ -2126,7 +2055,7 @@ export async function adminShiftBookingDates({
       paymentSource: booking.payment?.source ?? null,
       lodgeId: booking.lodgeId,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   // Post-transaction (no Stripe/Xero/payment mutations at all).
   const linkedChangeRequestId = await linkModificationToOutstandingChangeRequest(

@@ -102,8 +102,15 @@ const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
  * fails when a `tsx` entrypoint is published that no root covers.
  */
 const CLI_ROOT_DIRECTORIES = ["scripts", "e2e/tools", "e2e/setup"] as const;
-/** Seed entrypoints, which `prisma db seed` also runs under `tsx`. */
-const CLI_ROOT_FILES = ["prisma/seed.ts", "prisma/demo-seed.ts"] as const;
+/**
+ * Seed entrypoints, which `prisma db seed` also runs under `tsx`, and the load
+ * stack's volume seeder (#4940), which `scripts/load-stack.sh` runs the same way.
+ */
+const CLI_ROOT_FILES = [
+  "prisma/seed.ts",
+  "prisma/demo-seed.ts",
+  "prisma/load-volume-seed.ts",
+] as const;
 
 /**
  * Reaching this is fine PROVIDED every published invocation passes
@@ -584,7 +591,7 @@ describe("CLI entrypoints and the `server-only` boundary", () => {
         "caller that has a request (CT-5, #2869).\n\n" +
         violations.join("\n\n"),
     ).toEqual([]);
-  });
+  }, 30_000);
 
   it("publishes every `server-only`-reaching command with the condition", () => {
     const violations: string[] = [];

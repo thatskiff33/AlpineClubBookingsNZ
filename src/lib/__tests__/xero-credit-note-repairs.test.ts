@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   paymentUpdateMany: vi.fn(),
   paymentFindUnique: vi.fn(),
   manualRefundTaskFindMany: vi.fn(),
+  paymentRecoveryOperationFindMany: vi.fn(),
+  paymentRefundFindMany: vi.fn(),
   transaction: vi.fn(),
 }));
 
@@ -43,6 +45,12 @@ vi.mock("@/lib/prisma", () => ({
     },
     paymentRefund: {
       aggregate: mocks.paymentRefundAggregate,
+      // #4370: the failed-later refunds the recount takes off.
+      findMany: mocks.paymentRefundFindMany,
+    },
+    // #4370: the card refund rows that record refunds Stripe failed later.
+    paymentRecoveryOperation: {
+      findMany: mocks.paymentRecoveryOperationFindMany,
     },
     paymentTransaction: {
       findMany: mocks.paymentTransactionFindMany,
@@ -55,6 +63,18 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+// #4370: the failed-later recount reads in one read-only snapshot; here it
+// runs on the mocked client, and against a real database in
+// xero-recount-failed-later-refund.realdb.test.ts.
+const snapshot = vi.hoisted(() => ({ open: vi.fn((client: unknown, run: (tx: unknown) => Promise<unknown>) => run(client)) }));
+vi.mock("@/lib/read-only-snapshot", () => ({ withReadOnlySnapshot: snapshot.open }));
+
+// #4370: how far a payment's refund notes cover more than its cash. Its own
+// reads are proved against a real database (xero-recount-failed-later-refund);
+// here a suite sets what it answers.
+const aboveCash = vi.hoisted(() => ({ read: vi.fn() }));
+vi.mock("@/lib/refund-note-coverage-above-cash", () => ({ readRefundNoteCoverageAboveCashCents: aboveCash.read }));
+
 vi.mock("@/lib/xero-error-alert", () => ({
   notifyXeroSyncError: mocks.notifyXeroSyncError,
 }));
@@ -63,6 +83,8 @@ const logger = vi.hoisted(() => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(),
 vi.mock("@/lib/logger", () => ({ default: logger }));
 
 import { repairRefundedPaymentBusinessState } from "@/lib/xero-inbound/credit-note-repairs";
+import { decideLinkedRefundedTotalCents } from "@/lib/xero-inbound/linked-refunded-total";
+import { prisma } from "@/lib/prisma";
 import { resolveModificationRefundAmountsByPaymentId } from "@/lib/xero-inbound/modification-note-refunds";
 import { COMPLETED_REFUND_REQUEST_HAND_BACK_TASK_WHERE } from "@/lib/manual-refund-task-settlement-rules";
 
@@ -77,6 +99,10 @@ beforeEach(() => {
   mocks.paymentTransactionFindMany.mockResolvedValue([]);
   // #4215: no refund request paid back unless a suite says so.
   mocks.manualRefundTaskFindMany.mockResolvedValue([]);
+  // #4370: no card refund Stripe failed later unless a suite says so.
+  mocks.paymentRecoveryOperationFindMany.mockResolvedValue([]);
+  mocks.paymentRefundFindMany.mockResolvedValue([]);
+  aboveCash.read.mockResolvedValue(0);
   // No refund detail by default, so the #4162 floor has nothing to keep.
   mocks.paymentTransactionAggregate.mockResolvedValue({ _sum: { refundedAmountCents: 0 } });
 });
@@ -1207,5 +1233,324 @@ describe("#4288: the claim and the re-read of the note's own row, under the Paym
     expect(mocks.transaction).toHaveBeenCalledTimes(2);
     expect(unchangedChecks).toHaveLength(1);
     expect(mocks.notifyXeroSyncError).toHaveBeenCalledWith(expect.objectContaining({ errorType: "refund-ledger-divergence" }));
+  });
+});
+
+// #4370 (`INV-PAY-128`; owner decision 11 Nov 2026, option (a)): a card refund
+// Stripe failed later keeps its note in Xero, so a later note's recount took it
+// again. The worked example: $100 paid, an $80 refund noted then failed, a later
+// $30 refund noted (the note being synced). What went back is $30.
+describe("#4370: a card refund Stripe failed later is taken off the recount once", () => {
+  type Reversal = { cents: number; active: boolean; status?: string };
+  const FAILED_REFUND = "re_failed";
+
+  function arrange(input: { reversal?: Reversal; failureRecorded?: boolean; aboveCashCents?: number }) {
+    mocks.xeroObjectLinkFindMany.mockImplementation(
+      async ({ where }: { where: { role?: unknown; xeroObjectType?: string; active?: boolean } }) => {
+        if (where.role === "CARD_REFUND_REVERSAL_INVOICE") {
+          const { reversal } = input;
+          if (!reversal || (where.active === true && !reversal.active)) return [];
+          return [
+            {
+              localId: "pay-1",
+              role: "CARD_REFUND_REVERSAL_INVOICE",
+              metadata: { closeTaskId: "close-1", amountCents: reversal.cents, bookingId: "booking-1", ...(reversal.status ? { status: reversal.status } : {}) },
+            },
+          ];
+        }
+        // The failed refund's own $80 note, still AUTHORISED in Xero, among the payment's refund and account notes
+        // (never the current note's own row, read by its id).
+        if (where.xeroObjectType === "CREDIT_NOTE" && typeof where.role === "object") {
+          return [{ localId: "pay-1", xeroObjectId: "cn-failed", metadata: { status: "AUTHORISED", total: 80 } }];
+        }
+        return [];
+      },
+    );
+    mocks.paymentRecoveryOperationFindMany.mockResolvedValue(
+      input.failureRecorded === false
+        ? []
+        : [{ paymentId: "pay-1", idempotencyKey: `card_refund_failed_later_${FAILED_REFUND}`, allocationPlan: null }],
+    );
+    mocks.paymentRefundFindMany.mockImplementation(async ({ where }: { where: { stripeRefundId: { in: string[] } } }) =>
+      where.stripeRefundId.in.includes(FAILED_REFUND) ? [{ paymentId: "pay-1", amountCents: 8000 }] : [],
+    );
+    aboveCash.read.mockResolvedValue(input.aboveCashCents ?? 0);
+  }
+
+  async function recount(source: PaymentSource) {
+    mocks.paymentFindMany.mockResolvedValue([
+      payment({ source, refundedAmountCents: 3000, status: PaymentStatus.PARTIALLY_REFUNDED }),
+    ]);
+    return repairRefundedPaymentBusinessState({
+      creditNoteId: "cn-current",
+      creditNote: { status: "AUTHORISED", total: 30 } as never,
+      directPaymentIds: ["pay-1"],
+      modificationRefundAmountsByPaymentId: new Map(),
+    });
+  }
+
+  const writtenTotals = () =>
+    mocks.paymentUpdate.mock.calls.map((call) => call[0].data.refundedAmountCents).filter((cents) => cents !== undefined);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.paymentUpdate.mockResolvedValue({});
+    mocks.notifyXeroSyncError.mockResolvedValue(undefined);
+  });
+
+  describe.each([PaymentSource.STRIPE, PaymentSource.INTERNET_BANKING])("on a %s payment", (source) => {
+    it("MUTATION (drop the reversal): a reversed failure plus a later note leaves the $30 that went back - no write", async () => {
+      // The live reversal answers the failure; its failure record is not counted again.
+      arrange({ reversal: { cents: 8000, active: true }, aboveCashCents: 0 });
+
+      const result = await recount(source);
+
+      // Before #4370 this wrote 10000: $80 + $30 clamped to the $100 paid.
+      expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+      expect(result).toEqual({ matchedPayments: 1, updatedPayments: 0 });
+      expect(mocks.notifyXeroSyncError).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION (double-subtract): a failure its reversal answered never comes off a second time through the failure record", async () => {
+      // Even were the notes read above the cash, the reversal's $80 is the failure's only subtraction.
+      arrange({ reversal: { cents: 8000, active: true }, aboveCashCents: 8000 });
+
+      await recount(source);
+
+      // Twice would read $30 - $80 = $0 against the $30 that went back.
+      expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+      expect(aboveCash.read).not.toHaveBeenCalled();
+    });
+
+    it("a voided reversal stops being subtracted, and the failure record does not take its place", async () => {
+      // As #4369's net coverage reads it: the void adds the note's coverage back.
+      arrange({ reversal: { cents: 8000, active: false, status: "VOIDED" }, aboveCashCents: 8000 });
+
+      await recount(source);
+
+      expect(writtenTotals()).toEqual([10000]);
+      expect(mocks.paymentUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: PaymentStatus.REFUNDED }) }),
+      );
+    });
+
+    it("an unreversed failure plus a later note comes off once, through the failure record - no write", async () => {
+      // Notes $80 + $30 against $30 of cash: $80 above it, the whole failure.
+      arrange({ aboveCashCents: 8000 });
+
+      await recount(source);
+
+      expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+      expect(aboveCash.read).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "pay-1", bookingId: "booking-1", refundedAmountCents: 3000 }),
+        expect.anything(),
+      );
+    });
+
+    it("an unreversed failure comes off no further than the notes cover above the cash", async () => {
+      // Only $50 of the notes stand above the cash (a later refund paid $30 of the failure back under its own note).
+      arrange({ aboveCashCents: 5000 });
+
+      await recount(source);
+
+      // $80 + $30 - $50 = $60.
+      expect(writtenTotals()).toEqual([6000]);
+    });
+
+    it("MUTATION (unreadable cover): a failure whose notes' cover cannot be read comes off whole, never counted again", async () => {
+      // A hand-resolved note with no readable amount: the recount cannot size the failure, so it takes all of it off.
+      arrange({});
+      aboveCash.read.mockResolvedValue(null);
+
+      await recount(source);
+
+      // Counting it again would write 10000; all of it off leaves the $30 that went back.
+      expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+    });
+
+    it("a failure with no failure record and no reversal recounts exactly as before", async () => {
+      arrange({ failureRecorded: false, aboveCashCents: 8000 });
+
+      await recount(source);
+
+      expect(writtenTotals()).toEqual([10000]);
+      expect(aboveCash.read).not.toHaveBeenCalled();
+    });
+  });
+
+  it("MUTATION (notes outside the snapshot): the refund notes the raw total counts are read in the failure term's snapshot", async () => {
+    // A refund note's link moves no Payment column, so the claim cannot catch one linked between two reads:
+    // the notes counted and the subtraction sized against them must come from the one snapshot.
+    arrange({ aboveCashCents: 8000 });
+    const txLinkFindMany = vi.fn((args: unknown) => mocks.xeroObjectLinkFindMany(args));
+    snapshot.open.mockImplementationOnce((client: unknown, run: (tx: unknown) => Promise<unknown>) =>
+      run({ ...(client as object), xeroObjectLink: { findMany: txLinkFindMany } }),
+    );
+    const isCountedNotesRead = (call: unknown[]) => {
+      const where = (call[0] as { where: { xeroObjectType?: string; role?: unknown } }).where;
+      return where.xeroObjectType === "CREDIT_NOTE" && JSON.stringify(where.role) === JSON.stringify({ in: ["REFUND_CREDIT_NOTE", "ACCOUNT_CREDIT_NOTE"] });
+    };
+
+    await recount(PaymentSource.STRIPE);
+
+    expect(snapshot.open).toHaveBeenCalledTimes(1);
+    const inSnapshot = txLinkFindMany.mock.calls.filter(isCountedNotesRead).length;
+    expect(inSnapshot).toBe(1);
+    // Every read of the counted notes went through the snapshot's client, none beside it.
+    expect(mocks.xeroObjectLinkFindMany.mock.calls.filter(isCountedNotesRead).length).toBe(inSnapshot);
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("reads the failure record from the repaired payments' card refund rows, and the failed refunds' own amounts", async () => {
+    arrange({ aboveCashCents: 8000 });
+
+    await recount(PaymentSource.STRIPE);
+
+    // One snapshot holds every read, so a reversal linked mid-recount is seen by all of them or none.
+    expect(snapshot.open).toHaveBeenCalledTimes(1);
+
+    expect(mocks.paymentRecoveryOperationFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ paymentId: { in: ["pay-1"] }, type: expect.anything() }) }),
+    );
+    expect(mocks.paymentRefundFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { paymentId: { in: ["pay-1"] }, stripeRefundId: { in: [FAILED_REFUND] }, status: { in: ["failed", "canceled"] } },
+      }),
+    );
+  });
+
+  it("MUTATION (after the floor): a subtraction below Stripe's figure is kept off and alerted, never written", async () => {
+    // The failed refund's note voided already, so only the current $30 note stands; the reversal still takes $80.
+    arrange({ reversal: { cents: 8000, active: true } });
+    mocks.xeroObjectLinkFindMany.mockImplementation(async ({ where }: { where: { role?: unknown } }) =>
+      where.role === "CARD_REFUND_REVERSAL_INVOICE"
+        ? [{ localId: "pay-1", role: "CARD_REFUND_REVERSAL_INVOICE", metadata: { closeTaskId: "close-1", amountCents: 8000, bookingId: "booking-1" } }]
+        : [],
+    );
+
+    await recount(PaymentSource.STRIPE);
+
+    // $30 - $80 is clamped to $0 before the #1353 floor keeps Stripe's $30.
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+    expect(mocks.notifyXeroSyncError).toHaveBeenCalledWith(expect.objectContaining({ errorType: "refund-ledger-divergence" }));
+  });
+});
+
+// #4449 (`INV-PAY-126`): the recount's link reads moved into one decision
+// (`decideLinkedRefundedTotalCents`) the kept settle and the note sync's
+// allocation write also run, inside their own locked transactions. These pin
+// that it gives the recount's answers, and that #4370's subtraction
+// (`INV-PAY-155`) lives in it, so it holds on every path that shares it.
+describe("#4449: the extracted refunded-total decision gives the recount's answers", () => {
+  const FAILED_REFUND = "re_failed";
+  // A $30 refund note and a reversed-nothing $80 failure recorded, with $80 of the notes above the cash.
+  function arrange(input: { failureRecorded: boolean }) {
+    mocks.xeroObjectLinkFindMany.mockImplementation(async ({ where }: { where: { role?: unknown; xeroObjectType?: string } }) =>
+      where.xeroObjectType === "CREDIT_NOTE" && typeof where.role === "object" && where.role !== null && "in" in where.role
+        ? [
+            { localId: "pay-1", xeroObjectId: "cn-failed", metadata: { status: "AUTHORISED", total: 80 } },
+            { localId: "pay-1", xeroObjectId: "cn-current", metadata: { status: "AUTHORISED", total: 30 } },
+          ]
+        : [],
+    );
+    mocks.paymentRecoveryOperationFindMany.mockResolvedValue(
+      input.failureRecorded ? [{ paymentId: "pay-1", idempotencyKey: `card_refund_failed_later_${FAILED_REFUND}`, allocationPlan: null }] : [],
+    );
+    mocks.paymentRefundFindMany.mockImplementation(async ({ where }: { where: { stripeRefundId: { in: string[] } } }) =>
+      where.stripeRefundId.in.includes(FAILED_REFUND) ? [{ paymentId: "pay-1", amountCents: 8000 }] : [],
+    );
+    aboveCash.read.mockResolvedValue(8000);
+  }
+  const ibPayment = {
+    ...payment({ refundedAmountCents: 3000, status: PaymentStatus.PARTIALLY_REFUNDED }),
+    source: PaymentSource.INTERNET_BANKING,
+    xeroInvoiceId: "inv-1" as string | null,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.paymentUpdate.mockResolvedValue({});
+  });
+
+  it("matches what the recount writes, less the note it is syncing, which the recount adds itself", async () => {
+    arrange({ failureRecorded: false });
+    mocks.paymentFindMany.mockResolvedValue([ibPayment]);
+    await repairRefundedPaymentBusinessState({
+      creditNoteId: "cn-current",
+      creditNote: { status: "AUTHORISED", total: 30 } as never,
+      directPaymentIds: ["pay-1"],
+      modificationRefundAmountsByPaymentId: new Map(),
+    });
+    const recounted = mocks.paymentUpdate.mock.calls.map((call) => call[0].data.refundedAmountCents);
+
+    const decided = await decideLinkedRefundedTotalCents(prisma as never, [ibPayment], { excludeCreditNoteId: "cn-current" });
+
+    // $80 + $30: the recount writes $110 clamped to the $100 paid; the decision, without the $30 being synced, $80.
+    expect(recounted).toEqual([10000]);
+    expect(decided.get("pay-1")).toBe(8000);
+  });
+
+  it("MUTATION (#4370 lost from the module): on the root client a failed-later card refund comes off, read in one snapshot", async () => {
+    arrange({ failureRecorded: true });
+
+    const decided = await decideLinkedRefundedTotalCents(prisma as never, [ibPayment]);
+
+    // $80 + $30 of notes, less the $80 failure: $30. Without the subtraction, $110.
+    expect(decided.get("pay-1")).toBe(3000);
+    expect(snapshot.open).toHaveBeenCalledTimes(1);
+  });
+
+  it("MUTATION (#4370 lost from the module): on a writer's own transaction it comes off too, read on that transaction", async () => {
+    arrange({ failureRecorded: true });
+    // A transaction client: the same delegates, a different client, as Prisma hands an interactive transaction.
+    const tx = { ...(prisma as object) };
+
+    const decided = await decideLinkedRefundedTotalCents(tx as never, [ibPayment]);
+
+    expect(decided.get("pay-1")).toBe(3000);
+    // Never a second connection beside the caller's locked transaction.
+    expect(snapshot.open).not.toHaveBeenCalled();
+    expect(aboveCash.read).toHaveBeenCalledWith(expect.objectContaining({ id: "pay-1" }), tx);
+  });
+
+  // #4449 review, item 1: on a writer's own READ COMMITTED transaction a refund note's link can commit between
+  // the notes read and the cover-above-cash read, which then takes off a failure no note counted.
+  function tornBetweenReadings(notesByReading: Array<string[]>) {
+    let reading = 0;
+    const notes = { "cn-failed": 80, "cn-current": 30 } as Record<string, number>;
+    mocks.xeroObjectLinkFindMany.mockImplementation(async ({ where }: { where: { role?: unknown; xeroObjectType?: string } }) => {
+      if (!(where.xeroObjectType === "CREDIT_NOTE" && typeof where.role === "object" && where.role !== null && "in" in where.role)) return [];
+      const ids = notesByReading[Math.min(reading, notesByReading.length - 1)];
+      reading += 1;
+      return ids.map((id) => ({ localId: "pay-1", xeroObjectId: id, metadata: { status: "AUTHORISED", total: notes[id] } }));
+    });
+    return () => reading;
+  }
+
+  it("MUTATION (#4449 item 1): a reading torn by a refund note linked mid-read is taken again until two readings agree", async () => {
+    arrange({ failureRecorded: true });
+    // The first reading's notes miss the failed refund's note, while its cover read already sees it.
+    const readings = tornBetweenReadings([["cn-current"], ["cn-current", "cn-failed"]]);
+    const decided = await decideLinkedRefundedTotalCents({ ...(prisma as object) } as never, [ibPayment]);
+    // $30 + $80 - $80 = $30. Taking the torn reading would be $30 - $80, clamped to nothing by every caller.
+    expect(decided.get("pay-1")).toBe(3000);
+    expect(readings()).toBe(3);
+  });
+
+  it("MUTATION (#4449 item 1): readings that never agree throw, so the writer rolls back and its event is retried", async () => {
+    arrange({ failureRecorded: true });
+    tornBetweenReadings([["cn-current"], ["cn-current", "cn-failed"], ["cn-current"], ["cn-current", "cn-failed"]]);
+    await expect(decideLinkedRefundedTotalCents({ ...(prisma as object) } as never, [ibPayment])).rejects.toThrow(/kept changing/);
+  });
+
+  it("can go below 0, so every caller clamps after the subtraction, never before it", async () => {
+    arrange({ failureRecorded: true });
+    mocks.xeroObjectLinkFindMany.mockResolvedValue([]);
+    mocks.manualRefundTaskFindMany.mockResolvedValue([]);
+
+    const decided = await decideLinkedRefundedTotalCents(prisma as never, [ibPayment]);
+
+    // No note stands, and the whole unreversed failure is $80 (its cover is read as $80).
+    expect(decided.get("pay-1")).toBe(-8000);
   });
 });

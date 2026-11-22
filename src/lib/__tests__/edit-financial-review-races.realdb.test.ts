@@ -1361,20 +1361,19 @@ let observerClient: PrismaClient;
        */
       async function xeroOnceDrained() {
         const notes = await queuedNotes();
+        // The deallocation still in flight, found by its status: a landed one and a
+        // later one can share a `createdAt` under the frozen test clock, so
+        // "the newest" is not an answer (#4284).
         const deallocation = await prisma.xeroSyncOperation.findFirst({
-          where: { localModel: "Payment", localId: PAYMENT_ID, queueType: "APPLIED_CREDIT_DEALLOCATION" },
-          orderBy: { createdAt: "desc" },
-          select: { correlationKey: true, status: true },
+          where: { localModel: "Payment", localId: PAYMENT_ID, queueType: "APPLIED_CREDIT_DEALLOCATION", status: { not: "COMPLETED" } },
+          select: { correlationKey: true },
         });
         const slices = await prisma.memberCreditNoteAllocation.findMany({
           where: { appliedToBookingId: BOOKING_ID },
           select: { memberCreditId: true, amountCents: true },
         });
         const slicedCents = slices.reduce((sum, slice) => sum + slice.amountCents, 0);
-        const allocatedCreditCents =
-          deallocation && deallocation.status !== "COMPLETED"
-            ? Number(deallocation.correlationKey?.split(":").at(-2))
-            : slicedCents;
+        const allocatedCreditCents = deallocation ? Number(deallocation.correlationKey?.split(":").at(-2)) : slicedCents;
         const reductionCents = notes.filter((note) => note.queueType !== "MODIFICATION_ACCOUNT_CREDIT_NOTE").reduce((sum, note) => sum + note.cents, 0);
         const invoiceNetCents = 20_000 - reductionCents;
 
@@ -1403,7 +1402,7 @@ let observerClient: PrismaClient;
           .map((row) => {
             const xeroCreditNoteId = row.xeroCreditNoteId ?? stamped.get(row.id) ?? null;
             const remainingCents = xeroCreditNoteId === CREDIT_NOTE_ID ? row.amountCents - allocatedCreditCents : row.amountCents;
-            return { memberCreditId: row.id, creditType: row.type, xeroCreditNoteId, remainingCents };
+            return { memberCreditId: row.id, creditType: row.type, openingCredit: false, xeroCreditNoteId, remainingCents };
           })
           .filter((lot) => lot.remainingCents > 0)
           // Noted lots first, as the oldest funding note always is outside a frozen clock.

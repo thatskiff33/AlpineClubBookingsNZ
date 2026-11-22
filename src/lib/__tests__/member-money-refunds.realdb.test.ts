@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   closeKeptCaptureReturn,
   postBookingReceipts,
+  postHandBackObligation,
   postMemberMergeTransfer,
   postPaidAnotherWayClose,
   postRefundObligation,
@@ -29,7 +30,7 @@ import { refundRequestStripeMetadata } from "@/lib/refund-slice-evidence";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
 import { cleanHistories, createHistoryBooking, historyNames, seedHistoryFixtures } from "./support/booking-ledger-history";
-import { memberMoneyTestContext } from "./support/member-money-fixtures";
+import { memberMoneyTestContext, MEMBER_MONEY_TEST_TAX_ANCHOR } from "./support/member-money-fixtures";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 
 /**
@@ -69,7 +70,7 @@ async function booking(cents = 10_000, memberId = names.memberId) {
     obligations: [{ key: memberMoneyEventKeys.bookingCharge(id), kind: "CHARGE", debtor: { kind: "MEMBER", memberId }, faceCents: cents, evidence: {} }],
     legs: [
       { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: cents, booking: where, debtor: { kind: "MEMBER", memberId }, obligationKey: memberMoneyEventKeys.bookingCharge(id), evidence: {} },
-      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: cents, booking: where, chargeIdentity: charge(id), evidence: {} },
+      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: cents, booking: where, chargeIdentity: charge(id), taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
     ] }));
   return id;
 }
@@ -92,7 +93,7 @@ async function cancelKeeping(id: string, chargedCents: number, keptCents: number
       source: { kind: "BOOKING", id, version: "cancel" }, reason: "Synthetic R04",
       legs: [
         { type: "revenue", account: "BOOKING_REVENUE", side: "DEBIT", grossCents: chargedCents, booking: where, chargeIdentity: charge(id), evidence: {} },
-        ...(keptCents > 0 ? [{ type: "revenue" as const, account: "BOOKING_REVENUE" as const, side: "CREDIT" as const, grossCents: keptCents, booking: where, chargeIdentity: charge(id), evidence: {} }] : []),
+        ...(keptCents > 0 ? [{ type: "revenue" as const, account: "BOOKING_REVENUE" as const, side: "CREDIT" as const, grossCents: keptCents, booking: where, chargeIdentity: charge(id), taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} }] : []),
         { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: chargedCents - keptCents, booking: where, debtor: { kind: "MEMBER", memberId }, evidence: {} },
       ] });
   });
@@ -437,6 +438,125 @@ async function cancelledPaidBooking() {
     expect(memberMoneyConservationProblems(s)).toEqual([]);
   });
 
+  describe("a refund debt reversed after its owner merged away (#5191)", () => {
+    /** Member merge's order: the owner move, then the D4 transfer, in one transaction. */
+    const mergeInto = (id: string, from: string, to: string) => db.$transaction(async (tx) => {
+      await tx.booking.update({ where: { id }, data: { memberId: to } });
+      await postMemberMergeTransfer(tx, context, { fromMemberId: from, toMemberId: to, actorMemberId: names.officerId });
+    });
+    const receivable = async (id: string, memberId: string) => (await db.memberMoneyLine.findMany({ where: { bookingId: id, account: "MEMBER_RECEIVABLE", debtorKind: "MEMBER", memberId },
+      select: { side: true, amountCents: true } })).reduce((sum, l) => sum + (l.side === "DEBIT" ? l.amountCents : -l.amountCents), 0);
+    const residues = (id: string) => db.memberMoneyEvent.count({ where: { eventKey: { startsWith: "merge-residue:" }, sourceIdentity: id } });
+    const followed = async (id: string, gone: readonly string[], survivor: string, cents: number) => {
+      for (const memberId of gone) expect(await receivable(id, memberId)).toBe(0);
+      expect(await receivable(id, survivor)).toBe(cents);
+      expect((await receiptCensus(id)).filter((f) => f.kind === "MERGED_DEBTOR_BALANCE")).toEqual([]);
+      await capsHold(id);
+    };
+    /** A paid card booking owned by `owner`, cancelled keeping 2000 (no R05 of its own). */
+    const cancelledFor = async (owner: string) => {
+      const id = await booking(10_000, owner);
+      const row = await capture(id, 10_000);
+      await cancelKeeping(id, 10_000, 2_000, owner);
+      return { id, row };
+    };
+    const checkPart = (id: string) => db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      return postHandBackObligation(tx, context, { bookingId: id, taskId: `${id}-check`, amountCents: 700, origin: "APP", debtorRead: "booking-row" });
+    });
+    /** The dismissal's door order: lock(1), then the booking row, before the Payment row (`manual-refund-task-resolution.ts`). */
+    const dismiss = (id: string) => db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await tx.$executeRaw`SELECT 1 FROM "Booking" WHERE "id" = ${id} FOR NO KEY UPDATE`;
+      return withdrawRefundObligation(tx, context, { bookingId: id, scope: "hand-back", id: `${id}-check`, actorMemberId: names.officerId, reason: "dismissed",
+        senderKeyPrefix: `hand-back-dismiss:${id}-check`, part: { eventKey: memberMoneyEventKeys.handBackRestWithdrawn(`${id}-check`), amountCents: "open", debtorRead: "booking-row" } });
+    });
+
+    it("release_claim: an appeal's two concession debts reversed after a merge leave nothing on the merged-away member", async () => {
+      const [from, to] = await mergeMembers(2) as [string, string];
+      const { id } = await cancelledFor(from);
+      const requestId = `${id}-appeal`;
+      await r05(id, "refund-request", requestId, 1_000, true);
+      await db.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        await postHandBackObligation(tx, context, { bookingId: id, taskId: `${requestId}-task`, amountCents: 500, origin: "OFFICER", debtorRead: "booking-row", concession: true });
+      });
+      const before = await receivable(id, from);
+      await mergeInto(id, from, to);
+      // The route's release order: lock(1), the booking row, then the withdrawals.
+      expect(await db.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        await tx.$executeRaw`SELECT 1 FROM "Booking" WHERE "id" = ${id} FOR NO KEY UPDATE`;
+        const prefix = `refund_request_refund_${requestId}`;
+        return [await withdrawRefundObligation(tx, context, { bookingId: id, scope: "refund-request", id: requestId, actorMemberId: names.officerId, reason: "release_claim", senderKeyPrefix: prefix }),
+          await withdrawRefundObligation(tx, context, { bookingId: id, scope: "hand-back", id: `${requestId}-task`, actorMemberId: names.officerId, reason: "release_claim", senderKeyPrefix: prefix })];
+      })).toEqual([true, true]);
+      await followed(id, [from], to, before);
+      expect(await residues(id)).toBe(0);
+    });
+
+    it("the keep: a kept late capture's debt reversed after a merge moves its receivable to the survivor", async () => {
+      const [from, to] = await mergeMembers(2) as [string, string];
+      const id = await booking(10_000, from);
+      await capture(id, 10_000);
+      const late = await db.paymentTransaction.create({ data: { paymentId: `${id}-payment`, source: "STRIPE", kind: "ADDITIONAL", status: "SUCCEEDED", amountCents: 3_000, stripePaymentIntentId: `${id}-late` } });
+      await db.$transaction((tx) => syncBookingLedgerSettlements({ paymentId: `${id}-payment`, store: tx }));
+      await db.$transaction((tx) => postBookingReceipts(tx, context, { paymentId: `${id}-payment`, decision: { paymentIntentId: late.stripePaymentIntentId!, collect: false } }));
+      const prefix = buildLateCaptureRefundStripeKeyPrefix(id, late.stripePaymentIntentId!);
+      const key = refundSliceStripeIdempotencyKey(prefix, { paymentTransactionId: late.id, amountCents: 3_000 });
+      await reserve(id, late, { scope: "capture-return", id: late.stripePaymentIntentId!, ensureFaceCents: 3_000 }, key, 3_000, [key], prefix);
+      await refund(id, late, `re_5191_${id}`, 3_000, { evidence: key, status: "failed" });
+      const before = await receivable(id, from);
+      await mergeInto(id, from, to);
+      // The keep's order: lock(1), the booking row, then the Payment row (`prepareLateCaptureDecision`).
+      expect(await db.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        await tx.$executeRaw`SELECT 1 FROM "Booking" WHERE "id" = ${id} FOR NO KEY UPDATE`;
+        return closeKeptCaptureReturn(tx, context, { bookingId: id, paymentIntentId: late.stripePaymentIntentId!, actorMemberId: names.officerId });
+      })).toBe(true);
+      await followed(id, [from], to, before - 3_000);
+      expect(await residues(id)).toBe(1);
+    });
+
+    it("two hops: A into B, then B into C, before a dismissal: one residue move per hop, the balance on C", async () => {
+      const [a, b, c] = await mergeMembers(3) as [string, string, string];
+      const { id } = await cancelledFor(a);
+      await checkPart(id);
+      const before = await receivable(id, a);
+      await mergeInto(id, a, b);
+      await mergeInto(id, b, c);
+      expect(await dismiss(id)).toBe(true);
+      await followed(id, [a, b], c, before - 700);
+      expect(await residues(id)).toBe(2);
+    });
+
+    it("a debt posted on the merged-away member after the merge's snapshot moves with its reversal, so neither stays behind", async () => {
+      const [a, b] = await mergeMembers(2) as [string, string];
+      const { id } = await cancelledFor(a);
+      const before = await receivable(id, a);
+      // The snapshot, then the debt from a stale owner read (a reservation reads it unlocked), then the owner move.
+      await db.$transaction((tx) => postMemberMergeTransfer(tx, context, { fromMemberId: a, toMemberId: b, actorMemberId: names.officerId }));
+      await checkPart(id);
+      await db.booking.update({ where: { id }, data: { memberId: b } });
+      expect(await receivable(id, a)).toBe(700);
+      expect(await dismiss(id)).toBe(true);
+      await followed(id, [a], b, before);
+      expect(await residues(id)).toBe(2);
+      expect(await dismiss(id)).toBe(false);
+      expect(await residues(id)).toBe(2);
+    });
+
+    it("without a merge, a dismissal moves nothing", async () => {
+      const [owner] = await mergeMembers(1) as [string];
+      const { id } = await cancelledFor(owner);
+      await checkPart(id);
+      const before = await receivable(id, owner);
+      expect(await dismiss(id)).toBe(true);
+      expect(await receivable(id, owner)).toBe(before - 700);
+      expect(await residues(id)).toBe(0);
+    });
+  });
+
   it("rollback rules: a reservation an old colour stranded is answered from its row's exact made mark; one nothing names is released only by the OPERATOR", async () => {
     const { id, row, key } = await cancelledPaidBooking();
     await reserve(id, row, { scope: "cancellation", id }, key, 8_000);
@@ -561,7 +681,11 @@ async function cancelledPaidBooking() {
 });
 
 async function mergePair(): Promise<[string, string]> {
-  const ids: [string, string] = [`${MERGE_MEMBERS}${++sequence}`, `${MERGE_MEMBERS}${++sequence}`];
+  return await mergeMembers(2) as [string, string];
+}
+
+async function mergeMembers(count: number): Promise<string[]> {
+  const ids = Array.from({ length: count }, () => `${MERGE_MEMBERS}${++sequence}`);
   for (const id of ids) await db.member.create({ data: { id, email: `${id}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Merge", lastName: "Proof", ageTier: "ADULT" } });
   return ids;
 }

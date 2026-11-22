@@ -1,3 +1,4 @@
+import { recoverStaleSavedCardClaims, releaseSavedCardChargeClaim, runSavedCardClaimRelease } from "@/lib/saved-card-charge-claim";
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { savedCardChargeCents } from "@/lib/booking-payment-state";
 import { writeZeroWorthConfirmPayment } from "@/lib/zero-worth-confirm-payment";
@@ -6,11 +7,12 @@ import { BookingEventType, BookingStatus, PaymentSource, PaymentStatus, PaymentT
 import { OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 import { bookingOwner } from "@/lib/booking-owner";
+import { deliverBumpNotices, drainOwedBumpNotices, recordBumpNoticesOwed, type OwedBumpNotice, type OwedBumpNoticeSweepResult } from "@/lib/booking-bump-notice-owed";
+import { bookingBumpReason } from "@/lib/booking-bump-reason";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import {
   reconcileBedAllocationsForBookingWithGlobalLockHeld,
-  reconcileBedAllocationsForBookingWithLodgeLockHeld,
 } from "@/lib/bed-allocation-lifecycle";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
@@ -66,9 +68,7 @@ import {
   sendAdminPaymentFailureAlert,
   sendAdminSplitSettlementCancelledAlert,
   sendAdminSplitSettlementUnpaidAlert,
-  sendBookingBumpedEmail,
   sendBookingConfirmedEmail,
-  sendBookingGuestsCancelledEmail,
   sendBookingRequestPaymentExpiredEmail,
   sendSplitGuestPaymentLinkEmail,
   sendSplitGuestPortionCancelledEmail,
@@ -80,6 +80,7 @@ import { processWaitlistForDates } from "./waitlist";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { localChargeRefusal } from "@/lib/stripe-charge-currency";
 import type { ClubFormat } from "@/lib/club-format";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /** How long to extend the hold for request-origin bookings (no saved card) at hold expiry. */
 const REQUEST_HOLD_EXTENSION_MS = 2 * 24 * 60 * 60 * 1000;
@@ -220,7 +221,8 @@ type PendingBooking = Prisma.BookingGetPayload<{
 
 type HoldResolution =
   | { type: "already_processed" }
-  | { type: "bumped"; booking: PendingBooking; flagged: boolean }
+  // #5407: `owed` is what the transaction recorded as owed, for the delivery to claim.
+  | { type: "bumped"; booking: PendingBooking; flagged: boolean; owed: OwedBumpNotice }
   | { type: "confirmed_zero"; booking: PendingBooking }
   | {
       type: "extended_request_hold";
@@ -320,6 +322,8 @@ export interface CronConfirmResult {
   // members-only amount to settle here. Always empty.
   partialBumpedBookingIds: string[];
   failedBookingIds: string[];
+  // #5407: what this run's sweep did with the bump notices earlier runs left owed.
+  owedBumpNotices: OwedBumpNoticeSweepResult;
 }
 
 /**
@@ -419,47 +423,6 @@ async function sendConfirmationEmail(booking: PendingBooking, format: ClubFormat
     logger.error(
       { err: emailErr, bookingId: booking.id, job: "confirmPendingBookings" },
       "Failed to send confirmation email"
-    );
-  }
-}
-
-async function sendBumpedEmail(booking: PendingBooking, flagged: boolean) {
-  try {
-    if (flagged) {
-      await sendBookingGuestsCancelledEmail(
-        { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
-        bookingOwner(booking).member.email,
-        bookingOwner(booking).member.firstName,
-        booking.checkIn,
-        booking.checkOut,
-        booking.lodgeId
-      );
-    } else {
-      await sendBookingBumpedEmail(
-        { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
-        bookingOwner(booking).member.email,
-        bookingOwner(booking).member.firstName,
-        booking.checkIn,
-        booking.checkOut,
-        booking.guests.length,
-        booking.lodgeId,
-        // #2430: the only send site of this template, and it reaches two
-        // recipient classes. A club member (their own pending booking, or a
-        // split guest child) can sign in and rebook; the non-login
-        // NON_MEMBER/SCHOOL contact who owns a booking converted from a public
-        // booking request (#707) — or any non-login contact an admin booked for
-        // — cannot, so the notice points them at the club contact page instead
-        // of the members-only booking flow.
-        // #3369: an organisation never signs in, so the notice points a school
-        // at the club contact page — the same branch the non-login school
-        // contact already took.
-        bookingOwner(booking).member.canLogin ?? false
-      );
-    }
-  } catch (emailErr) {
-    logger.error(
-      { err: emailErr, bookingId: booking.id, job: "confirmPendingBookings" },
-      "Failed to send bumped email"
     );
   }
 }
@@ -589,12 +552,10 @@ async function resolveHoldWindowUnderLock(
       // #3611: nothing was paid, so nothing is kept; the stay's ledger lines are
       // reversed if a reversed mark-paid left it confirmed there (lock(1) above).
       await postCancellationLedgerLines({ store: tx, journal, bookingId: booking.id, lodgeId: booking.lodgeId, keptCents: 0, site: "confirm-pending:capacity-bump" });
+      // #5407: both notices are owed from this commit until sent.
+      const owed = await recordBumpNoticesOwed(tx, { bookingId: booking.id, flagged: booking.cancelIfGuestsBumped });
 
-      return {
-        type: "bumped",
-        booking,
-        flagged: booking.cancelIfGuestsBumped,
-      };
+      return { type: "bumped", booking, flagged: owed.flagged, owed };
     }
 
     // Zero-dollar booking: skip Stripe, just confirm with a SUCCEEDED Payment.
@@ -896,6 +857,7 @@ async function resolveHoldWindowUnderLock(
         // capacity-holding, payment-owed status; it is released back to PENDING
         // if the saved-card charge cannot complete.
         status: BookingStatus.CONFIRMED,
+        savedCardClaimAt: new Date(), // the claim's own time, not the run's start, so its age is true (#4993)
         nonMemberHoldUntil: null,
       },
     });
@@ -985,36 +947,20 @@ async function resolveHoldWindowUnderLock(
       previousHoldUntil: booking.nonMemberHoldUntil,
       attempt,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 async function releaseChargeClaim(
   claim: Extract<HoldResolution, { type: "claimed_for_charge" }>
 ) {
-  await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-    const claimLodgeId = claim.booking.lodgeId ?? (await getDefaultLodgeId(tx));
-    await acquireLodgeCapacityLock(tx, claimLodgeId);
-
-    const released = await tx.booking.updateMany({
-      where: { id: claim.booking.id, status: BookingStatus.CONFIRMED },
-      data: {
-        status: BookingStatus.PENDING,
-        nonMemberHoldUntil: claim.previousHoldUntil,
-      },
-    });
-
-    if (released.count > 0) {
-      await reconcileBedAllocationsForBookingWithGlobalLockHeld({
-        bookingId: claim.booking.id,
-        db: tx,
-        previousRange: {
-          checkIn: claim.booking.checkIn,
-          checkOut: claim.booking.checkOut,
-        },
-      });
-    }
-  });
+  const outcome = await runSavedCardClaimRelease((tx) => releaseSavedCardChargeClaim(tx, {
+    bookingId: claim.booking.id,
+    restoreHoldUntil: claim.previousHoldUntil,
+    previousRange: { checkIn: claim.booking.checkIn, checkOut: claim.booking.checkOut },
+  }), { bookingId: claim.booking.id, lodgeId: claim.booking.lodgeId });
+  // Committed, whether or not it found the claim still CONFIRMED: either way the
+  // booking is not stuck holding beds unpaid, which is what #3268's alert asks.
+  return outcome.ok;
 }
 
 /**
@@ -1161,7 +1107,10 @@ async function cancelSupersededLinkIntentsBestEffort(
  * For each PENDING booking where nonMemberHoldUntil <= now():
  * 1. Re-check bed availability under the booking advisory lock.
  * 2. If beds are unavailable, cancel the provisional booking, revoke payment
- *    links, and send the appropriate no-charge bump/cancellation email.
+ *    links, and send the appropriate no-charge bump/cancellation email and
+ *    the officers' alert. Both are recorded as owed in the cancel's own
+ *    transaction and swept by a later run if this one stops before sending
+ *    them (#5407, `booking-bump-notice-owed.ts`).
  * 3. If beds are available and a saved payment method exists, claim capacity,
  *    charge off-session, then move to PAID and queue the booking's Xero invoice.
  * 4. If the booking is request-origin and has no saved card, keep the #707
@@ -1182,6 +1131,10 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
   // #4627: and the journal's posting context, likewise once per run.
   const journal = await resolveBookingMoneyPostingContext({ zone: clubZone });
 
+  // #4993: first hand stale saved-card claims back to PENDING, with their hold
+  // at the claim time, so the pass below selects and replays them this run.
+  const recovery = await recoverStaleSavedCardClaims(now);
+
   // Find all PENDING bookings past their hold deadline, including split
   // non-member child bookings (#738). Process oldest first so older provisional
   // non-member windows resolve before newer competing holds.
@@ -1199,7 +1152,8 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
     bumpedBookingIds: [],
     cancelledBookingIds: [],
     partialBumpedBookingIds: [],
-    failedBookingIds: [],
+    failedBookingIds: [...recovery.failedBookingIds],
+    owedBumpNotices: await drainOwedBumpNotices(now),
   };
 
   for (const candidate of pendingBookings) {
@@ -1233,13 +1187,11 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         await recordBookingEvent({
           bookingId: resolution.booking.id,
           type: BookingEventType.BUMPED,
-          reason: resolution.flagged
-            ? "Released because the whole party could not be confirmed (only-if-guests-come)."
-            : "These dates filled up before the provisional guests were confirmed.",
+          reason: bookingBumpReason(resolution.flagged),
           snapshot: { flagged: resolution.flagged },
         });
-        await sendBumpedEmail(resolution.booking, resolution.flagged);
         triggerWaitlistProcessing(resolution.booking, format);
+        await deliverBumpNotices(resolution.booking, resolution.owed);
         continue;
       }
 
@@ -1743,12 +1695,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         await queueXeroInvoice(resolution.booking.id, "Xero invoice queued");
         await sendConfirmationEmail(resolution.booking, format);
       } else {
-        const settled = await prisma.$transaction(async (tx) => {
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-          const releaseLodgeId =
-            resolution.booking.lodgeId ?? (await getDefaultLodgeId(tx));
-          await acquireLodgeCapacityLock(tx, releaseLodgeId);
-
+        const releaseOutcome = await runSavedCardClaimRelease(async (tx) => {
           // #3267: record the intent Stripe answered with on the attempt row
           // FIRST, in this locked release transaction, forward only: a
           // `requires_action` or `processing` answer stays PROCESSING for the
@@ -1804,31 +1751,20 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             return { ...recorded, released: false, claimLost: !expected };
           }
 
-          const released = await tx.booking.updateMany({
-            where: {
-              id: resolution.booking.id,
-              status: BookingStatus.CONFIRMED,
-            },
-            data: {
-              status: BookingStatus.PENDING,
-              nonMemberHoldUntil: resolution.previousHoldUntil,
-            },
-          });
-          if (released.count === 0) {
-            throw new Error(
-              "Pending-hold charge release lost its CONFIRMED claim",
-            );
-          }
-          await reconcileBedAllocationsForBookingWithLodgeLockHeld({
+          const released = await releaseSavedCardChargeClaim(tx, {
             bookingId: resolution.booking.id,
-            db: tx,
-            previousRange: {
-              checkIn: resolution.booking.checkIn,
-              checkOut: resolution.booking.checkOut,
-            },
+            restoreHoldUntil: resolution.previousHoldUntil,
+            previousRange: { checkIn: resolution.booking.checkIn, checkOut: resolution.booking.checkOut },
           });
-          return { ...recorded, released: true, claimLost: false };
-        });
+          return { ...recorded, released: released.released, claimLost: !released.released };
+        }, { bookingId: resolution.booking.id, lodgeId: resolution.booking.lodgeId });
+        // #4993: the release already logged and audited its failure; the
+        // booking keeps its claim marker for the next run's recovery.
+        if (!releaseOutcome.ok) {
+          result.failedBookingIds.push(candidate.id);
+          continue;
+        }
+        const settled = releaseOutcome.value;
 
         // A claim lost to an actor other than the settling webhook is an
         // anomaly a person has to look at (the pre-#3267 code threw for it):
@@ -1949,19 +1885,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       // booking that is stuck CONFIRMED and unpaid.
       let claimReleased = false;
       if (claimForCharge && !paymentSucceeded) {
-        claimReleased = await releaseChargeClaim(claimForCharge)
-          .then(() => true)
-          .catch((revertErr) => {
-            logger.error(
-              {
-                err: revertErr,
-                bookingId: claimForCharge?.booking.id,
-                job: "confirmPendingBookings",
-              },
-              "Failed to release pending booking charge claim"
-            );
-            return false;
-          });
+        claimReleased = await releaseChargeClaim(claimForCharge);
       } else if (paymentSucceeded) {
         logger.error(
           { bookingId: candidate.id, job: "confirmPendingBookings" },

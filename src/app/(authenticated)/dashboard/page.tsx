@@ -55,6 +55,15 @@ import {
 } from "@/lib/promo";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { canViewCalendarEvents } from "@/lib/calendar-access";
+import { listDashboardCalendarEvents } from "@/lib/dashboard-calendar-events";
+import { canViewWorkParties } from "@/lib/work-party-access";
+import { listUpcomingMemberWorkParties } from "@/lib/work-party-member";
+import {
+  WORK_PARTY_DASHBOARD_CARD_LIMIT,
+  WorkPartyDashboardCard,
+} from "@/components/work-party-dashboard-card";
+import { canActorUseFoodOrders } from "@/lib/food-order-access";
+import { FoodOrderDashboardCard } from "@/components/food-order-dashboard-card";
 import { RecentNewsCard } from "@/components/recent-news-card";
 import { MessageBoardCard } from "@/components/message-board-card";
 import { countClubPostsSince } from "@/lib/club-posts";
@@ -74,6 +83,11 @@ import {
   countActiveLodgesForBookingList,
 } from "@/lib/lodges";
 import { BookingListLodgeName } from "@/components/booking/booking-list-lodge-name";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Dashboard",
+};
 
 /*
   The three tightest slots on this page — the upcoming-events list (a fixed-width
@@ -145,7 +159,7 @@ function SummaryLinkCard({
     >
       <Card className="h-full transition-colors group-hover:border-ring group-hover:bg-accent group-focus-visible:border-ring group-focus-visible:bg-accent">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">{title}</CardTitle>
+          <CardTitle headingLevel={2} className="text-sm font-medium">{title}</CardTitle>
           <span className="flex items-center gap-1 text-muted-foreground transition-colors group-hover:text-foreground group-focus-visible:text-foreground">
             {icon}
             <ChevronRight
@@ -484,18 +498,21 @@ export default async function DashboardPage() {
   // the process's own zone (INV-DATE-019).
   const twoWeeksOut = club.startOfDay(addCalendarDays(todayDate, 14));
   const upcomingEvents = showEventsCard
-    ? await prisma.calendarEvent.findMany({
-        where: { startsAt: { gte: startOfTodayNZ, lte: twoWeeksOut } },
-        orderBy: { startsAt: "asc" },
-        take: 6,
-        select: {
-          id: true,
-          title: true,
-          startsAt: true,
-          allDay: true,
-          isMeeting: true,
-        },
+    ? await listDashboardCalendarEvents({
+        from: startOfTodayNZ,
+        to: twoWeeksOut,
+        modules,
+        viewer: session.user,
       })
+    : [];
+
+  // Upcoming work parties (#5148): members only, with the module on. The
+  // bound is the club's today as a date-only value, against the work party's
+  // date-only last night, so one finishing today is still listed.
+  const showWorkPartiesCard =
+    modules.workParties && canViewWorkParties(session.user);
+  const upcomingWorkParties = showWorkPartiesCard
+    ? await listUpcomingMemberWorkParties(today, WORK_PARTY_DASHBOARD_CARD_LIMIT)
     : [];
 
   return (
@@ -687,6 +704,13 @@ export default async function DashboardPage() {
           </SummaryLinkCard>
         )}
 
+        {showWorkPartiesCard && (
+          <WorkPartyDashboardCard
+            workParties={upcomingWorkParties}
+            format={club.format}
+          />
+        )}
+
         {modules.promoCodes && (
           <SummaryLinkCard
             href={promoCodesHref}
@@ -712,7 +736,7 @@ export default async function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Quick Book</CardTitle>
+            <CardTitle headingLevel={2} className="text-sm font-medium">Quick Book</CardTitle>
             <Mountain className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -728,7 +752,7 @@ export default async function DashboardPage() {
         {modules.induction && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
+              <CardTitle headingLevel={2} className="text-sm font-medium">
                 Lodge Induction
               </CardTitle>
               <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
@@ -757,7 +781,7 @@ export default async function DashboardPage() {
         {modules.maintenanceReports && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
+              <CardTitle headingLevel={2} className="text-sm font-medium">
                 Lodge Maintenance Issue
               </CardTitle>
               <Wrench className="h-4 w-4 text-muted-foreground" />
@@ -774,10 +798,15 @@ export default async function DashboardPage() {
           </Card>
         )}
 
+        {/* Fork triyder/AlpineClubBookingsNZ#121: beside "Report an issue", while the module is on. */}
+        {modules.foodOrders && canActorUseFoodOrders(session.user) && (
+          <FoodOrderDashboardCard />
+        )}
+
         {modules.lockers && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Lockers</CardTitle>
+              <CardTitle headingLevel={2} className="text-sm font-medium">Lockers</CardTitle>
               <House className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -804,7 +833,7 @@ export default async function DashboardPage() {
         {modules.commsPortal && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
+              <CardTitle headingLevel={2} className="text-sm font-medium">
                 Message Board
               </CardTitle>
               <MessageSquare className="h-4 w-4 text-muted-foreground" />

@@ -13,8 +13,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Spinner } from "@/components/ui/spinner";
 import { useConfirm } from "@/components/confirm-dialog";
 import { AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import { chargeAxisDisplayName } from "@/lib/membership-charge-axis";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { formatCents } from "@/lib/utils";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { useClubTime } from "@/components/club-time-provider";
 import { useClubFormat } from "@/components/club-format-provider";
 import {
@@ -26,6 +28,10 @@ import {
   isInvoicingPreviewWarning,
   STRAY_INVOICE_AFTER_CLOSE_CODE,
 } from "@/lib/subscription-charge-already-paid";
+import {
+  MISSING_XERO_ACCOUNT_MAPPING_CODE,
+  SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE,
+} from "@/lib/xero-invoicing-off";
 
 type BillingData = {
   preview: {
@@ -36,7 +42,11 @@ type BillingData = {
     confirmationToken: string;
     entries: Array<{
       key: string;
-      membershipTypeName: string;
+      // Exactly one of these two is populated per entry — a category entry
+      // carries membershipTypeName null (chargeAxisDisplayName resolves the
+      // one that applies).
+      membershipTypeName: string | null;
+      subscriptionCategoryName?: string | null;
       billingBasis: string;
       prorationRule: string;
       chargedAmountCents: number;
@@ -56,10 +66,15 @@ type BillingData = {
     // required by design). Shown in a collapsed informational "Exempt" section,
     // never raised as MISSING_FEE_SCHEDULE. Optional so an older cached response
     // without the field still renders.
+    // `exemptBy` (#4496) is "MEMBERSHIP_TYPE" for a subscription-category
+    // member whose membership type needs no subscription; optional so an
+    // older cached response still renders as age-tier rows.
     exemptMembers?: Array<{
       memberId: string;
       memberName: string;
       ageTier: string | null;
+      exemptBy?: "AGE_TIER" | "MEMBERSHIP_TYPE";
+      membershipTypeName?: string;
     }>;
     // #2147 (D3): members suppressed from the preview because their season
     // subscription already holds a live Xero invoice. Shown in a collapsed
@@ -91,12 +106,29 @@ type BillingData = {
       markedByName?: string | null;
       markedAt?: string | null;
     }>;
+    // Subscription-category decoupling (review finding): 2+ members billed
+    // SOLO under the SAME subscription category this run, because they are
+    // not in a shared FamilyGroup — each bills the full flat rate
+    // separately, which can cost MORE than their individual membership-type
+    // rates for a couple/family-style category. Billing itself is
+    // unaffected (a genuinely standalone category is not an error), but
+    // this is surfaced so the confirming officer notices and can group the
+    // members into a FamilyGroup before confirming, if that was the intent.
+    // Optional so an older cached response without the field still renders.
+    ungroupedCategoryMembers?: Array<{
+      subscriptionCategoryId: string;
+      subscriptionCategoryName: string;
+      members: Array<{ memberId: string; memberName: string }>;
+    }>;
   };
   charges: Array<{
     id: string;
     status: string;
     billingBasis: string;
-    membershipTypeName: string;
+    // Exactly one of these two is populated per charge — see the matching
+    // comment on `preview.entries` above.
+    membershipTypeName: string | null;
+    subscriptionCategoryName?: string | null;
     chargedAmountCents: number;
     recipientName: string;
     xeroInvoiceId: string | null;
@@ -108,6 +140,10 @@ type BillingData = {
     coverage: Array<{ memberName: string; releasedAt?: string | null; subscription?: { status: string } }>;
   }>;
   exceptions: Array<{ id: string; fingerprint: string; message: string; code?: string }>;
+  // #4986: the effective xeroIntegration module, and (only while it is off) the
+  // season's charges still waiting for Xero. Optional for an older cached
+  // payload, which predates the guard and is read as Xero on.
+  xeroInvoicing?: { enabled: boolean; awaitingXeroCount: number };
   settings: { invoiceDueDays: number; familyBillingMode: FamilyBillingMode };
 };
 
@@ -141,8 +177,13 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
   const [mutationFeedback, setMutationFeedback] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const loadGeneration = useRef(0);
   const selectionRef = useRef({ seasonYear, decisionDate });
+  const xeroInvoicingOff = data?.xeroInvoicing?.enabled === false;
+  const awaitingXeroCount = data?.xeroInvoicing?.awaitingXeroCount ?? 0;
+  // #4986: with Xero off the missing account mapping is not why nothing can be
+  // invoiced, and the screen that sets it is hidden; the notice says why instead.
   const visibleItems = data
     ? [...new Map([...data.preview.exceptions, ...data.exceptions].map((item) => [item.fingerprint, item])).values()]
+        .filter((item) => !(xeroInvoicingOff && item.code === MISSING_XERO_ACCOUNT_MAPPING_CODE))
     : [];
   // #4110: a warning about a charge confirming still invoices is shown apart
   // from the exceptions that withhold an invoice, and is not counted with them.
@@ -159,18 +200,24 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
     setLoading(true);
     setData(null);
     setLoadFeedback(null);
+    const fallback = "Could not load billing preview.";
     try {
       const response = await fetch(`/api/admin/subscription-billing?seasonYear=${selection.seasonYear}&decisionDate=${selection.decisionDate}`);
+      if (!response.ok) {
+        const text = await apiErrorMessageFromResponse(response, fallback);
+        if (generation !== loadGeneration.current) return;
+        setLoadFeedback({ kind: "error", text });
+        return;
+      }
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Could not load billing preview.");
       if (generation !== loadGeneration.current) return;
       setData(body);
       setDueDays(String(body.settings.invoiceDueDays));
       setFamilyBillingMode(body.settings.familyBillingMode);
-    } catch (error) {
+    } catch {
       if (generation !== loadGeneration.current) return;
       setData(null);
-      setLoadFeedback({ kind: "error", text: error instanceof Error ? error.message : "Could not load billing preview." });
+      setLoadFeedback({ kind: "error", text: fallback });
     } finally {
       if (generation === loadGeneration.current) setLoading(false);
     }
@@ -188,20 +235,25 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
   async function post(body: Record<string, unknown>): Promise<boolean> {
     setWorking(true);
     setMutationFeedback(null);
+    const fallback = "Billing action failed.";
     try {
       const response = await fetch("/api/admin/subscription-billing", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
+      if (!response.ok) {
+        setData(null);
+        setMutationFeedback({ kind: "error", text: await apiErrorMessageFromResponse(response, fallback) });
+        return false;
+      }
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Billing action failed.");
       setMutationFeedback({ kind: "success", text: result.message || "Billing action completed." });
       await load();
       return true;
-    } catch (error) {
+    } catch {
       setData(null);
-      setMutationFeedback({ kind: "error", text: error instanceof Error ? error.message : "Billing action failed." });
+      setMutationFeedback({ kind: "error", text: fallback });
       return false;
     } finally {
       setWorking(false);
@@ -344,6 +396,16 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
         {loadFeedback ? <Alert variant="error">{loadFeedback.text}</Alert> : null}
         {loading ? <Spinner label="Building subscription billing preview…" /> : data ? (
           <>
+            {xeroInvoicingOff ? (
+              <Alert variant="info" title="Subscription invoicing needs Xero">
+                {SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE} The preview below shows what is owed, but no batch can be confirmed. When a member listed for this season in the subscriptions list pays, record it there with Mark as paid (manual). A member with no row for this season cannot be recorded in the app yet.
+              </Alert>
+            ) : null}
+            {xeroInvoicingOff && awaitingXeroCount > 0 ? (
+              <Alert variant="warning" title={`${awaitingXeroCount} charge${awaitingXeroCount === 1 ? " is" : "s are"} waiting for Xero`}>
+                {awaitingXeroCount === 1 ? "This charge was" : "These charges were"} queued for this season before Xero was switched off. When Xero is switched back on, the invoice{awaitingXeroCount === 1 ? " is" : "s are"} raised (if not already) and emailed automatically. Before switching it on, record every member who has already paid with Mark as paid (manual): a charge not yet invoiced in Xero is then held for your review instead of being invoiced.
+              </Alert>
+            ) : null}
             <div className="grid gap-3 sm:grid-cols-5">
               <div><p className="text-xs text-muted-foreground">Charges</p><p className="text-xl font-semibold tabular-nums">{data.preview.entries.length}</p></div>
               <div><p className="text-xs text-muted-foreground">Preview total</p><p className="text-xl font-semibold tabular-nums">{formatCents(data.preview.totalCents, format)}</p></div>
@@ -355,7 +417,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
               <div className="space-y-2">
                 {data.preview.entries.map((entry) => (
                   <div key={entry.key} className="rounded-md border p-3 text-sm">
-                    <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{entry.membershipTypeName} · {entry.recipient.name}</span><span className="tabular-nums">{formatCents(entry.chargedAmountCents, format)}</span></div>
+                    <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{chargeAxisDisplayName({ membershipTypeName: entry.membershipTypeName, subscriptionCategoryName: entry.subscriptionCategoryName ?? null })} · {entry.recipient.name}</span><span className="tabular-nums">{formatCents(entry.chargedAmountCents, format)}</span></div>
                     <p className="text-muted-foreground">{entry.billingBasis.replaceAll("_", " ")} · {entry.coveredMonths}/12 months · covers {entry.coveredMembers.map((member) => member.name).join(", ")}{entry.xeroAccountCode ? ` · Xero ${entry.xeroAccountCode}${entry.xeroItemCode ? ` / ${entry.xeroItemCode}` : ""}` : ""}</p>
                     {/* #2161 (D2): a PER_FAMILY charge can be marked as already
                         invoiced when the operator knows an ambiguous legacy
@@ -380,28 +442,48 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                     ) : null}
                   </div>
                 ))}
-                <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} type="button" onClick={() => void confirmBatch()} disabled={working}>Confirm and queue annual batch</ViewOnlyActionButton>
+                <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} type="button" onClick={() => void confirmBatch()} disabled={working || xeroInvoicingOff}>Confirm and queue annual batch</ViewOnlyActionButton>
               </div>
             ) : <Alert variant="info">No new charges are available for this preview. Existing immutable coverage is not regenerated.</Alert>}
             {(data.preview.exemptMembers ?? []).length > 0 ? (
               <details className="rounded-md border p-3 text-sm">
                 <summary className="cursor-pointer font-medium">
-                  Exempt ({(data.preview.exemptMembers ?? []).length}) — no subscription required by age tier
+                  Exempt ({(data.preview.exemptMembers ?? []).length}) — no subscription required by {(data.preview.exemptMembers ?? []).some((row) => row.exemptBy === "MEMBERSHIP_TYPE") ? "age tier or membership type" : "age tier"}
                 </summary>
                 <p className="mt-1 text-muted-foreground">
-                  These members are in an age tier that does not require a paid subscription, so no annual fee is charged and no MISSING_FEE_SCHEDULE exception is raised. Confirming the batch records a NOT_REQUIRED subscription for the season.
+                  These members are in an age tier, or hold a membership type, that does not require a paid subscription, so no annual fee is charged and no MISSING_FEE_SCHEDULE exception is raised. Confirming the batch records a NOT_REQUIRED subscription for the season.
                 </p>
                 <ul className="mt-2 space-y-1">
                   {(data.preview.exemptMembers ?? []).map((row) => (
                     <li key={row.memberId} className="flex flex-wrap items-center justify-between gap-2">
                       <span>{row.memberName}</span>
                       <span className="tabular-nums text-muted-foreground">
-                        {row.ageTier ? row.ageTier.replaceAll("_", " ") : "No age tier"}
+                        {row.exemptBy === "MEMBERSHIP_TYPE"
+                          ? `Membership type: ${row.membershipTypeName ?? "not required"}`
+                          : row.ageTier ? row.ageTier.replaceAll("_", " ") : "No age tier"}
                       </span>
                     </li>
                   ))}
                 </ul>
               </details>
+            ) : null}
+            {(data.preview.ungroupedCategoryMembers ?? []).length > 0 ? (
+              <Alert variant="warning">
+                <p className="font-medium">
+                  {(data.preview.ungroupedCategoryMembers ?? []).reduce((sum, row) => sum + row.members.length, 0)} member(s) sharing a subscription category are billed separately, not as one group
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  Each is still billed the full category rate on their own — for a couple/family-style category this can cost MORE than their individual membership-type rates. They are not in the same family group, which is required for a category to bill them together. Group them on their Family card, or leave as-is if this club genuinely bills this category per person.
+                </p>
+                <ul className="mt-2 space-y-2">
+                  {(data.preview.ungroupedCategoryMembers ?? []).map((row) => (
+                    <li key={row.subscriptionCategoryId}>
+                      <span className="font-medium">{row.subscriptionCategoryName}:</span>{" "}
+                      {row.members.map((member) => member.memberName).join(", ")}
+                    </li>
+                  ))}
+                </ul>
+              </Alert>
             ) : null}
             {((data.preview.alreadyInvoiced ?? []).length + (data.preview.alreadyInvoicedFamilies ?? []).length) > 0 ? (
               <details className="rounded-md border p-3 text-sm">
@@ -473,10 +555,10 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                 <h3 className="font-medium">Durable charge queue</h3>
                 {data.charges.map((charge) => (
                   <div key={charge.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3 text-sm">
-                    <div><p className="font-medium">{charge.membershipTypeName} · {charge.recipientName} · {formatCents(charge.chargedAmountCents, format)}</p><p className="text-muted-foreground">{charge.coverage.map((row) => row.memberName).join(", ")} · {charge.xeroInvoiceNumber ?? "No Xero number yet"}</p>{charge.lastErrorMessage ? <p className="text-danger">{charge.lastErrorMessage}</p> : null}{isChargeClosedAsAlreadyPaid(charge) ? <p className="text-muted-foreground">{charge.lastErrorCode === STRAY_INVOICE_AFTER_CLOSE_CODE ? "Closed as already paid." : "Closed as already paid. No Xero invoice is raised for this charge."}</p> : null}</div>
+                    <div><p className="font-medium">{chargeAxisDisplayName({ membershipTypeName: charge.membershipTypeName, subscriptionCategoryName: charge.subscriptionCategoryName ?? null })} · {charge.recipientName} · {formatCents(charge.chargedAmountCents, format)}</p><p className="text-muted-foreground">{charge.coverage.map((row) => row.memberName).join(", ")} · {charge.xeroInvoiceNumber ?? "No Xero number yet"}</p>{charge.lastErrorMessage ? <p className="text-danger">{charge.lastErrorMessage}</p> : null}{isChargeClosedAsAlreadyPaid(charge) ? <p className="text-muted-foreground">{charge.lastErrorCode === STRAY_INVOICE_AFTER_CLOSE_CODE ? "Closed as already paid." : "Closed as already paid. No Xero invoice is raised for this charge."}</p> : null}</div>
                     <div className="flex items-center gap-2">
                       <Badge variant="secondary">{charge.status.replaceAll("_", " ")}</Badge>
-                      {charge.status === "EMAIL_FAILED" || charge.status === "CONFLICT" || charge.status === "QUEUED" || charge.status === "INVOICE_CREATED" ? <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} size="sm" variant="outline" disabled={working} onClick={() => void post({ action: "RETRY_CHARGE", chargeId: charge.id })}>{charge.status === "EMAIL_FAILED" ? <MailWarning className="mr-1 h-4 w-4" /> : charge.status === "CONFLICT" ? <AlertTriangle className="mr-1 h-4 w-4" /> : <CheckCircle2 className="mr-1 h-4 w-4" />} Retry</ViewOnlyActionButton> : null}
+                      {charge.status === "EMAIL_FAILED" || charge.status === "CONFLICT" || charge.status === "QUEUED" || charge.status === "INVOICE_CREATED" ? <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} size="sm" variant="outline" disabled={working || xeroInvoicingOff} onClick={() => void post({ action: "RETRY_CHARGE", chargeId: charge.id })}>{charge.status === "EMAIL_FAILED" ? <MailWarning className="mr-1 h-4 w-4" /> : charge.status === "CONFLICT" ? <AlertTriangle className="mr-1 h-4 w-4" /> : <CheckCircle2 className="mr-1 h-4 w-4" />} Retry</ViewOnlyActionButton> : null}
                       {canOfferClose(charge) && closingChargeId !== charge.id ? <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} type="button" size="sm" variant="outline" disabled={working} onClick={() => { setClosingChargeId(charge.id); setCloseReason(""); }}>Close: already paid</ViewOnlyActionButton> : null}
                     </div>
                     {canOfferClose(charge) && closingChargeId === charge.id ? (

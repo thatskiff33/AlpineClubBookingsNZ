@@ -18,7 +18,7 @@ The area list is each registered admin page's top-level URL directory, taken
 from the [hub registry](../src/lib/admin-hubs/index.ts), whose own census ties
 every entry to its page on disk, so it is exhaustive and will not silently miss a
 surface. A hub's directory under `src/app/(admin)/admin/` (such as `website/`,
-`finance/`, `rules/`, `system/`, `messages/`, `booking-desk/` or `membership/`) is not an area: it holds areas. An area keeps
+`finance/`, `rules/`, `system/`, `messages/`, `booking-desk/`, `membership/` or `lodge-ops/`) is not an area: it holds areas. An area keeps
 its row, and its URL, when its pages move under a hub (epic #4468): the Website
 hub's areas live in `website/` (C4 #4801), the Finance hub's areas
 (`internet-banking`, `payments`, `refund-requests`, `reports`,
@@ -36,7 +36,9 @@ Bookings hub's areas (`bed-allocation`, `book`, `booking-approvals`,
 `booking-desk/` (C10 #4807), and the Members hub's areas (`committee`,
 `deletion-requests`, `family-groups`, `induction`, `member-applications`,
 `member-fields`, `members`, `membership-cancellations`, `membership-setup`,
-`membership-types`, `subscription-lockout`) in `membership/` (C9 #4806). Member
+`membership-types`, `subscription-categories`, `subscription-lockout`) in
+`membership/` (C9 #4806), and the Lodge hub's `display` and `lodges` areas in
+`lodge-ops/` (C11 part 1 #4808; its other areas move in part 2). Member
 detail, member merge, induction print and induction settings are not areas; they
 live under `members/` and `induction/`. The
 count that used to stand here said 70 and was measured once; it had already
@@ -76,8 +78,9 @@ For what an officer sees and does on each screen, use the
 | `access-roles` | support | `ARCHITECTURE.md` (access roles / definitions) | [guide](guides/access-roles.md) | 4 |
 | `age-tier-settings` | bookings | `ARCHITECTURE.md`, `AUTHORITATIVE_FEES.md` | [guide](guides/age-tier-settings.md) | 1 |
 | `ai-assistant` | support | [`guides/ai-help.md`](guides/ai-help.md) (usage panel and spend cap; the page is hidden while the module is off) | [guide](guides/ai-help.md) | — (AI help module #2211, off by default; postdates #2050) |
+| `ai-connections` | support | [`guides/mcp-server.md`](guides/mcp-server.md), [`invariants/mcp-connections.md`](invariants/mcp-connections.md) (`INV-MCP`), [`STATE_MACHINES.md`](STATE_MACHINES.md#ai-app-connection-lifecycle); served at `/admin/system/ai-connections`, hidden while the module is off | [guide](guides/mcp-server.md) | — (AI app connections module, ALP-653, off by default; postdates #2050) |
 | `ai-diagnostics` | overview (page); support (API) | [architecture](ai-diagnostics/architecture.md), [deployment](ai-diagnostics/deployment.md), [ux](ai-diagnostics/ux.md), [e2e-matrix](ai-diagnostics/e2e-matrix.md), [hub](ai-diagnostics/README.md) | [deployment/operator guide](ai-diagnostics/deployment.md) | — (AID module, off by default; outside #2050) |
-| `alpine-server` | finance | [`guides/integrations.md`](guides/integrations.md), `DEPLOYMENT.md` (cron endpoint), `SECURITY-ATTACK-SURFACE.md` (provider list), `STATE_MACHINES.md` (version pause, #49; the `version` read route is finance view) | [guide](guides/integrations.md) | — (Alpine Central Server module, off by default) |
+| `alpine-server` | finance | [`guides/integrations.md`](guides/integrations.md), `DEPLOYMENT.md` (cron endpoint), `SECURITY-ATTACK-SURFACE.md` (provider list), `STATE_MACHINES.md` (version pause, triyder/AlpineClubBookingsNZ#49; the `version` read route is finance view) | [guide](guides/integrations.md) | — (Alpine Central Server module, off by default) |
 | `appearance` | content | — | [guide](guides/appearance.md) (incl. `appearance/identity`) | 4 |
 | `audit-log` | support | `AUDIT_RETENTION_ARCHIVE_RUNBOOK.md` | [guide](guides/audit-log.md) | 4 |
 | `background-jobs` | support | `ARCHITECTURE.md` (Cron Jobs) | [guide](guides/background-jobs.md) | 4 |
@@ -109,6 +112,7 @@ For what an officer sees and does on each screen, use the
 | `family-groups` | membership | `ARCHITECTURE.md` (family groups / billing, hidden family suggestions) | [guide](guides/family-groups.md); Suggestions tab: [guide](guides/family-suggestions.md) | 2 |
 | `fee-configuration` | finance | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) (redirect → Fees) | 2 |
 | `fees` | bookings (route map); page opens on **bookings or finance** (`canAccessConsolidatedFeesPage`) | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) | 2 |
+| `food-orders` | lodge | `multi-lodge/lodge-scoping-contract.md` (FoodOrder scoping), `SECURITY-ATTACK-SURFACE.md` (member routes `/food-order`, `/food-orders` and their API) | [guide](guides/food-orders.md) | — (foodOrders module, off by default; outside #2050) |
 | `google` | finance | [`guides/security.md`](guides/security.md) (Google sign-in credentials, verified in-app before the module can be enabled), [`guides/integrations.md`](guides/integrations.md) | [guide](guides/integrations.md) (`google/setup` wizard) | — (epic #2030; postdates #2050) |
 | `health` | support | — | [guide](guides/health.md) (Integration readiness section, S1 #4796) | 4 |
 | `hut-leaders` | lodge | `ARCHITECTURE.md` (hut-leader auto-assign cron), `invariants/booking-dates-and-capacity.md` (`INV-DATE-031`: night cover, school-night kinds #3819) | [guide](guides/hut-leaders.md) | 3 |
@@ -124,7 +128,7 @@ For what an officer sees and does on each screen, use the
 | `maintenance-reports` | lodge | `multi-lodge/lodge-scoping-contract.md` (scoping), `SECURITY.md` (QR bearer token) | [guide](guides/maintenance-reports.md) | — (maintenanceReports module, on by default; outside #2050) |
 | `member-applications` | membership | `ARCHITECTURE.md` (membership application / nominations) | [guide](guides/member-applications.md) | 2 |
 | `member-fields` | membership | — | [guide](guides/member-fields.md) | 2 |
-| `members` | membership | `ARCHITECTURE.md` (members, CSV import, roles) | [guide](guides/members.md) | 2 |
+| `members` | membership (subject access report: Full Admin only) | `ARCHITECTURE.md` (members, CSV import, roles); [access requests](PRIVACY_RETENTION.md#answering-an-access-request) | [guide](guides/members.md) | 2 |
 | `membership-cancellations` | membership | `CANCELLATIONS.md`, `ARCHITECTURE.md` (cancellation review queue) | [guide](guides/membership-cancellations.md) (Settings tab included) | 2 |
 | `membership-setup` | membership | `ARCHITECTURE.md` (membership types) | [guide](guides/membership-setup.md) | 2 |
 | `membership-types` | membership | `ARCHITECTURE.md` (seasonal membership types) | [guide](guides/membership-types.md) | 2 |
@@ -137,7 +141,7 @@ For what an officer sees and does on each screen, use the
 | `payments` | finance | `ARCHITECTURE.md` (Stripe), `finance-dashboard/README.md` | [guide](guides/payments.md) | 1 |
 | `privacy-retention` | support (settings); membership:view additionally for application/member previews; bookings:edit additionally for the after-stay dietary period and switch | [retention schedule](PRIVACY_RETENTION.md) | [retention schedule and controls](PRIVACY_RETENTION.md) | — (#4457, #4916) |
 | `promo-codes` | bookings | `ARCHITECTURE.md` (promo codes / redemptions) | [guide](guides/promo-codes.md) | 1 |
-| `refund-requests` | finance | `CANCELLATIONS.md`, `ARCHITECTURE.md` (refund recovery) | [guide](guides/refund-requests.md) | 2 |
+| `refund-requests` | finance | `CANCELLATIONS.md`, `ARCHITECTURE.md` (refund recovery), `INV-PAY-162` (opening credits) | [guide](guides/refund-requests.md) | 2 |
 | `reports` | finance | `finance-dashboard/README.md` | [guide](guides/reports.md) | 1 |
 | `rooms-beds` | lodge | `CAPACITY_MODEL.md`, `ARCHITECTURE.md` (bed inventory) | [guide](guides/rooms-beds.md) | 3 |
 | `roster` | lodge | `ARCHITECTURE.md` (roster/chores) | [guide](guides/roster.md) | 3 |
@@ -149,17 +153,18 @@ For what an officer sees and does on each screen, use the
 | `site-style` | content | — | [guide](guides/site-style.md) | 4 |
 | `stripe` | finance | [`guides/integrations.md`](guides/integrations.md) (Stripe Setup), [`guides/payments.md`](guides/payments.md) | [guide](guides/integrations.md) (`stripe/setup` wizard) | — (guided setup epic #2078; postdates #2050) |
 | `stuck-states` | support | `ARCHITECTURE.md` (stuck-state dashboard) | [guide](guides/stuck-states.md) | 4 |
+| `subscription-categories` | membership | `AUTHORITATIVE_FEES.md` (subscription category billing axis) | [guide](guides/subscription-categories.md) | — (subscription-category-decoupling; postdates #2050) |
 | `subscription-lockout` | membership | `ARCHITECTURE.md` (subscription lockout) | [guide](guides/subscription-lockout.md) | 2 |
 | `subscriptions` | finance | `ARCHITECTURE.md` (membership subscription billing) | [guide](guides/subscriptions.md) | 2 |
 | `testing` | overview (allowlisted) | TEST-ONLY: `testing/route-error` is the route-error probe for the #4467 boundary E2E. In a real production runtime it calls `notFound()` before any await and has no loading boundary above it, so the answer is a real 404 status; elsewhere it runs the admin guard itself before reading its cookie (`src/lib/route-error-probe.ts`) | — (not an operator surface) | — |
 | `video-meetings` | finance | [`guides/calendar.md`](guides/calendar.md) ("Video meetings (MiroTalk)"), `SECURITY-ATTACK-SURFACE.md` (MiroTalk meeting tokens) | [guide](guides/calendar.md) | — (MAD #2940, epic #2725; postdates #2050) |
 | `waitlist` | bookings | `ARCHITECTURE.md` (waitlist), `E2E_PLAYWRIGHT.md` | [guide](guides/waitlist.md) | 1 |
-| `work-parties` | lodge | — | [guide](guides/work-parties.md) | 3 |
-| `xero` | finance | `xero/ARCHITECTURE.md`, `XERO_MEMBER_GROUPING_RUNBOOK.md` | [guide](guides/xero.md) | 2 |
+| `work-parties` | lodge | `SECURITY-ATTACK-SURFACE.md` (member route `/dashboard/work-parties/[id]` and `/api/work-parties`, #5148), [`guides/calendar.md`](guides/calendar.md) (linked calendar entries) | [guide](guides/work-parties.md) | 3 |
+| `xero` | finance | `xero/ARCHITECTURE.md` (including the unallocated payments queue, `xero/unallocated-payments`, #5204: finance view to read, finance edit to refresh), `XERO_MEMBER_GROUPING_RUNBOOK.md` | [guide](guides/xero.md) | 2 |
 
 ## Summary
 
-- **83** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`, `membership`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
+- **86** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`, `membership`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
 - **2** areas are already served by a **feature hub** (`display` → lobby-display,
   `lodges` → multi-lodge). #2050 should extend, not duplicate, those hubs.
 - **13** areas have **no reference coverage** beyond their operator guide
@@ -282,9 +287,9 @@ pages, and a feature-gated display cluster; the guides document the reality:
   by default**, so `/admin/display` 404s in the seed; the capture stack had the
   module **enabled** to shoot the hub plus **Devices**, **Layouts**,
   **Templates**, **Reference**, and the template **preview**. On current `main`
-  the hub is a **five-card** hub — Devices, **Visual builder** (#2048),
-  Layouts (Advanced), Templates, Reference — and the guide documents the Visual
-  builder card at hub level (the no-HTML authoring path most operators should
+  the hub is a **five-card** hub — Display Devices, **Display Builder** (the
+  visual builder, #2048), Display Layouts, Display Templates, Display Reference —
+  and the guide documents the Display Builder card at hub level (the no-HTML authoring path most operators should
   use), deferring the full builder walk-through to the `lobby-display/` feature
   hub rather than duplicating it. Because the committed `admin-display` capture
   predates the builder card (and `admin-display-templates` predates the #2047
@@ -329,9 +334,11 @@ feature-gated surfaces; the guides document the reality:
   screenshot — the [Integrations](guides/integrations.md) guide describes it in
   prose, matching the batch-2 Xero pattern. The page is now a thin hub with a
   single **Xero Setup** card.
-- **`communications` and `mountain-conditions` are gated but ON by default.**
-  Their modules (`communications`, `skifieldConditions`) default **on** in the
-  seed, so both render and are captured. `communications` lives in the **Members**
+- **`communications` and `mountain-conditions` render in the capture.**
+  `communications` defaults **on** in the seed; `mountain-conditions` is gated
+  by `skifieldWhakapapa`, which a fresh install leaves off and the E2E prepare
+  step (`e2e/setup/enable-e2e-modules.ts`) turns on (#4932), so both render and
+  are captured. `communications` lives in the **Members**
   sidebar section (permission area `membership`), not support.
 - **`display` stays a feature hub.** The lobby TV display module (`lobbyDisplay`)
   is **off** by default, so `/admin/display` 404s in the seed; rather than a new

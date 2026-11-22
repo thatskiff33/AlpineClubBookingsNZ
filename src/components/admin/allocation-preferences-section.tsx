@@ -18,10 +18,12 @@ import {
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
 import {
+  ApiRefusalError,
   MODULE_DISABLED_ERROR_CODE,
   apiErrorCodeFromBody,
   apiErrorMessageFromBody,
   readApiErrorBody,
+  wordedForbiddenRefusal,
 } from "@/lib/api-error-message";
 import {
   BED_ALLOCATION_PRIORITY_VOCABULARY,
@@ -111,16 +113,6 @@ export const ALLOCATION_PREFERENCES_NOT_FOUND_REASON =
 export const ALLOCATION_PREFERENCES_VIEW_FORBIDDEN_REASON =
   "Your admin role cannot view allocation preferences. Bookings view access is required. Refresh the page to see the latest permissions.";
 
-/**
- * The bare word `requireAdmin` answers a plain permission refusal with
- * (`forbiddenResponse` in `src/lib/session-guards.ts`). It is the ONE 403 body
- * worth replacing: the guard's other 403s — "Two-factor verification required",
- * "Password change required", "Account is deactivated" — are curated, specific
- * and actionable, and overwriting them with a generic sentence about roles
- * would be the same wrong diagnosis this whole change removes.
- */
-const BARE_FORBIDDEN_ERROR = "Forbidden";
-
 const LOAD_FALLBACK = "Failed to load allocation preferences";
 const SAVE_FALLBACK = "Failed to save allocation preferences";
 const UNREADABLE_SAVE_REPLY =
@@ -142,21 +134,18 @@ async function refusalFor(
 ): Promise<Error> {
   const body = await readApiErrorBody(response);
   if (apiErrorCodeFromBody(body) === MODULE_DISABLED_ERROR_CODE) {
-    return new Error(ALLOCATION_PREFERENCES_MODULE_OFF_REASON);
+    return new ApiRefusalError(ALLOCATION_PREFERENCES_MODULE_OFF_REASON);
   }
   if (response.status === 401) {
-    return new Error(ALLOCATION_PREFERENCES_SIGNED_OUT_REASON);
+    return new ApiRefusalError(ALLOCATION_PREFERENCES_SIGNED_OUT_REASON);
   }
   if (response.status === 404) {
-    return new Error(ALLOCATION_PREFERENCES_NOT_FOUND_REASON);
+    return new ApiRefusalError(ALLOCATION_PREFERENCES_NOT_FOUND_REASON);
   }
   if (response.status === 403) {
-    const message = apiErrorMessageFromBody(body, BARE_FORBIDDEN_ERROR);
-    return message === BARE_FORBIDDEN_ERROR
-      ? bareForbidden()
-      : new Error(message);
+    return wordedForbiddenRefusal(body) ?? bareForbidden();
   }
-  return new Error(apiErrorMessageFromBody(body, fallback));
+  return new ApiRefusalError(apiErrorMessageFromBody(body, fallback));
 }
 
 /**
@@ -242,7 +231,7 @@ export function AllocationPreferencesSection({
         throw await refusalFor(
           response,
           LOAD_FALLBACK,
-          () => new Error(ALLOCATION_PREFERENCES_VIEW_FORBIDDEN_REASON),
+          () => new ApiRefusalError(ALLOCATION_PREFERENCES_VIEW_FORBIDDEN_REASON),
         );
       }
       const settings = settingsOf(await response.json().catch(() => null));
@@ -272,7 +261,7 @@ export function AllocationPreferencesSection({
         );
       }
       const settings = settingsOf(await response.json().catch(() => null));
-      if (!settings) throw new Error(UNREADABLE_SAVE_REPLY);
+      if (!settings) throw new ApiRefusalError(UNREADABLE_SAVE_REPLY);
       return toDraft(draft.lodgeId, settings);
     },
     successMessage: "Allocation preferences saved",

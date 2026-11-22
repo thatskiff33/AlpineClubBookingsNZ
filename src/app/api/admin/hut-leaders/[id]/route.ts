@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
@@ -53,12 +55,9 @@ export async function PUT(
   const session = guard.session;
   const { id } = await params;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) {
@@ -98,10 +97,7 @@ export async function PUT(
       select: { id: true, active: true },
     });
     if (!lodge || !lodge.active) {
-      return NextResponse.json(
-        { error: "Lodge not found or not active" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Lodge not found or not active" }, { status: 400 });
     }
     updateData.lodgeId = lodge.id;
   }
@@ -193,6 +189,10 @@ export async function PUT(
   } catch (err) {
     const custodianResponse = custodianBedHoldErrorResponse(err);
     if (custodianResponse) return custodianResponse;
+    const contended = transactionContendedResponse(err, "Hut leader assignment edit contended for the lock(1) budget", {
+      context: { assignmentId: id },
+    });
+    if (contended) return contended;
     logger.error({ err }, "Error updating hut leader assignment");
     return NextResponse.json({ error: "Failed to update assignment" }, { status: 500 });
   }

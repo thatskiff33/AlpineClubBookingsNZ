@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => ({
   manualRefundTaskAggregate: vi.fn(),
   manualRefundTaskCreateMany: vi.fn(),
   manualRefundTaskDeleteMany: vi.fn(),
+  manualRefundTaskFindUniqueOrThrow: vi.fn(async () => ({ id: "hand-back-1", amountCents: 0 })),
+  manualRefundTaskFindFirst: vi.fn(async () => null),
   memberCreditAggregate: vi.fn(),
   transaction: vi.fn(),
   processRefund: vi.fn(),
@@ -48,6 +50,8 @@ vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postRefundObligation: vi.fn(async () => null),
   withdrawRefundObligation: vi.fn(async () => false),
+  // #4516 (M4d): the bank part's hand-back R05, likewise.
+  postHandBackObligation: vi.fn(async () => null),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -207,6 +211,9 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
           aggregate: mocks.manualRefundTaskAggregate,
           createMany: mocks.manualRefundTaskCreateMany,
           deleteMany: mocks.manualRefundTaskDeleteMany,
+          // #4516 (M4d): the bank part's task, read for its R05, and the open one a release withdraws.
+          findUniqueOrThrow: mocks.manualRefundTaskFindUniqueOrThrow,
+          findFirst: mocks.manualRefundTaskFindFirst,
         },
         refundRequest: {
           findUnique: mocks.lockedRefundRequestFindUnique,
@@ -562,10 +569,16 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
       paidBy("INTERNET_BANKING");
       stripePlans(0);
+      mocks.manualRefundTaskFindUniqueOrThrow.mockResolvedValueOnce({ id: "hand-back-1", amountCents: 2500 });
 
       const response = await PUT(approveFor(2500), { params: Promise.resolve({ id: "refund_1" }) });
 
       expect(response.status).toBe(200);
+      // #4516 (M4d review A): MUTATION - the bank part's R05 posts in the approval's transaction, as a concession
+      // like the card part's (Dr goodwill), so the member's receivable is left at zero once it is paid.
+      const { postHandBackObligation } = await import("@/lib/member-money/doors");
+      expect(vi.mocked(postHandBackObligation)).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.anything(), expect.objectContaining({
+        bookingId: "booking_1", taskId: "hand-back-1", amountCents: 2500, concession: true, debtorRead: "booking-row", actorMemberId: "admin_1" }));
       expect(mocks.manualRefundTaskCreateMany).toHaveBeenCalledTimes(1);
       expect(mocks.manualRefundTaskCreateMany).toHaveBeenCalledWith({
         data: [
@@ -687,6 +700,8 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       mocks.refundPaymentTransactions.mockRejectedValue(new Error("stripe down"));
       mocks.enqueueRefundRequestRefundRecovery.mockRejectedValue(new Error("db unavailable"));
 
+      mocks.manualRefundTaskFindFirst.mockResolvedValueOnce({ id: "hand-back-1" } as never);
+
       const response = await PUT(approveFor(2500), { params: Promise.resolve({ id: "refund_1" }) });
 
       expect(response.status).toBe(500);
@@ -699,14 +714,22 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       expect((mocks.executeRaw.mock.calls[2]?.[0] as TemplateStringsArray).join("?")).toContain(
         "pg_advisory_xact_lock(1)",
       );
-      expect(releaseLock).toBeLessThan(mocks.refundRequestUpdateMany.mock.invocationCallOrder[1]);
+      // MUTATION (#5191): then the booking row, before the release's claim, so its withdrawals read the owner under it.
+      const releaseRowLock = mocks.executeRaw.mock.invocationCallOrder[3];
+      expect((mocks.executeRaw.mock.calls[3]?.[0] as TemplateStringsArray).join("?")).toContain('FROM "Booking"');
+      expect(mocks.executeRaw.mock.calls[3]?.slice(1)).toEqual(["booking_1"]);
+      expect(releaseLock).toBeLessThan(releaseRowLock!);
+      expect(releaseRowLock).toBeLessThan(mocks.refundRequestUpdateMany.mock.invocationCallOrder[1]!);
       expect(mocks.refundRequestUpdateMany.mock.invocationCallOrder[1]).toBeLessThan(
         mocks.manualRefundTaskDeleteMany.mock.invocationCallOrder[0],
       );
       // MUTATION (#4516, M4c probe 10): the approval's R05 is withdrawn in that same transaction, after the release.
-      expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledTimes(1);
+      // MUTATION (#4516, M4d): and so is the bank part's hand-back R05, its concession with it.
+      expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledTimes(2);
       expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({
         scope: "refund-request", id: "refund_1", actorMemberId: "admin_1" }));
+      expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({
+        scope: "hand-back", id: "hand-back-1", actorMemberId: "admin_1" }));
       expect(mocks.manualRefundTaskDeleteMany.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(withdrawRefundObligation).mock.invocationCallOrder[0]!);
     });
 
@@ -773,6 +796,8 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
             aggregate: mocks.manualRefundTaskAggregate,
             createMany: mocks.manualRefundTaskCreateMany,
             deleteMany: mocks.manualRefundTaskDeleteMany,
+            // #4516 (M4d): a skipped insert means the row already stands; its R05 read finds it.
+            findUniqueOrThrow: mocks.manualRefundTaskFindUniqueOrThrow,
           },
           refundRequest: { findUnique: mocks.lockedRefundRequestFindUnique, updateMany: mocks.refundRequestUpdateMany },
           memberCredit: { aggregate: mocks.memberCreditAggregate },

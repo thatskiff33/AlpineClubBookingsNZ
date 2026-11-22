@@ -37,21 +37,29 @@ on:
 permissions:
   contents: read
 
+# Pull-request runs share a group per ref and cancel superseded runs. Pushes to
+# main share one group that never cancels a run in progress: GitHub keeps one
+# running and one pending run in it, so a newer merge replaces only main's
+# QUEUED run, a started run still reports, and the newest main commit always
+# gets its full set (owner decision, #5356). Pushes to epic/** keep a group per
+# commit. Why: INV-OPS-021 (docs/invariants/operations.md).
+# Pinned by scripts/ci/main-push-superseded-runs.test.ts.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && github.ref != 'refs/heads/main' && github.sha || github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   dependency-review:
     if: github.event_name == 'pull_request'
     # Every job names its runner image, never `ubuntu-latest` (#5192). GitHub
     # moves that label to a new Ubuntu release over several weeks, so the same
-    # commit ran on 24.04 or 26.04 by chance. On 26.04 the runner's pg_dump is
-    # PostgreSQL 17 and writes `SET transaction_timeout`, which the PostgreSQL
-    # 16 service refuses, failing `Migration drift check` for every pull
-    # request. Moving to a newer image is a deliberate change: update every
-    # workflow together; `require-test-shards.test.mjs` keeps them equal.
-    runs-on: ubuntu-24.04
+    # commit ran on 24.04 or 26.04 by chance, and the 26.04 runner's newer
+    # pg_dump broke the roles proof against the PostgreSQL 16 service. The
+    # real-PostgreSQL jobs now take their client tools from the service's own
+    # image (#5193), so the runner's client version no longer matters. Moving
+    # to a newer image is a deliberate change: update every workflow together;
+    # `require-test-shards.test.mjs` keeps them equal.
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -60,7 +68,7 @@ jobs:
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -130,7 +138,7 @@ jobs:
   # advisory. This one is required and also runs on pushes to `main`.
   dependency-audit:
     name: Dependency audit
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -141,7 +149,7 @@ jobs:
       # pnpm itself, for `pnpm audit`; its version comes from `packageManager`
       # in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       # No `cache: pnpm`: nothing here installs, so there is no store to hit.
       - name: Set up Node.js
@@ -181,7 +189,7 @@ jobs:
 
   static-analysis:
     name: Static analysis gate
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -318,7 +326,7 @@ jobs:
       # gate on findings so the alerts still publish.
       - name: Upload Semgrep SARIF to code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: ${{ runner.temp }}/semgrep-output/semgrep-results.published.sarif
           category: semgrep
@@ -360,7 +368,7 @@ jobs:
   # pass or a real failure.
   secret-scan:
     name: Secret scan (gitleaks)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -500,7 +508,7 @@ jobs:
   # GitHub treats a skipped required job as satisfying branch protection.
   test-shard:
     name: Test shard (${{ matrix.shard }}/4)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -532,7 +540,7 @@ jobs:
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -559,7 +567,7 @@ jobs:
   # environment as `verify` (`require-test-shards.test.mjs` pins all of it).
   typecheck:
     name: Typecheck
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       AUTH_SECRET: ci-auth-secret
@@ -579,7 +587,7 @@ jobs:
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -608,7 +616,7 @@ jobs:
 
   lint:
     name: Lint
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       AUTH_SECRET: ci-auth-secret
@@ -628,7 +636,7 @@ jobs:
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -649,7 +657,7 @@ jobs:
 
   build:
     name: Production build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       AUTH_SECRET: ci-auth-secret
@@ -669,7 +677,7 @@ jobs:
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -762,24 +770,25 @@ jobs:
           fi
 
   verify:
-    runs-on: ubuntu-24.04
-    # A BACKSTOP AGAINST A HUNG JOB, NOT A TARGET (#3425). 75 does not mean a
-    # 75-minute run is acceptable; it means a genuinely wedged job is still
-    # killed rather than burning an hour of budget indefinitely.
+    runs-on: ubuntu-26.04
+    # A BACKSTOP AGAINST A HUNG JOB, NOT A TARGET (#3425). 130 does not mean a
+    # 130-minute run is acceptable; it means a genuinely wedged job is still
+    # killed rather than burning budget indefinitely.
     #
     # Raised from 30 when `verify` ran the suite itself: a healthy run could be
     # cancelled mid-`Test` and skip every later build proof. #3431 moved the
     # full suite to independent shard jobs, and #4425 moved typecheck, lint and
     # the build with its proofs to jobs of their own; `verify` fails closed on
-    # all of their results, so this timeout must outlast its gate's wait.
+    # all of their results, so this timeout must outlast its gate's wait (110
+    # minutes, set on the gate step below) plus the steps before it (#5222).
     #
     # Historical baseline (13-14 Sep 2026): fourteen consecutive unsharded
     # runs measured 14.8 to 23.4 minutes. On #3431's first green hosted run,
     # four shards took 4m33s to 5m17s and this required job took 7m31s.
-    timeout-minutes: 75
+    timeout-minutes: 130
     permissions:
       contents: read
-      actions: read # poll this run attempt's shard, typecheck, lint and build jobs
+      actions: read # poll this run attempt's shard, typecheck, lint, build and real-PostgreSQL jobs
       # The concurrency-declaration gate fetches the CURRENT PR body from the
       # pulls API so a body edit can flip the check green on a plain re-run.
       pull-requests: read
@@ -803,7 +812,7 @@ jobs:
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -925,6 +934,21 @@ jobs:
       - name: Check workflows that run the suite check out full history
         run: node scripts/ci/check-workflow-suite-checkout-depth.mjs
 
+      # #5356: the commit a push to main is judged from by the push-only gates
+      # below (doc index, file-size ratchet). A newer merge may replace main's queued run, so the previous main
+      # commit (`github.event.before`) may never have been judged; this finds
+      # the last main commit whose `ci.yml` run ran the gate steps named here
+      # (INV-OPS-021). Keep the names in step with those steps; a rename keeps
+      # the old name with --step-was or --job-was (CONTRIBUTING.md). It writes
+      # nothing for any other event, which keeps its existing base, and fails
+      # closed when GitHub cannot say.
+      - name: Find the last judged main commit
+        id: main-push-base
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: node scripts/ci/resolve-main-push-base.mjs --job verify --step "Check doc index integrity (reachability + invariant ids)" --step "File-size budget ratchet"
+
       # #2691: every `docs/` page is reachable from a front door, and every cited
       # `INV-*` invariant id resolves to a real definition that the index lists.
       # Both properties are what make the routing table in AGENTS.md usable
@@ -937,7 +961,7 @@ jobs:
           # Immutable event SHAs: a branch ref can move while a run is queued,
           # and HEAD^1 may already postdate a deletion in a multi-commit push.
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PUSH_BASE_SHA: ${{ github.event.before }}
+          PUSH_BASE_SHA: ${{ steps.main-push-base.outputs.sha || github.event.before }}
         run: node scripts/ci/check-doc-index-integrity.mjs
 
       - name: Install dependencies
@@ -1057,33 +1081,57 @@ jobs:
       # This is a STEP in the existing required job, not a `needs:` edge, and
       # it runs after this job's own gates, so the required job does real work
       # before it waits (#4425). One poll of this run attempt gates the unit
-      # shards and the three jobs `verify` used to run in series. The script
-      # refuses absent, duplicate, skipped and failed jobs, fails at once on
-      # the first failure, and times out rather than making `verify`
-      # vacuously green.
-      - name: Require the unit-test shards, typecheck, lint and build to pass
+      # shards, the three jobs `verify` used to run in series, and (#4907,
+      # owner decision 11 Nov 2026) every real-PostgreSQL suite in
+      # `realdb-all`. The script refuses absent, duplicate, skipped and failed
+      # jobs, fails at once on the first failure, and times out rather than
+      # making `verify` vacuously green. `realdb-all` is the slowest of them
+      # (18-25 minutes, median 23, over the 14 successful `main` push runs of
+      # 12-14 Nov 2026, measured for #4907).
+      #
+      # The wait (#5222) is the runner queue an awaited job may sit in, then
+      # the longest `timeout-minutes` among them (the test shards' 45), then
+      # 5 minutes' grace: 60 + 45 + 5 = 110. On 17 Nov 2026 `realdb-all`
+      # queued for 37 minutes and ran 24, past the old flat 45-minute wait,
+      # and `verify` went red over a green run. GitHub ends each job at its
+      # own limit and the gate fails at once on that result, so the wait only
+      # fires for a job that never gets a runner. `require-test-shards.test.mjs`
+      # pins the run allowance to the jobs' limits and this job's timeout.
+      - name: Require the unit-test shards, typecheck, lint, build and real-PostgreSQL suites to pass
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/ci/require-test-shards.mjs --job Typecheck --job Lint --job "Production build"
+        run: node scripts/ci/require-test-shards.mjs --max-queue-minutes 60 --max-run-minutes 45 --job Typecheck --job Lint --job "Production build" --job "Real-PostgreSQL suites (all)"
 
       # #3432: deliberately LAST. Keep the detailed base-selection contract
       # above beside the full-history checkout it depends on; placing this
       # blocking quality gate here ensures every correctness and security gate
       # reports before a size-budget failure ends `verify`.
+      #
+      # #5196: the wrapper runs exactly `pnpm run quality:budget --base
+      # "$BUDGET_BASE"` unless the repository variable
+      # QUALITY_BUDGET_UPSTREAM_REPO is set, as only a deployment fork does.
+      # Then it fetches that repository's `main` and passes it as
+      # `--upstream-ref`, so a sync-down is not refused for upstream's own
+      # reviewed code. The upstream comes from a repository variable, never
+      # from anything a pull request controls; unset (upstream, or where a
+      # fork's variables are unavailable) it behaves as before, on pull
+      # requests and on pushes alike.
       - name: File-size budget ratchet
         env:
-          BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false && !startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || 'origin/main' }}
-        run: pnpm run quality:budget --base "$BUDGET_BASE"
+          BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false && !startsWith(github.ref, 'refs/heads/epic/')) && (steps.main-push-base.outputs.sha || github.event.before) || 'origin/main' }}
+          BUDGET_UPSTREAM_REPO: ${{ vars.QUALITY_BUDGET_UPSTREAM_REPO }}
+        run: node scripts/ci/run-budget-gate.mjs
 
   migration-drift:
     name: Migration drift check
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # #2672 raised this from 15: this job also hosts every opt-in real-Postgres
     # lock harness, and the member-merge shared-double suite added below drives
     # ten real merge/writer interleavings whose own describe budget is 120s each.
     timeout-minutes: 30
     permissions:
       contents: read
+      actions: read # find the last judged main commit (#5356)
     services:
       postgres:
         image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
@@ -1094,7 +1142,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -1108,7 +1156,7 @@ jobs:
           # Docker selects an available high port; never reserve one fixed host port.
           - 127.0.0.1:55442-65535:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d concurrency_race_1881"
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres -d concurrency_race_1881"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -1131,6 +1179,21 @@ jobs:
           # over the very pair it exists to catch.
           fetch-depth: 0
 
+      # #5356: the commit a push to main is judged from by the migration-safety
+      # ledger check below. A newer merge may replace main's queued run, so the previous main
+      # commit (`github.event.before`) may never have been judged; this finds
+      # the last main commit whose `ci.yml` run ran the gate steps named here
+      # (INV-OPS-021). Keep the names in step with those steps; a rename keeps
+      # the old name with --step-was or --job-was (CONTRIBUTING.md). It writes
+      # nothing for any other event, which keeps its existing base, and fails
+      # closed when GitHub cannot say.
+      - name: Find the last judged main commit
+        id: main-push-base
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: node scripts/ci/resolve-main-push-base.mjs --job "Migration drift check" --step "Check migration safety ledger coverage"
+
       # Fails fast (no database or dependency install needed) if any migration matching
       # the blue/green hot-table/breaking regexes lacks a safety-ledger entry, if
       # a new migration reuses an existing timestamp prefix, or — since #3002 —
@@ -1144,13 +1207,14 @@ jobs:
       # head is the epic's BRANCH POINT, so the added set is the whole epic so far
       # plus this child — which means a child adding a contract for an expand an
       # EARLIER child added is caught at child-PR time rather than only at
-      # `epic -> main`. On a push the event's `before` is the honest base, except
+      # `epic -> main`. On a push to main the honest base is the last judged
+      # main commit (the step above; usually the event's `before`), except
       # for a ref-CREATING push, whose `before` is all zeroes and which the gate
       # refuses; `github.event.created == false` is what keeps that off, and it
       # matters now that `epic/**` branches are created routinely.
       - name: Check migration safety ledger coverage
         env:
-          MIGRATION_SAFETY_BASE: ${{ (github.event_name == 'push' && github.event.created == false && !startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || 'origin/main' }}
+          MIGRATION_SAFETY_BASE: ${{ (github.event_name == 'push' && github.event.created == false && !startsWith(github.ref, 'refs/heads/epic/')) && (steps.main-push-base.outputs.sha || github.event.before) || 'origin/main' }}
         run: bash scripts/check-migration-safety-coverage.sh --base "$MIGRATION_SAFETY_BASE"
 
       # #2418: a data-REWRITING migration (backfill, repair, value transform)
@@ -1175,7 +1239,7 @@ jobs:
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -1185,6 +1249,12 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # #5193: every later `pg_dump` and `psql` runs from the service's own
+      # image, never the runner's client, whose major version follows the
+      # Ubuntu release. Both services here run the same image.
+      - name: Use the PostgreSQL client tools of the service's image
+        run: bash scripts/ci/postgres-client-from-service.sh "${{ job.services.concurrency-race-postgres.id }}"
 
       - name: Create shadow database
         if: steps.scope.outputs.needed != 'false'
@@ -1383,10 +1453,10 @@ jobs:
       # so only a real server can establish them. The suite provisions the roles
       # with the SHIPPED statements and CLI in scratch databases of its own (roles
       # are cluster-global, so each run carries a random prefix and drops them),
-      # and needs pg_dump and psql from the runner. A required step, like the
-      # diagnostics proof above, so a broken grant blocks the merge; the advisory
-      # realdb-all job runs the same file too. It describe.skip's itself without
-      # the env vars, so this step MUST stay wired —
+      # and needs pg_dump and psql, taken from the service's image (#5193). A
+      # required step, like the diagnostics proof above, so a broken grant
+      # blocks the merge; the realdb-all job runs the same file too. It
+      # describe.skip's itself without the env vars, so this step MUST stay wired —
       # `review-findings-contracts.test.ts` fails if it goes missing.
       - name: Prove the least-privilege database roles against dedicated PostgreSQL
         env:
@@ -1400,7 +1470,7 @@ jobs:
       # PostgreSQL's behaviour, not code a mock can run. The suite applies the
       # shipped migration in a scratch database of its own on the race service
       # and drops it afterwards. A required step, like the roles proof above;
-      # the advisory realdb-all job runs the same file too. It describe.skip's
+      # the realdb-all job runs the same file too. It describe.skip's
       # itself without the env vars, so this step MUST stay wired —
       # `review-findings-contracts.test.ts` fails if it goes missing.
       - name: Prove the member-money journal's enforcement against dedicated PostgreSQL
@@ -1413,7 +1483,7 @@ jobs:
       # checks can say whether a built batch really commits, and replay and
       # the concurrent-poster race are PostgreSQL behaviour, not code a mock
       # can run. Same shape as the step above: a scratch database of its own,
-      # required, and the advisory realdb-all job runs the file too. It
+      # required, and the realdb-all job runs the file too. It
       # describe.skip's itself without the env vars, so this step MUST stay
       # wired — `review-findings-contracts.test.ts` fails if it goes missing.
       - name: Prove the member-money posting command against dedicated PostgreSQL
@@ -1431,6 +1501,17 @@ jobs:
         env:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-money-applications.realdb.test.ts
+
+      # #4525 (Ledger M13): the primary invoice's export manifest against real
+      # PostgreSQL, as the INSERT/SELECT-only application role. Immutability,
+      # the coverage keys and the deferred coverage-total check are PostgreSQL
+      # behaviour. Same shape as the step above. It describe.skip's itself
+      # without the env vars, so this step MUST stay wired —
+      # `review-findings-contracts.test.ts` fails if it goes missing.
+      - name: Prove the member-money export manifest against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-money-export-manifest.realdb.test.ts
 
       # E8 (#1934): real-Postgres behavior of the member-grouping cutover
       # migration (legacy-rule deactivation, shape-dedupe, backfill, mode seed,
@@ -1527,7 +1608,7 @@ jobs:
   # fails inside this job when the URL is absent, rather than skipping quietly.
   data-migration-verification:
     name: Data migration verification
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -1541,7 +1622,7 @@ jobs:
         ports:
           - 55443:5432
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -1574,7 +1655,7 @@ jobs:
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -1619,23 +1700,30 @@ jobs:
   # lock in `vitest.setup.ts`), so the run is as long as the files one after
   # another.
   #
-  # ADVISORY, deliberately NOT a required check (owner ruling, 1 Sep 2026: a
-  # required-check edit waits for the owner). So no required job may name it in
-  # `needs:`; `realdb-ci-coverage-census.test.ts` fails if one does. Becoming
-  # required is a separate owner step (CONTRIBUTING.md, "Branch protection").
+  # BLOCKING through `verify` (#4907, owner decision 11 Nov 2026, option B):
+  # it is not a branch-protection context of its own; `verify`'s same-attempt
+  # poll names it by its `name:` and fails on any result but success, a skip,
+  # a cancellation, a timeout or a missing job included. So it never has a
+  # job-level `if:` or `needs:` (a skip would fail `verify` on every PR), and
+  # no job may name it in `needs:`; `realdb-ci-coverage-census.test.ts` fails
+  # on either, and on any reference besides that one poll. Through `verify` it
+  # also gates the release: `publish-ghcr-images` needs `verify`, so a red,
+  # cancelled or timed-out run on `main` publishes no image for that commit
+  # (`deployment-image-contracts.test.ts` pins both links).
   #
   # The file list is `scripts/ci/realdb-files.mjs`: every realdb file minus
   # `scripts/ci/realdb-quarantine.txt`. The census reads the same two sources,
   # so a new realdb file is either run here or named in the quarantine.
   # The per-file steps in `migration-drift` and `data-migration-verification`
-  # stay: they are required, this job is not. The last step fails the job when a
-  # listed file skipped itself or never ran (`scripts/ci/check-realdb-ran.mjs`),
-  # so a suite whose gate is unset cannot read as green. The one suite that
+  # stay: they report sooner, inside their own required jobs. The last step
+  # fails the job when a listed file skipped itself or never ran
+  # (`scripts/ci/check-realdb-ran.mjs`), so a suite whose gate is unset cannot
+  # read as green. The one suite that
   # cannot share this process (booking-ledger-history-seed, run by
   # `scripts/booking-ledger-seed-gate.sh`) is in the quarantine file.
   realdb-all:
-    name: Real-PostgreSQL suites (all, advisory)
-    runs-on: ubuntu-24.04
+    name: Real-PostgreSQL suites (all)
+    runs-on: ubuntu-26.04
     # PR CI measured this job at 9m02s (#4476). By 8 Nov 2026 it took 16-18
     # minutes on `main` and was cancelled at the old 20-minute limit in 4 of 7
     # runs, so a cancelled run proved nothing (#4793). 35 is about twice the
@@ -1654,7 +1742,7 @@ jobs:
           # Docker selects an available high port; never reserve one fixed host port.
           - 127.0.0.1:55442-65535:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d concurrency_race_1881"
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres -d concurrency_race_1881"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -1674,7 +1762,7 @@ jobs:
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -1707,6 +1795,12 @@ jobs:
         env:
           DATABASE_URL: ${{ env.CONCURRENCY_RACE_DATABASE_URL }}
         run: pnpm exec prisma migrate deploy
+
+      # #5193: the roles proof's `pg_dump` and `psql` run from the service's
+      # own image, never the runner's client, whose major version follows the
+      # Ubuntu release.
+      - name: Use the PostgreSQL client tools of the service's image
+        run: bash scripts/ci/postgres-client-from-service.sh "${{ job.services.concurrency-race-postgres.id }}"
 
       # One `vitest run` over every file, so the log shows each one executed.
       # The list is a script, not a shell glob: a glob would not reach a file in
@@ -1749,15 +1843,18 @@ jobs:
   # instead of weakening anything.
   docker-image-security:
     name: Image security gate (Trivy CRITICAL)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     permissions:
       contents: read
     env:
       # Stripe publishable key is delivered at runtime from the DB store (#2082),
       # not a build arg — nothing Stripe is inlined into the image.
-      NEXT_PUBLIC_SENTRY_DSN: ""
       IMAGE_REF: tacbookings-ci:${{ github.sha }}
+      # The builder-stage image the migrate and seed services run, built below.
+      # A first-party local tag (INV-OPS-017's exception, `tacbookings-*:ci`), and
+      # the name Compose reads for `migrate` and `seed`, so the smoke inherits it.
+      MIGRATE_IMAGE: tacbookings-ci-migrate:ci
       # Heap ceiling for the builder stage's `next build`, passed as the
       # Dockerfile's build-only NODE_OPTIONS arg; it never reaches the image's
       # runtime. Value and reason: the `Build` step of `Production build` in ci.yml (#5164).
@@ -1774,8 +1871,10 @@ jobs:
       # image is built and scanned only when the change can bring a new package
       # into it: the dependency manifests, `patches/`, the Dockerfile, a compose
       # file, `.dockerignore` or this workflow (`CHANGE_SCOPES.image` in
-      # scripts/ci/change-scope.mjs). A push - every merge to `main` - always
-      # scans in full, and so does any failure to classify the change.
+      # scripts/ci/change-scope.mjs). That list also holds the few files the
+      # first-install smoke and the browser-bundle assertion below depend on
+      # (#4977, #5262). A push - every merge to `main` - always scans in full,
+      # and so does any failure to classify the change.
       - name: Decide whether this change needs the image build and scan
         id: scope
         run: node scripts/ci/change-scope.mjs image
@@ -1803,7 +1902,6 @@ jobs:
         if: steps.scope.outputs.needed != 'false'
         run: |
           docker build \
-            --build-arg NEXT_PUBLIC_SENTRY_DSN="${NEXT_PUBLIC_SENTRY_DSN}" \
             --build-arg GIT_COMMIT_SHA="${GIT_COMMIT_SHA}" \
             --build-arg KNOWLEDGE_BUNDLE_OBSERVED_AT="${KNOWLEDGE_BUNDLE_OBSERVED_AT}" \
             --build-arg RELEASE_ID="${GIT_COMMIT_SHA}" \
@@ -1827,6 +1925,36 @@ jobs:
             exit 1
           fi
           echo "RELEASE_ID is readable in the image and matches the built commit."
+
+      # #5262: browser Sentry's release tag is the package.json version, stamped
+      # into the client bundle at build time. The nonce seed (RELEASE_ID here) is
+      # defined for the same compilers and must never reach a browser chunk.
+      - name: Assert the browser bundle carries the version and not the nonce seed
+        if: steps.scope.outputs.needed != 'false'
+        run: |
+          APP_VERSION="$(node -p 'require("./package.json").version')"
+          docker run --rm --entrypoint node \
+            -e EXPECT_VERSION="${APP_VERSION}" -e FORBID_SEED="${GIT_COMMIT_SHA}" \
+            "${IMAGE_REF}" -e '
+              const fs = require("node:fs");
+              const path = require("node:path");
+              const files = fs.readdirSync(".next/static", { recursive: true })
+                .map((f) => path.join(".next/static", f))
+                .filter((f) => f.endsWith(".js") && fs.statSync(f).isFile());
+              const version = JSON.stringify(process.env.EXPECT_VERSION);
+              const seed = process.env.FORBID_SEED;
+              let found = false;
+              const leaks = [];
+              for (const file of files) {
+                const text = fs.readFileSync(file, "utf8");
+                if (text.includes(version)) found = true;
+                if (seed && text.includes(seed)) leaks.push(file);
+              }
+              if (!seed) { console.error("No nonce seed to check against."); process.exit(1); }
+              if (leaks.length) { console.error("Nonce seed found in browser chunks:", leaks); process.exit(1); }
+              if (!found) { console.error(`No browser chunk contains the version ${version}.`); process.exit(1); }
+              console.log(`Browser chunks carry ${version} and not the nonce seed (${files.length} files).`);
+            '
 
       # REQUIRED GATE. A CRITICAL finding fails this step, fails the job, and
       # therefore blocks the merge (#2686, owner decision 9 Aug 2026). The step
@@ -1856,10 +1984,35 @@ jobs:
           severity: HIGH
           skip-setup-trivy: true
 
+      # #4977 (INV-OPS-022): the Docker-only first install, run as DEPLOYMENT.md
+      # "First Bootstrap" writes it, on an empty database. The migrate and seed
+      # services run the builder stage, which the app build above has just
+      # produced with these same build args, so this tags it from the cache
+      # rather than building it again; the job's MIGRATE_IMAGE points Compose at it,
+      # exactly as a production adopter points it at the published image.
+      - name: Tag the builder-stage image the migrate and seed services run
+        if: steps.scope.outputs.needed != 'false'
+        run: |
+          docker build \
+            --target builder \
+            --build-arg GIT_COMMIT_SHA="${GIT_COMMIT_SHA}" \
+            --build-arg KNOWLEDGE_BUNDLE_OBSERVED_AT="${KNOWLEDGE_BUNDLE_OBSERVED_AT}" \
+            --build-arg RELEASE_ID="${GIT_COMMIT_SHA}" \
+            --build-arg NODE_OPTIONS="${NODE_BUILD_OPTIONS}" \
+            --tag "${MIGRATE_IMAGE}" \
+            .
+
+      # The commands are read from the doc, never copied here, so the doc
+      # cannot drift from what this runs. Throwaway SEED_* values are generated
+      # by the script; no repository secret is involved.
+      - name: First-install smoke (migrate and seed exactly as DEPLOYMENT.md says)
+        if: steps.scope.outputs.needed != 'false'
+        run: node scripts/ci/first-install-smoke.mjs
+
   publish-ghcr-images:
     name: Publish GHCR images
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     needs:
       - verify
@@ -1885,7 +2038,6 @@ jobs:
       APP_IMAGE: ${{ vars.GHCR_APP_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-app', github.repository_owner) }}:${{ github.sha }}
       MIGRATE_IMAGE: ${{ vars.GHCR_MIGRATE_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-migrate', github.repository_owner) }}:${{ github.sha }}
       # Stripe credentials are DB-only (#2082) — no Stripe build args or env here.
-      NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
       # Heap ceiling for the builder stage's `next build` in both image builds,
       # passed as the Dockerfile's build-only NODE_OPTIONS arg; it never reaches
       # the published image's runtime. Value and reason: the `Build` step of `Production build` in ci.yml (#5164).
@@ -1906,7 +2058,7 @@ jobs:
           echo "MIGRATE_IMAGE_NAME=${MIGRATE_IMAGE%:*}" >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1942,7 +2094,6 @@ jobs:
           provenance: mode=max
           tags: ${{ env.APP_IMAGE }}
           build-args: |
-            NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
             GIT_COMMIT_SHA=${{ env.GIT_COMMIT_SHA }}
             KNOWLEDGE_BUNDLE_OBSERVED_AT=${{ env.KNOWLEDGE_BUNDLE_OBSERVED_AT }}
             RELEASE_ID=${{ env.GIT_COMMIT_SHA }}
@@ -1992,7 +2143,6 @@ jobs:
           provenance: mode=max
           tags: ${{ env.MIGRATE_IMAGE }}
           build-args: |
-            NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
             GIT_COMMIT_SHA=${{ env.GIT_COMMIT_SHA }}
             KNOWLEDGE_BUNDLE_OBSERVED_AT=${{ env.KNOWLEDGE_BUNDLE_OBSERVED_AT }}
             NODE_OPTIONS=${{ env.NODE_BUILD_OPTIONS }}

@@ -13,6 +13,12 @@ import {
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
+// #4915: the sections the export gained have their own tests
+// (subject-access-export.realdb.test.ts); this file is about the reads it kept.
+vi.mock("@/lib/subject-access-export-sections", () => ({
+  buildSubjectAccessSections: vi.fn(async () => ({})),
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
@@ -83,6 +89,10 @@ vi.mock("@/lib/prisma", () => ({
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     sessionReauthChallenge: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
+    // ALP-653: erasure ends the member's AI app connections in the same transaction.
+    mcpGrant: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     // #1756: deletion approval sweeps future shared-double placements inside
@@ -176,7 +186,7 @@ describe("F-COMP-03: Personal Data Export", () => {
 
     const disposition = res.headers.get("Content-Disposition");
     expect(disposition).toMatch(/attachment/);
-    expect(disposition).toMatch(/tac-my-data-\d{4}-\d{2}-\d{2}\.json/);
+    expect(disposition).toMatch(/filename="emc-my-data-\d{4}-\d{2}-\d{2}\.json"/);
 
     const body = await res.json();
     expect(body.profile.firstName).toBe("Alice");

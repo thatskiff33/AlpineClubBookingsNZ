@@ -41,7 +41,7 @@
  * transaction that records the receipt's link - so the note exists exactly
  * when the receipt does, and never runs before it.
  */
-import { Invoice, LineAmountTypes, type LineItem } from "xero-node";
+import { Invoice, type LineItem } from "xero-node";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -68,7 +68,10 @@ import { applyHutFeeLineCodes } from "@/lib/xero-hut-fee-line-codes";
 import { xeroDocumentDateFromInstant } from "@/lib/xero-provider-dates";
 import { readStripeCaptureDocumentDate } from "@/lib/stripe-capture-date";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroLineTax } from "@/lib/xero-tax-rendering";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { createXeroPaymentForInvoice } from "@/lib/xero-invoice-payments";
+import { recordCaptureReceiptManifest } from "@/lib/member-money/doors";
 import type { ClubTimeZone } from "@/lib/club-time";
 import { findLateCaptureRefundPaidAnotherWay } from "@/lib/late-capture-paid-another-way";
 import {
@@ -89,6 +92,7 @@ import {
 } from "@/lib/xero-operation-outbox-payload";
 import { lockKeptCaptureAnchor, withdrawUndecidedKeptCaptureReceipt } from "@/lib/kept-late-capture-change-receipt";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { returnOutboxRowToPending, UNCLAIMED } from "@/lib/xero-outbox-pending-request";
 
 /** Stamped on a row withdrawn because the task stopped keeping the money. */
 export const KEPT_LATE_CAPTURE_WITHDRAWN_ERROR_CODE = "KEPT_LATE_CAPTURE_WITHDRAWN";
@@ -206,12 +210,16 @@ export async function enqueueXeroKeptLateCaptureInvoiceOperation(params: {
     }
     const { invoiceLinked } = await readFailedKeptReceiptLinks(db, params.manualRefundTaskId, live.requestPayload);
     if (!invoiceLinked) {
-      // Status-guarded: only the FAILED row this read found goes back to run.
-      const requeued = await db.xeroSyncOperation.updateMany({
-        where: { id: live.id, status: "FAILED", manuallyResolvedAt: null },
-        data: { status: "PENDING", startedAt: null, completedAt: null, lastErrorCode: null, lastErrorMessage: null },
+      // Status-guarded: only the FAILED row this read found goes back to run,
+      // and (#5228) only with a request the outbox can claim and send.
+      const requeued = await returnOutboxRowToPending({
+        operationId: live.id, store: db, where: { status: "FAILED", manuallyResolvedAt: null }, data: UNCLAIMED, request: { keep: true },
       });
-      if (requeued.count === 0) {
+      if (requeued.outcome === "unclaimable") {
+        const message = "The failed Xero invoice for this payment holds no request the outbox can send, so it is not run again automatically. Check Xero, then retry it from the Xero operations list.";
+        return { queueOperationId: live.id, awaitingOfficerRetry: true, message };
+      }
+      if (requeued.outcome === "lost") {
         // Round 8 (concurrency): an officer retried or resolved it after the
         // read above - neither takes the task row. Answer what it is now.
         const now = await db.xeroSyncOperation.findUnique({
@@ -329,22 +337,12 @@ export async function settleKeptLateCaptureRecordOnApproval(params: {
       },
     });
   } else {
-    await db.xeroSyncOperation.updateMany({
-      // Never a row resolved in Xero: resolved is done, and never re-run.
-      where: {
-        ...KEPT_INVOICE_CREATE,
-        localId: params.manualRefundTaskId,
-        status: "PARTIAL",
-        manuallyResolvedAt: null,
-      },
-      data: {
-        status: "PENDING",
-        startedAt: null,
-        completedAt: null,
-        lastErrorCode: null,
-        lastErrorMessage: null,
-      },
-    });
+    // Never a row resolved in Xero: resolved is done, and never re-run.
+    const partial = { ...KEPT_INVOICE_CREATE, localId: params.manualRefundTaskId, status: "PARTIAL", manuallyResolvedAt: null } as const;
+    for (const row of await db.xeroSyncOperation.findMany({ where: partial, select: { id: true } })) {
+      // #5228: with the queued request its worker keeps; one the outbox could not send stays PARTIAL, for Retry.
+      await returnOutboxRowToPending({ operationId: row.id, store: db, where: partial, data: UNCLAIMED, request: { keep: true } });
+    }
   }
   await db.xeroSyncOperation.updateMany({
     where: {
@@ -539,12 +537,14 @@ export async function createXeroKeptLateCaptureInvoice(
         repairExistingLink: params.repairExistingLink,
       });
       const income = await getResolvedAccountMapping("hutFeesIncome");
+      // #4632: the kept money was charged under the booking's own treatment.
+      const taxRendering = await resolveXeroTaxRendering({ kind: "booking", bookingId });
       const line: LineItem = applyHutFeeLineCodes(
         {
           description: keptLateCaptureLineDescription(bookingId),
           quantity: 1,
           unitAmount: capturedCents / 100,
-          taxType: "OUTPUT2",
+          ...xeroLineTax(taxRendering),
         },
         {
           itemCode: income.itemCode,
@@ -560,7 +560,7 @@ export async function createXeroKeptLateCaptureInvoice(
         dueDate: capturedOn,
         reference: `Kept late payment for booking ${bookingId.slice(0, 8)}`,
         status: Invoice.StatusEnum.AUTHORISED,
-        lineAmountTypes: LineAmountTypes.Inclusive,
+        lineAmountTypes: taxRendering.lineAmountTypes,
       });
       // Keep the queued instruction beside the request, so a retry replays it.
       const buildStoredPayload = (resolvedContactId: string) => ({
@@ -609,7 +609,9 @@ export async function createXeroKeptLateCaptureInvoice(
     // the capture day; it writes the task's payment link itself.
     let paymentId: string | null = null;
     let paymentError: unknown = null;
-    if (!(await linkFor(KEPT_LATE_CAPTURE_PAYMENT_ROLE))) {
+    const paymentReference = `Stripe ${paymentIntentId}`;
+    const paymentLink = await linkFor(KEPT_LATE_CAPTURE_PAYMENT_ROLE);
+    if (!paymentLink) {
       try {
         paymentId = await providers.createXeroPaymentForInvoice({
           localModel: "ManualRefundTask",
@@ -617,7 +619,7 @@ export async function createXeroKeptLateCaptureInvoice(
           invoiceId: invoiceId!,
           amountCents: capturedCents,
           idempotencyKey: paymentKey(taskId),
-          reference: `Stripe ${paymentIntentId}`,
+          reference: paymentReference,
           role: KEPT_LATE_CAPTURE_PAYMENT_ROLE,
           createdByMemberId: params.createdByMemberId,
           metadata: { invoiceId, amountCents: capturedCents },
@@ -660,6 +662,20 @@ export async function createXeroKeptLateCaptureInvoice(
       xeroObjectUrl: buildXeroInvoiceUrl(invoiceId!),
       extraLinks: [receiptLink],
     });
+    // #4525 (Ledger M13): the payment's capture receipt, once its id is stored - this run's,
+    // or the link an earlier run left. Nothing when the payment failed. Never throws.
+    const storedPaymentId = paymentId ?? paymentLink?.xeroObjectId ?? null;
+    if (storedPaymentId) {
+      await recordCaptureReceiptManifest({
+        bookingId,
+        paymentIntentId,
+        paymentKey: paymentKey(taskId),
+        amountCents: capturedCents,
+        providerPaymentId: storedPaymentId,
+        invoiceId: invoiceId!,
+        reference: paymentReference,
+      });
+    }
 
     // Imported here, not at the top: that module reaches the outbox, which
     // dispatches to this worker.

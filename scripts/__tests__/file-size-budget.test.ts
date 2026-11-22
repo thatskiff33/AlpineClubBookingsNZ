@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { run } from "../ci/check-file-size-budget";
+import { run, upstreamRefFrom } from "../ci/check-file-size-budget";
+import { UPSTREAM_IGNORED_LINE } from "../lib/budget-upstream-ref";
 import { evaluateComputedRatchet } from "../lib/file-size-base";
 import { ALLOWANCE_DIR } from "../lib/file-size-allowances";
 import { FUNCTION_LENGTH_LIMIT } from "../lib/function-length-ratchet";
@@ -17,6 +18,7 @@ import {
   countLines,
   findOversizedProductionFiles,
   findUnclassifiedFiles,
+  hardCeilingFor,
   isProductionFile,
   isRatchetExcludedTestFile,
   scanRepository,
@@ -184,7 +186,7 @@ describe("blocking CI wiring", () => {
     expect(verify, "ci.yml must contain a top-level verify job").not.toBe("");
     expect(
       verify.match(
-        /^        run: pnpm run quality:budget --base "\$BUDGET_BASE"\s*$/gm,
+        /^        run: node scripts\/ci\/run-budget-gate\.mjs\s*$/gm,
       ) ?? [],
     ).toHaveLength(1);
   });
@@ -218,7 +220,7 @@ describe("blocking CI wiring", () => {
     expect(verify).toContain(
       "BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false" +
         " && !startsWith(github.ref, 'refs/heads/epic/'))" +
-        " && github.event.before || 'origin/main' }}",
+        " && (steps.main-push-base.outputs.sha || github.event.before) || 'origin/main' }}",
     );
   });
 
@@ -797,6 +799,46 @@ describe("the deliberate escape: a declared allowance", () => {
     expect(result.stdout).toContain("lifting that tree out is a refactor of its own");
   });
 
+  it("prints the change's effect on tree-wide size debt, on a pass and on a failure (#4926)", () => {
+    const grown = overBudgetRepo();
+    grown.repo.write("src/lib/big.ts", 1300);
+    grown.repo.allow("4926-big.md", `file: src/lib/big.ts\nlines: 1300\nreason: ${REASON}\n`);
+    grown.repo.commit("grew, with an allowance");
+    const passed = captureRun(grown.repo.root, ["--base", grown.base]);
+    expect(passed.code).toBe(0);
+    expect(passed.stdout).toContain("Size debt change from this PR: +100 lines\n");
+
+    const shrunk = overBudgetRepo();
+    shrunk.repo.write("src/lib/big.ts", 1150);
+    shrunk.repo.write("src/lib/brand-new.ts", 900);
+    shrunk.repo.commit("shrank one, added an over-budget one");
+    const failed = captureRun(shrunk.repo.root, ["--base", shrunk.base]);
+    expect(failed.code).toBe(1);
+    // -50 from the shrink, +200 from the new file the gate refuses.
+    expect(failed.stderr).toContain("Size debt change from this PR: +150 lines\n");
+
+    const same = overBudgetRepo();
+    same.repo.write("src/lib/keep.ts", 20);
+    same.repo.commit("touched an in-budget file");
+    expect(captureRun(same.repo.root, ["--base", same.base]).stdout).toContain(
+      "Size debt change from this PR: 0 lines\n",
+    );
+  });
+
+  it("refuses an allowance past the hard ceiling of three budgets, and says to split (#4926)", () => {
+    const { repo, base } = overBudgetRepo();
+    repo.write("src/lib/big.ts", 2101);
+    repo.allow("4926-big.md", `file: src/lib/big.ts\nlines: 2101\nreason: ${REASON}\n`);
+    repo.commit("grew past the ceiling, with an allowance");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("an allowance cannot take a file past 3 times its budget");
+    expect(result.stderr).toContain("domain module, <= 700 LOC, hard ceiling 2100 LOC");
+    expect(result.stderr).toContain("split a cohesive part out first");
+    expect(result.stderr).not.toContain("ALLOWED GROWTH");
+  });
+
   it("fails when the recorded length is not the file's real length", () => {
     // The rule that stops an allowance drifting from the tree the way the
     // ledger did, and stops one being written once and reached for later.
@@ -1149,6 +1191,93 @@ describe("the epic sync: main's allowances are spent, the epic's are judged (#48
   });
 });
 
+describe("a deployment fork's sync-down: --upstream-ref (#5196)", () => {
+  /**
+   * Upstream adds a module over its budget; the fork, cut from the same
+   * commit, merges that upstream tip into a sync branch. `panelLines` decides
+   * whether the ordinary gate would pass it.
+   */
+  function syncFixture(panelLines = 900) {
+    const repo = newRepo();
+    repo.write("src/lib/existing.ts", 10);
+    const common = repo.commit("common");
+    git(repo.root, "checkout", "--quiet", "-b", "upstream");
+    repo.write("src/lib/panel.ts", panelLines);
+    const upstreamTip = repo.commit("upstream adds a panel");
+    git(repo.root, "checkout", "--quiet", "main");
+    repo.write("src/lib/fork.ts", 10);
+    const base = repo.commit("fork work");
+    git(repo.root, "checkout", "--quiet", "-b", "sync");
+    git(repo.root, "merge", "--quiet", "--no-ff", "--no-edit", "upstream");
+    return { ...repo, common, upstreamTip, base };
+  }
+
+  it("reads the option in both spellings, and refuses it without a value", () => {
+    expect(upstreamRefFrom([])).toEqual({ ok: true, ref: null });
+    expect(upstreamRefFrom(["--upstream-ref", "up/main"])).toEqual({ ok: true, ref: "up/main" });
+    expect(upstreamRefFrom(["--upstream-ref=up/main"])).toEqual({ ok: true, ref: "up/main" });
+    expect(upstreamRefFrom(["--upstream-ref"]).ok).toBe(false);
+    expect(upstreamRefFrom(["--upstream-ref="]).ok).toBe(false);
+    expect(upstreamRefFrom(["--upstream-ref", "--base", "x"]).ok).toBe(false);
+
+    const repo = syncFixture();
+    const missing = captureRun(repo.root, ["--base", repo.base, "--upstream-ref"]);
+    expect(missing.code).toBe(1);
+    expect(missing.stderr).toContain("--upstream-ref needs a value");
+    expect(missing.stdout).toBe("");
+  });
+
+  it("passes upstream's over-budget module and names the commit it trusted", () => {
+    const repo = syncFixture();
+    const ordinary = captureRun(repo.root, ["--base", repo.base]);
+    expect(ordinary.code).toBe(1);
+    expect(ordinary.stderr).toContain("a NEW file is over its budget");
+    expect(`${ordinary.stdout}${ordinary.stderr}`).not.toContain("Trusted upstream");
+
+    const trusted = captureRun(repo.root, ["--base", repo.base, "--upstream-ref", "upstream"]);
+    expect(trusted.stderr).toBe("");
+    expect(trusted.code).toBe(0);
+    expect(trusted.stdout).toContain(
+      `Trusted upstream ${repo.upstreamTip.slice(0, 12)} "upstream adds a panel": ` +
+        "1 file(s) judged against its longer length, 0 allowance fragment(s) ignored as its own.",
+    );
+    expect(trusted.stdout).toContain(
+      `Trusted upstream ${repo.upstreamTip.slice(0, 12)} "upstream adds a panel": 0 function(s)`,
+    );
+  });
+
+  it("names the trusted commit on failure too, and fails an upstream ref that does not resolve", () => {
+    const repo = syncFixture();
+    repo.write("src/lib/fork.ts", 900);
+    const failed = captureRun(repo.root, ["--base", repo.base, "--upstream-ref=upstream"]);
+    expect(failed.code).toBe(1);
+    expect(failed.stderr).toContain(`Trusted upstream ${repo.upstreamTip.slice(0, 12)}`);
+    expect(failed.stderr).toContain("src/lib/fork.ts");
+    expect(failed.stderr).not.toContain("src/lib/panel.ts");
+
+    const unresolved = captureRun(repo.root, ["--base", repo.base, "--upstream-ref", "nope/main"]);
+    expect(unresolved.code).toBe(1);
+    expect(unresolved.stderr).toContain("could not be resolved");
+  });
+
+  it.each([
+    ["failing", 900, 1],
+    ["passing", 600, 0],
+  ])(
+    "on a %s run where the upstream is HEAD, prints one ignored line and otherwise changes nothing",
+    (_label, panelLines, code) => {
+      const repo = syncFixture(panelLines);
+      git(repo.root, "checkout", "--quiet", "upstream");
+      const ordinary = captureRun(repo.root, ["--base", repo.common]);
+      const ignored = captureRun(repo.root, ["--base", repo.common, "--upstream-ref", "upstream"]);
+      expect(ordinary.code).toBe(code);
+      expect(ignored.code).toBe(ordinary.code);
+      expect(ignored.stderr).toBe(ordinary.stderr);
+      expect(ignored.stdout).toBe(`${UPSTREAM_IGNORED_LINE}\n${ordinary.stdout}`);
+    },
+  );
+});
+
 describe("this repository", () => {
   it("produces a trustworthy comparison against its own HEAD", () => {
     // Deliberately asserts the absence of `unusable` rather than a clean exit:
@@ -1198,5 +1327,35 @@ describe("this repository", () => {
     const scan = scanRepository(path.join(REPO_ROOT, "no-such-directory-2687"));
     expect(scan.gitError).not.toBeNull();
     expect(scan.productionStats).toEqual([]);
+  });
+});
+
+/**
+ * #4926 — the three ceilings are restated in prose on purpose: the issue asks the
+ * two docs to state them, and a reader of either should not have to multiply.
+ * A number repeated in prose drifts (INV-SSOT-001), so this is the pin that ties
+ * those restatements to `HARD_CEILING_MULTIPLE` instead of leaving the next
+ * change of the multiple, or of a budget, to remember every place.
+ */
+describe("the hard ceiling the docs state (#4926)", () => {
+  const [domain, handler, page] = [PRODUCTION_LIMIT, ROUTE_HANDLER_LIMIT, ROUTE_PAGE_LIMIT].map(
+    (limit) => hardCeilingFor({ limit }).toLocaleString("en-US"),
+  );
+  const prose = (doc: string) =>
+    readFileSync(path.join(REPO_ROOT, doc), "utf8").replace(/\s+/g, " ");
+
+  it.each(["docs/MAINTENANCE.md", "size-allowances.d/README.md"])(
+    "%s names the three ceilings the code derives",
+    (doc) => {
+      expect(prose(doc)).toContain(
+        `${domain} lines for a domain module, ${handler} for a route handler, ${page} for a page shell`,
+      );
+    },
+  );
+
+  it("MAINTENANCE.md also lists them beside the finding kind that refuses past them", () => {
+    expect(prose("docs/MAINTENANCE.md")).toContain(
+      `(${domain} / ${handler} / ${page} lines), refused as \`allowance-over-hard-ceiling\``,
+    );
   });
 });

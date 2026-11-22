@@ -23,13 +23,15 @@
  * No provider call runs in the close's transaction. This worker runs after
  * the outbox claim, the same claim every other queue type uses.
  */
-import { Invoice, LineAmountTypes, type LineItem } from "xero-node";
+import { Invoice, type LineItem } from "xero-node";
 import type { Prisma } from "@prisma/client";
-import { addCalendarDays, requireCalendarDate } from "@/lib/club-time";
+import { addCalendarDays, isCalendarDate, requireCalendarDate } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
 import logger from "@/lib/logger";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hutFeeRefundLine } from "@/lib/xero-hut-fee-line-codes";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
+import type { XeroTaxRendering } from "@/lib/xero-tax-rendering";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   buildXeroIdempotencyKey,
@@ -55,6 +57,7 @@ import {
   XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE,
 } from "@/lib/xero-card-refund-reversal-outbox";
 import { readQueuedOutboxPayload } from "@/lib/xero-operation-outbox-payload";
+import { recordFailedLaterRefundReversalManifest } from "@/lib/member-money/doors";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export {
@@ -256,9 +259,14 @@ export async function createXeroCardRefundReversalInvoice(
     let invoiceId = invoiceLink?.xeroObjectId ?? null;
     let invoiceNumber = invoiceLink?.xeroObjectNumber ?? null;
     let invoiceBody: unknown = null;
+    // What this run built and sent: its line and the tax rendering it was built under (#4632).
+    let sent: { lines: LineItem[]; taxRendering: XeroTaxRendering } | null = null;
     const storedDate = asRecord(invoiceLink?.metadata)?.documentDate;
+    // A real day, not just the shape: this worker writes `documentDate` from a
+    // real day, so a stored non-day is corruption and falls back to choosing the
+    // date afresh rather than sending Xero a date it would refuse.
     let dated =
-      typeof storedDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(storedDate)
+      isCalendarDate(storedDate)
         ? { date: storedDate, redated: storedDate !== closedOn, lockKnown: true }
         : await chooseDocumentDate(closedOn, providers);
 
@@ -269,7 +277,9 @@ export async function createXeroCardRefundReversalInvoice(
         createdByMemberId: params.createdByMemberId,
       });
       const refunds = await providers.getResolvedAccountMapping("hutFeeRefunds");
-      const line: LineItem = hutFeeRefundLine(cardRefundReversalDescription(bookingId), amountCents, refunds);
+      // #4632: the reversal undoes a note raised under the booking's treatment, so it carries the same one.
+      const taxRendering = await resolveXeroTaxRendering({ kind: "booking", bookingId });
+      const line: LineItem = hutFeeRefundLine(cardRefundReversalDescription(bookingId), amountCents, refunds, taxRendering);
       const buildInvoice = (resolvedContactId: string, documentDate: string): Invoice => ({
         type: Invoice.TypeEnum.ACCREC,
         contact: { contactID: resolvedContactId },
@@ -278,7 +288,7 @@ export async function createXeroCardRefundReversalInvoice(
         dueDate: documentDate,
         reference,
         status: Invoice.StatusEnum.AUTHORISED,
-        lineAmountTypes: LineAmountTypes.Inclusive,
+        lineAmountTypes: taxRendering.lineAmountTypes,
       });
       const send = (documentDate: string) =>
         providers.retryXeroWriteWithContactRepair({
@@ -322,6 +332,7 @@ export async function createXeroCardRefundReversalInvoice(
       invoiceId = created.invoiceID;
       invoiceNumber = created.invoiceNumber ?? null;
       invoiceBody = response.body;
+      sent = { lines: [line], taxRendering };
       await prisma.xeroSyncOperation.update({
         where: { id: syncOperation.id },
         data: {
@@ -384,6 +395,15 @@ export async function createXeroCardRefundReversalInvoice(
           metadata: { closeTaskId, amountCents, bookingId, documentDate: dated.date },
         },
       ],
+    });
+    // #4525 (M13): the reversal's export manifest, in its own transaction; never throws.
+    await recordFailedLaterRefundReversalManifest({
+      paymentId,
+      bookingId,
+      closeTaskId,
+      invoiceId: invoiceId!,
+      legacyKey: cardRefundReversalInvoiceKey(paymentId, closeTaskId),
+      source: sent ? { kind: "BUILT", ...sent } : { kind: "REPLAY", operationId: syncOperation.id },
     });
     return invoiceId;
   } catch (error) {

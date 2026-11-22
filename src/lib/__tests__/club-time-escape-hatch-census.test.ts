@@ -21,8 +21,6 @@ import { balancedBrackets } from "./support/balanced-brackets";
  *   too many remaining call sites for a block-level exemption list to be
  *   readable — sixty files — so the honest instrument is a counted inventory
  *   that CI refuses to let grow;
- * - **the count of files still importing the retired adapters**, which is the
- *   epic's own definition-of-done measure for legacy retirement;
  * - **the classes that are now at ZERO**, asserted as zero rather than left
  *   unmeasured. A class nobody counts is a class nobody notices coming back.
  *
@@ -435,251 +433,15 @@ const CENSUS_CEILING = {
   /** Production files containing at least one of them. Zero, and see above. */
   defaultedZoneFiles: 0,
   /**
-   * Production files importing the date-only adapter, zone-free uses included.
-   *
-   * A COARSE NUMBER THAT DOES NOT MEASURE ENVIRONMENT AUTHORITY, and it is
-   * worth being explicit about that now the number above is zero. Most of
-   * these files import only zone-free exports — `parseDateOnly`,
-   * `addDaysDateOnly`, `formatDateOnly` — and never consult a timezone at all.
-   * A file can even JOIN this list by getting better: CT-6 replaced a
-   * host-local `setDate(getDate() - n)` in `waitlist.ts` with `addDaysDateOnly`,
-   * which is zone-free UTC arithmetic and a strictly better state that
-   * nonetheless adds an importer.
-   *
-   * 213 -> 214 is a file SPLIT, and is the third way to join this list without
-   * changing anything (#3128). `bed-allocation-lifecycle.ts` was over its size
-   * budget; its three write-time re-filters moved verbatim into
-   * `bed-allocation-write-rechecks.ts`, taking with them the
-   * `addDaysDateOnly` / `eachDateOnlyInRange` / `formatDateOnly` import they
-   * already had. One importer became two importers of the same three zone-free
-   * helpers, with no call site added, removed or changed, and neither file
-   * resolves a timezone. That is the "human decision about which direction it
-   * moved and why" this docblock asks for.
-   *
-   * So this one is a size-of-surface tracker, not a defect count, and it can
-   * legitimately move in either direction. It is `toBe` like the rest, which
-   * means a change here fails the suite and asks for a human decision about
-   * which direction it moved and why — that is the intended behaviour, not an
-   * oversight.
-   *
-   * It moved 213 to 214 in #3128, and that is the benign direction described
-   * above rather than a new site: splitting `buildShiftPreviewResponse` verbatim
-   * out of `modify-quote/route.ts` into `src/lib/booking-shift-preview.ts` moved
-   * three zone-free calls (`addDaysDateOnly`, `eachDateOnlyInRange`,
-   * `parseDateOnly`) into a file of their own, so one importer became two. No
-   * call changed and no zone is consulted on either side of the seam.
-   *
-   * 214 -> 216 (#3108): the booking add-to-calendar feature adds two
-   * importers -- `calendar-links.ts` and the `.ics` download route -- both of
-   * which use only the zone-free exports (`parseDateOnly`, `addDaysDateOnly`,
-   * `formatDateOnly`) to keep lodge nights calendar days per INV-DATE-001;
-   * neither consults a timezone.
-   *
-   * 216 -> 217 since #3128's third split did the same thing as the first again:
-   * the three write-time re-filters moved verbatim out of
-   * `bed-allocation-lifecycle.ts` into `src/lib/bed-allocation-write-rechecks.ts`,
-   * taking `addDaysDateOnly`, `eachDateOnlyInRange` and `formatDateOnly` with
-   * them. Same shape, same reason, no call changed, no zone consulted.
-   *
-   * A WARNING FOR THE NEXT LANE THAT SPLITS A FILE, because this counter caught
-   * nobody and nearly shipped wrong -- twice. Two sibling branches each raised
-   * it 213 -> 214 independently and correctly. The first merged; the second
-   * REBASED CLEANLY, because git saw both sides making the identical edit and
-   * had no conflict to report -- leaving a branch that had added a 215th
-   * importer asserting 214, with a green rebase and no warning anywhere. This
-   * branch then sat at 215 while `main` moved to 216 underneath it. Only
-   * running this suite found either. If you bump this number on a branch,
-   * re-run this file after every rebase or merge onto a moved `main`: a clean
-   * merge is not evidence the count is still right, and neither is arithmetic.
-   *
-   * 217 -> 219 (#3128's fourth split): `adult-member-hosting-review.ts` was
-   * 3,051 lines, and two of the four blocks that came out of it took their
-   * existing `date-only` import with them -- the create-path evaluation into
-   * `adult-member-hosting-proposed.ts` and the merge fan-out plan into
-   * `adult-member-hosting-merge-coverage-plan.ts`. Both use only the zone-free
-   * exports (`eachDateOnlyInRange`, `formatDateOnly`), no call was added,
-   * removed or changed, and neither file resolves a timezone. Two importers
-   * where there was one, twice over -- and this branch is the third lane in a
-   * row to move this number, which is why the warning above is written the way
-   * it is. It sat at 218 against a base of 216 until `main` moved to 217
-   * underneath it; the value below was then re-measured, not re-added.
-   *
-   * 219 -> 220 (#3232): `booking-linked-date-move-service.ts` is a new module and
-   * takes its own `date-only` import, using only the zone-free exports
-   * (`addDaysDateOnly`, `formatDateOnly`, `parseDateOnly`) to shift a lodge-night
-   * window by a whole number of days per `INV-DATE-001`. It resolves no timezone:
-   * the club's day arrives as the `todayAtClub` value its callers already resolve
-   * outside their transactions, which is `INV-LOCK-004`'s rule and not this
-   * counter's. Re-measured against the branch base rather than added to, per the
-   * warning above.
-   *
-   * 220 -> 221 (#3232, completion): the pure construction of the linked-move
-   * quote moved into `adult-member-hosting-linked-move.ts` so the new service
-   * module could come under its file-size budget — the gate refuses an allowance
-   * for a new file outright — and the shift rule it took with it needs the same
-   * three zone-free exports. Both modules now import them; neither resolves a
-   * timezone. Re-measured, not incremented.
-   *
-   * 221 -> 224 (#2958): the same benign split shape as #3128 and #3232, at the
-   * largest scale yet. `bookings/[id]/page.tsx` carried the whole surface's
-   * single `date-only` import; the behaviour-preserving decomposition
-   * moved its sections and projections verbatim into route-local modules, and
-   * four of them took the zone-free helper they were already calling with them:
-   * `_lib/booking-detail-consent.ts` (`eachDateOnlyInRange`, feeding
-   * `formatConsentNightsLabel`), `_lib/booking-detail-editor-data.ts`,
-   * `_lib/booking-detail-linked-party.ts` and
-   * `_components/booking-stay-preferences.tsx` (`formatDateOnly`). The page
-   * itself no longer imports the adapter, so one importer became four: -1 +4.
-   * No call was added, removed or changed, none of the four resolves a
-   * timezone, and every club-facing instant on the page still comes from the
-   * one `clubTime()` the shell resolves (CT-4, #2870; INV-CONFIG-002).
-   * Re-measured against the branch base, and re-measured again after the merge
-   * of the epic branch, per the warning above.
-   *
-   * 224 -> 225 (#2698): the same shape again. The hut-leader route sat exactly
-   * on its file-size ceiling, and the gate refuses an allowance for a file that
-   * was inside its budget, so the audit blocks moved into
-   * `hut-leader-assignment-audit.ts` and took `formatDateOnly` with them. That
-   * export is `date.toISOString().slice(0, 10)` — it resolves no timezone at
-   * all, and the zone-aware sibling `formatDateOnlyForTimeZone` is not used
-   * here. The dates it formats are the assignment's own `@db.Date` bounds, which
-   * arrive date-only and are written into an audit payload unchanged.
-   * Re-measured, not incremented.
-   *
-   * 225 -> 221 (#2930), and a DOWNWARD revision, which is the direction this
-   * census exists to reward. Six importers went and two arrived; the whole
-   * movement is set out here because an earlier draft of this entry said 220 by
-   * counting only five of the eight and was caught by this test, not by review.
-   *
-   * The first round took the FOUR copies of `getCapacityFullNights` into
-   * `src/lib/capacity-full-nights.ts`, which removed the whole `date-only`
-   * import from `booking-request-shared.ts`, `booking-request-quotes.ts` and
-   * `group-booking.ts` — in each of those the copied helper was the file's ONLY
-   * reader of the adapter — and added one import to the new module: -3 +1.
-   * `booking-create-guests.ts` lost the same copy but still imports
-   * `addDaysDateOnly`, so it stays counted.
-   *
-   * The second took the six INLINE re-spellings of the same comparison through
-   * one of the two canonical helpers, which removed `formatDateOnly` from the
-   * three admin overbook routes — `capacity-hold`, `force-confirm` and
-   * `confirm-pending-guests`, each of which formatted the night itself — and
-   * from `group-settlement.ts`, which had not imported the adapter at all
-   * because its copy mapped the raw `Date` (that was the defect): -3 and no
-   * additions, `over-capacity-confirmation.ts` having imported it all along.
-   *
-   * The third is the one the first accounting missed: +1 for
-   * `book/_lib/capacity-advisory.ts`, the wizard's per-night shortfall
-   * calculation lifted out of `use-booking-wizard.ts`. It imports `parseDateOnly`
-   * for a reason this census should want — it stopped restating the stay-night
-   * rule and now calls the frozen `isGuestActiveOnNight`, whose parameters are
-   * date-only `Date` encodings, so the adapter is how a `yyyy-MM-dd` from the
-   * availability payload reaches the one model (`INV-DATE-005`). The hook it
-   * came from does not import the adapter, so this is a genuine new importer
-   * rather than a move, and it is counted as one.
-   *
-   * Neither `formatDateOnly` (`date.toISOString().slice(0, 10)`) nor
-   * `parseDateOnly` resolves a timezone; the values on both sides are the
-   * capacity engine's own date-only lodge nights. No call was added or changed
-   * by the two collapse rounds — many call sites became two, calling the same
-   * function on the same values — and the group settlement path gained one it
-   * should always have made. Re-measured against the branch base, not
-   * subtracted from.
-   *
-   * 221 -> 223 (#2936): the officer's booking-request correction adds two
-   * importers, and both are the benign direction this docblock describes. The
-   * correction route imports `isDateOnlyString` and `parseDateOnly` to turn the
-   * posted `yyyy-MM-dd` strings into date-only lodge nights per INV-DATE-001;
-   * the correction form imports `dateOnlyFromIsoString` to seed its two date
-   * inputs from the serialised request. All three are zone-free — none of them
-   * takes a `timeZone` parameter at all — so neither file consults a timezone,
-   * and the correction service itself derives the club's today through
-   * `club-time` rather than through this adapter. Re-measured by RUNNING this
-   * suite on this tree, not by adding two to the literal.
-   *
-   * 223 -> 225 (#3530): two importers, both `formatDateOnly` alone and both the
-   * zone-free direction. `night-price-runs.ts` is the run splitter lifted out
-   * of `xero-booking-invoices.ts` (an importer already counted) so an edit's
-   * lines are cut on the same runs the invoice is; it compares date-only lodge
-   * nights for contiguity. `booking-modification-lines.ts` keys the same
-   * nights by their date-only string and stores them as calendar days; the
-   * sentence a person reads goes through `club-time`'s `formatClubDate`, not
-   * this adapter. Re-measured by RUNNING this suite on this tree.
-   *
-   * 225 -> 226 (#3531 3b): `rate-derived-night-price-backfill.ts`, `formatDateOnly`
-   * alone and the zone-free direction: it keys a strand's stored night rows
-   * (`@db.Date` lodge nights) by their date-only string to pair each with the
-   * engine's `nightDates`. Re-measured by RUNNING this suite on this tree.
-   *
-   * 226 -> 227 (#3029 S1): `member-dietary.ts`, `addDaysDateOnly` alone and the
-   * zone-free direction: the kiosk dietary grant re-checks a hut-leader
-   * assignment window (`startDate <= day + 1`, `endDate >= day`) over the
-   * `@db.Date` day `checkLodgeAuth` already judged, the same window
-   * `getKioskAccessTier` uses. Re-measured by RUNNING this suite on this tree.
-   *
-   * 227 -> 226 (#3817): `member-dietary.ts` stops importing it. Every
-   * hut-leader access reader now asks the one window in
-   * `hut-leader-access-window.ts`, which steps its stored days with the
-   * club-time kernel (`addCalendarDays`), as does the new stay check in
-   * `hut-leader-stayed-nights.ts`; neither imports this adapter. Re-measured by
-   * RUNNING this suite on this tree.
-   *
-   * 226 -> 227 (#3413, composed with #3817): `booking-request-pending-adult-reservations.ts`
-   * uses only zone-free lodge-night helpers. Re-measured by RUNNING this suite
-   * on the composed tree.
-   *
-   * 228 -> 229 (#50, composed with main): one importer, `src/lib/other-lodges.ts`, and the
-   * zone-free direction again. The other-lodges registry gains two `@db.Date`
-   * season-start columns that travel as `yyyy-MM-dd` strings, so the shared
-   * field list validates them with `isDateOnlyString`, stores them through
-   * `parseDateOnly` and serialises them with `formatDateOnly` — none of which
-   * takes a `timeZone`, and the file consults no zone anywhere else; the one
-   * comparison it makes between two stored days goes through `storedDateOnly`.
-   * Re-measured by RUNNING this suite on this tree.
-   *
-   * 227/229 -> 228 (sync of `main` f1ecdb5ff into epic #3789): #3817's removal
-   * (`member-dietary.ts`) and #50's addition (`other-lodges.ts`) are disjoint.
-   * Re-measured by RUNNING this suite on the composed tree, never added.
-   */
-  // #3413: booking-request-pending-adult-reservations uses only zone-free
-  // lodge-night helpers. Re-measured by this suite on the composed branch.
-  // 229 -> 231 (#62): two importers, both the zone-free direction.
-  // `central-availability.ts` lists a stay's date-only lodge nights
-  // (`eachDateOnlyInRange`) and keys the member calendar's map by them
-  // (`formatDateOnly`); the availability route validates and parses the posted
-  // `yyyy-MM-dd` strings (`isDateOnlyString`, `parseDateOnly`) and bounds the
-  // stay (`addDaysDateOnly`). Neither takes a `timeZone`; the club's today comes
-  // from `club-time` (`clubTodayDateOnlyInstant`), not this adapter.
-  // Re-measured by RUNNING this suite on this tree.
-  // 231 -> 232 (#77): `other-lodge-fees-sync.ts`, the zone-free direction:
-  // it formats stored `@db.Date` season days as `yyyy-MM-dd` (`formatDateOnly`)
-  // for the season check and the audit text; the club's today comes from
-  // `club-time` (`clubTodayDateOnlyInstant`), not this adapter.
-  // Re-measured by RUNNING this suite on this tree.
-  // 231 -> 223 (#4931): the date-only request schema moved into
-  // `date-only-schema.ts`, a new zone-free importer (`isDateOnlyString`,
-  // `parseDateOnly`), and nine routes that imported this adapter only to declare
-  // their own copy of it no longer import it at all. Re-measured by RUNNING this
-  // suite on this tree.
-  // 223 -> 224 (#4369, `INV-PAY-151`): one importer,
-  // `xero-card-refund-reversal-invoice.ts`, `formatDateOnly` alone and the
-  // zone-free direction. It renders the effective Xero lock date as
-  // `yyyy-MM-dd` to compare with the close's day. That lock date is a
-  // `@db.Date` column read back as a UTC-midnight date, the same decode
-  // `xero-period-lock-guard.ts` already makes through this adapter. The close's
-  // own day arrives as a `yyyy-MM-dd` string in the queued payload and is
-  // stepped with `club-time` (`addCalendarDays`), not this adapter. No
-  // `timeZone` is taken anywhere in the file's use of it. Re-measured by
-  // RUNNING this suite on the merged tree, not by adding one to the literal.
-  dateOnlyImporters: 224, // 228/232 -> 231 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #77's one, zone-free, on upstream's 228. Re-measured by RUNNING this suite on the merged tree.
-  /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *
    * Counted here because it is the one class on the issue's census list that no
    * lint selector reaches: a constructor, not a method call. Both live sites are
-   * reviewed report-surface adapters, so this is a recurrence counter rather
-   * than a backlog.
+   * in one reviewed report-surface adapter, so this is a recurrence counter
+   * rather than a backlog. 3 -> 2 (#5258): the report charts' `host-local-day.ts`
+   * left; the chart labels format through the club-time kernel.
    */
-  localMidnightConstructions: 3,
+  localMidnightConstructions: 2,
 } as const;
 
 describe("the escape-hatch census is exact, and only ever revised downward", () => {
@@ -704,13 +466,6 @@ describe("the escape-hatch census is exact, and only ever revised downward", () 
           .join("\n"),
     ).toBe(CENSUS_CEILING.defaultedZoneCalls);
     expect(withDefaults.length).toBe(CENSUS_CEILING.defaultedZoneFiles);
-  });
-
-  it("has EXACTLY the legacy-adapter importers measured", () => {
-    const dateOnly = PRODUCTION_FILES.filter(
-      (file) => !ADAPTER_MODULES.has(file) && importsAdapter(read(file), "date-only"),
-    );
-    expect(dateOnly.length).toBe(CENSUS_CEILING.dateOnlyImporters);
   });
 
   it("has no importer of the deleted rendering adapter, by any path spelling", () => {
@@ -790,16 +545,14 @@ describe("the classes CT-6 closed are at zero, and stay there", () => {
       file,
       count: findLocalMidnightConstruction(read(file)),
     })).filter((entry) => entry.count > 0);
-    // Three, in two files, both already reviewed: the admin report surface's
-    // own `host-local-day.ts`, which says what it is in its name, and
-    // `admin-dataset-reset-state.ts`, which is on the `date-fns` ratchet for
-    // the same report-bucketing reason. A FOURTH would not have been noticed
-    // before this counter existed, which is the whole point of adding it.
+    // Two, in one already-reviewed file: `admin-dataset-reset-state.ts`, which
+    // is on the `date-fns` ratchet for the report-bucketing reason. A THIRD
+    // would not have been noticed before this counter existed, which is the
+    // whole point of adding it.
     expect(
       offenders.map((entry) => entry.file).sort(),
       offenders.map((entry) => entry.file + ": " + entry.count).join("\n"),
     ).toEqual([
-      "src/app/(admin)/admin/finance/reports/_components/host-local-day.ts",
       "src/lib/admin-dataset-reset-state.ts",
     ]);
     expect(

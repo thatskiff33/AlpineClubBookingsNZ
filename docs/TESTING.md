@@ -288,7 +288,7 @@ knip, the production build and its proofs without a `needs:` edge or job-level
 condition, then `scripts/ci/require-test-shards.mjs` checks that all four shard
 jobs from the **same Actions run attempt** completed successfully. Missing,
 duplicate, skipped, cancelled, failed or timed-out shards, API errors and a
-bounded wait all fail `verify`; a job that never reported cannot silently pass.
+bounded wait ([how long](../CONTRIBUTING.md#branch-protection)) all fail `verify`; a job that never reported cannot silently pass.
 Re-run the whole workflow rather than only a failed job if a partial re-run
 leaves successful shards absent from the new attempt. This does not add a
 branch-protection context. The required shards do not collect coverage: the
@@ -692,11 +692,14 @@ That is not a loss: before #2693 they were loaded with `allowJs: true,
 checkJs: false`, which produced no diagnostics either. Their names are pinned in
 `src/lib/__tests__/typecheck-project-coverage.test.ts`, so a new JavaScript
 test fails that contract until it is either written in TypeScript (the default)
-or named there deliberately. Four JavaScript modules that TypeScript tests
-import — `eslint.config.mjs`, `scripts/ci/server-only-boundary-selftest.mjs`,
-`scripts/sync-user-guide-wiki.mjs` and `load/lib/contention-invariant.js` —
-carry a sibling `.d.mts` / `.d.ts` declaring their exports; the same contract
-pins each pair.
+or named there deliberately. The JavaScript modules that TypeScript tests
+import — `eslint.config.mjs`, `scripts/ci/check-allow-builds.mjs`,
+`scripts/ci/server-only-boundary-selftest.mjs`,
+`scripts/sync-user-guide-wiki.mjs`, the k6 harness's pure helpers under
+`load/lib/` (`contention-invariant.js`, `stay-window.js`, `target-guard.js` and
+`volume-users.js`) and the Stripe stub `load/stripe-stub/server.mjs` — carry a
+sibling `.d.mts` / `.d.ts` declaring their exports; the same contract pins each
+pair.
 
 Put a supported new Vitest test under `src/` or `scripts/` and the existing
 patterns cover it; put one somewhere else and you must add the pattern.
@@ -1024,6 +1027,21 @@ generalised.
    `member-guest-probe-guard.test.ts` measures its privacy timing floor with
    `process.hrtime.bigint()` for exactly that reason: the guard itself reads
    `performance.now()`, so the test deliberately measures with a different API.
+
+   A stopwatch is for "it did not wait", never for "real work was fast
+   enough": runner speed varies, so that bound fails busy CI (#5213). To prove
+   a real-PostgreSQL transaction body fits its budget, run that body on the
+   production budget constant (`LOCK1_HOLDER_TRANSACTION_BUDGET`) and assert
+   it commits: Prisma rolls back a body that outruns `timeout`. The proof
+   covers only the work the test puts in the transaction. The 40-child group
+   settle case in `booking-ledger-journal.realdb.test.ts` proves the 40 R01
+   postings fit, not the whole settle, which also upserts payments, flips each
+   child to PAID and reconciles beds in the same budget (#5350). Its failure
+   message reports the time to start, the wait for lock(1) and the body, and
+   names any other backend holding lock(1) as it began to wait (through
+   `onTestFailed` when Vitest's own timeout ends the test first: in a local
+   probe on Prisma 7.10.1, `timeout` did not interrupt a blocked lock wait);
+   keep those diagnostics out of the verdict.
 6. **Remember the environment's zone follows `process.env.TZ`.** The seed
    reader (`club-time-zone-env.ts`) answers `TZ || NEXT_PUBLIC_TZ ||
    "Pacific/Auckland"` whenever no zone is stored — which is every unit test
@@ -1411,6 +1429,10 @@ the explanation appears elsewhere on the page. Nearly all use
 the current list); `policy-exception-requests-panel.tsx` and `roster-editor.tsx`
 call the same failure primitive directly through `useActionAttention`. Since #2934 every one of them focuses and scrolls through
 `src/hooks/use-scroll-to-feedback.ts` — see "Attention after an action" below.
+A component that holds its own failure takes the message and the counter that
+re-fires an identical repeat from `useActionFailure`
+(`src/hooks/use-action-failure.ts`); test a repeat by failing twice with the
+same message and asserting the alert holds focus each time.
 
 Assert that contract with the shared helper, never by hand:
 
@@ -1461,6 +1483,21 @@ the text, not the element:
 const alert = await screen.findByRole("alert");
 await waitFor(() => expect(alert).toHaveTextContent("Payment Error"));
 ```
+
+### Wait for the loaded state, not a container that is also the loading state
+
+The same one-turn margin catches a wait for a container that a component
+renders both while it loads and after. `ManualRefundTaskQueue` shows its
+`manual-refund-task-queue` card while `tasks === null`, so
+`waitFor(() => screen.getByTestId("manual-refund-task-queue"))` passes on its
+first check, and the rows the next line reads exist only if the fetch landed
+inside Testing Library's single drain. A loaded runner lost that race on `main`
+(#5357) and on a pull request (#5430), each time with the card holding only
+"Loading…". Wait for the loading state to end instead. For this queue, call
+`waitForManualRefundQueueLoaded()` from
+`src/lib/__tests__/support/manual-refund-task-queue-loaded.ts` straight after
+`render`. It first checks that "Loading…" is on screen, so it cannot pass
+without waiting if that copy changes.
 
 ### Do not make the component's effect a layout effect
 
@@ -1688,10 +1725,36 @@ So:
    member of the set, or a real one missing. Commit `5a5e4e748` (#2649) found a
    census claiming "at least nine other producers" that was really six, with two
    of the named ones refuted outright.
-4. **Prefer a census that enumerates over one that only counts.** Listing the
-   entries by name puts two concurrent additions on the same lines, so git
-   raises a conflict and a human classifies both — which is exactly the review a
-   bare integer skipped.
+4. **Prefer a census that enumerates over one that only counts, and publish no
+   total (#5211).** List one entry per line, sorted, with nothing else on the
+   line: two branches adding different entries then merge cleanly AND the merged
+   list is exactly right, which a bare integer never is. Do not pin the length
+   of a list that ordinary feature work grows, and do not quote a total in a
+   comment or document; each is a shared line every lane edits. Pin a number
+   only as a review gate on a small set that changes when someone makes a
+   decision, and say so beside it.
+
+The audit-writer and view-only censuses work this way. A new audit write site
+regenerates `scripts/audit/audit-write-sites.ts` with
+`pnpm run audit:census --write`, which adds that site's line; review it,
+because the line states the category the row is filed under. Each line also
+carries the site's action and the reviewed records that name it, and the census
+compares per function by sink and action, naming every attribute that
+changed, so its failure says NEW, REMOVED, REMOVED+NEW,
+RENUMBERED (ordinals shifted by an earlier addition; nobody's readership
+changed), RECLASSIFIED, SINK MOVED or REVIEW RECORD CHANGED. Two sites in one
+function sharing an action are told apart only by order. The ledger is
+`merge=union`: two lanes whose lines sort together merge cleanly, and the cases
+union cannot get right fail loudly rather than silently. Two lanes appending to
+the SAME function both write `<fn>#1`; with different actions union keeps both
+lines, a repeated key that the census names (and `tsc` refuses), and with the
+identical action and category git merges the identical line and the census
+fails on the missing `#2`. Either way, regenerate on the merged tree, which is
+why the census must run on the composed tree before merging. A new
+`ViewOnlyActionButton` under a section banner needs no entry; one that keeps its
+own per-button reason adds or updates its file's line in `KEEPS_OWN_REASON` in
+`view-only-banner-contract.test.ts`. Neither census has a total to re-measure,
+and each refuses one coming back in its documents.
 
 Censuses reading balanced call arguments or object bodies share
 [`balancedBrackets`](../src/lib/__tests__/support/balanced-brackets.ts).
@@ -1813,6 +1876,20 @@ Like every disk-scanning test here it has no import edge to the `.tsx` files it
 reads, so `pnpm run test:related` cannot select it from a diff. Run it by name
 when a change adds or edits a numeric input.
 
+### The lock(1) transaction-budget census
+
+[`lock1-transaction-budget-census.test.ts`](../src/lib/__tests__/lock1-transaction-budget-census.test.ts)
+polices `INV-LOCK-006`. It starts from the INV-LOCK-003 site list, follows each
+`pg_advisory_xact_lock(1)` wait out through named helpers to the transaction that
+opens it, and fails on an opener whose options are not the shared budget, a
+plain alias of it, or an
+`INV-LOCK-006 exception:` comment with a reason. Like the others it enumerates
+rather than counts, and it fails if the reader finds too few openers to be
+reading at all. It reads source from disk, so run it by name when a change adds a
+lock(1) site, a helper that takes the key, or a transaction that calls one; it is
+in `ci:fast-censuses` because a lock(1) site landing on `main` can make a green
+branch red.
+
 ### Suites that time out under load and pass alone
 
 Running the whole suite natively on Windows was measured and rejected as the
@@ -1887,8 +1964,8 @@ re-verify an entry.
   that mapper the only production season mapping", ran **2,589ms** alone, over
   half the budget with the machine otherwise idle. Under the smaller batch it
   **timed out**. This is the entry closest to being a real per-test budget
-  problem rather than a load artefact, and it is a candidate for an inline
-  budget like the next entry's.
+  problem rather than a load artefact, so since #5407 its three tree-reading
+  tests carry an inline 30,000ms budget, like the entries below.
 - [`src/lib/__tests__/hut-leader-change-last-night.test.tsx`](../src/lib/__tests__/hut-leader-change-last-night.test.tsx)
   — measured 13 October 2026 (vitest 5.0.3, Node 24, WSL2): run alone its
   first test, which absorbs the Hut Leaders page's first jsdom render, took
@@ -1904,6 +1981,29 @@ re-verify an entry.
   now waits for the settled scope before typing (#4085), and keeps the
   30,000ms `describe` budget for the full-page render itself.
 
+Four more suites, and two cases of a fifth, carry an inline 30,000ms budget
+since #5407 (measured 22 November 2026 on an in-use 20-core Windows 11 host,
+vitest 5.1.0, Node 24, with other lanes running). Lanes sharing that host
+saw each time out at 5,000ms, and an isolated `pnpm exec vitest run <file>`
+on it did too, so these are not "pass alone" entries: the budget is the fix,
+not a classification. Each loops or walks `src/`, and its 5s default measured
+only that the host was busy.
+
+- [`src/lib/__tests__/cli-server-only-reach-census.test.ts`](../src/lib/__tests__/cli-server-only-reach-census.test.ts)
+  — the "no static or dynamic path to `next/headers`" walk timed out at 5,000ms.
+- [`src/lib/__tests__/app-currency-import-census.test.ts`](../src/lib/__tests__/app-currency-import-census.test.ts)
+  — the "none of the four retired names" scan timed out at 5,000ms.
+- [`src/lib/__tests__/auth-session-max-age.test.ts`](../src/lib/__tests__/auth-session-max-age.test.ts)
+  — the hourly-refresh loops (one handler round trip per simulated hour, up to
+  722 for the 720-hour cap) timed out at 5,000ms.
+- [`src/lib/__tests__/bed-allocation-lock-topology-contract.test.ts`](../src/lib/__tests__/bed-allocation-lock-topology-contract.test.ts)
+  — its two whole-of-`src/` cases (the member-key restore census and the
+  `Booking.lodgeId` writer scan) timed out at 5,000ms.
+- [`src/lib/__tests__/admin-hubs-registry.test.ts`](../src/lib/__tests__/admin-hubs-registry.test.ts)
+  — three tree-reading or grid-wide cases ("reproduces canOpenAdminPath for every
+  permission grid", "are linked from nowhere in the code", and the reviewed-importers
+  scan) timed out at 5,000ms.
+
 Of the entries above, the two 2026-09-19 batches covered the first five; they
 produced no timeout, so their figures show how close each suite runs to the
 budget under a batch of that size, not a red. The reds came later, on 20
@@ -1915,6 +2015,24 @@ batch: the 141 files vitest selects for the filters `census`, `contract` and
 passed alone immediately afterwards. That is the evidence of the limit being
 crossed; a lane running any such batch beside another lane's tests, a build, or
 a typecheck is where it will be crossed again.
+
+### Knip on a Windows host reports two unused exports
+
+Measured under #5407: on unchanged `main`,
+`pnpm run knip` reports `setStripeClientForTests` and `resetStripeClientForTests`
+as unused exports, and CI's Linux run passes. Two test files reach them through
+the `@/` alias: `src/test/providers/provider-transports.test.ts` (static import)
+and `src/test/providers/stripe-webhook-round-trip.realdb.test.ts` (dynamic
+import). `tsconfig.json` excludes every test file. On that host knip credits
+neither, and leaves `@/` unresolved for a test file outside a `__tests__`
+directory;
+lifting the test exclusions from a copy of `tsconfig.json` clears both lines.
+`knip.jsonc` cannot carry the fix: its `tsConfig` is a command-line flag, CI runs
+`pnpm exec knip`, and a `paths` entry did not change the result. Classify the two
+lines as environmental. Do not delete the exports or edit `knip.jsonc` to silence
+them, and take the verdict from CI. The same run suggests removing `awk`,
+`pg_dump` and `gunzip` from `ignoreBinaries`; those are hints, they do not fail
+the run, and their cause is not established, so leave the entries in place.
 
 ## The shared race harness: declare the environment role per suite, and put it back
 
@@ -2011,14 +2129,18 @@ on. Expect a batch of realdb files to
 take as long as running them one after another. Inside one file the old rules
 still apply: a suite owns its own fixtures and queued work.
 
-CI runs every one of these files in the advisory `realdb-all` job (#4458), in
-one `vitest run` on one Postgres service, with `RUN_CONCURRENCY_RACE_TESTS=1`.
+CI runs every one of these files in the `realdb-all` job,
+`Real-PostgreSQL suites (all)` (#4458), in one `vitest run` on one Postgres
+service, with `RUN_CONCURRENCY_RACE_TESTS=1`. It blocks a merge through the
+required `verify` check, whose same-attempt poll fails unless this job succeeded
+(#4907); it is not a branch-protection context of its own.
 The file list is `scripts/ci/realdb-files.mjs`: every `*.realdb.test.*` file
 under `src/` minus `scripts/ci/realdb-quarantine.txt`, which names a suite that
 is red for a known reason, or cannot share the process, with its issue or PR.
 Add a realdb file and it joins the job with no edit. `realdb-ci-coverage-census.test.ts` fails when a file is
 neither run nor quarantined, when the job stops setting
-`RUN_CONCURRENCY_RACE_TESTS=1`, or when any other job names `realdb-all`. The
+`RUN_CONCURRENCY_RACE_TESTS=1`, when any job `needs:` it or it gains a
+job-level `if:` or `needs:`, or when anything but `verify`'s poll names it. The
 job points `DATA_MIGRATION_VERIFICATION_DATABASE_URL` at the same race service
 (those three suites create scratch databases of their own), and its last step,
 `scripts/ci/check-realdb-ran.mjs`, reads Vitest's JSON report and fails when a
@@ -2027,7 +2149,9 @@ gate is unset skips green otherwise. The seed suite
 (`booking-ledger-history-seed`) is quarantined because
 `scripts/booking-ledger-seed-gate.sh` runs it against a database of its own. The
 per-file steps in `migration-drift` and `data-migration-verification` stay: they
-are required checks and this job is not.
+report sooner, inside their own required checks. A flaky suite now blocks every
+pull request, so quarantine it with its issue rather than loosening the no-skip
+check.
 
 ## Mocking a money seam: never in a test that asserts its money
 

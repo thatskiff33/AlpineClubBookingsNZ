@@ -122,6 +122,39 @@ organisations cannot hold admin roles, and the server-side Full-Admin gates on
 access-role writes remain the authority (the UI only mirrors them). The admin
 population is protected against lock-out by `INV-LIFE-089`.
 
+## INV-LIFE-094
+
+Subscription category is a second, independent billing axis beside membership
+type, and a fourth member classification axis beside the access role, seasonal
+membership type and age tier axes `INV-LIFE-005` already names — not a variant
+of them. `SeasonalMembershipAssignment` carries
+`subscriptionCategoryId` (nullable FK to `SubscriptionCategory`) alongside its
+existing `membershipTypeId`; the two are resolved and stored independently, one
+row per member per season. A `SubscriptionCategory` (e.g. "Couple", "Adult +
+Child", "2 Adults + 2+ Children" — club-definable) governs
+ONLY how a member's annual subscription is billed and grouped (via
+`SubscriptionCategoryFee`, a flat fee independent of `MembershipType` and age
+tier). It has ZERO effect on booking rights, hut rate, or subscription
+lockout: `MembershipType.bookingBehavior`/`subscriptionBehavior` keep deciding
+those, and `src/lib/subscription-lockout-facts.ts`'s
+`resolveMemberSubscriptionSettlement` never reads a category — it only ever
+reads `MembershipType.subscriptionBehavior` and `MemberSubscription.status`.
+Billing does not call that resolver: both billing axes share
+`resolveSubscriptionTierExemption`, so a member whose type exempts them is
+never billed through a category (`INV-MONEY-046` states the rule and the
+pre-existing edge where it and booking access differ).
+Two members of the same `MembershipType` (same booking rights/rate) can be
+assigned different subscription categories (or none), and two members sharing
+one category can hold different `MembershipType`s (e.g. a Senior + a Life
+Member couple) — the billing engine groups and charges them together on the
+category axis while each keeps their own type's rights. Assignment is a manual
+admin choice per member, mirroring how `membershipTypeId` is assigned —
+never auto-derived from a family group's size or composition; an earlier
+composition-detection heuristic for family billing was deliberately removed in
+#1931 (E5) in favour of explicit assignment, and this axis follows the same
+precedent. See `docs/AUTHORITATIVE_FEES.md` for the fee-resolution and
+billing-engine detail.
+
 ## INV-LIFE-089
 
 The admin population is protected against lock-out on the seven member-write
@@ -416,9 +449,7 @@ each gated on `bookings:edit` and returning exactly one member's family group
 via the shared `resolveMemberFamily` helper. This decoupling means a club that
 customises the Booking Officer role to drop `membership:view` can still attach
 the correct member identity — and therefore correct member pricing — instead of
-silently re-adding the member as a mispriced non-member. The member-scoped
-`GET /api/admin/members/[id]/family` remains gated on `membership:view` for
-membership surfaces.
+silently re-adding the member as a mispriced non-member.
 
 ## INV-LIFE-068
 
@@ -677,21 +708,26 @@ switch to `private, no-store` instead of the short public cache).
 
 ## INV-LIFE-086
 
-Every stored image has its EXIF/XMP/comment metadata (camera GPS) stripped
-first, on every path that stores image bytes: the member-photo upload, the
-admin image library, the image manager's batch upload into `public/images`, the
-config-transfer bundle import, and the inline club logo held as a base64 data URI
-on `ClubTheme.logoDataUrl` (written by the site-style save and by the bundle
-import, and rendered inline on every public page). The member-photo path fails
-**closed** (an unconfirmable strip rejects the upload, because it is personal
-data on a narrow purpose-built path); the others fail **open** through
-`storableImageBytes` / `storableLogoDataUrl` — they store the original and log a
-warning — because blocking a legitimate admin content upload, a site-style save,
-or an operator's whole configuration restore is the worse outcome there. `gif`,
-`avif` and `svg+xml` have no stripper and are always reported as unconfirmed, so
-they log rather than claim a clean strip. `POST /api/admin/site-style/logo` needs
-no strip step: it re-encodes through sharp, which drops metadata unless asked to
-keep it.
+Every stored image has its hidden metadata removed first — EXIF and GPS, XMP,
+comments, editor and embedded text — on every path that stores image bytes:
+the member-photo upload, the admin image library, the image manager's batch
+upload into `public/images`, the config-transfer bundle import, and the inline
+club logo on `ClubTheme.logoDataUrl` (the site-style save and the bundle
+import). Every allowed type has a keep-list cleaner (#5244): JPEG, PNG and
+WebP keep only what draws the picture plus an EXIF Orientation; GIF keeps only
+picture, timing and looping blocks; a still AVIF has every non-picture item,
+property (bar the kept `colr` colour profile) and box blanked in place; SVG is rebuilt from an allow-list of drawing
+elements and attributes. An unchanged inline logo resent by a site-style save
+is not re-cleaned.
+
+Every path fails **closed** through `cleanImageForStorage` /
+`storableLogoDataUrl`: an image that cannot be confirmed clean (malformed,
+truncated, an animated AVIF, an SVG reaching outside itself, a drawing whose
+root is not in the SVG namespace) is refused with
+`IMAGE_NOT_CLEAN_MESSAGE` and nothing is stored — a configuration restore stops
+at its dry run naming the file. `POST /api/admin/site-style/logo` needs no
+strip step: it re-encodes through sharp, which drops metadata unless asked to
+keep it. Images stored before #5244 are not altered.
 
 ## INV-LIFE-087
 

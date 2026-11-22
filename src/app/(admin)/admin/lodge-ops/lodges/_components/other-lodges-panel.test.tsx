@@ -1,0 +1,1072 @@
+// @vitest-environment jsdom
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+
+// The panel reads the session permission matrix for view-only gating (#1940).
+// `lodgeLevel` is switched per test so both an editing and a view-only admin
+// are covered.
+let lodgeLevel: "edit" | "view" = "edit";
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    status: "authenticated",
+    data: {
+      user: {
+        id: "admin-1",
+        adminPermissionMatrix: {
+          overview: "edit",
+          bookings: "edit",
+          membership: "edit",
+          finance: "edit",
+          lodge: lodgeLevel,
+          content: "edit",
+          support: "edit",
+        },
+      },
+    },
+  }),
+}));
+
+import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
+import {
+  OTHER_LODGE_NOT_OWNED_CODE,
+  type AdminOtherLodge,
+  type AdminOtherLodgesResponse,
+} from "@/lib/other-lodges";
+import { OtherLodgesPanel } from "./other-lodges-panel";
+
+// triyder/AlpineClubBookingsNZ#52: a site changes only the lodge(s) the central server says it owns. The
+// list has no Add, Edit or Delete; each OWNED lodge gets one "Edit my Lodge"
+// button (named when there are several) that opens the triyder/AlpineClubBookingsNZ#51 popup with the name
+// read-only; the panel is read-only with a note while the owned list is
+// unknown or empty; and no booking officer's phone is shown in the list.
+//
+// The triyder/AlpineClubBookingsNZ#51 popup pins (opens over the list, error INSIDE the dialog above Save,
+// background click does not close, Escape and Cancel do, Escape ignored while
+// saving, focus returns to the opener, newest refresh wins, view-only admin
+// cannot open it) are kept, now opened through Edit my Lodge.
+
+const fetchMock = vi.fn();
+
+function lodge(over: Partial<AdminOtherLodge> = {}): AdminOtherLodge {
+  return {
+    id: "ol-1",
+    name: "Tararua Lodge",
+    location: "Otaki Forks",
+    bookingOfficerName: "Ann Officer",
+    bookingOfficerEmail: "bookings@tararua.test",
+    bookingOfficerPhone: "021 555 0000",
+    bedCapacity: 24,
+    siteUrl: null,
+    doubleBeds: null,
+    singleBeds: null,
+    minutesWalkToLodge: null,
+    roomType: null,
+    skiWorkshopArea: false,
+    gamesRoom: false,
+    cancellationPeriod: null,
+    requiresLodgeCustodian: false,
+    freeWifi: false,
+    quietRoom: false,
+    dryingRoom: false,
+    sharedKitchen: false,
+    wheelchairAccessible: false,
+    breakfastIncluded: false,
+    lunchIncluded: false,
+    dinnerIncluded: false,
+    winterSeasonStart: null,
+    winterSeasonEnd: null,
+    summerSeasonStart: null,
+    summerSeasonEnd: null,
+    winterRateUnder5Cents: null,
+    winterRate5To11Cents: null,
+    winterRate12To17Cents: null,
+    winterRateAdultCents: null,
+    summerRateUnder5Cents: null,
+    summerRate5To11Cents: null,
+    summerRate12To17Cents: null,
+    summerRateAdultCents: null,
+    amenities: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    owned: true,
+    renamable: false,
+    ...over,
+  };
+}
+
+/** Another club's lodge as the API sends it: not owned, and NO phone key. */
+function theirs(over: Partial<AdminOtherLodge> = {}): AdminOtherLodge {
+  const { bookingOfficerPhone: _dropped, ...rest } = lodge({
+    id: "ol-2",
+    name: "Ruapehu Hut",
+    location: "Whakapapa",
+    bookingOfficerName: "Sam Officer",
+    bookingOfficerEmail: "bookings@ruapehu.test",
+    owned: false,
+    renamable: false,
+    ...over,
+  });
+  void _dropped;
+  return rest;
+}
+
+type Pending = { resolve: (value: unknown) => void };
+
+/** GET returns the list; any write is answered by `onWrite`. */
+function stubFetch(
+  body: AdminOtherLodgesResponse,
+  onWrite: (init: RequestInit) => Promise<unknown> | unknown = () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({}),
+  }),
+) {
+  fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+    if (init?.method && init.method !== "GET") return onWrite(init);
+    return { ok: true, status: 200, json: async () => body };
+  });
+  vi.stubGlobal("fetch", fetchMock);
+}
+
+/** The common case: one owned lodge (ours) and one other club's. */
+function oneOwned(): AdminOtherLodgesResponse {
+  return {
+    otherLodges: [lodge(), theirs()],
+    ownedLodgeNames: ["Tararua Lodge"],
+    serverVersionStatus: "match",
+  };
+}
+
+async function renderPanel() {
+  render(<OtherLodgesPanel ancestorRendersViewOnlyBanner />);
+  await screen.findByText("Tararua Lodge");
+}
+
+const editMyLodge = () => screen.getByRole("button", { name: /edit my lodge/i });
+
+beforeEach(() => {
+  lodgeLevel = "edit";
+  fetchMock.mockReset();
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+describe("Other lodges: only the site's own lodge is editable (triyder/AlpineClubBookingsNZ#52)", () => {
+  it("offers no Add, Edit or Delete, and one Edit my Lodge for the one owned lodge", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+
+    expect(screen.queryByRole("button", { name: /add other lodge/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^edit$/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^delete$/i })).toBeNull();
+    // Exactly one, on the owned row; the other club's row has no button.
+    const buttons = screen.getAllByRole("button", { name: /^edit/i });
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].textContent).toMatch(/edit my lodge/i);
+    const theirRow = screen.getByText("Ruapehu Hut").closest("tr") as HTMLElement;
+    expect(within(theirRow).queryByRole("button")).toBeNull();
+  });
+
+  it("names each button when the site owns several lodges", async () => {
+    stubFetch({
+      otherLodges: [
+        lodge(),
+        lodge({ id: "ol-3", name: "Tararua Annex", owned: true }),
+        theirs(),
+      ],
+      ownedLodgeNames: ["Tararua Lodge", "Tararua Annex"],
+      serverVersionStatus: "match",
+    });
+    await renderPanel();
+
+    expect(screen.getByRole("button", { name: "Edit Tararua Lodge" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Edit Tararua Annex" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /edit my lodge/i })).toBeNull();
+    expect(screen.getAllByRole("button", { name: /^edit/i })).toHaveLength(2);
+  });
+
+  it("opens the popup for the owned lodge with its name READ-ONLY until it is keyed (triyder/AlpineClubBookingsNZ#64)", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    fireEvent.click(editMyLodge());
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Edit my Lodge")).toBeTruthy();
+    const name = within(dialog).getByLabelText("Name") as HTMLInputElement;
+    expect(name.value).toBe("Tararua Lodge");
+    // Not keyed by the central server yet: a new name would reach it as a
+    // second lodge. The route refuses it too — this is the UI half.
+    expect(name.readOnly).toBe(true);
+    expect(within(dialog).getByText(/can be renamed after the next Download/i)).toBeTruthy();
+    // The rest of the form is still editable, including the phone.
+    expect((within(dialog).getByLabelText("Booking officer's phone") as HTMLInputElement).readOnly).toBe(false);
+    expect((within(dialog).getByLabelText("Booking officer's phone") as HTMLInputElement).value).toBe("021 555 0000");
+    // The list is still there behind it.
+    expect(screen.getByText("Otaki Forks")).toBeTruthy();
+  });
+
+  it("shows no booking officer phone anywhere in the list, including the owned row", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+
+    expect(screen.queryByText("021 555 0000")).toBeNull();
+    // Name and email are still shown.
+    expect(screen.getByText("Ann Officer")).toBeTruthy();
+    expect(screen.getByText("bookings@tararua.test")).toBeTruthy();
+    expect(screen.getByText("Sam Officer")).toBeTruthy();
+  });
+
+  it("is read-only with a note, and no buttons, while the owned list is UNKNOWN", async () => {
+    stubFetch({
+      otherLodges: [lodge({ owned: false }), theirs()],
+      ownedLodgeNames: null,
+      serverVersionStatus: "match",
+    });
+    await renderPanel();
+
+    expect(screen.queryByRole("button", { name: /^edit/i })).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: /actions/i })).toBeNull();
+    const note = screen.getByTestId("owned-unknown");
+    expect(note.textContent).toMatch(/set on the central server/i);
+    expect(note.textContent).toMatch(/download/i);
+    expect(screen.queryByTestId("owned-none")).toBeNull();
+  });
+
+  it("is read-only with a different note while the owned list is known but EMPTY", async () => {
+    stubFetch({
+      otherLodges: [lodge({ owned: false }), theirs()],
+      ownedLodgeNames: [],
+      serverVersionStatus: "match",
+    });
+    await renderPanel();
+
+    expect(screen.queryByRole("button", { name: /^edit/i })).toBeNull();
+    const note = screen.getByTestId("owned-none");
+    expect(note.textContent).toMatch(/no lodge assigned to this site/i);
+    expect(screen.queryByTestId("owned-unknown")).toBeNull();
+  });
+
+  it("says syncing is paused, linking to setup, while the server version differs (triyder/AlpineClubBookingsNZ#49)", async () => {
+    stubFetch({ ...oneOwned(), serverVersionStatus: "mismatch" });
+    await renderPanel();
+
+    const note = screen.getByTestId("server-version-paused");
+    expect(note.textContent).toMatch(/paused/i);
+    expect(note.textContent).toMatch(/different software version/i);
+    const link = within(note).getByRole("link", { name: /setup page/i });
+    expect(link.getAttribute("href")).toBe("/admin/alpine-server/setup");
+    // The list is still shown, and the owned lodge is still editable: a pause
+    // stops the transfer, not the local edit.
+    expect(screen.getByText("Tararua Lodge")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^edit/i })).toBeTruthy();
+  });
+
+  it("shows no paused note while the versions match, are unchecked, or no key is stored (triyder/AlpineClubBookingsNZ#49)", async () => {
+    for (const status of ["match", "unchecked", "no-key"] as const) {
+      cleanup();
+      stubFetch({ ...oneOwned(), serverVersionStatus: status });
+      await renderPanel();
+      expect(screen.queryByTestId("server-version-paused")).toBeNull();
+    }
+  });
+
+  it("shows no note once the owned list is known and an owned row is on screen", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    expect(screen.queryByTestId("owned-unknown")).toBeNull();
+    expect(screen.queryByTestId("owned-none")).toBeNull();
+    expect(screen.queryByTestId("owned-not-downloaded")).toBeNull();
+  });
+
+  it("explains, with no button, when the server names a lodge that has not been downloaded yet", async () => {
+    // The list says "Tararua Lodge" but no local row carries that name.
+    stubFetch({
+      otherLodges: [theirs()],
+      ownedLodgeNames: ["Tararua Lodge"],
+      serverVersionStatus: "match",
+    });
+    render(<OtherLodgesPanel ancestorRendersViewOnlyBanner />);
+    await screen.findByText("Ruapehu Hut");
+
+    expect(screen.queryByRole("button", { name: /^edit/i })).toBeNull();
+    const note = screen.getByTestId("owned-not-downloaded");
+    expect(note.textContent).toMatch(/Tararua Lodge/);
+    expect(note.textContent).toMatch(/not linked to this site yet/i);
+    expect(note.textContent).toMatch(/download/i);
+    expect(screen.queryByTestId("owned-unknown")).toBeNull();
+    expect(screen.queryByTestId("owned-none")).toBeNull();
+  });
+
+  it("labels the button by the owned rows ON SCREEN, not by the server's count", async () => {
+    // The server names two lodges; only one has been downloaded. One button,
+    // and it reads "Edit my Lodge" rather than naming a lodge to tell it apart
+    // from a sibling that is not there.
+    stubFetch({
+      otherLodges: [lodge(), theirs()],
+      ownedLodgeNames: ["Tararua Lodge", "Tararua Annex"],
+      serverVersionStatus: "match",
+    });
+    await renderPanel();
+
+    expect(screen.getAllByRole("button", { name: /^edit/i })).toHaveLength(1);
+    expect(editMyLodge()).toBeTruthy();
+    expect(screen.queryByTestId("owned-not-downloaded")).toBeNull();
+  });
+
+  it("a view-only admin cannot open the popup", async () => {
+    lodgeLevel = "view";
+    stubFetch(oneOwned());
+    await renderPanel();
+
+    const edit = editMyLodge();
+    expect((edit as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(edit);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("shows the route's own ownership refusal inside the dialog, and the generic one for a bare 403", async () => {
+    stubFetch(oneOwned(), () => ({
+      ok: false,
+      status: 403,
+      json: async () => ({
+        error: "Only this site's own lodge can be changed here.",
+        code: OTHER_LODGE_NOT_OWNED_CODE,
+      }),
+    }));
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    let dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    let alert = await within(dialog).findByRole("alert");
+    expect(alert.textContent).toContain("Only this site's own lodge can be changed here.");
+    fireEvent.click(within(dialog).getByRole("button", { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // A permissions 403 carries no code: the generic view-only message.
+    stubFetch(oneOwned(), () => ({
+      ok: false,
+      status: 403,
+      json: async () => ({ error: "Forbidden" }),
+    }));
+    fireEvent.click(editMyLodge());
+    dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    alert = await within(dialog).findByRole("alert");
+    expect(alert.textContent).toMatch(/cannot make changes/i);
+  });
+});
+
+describe("Other lodges edit popup (triyder/AlpineClubBookingsNZ#51, opened through Edit my Lodge)", () => {
+  it("shows a validation error inside the dialog, not on the page behind it", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Bed capacity"), {
+      target: { value: "999999" },
+    });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    const alert = await within(dialog).findByRole("alert");
+    // Over the shared bound, which jsdom lets through a number input (a
+    // non-numeric value it would sanitise to empty before the form saw it).
+    expect(alert.textContent).toMatch(/too large/i);
+    // Exactly one alert on the page — hidden ones included, because a dialog
+    // hides everything behind it from the accessibility tree — and it is the
+    // one in the dialog.
+    expect(screen.getAllByRole("alert", { hidden: true })).toHaveLength(1);
+    // Nothing was sent: the form refused it before any request.
+    expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+  });
+
+  it("shows a save failure inside the dialog and keeps what was typed", async () => {
+    stubFetch(oneOwned(), () => ({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: "Invalid input" }),
+    }));
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Location"), {
+      target: { value: "Otaki Forks, Tararua Range" },
+    });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert.textContent).toContain("Invalid input");
+    expect(screen.getAllByRole("alert", { hidden: true })).toHaveLength(1);
+    // Still open, still holding the typed value.
+    expect(
+      (within(screen.getByRole("dialog")).getByLabelText("Location") as HTMLInputElement).value,
+    ).toBe("Otaki Forks, Tararua Range");
+  });
+
+  it("closes after a successful save and refreshes the list", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Bed capacity"), {
+      target: { value: "30" },
+    });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const writes = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(writes).toHaveLength(1);
+    expect(writes[0][0]).toBe("/api/admin/other-lodges/ol-1");
+    // The payload carries the stored name, unchanged, with the edit.
+    expect(JSON.parse(writes[0][1].body)).toMatchObject({ name: "Tararua Lodge", bedCapacity: 30 });
+    // No POST, no DELETE, ever.
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST" || init?.method === "DELETE")).toBe(false);
+    // The list was loaded again after the save (GET twice: first load + refresh).
+    const gets = fetchMock.mock.calls.filter(([, init]) => !init?.method || init.method === "GET");
+    expect(gets.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it.each([
+    [{ status: "uploaded", sent: 1, accepted: 1 }, "Saved, and sent to the Alpine Central Server."],
+    // A lodge the server refused is not reported as sent (#4720 review).
+    [{ status: "uploaded", sent: 1, accepted: 0 }, "Saved, but the Alpine Central Server did not accept the change. The nightly sync sends it again."],
+    [{ status: "uploaded", sent: 2, accepted: 1 }, "Saved and sent, but the Alpine Central Server did not accept every lodge. The nightly sync sends the rest again."],
+    [{ status: "uploaded", sent: 0, accepted: 0 }, "Saved. The Alpine Central Server already has these details."],
+    [{ status: "owned-unreadable" }, "Saved, but this site's list of its own lodges could not be read, so nothing was sent. The next download from the Alpine Central Server rewrites it."],
+    [{ status: "no-upload-permission" }, "Saved. The nightly sync sends the change to the Alpine Central Server; sending it straight away needs Finance edit."],
+    [{ status: "failed" }, "Saved, but the change could not be sent to the Alpine Central Server just now. The nightly sync tries again."],
+    [{ status: "sharing-off" }, "Saved. Other Clubs sharing is off, so the change was not sent to the Alpine Central Server."],
+  ])("says what uploading the saved lodge came to (%o)", async (upload, text) => {
+    stubFetch(oneOwned(), () => ({ ok: true, status: 200, json: async () => ({ upload }) }));
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByTestId("other-lodge-upload-notice").textContent).toBe(text);
+  });
+
+  it("edits the API 2.1 fields: bed counts, walk, room type and the two new facilities", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    // The booking path is gone; the URL carries the server's new label.
+    expect(within(dialog).queryByLabelText("How to book")).toBeNull();
+    expect(within(dialog).getByLabelText("Non-member booking page URL")).toBeTruthy();
+    fireEvent.change(within(dialog).getByLabelText("Double beds"), { target: { value: "4" } });
+    fireEvent.change(within(dialog).getByLabelText("Single beds"), { target: { value: "12" } });
+    fireEvent.change(within(dialog).getByLabelText("Minutes' walk to the lodge"), {
+      target: { value: "25" },
+    });
+    fireEvent.click(within(dialog).getByLabelText("Dormitory"));
+    fireEvent.click(within(dialog).getByLabelText("Ski workshop area"));
+    fireEvent.click(within(dialog).getByLabelText("Games room"));
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const [write] = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    const body = JSON.parse(write[1].body);
+    expect(body).toMatchObject({
+      doubleBeds: 4,
+      singleBeds: 12,
+      minutesWalkToLodge: 25,
+      roomType: "DORMITORY",
+      skiWorkshopArea: true,
+      gamesRoom: true,
+    });
+    expect(body).not.toHaveProperty("bookingPath");
+  });
+
+  it("edits the non-member rates (triyder/AlpineClubBookingsNZ#61): a stored rate loads as dollars, typed dollars save as cents, blank clears", async () => {
+    stubFetch({
+      ...oneOwned(),
+      otherLodges: [lodge({ winterRateAdultCents: 4550, summerRateUnder5Cents: 0 }), theirs()],
+    });
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    // Stored cents load as the dollars an officer would type; zero is a rate,
+    // not "not set".
+    const winterAdult = within(dialog).getByLabelText("Winter rate, Adult") as HTMLInputElement;
+    expect(winterAdult.value).toBe("45.50");
+    expect((within(dialog).getByLabelText("Summer rate, Infant") as HTMLInputElement).value).toBe("0.00");
+    expect((within(dialog).getByLabelText("Winter rate, Child") as HTMLInputElement).value).toBe("");
+
+    fireEvent.change(within(dialog).getByLabelText("Winter rate, Child"), { target: { value: "20" } });
+    fireEvent.change(within(dialog).getByLabelText("Summer rate, Youth"), { target: { value: "30.1" } });
+    fireEvent.change(winterAdult, { target: { value: "" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const [write] = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(JSON.parse(write[1].body)).toMatchObject({
+      winterRateUnder5Cents: null,
+      winterRate5To11Cents: 2000,
+      winterRate12To17Cents: null,
+      winterRateAdultCents: null,
+      summerRateUnder5Cents: 0,
+      summerRate5To11Cents: null,
+      summerRate12To17Cents: 3010,
+      summerRateAdultCents: null,
+    });
+  });
+
+  it("names every rate cell and its step buttons by season AND age group (triyder/AlpineClubBookingsNZ#61)", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    for (const season of ["Winter", "Summer"]) {
+      for (const ageGroup of ["Infant", "Child", "Youth", "Adult"]) {
+        const name = `${season} rate, ${ageGroup}`;
+        expect(within(dialog).getByLabelText(name)).toBeTruthy();
+        // MoneyInput names its buttons from the field's <label>: without the
+        // season in it, "Increase Adult by one dollar" would appear twice.
+        await waitFor(() =>
+          expect(
+            within(dialog).getByRole("button", { name: `Increase ${name} by one dollar` }),
+          ).toBeTruthy(),
+        );
+      }
+    }
+  });
+
+  it("refuses an unrealistic rate inside the dialog and sends nothing", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Summer rate, Adult"), {
+      target: { value: "100000" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert.textContent).toBe("Summer rate, Adult can be at most $99999.99.");
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+  });
+
+  it("clears a stored room type with 'Not stated' and refuses a fractional bed count", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByLabelText("Room"));
+    fireEvent.change(within(dialog).getByLabelText("Single beds"), { target: { value: "2.5" } });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert.textContent).toBe("Single beds must be a whole number.");
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+
+    fireEvent.change(within(dialog).getByLabelText("Single beds"), { target: { value: "" } });
+    fireEvent.click(within(dialog).getByLabelText("Not stated"));
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const [write] = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(JSON.parse(write[1].body)).toMatchObject({ roomType: null, singleBeds: null });
+  });
+
+  it("does NOT close when the dimmed background is clicked", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    await screen.findByRole("dialog");
+
+    fireEvent.pointerDown(document.body);
+    fireEvent.mouseDown(document.body);
+    fireEvent.click(document.body);
+
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("closes on Escape, and on Cancel, discarding the edit", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+
+    fireEvent.click(editMyLodge());
+    let dialog = await screen.findByRole("dialog");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    fireEvent.click(editMyLodge());
+    dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Location"), { target: { value: "Changed" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // Nothing was written, and reopening shows the stored value, not "Changed".
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+    fireEvent.click(editMyLodge());
+    dialog = await screen.findByRole("dialog");
+    expect((within(dialog).getByLabelText("Location") as HTMLInputElement).value).toBe("Otaki Forks");
+  });
+
+  it("ignores Escape and the close button while a save is in flight", async () => {
+    const pending: Pending = { resolve: () => undefined };
+    stubFetch(oneOwned(), () => new Promise((resolve) => (pending.resolve = resolve)));
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    await within(dialog).findByRole("button", { name: /saving/i });
+
+    // No clickable close button that does nothing: it is hidden while saving.
+    expect(within(dialog).queryByRole("button", { name: /^close$/i })).toBeNull();
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.getByRole("dialog")).toBeTruthy();
+
+    // Once the save lands, the dialog closes.
+    pending.resolve({ ok: true, status: 200, json: async () => ({}) });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("returns focus to the Edit my Lodge button that opened it", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    const editButton = editMyLodge();
+    // NOT focused first: a click does not focus a button in every browser
+    // (Safari, Firefox on macOS), and jsdom's fireEvent.click does not either.
+    // Radix would then restore focus to the page body, so only the panel's own
+    // return-to-opener can pass this.
+    expect(document.activeElement).not.toBe(editButton);
+    fireEvent.click(editButton);
+    const dialog = await screen.findByRole("dialog");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // The same button is still mounted (a refresh keeps the table), so focus
+    // has somewhere to return to, and it HOLDS it once everything has settled.
+    expect(editMyLodge()).toBe(editButton);
+    await expectRecoveryAlertToHoldFocus(editButton);
+  });
+
+  it("keeps the table (and the button's focus target) while the list refreshes after a SAVE", async () => {
+    // The refresh after a save is held open by hand, so the "list is loading"
+    // state is actually on screen when we look; an instantly-answered mock lets
+    // React batch it away and the check proves nothing.
+    let gets = 0;
+    let releaseRefresh: () => void = () => undefined;
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+      if (init?.method && init.method !== "GET") {
+        // The server answers a save with the saved lodge, in the list shape.
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ otherLodge: lodge({ location: "Otaki Forks (upper)" }) }),
+        };
+      }
+      gets += 1;
+      if (gets > 1) await new Promise<void>((resolve) => (releaseRefresh = resolve));
+      return { ok: true, status: 200, json: async () => oneOwned() };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await renderPanel();
+    const editButton = editMyLodge();
+    fireEvent.click(editButton);
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Location"), {
+      target: { value: "Otaki Forks (upper)" },
+    });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(gets).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // Refresh still in flight: a spinner in place of the table would have
+    // unmounted this button, leaving focus nowhere to return to.
+    expect(screen.queryByText(/loading other lodges/i)).toBeNull();
+    expect(editMyLodge()).toBe(editButton);
+    await expectRecoveryAlertToHoldFocus(editButton);
+    // And the saved value is on screen already, not the stale one.
+    expect(screen.getByText("Otaki Forks (upper)")).toBeTruthy();
+    expect(screen.queryByText("Otaki Forks")).toBeNull();
+
+    releaseRefresh();
+    await waitFor(() => expect(editMyLodge()).toBe(editButton));
+  });
+
+  it("a discarded edit's error does not reappear on the page after the dialog closes", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Bed capacity"), { target: { value: "999999" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    await within(dialog).findByRole("alert");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    expect(screen.queryByRole("alert", { hidden: true })).toBeNull();
+
+    // Same for Escape.
+    fireEvent.click(editMyLodge());
+    const second = await screen.findByRole("dialog");
+    fireEvent.change(within(second).getByLabelText("Bed capacity"), { target: { value: "999999" } });
+    fireEvent.click(within(second).getByRole("button", { name: /^save$/i }));
+    await within(second).findByRole("alert");
+    fireEvent.keyDown(second, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.queryByRole("alert", { hidden: true })).toBeNull();
+  });
+
+  it("shows the error directly above Save and Cancel, after the fields", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Bed capacity"), { target: { value: "999999" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    const alert = await within(dialog).findByRole("alert");
+
+    const follows = (a: Element, b: Element) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    // After the last field of the form, before the buttons it explains.
+    expect(follows(within(dialog).getByLabelText("Name"), alert)).toBe(true);
+    expect(
+      follows(within(dialog).getByRole("button", { name: /add amenity/i }), alert),
+    ).toBe(true);
+    expect(follows(alert, within(dialog).getByRole("button", { name: /^save$/i }))).toBe(true);
+    expect(follows(alert, within(dialog).getByRole("button", { name: /^cancel$/i }))).toBe(true);
+  });
+
+  it("applies the results of overlapping refreshes newest-first, never letting an older one win", async () => {
+    // Two saves' refreshes can be in flight together. If the older response
+    // arrived last it would put back the value the newer one had replaced.
+    const releases: Array<() => void> = [];
+    const answers: AdminOtherLodgesResponse[] = [
+      oneOwned(),
+      oneOwned(),
+      { ...oneOwned(), otherLodges: [lodge({ location: "Final" }), theirs()] },
+    ];
+    let get = 0;
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") {
+        return { ok: true, status: 200, json: async () => ({}) };
+      }
+      const mine = get;
+      get += 1;
+      if (mine >= 1) await new Promise<void>((resolve) => releases.push(resolve));
+      return { ok: true, status: 200, json: async () => answers[mine] };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await renderPanel();
+
+    // Save -> refresh #1 (held open).
+    fireEvent.click(editMyLodge());
+    let dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(releases).toHaveLength(1));
+
+    // Save again -> refresh #2 (held open), while #1 is still pending.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    fireEvent.click(editMyLodge());
+    dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(releases).toHaveLength(2));
+
+    // The NEWER refresh answers first, then the older one answers late with
+    // the stale list.
+    releases[1]();
+    await screen.findByText("Final");
+    releases[0]();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.getByText("Final")).toBeTruthy();
+    expect(screen.queryByText("Otaki Forks")).toBeNull();
+  });
+});
+
+describe("Other lodges: renaming our own lodge and lodges the server no longer has (triyder/AlpineClubBookingsNZ#64)", () => {
+  it("lets a keyed owned lodge be renamed, and sends the new name", async () => {
+    stubFetch(
+      { ...oneOwned(), otherLodges: [lodge({ renamable: true }), theirs()] },
+      () => ({ ok: true, status: 200, json: async () => ({}) }),
+    );
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    const name = within(dialog).getByLabelText("Name") as HTMLInputElement;
+    expect(name.readOnly).toBe(false);
+    expect(within(dialog).getByText(/reaches every other club on their next download/i)).toBeTruthy();
+
+    fireEvent.change(name, { target: { value: "Tararua Alpine Lodge" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const [write] = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(JSON.parse(write[1].body).name).toBe("Tararua Alpine Lodge");
+  });
+
+  it("refuses an empty name inline, sending nothing", async () => {
+    stubFetch({ ...oneOwned(), otherLodges: [lodge({ renamable: true }), theirs()] });
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "   " } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    expect(await within(dialog).findByText("The lodge needs a name.")).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+  });
+
+  it("marks a lodge the central server no longer has, with what still cites it", async () => {
+    stubFetch({
+      ...oneOwned(),
+      otherLodges: [
+        lodge(),
+        theirs({ notOnCentralServer: { bookings: 1, bookingRequests: 3 } }),
+      ],
+    });
+    await renderPanel();
+    const row = screen.getByText("Ruapehu Hut").closest("tr") as HTMLElement;
+    expect(within(row).getByText(/not found on the alpine central server/i).textContent).toMatch(
+      /referred to by 1 booking and 3 booking requests/i,
+    );
+    const ours = screen.getByText("Tararua Lodge").closest("tr") as HTMLElement;
+    expect(within(ours).queryByText(/not found on the alpine central server/i)).toBeNull();
+  });
+
+  it("says when nothing refers to a lodge the central server no longer has", async () => {
+    stubFetch({
+      ...oneOwned(),
+      otherLodges: [lodge(), theirs({ notOnCentralServer: { bookings: 0, bookingRequests: 0 } })],
+    });
+    await renderPanel();
+    expect(screen.getByText(/nothing here refers to it/i)).toBeTruthy();
+  });
+});
+
+describe("Other lodges: hiding a lodge the central server does not list (triyder/AlpineClubBookingsNZ#58)", () => {
+  it("offers Hide on every not-found lodge, cited or not, and never on a listed one", async () => {
+    stubFetch({
+      ...oneOwned(),
+      otherLodges: [
+        lodge(),
+        theirs({ notOnCentralServer: { bookings: 0, bookingRequests: 0 } }),
+        theirs({ id: "ol-3", name: "Cited Hut", notOnCentralServer: { bookings: 1, bookingRequests: 0 } }),
+      ],
+    });
+    await renderPanel();
+    expect(screen.getByRole("button", { name: "Hide Ruapehu Hut" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Hide Cited Hut" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Hide Tararua Lodge" })).toBeNull();
+  });
+
+  it("asks first, hides through the route, reloads, announces it and moves focus to the list's heading", async () => {
+    stubFetch(
+      { ...oneOwned(), otherLodges: [lodge(), theirs({ notOnCentralServer: { bookings: 2, bookingRequests: 0 } })] },
+      () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }),
+    );
+    await renderPanel();
+    const getsBefore = fetchMock.mock.calls.filter(([, init]) => !init?.method || init.method === "GET").length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide Ruapehu Hut" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/bookings and booking requests that already name it keep it/i)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: /^hide$/i }));
+
+    expect(await screen.findByText("Ruapehu Hut is hidden.")).toBeTruthy();
+    const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(posts.map(([url]) => url)).toEqual(["/api/admin/other-lodges/ol-2/hide"]);
+    expect(fetchMock.mock.calls.filter(([, init]) => !init?.method || init.method === "GET").length).toBeGreaterThan(getsBefore);
+    await waitFor(() => expect(document.activeElement?.textContent).toBe("Other lodges"));
+  });
+
+  it("sends nothing when the administrator cancels", async () => {
+    stubFetch({ ...oneOwned(), otherLodges: [lodge(), theirs({ notOnCentralServer: { bookings: 0, bookingRequests: 0 } })] });
+    await renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: "Hide Ruapehu Hut" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /cancel/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
+  it("shows the route's refusal by the list and reloads it, since the list is out of date", async () => {
+    stubFetch(
+      { ...oneOwned(), otherLodges: [lodge(), theirs({ notOnCentralServer: { bookings: 0, bookingRequests: 0 } })] },
+      () => ({
+        ok: false,
+        status: 409,
+        json: async () => ({ error: "Only a lodge marked “Not found on the Alpine Central Server” can be hidden here." }),
+      }),
+    );
+    await renderPanel();
+    const getsBefore = fetchMock.mock.calls.filter(([, init]) => !init?.method || init.method === "GET").length;
+    fireEvent.click(screen.getByRole("button", { name: "Hide Ruapehu Hut" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: /^hide$/i }));
+    const status = await screen.findByText(/can be hidden here/i);
+    expect(status.getAttribute("role")).toBe("status");
+    expect(fetchMock.mock.calls.filter(([, init]) => !init?.method || init.method === "GET").length).toBeGreaterThan(getsBefore);
+  });
+});
+
+describe("Other lodges: the booking page address (triyder/AlpineClubBookingsNZ#55)", () => {
+  const withSiteUrl = (siteUrl: string): AdminOtherLodgesResponse => ({
+    ...oneOwned(),
+    otherLodges: [lodge({ siteUrl }), theirs()],
+  });
+
+  it("links an ordinary address", async () => {
+    stubFetch(withSiteUrl("https://tararua.test/book"));
+    await renderPanel();
+    expect(screen.getByRole("link", { name: "https://tararua.test/book" }).getAttribute("href")).toBe(
+      "https://tararua.test/book",
+    );
+  });
+
+  it("shows an address the central server would refuse as plain text, never a link", async () => {
+    stubFetch(withSiteUrl("https://tararua.test@evil.test"));
+    await renderPanel();
+    expect(screen.getByText("https://tararua.test@evil.test").closest("a")).toBeNull();
+  });
+
+  it("flags a saved odd address as soon as the form opens, and refuses to save it", async () => {
+    stubFetch(withSiteUrl("https://tararua.test@evil.test"));
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    const field = within(dialog).getByLabelText("Non-member booking page URL");
+    const note = within(dialog).getByTestId("site-url-note");
+    expect(field.getAttribute("aria-describedby")).toBe(note.id);
+    expect(field.getAttribute("aria-invalid")).toBe("true");
+    expect(note.textContent).toMatch(/no spaces, no backslashes, and no @ before the site.s name/);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    expect((await within(dialog).findByRole("alert")).textContent).toMatch(/no @ before the site.s name/);
+    expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+
+    // Fixed: the note clears.
+    fireEvent.change(field, { target: { value: "https://tararua.test/book" } });
+    expect(within(dialog).getByTestId("site-url-note").textContent).toBe("");
+    expect(field.getAttribute("aria-invalid")).toBeNull();
+  });
+
+  it("does not judge a NEW address while it is typed; Save says what is wrong", async () => {
+    stubFetch(withSiteUrl(""));
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    const field = within(dialog).getByLabelText("Non-member booking page URL");
+    fireEvent.change(field, { target: { value: "https://tara" } });
+    fireEvent.change(field, { target: { value: "https://tararua.test@evil.test" } });
+    expect(within(dialog).getByTestId("site-url-note").textContent).toBe("");
+    expect(field.getAttribute("aria-invalid")).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    expect((await within(dialog).findByRole("alert")).textContent).toMatch(/no @ before the site.s name/);
+  });
+});
+
+describe("Other lodges: season start and end dates (triyder/AlpineClubBookingsNZ#75)", () => {
+  it("offers each season's start and end date in the editor", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    for (const label of [
+      "Winter season start date",
+      "Winter season end date",
+      "Summer season start date",
+      "Summer season end date",
+    ]) {
+      expect(within(dialog).getByLabelText(label).getAttribute("aria-describedby")).toBe("other-lodge-season-hint");
+    }
+    expect(within(dialog).getByText(/only the day and month are used/)).toBeTruthy();
+  });
+});
+
+describe("rates and season dates from the Fees page (triyder/AlpineClubBookingsNZ#77)", () => {
+  function fromFees(on: boolean): AdminOtherLodgesResponse {
+    return { ...oneOwned(), otherLodges: [lodge({ ratesFromFees: on, winterRateAdultCents: 4500 }), theirs()] };
+  }
+  const feesSwitch = (dialog: HTMLElement) =>
+    within(dialog).getByRole("checkbox", { name: "Rates and season dates from the Fees page" }) as HTMLInputElement;
+
+  it("while on, shows the rates and dates read-only, links to Fees, and saves the switch", async () => {
+    stubFetch(fromFees(true));
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    expect(feesSwitch(dialog).checked).toBe(true);
+    expect(within(dialog).getByRole("link", { name: /Fees/ }).getAttribute("href")).toBe("/admin/fees");
+    const winterAdult = within(dialog).getByLabelText("Winter rate, Adult") as HTMLInputElement;
+    expect(winterAdult.value).toBe("45.00");
+    expect(winterAdult.readOnly).toBe(true);
+    expect((within(dialog).getByLabelText("Winter season end date") as HTMLInputElement).readOnly).toBe(true);
+    // A screen reader is told why: each locked field points at the switch's note.
+    expect(winterAdult.getAttribute("aria-describedby")).toContain("other-lodge-ratesFromFees-hint");
+    expect(within(dialog).getByLabelText("Winter season end date").getAttribute("aria-describedby")).toContain(
+      "other-lodge-ratesFromFees-hint",
+    );
+    expect(within(dialog).getByRole("link", { name: /Fees/ }).getAttribute("target")).toBe("_blank");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const [write] = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    const sent = JSON.parse(write[1].body);
+    expect(sent).toMatchObject({ ratesFromFees: true, bedCapacity: expect.anything() });
+    // The rates and dates are the Fees page's: not sent at all.
+    expect(sent).not.toHaveProperty("winterRateAdultCents");
+    expect(sent).not.toHaveProperty("winterSeasonStart");
+  });
+
+  it("says in the popup why the Fees page cannot fill the lodge", async () => {
+    stubFetch({ ...fromFees(true), otherLodges: [lodge({ ratesFromFees: true, feesProblem: "Not filled: not linked." }), theirs()] });
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Not filled: not linked.")).toBeTruthy();
+  });
+
+  it("turned off, lets the rates and dates be typed and saves them with the switch off", async () => {
+    stubFetch(fromFees(true));
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(feesSwitch(dialog));
+    const winterAdult = within(dialog).getByLabelText("Winter rate, Adult") as HTMLInputElement;
+    expect(winterAdult.readOnly).toBe(false);
+    fireEvent.change(winterAdult, { target: { value: "50" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const [write] = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(JSON.parse(write[1].body)).toMatchObject({ ratesFromFees: false, winterRateAdultCents: 5000 });
+  });
+
+  it("shows no switch, and sends none, for a lodge the list carries no switch for", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByRole("checkbox", { name: "Rates and season dates from the Fees page" })).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const [write] = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(JSON.parse(write[1].body)).not.toHaveProperty("ratesFromFees");
+  });
+});

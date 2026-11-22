@@ -6,7 +6,6 @@ import {
   fireEvent,
   render,
   screen,
-  waitFor,
   within,
 } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -21,6 +20,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
 }));
 
 import { ManualRefundTaskQueue } from "@/components/admin/manual-refund-task-queue";
+import { waitForManualRefundQueueLoaded } from "@/lib/__tests__/support/manual-refund-task-queue-loaded";
 
 /**
  * #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): an officer cancelled an
@@ -42,8 +42,6 @@ const REVIEW_TASK = {
     "Booking booking-7 was cancelled as unpaid, but Xero records a payment against its invoice.",
   createdAt: "2026-06-21T00:00:00Z",
   memberName: "Ada Lovelace",
-  reviewEvidence: null,
-  reviewEvidenceUnreadable: false,
   checkIn: "2026-08-10T00:00:00Z",
   checkOut: "2026-08-12T00:00:00Z",
 };
@@ -62,9 +60,7 @@ async function renderQueue(tasks: unknown[] = [REVIEW_TASK]) {
     })),
   );
   render(<ManualRefundTaskQueue />);
-  await waitFor(() =>
-    expect(screen.getByTestId("manual-refund-task-queue")).toBeInTheDocument(),
-  );
+  await waitForManualRefundQueueLoaded();
   return screen.getByTestId("manual-refund-task-queue");
 }
 

@@ -69,6 +69,11 @@ export const SINGLETON_MODELS_REGISTERED_ELSEWHERE: Record<string, string> = {
  * a real, currently singleton-shaped model (both asserted by the guard test).
  */
 export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
+  McpSettings:
+    "who may connect an AI app to THIS install's live data, how much a " +
+    "connection may do and which apps are approved (ALP-653): a security and " +
+    "privacy decision each club makes for its own deployment, like the " +
+    "non-travelling mcpServer module flag it sits behind — instance-local",
   XeroInboundSettings:
     "webhook receipt and quiet-period monitoring policy belong to this install's " +
     "Xero subscription (#4432); importing either could hide a target install's " +
@@ -177,13 +182,21 @@ export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
     "bookkeeping beside it (cleanupStartedAt, lastCleanupAt, lastCleanupDeleted) " +
     "is this install's own run history and is meaningless on another -- " +
     "instance-local",
+  FoodOrderSettings:
+    "the food officer's email address and label (fork triyder/AlpineClubBookingsNZ#121): where THIS club's " +
+    "food orders are emailed. Importing it would silently send a target club's " +
+    "members' orders to the source club's officer, so a fresh import keeps the " +
+    "target's own address, and a target with none stays not set up (orders " +
+    "refused, fail-closed) -- instance-local",
   ClubTaxSettings:
-    "the club's GST registration, rate and effective-from date (#4626, Ledger " +
-    "M3a; decision D3): the tax treatment the member-money journal splits every " +
-    "charge under. Like ClubFormatSettings it re-states how a club's money is " +
+    "the club's dated schedule of GST registration, rate and Xero tax code (#4626, " +
+    "Ledger M3a; #4632): the tax treatment the member-money journal splits every " +
+    "charge under and every Xero document is rendered with, each period naming " +
+    "the member who scheduled it. Like ClubFormatSettings it re-states how a club's money is " +
     "recorded, and it is a legal fact about THIS club, not policy another club " +
     "can share: importing it would post a target's future charges under a " +
-    "registration or rate the target never declared. A fresh import keeps the " +
+    "registration, rate or Xero code the target never declared, and a code its " +
+    "own Xero organisation may not carry. A fresh import keeps the " +
     "target's own setting, and a target with none keeps the defaults (INV-CONFIG-001) " +
     "-- instance-local",
   PrivacyRetentionSettings:

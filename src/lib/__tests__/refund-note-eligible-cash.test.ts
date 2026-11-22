@@ -17,6 +17,9 @@ const state = vi.hoisted(() => ({
   /** #4170: intents a cancel claim (`CANCEL_PAYMENT_INTENT` recovery) names. */
   cancelClaims: [] as string[],
   bookingStatus: "CANCELLED",
+  /** #4383: the capture's gross, and its own receipt's stored plan and payment link. */
+  captureCents: 24000,
+  ownReceipt: null as null | { legs: number[]; capturedCents: number; linked: boolean },
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -38,6 +41,7 @@ vi.mock("@/lib/prisma", () => ({
     memberCredit: { aggregate: async () => ({ _sum: { amountCents: 0 } }) },
     payment: { findUnique: async () => ({ booking: { status: state.bookingStatus } }) },
     paymentTransaction: {
+      findUnique: async () => ({ amountCents: state.captureCents }),
       findMany: async ({ where }: { where: { stripePaymentIntentId: { in: string[] } } }) =>
         where.stripePaymentIntentId.in.map((intent) => ({
           stripePaymentIntentId: intent,
@@ -66,12 +70,20 @@ vi.mock("@/lib/prisma", () => ({
     xeroObjectLink: {
       // #3924 round 10: a change's own invoice link is asked too; none here.
       findFirst: async ({ where }: { where: { localId: string; role?: string } }) =>
-        where.role === "SUPPLEMENTARY_INVOICE" ? null : (state.keptLinks.find((l) => l.localId === where.localId) ?? null),
+        where.role === "SUPPLEMENTARY_INVOICE"
+          ? null
+          : where.role === "ADDITIONAL_CAPTURE_PAYMENT"
+            ? state.ownReceipt?.linked
+              ? { metadata: { invoiceId: "inv_primary" } }
+              : null
+            : (state.keptLinks.find((l) => l.localId === where.localId) ?? null),
     },
     xeroSyncOperation: {
       // Round 10: the kept receipt's resolved rows are read with their invoice id.
       findMany: async ({ where }: { where: { queueType?: string; localId?: string; requestPayload?: { equals: string } } }) =>
-        where.queueType === "KEPT_LATE_CAPTURE_INVOICE"
+        where.queueType === "ADDITIONAL_CAPTURE_RECEIPT"
+          ? ownReceiptRows()
+          : where.queueType === "KEPT_LATE_CAPTURE_INVOICE"
           ? state.resolvedKept.filter((id) => id === where.localId).map(() => ({ xeroObjectId: null }))
           : state.supplementary
               .filter((row) => row.paymentIntentId === where.requestPayload?.equals)
@@ -81,6 +93,29 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
+
+/** #4383: the capture's own receipt row, its plan stored before the Xero call. */
+function ownReceiptRows() {
+  const receipt = state.ownReceipt;
+  if (!receipt) return [];
+  const legs = receipt.legs.map((amountCents, index) => ({ target: "PRIMARY_INVOICE", invoiceId: `inv_${index}`, amountCents }));
+  return [
+    {
+      localId: "ptx_late",
+      status: receipt.linked ? "SUCCEEDED" : "RUNNING",
+      manuallyResolvedAt: null,
+      responsePayload: null,
+      requestPayload: {
+        queueType: "ADDITIONAL_CAPTURE_RECEIPT",
+        bookingId: "booking_1",
+        paymentId: "payment_1",
+        paymentTransactionId: "ptx_late",
+        paymentIntentId: "pi_late",
+        plan: { ...legs[0], capturedCents: receipt.capturedCents, date: "2026-06-20", legs },
+      },
+    },
+  ];
+}
 import { cancelledBookingPrimaryPaymentRefundReason } from "@/lib/deleted-booking-modification-payment";
 
 const PAYMENT = { id: "payment_1", bookingId: "booking_1", refundedAmountCents: 34000 };
@@ -97,6 +132,8 @@ beforeEach(() => {
   state.markedIntents = [];
   state.cancelClaims = [];
   state.bookingStatus = "CANCELLED";
+  state.captureCents = 24000;
+  state.ownReceipt = null;
 });
 
 describe("resolveRefundNoteEligibleCash", () => {
@@ -167,5 +204,45 @@ describe("resolveRefundNoteEligibleCash", () => {
     await expect(
       resolveRefundNoteEligibleCash({ ...PAYMENT, refundedAmountCents: 10000 }),
     ).resolves.toMatchObject({ eligibleCashCents: 10000, lateCaptureExcludedCents: 0 });
+  });
+
+  describe("#4383: a receipt capped at its invoice's room", () => {
+    const refundLate = (amountCents: number) => {
+      state.refunds[1].amountCents = amountCents;
+      return { ...PAYMENT, refundedAmountCents: 10000 + amountCents };
+    };
+    beforeEach(() => {
+      state.tasks = [{ id: "task_late", lateCaptureApprovalIntentId: "pi_late", reason: null }];
+      state.captureCents = 8000;
+      state.ownReceipt = { legs: [5000], capturedCents: 8000, linked: true };
+    });
+
+    it("MUTATION: an $80 capture recorded as $50 and refunded in full: $50 is eligible, $30 excluded - linked or decided", async () => {
+      const payment = refundLate(8000);
+      await expect(resolveRefundNoteEligibleCash(payment)).resolves.toMatchObject({
+        eligibleCashCents: 15000,
+        lateCaptureExcludedCents: 3000,
+      });
+      state.ownReceipt = { legs: [5000], capturedCents: 8000, linked: false };
+      await expect(resolveRefundNoteEligibleCash(payment)).resolves.toMatchObject({
+        eligibleCashCents: 15000,
+        lateCaptureExcludedCents: 3000,
+      });
+    });
+
+    it("a $30 refund of it, below what was recorded, is eligible in full", async () => {
+      await expect(resolveRefundNoteEligibleCash(refundLate(3000))).resolves.toMatchObject({
+        eligibleCashCents: 13000,
+        lateCaptureExcludedCents: 0,
+      });
+    });
+
+    it("an uncapped receipt is unchanged: the whole refund is eligible", async () => {
+      state.ownReceipt = { legs: [8000], capturedCents: 8000, linked: true };
+      await expect(resolveRefundNoteEligibleCash(refundLate(8000))).resolves.toMatchObject({
+        eligibleCashCents: 18000,
+        lateCaptureExcludedCents: 0,
+      });
+    });
   });
 });

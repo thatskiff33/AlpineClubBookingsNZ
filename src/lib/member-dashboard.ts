@@ -1,6 +1,6 @@
 import { outstandingAdditionalAskCents } from "@/lib/additional-payment-ask";
 import { readBookingAmountOwed } from "@/lib/booking-amount-owed";
-import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
+import { isBookingOwnAmountOwed } from "@/lib/booking-status";
 
 interface DashboardPaymentAsk {
   status: string;
@@ -35,19 +35,6 @@ export interface DashboardPaymentSummary {
   totalCents: number;
 }
 
-// The booking's own amount is still owed: a payment-owed status and no
-// successful payment. A bank-transfer booking counts — its member still owes
-// the transfer.
-function bookingAmountIsOwed(booking: {
-  status: string;
-  payment: { status: string } | null;
-}) {
-  return (
-    isPaymentOwedBookingStatus(booking.status) &&
-    booking.payment?.status !== "SUCCEEDED"
-  );
-}
-
 /**
  * #4944 (`INV-PAY-119`): reads what each payment-owed booking still owes
  * through `readBookingAmountOwed`, the one read the booking page and the card
@@ -62,7 +49,8 @@ export async function loadDashboardPaymentSnapshots(
     rows.map(async (row) => ({
       id: row.id,
       status: row.status,
-      amountDueCents: bookingAmountIsOwed(row)
+      // A bank-transfer booking counts: its member still owes the transfer.
+      amountDueCents: isBookingOwnAmountOwed(row)
         ? (await readBookingAmountOwed(row)).dueCents
         : 0,
       payment: row.payment,
@@ -73,7 +61,7 @@ export async function loadDashboardPaymentSnapshots(
 export function getDashboardPaymentOwedCents(booking: DashboardPaymentSnapshot) {
   let owedCents = 0;
 
-  if (bookingAmountIsOwed(booking)) {
+  if (isBookingOwnAmountOwed(booking)) {
     owedCents += booking.amountDueCents;
   }
 

@@ -24,6 +24,7 @@ import { DeleteAccountButton } from "./delete-account-button";
 import { MembershipCancellationPanel } from "./membership-cancellation-panel";
 import { TwoFactorSecurityCard } from "./two-factor-security-card";
 import { GoogleAccountCard } from "./google-account-card";
+import { ConnectedAppsSection } from "./connected-apps-section";
 import { loadProfilePendingRequests } from "./pending-requests";
 import { googleCredentialsConfigured } from "@/lib/google-oauth";
 import { memberHoldsRetiredRecoveryCodes } from "@/lib/two-factor";
@@ -40,7 +41,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
-import { getSafeInternalReturnPath } from "@/lib/internal-return-path";
+import { profileQuery } from "./profile-query";
 import { getAvailablePromoCodesForMember } from "@/lib/promo";
 import {
   subscriptionStatusClass,
@@ -59,10 +60,6 @@ import {
   grantSelfDietaryAccess,
   loadDietaryRequirementsForDisplay,
 } from "@/lib/member-dietary";
-
-function singleSearchParam(value?: string | string[]) {
-  return Array.isArray(value) ? value[0] : value;
-}
 
 function formatPromoBenefit(promo: {
   fixedNightlyMode: string | null;
@@ -141,12 +138,8 @@ export default async function ProfilePage({
 }) {
   const session = await auth();
   if (!session?.user?.id) redirect("/login");
-  const params = await searchParams;
-  const emailChangeError = singleSearchParam(params.emailChangeError);
-  const emailChanged = singleSearchParam(params.emailChanged) === "true";
-  const googleLinked = singleSearchParam(params.googleLinked) === "1";
-  const googleError = singleSearchParam(params.googleError);
-  const returnTo = getSafeInternalReturnPath(params.returnTo);
+  const { emailChangeError, emailChanged, googleLinked, googleError, returnTo } =
+    profileQuery(await searchParams);
 
   // `createdAt` and `passwordChangedAt` are real INSTANTS, so the civil day each
   // reads as comes from the club's PERSISTED timezone rather than the
@@ -353,7 +346,7 @@ export default async function ProfilePage({
         {/* Profile photo */}
         <Card id="profile-photo" className="scroll-mt-20">
           <CardHeader>
-            <CardTitle>Profile Photo</CardTitle>
+            <CardTitle headingLevel={2}>Profile Photo</CardTitle>
             <CardDescription>
               Add a photo of yourself. Committee members&apos; photos appear on
               the public committee page.
@@ -378,7 +371,7 @@ export default async function ProfilePage({
           <CardHeader>
             <div className="flex items-start justify-between">
               <div>
-                <CardTitle>Account Information</CardTitle>
+                <CardTitle headingLevel={2}>Account Information</CardTitle>
                 <CardDescription>
                   Your membership details and status
                 </CardDescription>
@@ -430,7 +423,7 @@ export default async function ProfilePage({
         {/* Security */}
         <Card id="security" className="scroll-mt-20">
           <CardHeader>
-            <CardTitle>Security</CardTitle>
+            <CardTitle headingLevel={2}>Security</CardTitle>
             <CardDescription>
               Manage your password and account security
             </CardDescription>
@@ -495,6 +488,8 @@ export default async function ProfilePage({
             ) : null}
           </CardContent>
         </Card>
+
+        {modules.mcpServer ? <ConnectedAppsSection user={session.user} /> : null}
 
         {/* Subscription History */}
         <ProfileSectionCard
@@ -675,7 +670,7 @@ export default async function ProfilePage({
         {/* Privacy & Data */}
         <Card id="privacy-data" className="scroll-mt-20">
           <CardHeader>
-            <CardTitle>Privacy &amp; Data</CardTitle>
+            <CardTitle headingLevel={2}>Privacy &amp; Data</CardTitle>
             <CardDescription>
               Download a copy of your data or request account deletion
             </CardDescription>
@@ -683,8 +678,10 @@ export default async function ProfilePage({
           <CardContent className="space-y-4">
             <div>
               <p className="text-sm text-muted-foreground mb-2">
-                Download a machine-readable copy of all data the system holds
-                about you (JSON format, max 5 times per day).
+                Download your profile, bookings, credits and other personal records
+                as JSON (up to 5 times per day). The file lists exclusions.
+                Contact the club’s privacy officer for anything else, including
+                a dependant’s record.
               </p>
               <DataExportButton />
             </div>

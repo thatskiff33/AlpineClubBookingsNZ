@@ -105,6 +105,36 @@ a member cannot use are never shown — and even a stale page could not save.
 2. For a **repeating** event you are asked whether the change applies to **This
    event only** or **All events in the series** — see below.
 
+### Work party entries
+
+With the **Events calendar** and **Work parties** modules on, each work party
+can put itself on the calendar: one all-day entry, titled "Work party: {name}", for each night of its
+window, stored as a daily series so the nights move together. It shows as one
+event, not a repeating one: no repeat marker and no "Daily" line. See
+[Work Parties](work-parties.md#the-events-calendar).
+
+- Only **members** see them, as with the Work Parties card and page (owner
+  decision, 20 Nov 2026). Non-member logins, kiosk and admin-only accounts see
+  the rest of the calendar without them, on the calendar and the dashboard
+  **Events** card alike; organisation accounts see no calendar at all.
+- They open **read-only** for everyone, admins included. While the Work parties
+  module is on, **Open the work party** takes admins (on the admin calendar) to
+  **Admin → Work Parties** and members to the work party page.
+  Change or delete the work party there and its entries follow.
+- The calendar API refuses to edit or delete them (**409**), so they cannot drift
+  from the work party.
+- While a work party is **inactive**, or the **Work parties** module is off,
+  its entries are hidden from the calendar and the dashboard **Events** card;
+  activating it, or turning the module back on, shows them again unchanged.
+- The dashboard **Events** card shows a work party as one line, on its first
+  night in the next two weeks, rather than one line per night.
+- A work party can run for at most 366 nights, the calendar's series limit;
+  new dates longer than that are refused when the work party is saved. One
+  saved longer before the limit shows its first 366 nights.
+- The entry's location is the lodge's name when the work party was last
+  saved. Renaming a lodge does not change existing entries until the work
+  party is saved again.
+
 ## Recurring events
 
 Set **Repeat** on an event to make it recur. The options are labelled from the
@@ -163,14 +193,14 @@ route that reads the token — the path form ignores it).
 ### Where each setting lives
 
 **Audience: operator.** Since #2940 the settings a club decides live on
-**Admin → Integrations → Video meetings**, and the settings the machine decides
+**Admin → Integrations → Video Meetings Setup**, and the settings the machine decides
 stay in the environment. Nothing was taken away: every environment variable
 below still works, and is what the page falls back to until somebody sets a
 value on it.
 
 | Setting | Where it lives | Falls back to |
 | --- | --- | --- |
-| Meeting server address | Admin → Integrations → Video meetings | `MIROTALK_URL`, then `https://meet.<your app domain>` |
+| Meeting server address | Admin → Integrations → Video Meetings Setup | `MIROTALK_URL`, then `https://meet.<your app domain>` |
 | Whoever opens a link is the host | the same page | `MIRO_MEETING_PRESENTER`, then on |
 | How long a join link lasts | the same page | `MIRO_JWT_EXP`, then `1h` |
 | Signing key | the same page, stored encrypted | `MIRO_JWT_KEY` |
@@ -204,7 +234,7 @@ value comes from.
 ### Installing MiroTalk
 
 MiroTalk is a **separate service** you self-host; it is not bundled with this
-app. Point the app at it on **Admin → Integrations → Video meetings**, in the
+app. Point the app at it on **Admin → Integrations → Video Meetings Setup**, in the
 **Meeting server address** box — for example `https://meet.example.org`.
 
 - **An address saved on the page has to be a public `https://` one**, with no
@@ -252,7 +282,7 @@ then create a meeting event and click **Open meeting link**.
 2. Reverse-proxy the subdomain through Caddy so it gets a TLS certificate, and
    give that subdomain a `Permissions-Policy` that **allows** `camera` and
    `microphone` (the app's main site deliberately disables them).
-3. Tell the app where it is, on **Admin → Integrations → Video meetings**. (Or
+3. Tell the app where it is, on **Admin → Integrations → Video Meetings Setup**. (Or
    set `MIROTALK_URL=https://meet.<yourdomain>` in the environment and restart,
    which is what installations that predate that page already do.)
 4. For members joining from home, run a **TURN server** (MiroTalk bundles
@@ -270,7 +300,7 @@ app only links to it, which keeps the licence boundary clean.
 
 If your MiroTalk is host-protected (`HOST_PROTECTED=true`, `HOST_USER_AUTH=true`
 with `HOST_USERS`), members would normally hit a login prompt. Fill in the
-**Host sign-in** section of **Admin → Integrations → Video meetings** and the app
+**Host sign-in** section of **Admin → Integrations → Video Meetings Setup** and the app
 appends a **short-lived signed `?token=`** to each meeting link, so committee
 members join straight in while unauthorised people (who never get the link, and
 could not forge a token) stay out. The token is minted fresh on each click and
@@ -371,13 +401,13 @@ in the environment, where there is nobody to tell, grep the container logs for
 | Ends                         | When recurrence stops                  | Never           | Never (≈24 months / 366 cap), On date, or After N times |
 | Location                     | Free-text location                     | —               | Optional; up to 200 characters                          |
 | Details                      | Agenda / notes                         | —               | Optional; up to 5000 characters                         |
-| Video meeting (MiroTalk)     | Attaches a meeting link                | off             | Needs a MiroTalk instance, configured on **Admin → Integrations → Video meetings** (see above) |
+| Video meeting (MiroTalk)     | Attaches a meeting link                | off             | Needs a MiroTalk instance, configured on **Admin → Integrations → Video Meetings Setup** (see above) |
 
 ## Troubleshooting
 
 | Symptom                                               | Likely cause                                                                                    | Fix                                                                                                                               |
 | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| A **Join meeting** link goes to the wrong server, or to `localhost` | Nothing is set on **Admin → Integrations → Video meetings** or in `MIROTALK_URL`, so the address is derived from your app's domain | Open that page: it names the source of every value in force. Set the meeting server address there |
+| A **Join meeting** link goes to the wrong server, or to `localhost` | Nothing is set on **Admin → Integrations → Video Meetings Setup** or in `MIROTALK_URL`, so the address is derived from your app's domain | Open that page: it names the source of every value in force. Set the meeting server address there |
 | An address saved on that page **is not being used** | It failed the page's own rules after it was stored (it is `http://`, carries a sign-in, or names a private address) | The page says which rule and what is being used instead; re-enter a public `https://` address |
 | A join link lands on MiroTalk's **login** prompt | One of the three host sign-in values is missing, so no token is minted | The page shows which are set and from where. All three are needed — a partial set mints nothing, because MiroTalk would reject it |
 | A join link is **rejected** by MiroTalk after it used to work | The signing key and the meeting server no longer match — usually one side was rotated alone | Set the app's signing key to that instance's `JWT_KEY`; they are a pair. Moving the address clears the stored sign-in for you, so after a move it is the three new values that are needed |
@@ -388,6 +418,7 @@ in the environment, where there is nobody to tell, grep the container logs for
 | A member should be able to **create** but cannot       | They have no active committee assignment and no lodge-edit role                                 | Add a committee assignment (**Admin → Members → [member] → Committee**) or grant lodge edit                                       |
 | A committee member cannot **edit or delete** an event  | Working as designed — committee members are create-only; only lodge-edit admins may edit/delete | Grant the member the lodge-edit admin role if they need to edit or delete events                                                 |
 | A repeating event shows on only one month             | The recurrence was not saved (older build)                                                      | Open the event, set **Repeat**, and **Save** (this converts it to a series), or delete and recreate; ensure the app is up to date |
+| An event opens read-only even for an admin, saying it is managed from Work Parties | It is a work party's entry | Edit, deactivate or delete the work party on **Admin → Work Parties**; the entries follow |
 | Saving or deleting says the event was not found        | Someone else deleted that event (or the whole series) while your dialog was open                | Close the dialog and reload the calendar; the event is already gone, so nothing was lost                                          |
 | Camera/mic blocked in the meeting                     | MiroTalk is served over plain HTTP (not localhost) or without a camera/mic `Permissions-Policy` | Serve MiroTalk over HTTPS on its own subdomain with camera/mic allowed                                                            |
 

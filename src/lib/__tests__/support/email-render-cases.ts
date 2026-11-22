@@ -116,6 +116,7 @@ import {
   adminEmailWithheldTemplate,
   adminIssueReportTemplate,
   adminMaintenanceReportTemplate,
+  foodOrderPlacedTemplate,
   adminServerVersionPausedTemplate,
   websiteContactTemplate,
 } from "@/lib/email-templates/admin-ops";
@@ -878,6 +879,8 @@ const GENERATED_CASES: EmailRenderCase[] = [
   // #4042: an organiser's Internet Banking group cancel, whose refunds are already booked.
   { id: "adminManualRefundTaskTemplate:group-organiser", fn: "adminManualRefundTaskTemplate", render: () =>
     adminManualRefundTaskTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), refundAmountCents: 104, bookingId: "bookingId-5", reason: "reason-6", reviewUrl: "reviewUrl-7", situation: "group-organiser-internet-banking" }, CLUB_FORMAT_TEST) },
+  { id: "adminManualRefundTaskTemplate:disputed-card", fn: "adminManualRefundTaskTemplate", render: () =>
+    adminManualRefundTaskTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), refundAmountCents: 104, bookingId: "bookingId-5", reason: "reason-6", reviewUrl: "reviewUrl-7", situation: "disputed-card-cancellation" }, CLUB_FORMAT_TEST) },
   { id: "adminLateCaptureRefundedOutsideAppTemplate:minimal", fn: "adminLateCaptureRefundedOutsideAppTemplate", render: () =>
     adminLateCaptureRefundedOutsideAppTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), bookingId: "bookingId-4", paymentIntentId: "paymentIntentId-5", refundedCents: 106, reviewUrl: "reviewUrl-7" }, CLUB_FORMAT_TEST) },
   // #4532: a Stripe payment the app did not create.
@@ -891,12 +894,15 @@ const GENERATED_CASES: EmailRenderCase[] = [
     adminStripeDisputeTemplate({ stage: "opened", outcome: "outcome-1", amount: "amount-2", reason: "reason-3", openedAt: "openedAt-4", bookingId: "bookingId-5", bookingOwner: "bookingOwner-6", disputeId: "disputeId-7", paymentIntentId: "paymentIntentId-8", chargeId: "chargeId-9", disputeNextStep: "disputeNextStep-10", stripeDashboardUrl: "https://dashboard.stripe.com/test/payments/paymentIntentId-8" }) },
   { id: "adminStripeDisputeTemplate:closed-lost", fn: "adminStripeDisputeTemplate", render: () =>
     adminStripeDisputeTemplate({ stage: "closed", outcome: "lost", amount: "amount-2", reason: "reason-3", openedAt: "openedAt-4", bookingId: "bookingId-5", bookingOwner: "bookingOwner-6", disputeId: "disputeId-7", paymentIntentId: "paymentIntentId-8", chargeId: "chargeId-9", disputeNextStep: "disputeNextStep-10", stripeDashboardUrl: "https://dashboard.stripe.com/test/payments/paymentIntentId-8" }) },
+  // #5061 follow-up: a dispute already alerted as lost, later reported won.
+  { id: "adminStripeDisputeTemplate:won-after-loss", fn: "adminStripeDisputeTemplate", render: () =>
+    adminStripeDisputeTemplate({ stage: "won-after-loss", outcome: "won", amount: "amount-2", reason: "reason-3", openedAt: "openedAt-4", bookingId: "bookingId-5", bookingOwner: "bookingOwner-6", disputeId: "disputeId-7", paymentIntentId: "paymentIntentId-8", chargeId: "chargeId-9", disputeNextStep: "disputeNextStep-10", stripeDashboardUrl: "https://dashboard.stripe.com/test/payments/paymentIntentId-8" }) },
   { id: "adminLateCaptureHeldTemplate:minimal", fn: "adminLateCaptureHeldTemplate", render: () =>
     adminLateCaptureHeldTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), amountCents: 104, bookingId: "bookingId-5", reviewUrl: "reviewUrl-6" }, CLUB_FORMAT_TEST) },
   { id: "adminPendingDeadlineTemplate:minimal", fn: "adminPendingDeadlineTemplate", render: () =>
     adminPendingDeadlineTemplate([{ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, deadline: new Date("2026-03-06T00:00:00.000Z"), hoursRemaining: 106 }]) },
   { id: "adminBookingBumpedTemplate:minimal", fn: "adminBookingBumpedTemplate", render: () =>
-    adminBookingBumpedTemplate({ bumpedMemberName: "bumpedMemberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, triggeringMemberName: "triggeringMemberName-5" }) },
+    adminBookingBumpedTemplate({ bumpedMemberName: "bumpedMemberName-1", bookingReference: "bookingReference-2", lodgeName: "lodgeName-3", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z"), guestCount: 106, reason: "reason-7" }) },
   { id: "adminXeroSyncErrorTemplate:minimal", fn: "adminXeroSyncErrorTemplate", render: () =>
     adminXeroSyncErrorTemplate({ errorType: "errorType-1", operation: "operation-2", errorMessage: "errorMessage-3", timestamp: new Date("2026-03-05T00:00:00.000Z") }) },
   { id: "adminXeroRepeatedFailureTemplate:minimal", fn: "adminXeroRepeatedFailureTemplate", render: () =>
@@ -1105,6 +1111,10 @@ const GENERATED_CASES: EmailRenderCase[] = [
     adminMaintenanceReportTemplate({ lodgeName: "lodgeName-1", reportedBy: "reportedBy-2", sourceLabel: "sourceLabel-3", photoLabel: "photoLabel-4", summary: "summary-5", answers: [], maintenanceReportUrl: "maintenanceReportUrl-6" }) },
   { id: "adminMaintenanceReportTemplate:full", fn: "adminMaintenanceReportTemplate", render: () =>
     adminMaintenanceReportTemplate({ lodgeName: "lodgeName-1", reportedBy: "reportedBy-2", sourceLabel: "sourceLabel-3", photoLabel: "photoLabel-4", summary: "summary-5", answers: [{ label: "label-6", value: "value-7" }, { label: "label-8", value: "value-9" }], maintenanceReportUrl: "maintenanceReportUrl-10" }) },
+  { id: "foodOrderPlacedTemplate:minimal", fn: "foodOrderPlacedTemplate", render: () =>
+    foodOrderPlacedTemplate({ officerLabel: "officerLabel-1", lodgeName: "lodgeName-2", neededBy: "neededBy-3", orderedBy: "orderedBy-4", items: [{ description: "description-5", quantity: "6", unit: "ITEMS" }], notes: null, foodOrderUrl: "foodOrderUrl-7" }) },
+  { id: "foodOrderPlacedTemplate:full", fn: "foodOrderPlacedTemplate", render: () =>
+    foodOrderPlacedTemplate({ officerLabel: "officerLabel-1", lodgeName: "lodgeName-2", neededBy: "neededBy-3", orderedBy: "orderedBy-4", items: [{ description: "description-5", quantity: "1", unit: "LOAVES" }, { description: "description-7", quantity: "0.5", unit: "PACKETS" }], notes: "notes-9", foodOrderUrl: "foodOrderUrl-10" }) },
   { id: "refundRequestApprovedTemplate:minimal", fn: "refundRequestApprovedTemplate", render: () =>
     refundRequestApprovedTemplate({ firstName: "firstName-1", amountCents: 102, bankTransferCents: 0, adminNotes: "adminNotes-3", checkIn: new Date("2026-03-05T00:00:00.000Z"), checkOut: new Date("2026-03-06T00:00:00.000Z") }, CLUB_FORMAT_TEST) },
   // #3827 (D-3813-7): an internet-banking appeal's refund is promised, not

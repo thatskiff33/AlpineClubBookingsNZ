@@ -308,19 +308,31 @@ describe("every operation name this repository passes to callXeroApi", () => {
       "getContactGroups",
       "getContacts",
       "getCreditNote",
+      // #5066: the booking page's credit-note download reads Xero's own PDF.
+      "getCreditNoteAsPdf",
       // #4162: the "already in Xero" answer reads the hand-made note by its number.
       "getCreditNotes",
       "getInvoice",
+      // #5066: the booking page's Download invoice reads Xero's own PDF.
+      "getInvoiceAsPdf",
       "getInvoices",
       "getItems",
       "getOnlineInvoice",
       "getOrganisations",
+      // #5204: the unallocated-payments queue reads overpayments and prepayments,
+      // listed and re-read by id.
+      "getOverpayment",
+      "getOverpayments",
       "getPayment",
       // #4531: the deleted-payment link backfill lists Xero's DELETED payments.
       "getPayments",
+      "getPrepayment",
+      "getPrepayments",
       "getReportBalanceSheet",
       "getReportBankSummary",
       "getReportProfitAndLoss",
+      // #4632: the club tax writer and health check read the organisation's tax rates.
+      "getTaxRates",
     ];
     const KNOWN_WRITES = [
       "createContactGroupContacts",

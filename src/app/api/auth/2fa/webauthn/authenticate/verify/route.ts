@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { recordTwoFactorFailure } from "@/lib/two-factor";
 import { markTwoFactorSessionVerified } from "@/lib/two-factor-api";
 import { verifyPasskeyAssertion } from "@/lib/webauthn";
@@ -15,12 +16,11 @@ export async function POST(request: NextRequest) {
   const refused = authenticationAllowed(guard);
   if (refused) return refused;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return passkeyJsonError(400, "Invalid JSON payload");
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

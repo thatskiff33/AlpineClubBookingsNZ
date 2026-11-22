@@ -10,6 +10,14 @@ actor who did it, the member it affected, the outcome, and (when present) the
 request ID, IP, and retention class. Find it at **Admin → Monitoring & Support → Audit Log**
 (`/admin/audit-log`).
 
+For an entry made by a visitor's request, the IP is the address the proxy
+nearest the app saw, the same one the rate limits count, not one the visitor can
+choose by sending their own forwarding header (#5399). That holds only when the
+club's proxies are set up as
+[`DEPLOYMENT.md`](../../DEPLOYMENT.md#public-rate-limits-and-proxy-headers)
+describes. Other entries can hold something else there: a scheduled job's tag,
+or nothing at all.
+
 The audit log is read-only — you can filter, search, expand a row for its full
 detail, and drill through to the member or record it references, but you cannot
 edit or delete an entry. Retention and optional archival are governed by the
@@ -427,7 +435,7 @@ because the entry's own category is `admin`, which on this screen is Support onl
 a Booking Officer who cannot find the entry in the Audit Log can still read its
 words on the booking.
 
-A **view-only** booking admin sees the queue on **Admin → All Bookings** — which
+A **view-only** booking admin sees the queue on **Admin → Bookings** — which
 booking, whose, which nights, how many uncovered guest-nights and the cause label
 — and, on the booking itself, no reason. That is the same line drawn twice:
 noticing that a booking needs attention and reading an officer's private note
@@ -507,8 +515,8 @@ and the data download rather than every page that happens to quote an entry.
 ### Some entries have no category at all
 
 `Category` is optional in the database, and **82 of the platform's places that
-record an audit entry used not to set one**. As of this release **none do**: all
-543 now record a category, measured on every build rather than estimated.
+record an audit entry used not to set one**. As of this release **none do**: every
+place now records a category, measured on every build rather than estimated.
 
 **And a new one can no longer forget.** Recording an entry without a category is
 now refused three separate ways. Giving the 82 places a category and stopping the
@@ -530,7 +538,7 @@ that order and both landing in this release; this is the second:
    maintenance script outside the normal path.
 
 The practical effect for you: an entry recorded the ordinary way — through the
-platform’s own recording step, which is how every one of the 543 places does it —
+platform’s own recording step, which is how every place in the platform does it,
 cannot be born without a category any more. **It is not a mathematical
 guarantee**, and it is worth saying so rather than overclaiming: someone writing
 directly to the database table in a migration, or building a query by hand, is
@@ -738,6 +746,30 @@ Entries are written only after the change is saved, so a refused change records
 nothing at all — a time outside the allowed values (the field takes the hour or
 the half hour), a booking already past its check-in date, a cancelled or
 completed booking, or a caller without permission.
+
+### Booking invoice and credit-note downloads (#5066)
+
+Every successful **Download invoice** or, when the club's Xero module is on,
+**Download credit note** on a booking page records one entry in the
+**Booking** category: `booking.invoice.downloaded` or
+`booking.credit_note.downloaded`.
+
+- **Who it is about is the booking's owner.** The actor is whoever downloaded
+  it; the subject is the owner (none for an organisation-owned booking). The
+  metadata's `onBehalf` is `true` when an officer or admin downloaded it.
+- **Which document.** The metadata carries the Xero invoice number, or the
+  credit note's number and what it was for (`creditNoteKind`: a change, a
+  refund, account credit, or account credit used).
+- **Only real downloads.** The entry is written after Xero has returned the
+  PDF, and if it cannot be written the PDF is not handed over. A refused,
+  throttled or failed download records nothing.
+- **With Xero off** (#5066 slice 2), the invoice the app makes itself records
+  the same `booking.invoice.downloaded` entry, summarised "Booking invoice
+  generated and downloaded", with `source` `GENERATED` and what was issued:
+  the document's date (`documentDate`), its total and balance in cents
+  (`totalCents`, `balanceCents`) and whether it was marked Not yet approved
+  (`notYetApproved`). The document has no number and is not stored, so this
+  entry is the club's record of what it sent.
 
 ### Email inheritance source entries (#2822)
 

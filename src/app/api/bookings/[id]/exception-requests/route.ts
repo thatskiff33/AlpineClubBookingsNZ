@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
@@ -37,6 +38,7 @@ import {
   startMemberGuestRefusalClock,
 } from "@/lib/member-guest-probe-guard";
 import { BookingGuestValidationError } from "@/lib/booking-guests";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
 /*
  * A guest's explicit night set (#713) rides in `guestStayFieldsSchema`, as on `/modify`.
@@ -156,12 +158,9 @@ export async function POST(
     );
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
@@ -306,6 +305,13 @@ export async function POST(
 
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
+    // The request is created in one lock(1) transaction (INV-LOCK-006).
+    const contended = transactionContendedResponse(
+      error,
+      "Modification exception request create contended for the lock(1) budget",
+      { context: { bookingId } },
+    );
+    if (contended) return contended;
     // #3770: a collapsed member-guest refusal owes the add paths' throttle unit,
     // audit row and timing floor; no boundary hook here, so it charges on exit.
     if (error instanceof BookingGuestValidationError) {

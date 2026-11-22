@@ -387,14 +387,14 @@ the owner's checklist for rebuilding it.
 
 | Required check | Status | Job | What it gates |
 | --- | --- | --- | --- |
-| `verify` | applied | `ci.yml` → `verify` | knip, PR-body gates and the other cheap checks itself, then one fail-closed same-attempt poll of four independent full-suite test shards (#3431) and the `Typecheck`, `Lint` and `Production build` jobs (#4425; those three are not required contexts themselves). It no longer runs the dependency audit (#2946) |
+| `verify` | applied | `ci.yml` → `verify` | knip, PR-body gates and the other cheap checks itself, then one fail-closed same-attempt poll of four independent full-suite test shards (#3431), the `Typecheck`, `Lint` and `Production build` jobs (#4425) and `Real-PostgreSQL suites (all)` (`realdb-all`, every `*.realdb.test.ts` file against one Postgres service; #4907, owner decision 11 Nov 2026). None of those jobs is a required context itself; a failed, cancelled, timed-out, skipped or missing one fails `verify`. It no longer runs the dependency audit (#2946) |
 | `Migration drift check` | applied | `ci.yml` → `migration-drift` | migrations reproduce `schema.prisma`; real-Postgres lock harnesses. On a pull request that changes nothing in `CHANGE_SCOPES.migrations` (`scripts/ci/change-scope.mjs`), its migration-only steps skip (drift, partial indexes, two migration tests; a step-level skip, #4425). Every real-Postgres proof that imports app code still runs |
 | `Data migration verification` | applied | `ci.yml` → `data-migration-verification` | data-rewriting migrations against realistic pre-state; its two migration-only proofs skip like `Migration drift check`, and the school naming races always run (#4425) |
 | `Static analysis gate` | applied | `ci.yml` → `static-analysis` | Semgrep: four registry packs **plus** `.semgrep/rules/**` and their fixtures |
 | `Playwright E2E` | applied | `e2e.yml` → `playwright` | the browser suite: runs shard 1 and fails closed unless `E2E shard (2/3)`/`(3/3)` pass (#4397) |
 | `E2E multi-lodge` | applied | `e2e.yml` → `multi-lodge` | the multi-lodge browser suite (#4397: waits for the run's image and database in a step, never `needs:`) |
 | `Secret scan (gitleaks)` | applied | `ci.yml` → `secret-scan` | the PR's own commits, `main`'s history including merge commits, and the checked-out tree (#2686) |
-| `Image security gate (Trivy CRITICAL)` | applied | `ci.yml` → `docker-image-security` | CRITICAL image vulnerabilities. HIGH stays advisory (#2686). On a pull request it builds and scans only when dependencies, `patches/`, the Dockerfile, a compose file, `.dockerignore`, `.trivyignore` or the workflow changed; every push scans (#4425, owner decision) |
+| `Image security gate (Trivy CRITICAL)` | applied | `ci.yml` → `docker-image-security` | CRITICAL image vulnerabilities. HIGH stays advisory (#2686). On a pull request it builds and scans only when dependencies, `patches/`, the Dockerfile, a compose file, `.dockerignore`, `.trivyignore` or the workflow changed; every push scans (#4425, owner decision). The same job checks that the browser bundle carries the version and not the nonce seed, so a change to `next.config.ts`, `src/instrumentation-client.ts`, `src/lib/app-version.ts` or the release-nonce modules also builds it on a pull request (#5262). The full list is `CHANGE_SCOPES.image` in `scripts/ci/change-scope.mjs` |
 | `Dependency audit` | applied | `ci.yml` → `dependency-audit` | `pnpm audit --audit-level=high`. Split out of `verify` (#2946), where a failing audit skipped lint, the ratchet, `prisma generate`, typecheck, knip, `pnpm test` and the build on every branch (#2945) |
 
 **Two workflows report on the money modules and are not required** (#4459):
@@ -415,6 +415,32 @@ classify the change runs everything. A job that reaches a required check
 through another's gate step (`require-test-shards.mjs`) takes no condition
 either: the gate fails on a skipped job. Renaming such a job means renaming it
 in the gate's `--job` too.
+
+**How long a gate waits is set by the jobs it waits for** (#5222). Each call
+to `require-test-shards.mjs` states two allowances: `--max-queue-minutes`, how
+long an awaited job may wait for a runner, and `--max-run-minutes`, the longest
+`timeout-minutes` among the awaited jobs. It gives up only after both plus five
+minutes' grace. A job that fails, is cancelled or hits its own limit fails
+the gate at the next poll, so the long wait only matters for a job that never
+gets a runner.
+
+| Gate | Runner queue | Longest job limit | Total wait | Gate job's limit |
+| --- | --- | --- | --- | --- |
+| `verify` | 60 | 45 (`Test shard`; `Real-PostgreSQL suites (all)` is 35) | 110 | 130 |
+| `Playwright E2E`, shards 2-3 | 25 | 45 (`E2E shard`) | 75 | 165 |
+
+The numbers are set in the workflows. `scripts/ci/require-test-shards.test.mjs`
+fails if a run allowance stops matching its jobs' `timeout-minutes`, a gate
+job's limit is too short for its wait, or this table stops matching the gate
+steps' flags and the gate jobs' `timeout-minutes` (#5362). Before #5222,
+`verify` waited a flat 45 minutes. `Real-PostgreSQL suites (all)` once queued
+37 minutes for a runner and then passed, but `verify` had already gone red.
+
+The long wait has a cost: a gate job holds its hosted runner for the whole
+of it, up to its total wait in the table above, so on a backlog day the
+waiting gates take runner slots the jobs they wait for could use, and can
+lengthen the queue. That cost arises only in a run that would once have timed out; a run
+whose jobs start promptly releases the gate as soon as they finish.
 
 **The PR-body gates read the description from a file, never an environment
 variable** (#4053). `verify` writes `.pull_request.body` from
@@ -515,9 +541,6 @@ and adding one would require disabling default setup); `Semgrep OSS`
 SARIF — not a second scan);
 `semgrep-cloud-platform/scan` (a Semgrep AppSec Platform App
 configured outside this repository); `dependency-review`;
-`Real-PostgreSQL suites (all, advisory)` (`ci.yml` → `realdb-all`, #4458: every
-`*.realdb.test.ts` file against one Postgres service; no job may `needs:` it, and
-making it required is a separate owner step);
 `Markdown relative-link check (offline)`; `Scheduled secret sweep` (#2852),
 weekly and unrequirable; and the clock-rollover canary, which
 its own workflow comment says must never become a pull-request check.
@@ -538,6 +561,60 @@ against `main`'s own latest CI before calling a failure pre-existing. Require
 each required check present on the **exact current head SHA**: a conflicted
 PR gets no `pull_request` runs, so `gh pr checks` can read green off an older
 head, and an empty failure list is not a passing run (#2641).
+
+#### Finding which merge broke main
+
+A newer merge may replace `main`'s queued runs of CI, E2E, Money coverage and
+Docs link check (`INV-OPS-021`, #5356). A run that has started always
+finishes, and the newest `main` commit gets its full set (step 3 has the one
+exception), but the commits in between can have no run. So when `main` goes
+red, the first red run may cover several merges. To find the one that broke
+it:
+
+1. List the runs that were replaced or cancelled, with their commits:
+
+   ```bash
+   gh run list --workflow ci.yml --branch main --event push --status cancelled \
+     --json databaseId,headSha,createdAt,displayTitle
+   ```
+
+   Use the workflow that went red (`e2e.yml`, `money-coverage.yml` or
+   `docs-link-check.yml`) in place of `ci.yml` where it differs.
+2. Take the cancelled runs whose commits sit between the last green `main`
+   commit and the first red one (`git log --first-parent --oneline <green>..<red>`).
+3. Re-run them oldest first with `gh run rerun <run-id>`. A re-run joins the
+   same queue as new merges and replaces whatever is pending there, including
+   the newest `main` commit's run. So start each re-run only when no run of
+   that workflow is pending on `main`
+   (`gh run list --workflow ci.yml --branch main --status pending`), and if one
+   was replaced anyway, re-run it last. The first commit whose re-run goes red
+   is the merge that broke `main`. "Re-run failed jobs" on a `main` run, for
+   example after a flaky shard, has the same effect: it joins that queue and
+   replaces whatever is pending, so check for a pending run first there too.
+
+The push-only gates in `verify` and `Migration drift check` already judge
+those merges together: a push to `main` is judged from the last commit whose
+finished run reached those gate steps, and the step `Find the last judged main
+commit` says which commit that was. Judged together, they can fail where each
+merge alone passed: two merges that each declared a `size-allowances.d/` entry
+for the same file, an allowance a later merge made unnecessary, or an expand
+and its contract migration landing in the same window. To judge them one at a time,
+re-run the replaced run of the earlier merge, and once it has finished, re-run
+the failed job: it then judges from that commit.
+
+To rename a gate step or its job (`verify`'s `Check doc index integrity
+(reachability + invariant ids)` or `File-size budget ratchet`, or `Migration
+drift check`'s `Check migration safety ledger coverage`), keep the old name on
+the `Find the last judged main commit` step: add `--step-was "<old name>"`
+right after the `--step` it belongs to, or `--job-was "<old name>"` for the
+job. Earlier runs recorded only the old name, so without the alias no run
+matches, every push to `main` fails closed, and no re-run can fix it: the gates
+after the resolver are skipped, so the new name is never recorded. Remove the
+alias in a later pull request, once a `main` run has finished the gate under
+its new name, and update the recorded names pinned in
+`scripts/ci/resolve-main-push-base.test.ts` in the same pull request. That test
+fails a rename that drops a recorded name without an alias, and refuses an
+alias that is still a current step or job name.
 
 #### Rebuilding the code-owner configuration
 

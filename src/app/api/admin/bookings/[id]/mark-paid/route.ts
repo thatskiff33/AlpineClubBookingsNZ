@@ -1,11 +1,13 @@
 import { revalidatePath } from "next/cache";
 import { revalidateAdminPage } from "@/lib/admin-page-revalidation";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { BOOKING_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { clubFormat } from "@/lib/club-format-server";
 import type { BoundClubFormat } from "@/lib/club-format-bound";
 import {
@@ -132,12 +134,11 @@ export async function POST(
   const { id } = await params;
   const money = await clubFormat();
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON." }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON.",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
@@ -243,6 +244,13 @@ export async function POST(
         additionalNote(result.direction, result.additional, money),
     });
   } catch (error) {
+    // `INV-LOCK-006`: the settle or reversal's one transaction rolled back.
+    const contended = transactionContendedResponse(
+      error,
+      "Manual booking payment contended for the lock(1) budget",
+      { context: { bookingId: id, direction } },
+    );
+    if (contended) return contended;
     const hostingRetry = hostingCoverageParticipantRetryResponse(error);
     if (hostingRetry) return hostingRetry;
     if (error instanceof ManualBookingPaymentError) {

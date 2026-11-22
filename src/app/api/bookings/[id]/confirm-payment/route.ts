@@ -1,16 +1,15 @@
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import { NextRequest, NextResponse } from "next/server";
-import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getPaymentIntent } from "@/lib/stripe";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
-import { sendBookingConfirmedEmail } from "@/lib/email";
-import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
+import { sendPaidBookingConfirmedEmail } from "@/lib/paid-booking-confirmation-email";
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
@@ -29,6 +28,10 @@ import {
   SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY,
 } from "@/lib/payment-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 
 const schema = z.object({
   paymentIntentId: z.string().min(1),
@@ -62,8 +65,7 @@ export async function POST(
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
-  const ipAddress =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const ipAddress = getClientIp(request);
   let succeededPaymentIntentObserved = false;
   let successfulIntentClassificationPending = false;
 
@@ -236,52 +238,7 @@ export async function POST(
     // returns "already_paid" here and we skip the send, so the email goes out
     // exactly once whichever path wins the race (issue #772).
     if (reconciliation.outcome === "paid") {
-      try {
-        const booking = await prisma.booking.findUnique({
-          where: { id: bookingId },
-          include: {
-            member: true,
-            // #3369: the owner may be an Organisation; bookingOwner() reads both.
-            organisation: { select: { name: true, email: true } },
-            guests: true,
-            promoRedemptions: { include: { promoCode: true } },
-            // #3750: a change fee recorded on the payment was paid too.
-            payment: { select: { changeFeeCents: true } },
-          },
-        });
-        if (booking) {
-          // Split-booking parent (#738): describe the provisional non-member
-          // child so the confirmation explains the separate later charge.
-          const provisionalGuests = await getProvisionalNonMemberChildSummary({
-            id: booking.id,
-            memberId: bookingOwner(booking).memberId,
-          });
-          await sendBookingConfirmedEmail(
-            { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
-            bookingOwner(booking).member.email,
-            bookingOwner(booking).member.firstName,
-            booking.checkIn,
-            booking.checkOut,
-            booking.guests.length,
-            // #3955 review F8: the booking's worth is what was paid for.
-            bookingWorthCents({
-              finalPriceCents: booking.finalPriceCents,
-              changeFeeCents: booking.payment?.changeFeeCents ?? null,
-            }),
-            format,
-            {
-              lodgeId: booking.lodgeId,
-              ...(provisionalGuests ? { provisionalGuests } : {}),
-              ...bookingPromoEmailFields(booking),
-            }
-          );
-        }
-      } catch (emailErr) {
-        logger.error(
-          { err: emailErr, bookingId },
-          "Failed to send confirmation email"
-        );
-      }
+      await sendPaidBookingConfirmedEmail(bookingId, format);
     }
 
     await queueXeroInvoiceForPaidBooking({
@@ -338,6 +295,19 @@ export async function POST(
         : undefined,
     );
     if (hostingRetry) return hostingRetry;
+    // Before any capture is observed, a contended lock(1) transaction
+    // (INV-LOCK-006) is retryable; after it, the payment-received answer below wins.
+    if (!succeededPaymentIntentObserved) {
+      const contended = transactionContendedResponse(
+        err,
+        "Primary payment confirmation contended for the lock(1) budget",
+        {
+          message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+          context: { bookingId, paymentIntentId },
+        },
+      );
+      if (contended) return contended;
+    }
     // #1888 — never echo an unexpected error's message to the client (it can
     // carry Prisma constraint names or infrastructure detail); the raw error
     // stays in the log only.

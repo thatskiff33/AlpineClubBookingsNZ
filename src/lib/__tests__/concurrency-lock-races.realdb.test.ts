@@ -259,6 +259,17 @@ import "./ib-capacity-cancel-credit-restore.realdb.test";
 // `race-3979-` fixtures, and its email and Xero doubles pass through for every
 // other suite.
 import "./ib-settle-from-cash.realdb.test";
+// #4449 reuses it to prove a cancel queued behind a KEPT bank-transfer settle
+// reads the net the cash supports: the REAL settle decides the whole refunded
+// total in its own transaction, and the REAL credit-note allocation write takes
+// the Payment row first and decides it under that lock, in either commit order.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4449-` fixtures.
+import "./kept-settle-queued-cancel.realdb.test";
+// #4449 review: a kept settle takes a card refund Stripe failed later off the total it decides (#4370).
+import "./kept-settle-failed-card-refund.realdb.test";
+// #4449 verify: one bank-transfer floor alert per payment per inbound credit-note sync.
+import "./allocation-floor-alert-once.realdb.test";
 // #4047: read-only invoice discovery and post-provider audience/lifecycle fences.
 import "./booking-outstanding-observation.realdb.test";
 // #3864 reuses it to prove an edit's stored credit election is never spent on top
@@ -314,6 +325,11 @@ import "./refused-card-refund-retry.realdb.test";
 // write, the retry's fresh key, and a held row rolling the write back. Skipped
 // unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4104-` fixtures.
 import "./card-refund-failed-later.realdb.test";
+// #4284 reuses it to prove the card-refund owed figure reads a createdAt tie
+// the same in either physical order: the same tied rows written in opposite
+// orders, read through the real Net Collected select. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4284-` fixtures.
+import "./card-refund-owed-tie-order.realdb.test";
 // #4097 reuses it to prove an own-card cancel whose card refund plan carries
 // less than the refund due raises one hand-back task for the rest in its claim,
 // which "Refunds owed" counts until the treasurer pays it back (its BANK_REFUND
@@ -347,10 +363,18 @@ import "./cancel-card-refund-failed-later.realdb.test";
 // #4280 reuses it to prove a card refund's reversal keeps the bank cash a "Paid
 // another way" close recorded: full and part closes, a late pending or
 // succeeded refund then failed or cancelled, each note state, several charges,
-// credit beside it, shortfalls and undone hand-backs never counted, the close
-// and the refund racing in both orders, and a rolled-back failure. Skipped
-// unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4280-` fixtures.
+// credit beside it, undone hand-backs never counted, the close and the refund
+// racing in both orders, and a rolled-back failure. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4280-` fixtures.
 import "./card-refund-reversal-bank-cash-floor.realdb.test";
+// #4488 reuses it to prove the same floor keeps the bank cash a completed card
+// refund shortfall recorded - a cancel's and a capacity race's - through the
+// real cancel, runner, close, completion, sync and failure writers: both worked
+// examples, cash on another charge counted once, an open or dismissed shortfall
+// counting for nothing, and the completion and the failure racing in both
+// orders. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its
+// own `race-4488-` fixtures.
+import "./card-refund-reversal-shortfall-floor.realdb.test";
 // #4210 reuses it to prove a card refund that fails later after its row was
 // closed "Paid another way" is held for an officer and alerted, never re-sent:
 // full and part closes, duplicate deliveries, no close and a close on another
@@ -600,6 +624,13 @@ import "./refund-gap-prefilter.realdb.test";
 // failed write gives the row back PARTIAL. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4256-` fixtures.
 import "./xero-partial-repair-claim.realdb.test";
+// #4279 reuses it to prove a refund credit-note repair that loses its claim
+// after Xero voids or deletes the note leaves the payment pointing at no
+// voided note and no live link to it, through the real retry, inbound void and
+// stale reset; the pointer is adopted only inside a completion that wins its
+// claim. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its
+// own `race-4279-` fixtures.
+import "./xero-refund-repair-lost-claim-void.realdb.test";
 // #4259 reuses it to prove the PARTIAL modification credit-note repair claims
 // its row the same way and closes it: a resolve or a mark committed while it
 // waits wins, two retries make one allocation and close the row once SUCCEEDED,
@@ -671,6 +702,13 @@ import "./saved-card-charge-worth.realdb.test";
 // for one row have one winner. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4646-` fixtures.
 import "./saved-card-async-capture-adopt.realdb.test";
+// #4993 (`INV-PAY-158`) reuses it to prove a saved-card claim stranded
+// CONFIRMED by an interrupted charge is handed back to PENDING once, its hold
+// the claim marker and its attempt row untouched; a young claim and a captured
+// one are left; and recovery racing the capture's adoption resolves either way
+// with one row, no refund and the booking settled once. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4993-` fixtures.
+import "./saved-card-claim-recovery.realdb.test";
 // #4265 reuses it to prove a refund-note row covers only its own live,
 // non-request note: a refund request's note resolved by hand through the real
 // outbox and resolve route covers nothing, live or voided, so the bank-void
@@ -767,6 +805,11 @@ import "./login-throttle.realdb.test";
 // claim does not. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
 // cleans its own `race-4616-` member.
 import "./session-reauth.realdb.test";
+// #5261 reuses it to prove the stored-password cost upgrade, a compare-and-swap
+// on the proved hash, never overwrites a password changed at the same moment,
+// including a change it waited on. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
+// it owns and cleans its own `race-5261-` member.
+import "./password-rehash.realdb.test";
 // #4617 reuses it to prove one of two concurrent passkey challenge claims
 // succeeds, and one of two concurrent counter updates. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4617-` member.
@@ -812,6 +855,13 @@ import "./superseded-refund-cancel-hold-back.realdb.test";
 // Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
 // `race-4872-` fixtures.
 import "./superseded-refund-4872-hold-back.realdb.test";
+// #4879 reuses it to prove an edit financial review's card refund and a "Paid
+// another way" close leave a live superseded capture to its own refund, while
+// closing that superseded refund itself still records it on its own charge,
+// including when the door queues behind the hand-off on the Payment row.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4879-` fixtures.
+import "./superseded-refund-other-doors-hold-back.realdb.test";
 // #4685 reuses it to prove an account-credit Xero note stamps the one credit it
 // was raised for, by id, and that a row queued without the id still stamps.
 // Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
@@ -833,6 +883,11 @@ import "./edit-quoted-figures.realdb.test";
 // changed underneath it (no side effect, retried), and two writers forced to meet
 // at the claim. It owns and cleans its own `race-4456` credential rows.
 import "./data-encryption-key-ring.realdb.test";
+// #4988 reuses it to prove an opening-credit file posts once when two officers
+// confirm it together, queues behind a member's credit-ledger lock, and
+// reverses only while every credit in it is unspent. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4988-` fixtures.
+import "./opening-credit-batch.realdb.test";
 // #4911 reuses it to prove a paid cancel of a booking whose card capture the
 // cardholder disputes (a lost dispute) issues no card refund and no account
 // credit, by either refund method, and raises one treasurer task naming the
@@ -844,6 +899,11 @@ import "./stripe-dispute-cancel.realdb.test";
 // racing takeovers or a racing Mark failed, and the abandoned attempt's late
 // outcome refused. It owns and cleans its own `race-alp546-` fixtures.
 import "./xero-inbound-abandoned-operation.realdb.test";
+// INV-INT-039 (#4921) reuses it to prove the automatic worker takes over a
+// stored Xero inbound event a dead worker left PROCESSING past the webhook
+// lease, clearing its dedup row, and that racing workers apply it exactly once.
+// It owns and cleans its own `race-alp642-` fixtures.
+import "./xero-inbound-stale-event-takeover.realdb.test";
 // #4851 reuses it to prove Stuck States' settlement of a dead refund out of the
 // group organiser's card: a refund Stripe already holds is recorded and nobody is
 // paid again, a bank close raises the mirror and its no-Xero-note hand-back, a
@@ -852,6 +912,22 @@ import "./xero-inbound-abandoned-operation.realdb.test";
 // whole-group row flips and mirrors. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
 // it owns and cleans its own `race-4851-` fixtures.
 import "./card-refund-group-settle.realdb.test";
+// The #5061 follow-up proves the same for an edit that lowers the price (date
+// change, guest removal, batch edit): one treasurer task, no money moved. It
+// owns and cleans its own `race-5061e-` fixtures.
+import "./stripe-dispute-edit.realdb.test";
+// #5228 reuses it to prove a queued Xero row a pre-HTTP cooldown refuses after
+// its handler saved the execution request goes back to PENDING with its queued
+// request (five real handlers); that every PENDING writer leaves a claimable
+// request or writes nothing; that rows stuck before the fix are listed,
+// released and retried, sized on today's cover; and that a stale reset never
+// leaves such a row PENDING. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; each
+// owns and cleans its own `race-5228`-prefixed fixtures.
+import "./xero-cooldown-giveback-queued-request.realdb.test";
+import "./xero-pending-request-transitions.realdb.test";
+import "./xero-stuck-queued-request.realdb.test";
+import "./xero-released-refund-current-cap.realdb.test";
+import "./xero-stale-request-recovery.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

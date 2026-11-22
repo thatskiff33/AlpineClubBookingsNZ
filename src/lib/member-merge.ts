@@ -12,7 +12,7 @@ import {
   wouldRemoveLastFullAdmin,
 } from "@/lib/admin-account-guards";
 import { memberHoldsFullAdminRole } from "@/lib/access-roles";
-import { buildStructuredAuditLogCreateArgs } from "@/lib/audit";
+import { buildStructuredAuditLogCreateArgs, getAuditRequestContext } from "@/lib/audit";
 import {
   describeChildSideDepth,
   describeParentSideDepth,
@@ -70,8 +70,8 @@ import {
 import {
   attachMergeDietaryRequirements,
   isDietaryFieldEnabled,
-  redactDietaryMergeRow,
 } from "@/lib/member-dietary";
+import { redactDietaryMergeRow } from "@/lib/member-dietary-field";
 
 /**
  * E11 (#1937) — additive, master-wins member profile merge.
@@ -1537,7 +1537,7 @@ async function auditRefusedMemberMerge(args: {
           statusCode: args.error.statusCode,
           refusal: extractRefusalContext(args.error.details),
         },
-        request: args.request ? getRequestContext(args.request) : undefined,
+        request: args.request ? getAuditRequestContext(args.request) : undefined,
       }),
     );
   } catch (err) {
@@ -2354,7 +2354,7 @@ export async function executeMemberMerge(params: {
           movedIdSample: movedIdSample.sample,
           movedIdSampleTruncated: movedIdSample.truncated,
         },
-        request: params.request ? getRequestContext(params.request) : undefined,
+        request: params.request ? getAuditRequestContext(params.request) : undefined,
       }),
     );
 
@@ -2454,17 +2454,6 @@ export async function executeMemberMerge(params: {
   }
 
   return result;
-}
-
-function getRequestContext(request: Request) {
-  const forwarded = request.headers.get("x-forwarded-for");
-  const parts = forwarded?.split(",").map((p) => p.trim()).filter(Boolean);
-  return {
-    id: request.headers.get("x-request-id") ?? request.headers.get("x-correlation-id"),
-    ipAddress:
-      parts?.[parts.length - 1] ?? request.headers.get("x-real-ip") ?? "unknown",
-    userAgent: request.headers.get("user-agent"),
-  };
 }
 
 /**

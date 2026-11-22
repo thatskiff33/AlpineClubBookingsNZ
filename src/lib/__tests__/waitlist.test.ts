@@ -256,6 +256,22 @@ vi.mock("@/lib/booking-guest-removal-service", () => ({
     mockRecalculateBookingPromo(...args),
 }));
 
+// #5410: the club time zone is read before an offer pass opens its transaction,
+// so a throw there escapes the pass. The real reader runs unless a test names
+// which call should fail.
+const zoneReadFault = vi.hoisted(() => ({ call: 0, failOn: 0 }));
+vi.mock("@/lib/club-time-zone-runtime", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/club-time-zone-runtime");
+  return {
+    ...actual,
+    readClubTimeZoneOutsideRequest: async () => {
+      zoneReadFault.call += 1;
+      if (zoneReadFault.call === zoneReadFault.failOn) throw new Error("club time zone read failed");
+      return actual.readClubTimeZoneOutsideRequest();
+    },
+  };
+});
+
 vi.mock("@/lib/logger", () => ({
   default: {
     info: vi.fn(),
@@ -267,6 +283,8 @@ vi.mock("@/lib/logger", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  zoneReadFault.call = 0;
+  zoneReadFault.failOn = 0;
   mockPrismaTransaction.mockReset();
   mockBookingFindUnique.mockReset();
   mockBookingFindMany.mockReset();
@@ -342,103 +360,6 @@ beforeEach(() => {
 });
 
 // ─── Core Logic Tests ───
-
-describe("getWaitlistPosition", () => {
-  it("returns correct FIFO position", async () => {
-    const { getWaitlistPosition } = await import("@/lib/waitlist");
-
-    mockBookingFindUnique.mockResolvedValue({
-      checkIn: new Date("2026-07-01"),
-      checkOut: new Date("2026-07-03"),
-      createdAt: new Date("2026-04-08T12:00:00Z"),
-      status: "WAITLISTED",
-    });
-    mockBookingCount.mockResolvedValue(2); // 2 ahead
-
-    const position = await getWaitlistPosition("booking1");
-    expect(position).toBe(3); // 2 ahead + 1
-  });
-
-  it("returns 0 for non-waitlisted booking", async () => {
-    const { getWaitlistPosition } = await import("@/lib/waitlist");
-
-    mockBookingFindUnique.mockResolvedValue({
-      checkIn: new Date("2026-07-01"),
-      checkOut: new Date("2026-07-03"),
-      createdAt: new Date(),
-      status: "CONFIRMED",
-    });
-
-    const position = await getWaitlistPosition("booking1");
-    expect(position).toBe(0);
-  });
-
-  it("returns 0 for non-existent booking", async () => {
-    const { getWaitlistPosition } = await import("@/lib/waitlist");
-
-    mockBookingFindUnique.mockResolvedValue(null);
-
-    const position = await getWaitlistPosition("nonexistent");
-    expect(position).toBe(0);
-  });
-
-  it("counts only the entry's own lodge (M6): first in line at lodge B, not behind older lodge A entries", async () => {
-    const { getWaitlistPosition } = await import("@/lib/waitlist");
-
-    // The entry waits at lodge B. Older overlapping WAITLISTED entries exist at
-    // lodge A; club-wide counting would put this entry at position 4, but the
-    // per-lodge queue makes it position 1.
-    mockBookingFindUnique.mockResolvedValue({
-      checkIn: new Date("2026-07-01"),
-      checkOut: new Date("2026-07-03"),
-      createdAt: new Date("2026-04-08T12:00:00Z"),
-      status: "WAITLISTED",
-      lodgeId: "lodge-b",
-    });
-    // The three ahead-of-you entries all sit at lodge A; only lodge-B entries
-    // are counted.
-    const aheadByLodge: Record<string, number> = { "lodge-a": 3, "lodge-b": 0 };
-    mockBookingCount.mockImplementation(async (args: { where: { lodgeId?: string } }) =>
-      args.where.lodgeId ? aheadByLodge[args.where.lodgeId] ?? 0 : 3
-    );
-
-    const position = await getWaitlistPosition("booking1");
-
-    expect(position).toBe(1);
-    expect(mockBookingCount).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ status: "WAITLISTED", lodgeId: "lodge-b" }),
-      })
-    );
-  });
-});
-
-describe("getWaitlistForDates", () => {
-  it("returns waitlisted bookings ordered by createdAt ASC", async () => {
-    const { getWaitlistForDates } = await import("@/lib/waitlist");
-
-    const mockEntries = [
-      { id: "b1", createdAt: new Date("2026-04-01") },
-      { id: "b2", createdAt: new Date("2026-04-02") },
-    ];
-    mockBookingFindMany.mockResolvedValue(mockEntries);
-
-    const result = await getWaitlistForDates(
-      new Date("2026-07-01"),
-      new Date("2026-07-05"),
-      "lodge-b"
-    );
-
-    expect(result).toEqual(mockEntries);
-    // Per-lodge queue (M6): the query is scoped to the supplied lodge.
-    expect(mockBookingFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ status: "WAITLISTED", lodgeId: "lodge-b" }),
-        orderBy: { createdAt: "asc" },
-      })
-    );
-  });
-});
 
 describe("processWaitlistForDates", () => {
   it("offers to top candidate when capacity available", async () => {
@@ -1004,7 +925,8 @@ describe("processWaitlistForDates", () => {
     // stored snapshot": it fails the sweep's transaction, no offer issues for
     // these dates, and the outer catch logs the invariant by name. That is the
     // documented contract (docs/guides/waitlist.md -> Troubleshooting).
-    expect(result).toEqual({ offeredBookingId: null });
+    // `failed` since #5410, so the expiry sweep can count a pass like this one.
+    expect(result).toEqual({ offeredBookingId: null, failed: true });
     expect(sendWaitlistOfferEmail).not.toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1361,6 +1283,32 @@ describe("confirmWaitlistOffer", () => {
     expect(mockBookingUpdateMany).not.toHaveBeenCalled();
   });
 
+  // INV-LOCK-006: contention reaches the route's retryable 503 instead of the
+  // generic failure result; any other claim error still becomes that result.
+  it.each(["P2028", "P2034"] as const)(
+    "rethrows %s transaction contention from the offer claim",
+    async (code) => {
+      const { confirmWaitlistOffer } = await import("@/lib/waitlist");
+      const contended = Object.assign(new Error("contended"), { code });
+      mockPrismaTransaction.mockRejectedValueOnce(contended);
+
+      await expect(
+        confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST),
+      ).rejects.toBe(contended);
+    },
+  );
+
+  it("still folds an unrelated claim error into the generic failure result", async () => {
+    const { confirmWaitlistOffer } = await import("@/lib/waitlist");
+    mockPrismaTransaction.mockRejectedValueOnce(
+      Object.assign(new Error("unique"), { code: "P2002" }),
+    );
+
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
+
+    expect(result).toMatchObject({ success: false });
+  });
+
   it("transitions to PAYMENT_PENDING for all-member bookings", async () => {
     const { confirmWaitlistOffer } = await import("@/lib/waitlist");
     const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
@@ -1673,6 +1621,69 @@ describe("expireStaleOffers", () => {
     );
   });
 
+  it("quotes the expired offer's place counting the entries already waiting ahead, not only other lapsed offers (#5402)", async () => {
+    const { expireStaleOffers } = await import("@/lib/waitlist");
+    const { sendWaitlistOfferExpiredEmail } = await import("@/lib/email");
+    const { logAudit } = await import("@/lib/audit");
+
+    const nights = { checkIn: new Date("2026-07-01"), checkOut: new Date("2026-07-03") };
+    const offer = {
+      id: "offer-1",
+      lodgeId: "lodge-1",
+      waitlistOfferedLodgeId: null,
+      ...nights,
+      createdAt: new Date("2026-04-03"),
+      member: { email: "test@test.com", firstName: "John" },
+    };
+    const waiting = (id: string, createdAt: string, lodgeId = "lodge-1") => ({
+      id,
+      lodgeId,
+      ...nights,
+      createdAt: new Date(createdAt),
+      waitlistAlternateLodges: [],
+    });
+    mockTxBookingFindMany
+      .mockResolvedValueOnce([offer]) // the lapsed offers
+      // The queue read after the revert: two entries joined earlier at the same
+      // lodge, one at another lodge, and the reverted offer itself.
+      .mockResolvedValueOnce([
+        waiting("w-1", "2026-04-01"),
+        waiting("w-other-lodge", "2026-04-01T06:00:00Z", "lodge-2"),
+        waiting("w-2", "2026-04-02"),
+        waiting("offer-1", "2026-04-03"),
+      ])
+      .mockResolvedValue([]);
+
+    await expireStaleOffers(CLUB_FORMAT_TEST);
+
+    // The pre-#5402 count saw only the other lapsed offers and quoted #1.
+    expect(sendWaitlistOfferExpiredEmail).toHaveBeenCalledWith(
+      { bookingId: "offer-1", recipientMemberId: undefined },
+      "test@test.com",
+      "John",
+      nights.checkIn,
+      nights.checkOut,
+      3,
+      "lodge-1",
+    );
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "waitlist.offer_expired",
+        metadata: expect.objectContaining({ newPosition: 3 }),
+      }),
+    );
+    // Read in the same transaction as the revert, after it.
+    const queueRead = mockTxBookingFindMany.mock.calls[1]![0] as {
+      where: { status: string; noEmails: boolean };
+    };
+    expect(queueRead.where).toEqual(
+      expect.objectContaining({ status: "WAITLISTED", noEmails: false }),
+    );
+    expect(mockTx.booking.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      mockTxBookingFindMany.mock.invocationCallOrder[1]!,
+    );
+  });
+
   it("skips the revert when a concurrent confirm moved the offer out of WAITLIST_OFFERED under the lock (#1881)", async () => {
     const { expireStaleOffers } = await import("@/lib/waitlist");
 
@@ -1805,7 +1816,9 @@ describe("expireStaleOffers", () => {
 
     mockTxBookingFindMany
       .mockResolvedValueOnce([offerA, offerB]) // the offers query
+      .mockResolvedValueOnce([]) // #5402: the expiry emails' queue read
       .mockResolvedValueOnce([nextInLine("cand-a", "lodge-a", "2026-06-01")]) // pass 1: lodge A
+      .mockResolvedValueOnce([]) // #5402: pass 1's offer-time queue read
       .mockResolvedValueOnce([nextInLine("cand-b", "lodge-b", "2026-06-02")]) // pass 2: lodge B
       .mockResolvedValue([]);
     mockTx.lodge.findMany.mockResolvedValue([{ id: "lodge-a" }, { id: "lodge-b" }]);
@@ -1836,6 +1849,243 @@ describe("expireStaleOffers", () => {
         data: expect.objectContaining({ status: "WAITLIST_OFFERED" }),
       })
     );
+  });
+});
+
+describe("a lapsed offer's place goes on down the queue (#5410, INV-CAP-042)", () => {
+  function queued(id: string, createdAt: string, nights = { checkIn: new Date("2026-09-10"), checkOut: new Date("2026-09-12") }) {
+    return {
+      id,
+      memberId: `m-${id}`,
+      lodgeId: "lodge-1",
+      ...nights,
+      createdAt: new Date(createdAt),
+      totalPriceCents: 20000,
+      finalPriceCents: 20000,
+      guests: [{ id: `g-${id}`, ageTier: "ADULT", isMember: true, memberId: `m-${id}`, nights: [] }],
+      member: { id: `m-${id}`, email: `${id}@test.com`, firstName: id, lastName: "Queue" },
+      waitlistAlternateLodges: [],
+      promoRedemptions: [],
+    };
+  }
+  function lapsedOffer(id: string, createdAt: string, nights = { checkIn: new Date("2026-09-10"), checkOut: new Date("2026-09-12") }) {
+    return {
+      id,
+      lodgeId: "lodge-1",
+      waitlistOfferedLodgeId: null,
+      ...nights,
+      createdAt: new Date(createdAt),
+      member: { email: `${id}@test.com`, firstName: id },
+    };
+  }
+  /** The offer passes' candidate reads (the position reads `select`, these `include`). */
+  function candidateReads() {
+    return mockTxBookingFindMany.mock.calls
+      .map(([args]) => args as { where: { status?: string; checkIn?: { lt: Date } }; include?: unknown })
+      .filter((args) => args.where?.status === "WAITLISTED" && args.include !== undefined);
+  }
+  /** The bookings offered, in order (the offer-time reprice also updates the booking). */
+  function offeredIds() {
+    return mockTx.booking.update.mock.calls
+      .map(([args]) => args as { where: { id: string }; data: { status?: string } })
+      .filter((args) => args.data.status === "WAITLIST_OFFERED")
+      .map((args) => args.where.id);
+  }
+
+  beforeEach(async () => {
+    const { checkCapacityForGuestRanges } = await import("@/lib/capacity");
+    vi.mocked(checkCapacityForGuestRanges).mockResolvedValue({ available: true, minAvailable: 2, nightDetails: [] });
+    mockTx.booking.update.mockResolvedValue({});
+  });
+
+  it("a pass given no lapse offers the head of the queue; told the head just lapsed, it offers the next", async () => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const queue = [queued("q1", "2026-05-01"), queued("q2", "2026-05-02"), queued("q3", "2026-05-03")];
+    const range = { checkIn: new Date("2026-09-10"), checkOut: new Date("2026-09-12"), lodgeId: "lodge-1" };
+    mockTxBookingFindMany.mockResolvedValueOnce(queue).mockResolvedValue([]);
+    expect((await processWaitlistForDates(range, CLUB_FORMAT_TEST)).offeredBookingId).toBe("q1");
+
+    mockTxBookingFindMany.mockReset();
+    mockTxBookingFindMany.mockResolvedValueOnce(queue).mockResolvedValue([]);
+    const key = { id: "q1", createdAt: queue[0]!.createdAt, offeredLodgeId: "lodge-1" };
+    const { offeredBookingId } = await processWaitlistForDates(range, CLUB_FORMAT_TEST, { key, run: [key] });
+    expect(offeredBookingId).toBe("q2");
+  });
+
+  it("re-offers the lapsed place to the next person in the same run, keeping the lapsed booking WAITLISTED", async () => {
+    const { expireStaleOffers } = await import("@/lib/waitlist");
+    mockTxBookingFindMany
+      .mockResolvedValueOnce([lapsedOffer("q1", "2026-05-01")]) // the lapsed offers
+      .mockResolvedValueOnce([]) // the expiry emails' position read
+      // The pass's candidate read: q1 is back in its original place.
+      .mockResolvedValueOnce([queued("q1", "2026-05-01"), queued("q2", "2026-05-02")])
+      .mockResolvedValue([]);
+
+    const result = await expireStaleOffers(CLUB_FORMAT_TEST);
+
+    expect(result).toEqual({ expiredCount: 1, reofferedCount: 1, failedReofferCount: 0 });
+    expect(offeredIds()).toEqual(["q2"]);
+    expect(mockTx.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "q1", status: "WAITLIST_OFFERED" }, data: expect.objectContaining({ status: "WAITLISTED" }) }),
+    );
+  });
+
+  it("makes one pass per lapsed offer in join order, even for two on the same nights at the same lodge", async () => {
+    const { expireStaleOffers } = await import("@/lib/waitlist");
+    // Read newest first, so join order has to come from the sort.
+    mockTxBookingFindMany
+      .mockResolvedValueOnce([lapsedOffer("q2", "2026-05-02"), lapsedOffer("q1", "2026-05-01")])
+      .mockResolvedValueOnce([]) // the expiry emails' position read
+      .mockResolvedValueOnce(["q1", "q2", "q3", "q4"].map((id, i) => queued(id, `2026-05-0${i + 1}`))) // q1's pass
+      .mockResolvedValueOnce([]) // its offer-time position read
+      .mockResolvedValueOnce(["q1", "q2", "q4"].map((id) => queued(id, `2026-05-0${id.slice(1)}`))) // q2's pass
+      .mockResolvedValue([]);
+
+    const result = await expireStaleOffers(CLUB_FORMAT_TEST);
+
+    // Two passes where the old per-range grouping made one. q1's place goes
+    // to q3 (q2 lapsed in the same run, so it comes after q3 and q4), and q2's
+    // to q4: neither member who let an offer lapse is offered straight back.
+    expect(candidateReads()).toHaveLength(2);
+    expect(result).toEqual({ expiredCount: 2, reofferedCount: 2, failedReofferCount: 0 });
+    expect(offeredIds()).toEqual(["q3", "q4"]);
+  });
+
+  describe("a pass that throws", () => {
+    const nightsOf = (day: number) => ({
+      checkIn: new Date(`2026-09-${String(day).padStart(2, "0")}`),
+      checkOut: new Date(`2026-09-${String(day + 2).padStart(2, "0")}`),
+    });
+    // Three lapses on separate nights; the second pass's club time-zone read
+    // (before its transaction) throws.
+    function arrangeThreeLapsesSecondPassThrows() {
+      mockTxBookingFindMany
+        .mockResolvedValueOnce([
+          lapsedOffer("l1", "2026-05-01", nightsOf(1)),
+          lapsedOffer("l2", "2026-05-02", nightsOf(10)),
+          lapsedOffer("l3", "2026-05-03", nightsOf(20)),
+        ])
+        .mockResolvedValueOnce([]) // the expiry emails' position read
+        .mockResolvedValueOnce([queued("next-1", "2026-05-11", nightsOf(1))]) // l1's pass
+        .mockResolvedValueOnce([]) // its offer-time position read
+        .mockResolvedValueOnce([queued("next-3", "2026-05-13", nightsOf(20))]) // l3's pass
+        .mockResolvedValue([]);
+      zoneReadFault.failOn = 2;
+    }
+
+    it("is logged with its booking and lodge and counted, and the passes after it still run", async () => {
+      const { expireStaleOffers } = await import("@/lib/waitlist");
+      const logger = (await import("@/lib/logger")).default;
+      arrangeThreeLapsesSecondPassThrows();
+
+      const result = await expireStaleOffers(CLUB_FORMAT_TEST);
+
+      expect(result).toEqual({ expiredCount: 3, reofferedCount: 2, failedReofferCount: 1 });
+      expect(offeredIds()).toEqual(["next-1", "next-3"]);
+      expect(candidateReads().map((args) => args.where.checkIn!.lt)).toEqual([
+        nightsOf(1).checkOut,
+        nightsOf(20).checkOut,
+      ]);
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingId: "l2", lodgeId: "lodge-1", err: expect.any(Error) }),
+        expect.stringContaining("re-offer a lapsed waitlist place"),
+      );
+    });
+
+    it("fails the cron run once the rest of it has run, without retrying the sweep", async () => {
+      const { processWaitlistCron } = await import("@/lib/cron-waitlist");
+      arrangeThreeLapsesSecondPassThrows();
+      mockBookingFindMany.mockResolvedValue([]); // step 2: no past-date entries
+
+      await expect(processWaitlistCron()).rejects.toThrow(
+        /^1 waitlist re-offer pass\(es\) failed after their offers lapsed.*: 3 offer\(s\) expired, 2 new offer\(s\), 0 past-date booking\(s\) cancelled\.$/,
+      );
+      // Step 2 still ran, after the sweep.
+      expect(mockBookingFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ checkOut: expect.anything() }) }),
+      );
+      // Not retried: the stale offers were read once, and only the revert and
+      // the two passes that ran opened a transaction.
+      const offerReads = mockTxBookingFindMany.mock.calls.filter(
+        ([args]) => (args as { where?: { status?: string } }).where?.status === "WAITLIST_OFFERED",
+      );
+      expect(offerReads).toHaveLength(1);
+      expect(mockPrismaTransaction).toHaveBeenCalledTimes(3);
+      expect(offeredIds()).toEqual(["next-1", "next-3"]);
+    });
+
+    it("still fails the cron run when the attempt that counted it is retried and the retry succeeds", async () => {
+      const originalDelay = process.env.WAITLIST_TRANSACTION_RETRY_DELAY_MS;
+      process.env.WAITLIST_TRANSACTION_RETRY_DELAY_MS = "0";
+      try {
+        const { processWaitlistCron } = await import("@/lib/cron-waitlist");
+        // Attempt 1: one lapse, whose pass throws before its transaction
+        // (time-zone read 1); step 2 then reads the zone (read 2), finds one
+        // past-date entry and fails to start its transaction.
+        mockTxBookingFindMany
+          .mockResolvedValueOnce([lapsedOffer("l1", "2026-05-01", nightsOf(1))])
+          .mockResolvedValueOnce([]) // the expiry email's position read
+          .mockResolvedValue([]); // attempt 2: nothing stale
+        zoneReadFault.failOn = 1;
+        mockBookingFindMany.mockResolvedValueOnce([{ id: "old1" }]).mockResolvedValue([]);
+        mockPrismaTransaction
+          .mockImplementationOnce(async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx))
+          .mockRejectedValueOnce(
+            new Error("Transaction API error: Unable to start a transaction in the given time."),
+          );
+
+        await expect(processWaitlistCron()).rejects.toThrow(
+          /^1 waitlist re-offer pass\(es\) failed after their offers lapsed.*: 1 offer\(s\) expired, 0 new offer\(s\), 0 past-date booking\(s\) cancelled\.$/,
+        );
+        // Attempt 2 ran: two stale-offer reads, the second finding nothing.
+        const offerReads = mockTxBookingFindMany.mock.calls.filter(
+          ([args]) => (args as { where?: { status?: string } }).where?.status === "WAITLIST_OFFERED",
+        );
+        expect(offerReads).toHaveLength(2);
+      } finally {
+        if (originalDelay === undefined) delete process.env.WAITLIST_TRANSACTION_RETRY_DELAY_MS;
+        else process.env.WAITLIST_TRANSACTION_RETRY_DELAY_MS = originalDelay;
+      }
+    });
+
+    it("counts a pass whose own transaction failed, and still runs the rest", async () => {
+      const { expireStaleOffers } = await import("@/lib/waitlist");
+      const logger = (await import("@/lib/logger")).default;
+      mockTxBookingFindMany
+        .mockResolvedValueOnce([
+          lapsedOffer("l1", "2026-05-01", nightsOf(1)),
+          lapsedOffer("l2", "2026-05-02", nightsOf(10)),
+        ])
+        .mockResolvedValueOnce([]) // the expiry emails' position read
+        .mockResolvedValueOnce([queued("next-2", "2026-05-12", nightsOf(10))]) // l2's pass
+        .mockResolvedValue([]);
+      // The revert runs; l1's pass transaction fails inside; l2's runs.
+      mockPrismaTransaction
+        .mockImplementationOnce(async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx))
+        .mockRejectedValueOnce(new Error("Transaction already closed: timeout"));
+
+      const result = await expireStaleOffers(CLUB_FORMAT_TEST);
+
+      expect(result).toEqual({ expiredCount: 2, reofferedCount: 1, failedReofferCount: 1 });
+      expect(offeredIds()).toEqual(["next-2"]);
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ lapsedBookingId: "l1", checkIn: nightsOf(1).checkIn }),
+        "Failed to process waitlist for dates",
+      );
+    });
+  });
+
+  it("orders the passes by join time, not by the order the lapsed offers were read", async () => {
+    const { expireStaleOffers } = await import("@/lib/waitlist");
+    const early = { checkIn: new Date("2026-09-01"), checkOut: new Date("2026-09-03") };
+    const late = { checkIn: new Date("2026-09-20"), checkOut: new Date("2026-09-22") };
+    mockTxBookingFindMany
+      .mockResolvedValueOnce([lapsedOffer("joined-second", "2026-05-02", late), lapsedOffer("joined-first", "2026-05-01", early)])
+      .mockResolvedValue([]);
+
+    await expireStaleOffers(CLUB_FORMAT_TEST);
+
+    expect(candidateReads().map((args) => args.where.checkIn!.lt)).toEqual([early.checkOut, late.checkOut]);
   });
 });
 
@@ -1947,6 +2197,20 @@ describe("waitlist email templates", () => {
     expect(html).toContain("Expired");
     expect(html).toContain("Mike");
     expect(html).toContain("#3");
+    // #5410: the place goes on down the queue, and the member keeps theirs.
+    expect(html).toContain("Your Position");
+    expect(html).not.toContain("New Position");
+    expect(html).toContain("offered to the next person on the waitlist");
+    expect(html).toContain("You keep your place in the queue");
+  });
+
+  it("ships the same #5410 expiry wording as the editable default", async () => {
+    const { getEmailTemplateDefinition } = await import("@/lib/email-message-registry");
+    const body = getEmailTemplateDefinition("waitlist-offer-expired")!.defaultBody;
+    expect(body).toContain("Your Position: #{{position}}");
+    expect(body).toContain(
+      "A place that is not taken up is offered to the next person on the waitlist, so this one may go to someone behind you. You keep your place in the queue, and we'll email you again if a place opens up for you.",
+    );
   });
 
   it("adminWaitlistOfferTemplate renders correctly", async () => {
@@ -2136,37 +2400,5 @@ describe("booking creation waitlist response", () => {
     expect((err as unknown as { code: string }).code).toBe("CAPACITY_EXCEEDED");
     expect((err as unknown as { canWaitlist: boolean }).canWaitlist).toBe(true);
     expect((err as unknown as { fullNights: string[] }).fullNights).toHaveLength(2);
-  });
-});
-
-describe("updateWaitlistPositions", () => {
-  it("recalculates positions correctly", async () => {
-    const { updateWaitlistPositions } = await import("@/lib/waitlist");
-
-    mockBookingFindMany.mockResolvedValue([
-      { id: "b1" },
-      { id: "b2" },
-      { id: "b3" },
-    ]);
-    mockBookingUpdate.mockResolvedValue({});
-
-    await updateWaitlistPositions(
-      new Date("2026-07-01"),
-      new Date("2026-07-05")
-    );
-
-    expect(mockBookingUpdate).toHaveBeenCalledTimes(3);
-    expect(mockBookingUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: "b1" },
-        data: { waitlistPosition: 1 },
-      })
-    );
-    expect(mockBookingUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: "b3" },
-        data: { waitlistPosition: 3 },
-      })
-    );
   });
 });

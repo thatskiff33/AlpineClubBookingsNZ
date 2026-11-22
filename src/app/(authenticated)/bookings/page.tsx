@@ -1,4 +1,5 @@
 import { bookingOwner } from "@/lib/booking-owner";
+import { MEMBER_BOOKING_LIST_ORDER, memberVisibleBookingWhere } from "@/lib/member-self-read";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import Link from "next/link";
@@ -21,6 +22,11 @@ import {
   bookingListLodgeLabel,
   countActiveLodgesForBookingList,
 } from "@/lib/lodges";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "My bookings",
+};
 
 export default async function MyBookingsPage() {
   const session = await auth();
@@ -89,13 +95,7 @@ export default async function MyBookingsPage() {
 
   const [bookings, activeLodgeCount] = await Promise.all([
     prisma.booking.findMany({
-      where: {
-        deletedAt: null,
-        OR: [
-          { memberId: session.user.id },
-          { guests: { some: { memberId: session.user.id } } },
-        ],
-      },
+      where: memberVisibleBookingWhere(session.user.id),
       include: {
         // #3278: the stored-money classification below is derived from THIS read,
         // so the per-night and adjustment evidence it needs rides along here
@@ -120,7 +120,7 @@ export default async function MyBookingsPage() {
         lodge: BOOKING_LIST_LODGE_SELECT,
       },
       // Newest start date first, with a stable createdAt tiebreaker (#771).
-      orderBy: [{ checkIn: "desc" }, { createdAt: "desc" }],
+      orderBy: [...MEMBER_BOOKING_LIST_ORDER],
     }),
     // INV-CAP-039: read from the database alongside the list, never inferred
     // from a client-side lodge list that can fail to load (#2701).

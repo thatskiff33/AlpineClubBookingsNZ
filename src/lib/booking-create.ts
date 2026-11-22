@@ -27,6 +27,7 @@ import {
   type PrismaClient,
 } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
+import { createZeroPriceConfirmationPayment } from "@/lib/booking-zero-price-payment";
 import { assertMemberMayBookLodge } from "@/lib/lodge-access";
 import {
   lodgeNullTolerantScope,
@@ -56,6 +57,7 @@ import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { lockPromoCodeRowsForUpdate, redeemPromoCode } from "@/lib/promo";
 import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
+import { getWaitlistPositionOf } from "@/lib/waitlist-queue";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
   sendAdminNewBookingAlert,
@@ -115,7 +117,10 @@ import {
 } from "./booking-create-guests";
 import { recordAdultMemberHostingReviewForNewBooking } from "@/lib/adult-member-hosting-review";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
-import { withOptionalTransaction } from "@/lib/db-transaction";
+import {
+  LOCK1_HOLDER_TRANSACTION_BUDGET,
+  withOptionalTransaction,
+} from "@/lib/db-transaction";
 import { organiserPaysForJoinerInTx } from "@/lib/group-late-joiner";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { resolveBookingGuestDietary } from "@/lib/member-dietary-booking-writes";
@@ -295,6 +300,8 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
   // `server-only` is a bare throw outside the `react-server` condition.
   const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
 
+  // The wait for lock(1) counts against this budget (`INV-LOCK-006`); on the
+  // defaults any long holder of the key aborted the draft.
   const newBooking = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     // The explicit lodge id is the immutable lock key.  Take the capacity lock
@@ -496,7 +503,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
     );
 
     return createdBooking;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   logAudit({
     action: "booking.created",
@@ -796,7 +803,8 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     // unchanged). The caller that supplies `tx` has ALREADY taken global lock(1)
     // and the per-lodge capacity lock; the `acquireLodgeCapacityLock` below then
     // re-enters that same per-lodge key (a no-op) so the lock order holds either
-    // way.
+    // way. The lock(1) budget applies only to the transaction opened here; a
+    // caller's `tx` keeps its opener's budget (`INV-LOCK-006`).
     booking = await withOptionalTransaction(input.tx, async (tx) => {
       if (!input.tx) {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -1172,14 +1180,8 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         }
 
         isZeroDollarConfirmed = true;
-        await tx.payment.create({
-          data: {
-            bookingId: newBooking.id,
-            amountCents: 0,
-            creditAppliedCents,
-            status: PaymentStatus.SUCCEEDED,
-          },
-        });
+        // The $0 Payment row, shared with the import's free stay (#5167).
+        await createZeroPriceConfirmationPayment(tx, { bookingId: newBooking.id, creditAppliedCents });
         await tx.booking.update({
           where: { id: newBooking.id },
           data: {
@@ -1418,7 +1420,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       );
 
       return newBooking;
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
     if (err instanceof Error && err.message === "CAPACITY_EXCEEDED_SENTINEL" && capacityFullNights) {
       return { type: "capacityExceeded", fullNights: capacityFullNights };
@@ -1982,22 +1984,11 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       });
     }
 
-    const waitlistPosition =
-      (await tx.booking.count({
-        where: {
-          status: BookingStatus.WAITLISTED,
-          lodgeId: waitlistLodgeId,
-          checkIn: { lt: createdBooking.checkOut },
-          checkOut: { gt: createdBooking.checkIn },
-          createdAt: { lt: createdBooking.createdAt },
-        },
-      })) + 1;
-
-    const updatedBooking = await tx.booking.update({
-      where: { id: createdBooking.id },
-      data: { waitlistPosition },
-      include: { guests: true },
-    });
+    // The place quoted in the confirmation email and the audit row, read from
+    // the live queue under this transaction's lodge key (#5402). Nothing
+    // stores it: every screen reads it again when it shows it
+    // (`INV-CAP-041`).
+    const position = await getWaitlistPositionOf(tx, createdBooking);
 
     // #2364. A waitlisted booking holds no capacity, but it is still a party
     // the club will have to admit if the offer is taken, so the hazard is
@@ -2005,12 +1996,12 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     // path re-reconciles, so a policy or membership change during the wait is
     // still picked up.
     await recordAdultMemberHostingReviewForNewBooking(
-      updatedBooking.id,
+      createdBooking.id,
       tx,
       adultMemberHostingDecision,
     );
 
-    return { newBooking: updatedBooking, position: waitlistPosition };
+    return { newBooking: createdBooking, position };
   });
 
   const member = await prisma.member.findUnique({ where: { id: effectiveMemberId } });

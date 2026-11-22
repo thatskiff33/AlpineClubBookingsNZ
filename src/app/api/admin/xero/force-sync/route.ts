@@ -1,4 +1,5 @@
 import { after, NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { z } from "zod";
@@ -7,6 +8,10 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { checkMembershipStatus } from "@/lib/xero-membership-sync";
@@ -132,12 +137,11 @@ export async function POST(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = forceSyncSchema.safeParse(body);
   if (!parsed.success) {
@@ -327,6 +331,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const contended = transactionContendedResponse(
+      error,
+      "Targeted Xero sync contended for the lock(1) budget",
+      { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, context: { syncType } },
+    );
+    if (contended) return contended;
     logger.error({ err: error, syncType, query }, "Failed targeted Xero sync");
     return NextResponse.json(
       { error: "Failed targeted Xero sync" },

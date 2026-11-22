@@ -66,6 +66,8 @@ export { isCodeExplicitlyConfigured } from "@/lib/xero-account-mapping-keys";
 export async function getResolvedAccountMapping(
   key: string,
   store: Prisma.TransactionClient | typeof prisma = prisma,
+  /** #4988: a caller for whom "unset" and "could not be read" must not look alike asks for the throw. */
+  options: { throwOnReadError?: boolean } = {},
 ): Promise<ResolvedAccountMapping> {
   try {
     const mapping = await store.xeroAccountMapping.findUnique({
@@ -80,7 +82,8 @@ export async function getResolvedAccountMapping(
       itemCode: mapping?.itemCode ?? null,
       codeExplicitlyConfigured: isCodeExplicitlyConfigured(mapping),
     };
-  } catch {
+  } catch (error) {
+    if (options.throwOnReadError) throw error;
     return {
       code: ACCOUNT_MAPPING_DEFAULTS[key] ?? null,
       itemCode: null,
@@ -118,8 +121,10 @@ export type ResolvedAccountMappingWithFallback = ResolvedAccountMapping & {
 export async function getResolvedAccountMappingWithFallback(
   key: AccountMappingKey,
   store: Prisma.TransactionClient | typeof prisma = prisma,
+  /** Applies to the REQUESTED key's read only; its fallback's read is unchanged. */
+  options: { throwOnReadError?: boolean } = {},
 ): Promise<ResolvedAccountMappingWithFallback> {
-  const requested = await getResolvedAccountMapping(key, store);
+  const requested = await getResolvedAccountMapping(key, store, options);
   const { sourceKey, usingFallback } = resolveAccountMappingSource(
     key,
     requested.codeExplicitlyConfigured,
@@ -152,10 +157,12 @@ async function getItemCodeMapping(key: string): Promise<string | null> {
  * subscription when fee-schedule look-through is enabled (#2109). It is the
  * distinct non-null `MembershipAnnualFeeComponent.xeroItemCode` values (every
  * historical fee row contributes — prior seasons were billed under retired fee
- * rows) UNION the single configured `subscriptionIncome.itemCode`, sorted for a
- * stable preview. Closed-loop invariant: because billing stamps exactly those
- * component codes onto each invoice line, this detection set is a superset of
- * every code the billing pipeline can stamp.
+ * rows) UNION the distinct non-null `SubscriptionCategoryFeeComponent.xeroItemCode`
+ * values UNION the single configured `subscriptionIncome.itemCode`, sorted for
+ * a stable preview. Closed-loop invariant: because billing stamps exactly
+ * those component codes onto each invoice line — on EITHER billing axis —
+ * this detection set is a superset of every code the billing pipeline can
+ * stamp.
  *
  * The single `subscriptionIncome.itemCode` is always folded in so the flat
  * "fallback item code" stays in the matching set even when no fee row carries
@@ -179,6 +186,23 @@ export async function getSubscriptionItemCodes(
   } catch {
     // Fee-schedule read failed: fall back to whatever the single mapping resolves
     // below so the flat item code still participates in matching.
+  }
+  try {
+    // Subscription-category decoupling: the independent category-axis fee
+    // schedule's own component item codes, unioned in the same way as the
+    // membership-type fee schedule above — a category charge stamps these
+    // codes onto its invoice lines exactly as a type charge stamps the
+    // membership-annual-fee ones, so detection must recognize both.
+    const categoryRows = await store.subscriptionCategoryFeeComponent.findMany({
+      where: { xeroItemCode: { not: null } },
+      select: { xeroItemCode: true },
+      distinct: ["xeroItemCode"],
+    });
+    for (const row of categoryRows) {
+      if (row.xeroItemCode) codes.add(row.xeroItemCode);
+    }
+  } catch {
+    // Same best-effort degrade as the fee-schedule read above.
   }
   const mapping = await getResolvedAccountMapping("subscriptionIncome", store);
   if (mapping.itemCode) codes.add(mapping.itemCode);

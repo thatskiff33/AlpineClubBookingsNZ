@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireActiveSession } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
@@ -12,6 +13,7 @@ import {
   removeOwnPartnerLink,
 } from "@/lib/member-partner-link";
 import { cancelOwnPartnerInviteToken } from "@/lib/partner-invite-token";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
 /**
  * GET /api/members/partner-link (#1742)
@@ -59,12 +61,9 @@ export async function POST(req: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.familyGroupJoinRequest, req);
   if (rateLimited) return rateLimited;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const parsedJson = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!parsedJson.ok) return parsedJson.response;
+  const body = parsedJson.body;
 
   const parsed = requestSchema.safeParse(body);
   if (!parsed.success) {
@@ -133,12 +132,9 @@ export async function PUT(req: NextRequest) {
   const guard = await requireActiveSession();
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = respondSchema.safeParse(body);
   if (!parsed.success) {
@@ -200,10 +196,22 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Partner link id required" }, { status: 400 });
   }
 
-  const result = await removeOwnPartnerLink({
-    memberId: guard.session.user.id,
-    linkId,
-  });
+  let result: Awaited<ReturnType<typeof removeOwnPartnerLink>>;
+  try {
+    result = await removeOwnPartnerLink({
+      memberId: guard.session.user.id,
+      linkId,
+    });
+  } catch (err) {
+    // The removal and its share sweep are one lock(1) transaction (INV-LOCK-006).
+    const contended = transactionContendedResponse(
+      err,
+      "Partner link removal contended for the lock(1) budget",
+      { context: { linkId } },
+    );
+    if (contended) return contended;
+    throw err;
+  }
 
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: result.status });

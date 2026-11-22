@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { resolveClubFormat } from "@/lib/club-format";
 import { stripeSdkError as stripeError } from "./support/stripe-sdk-error";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { bookingBumpReason } from "@/lib/booking-bump-reason";
+import { createAlertCooldownStore } from "./support/alert-cooldown-store";
 
 // Mock Stripe
 vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_fake");
@@ -156,6 +158,18 @@ const mockSendBookingRequestPaymentExpiredEmail = vi
   .mockResolvedValue(undefined);
 // #3268: the one member notice for a saved card the cron has given up on.
 const mockSendSavedCardChargeFailedEmail = vi.fn().mockResolvedValue(undefined);
+// #5403: the officers' alert for a bumped booking, sent after the bump commits.
+// #5407: it returns `sendToAdmins`' result, which decides whether its owed
+// marker is cleared; one officer received it unless a case says otherwise.
+const OFFICER_ALERT_SENT = {
+  deliveryAllowed: true,
+  recipients: 1,
+  sent: 1,
+  queuedForRetry: 0,
+  notDelivered: 0,
+  failedBeforeLogged: 0,
+};
+const mockSendAdminBookingBumpedAlert = vi.fn().mockResolvedValue(OFFICER_ALERT_SENT);
 vi.mock("../email", () => ({
   sendSavedCardChargeFailedEmail: (...args: unknown[]) =>
     mockSendSavedCardChargeFailedEmail(...args),
@@ -178,6 +192,8 @@ vi.mock("../email", () => ({
     mockSendAdminSplitSettlementUnpaidAlert(...args),
   sendAdminSplitSettlementCancelledAlert: (...args: unknown[]) =>
     mockSendAdminSplitSettlementCancelledAlert(...args),
+  sendAdminBookingBumpedAlert: (...args: unknown[]) =>
+    mockSendAdminBookingBumpedAlert(...args),
 }));
 
 // #1993 Part B: the derived alert cadence anchors on the hold's original expiry,
@@ -242,12 +258,19 @@ vi.mock("../capacity", () => ({
 }));
 
 const mockLodgeFindFirst = vi.fn().mockResolvedValue({ id: "lodge-1" });
-vi.mock("../lodges", () => ({
+// #5403: the real lodge helpers run, so the bumped alert's lodge line is
+// decided by the real `bookingListLodgeLabel` over the base client's reads.
+vi.mock("../lodges", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("../lodges")),
   getDefaultLodgeId: (...args: unknown[]) => mockLodgeFindFirst(...args).then((l: { id: string }) => l.id),
 }));
 
 // Mock Prisma
 const mockBookingFindMany = vi.fn();
+// #4993: the stale saved-card claim recovery's CONFIRMED read, kept apart from
+// the pending pass's read so every fixture above keeps describing that pass.
+const mockStaleClaimFindMany = vi.fn().mockResolvedValue([]);
+const mockAuditLogCreate = vi.fn().mockResolvedValue({ id: "audit_1" });
 const mockBookingFindUnique = vi.fn();
 const mockBookingUpdate = vi.fn();
 const mockBookingUpdateMany = vi.fn();
@@ -280,6 +303,8 @@ const paymentTransactionMocks = {
 const mockPromoRedemptionFindMany = vi.fn();
 // #1993 Part A: the terminal branch records a CANCELLED booking event in-tx.
 const mockBookingEventCreate = vi.fn().mockResolvedValue({ id: "evt_1" });
+// #5407: the bump-notice sweep asks whether the booking moved on since the bump.
+const mockBookingEventFindFirst = vi.fn().mockResolvedValue(null);
 const mockEmailLogFindFirst = vi.fn().mockResolvedValue(null);
 const mockEmailLogCreate = vi.fn().mockResolvedValue({ id: "emaillog_1" });
 const mockPrismaTransaction = vi.fn();
@@ -311,11 +336,27 @@ const mockHostingCoverageReevaluationCreate = vi
   .fn()
   .mockResolvedValue({ id: "hcr_1" });
 const mockHostingCoverageReevaluationFindMany = vi.fn().mockResolvedValue([]);
+// #5403: the bumped alert names the booking's lodge, read on the base client
+// after the bump has committed.
+const mockLodgeFindUnique = vi.fn().mockResolvedValue({ name: "Ruapehu Lodge", active: true });
+// Active lodges: two by default, so the lodge is named.
+const mockLodgeCount = vi.fn().mockResolvedValue(2);
+// #5407: the bump notices' owed markers. The transaction double stages its
+// `AlertCooldown` writes and applies them only when its callback resolves (and
+// `failNextCommit` is unset), so a rolled-back bump leaves no marker, as in
+// PostgreSQL. `markerKeysWrittenInTransaction` lists the keys written through
+// the transaction client.
+const alertCooldownStore = createAlertCooldownStore();
+const markerKeysWrittenInTransaction: string[] = [];
+const transactionCommit = { failNext: false };
 
 vi.mock("../prisma", () => ({
   prisma: {
     booking: {
-      findMany: (...args: unknown[]) => mockBookingFindMany(...args),
+      findMany: (args: { where?: { status?: unknown } }) =>
+        args.where?.status === "CONFIRMED"
+          ? mockStaleClaimFindMany(args)
+          : mockBookingFindMany(args),
       findUnique: (...args: unknown[]) => mockBookingFindUnique(...args),
       update: (...args: unknown[]) => mockBookingUpdate(...args),
       updateMany: (...args: unknown[]) => mockBookingUpdateMany(...args),
@@ -338,6 +379,7 @@ vi.mock("../prisma", () => ({
     // the lock transaction.
     bookingEvent: {
       create: (...args: unknown[]) => mockBookingEventCreate(...args),
+      findFirst: (...args: unknown[]) => mockBookingEventFindFirst(...args),
     },
     // #2258: the withheld-send audit row for a split guest link that was never
     // minted because the booking has "No emails" turned on.
@@ -354,6 +396,18 @@ vi.mock("../prisma", () => ({
     clubTimeSettings: {
       findUnique: (...args: unknown[]) =>
         mockClubTimeSettingsFindUnique(...args),
+    },
+    // #4993: the claim recovery's and the failed release's awaited audit rows.
+    auditLog: {
+      create: (...args: unknown[]) => mockAuditLogCreate(...args),
+    },
+    lodge: {
+      findUnique: (...args: unknown[]) => mockLodgeFindUnique(...args),
+      count: (...args: unknown[]) => mockLodgeCount(...args),
+    },
+    // #5407: the owed-marker claims, clears and sweep run on the base client.
+    get alertCooldown() {
+      return alertCooldownStore.delegate;
     },
     $transaction: (...args: unknown[]) => mockPrismaTransaction(...args),
     // #4217: the root client, so a settle without a caller's transaction opens its own.
@@ -599,6 +653,8 @@ describe("Cron: Confirm Pending Bookings", () => {
       skipped: 0,
     });
     mockBookingUpdateMany.mockResolvedValue({ count: 1 });
+    mockStaleClaimFindMany.mockResolvedValue([]);
+    mockAuditLogCreate.mockResolvedValue({ id: "audit_1" });
     mockPaymentUpsert.mockImplementation(
       async ({
         where,
@@ -639,6 +695,10 @@ describe("Cron: Confirm Pending Bookings", () => {
       })
     );
     mockSendSavedCardChargeFailedEmail.mockResolvedValue(undefined);
+    mockSendAdminBookingBumpedAlert.mockResolvedValue(OFFICER_ALERT_SENT);
+    mockBookingEventFindFirst.mockResolvedValue(null);
+    mockLodgeFindUnique.mockResolvedValue({ name: "Ruapehu Lodge", active: true });
+    mockLodgeCount.mockResolvedValue(2);
     mockClubTimeSettingsFindUnique.mockResolvedValue(null);
     mockMemberCreditAggregate.mockResolvedValue({ _sum: { amountCents: null } });
     mockPromoRedemptionFindMany.mockResolvedValue([]);
@@ -661,8 +721,12 @@ describe("Cron: Confirm Pending Bookings", () => {
     mockGetNonMemberHoldDays.mockResolvedValue(7);
     mockBookingEventCreate.mockResolvedValue({ id: "evt_1" });
     zoneReadsInsideTransaction = 0;
+    alertCooldownStore.rows.clear();
+    markerKeysWrittenInTransaction.length = 0;
+    transactionCommit.failNext = false;
     mockPrismaTransaction.mockImplementation(async (arg: unknown) => {
       if (typeof arg === "function") {
+        const stagedMarkers: Array<{ where: { key: string }; create: { key: string; lastAlertedAt: Date }; update: object }> = [];
         // #2870: how many `clubTimeSettings` reads happened WHILE this callback
         // was running. Zero is the contract — the callback holds
         // `pg_advisory_xact_lock(1)` and the per-lodge capacity lock for its
@@ -672,7 +736,7 @@ describe("Cron: Confirm Pending Bookings", () => {
         // transaction but still ran once per run keeps that count at 1.
         const zoneReadsBefore = mockClubTimeSettingsFindUnique.mock.calls.length;
         try {
-          return await arg({
+          const result = await arg({
           $executeRaw: (...args: unknown[]) => mockExecuteRaw(...args),
           lodge: {
             findFirst: (...args: unknown[]) => mockLodgeFindFirst(...args),
@@ -710,7 +774,21 @@ describe("Cron: Confirm Pending Bookings", () => {
             create: (...args: unknown[]) =>
               mockHostingCoverageReevaluationCreate(...args),
           },
+          // #5407: the bump records its notices as owed here, by upsert only.
+          alertCooldown: {
+            upsert: async (args: (typeof stagedMarkers)[number]) => {
+              markerKeysWrittenInTransaction.push(args.where.key);
+              stagedMarkers.push(args);
+              return args.create;
+            },
+          },
           });
+          if (transactionCommit.failNext) {
+            transactionCommit.failNext = false;
+            throw new Error("Transaction commit failed");
+          }
+          for (const staged of stagedMarkers) await alertCooldownStore.delegate.upsert(staged);
+          return result;
         } finally {
           zoneReadsInsideTransaction +=
             mockClubTimeSettingsFindUnique.mock.calls.length - zoneReadsBefore;
@@ -1485,6 +1563,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       data: {
         status: "PENDING",
         nonMemberHoldUntil: booking.nonMemberHoldUntil,
+        savedCardClaimAt: null,
       },
     });
     const releaseLockOrder = mockAcquireLodgeCapacityLock.mock.invocationCallOrder.at(-1);
@@ -1613,13 +1692,14 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(result.failedBookingIds).toEqual(["b1"]);
     expect(mockBookingUpdateMany).toHaveBeenCalledWith({
       where: { id: "b1", status: "PENDING" },
-      data: { status: "CONFIRMED", nonMemberHoldUntil: null },
+      data: { status: "CONFIRMED", nonMemberHoldUntil: null, savedCardClaimAt: expect.any(Date) },
     });
     expect(mockBookingUpdateMany).not.toHaveBeenCalledWith({
       where: { id: "b1", status: "CONFIRMED" },
       data: {
         status: "PENDING",
         nonMemberHoldUntil: booking.nonMemberHoldUntil,
+        savedCardClaimAt: null,
       },
     });
     expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
@@ -1743,6 +1823,401 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(mockBookingUpdateMany).toHaveBeenCalledWith({
       where: { id: "b1", status: "PENDING" },
       data: { status: "CANCELLED", nonMemberHoldUntil: null },
+    });
+  });
+
+  // #5403 (owner decision, 22 Nov 2026): the officers' booking-bumped alert is
+  // reconnected here, the one place that knows a bump happened. Recipients
+  // (the `adminBookingBumped` switch and `bookings: edit`) are the shared
+  // sender's rule, proved in phase6a-notifications.test.ts; this block proves
+  // when the cron sends it, what it says, and that it is once per bump.
+  describe("#5403 the officers' booking-bumped alert", () => {
+    const NO_ROOM = { available: false, minAvailable: 0, nightDetails: [] };
+
+    /** Wraps the transaction double so a test can see whether a call ran inside one. */
+    function trackTransaction() {
+      const state = { inside: false };
+      const original = mockPrismaTransaction.getMockImplementation();
+      mockPrismaTransaction.mockImplementation(async (arg: unknown) => {
+        state.inside = true;
+        try {
+          return await original!(arg);
+        } finally {
+          state.inside = false;
+        }
+      });
+      return state;
+    }
+
+    it("alerts officers after the bump commits, outside the transaction, naming the member, lodge and reason", async () => {
+      const booking = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+      const transaction = trackTransaction();
+      const sentInsideTransaction: boolean[] = [];
+      mockSendAdminBookingBumpedAlert.mockImplementation(async () => {
+        sentInsideTransaction.push(transaction.inside);
+      });
+      const lodgeReadInsideTransaction: boolean[] = [];
+      mockLodgeFindUnique.mockImplementation(async () => {
+        lodgeReadInsideTransaction.push(transaction.inside);
+        return { name: "Ruapehu Lodge", active: true };
+      });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.bumpedBookingIds).toEqual(["b1"]);
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledWith({
+        bumpedMemberName: "Test User",
+        bookingReference: "B1",
+        lodgeName: "Ruapehu Lodge",
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+        guestCount: 2,
+        reason: bookingBumpReason(false),
+      });
+      // The booking's own lodge, read on the base client, not the default.
+      expect(mockLodgeFindUnique).toHaveBeenCalledWith({
+        where: { id: "lodge-1" },
+        select: { name: true, active: true },
+      });
+      expect(sentInsideTransaction).toEqual([false]);
+      // The display-only lodge read is after the commit too, never under the locks.
+      expect(lodgeReadInsideTransaction).toEqual([false]);
+      // After the won claim, and after the member's own email.
+      const claimOrder = mockBookingUpdateMany.mock.invocationCallOrder[
+        mockBookingUpdateMany.mock.calls.findIndex(
+          ([call]) => call?.data?.status === "CANCELLED",
+        )
+      ];
+      const alertOrder = mockSendAdminBookingBumpedAlert.mock.invocationCallOrder[0];
+      expect(claimOrder).toBeLessThan(alertOrder);
+      expect(mockSendBumpedEmail.mock.invocationCallOrder[0]).toBeLessThan(alertOrder);
+      // The member's email is unchanged.
+      expect(mockSendBumpedEmail).toHaveBeenCalledTimes(1);
+    });
+
+    it("says so when it is the guests-cancelled variant", async () => {
+      const booking = {
+        ...makeMixedPendingBooking({ cancelIfGuestsBumped: true }),
+        lodgeId: "lodge-1",
+      };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+
+      await confirmPendingBookings();
+
+      expect(mockSendGuestsCancelledEmail).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          guestCount: 2,
+          reason: bookingBumpReason(true),
+        }),
+      );
+      expect(bookingBumpReason(true)).not.toEqual(bookingBumpReason(false));
+    });
+
+    it("sends once when the job runs twice over the same bump", async () => {
+      const booking = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+
+      const first = await confirmPendingBookings();
+      expect(first.bumpedBookingIds).toEqual(["b1"]);
+
+      // The second run still lists the booking (a stale read, as a concurrent
+      // run would have) but the locked re-read finds the first run's CANCELLED.
+      mockBookingFindUnique.mockResolvedValue({
+        ...booking,
+        status: "CANCELLED",
+        nonMemberHoldUntil: null,
+      });
+      const second = await confirmPendingBookings();
+
+      expect(second.bumpedBookingIds).toEqual([]);
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledTimes(1);
+      expect(mockSendBumpedEmail).toHaveBeenCalledTimes(1);
+    });
+
+    it("sends nothing when another run won the claim", async () => {
+      const booking = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+      mockBookingUpdateMany.mockResolvedValue({ count: 0 });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.bumpedBookingIds).toEqual([]);
+      expect(mockSendAdminBookingBumpedAlert).not.toHaveBeenCalled();
+      expect(mockSendBumpedEmail).not.toHaveBeenCalled();
+    });
+
+    it("keeps the bump, the member's email and the rest of the run when the send fails", async () => {
+      const first = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+      const second = {
+        ...makePendingBooking("b2", { checkIn: "2026-07-20", checkOut: "2026-07-22" }),
+        lodgeId: "lodge-1",
+      };
+      mockPendingBookings([first, second]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+      mockSendAdminBookingBumpedAlert.mockRejectedValueOnce(new Error("SMTP down"));
+
+      const result = await confirmPendingBookings();
+
+      expect(result.bumpedBookingIds).toEqual(["b1", "b2"]);
+      expect(result.failedBookingIds).toEqual([]);
+      expect(mockSendBumpedEmail).toHaveBeenCalledTimes(2);
+      // The second booking's alert still went out.
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenLastCalledWith(
+        expect.objectContaining({ checkIn: second.checkIn }),
+      );
+      expect(mockProcessWaitlistForDates).toHaveBeenCalledTimes(2);
+    });
+
+    it("still alerts, leaving the lodge out, when the display-only lodge read fails", async () => {
+      const booking = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+      mockLodgeFindUnique.mockRejectedValueOnce(new Error("db down"));
+
+      const result = await confirmPendingBookings();
+
+      expect(result.bumpedBookingIds).toEqual(["b1"]);
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ lodgeName: null }),
+      );
+    });
+
+    it("names the lodge when the active-lodge count cannot be read", async () => {
+      const booking = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+      mockLodgeCount.mockRejectedValueOnce(new Error("db down"));
+
+      await confirmPendingBookings();
+
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ lodgeName: "Ruapehu Lodge" }),
+      );
+    });
+
+    it("names an archived lodge even in a club with one active lodge", async () => {
+      const booking = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+      mockLodgeCount.mockResolvedValue(1);
+      mockLodgeFindUnique.mockResolvedValue({ name: "Old Hut", active: false });
+
+      await confirmPendingBookings();
+
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ lodgeName: "Old Hut" }),
+      );
+    });
+
+    it("leaves the lodge out in a one-lodge club, as the capacity warning does", async () => {
+      const booking = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+      mockLodgeCount.mockResolvedValue(1);
+
+      await confirmPendingBookings();
+
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ lodgeName: null }),
+      );
+    });
+
+    it("is not sent when the booking fits and is confirmed", async () => {
+      const booking = { ...makePendingBooking("b1", { finalPriceCents: 0 }), lodgeId: "lodge-1" };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.confirmedBookingIds).toEqual(["b1"]);
+      expect(mockSendAdminBookingBumpedAlert).not.toHaveBeenCalled();
+    });
+  });
+
+  // #5407 item 13: both bump notices are recorded as owed in the bump's own
+  // transaction, cleared when their send returns, and swept by a later run
+  // when the job stopped or the send threw. The sweep itself is proved in
+  // booking-bump-notice-owed.test.ts and against PostgreSQL.
+  describe("#5407 bump notices owed until sent", () => {
+    const NO_ROOM = { available: false, minAvailable: 0, nightDetails: [] };
+    const RUN_AT = new Date("2026-07-09T00:00:00.000Z");
+    const MEMBER_KEY = `booking-bump-member-owed:b1:${RUN_AT.getTime()}:b`;
+    const OFFICER_KEY = `booking-bump-officers-owed:b1:${RUN_AT.getTime()}:b`;
+
+    function bumpOneBooking() {
+      const booking = { ...makePendingBooking("b1"), lodgeId: "lodge-1" };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+      return booking;
+    }
+
+    it("writes both markers through the transaction client, by upsert alone", async () => {
+      bumpOneBooking();
+      mockSendBumpedEmail.mockRejectedValueOnce(new Error("SMTP down"));
+      mockSendAdminBookingBumpedAlert.mockRejectedValueOnce(new Error("SMTP down"));
+
+      await confirmPendingBookings();
+
+      expect(markerKeysWrittenInTransaction).toEqual([MEMBER_KEY, OFFICER_KEY]);
+      // Only those two writes reached the table, applied when the commit did.
+      expect(alertCooldownStore.delegate.upsert.mock.calls.map(([call]) => call.where.key)).toEqual([MEMBER_KEY, OFFICER_KEY]);
+      expect([...alertCooldownStore.rows.keys()]).toEqual([MEMBER_KEY, OFFICER_KEY]);
+    });
+
+    it("leaves no marker and sends nothing when the bump's commit fails", async () => {
+      bumpOneBooking();
+      transactionCommit.failNext = true;
+
+      const result = await confirmPendingBookings();
+
+      expect(result.bumpedBookingIds).toEqual([]);
+      expect(result.failedBookingIds).toEqual(["b1"]);
+      expect(alertCooldownStore.rows.size).toBe(0);
+      expect(mockSendBumpedEmail).not.toHaveBeenCalled();
+      expect(mockSendAdminBookingBumpedAlert).not.toHaveBeenCalled();
+    });
+
+    it("sends the member's email with the bump's event key and clears both markers", async () => {
+      bumpOneBooking();
+
+      await confirmPendingBookings();
+
+      expect(mockSendBumpedEmail).toHaveBeenCalledTimes(1);
+      expect(mockSendBumpedEmail.mock.calls[0]![0]).toEqual({
+        bookingId: "b1",
+        recipientMemberId: "member_b1",
+        idempotencyKey: `b1:${RUN_AT.getTime()}`,
+      });
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledTimes(1);
+      expect(alertCooldownStore.rows.size).toBe(0);
+    });
+
+    it("keys the guests-cancelled variant apart and gives its email the same event key", async () => {
+      const booking = { ...makeMixedPendingBooking({ cancelIfGuestsBumped: true }), lodgeId: "lodge-1" };
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue(NO_ROOM);
+      mockSendGuestsCancelledEmail.mockRejectedValueOnce(new Error("SMTP down"));
+
+      await confirmPendingBookings();
+
+      expect(markerKeysWrittenInTransaction).toEqual([
+        `booking-bump-member-owed:b1:${RUN_AT.getTime()}:g`,
+        `booking-bump-officers-owed:b1:${RUN_AT.getTime()}:g`,
+      ]);
+      expect(mockSendGuestsCancelledEmail.mock.calls[0]![0]).toEqual(
+        expect.objectContaining({ idempotencyKey: `b1:${RUN_AT.getTime()}` }),
+      );
+      expect([...alertCooldownStore.rows.keys()]).toEqual([`booking-bump-member-owed:b1:${RUN_AT.getTime()}:g`]);
+    });
+
+    it("leaves only the member's marker when the member's email throws", async () => {
+      bumpOneBooking();
+      mockSendBumpedEmail.mockRejectedValueOnce(new Error("SMTP down"));
+
+      const result = await confirmPendingBookings();
+
+      expect(result.bumpedBookingIds).toEqual(["b1"]);
+      expect([...alertCooldownStore.rows.keys()]).toEqual([MEMBER_KEY]);
+    });
+
+    it("leaves only the officers' marker when their alert throws", async () => {
+      bumpOneBooking();
+      mockSendAdminBookingBumpedAlert.mockRejectedValueOnce(new Error("SMTP down"));
+
+      await confirmPendingBookings();
+
+      expect([...alertCooldownStore.rows.keys()]).toEqual([OFFICER_KEY]);
+    });
+
+    it("sends a notice the first run left owed on a later run, once", async () => {
+      const booking = bumpOneBooking();
+      mockSendBumpedEmail.mockRejectedValueOnce(new Error("SMTP down"));
+      await confirmPendingBookings();
+      expect([...alertCooldownStore.rows.keys()]).toEqual([MEMBER_KEY]);
+
+      // The next run, after the sweep's wait: the booking is CANCELLED and no
+      // longer pending.
+      mockBookingFindMany.mockResolvedValue([]);
+      mockBookingFindUnique.mockResolvedValue({ ...booking, status: "CANCELLED", nonMemberHoldUntil: null });
+      vi.setSystemTime(new Date(RUN_AT.getTime() + 3 * 60 * 60 * 1000));
+      const later = await confirmPendingBookings();
+
+      expect(later.owedBumpNotices).toEqual({ checked: 1, delivered: 1, cleared: 0, expired: 0 });
+      expect(mockSendBumpedEmail).toHaveBeenCalledTimes(2);
+      // The same event key, so the email core records one row for both tries.
+      expect(mockSendBumpedEmail.mock.calls[1]![0]).toEqual(mockSendBumpedEmail.mock.calls[0]![0]);
+      // The officers had theirs from the first run and get no second copy.
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledTimes(1);
+      expect(alertCooldownStore.rows.size).toBe(0);
+
+      const third = await confirmPendingBookings();
+      expect(third.owedBumpNotices.checked).toBe(0);
+      expect(mockSendBumpedEmail).toHaveBeenCalledTimes(2);
+    });
+
+    // INV-SSOT-002: the delivery claims with the instant the transaction
+    // stamped, which is the bump's own time, not the run's `now`.
+    it("claims with the bump's own stamp when it differs from the run's start", async () => {
+      bumpOneBooking();
+      const BUMPED_AT = new Date(RUN_AT.getTime() + 5 * 60 * 1000);
+      // Time passes during the run: the capacity check runs five minutes in.
+      mockCheckCapacityForGuestRanges.mockImplementation(async () => {
+        vi.setSystemTime(BUMPED_AT);
+        return NO_ROOM;
+      });
+
+      await confirmPendingBookings();
+
+      expect(markerKeysWrittenInTransaction).toEqual([
+        `booking-bump-member-owed:b1:${BUMPED_AT.getTime()}:b`,
+        `booking-bump-officers-owed:b1:${BUMPED_AT.getTime()}:b`,
+      ]);
+      expect(mockSendBumpedEmail.mock.calls[0]![0]).toEqual(
+        expect.objectContaining({ idempotencyKey: `b1:${BUMPED_AT.getTime()}` }),
+      );
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledTimes(1);
+      expect(alertCooldownStore.rows.size).toBe(0);
+    });
+
+    it("keeps the officers' marker when nobody received the alert and nothing will replay it", async () => {
+      bumpOneBooking();
+      mockSendAdminBookingBumpedAlert.mockResolvedValueOnce({
+        ...OFFICER_ALERT_SENT,
+        sent: 0,
+        notDelivered: 1,
+        failedBeforeLogged: 1,
+      });
+
+      await confirmPendingBookings();
+
+      expect([...alertCooldownStore.rows.keys()]).toEqual([OFFICER_KEY]);
+    });
+
+    it("does not sweep a marker before its wait has passed", async () => {
+      bumpOneBooking();
+      mockSendAdminBookingBumpedAlert.mockRejectedValueOnce(new Error("SMTP down"));
+      await confirmPendingBookings();
+
+      mockBookingFindMany.mockResolvedValue([]);
+      vi.setSystemTime(new Date(RUN_AT.getTime() + 30 * 60 * 1000));
+      const soon = await confirmPendingBookings();
+
+      expect(soon.owedBumpNotices.checked).toBe(0);
+      expect(mockSendAdminBookingBumpedAlert).toHaveBeenCalledTimes(1);
+      expect([...alertCooldownStore.rows.keys()]).toEqual([OFFICER_KEY]);
     });
   });
 
@@ -4471,6 +4946,220 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(mockDetachPaymentMethod).not.toHaveBeenCalled();
       expect(mockPaymentUpdateMany).not.toHaveBeenCalled();
       expect(mockSendSavedCardChargeFailedEmail).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("#4993 a saved-card claim stranded CONFIRMED is recovered and replayed, never re-minted", () => {
+    const NOW = new Date("2026-07-09T00:00:00.000Z");
+    const STALE_MARKER = new Date("2026-07-08T23:00:00.000Z");
+
+    function capacityAvailable() {
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 10,
+        nightDetails: [],
+      });
+    }
+
+    /**
+     * The booking as the claim left it: CONFIRMED, marker stamped, hold cleared.
+     * Its Stripe payment is PENDING, or FAILED once a decline's payment_failed
+     * webhook reconciled the aggregate from the FAILED row.
+     */
+    function strandedClaim(marker = STALE_MARKER, payment: { status: string; transactions: { status: string }[] } = { status: "PENDING", transactions: [] }) {
+      mockStaleClaimFindMany.mockResolvedValue([{ id: "b1", lodgeId: "lodge-1" }]);
+      const pendingRead = mockBookingFindUnique.getMockImplementation()!;
+      let recovered = false;
+      mockBookingUpdateMany.mockImplementation(async (call: { where?: { savedCardClaimAt?: unknown } }) => {
+        if (call?.where?.savedCardClaimAt) recovered = true;
+        return { count: 1 };
+      });
+      mockBookingFindUnique.mockImplementation(async (args: { select?: Record<string, unknown> }) => {
+        if (args.select?.savedCardClaimAt) {
+          return {
+            status: "CONFIRMED",
+            savedCardClaimAt: marker,
+            checkIn: new Date("2026-08-01T00:00:00.000Z"),
+            checkOut: new Date("2026-08-03T00:00:00.000Z"),
+            payment: { source: "STRIPE", ...payment },
+          };
+        }
+        if (!recovered && args.select && Object.keys(args.select).join() === "status") {
+          return { status: "CONFIRMED" };
+        }
+        return pendingRead(args);
+      });
+    }
+
+    function recoveryReleaseCall() {
+      return mockBookingUpdateMany.mock.calls.find(([call]) => call?.where?.savedCardClaimAt !== undefined);
+    }
+
+    function auditActions() {
+      return mockAuditLogCreate.mock.calls.map(([call]) => (call as { data: { action: string } }).data.action);
+    }
+
+    it("selects only CONFIRMED bookings whose marker is older than the recovery age and whose Stripe payment moved no money", async () => {
+      mockPendingBookings([]);
+
+      await confirmPendingBookings();
+
+      expect(mockStaleClaimFindMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: {
+          status: "CONFIRMED",
+          savedCardClaimAt: { lte: new Date(NOW.getTime() - 30 * 60 * 1000) },
+          payment: { source: "STRIPE", status: { in: ["PENDING", "FAILED"] } },
+        },
+      }));
+    });
+
+    it("a claim whose charge step never ran (the process stopped) is returned to PENDING, then the same run replays the stranded attempt's own key", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      strandedClaim();
+      // The claim minted this row and committed; the POST was never made.
+      mockPaymentTransactionFindMany.mockImplementation(
+        async (args: { where: { OR?: unknown } }) =>
+          args.where.OR
+            ? []
+            : [
+                {
+                  id: "txn_stranded",
+                  status: "PENDING",
+                  amountCents: 10000,
+                  refundedAmountCents: 0,
+                  paymentMethodId: "pm_b1",
+                  stripePaymentIntentId: null,
+                  reference: "pending_charge_b1_txn_stranded_v2",
+                  reason: "cron_pending_hold_charge",
+                  createdAt: STALE_MARKER,
+                  updatedAt: STALE_MARKER,
+                },
+              ],
+      );
+      mockChargePaymentMethod.mockResolvedValue({
+        id: "pi_replayed",
+        status: "succeeded",
+        amount: 10000,
+        payment_method: "pm_b1",
+      });
+
+      const result = await confirmPendingBookings();
+
+      expect(recoveryReleaseCall()?.[0]).toEqual({
+        where: { id: "b1", status: "CONFIRMED", savedCardClaimAt: STALE_MARKER },
+        data: { status: "PENDING", nonMemberHoldUntil: STALE_MARKER, savedCardClaimAt: null },
+      });
+      expect(auditActions()).toContain("booking.saved_card_claim_recovered");
+      // The recovery itself never calls Stripe; the ordinary pass replays by key.
+      expect(mockChargePaymentMethod).toHaveBeenCalledTimes(1);
+      expect(mockChargePaymentMethod).toHaveBeenCalledWith(
+        expect.objectContaining({ idempotencyKey: "pending_charge_b1_txn_stranded_v2" }),
+      );
+      expect(mockPaymentTransactionCreate).not.toHaveBeenCalled();
+      expect(result.confirmedBookingIds).toEqual(["b1"]);
+    });
+
+    it("stamps the cron's marker at the claim itself, not at the run's start, so a long run never ages a live claim", async () => {
+      const claimTime = new Date(NOW.getTime() + 20 * 60 * 1000);
+      mockPendingBookings([makePendingBooking("b1")]);
+      // The run has been going 20 minutes by the time this booking's capacity is checked.
+      mockCheckCapacityForGuestRanges.mockImplementation(async () => {
+        vi.setSystemTime(claimTime);
+        return { available: true, minAvailable: 10, nightDetails: [] };
+      });
+      mockChargePaymentMethod.mockResolvedValue({ id: "pi_late", status: "succeeded", amount: 10000, payment_method: "pm_b1" });
+
+      await confirmPendingBookings();
+
+      const claim = mockBookingUpdateMany.mock.calls.find(([call]) => call?.where?.status === "PENDING" && call?.data?.status === "CONFIRMED");
+      expect(claim?.[0].data.savedCardClaimAt).toEqual(claimTime);
+    });
+
+    it("leaves a claim younger than the recovery age alone after the locked re-read", async () => {
+      mockPendingBookings([]);
+      strandedClaim(new Date(NOW.getTime() - 60 * 1000));
+
+      const result = await confirmPendingBookings();
+
+      expect(recoveryReleaseCall()).toBeUndefined();
+      expect(auditActions()).toEqual([]);
+      expect(result.failedBookingIds).toEqual([]);
+    });
+
+    it("a release that hits P2028 twice is retried once, audited as critical, counted failed, keeps the marker, and #3268 is told the claim was not released", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      mockChargePaymentMethod.mockRejectedValue(
+        stripeError({ type: "card_error", code: "card_declined", decline_code: "lost_card", message: "Your card was declined." }),
+      );
+      const runTransaction = mockPrismaTransaction.getMockImplementation()!;
+      let releaseTransactions = 0;
+      mockPrismaTransaction.mockImplementation(async (arg: unknown, options?: unknown) => {
+        if (typeof arg === "function" && mockChargePaymentMethod.mock.calls.length > 0) {
+          releaseTransactions++;
+          expect(options).toEqual({ maxWait: 5000, timeout: 10000 });
+          throw Object.assign(new Error("Transaction API error: Unable to start a transaction in the given time."), { code: "P2028" });
+        }
+        return runTransaction(arg, options);
+      });
+
+      // The retry's short pause runs on this suite's frozen clock.
+      const run = confirmPendingBookings();
+      await vi.runAllTimersAsync();
+      const result = await run;
+
+      expect(releaseTransactions).toBe(2);
+      expect(result.failedBookingIds).toEqual(["b1"]);
+      expect(auditActions()).toEqual(["booking.saved_card_claim_release_failed"]);
+      expect(mockAuditLogCreate.mock.calls[0]?.[0]).toMatchObject({
+        data: { severity: "critical", category: "payment", entityId: "b1" },
+      });
+      expect(
+        mockBookingUpdateMany.mock.calls.find(([call]) => call?.data?.savedCardClaimAt === null),
+      ).toBeUndefined();
+      const [alert] = mockSendAdminPaymentFailureAlert.mock.calls[0] as [{ errorMessage: string }];
+      expect(alert.errorMessage).toContain("still marked confirmed but unpaid");
+    });
+
+    it("after a definite decline marked the attempt FAILED and the release failed, the next run recovers the booking and starts a FRESH attempt", async () => {
+      mockPendingBookings([makePendingBooking("b1")]);
+      capacityAvailable();
+      strandedClaim(STALE_MARKER, { status: "FAILED", transactions: [{ status: "FAILED" }] });
+      mockPaymentTransactionFindMany.mockImplementation(
+        async (args: { where: { OR?: unknown } }) =>
+          args.where.OR
+            ? []
+            : [
+                {
+                  id: "txn_declined",
+                  status: "FAILED",
+                  amountCents: 10000,
+                  refundedAmountCents: 0,
+                  paymentMethodId: "pm_b1",
+                  stripePaymentIntentId: "pi_declined",
+                  reference: "pending_charge_b1_txn_declined_v2",
+                  reason: "cron_pending_hold_charge",
+                  createdAt: STALE_MARKER,
+                  updatedAt: STALE_MARKER,
+                },
+              ],
+      );
+      mockChargePaymentMethod.mockResolvedValue({
+        id: "pi_fresh",
+        status: "succeeded",
+        amount: 10000,
+        payment_method: "pm_b1",
+      });
+
+      const result = await confirmPendingBookings();
+
+      expect(recoveryReleaseCall()).toBeDefined();
+      expect(mockPaymentTransactionCreate).toHaveBeenCalledTimes(1);
+      expect(mockChargePaymentMethod).toHaveBeenCalledWith(
+        expect.objectContaining({ idempotencyKey: attemptKeyFor("b1") }),
+      );
+      expect(result.confirmedBookingIds).toEqual(["b1"]);
     });
   });
 });

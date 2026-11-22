@@ -11,6 +11,7 @@ import { hasFinanceManagerAccess } from "@/lib/admin-permissions";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { loadFinanceAccessMember } from "@/lib/finance-auth";
 import { requireAdmin } from "@/lib/session-guards";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const mappingSchema = z.object({
   id: z.string().optional(),
@@ -82,12 +83,11 @@ export async function PUT(request: NextRequest) {
     return guard.response;
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = saveSchema.safeParse(body);
   if (!parsed.success) {

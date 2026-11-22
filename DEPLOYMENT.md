@@ -38,6 +38,7 @@ Postgres `max_connections=40`:
 | `app_blue` / `app_green` | web slots | 10 each |
 | `app` | cron leader + warm fallback web | 5 |
 | `migrate` | deploy-window migrations | 2 |
+| `seed` | first-install seed, one-shot, never on an upgrade | 2 |
 | `app` (cron leader), `AUDIT_RETENTION_DATABASE_URL` | nightly audit retention, only when set (#4453) | 2 |
 
 The ceiling holds per container because `src/lib/prisma.ts` shares one client
@@ -663,6 +664,10 @@ Start from `.env.example` and the configuration reference:
 cp .env.example .env
 ```
 
+The template declares `APP_ENVIRONMENT_ROLE=non-production`. On the club's live
+site, change it to `APP_ENVIRONMENT_ROLE=production` (see "Environment safety"
+below).
+
 See `CONFIGURATION.md` for every supported environment variable and
 `config/club.json` field.
 
@@ -693,7 +698,10 @@ Minimum production categories:
   brought up yourself needs the line by hand.
   `scripts/run-production-blue-green-deploy.sh` refuses to run without exactly
   `production` — at step 3 of 20, before the migration and long before the
-  cutover — so a live deployment cannot reach UNKNOWN through the supported path.
+  cutover — and First Bootstrap runs the same check
+  (`bash scripts/check-environment-role.sh`) before its first `docker compose up`,
+  so neither supported way of standing up the live site starts it as UNKNOWN or
+  as a copy.
   **It is not `APP_RUNTIME_ROLE`**, which sits beside it in the same Compose
   environment, names which container *slot* a process is (`web-blue`,
   `web-green`, `cron-leader`, `staging`), and is never read to decide whether
@@ -776,13 +784,25 @@ Minimum production categories:
   is not reachable from web containers at
   `http://app:3000/api/deploy/runtime-status`
 - Observability: `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_ORG`,
-  `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN`
+  `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN`. Both DSNs are read at runtime from
+  `.env`; changing them needs a restart/redeploy, not a rebuild. Browser Sentry
+  stays off if `NEXT_PUBLIC_SENTRY_DSN` is blank or runtime configuration cannot
+  be fetched. Source-map upload credentials remain build-time settings.
 
 Do not commit `.env` files or production secrets.
 
 ## GitHub Container Registry
 
-GitHub Actions publishes production images after CI passes on `main`:
+Published images contain no browser Sentry destination. Before upgrading to
+runtime browser Sentry, every operator, including the upstream maintainer,
+must set `NEXT_PUBLIC_SENTRY_DSN` in the deployment's `.env` if browser error
+reports are wanted. It works identically with published images and host builds
+(`--build-and-push-images`). Leaving it blank disables browser reporting;
+replay additionally requires the club's privacy opt-in. See
+[`CONFIGURATION.md`](CONFIGURATION.md#sentry).
+
+GitHub Actions publishes production images from each `main` commit's own CI
+run, once its gates pass (the `Publish GHCR images` job in `ci.yml`):
 
 ```text
 ghcr.io/<owner>/alpineclubbookingsnz-app:<commit-sha>
@@ -799,6 +819,19 @@ echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u <owner> --password-stdin
 
 Do not store that token in the repository or `.env`.
 
+A `main` commit has images exactly when its CI run's `Publish GHCR images`
+job succeeded, not merely because it is on `main`. A newer merge may replace
+`main`'s queued run, so an intermediate `main` commit can have no run and no
+images; a run that has started always finishes, and the newest `main` commit
+normally gets one (a manual re-run can replace its pending run; `INV-OPS-021`,
+#5356). A run whose `Publish GHCR images` job did not succeed (replaced while
+queued, skipped after a failed gate, failed, or cancelled by hand) published
+nothing; re-run it with `gh run rerun <run-id>`. A re-run joins `main`'s queue
+and replaces whatever is pending there, so start it only when nothing is
+pending on `main` (`gh run list --workflow ci.yml --branch main --status pending`).
+`pnpm run release:cut publish` tags `origin/main` by default, asks GitHub for
+that job's result, and will not tag a commit without images.
+
 ### Supply chain
 
 Builds use reviewed, immutable inputs. Every third-party Action is pinned to a
@@ -807,9 +840,9 @@ workflow and composite-action references, including `docker://` actions.
 External images in the Dockerfile and Compose files keep readable tags and pin
 the multi-architecture index digest. Dependabot proposes Action and Docker
 updates for review. The pnpm minimum release age matches the npm Dependabot
-cooldown: seven days (`10080` minutes).
-The already-locked `nodemailer@10.2.1` has an exact-version exception so frozen
-installs work during rollout; remove it after the next Nodemailer update.
+cooldown: seven days (`10080` minutes). No version is exempt from it: the
+exact-version exception made during rollout, for the already-locked
+`nodemailer@10.2.1`, was removed once `main` had moved to a later Nodemailer.
 
 Both published images include a BuildKit SBOM and maximum build provenance,
 plus a GitHub build provenance attestation tied to the pushed image digest.
@@ -872,12 +905,23 @@ and [Adding a data-encryption key](#adding-a-data-encryption-key-4456).
    Generate four different passwords with `openssl rand -hex 24`: the operator's
    `DB_PASSWORD`, then `APP_DB_PASSWORD`, `MIGRATION_DB_PASSWORD` and
    `AUDIT_RETENTION_DB_PASSWORD`. Hex passwords need no URL encoding in the
-   connection strings below. Set a strong `AUTH_SECRET` too. **Leave `APP_DB_USER`, `MIGRATION_DB_USER` and
-   `AUDIT_RETENTION_DATABASE_URL` blank until step 6.**
+   connection strings below. Set a strong `AUTH_SECRET` too. Set `NEXTAUTH_URL`
+   to the club's public address. Set the first administrator's `SEED_ADMIN_EMAIL`
+   and `SEED_ADMIN_PASSWORD`, and the shared lodge kiosk account's
+   `SEED_LODGE_PASSWORD`, for step 7. **Leave `APP_DB_USER`, `MIGRATION_DB_USER` and
+   `AUDIT_RETENTION_DATABASE_URL` blank until step 6.** Change the template's
+   existing `APP_ENVIRONMENT_ROLE=non-production` line to the live-site
+   declaration rather than adding a second line, which the step 3 check refuses
+   (see below for why):
 
-3. **Start only PostgreSQL**:
+   ```dotenv
+   APP_ENVIRONMENT_ROLE=production
+   ```
+
+3. **Check the environment role, then start only PostgreSQL**:
 
    ```bash
+   bash scripts/check-environment-role.sh
    docker compose up -d --build postgres
    ```
 
@@ -929,18 +973,49 @@ and [Adding a data-encryption key](#adding-a-data-encryption-key-4456).
    checkout tools such as `setup:check`, point their `DATABASE_URL` at the app
    role, using the host/port reachable from that shell.
 
-7. **Start the web slots, Caddy and cron leader**:
+7. **Create the first administrator** with the seed service, which needs nothing
+   on the server but Docker:
+
+   ```bash
+   docker compose run --rm seed
+   ```
+
+   It creates the first admin, the shared lodge kiosk account and the starter
+   data (access roles, membership types, starter pages) on the empty database.
+   It runs `prisma/seed.ts` in the same image as `migrate`, so with
+   `MIGRATE_IMAGE` set to the published image it builds nothing, and it connects
+   as the application role from step 6. It reads the three `SEED_*` values from
+   `.env`; if one is missing it stops, names it, and writes nothing. Run it once,
+   on the first install only: upgrades never run it (see "Config Self-Heal On
+   Boot"), and `docker compose up` never starts it. CI runs steps 3 to 7 as
+   written here, on an empty database (`scripts/ci/first-install-smoke.mjs`,
+   `INV-OPS-022`), so keep each command in its own fenced block.
+
+8. **Start the web slots, Caddy and cron leader**:
 
    ```bash
    docker compose up -d --build app app_blue app_green caddy
    docker compose ps
    ```
 
-8. **Open Admin → Setup** after seeding the intended admin (below). Confirm
+9. **Open Admin → Setup** after seeding the intended admin (step 7). Confirm
    **Data Encryption Key** and **Database role** are complete before connecting
    providers or enrolling authenticator apps. `pnpm run setup:check` shows the
    same checks for its own shell connection; the database-role warning never
    blocks an existing deployment.
+
+**Set `APP_ENVIRONMENT_ROLE=production` before the first `docker compose up`,
+and run `bash scripts/check-environment-role.sh` first.** `.env.example` ships
+`APP_ENVIRONMENT_ROLE=non-production`, which is right for a laptop and wrong
+here: a live site started from the template unchanged believes it is a copy, so
+it emails no member (confirmations, receipts, password resets) and replaces the
+email addresses on the club's real Xero contacts. The check refuses anything but
+exactly `production` before any container starts, and names the variable. It is
+the same check the blue/green deploy script runs at its own step 3
+(`scripts/lib/environment-role-check.sh`), and needs only `bash`. A staging site
+or rehearsal copy does not use First Bootstrap; it uses
+`docker-compose.staging.yml`, which declares `non-production` itself. See
+`docs/guides/environment-role.md`.
 
 To validate the production image alone (without Compose), build it locally:
 
@@ -949,8 +1024,8 @@ docker build -t tacbookings:local .
 ```
 
 Club identity, capacity, age tiers, seasons, and rates are configured **in the
-database**, not in a file. After the migrate/seed steps, sign in as the seeded
-admin and complete configuration at `/admin/setup` (identity, lodges/capacity,
+database**, not in a file. Once the seed step above has run, sign in as the
+seeded admin and complete configuration at `/admin/setup` (identity, lodges/capacity,
 seasons/rates, email, Stripe, Xero). Optionally run `pnpm run setup:wizard`
 against the migrated database to bootstrap the club identity, capacity, and age
 tiers from the CLI — it writes those database settings rows (no `config/club.json`
@@ -961,14 +1036,16 @@ the file on a Docker host changes nothing there. Copy `config/club.example.json`
 to `config/club.json` and edit it only for those cases; it is no longer required.
 
 Create or seed accounts only for the intended environment. The first admin
-from `prisma/seed.ts` is controlled by `SEED_ADMIN_EMAIL` and
+from `prisma/seed.ts` (`docker compose run --rm seed` on a Docker-only install,
+`pnpm run db:seed` on a machine with Node and pnpm) is controlled by `SEED_ADMIN_EMAIL` and
 `SEED_ADMIN_PASSWORD` (optionally `SEED_ADMIN_FIRST_NAME` and
 `SEED_ADMIN_LAST_NAME`), and the shared lodge kiosk account by
 `SEED_LODGE_PASSWORD`. The seeded admin can log in immediately and is forced
 to change password on first login; change all seed credentials before any
 shared environment is exposed. The seed is create-if-missing throughout, so
-re-running it against an existing database changes nothing; committee and
-chore placeholders are only inserted when those tables are empty.
+re-running it against an existing database adds nothing and changes no value
+you set; only the built-in lobby display designs are refreshed from code.
+Committee and chore placeholders are only inserted when those tables are empty.
 
 ## Routine Production Deploy
 
@@ -1013,10 +1090,18 @@ full order, its refusals and its recovery messages are in
 "Public Reference Release Checklist":
 
 1. `pnpm run release:cut prepare --execute` on a clean checkout of
-   `origin/main` builds the `release/v<version>` commit; push it and merge it
-   as the release-prep pull request.
+   `origin/main` builds the `release/v<version>` commit. It rolls the
+   changelog, files the upgrade guide's `## Unreleased` steps under
+   `## v<previous> → v<version>`, and writes a `docs/releases/v<version>.md`
+   stub listed in the release index (#4983). Write the notes page, then push
+   the branch and merge it as the release-prep pull request.
 2. `pnpm run release:cut publish --execute` tags the merged commit, pushes the
-   tag and publishes the GitHub release.
+   tag and publishes the GitHub release. It first asks GitHub whether that
+   commit's CI run published its images, and refuses if not, so the deploy
+   below can pull them. It also refuses while the upgrade guide lacks the
+   version's section, still has steps under `## Unreleased` or has a step in a
+   section an earlier release already shipped, and while the notes page is
+   missing or unfinished.
 3. Deploy that tag from the host's source checkout:
 
    ```bash
@@ -1210,7 +1295,7 @@ image stops the engine before image inspection; it never guesses a local tag.
 ## Public Rate Limits And Proxy Headers
 
 Public route rate limits are process-local sliding windows keyed by
-`getClientIp()` in `src/lib/rate-limit.ts`. This is acceptable for the supported
+`getClientIp()` in `src/lib/rate-limit-http.ts`. This is acceptable for the supported
 production shape because Caddy is the only public listener and routes traffic to
 one active web slot at a time.
 
@@ -1220,11 +1305,14 @@ old and new slots, so public abuse controls can be temporarily split across both
 runtimes during that drain. Do not run multiple publicly routed app replicas
 long-term unless the in-memory limiter is replaced with a shared store.
 
-**A `Caddyfile` change does not ship with an app deploy.** The blue/green runner
-rebuilds and cuts over the app slots; it does not reload Caddy. After pulling a
-release whose diff touches `Caddyfile` or `Caddyfile.staging` — request-body
-caps, security headers, routing — reload Caddy explicitly on the host, and check
-the config first so a typo cannot take the site down:
+**The production deploy picks up a `Caddyfile` change by itself.**
+`docker-compose.yml` mounts the checkout's `Caddyfile` into the Caddy
+container, and `scripts/run-production-blue-green-deploy.sh` validates it before
+it changes anything (step 4) and, at cutover (step 17), runs
+`docker compose up -d caddy` and reloads Caddy. Nothing is needed by hand. Only
+when a `Caddyfile` or `Caddyfile.staging` change reaches a host some other way
+(a staging host, or a deploy that does not use that script) reload Caddy
+explicitly, and check the config first so a typo cannot take the site down:
 
 ```bash
 docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile
@@ -1236,15 +1324,32 @@ connections and the TLS certificate cache. If `validate` fails, fix the file
 before reloading — the running config stays in place until a reload succeeds.
 
 The app trusts proxy-derived client IP headers only under that Caddy boundary.
-`getClientIp()` uses the rightmost `X-Forwarded-For` value, which is the peer
-Caddy appended closest to the app container, then falls back to `X-Real-IP`.
+Caddy replaces `X-Forwarded-For` with its resolved client IP (`header_up
+X-Forwarded-For {client_ip}` in `deploy/caddy/tacbookings-active.caddy`), which
+is the connecting peer when Caddy is the edge and, in `CADDY_TLS_MODE=local`,
+the address the trusted proxy forwarded — see "Client IPs behind the proxy"
+below. The app therefore normally sees one address. `getClientIp()` takes the
+last `X-Forwarded-For` address, or `X-Real-IP` when that header is absent. The
+last-address rule is for a proxy that appends to the header instead of
+replacing it, where the first address is whatever the caller sent.
+
+The audit log records the same address as the rate limits: every route that
+writes a caller's IP takes it from `getClientIp()`, and lint refuses a direct
+read of a client-address header anywhere else (#5399). It is the address the hop
+nearest the app saw, so it is the visitor's only in the supported shape:
+
+- **Behind more than one proxy** (a CDN in front of another proxy, say), the
+  hop nearest the app must resolve the visitor's address and overwrite the
+  header. That is the reference Caddy in local mode, with
+  `CADDY_TRUSTED_PROXIES` covering every hop in front of it. Otherwise the last
+  address is the next hop's own peer, such as a CDN edge address many visitors
+  share, and both the audit log and the per-address rate limits see that.
+- **With no proxy at all**, the caller sets `X-Forwarded-For` and `X-Real-IP`
+  freely, so neither the audit address nor a rate-limit key can be trusted.
+
 Do not expose app containers directly to the Internet or through another proxy
 that preserves attacker-supplied `X-Forwarded-For` values without appending its
 own trusted peer address.
-Caddy sets that header to its resolved client IP (`header_up X-Forwarded-For
-{client_ip}` in `deploy/caddy/tacbookings-active.caddy`), which is the connecting
-peer when Caddy is the edge and, in `CADDY_TLS_MODE=local`, the address the
-trusted proxy forwarded — see "Client IPs behind the proxy" below.
 
 ### Hostnames and DNS records
 
@@ -1423,6 +1528,13 @@ docker compose logs --since 1h caddy | grep '"uri"'
 
 Read `docs/BLUE_GREEN_MIGRATION_POLICY.md` before deploying schema changes.
 Migrations must be compatible with old and new app versions during cutover.
+
+A fork that already ran an earlier, since-replaced version of the
+subscription-category migrations needs a one-time, out-of-band reconciliation
+before the current migration history will apply cleanly — see
+`docs/guides/subscription-category-redesign-production-reconciliation.md`.
+This does not apply to a deployment that has never run any
+subscription-category migration at all.
 
 Potentially breaking migrations require explicit operator acknowledgement with:
 
@@ -1786,7 +1898,7 @@ To seed a fresh instance — disaster recovery, or standing up a replacement /
 clone — from a known-good configuration instead of hand-configuring it, drop the
 club's exported **config-transfer bundle** on disk and point
 `CONFIG_BUNDLE_IMPORT_PATH` at it. On the next Node boot — **after** migrations,
-the base seed, and the C2 self-heal — the app applies that bundle
+the base seed (`docker compose run --rm seed`), and the C2 self-heal — the app applies that bundle
 **non-interactively**, through the same validated import pipeline the admin
 Export & Import page uses (`src/lib/config-transfer/bootstrap-import.ts`,
 implementing ADR-003).
@@ -1794,7 +1906,7 @@ implementing ADR-003).
 The whole provisioning flow becomes:
 
 ```text
-deploy env + bundle file  →  prisma migrate deploy  →  base seed  →  boot auto-import  →  operational site
+deploy env + bundle file  →  run --rm migrate  →  run --rm seed  →  boot auto-import  →  operational site
 ```
 
 ### Placement and enabling
@@ -1940,6 +2052,8 @@ docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml up -d --build postgres app
 docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml run --rm migrate
+docker compose --env-file .env.staging -p tacbookings-staging \
+  -f docker-compose.yml -f docker-compose.staging.yml run --rm seed
 ```
 
 See `docs/STAGING_ACCESSIBILITY.md` for route coverage and Lighthouse guidance.
@@ -1950,7 +2064,9 @@ synthetic data.
 
 The app runs scheduled PostgreSQL dumps to S3-compatible storage. **Backups are
 configured in-app (#2095), not by environment variables.** Enable and configure
-them at **Admin → Integrations → Database Backups** (`/admin/backups`):
+them with the **Backup Setup** wizard (**Admin → Integrations → Backup Setup**),
+then edit them at **Admin → Monitoring & Support → Database Backups**
+(`/admin/backups`):
 
 - the **enabled** switch and the **retention** window (support-area edit),
 - the S3 **bucket** and **region** (Full Admin only — repointing the destination
@@ -2127,13 +2243,16 @@ release acknowledges an event it does not know and drops it. With them the app
 keeps one record per cardholder dispute (chargeback), emails Finance when a
 dispute opens and when it closes, shows "Disputed by cardholder" on the
 booking and on **Finance → Payments**, and, while a dispute is open or lost,
-issues no card refund or account credit for that payment: a cancel is handed to
-the treasurer instead (`INV-PAY-154`). Disputes opened before the upgrade are
+issues no card refund or account credit for that payment: a cancel, or an edit
+that lowers the price, is handed to the treasurer instead (`INV-PAY-154`). Disputes opened before the upgrade are
 not back-filled, so check Stripe's **Disputes** page once after adding the
 events and handle any open dispute by hand.
 
 **Recording a lost dispute in Xero (treasurer, by hand).** The app posts
-nothing to Xero for a dispute. When the Finance alert says a dispute was lost:
+nothing to Xero for a dispute, nor a credit note for a cancel's or edit's
+refund it handed to the treasurer because of one. If you pay such a refund
+while the dispute is open, record the refund in Xero by hand as you would any
+bank-transfer refund. When the Finance alert says a dispute was lost:
 
 1. In Stripe, open the dispute and note the disputed amount, Stripe's dispute
    fee and the payout that carried the withdrawal.
@@ -2143,12 +2262,41 @@ nothing to Xero for a dispute. When the Finance alert says a dispute was lost:
    the booking and the Stripe dispute id, and a second for the dispute fee,
    coded to bank fees.
 3. Reconcile both against the Stripe payout that carried them.
-4. Do not refund or credit the member: the bank has already returned their
-   money. Resolve the cancellation's treasurer task, if one was raised, by
-   dismissing it with the dispute id as the reason.
+4. Do not refund or credit the member for the lost amount: the bank has
+   already returned it. Resolve the cancellation's or edit's treasurer task in
+   Finance > Payments. The lost amount is counted once across all the refunds
+   on that card payment, oldest refund first. Where it covers what a task still
+   owes, the task offers **Dismiss** (give the dispute id as the reason). Where
+   it covers only part, the task offers **Reduce by lost dispute**, which takes
+   exactly the lost part off; mark the rest paid once you have sent it. A task
+   the loss does not reach (it went to an older refund) stays owed in full.
+   Neither task offers **Mark paid back** while lost money is set against it,
+   and while another dispute on the payment is still open, wait for it.
+   **Before upgrading to the release with this rule (#4516),** look in
+   Finance > Payments for refund tasks on a disputed card payment that were
+   dismissed while the dispute was still open. The app counts every dismissed
+   one as lost money already applied, so a later refund on that payment is
+   reduced by less than was lost (a $50 refund dismissed early, then $150 lost
+   against a $150 refund, leaves $50 the club pays twice). Note each one for
+   the treasurer, who settles that payment's later refund by hand.
 
 A won dispute needs no Xero entry unless the withdrawal was recorded by hand
 before the win; then record its reversal the same way.
+
+**A lost dispute later won (treasurer, by hand).** Stripe can reverse a lost
+dispute, for example after an appeal. The app then sends Finance one more
+alert, "Lost card payment dispute now won". If you recorded the loss in Xero:
+
+1. In Stripe, note the payout that carried the returned amount and whether the
+   dispute fee came back with it.
+2. In Xero, record a receive money transaction into the Stripe clearing account
+   for the returned amount, coded to the same account as the loss and
+   referencing the booking and the Stripe dispute id, and a second for the fee
+   if Stripe returned it.
+3. Reconcile both against that payout.
+4. A treasurer task the app raised while the dispute held stays open. If you
+   already dismissed it, the member's refund or credit is now owed again: pay
+   it as the task would have.
 
 If Stripe webhook delivery was missed while the endpoint, DNS, TLS, or the
 signing secret stored under **Admin > Integrations > Stripe** was wrong (it is
@@ -2572,6 +2720,12 @@ before deployment; Admin Modules do not replace that safety check.
 Preferred rollback is to route Caddy back to the previous healthy color while it
 is still running. If schema changes have already applied, rollback must respect
 the migration policy and any compatibility constraints in the migration PR.
+
+**Not below v0.14.0 once it has run (#5270).** Routing back to a colour older
+than v0.14.0 can let an old copy retry a saved-card charge under a different key
+and charge a member twice, and a backup cannot undo a charge at Stripe. Recover
+on v0.14.0 or later. The boundary and the checks to run if it was crossed are in
+the [saved-card upgrade and rollback boundary](docs/UPGRADING.md#saved-card-upgrade-and-rollback-boundary-5270).
 
 **Not once a data-encryption key is in use (#4456).** Rows written under
 `DATA_ENCRYPTION_KEYS` cannot be read by an older release or by a colour started

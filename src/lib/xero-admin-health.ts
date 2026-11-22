@@ -1,7 +1,12 @@
 import { getXeroWebhookHealth } from "@/lib/xero-webhook-health";
 import type { BookingStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
+import { BOOKING_EXTERNAL_SETTLEMENT_WHERE } from "@/lib/booking-external-settlement";
 import { getXeroMemberGroupingSnapshot } from "@/lib/xero-member-grouping-resync";
+import {
+  contactGroupMismatchTotal,
+  type ContactGroupMismatchCounts,
+} from "@/lib/xero-contact-group-mismatch-summary";
 import { prisma } from "@/lib/prisma";
 import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
 import { readPaidAnotherWayUncoveredCents } from "@/lib/card-refund-paid-another-way-cash";
@@ -10,6 +15,7 @@ import { getTodaysXeroUsageSummary } from "@/lib/xero-api-usage";
 import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoice-evidence";
 import { getXeroContactLinkMismatchSnapshot } from "@/lib/xero-contact-link-mismatches";
 import { findCreditNotesSpentOutsideApp } from "@/lib/xero-credit-note-spent-outside-flag";
+import { readXeroTaxHealth, type XeroTaxHealth } from "@/lib/xero-tax-health";
 import { readActiveRefundNoteMetadataCentsByPayment } from "@/lib/xero-sync";
 import {
   findResolvedBookingInvoiceCreate,
@@ -115,7 +121,12 @@ export interface XeroAdminHealthSnapshot {
     count: number;
     graceHours: number;
   };
-  contactGroupMismatches: {
+  /**
+   * #5234: `count` is every entry the operator must look at — mismatches the
+   * re-sync repairs plus information-only entries it never touches — split
+   * so each surface can say which is which.
+   */
+  contactGroupMismatches: ContactGroupMismatchCounts & {
     count: number;
     cacheReady: boolean;
   };
@@ -125,6 +136,8 @@ export interface XeroAdminHealthSnapshot {
   };
   /** #4220: credit notes Xero shows spent outside the app while bookings wait to draw on them; derived, no Xero call. */
   creditNotesSpentOutsideApp: { count: number };
+  /** #4632: whether Xero still carries the club's tax treatment in force today; not checked when Xero cannot be read. */
+  taxTreatment: XeroTaxHealth;
   apiBudget: {
     status: "healthy" | "warning" | "critical" | "exhausted" | "unknown";
     usagePercent: number | null;
@@ -177,7 +190,8 @@ export async function getMissingXeroInvoiceBookings(options?: {
       // it here would invite an admin to mint an awaiting-payment invoice — and
       // email it to the member — for money the club already holds. Admin UX
       // only: the enforcement point is the enqueue choke fence.
-      NOT: { payment: { manuallyMarkedPaidAt: { not: null } } },
+      // #5005: nor is an imported free stay. The filter is the fence's own.
+      NOT: BOOKING_EXTERNAL_SETTLEMENT_WHERE,
     },
     select: {
       id: true,
@@ -454,6 +468,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     contactGroupMismatches,
     contactLinkMismatches,
     creditNotesSpentOutside,
+    taxTreatment,
     usageSummaryResult,
   ] = await Promise.all([
     prisma.member.count({
@@ -493,6 +508,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     getXeroMemberGroupingSnapshot({ limit: 1 }),
     getXeroContactLinkMismatchSnapshot({ limit: 1 }),
     findCreditNotesSpentOutsideApp(prisma),
+    readXeroTaxHealth().catch(() => ({ checked: false, problems: [] })),
     getTodaysXeroUsageSummary()
       .then((summary) => ({
         status: summary.today.budgetStatus,
@@ -544,10 +560,13 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     contactGroupMismatches: {
       // Parity with the retired age-tier snapshot: information-only entries
       // (parked members in managed groups, never written to) count toward the
-      // surfaced total so the operator still sees them.
-      count:
-        contactGroupMismatches.mismatchCount +
-        contactGroupMismatches.informationalCount,
+      // surfaced total so the operator still sees them (owner decision, #5234).
+      count: contactGroupMismatchTotal({
+        resyncCount: contactGroupMismatches.mismatchCount,
+        reviewByHandCount: contactGroupMismatches.informationalCount,
+      }),
+      resyncCount: contactGroupMismatches.mismatchCount,
+      reviewByHandCount: contactGroupMismatches.informationalCount,
       cacheReady: contactGroupMismatches.cacheReady,
     },
     contactLinkMismatches: {
@@ -555,6 +574,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
       cacheReady: contactLinkMismatches.cacheReady,
     },
     creditNotesSpentOutsideApp: { count: creditNotesSpentOutside.length },
+    taxTreatment,
     apiBudget: usageSummaryResult,
   };
 }

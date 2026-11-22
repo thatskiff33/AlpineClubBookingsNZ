@@ -81,6 +81,7 @@ const MODULES = {
   induction: true, workParties: true, promoCodes: true, hutLeaders: true,
   communications: true, memberNotices: true, eventsCalendar: true,
   skifieldConditions: true,
+  skifieldWhakapapa: true,
   twoFactor: false, analytics: false,
   // Every travelling module flag is a non-null Boolean; the #2200 dry-run
   // `constraints.required` audit rejects a projected null, so the fixture must
@@ -120,7 +121,7 @@ describe("config-transfer club-settings", () => {
       strFromU8(files.get("club-settings/email-message-setting.json")!),
     );
     expect(email.clubName).toBe("Grads");
-    // doorCode was dropped from EmailMessageSetting (fork #15); it must never be
+    // doorCode was dropped from EmailMessageSetting (triyder/AlpineClubBookingsNZ#15); it must never be
     // emitted here — the lodge door code travels in lodge.json instead.
     expect("doorCode" in email).toBe(false);
   });
@@ -179,6 +180,43 @@ describe("config-transfer club-settings", () => {
       },
     ]);
   });
+
+  // #4932: before the split, skifieldConditions also switched the Whakapapa
+  // report on, so an older bundle's answer must carry across to the new flag.
+  it.each([true, false])(
+    "carries a pre-#4932 bundle's skifieldConditions=%s to skifieldWhakapapa",
+    async (value) => {
+      const older = Object.fromEntries(
+        Object.entries({ ...MODULES, skifieldConditions: value }).filter(
+          ([key]) => key !== "skifieldWhakapapa",
+        ),
+      );
+      const plan = await clubSettingsImporter.plan({
+        format: CLUB_FORMAT_TEST,
+        db: stubDb({
+          clubModuleSettings: { ...MODULES, skifieldConditions: value, skifieldWhakapapa: !value },
+        }),
+        files: new Map([
+          [
+            "club-settings/club-module-settings.json",
+            strToU8(JSON.stringify(older)),
+          ],
+        ]),
+        manifest: {} as never,
+        mode: "merge",
+        resolutions: new Map(),
+      });
+      expect(plan.errors).toEqual([]);
+      expect(plan.items).toEqual([
+        {
+          entity: "club-module-settings",
+          key: "default",
+          action: "update",
+          changedFields: ["skifieldWhakapapa"],
+        },
+      ]);
+    },
+  );
 
   // #3819 retired #3416's club-wide switch in favour of a per-lodge setting.
   // A bundle from a release that still exported it must import cleanly, and
@@ -362,10 +400,11 @@ describe("aiDiagnostics is non-travelling (AID-2, #2371)", () => {
   });
 });
 
-// Guard against the #153 regression: every ClubModuleSettings read in this
+// Guard against the hoppers99/AlpineClubBookingsNZ#153 regression: every ClubModuleSettings read in this
 // category (export, plan, apply) must use the shared column select so a
-// retired-but-not-yet-dropped column never appears in the generated SQL (see
-// CLUB_MODULE_SETTINGS_COLUMN_SELECT in src/config/modules.ts and #150/#139).
+// retired-but-not-yet-ignored column never appears in a SELECT or RETURNING (see
+// CLUB_MODULE_SETTINGS_COLUMN_SELECT in src/config/modules.ts, hoppers99/AlpineClubBookingsNZ#150 and
+// hoppers99/AlpineClubBookingsNZ#139).
 describe("club-module-settings singleton reads use the explicit column select", () => {
   it("declares the shared select on the SINGLETONS spec", () => {
     const spec = SINGLETONS.find((s) => s.entity === "club-module-settings");
@@ -482,7 +521,7 @@ describe("club-module-settings singleton reads use the explicit column select", 
 // Guard against the class of bug where an upstream schema change drops/renames a
 // column that a singleton allowlist still names — the club-settings apply uses an
 // untyped delegate, so typecheck can't catch it and it only fails at write time
-// on the server (as EmailMessageSetting.doorCode did after fork #15). This
+// on the server (as EmailMessageSetting.doorCode did after triyder/AlpineClubBookingsNZ#15). This
 // validates every singleton field against the real Prisma model columns.
 describe("club-settings allowlists match the Prisma schema", () => {
   it("every singleton field is a real column on its model", () => {
@@ -687,6 +726,11 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
       // that answer rather than switching a target install to treasurer approval.
       lateCaptureRefundNeedsApproval:
         DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
+      // #4932: the three booking timings export their shipped defaults.
+      preArrivalReminderDays: DEFAULT_BOOKING_DEFAULTS.preArrivalReminderDays,
+      additionalPaymentReminderDays:
+        DEFAULT_BOOKING_DEFAULTS.additionalPaymentReminderDays,
+      policyExceptionHoldDays: DEFAULT_BOOKING_DEFAULTS.policyExceptionHoldDays,
     });
     expect(readJson(files, "booking-request-settings")).toEqual({
       ...DEFAULT_BOOKING_REQUEST_SETTINGS,
@@ -729,6 +773,8 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
       shortName: null,
       hutLeaderLabel: null,
       facebookUrl: null,
+      legalName: null,
+      postalAddress: null,
     });
     expect(readJson(files, "email-message-setting")).toEqual({
       clubName: null,
@@ -1545,6 +1591,52 @@ describe("#2200 singleton dry-run validation (bounds, required, enum)", () => {
     expect(plan.errors.join(" ")).toMatch(
       /nonMemberHoldDays — .*out of range.*1–365/,
     );
+  });
+
+  // #5066: the invoice supplier fields carry the admin save's rules.
+  it("refuses a multi-line or over-long legal name and an over-long postal address, and accepts good ones", async () => {
+    const identity = (values: Record<string, unknown>) =>
+      singletonBundle("club-identity-settings", { name: null, shortName: null, hutLeaderLabel: null, facebookUrl: null, ...values });
+    for (const bad of [{ legalName: "Alpine Club\nIncorporated" }, { legalName: "x".repeat(201) }, { postalAddress: "x".repeat(501) }]) {
+      const plan = await buildImportPlan(stubDb({}), identity(bad), { format: CLUB_FORMAT_TEST, mode: "merge" });
+      expect(plan.errors.join(" ")).toMatch(new RegExp(`${Object.keys(bad)[0]} - Legal name: one line, at most 200 characters`));
+    }
+    const plan = await buildImportPlan(
+      stubDb({}),
+      identity({ legalName: "Alpine Club Incorporated", postalAddress: "PO Box 7\nOhakune" }),
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
+    );
+    expect(plan.errors).toEqual([]);
+    const cleared = await buildImportPlan(stubDb({}), identity({ legalName: null, postalAddress: null }), { format: CLUB_FORMAT_TEST, mode: "merge" });
+    expect(cleared.errors).toEqual([]);
+  });
+
+  // #4932: the three booking timings carry the admin form's 1–30 bound.
+  it("rejects a booking timing outside the admin 1–30 range, and accepts one inside it", async () => {
+    for (const field of [
+      "preArrivalReminderDays",
+      "additionalPaymentReminderDays",
+      "policyExceptionHoldDays",
+    ]) {
+      for (const bad of [0, 31]) {
+        const zip = singletonBundle("booking-defaults", {
+          nonMemberHoldEnabled: true,
+          nonMemberHoldDays: 7,
+          waitlistCrossLodgeOrder: "OWN_LODGE_FIRST",
+          [field]: bad,
+        });
+        const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
+        expect(plan.errors.join(" ")).toMatch(new RegExp(`${field} — .*out of range.*1–30`));
+      }
+      const zip = singletonBundle("booking-defaults", {
+        nonMemberHoldEnabled: true,
+        nonMemberHoldDays: 7,
+        waitlistCrossLodgeOrder: "OWN_LODGE_FIRST",
+        [field]: 14,
+      });
+      const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
+      expect(plan.errors).toEqual([]);
+    }
   });
 });
 

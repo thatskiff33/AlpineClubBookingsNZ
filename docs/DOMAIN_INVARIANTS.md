@@ -20,7 +20,7 @@ description, so you can find the right file without opening more than one.
 
 | File under `docs/invariants/` | Prefixes | Read it when you are changing… |
 | --- | --- | --- |
-| [`public-content.md`](invariants/public-content.md) | `INV-PUB` | public fee/policy page content, named lodge tokens, gallery image copies |
+| [`public-content.md`](invariants/public-content.md) | `INV-PUB` | public fee/policy page content, named lodge tokens, gallery image copies, a member page's tab title and headings |
 | [`money.md`](invariants/money.md) | `INV-MONEY` | anything holding cents: fee authorities, whole-lodge pricing, promo caps, subscription charges, or the Xero invoice identity behind them |
 | [`booking-dates-and-capacity.md`](invariants/booking-dates-and-capacity.md) | `INV-DATE`, `INV-CAP`, plus `INV-LIFE-062` | what day it is, who is present, how many beds, which bed, custodian bed holds |
 | [`payment-and-settlement.md`](invariants/payment-and-settlement.md) | `INV-PAY` | taking, clearing, crediting or refunding money |
@@ -38,6 +38,7 @@ description, so you can find the right file without opening more than one.
 | [`product-configuration.md`](invariants/product-configuration.md) | `INV-CONFIG` | adding a value or feature a club could answer differently, a new setting existing deployments will not have, or a default an upgrade must fall back to |
 | [`single-source-of-truth.md`](invariants/single-source-of-truth.md) | `INV-SSOT` | adding a constant, helper, formatter, type, validation rule or config value a second place will need; comparing two values; putting a default on a parameter that resolves an environment or configuration authority; or writing a guard, census or ratchet that claims to cross-check another one |
 | [`authentication.md`](invariants/authentication.md) | `INV-AUTH` | password sign-in, the per-account password throttle, what a refused or throttled sign-in answers, the breach-list check on a chosen password, the maximum session age |
+| [`mcp-connections.md`](invariants/mcp-connections.md) | `INV-MCP` | AI app (MCP) connections: who may connect, the OAuth flow, the connection lifecycle, the action catalogue and its route census, the loopback dispatcher, their audit rows |
 
 Three supporting files sit beside them: the full id scheme in
 [`SCHEME.md`](invariants/SCHEME.md); the word-budget register of approved
@@ -68,7 +69,8 @@ operative ones:
 
 ## Public authoritative content
 
-What the public site is allowed to publish.
+What the public site is allowed to publish, the image copies a gallery serves, and a
+member page's outline and title.
 File: [`invariants/public-content.md`](invariants/public-content.md). Prefix
 `INV-PUB`.
 
@@ -79,6 +81,7 @@ File: [`invariants/public-content.md`](invariants/public-content.md). Prefix
 | `INV-PUB-003` | A named lodge token resolves one active lodge or nothing |
 | `INV-PUB-004` | `{{data-hosting}}` publishes only the two typed hosting values, escaped, or fallback |
 | `INV-PUB-005` | Galleries serve current, smaller copies made at upload; originals kept |
+| `INV-PUB-006` | Member pages: own tab title, one h1; CardTitles declare a level |
 
 ## Money
 
@@ -119,6 +122,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-012` | Club `familyBillingMode` decides whether family billing exists; stale schedules raise exceptions |
 | `INV-MONEY-013` | A multi-family member's per-family fee bills only via their admin-chosen billing family |
 | `INV-MONEY-014` | One family/type/membership-year tuple carries at most one durable charge |
+| `INV-MONEY-046` | Subscription category is a second billing axis, independent of membership type |
 | `INV-MONEY-015` | Approval stands when billing setup is incomplete; billing records a visible exception |
 | `INV-MONEY-016` | Membership type governs liability, including archived role defaults; role grants no exemption |
 | `INV-MONEY-017` | Paid-up: NOT_REQUIRED type, PAID current-season row, exempt tier; nomination honours first |
@@ -194,6 +198,9 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-CAP-036` | A shared double losing its primary auto-promotes the survivor, audited |
 | `INV-CAP-037` | At most one live payment link per booking; never both settle |
 | `INV-CAP-038` | A whole-lodge hold excludes custodian-held bed-nights; the reverse asks, then amends atomically |
+| `INV-CAP-040` | An import claims beds under the lodge lock, never overbooks |
+| `INV-CAP-041` | A waitlist position is read from the live queue, never stored |
+| `INV-CAP-042` | A lapsed offer's place goes on down the queue |
 | `INV-CAP-011` | Waitlisted and offered bookings hold no capacity until confirmed |
 | `INV-CAP-012` | A waitlist offer reprices at current rates and states what is payable |
 | `INV-CAP-013` | A member is present on only one live booking per lodge night |
@@ -355,7 +362,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-137` | An IB organiser-paid joiner's refund goes to the organiser, on its mirror |
 | `INV-PAY-139` | A change capture nothing else records is recorded once, against its invoice |
 | `INV-PAY-140` | A superseded card change's waiting invoice follows the carrying request |
-| `INV-PAY-141` | A card refund's reversal keeps Paid another way bank cash |
+| `INV-PAY-141` | A card refund's reversal keeps its bank-paid closes and shortfalls |
 | `INV-PAY-142` | A refund failing after a Paid another way close is held |
 | `INV-PAY-143` | An unminted approved whole-lodge booking reprices as unpaid |
 | `INV-PAY-144` | A kept change capture is recorded by the document its evidence names |
@@ -364,11 +371,19 @@ Prefix `INV-PAY`.
 | `INV-PAY-147` | Refund slice evidence prevents replay after Stripe forgets idempotency keys |
 | `INV-PAY-148` | Organiser bank-transfer edit invoices, unpaid-first netting and historical repair |
 | `INV-PAY-149` | A dead card refund closes with nothing owed or retries its card |
-| `INV-PAY-150` | Refund doors leave a live superseded capture to its own refund |
+| `INV-PAY-150` | Cancels, reviews, hand closes leave superseded captures to their refund |
 | `INV-PAY-151` | Paid another way reverses a covered failed card refund |
 | `INV-PAY-152` | Cancellation credit events commit with the credit they describe |
 | `INV-PAY-153` | Stuck States settles dead group organiser card refunds |
 | `INV-PAY-154` | A disputed capture is never refunded or credited |
+| `INV-PAY-155` | The inbound recount takes each failed-later card refund off once |
+| `INV-PAY-156` | Stuck States signals name their records with the count's filter |
+| `INV-PAY-157` | Lost dispute cents close a payment's hand-backs once, oldest first |
+| `INV-PAY-158` | A saved-card claim is marked durably and recovered when stranded |
+| `INV-PAY-159` | Cash cover is read from cash records by one reader |
+| `INV-PAY-160` | An edit refunds a card only where Stripe holds a record |
+| `INV-PAY-161` | An imported paid booking is settled manually in its creating transaction |
+| `INV-PAY-162` | An opening-credit file posts once, from one approval; reversal needs it unspent |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -489,6 +504,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-060` | An ordinary price ask's door and replay send one Stripe request |
 | `INV-MOD-061` | An edit's card refund and its replay send one Stripe request |
 | `INV-MOD-062` | An edit settles only the figures its preview showed |
+| `INV-MOD-063` | An officer's work-party correction prices a started stay whole |
 
 ### Adult-member hosting
 
@@ -642,7 +658,7 @@ Prefix `INV-LOCKOUT`.
 | `INV-LOCKOUT-057` | Every withhold writes a `SKIPPED_NO_EMAILS` `EmailLog` row with no retained body |
 | `INV-LOCKOUT-058` | The retry cron re-reads the switch and booking authority before every replay |
 | `INV-LOCKOUT-059` | Waitlist candidacy excludes a silenced booking; two residual cases surfaced, not denied |
-| `INV-LOCKOUT-060` | A silenced waitlist entry keeps its place and quoted position |
+| `INV-LOCKOUT-060` | A silenced waitlist entry shows no position and is not counted |
 | `INV-LOCKOUT-061` | Xero-sent invoice emails are gated too, superseding the #1705 always-send carve-out |
 | `INV-LOCKOUT-062` | Enabling the switch requires an acknowledgement; both set and clear are audited |
 | `INV-LOCKOUT-063` | The acknowledgement is a two-button dialog, never a checkbox; `bookings:edit` |
@@ -798,6 +814,8 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-022` | Profile and booking dietary data absent unless one granted module selects it |
 | `INV-PRIV-023` | A stay's dietary value is cleared a club-set period after the stay |
 | `INV-PRIV-024` | Every outside recipient of personal data is in one census-held register |
+| `INV-PRIV-025` | One subject access builder; every personal model placed; own rows only |
+| `INV-PRIV-026` | Bulk email declares a category: club notices opt-out, newsletters opt-in |
 
 ## Membership Lifecycle
 
@@ -820,6 +838,7 @@ is now `INV-OPS-005` to `INV-OPS-011` in
 | `INV-LIFE-003` | One cancellation at most credits a subscription invoice: durable first-writer claim |
 | `INV-LIFE-004` | Unpaid-invoice approval blocker excuses an invoice only while it awaits crediting |
 | `INV-LIFE-005` | Role, membership type, age tier, Xero group, committee: separate axes |
+| `INV-LIFE-094` | Subscription category is a fourth billing axis, independent of booking rights |
 | `INV-LIFE-089` | Last active Full Admin can never be deactivated, de-logined or archived |
 | `INV-LIFE-006` | Cancellation eligibility is an account-holder question, refusing exactly two record classes |
 | `INV-LIFE-007` | Member-raised route: active and can-log-in only; family candidates unfiltered by role |
@@ -847,7 +866,7 @@ is now `INV-OPS-005` to `INV-OPS-011` in
 | `INV-LIFE-019` | `NOT_APPLICABLE` has no `AgeTierSetting` row and sits outside every age-based automation |
 | `INV-LIFE-084` | Committee assignment is presentation only; contact routing per assignment via `contactEmailMode` |
 | `INV-LIFE-085` | Member photos: scoped endpoint only; public only when rostered and displayed |
-| `INV-LIFE-086` | Every stored image has EXIF/XMP metadata stripped; member-photo path fails closed |
+| `INV-LIFE-086` | Every stored image has hidden metadata removed; unconfirmed images are refused |
 | `INV-LIFE-087` | Seasonal membership type governs pricing and lockout, never access or committee |
 | `INV-LIFE-093` | Full and Non-Member stay active with fixed booking rules; drift is repairable |
 | `INV-LIFE-020` | 2FA on: the JWT claim flips only via a server-minted challenge |
@@ -955,6 +974,9 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-036` | An account-credit note stamps the one member credit it was raised for |
 | `INV-INT-037` | A manual grant queues one Xero note at approval |
 | `INV-INT-038` | An abandoned inbound reconcile row is taken over, never shared |
+| `INV-INT-039` | A dead webhook attempt is taken over past the lease |
+| `INV-INT-040` | No subscription or joining-fee invoice work while Xero is off |
+| `INV-INT-041` | A PENDING outbox row always holds a request the outbox can claim |
 
 ## Operations
 
@@ -973,8 +995,10 @@ the row-locking rules it is the sibling of.
 | `INV-LOCK-003` | Every global-lock call site is registered, by site, with its own reason |
 | `INV-LOCK-004` | A read taken under a lock uses the caller's transaction client |
 | `INV-LOCK-005` | Advisory-lock transactions use fresh READ COMMITTED snapshots |
+| `INV-LOCK-006` | A lock(1) waiter states the shared budget; contention is a 503 |
 | `INV-OPS-014` | Never interpolate or concatenate into `$queryRawUnsafe` / `$executeRawUnsafe` |
 | `INV-OPS-013` | A `"use client"` module never imports server-only code at runtime |
+| `INV-OPS-020` | A row-capped admin list shows its total and reaches every row |
 | `INV-OPS-002` | Production deployment must respect `docs/BLUE_GREEN_MIGRATION_POLICY.md` |
 | `INV-OPS-012` | Audit reclassification ships its backfill or files one; measured audience stated |
 | `INV-OPS-005` | Doomed columns need `@ignore`: static defaults and implicit `RETURNING` name them |
@@ -991,6 +1015,8 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-017` | Third-party deployment and workflow container images require digest pins |
 | `INV-OPS-018` | First Bootstrap provisions restricted roles and a separate data key |
 | `INV-OPS-019` | Production deploys only a published annotated release tag, or a recorded override |
+| `INV-OPS-021` | Newer merges replace main's queued runs; releases tag published commits |
+| `INV-OPS-022` | The documented Docker first install, seed included, is what CI runs |
 
 ## Product Configuration
 
@@ -1010,7 +1036,8 @@ headings the index keeps verbatim.
 | `INV-CONFIG-004` | Every application-controlled send passes one environment-aware boundary; four outcomes, all distinguishable |
 | `INV-CONFIG-005` | Every application-managed Xero contact write consumes the canonical role; copies contained |
 | `INV-CONFIG-006` | One persisted currency and locale; the environment seeds them once |
-| `INV-CONFIG-007` | One GST treatment setting, today's default, unwritten until Xero reads it |
+| `INV-CONFIG-007` | One GST schedule, dated periods; Xero and the journal resolve it |
+| `INV-CONFIG-008` | Tax categories map to the club's own Xero rates; none hard-coded |
 
 ## Single Source Of Truth
 
@@ -1033,6 +1060,9 @@ ten pre-split domain headings the index keeps verbatim.
 | `INV-SSOT-006` | Id- or input-carrying Prisma `startsWith` prefixes go through `exactPrefix` |
 | `INV-SSOT-007` | A failed admin list load shows `AdminLoadError`, never the empty state |
 | `INV-SSOT-008` | No static import cycles, Xero facade imports or component-to-route imports |
+| `INV-SSOT-009` | A charge's dedup key and display name share one builder only |
+| `INV-SSOT-010` | An admin page's heading is its registry label; a census holds it |
+| `INV-SSOT-011` | Officer work queues: one registry, one counter, both admin surfaces |
 
 ## Authentication
 
@@ -1057,4 +1087,24 @@ headings the index keeps verbatim.
 | `INV-AUTH-010` | Listed admin routes require a fresh proof first |
 | `INV-AUTH-011` | Address sign-in limits exempt signout/session; refusals show a network wait |
 | `INV-AUTH-012` | Officers use an app or passkey after grace |
-| `INV-AUTH-013` | Password work leaves the event loop; placeholders use one unusable hash |
+| `INV-AUTH-013` | Password work off the event loop; unusable placeholders; proof-time upgrade; refusal top-up |
+
+## AI App Connections
+
+How a member connects an AI app to their own account over the Model Context
+Protocol: who may hold a connection, how the app obtains and keeps it, how it
+ends, and how each action reaches the site as that member.
+File: [`invariants/mcp-connections.md`](invariants/mcp-connections.md).
+Prefix `INV-MCP`. Added by ALP-653; it is not one of the ten pre-split domain
+headings the index keeps verbatim.
+
+| ID | Covers |
+| --- | --- |
+| `INV-MCP-001` | The `mcpServer` module is the only switch; off answers 404 |
+| `INV-MCP-002` | Club policy decides who connects, checked at approval and every use |
+| `INV-MCP-003` | PKCE S256, approved redirect hosts, single-use codes, rotating hashed tokens |
+| `INV-MCP-004` | ACTIVE ends once as REVOKED or EXPIRED by a guarded claim |
+| `INV-MCP-005` | A connection signs in through `auth()` as the member, never freshly |
+| `INV-MCP-006` | Every API route method is an action or has a stated exclusion |
+| `INV-MCP-007` | Actions reach routes over loopback; scope enforced before dispatch |
+| `INV-MCP-008` | Which connection events and action calls write an audit row |

@@ -1,4 +1,5 @@
 import type { Lodge, Prisma, PrismaClient } from "@prisma/client";
+import { slugify } from "./slug";
 
 // Callers pass their own Prisma client/transaction so this module stays free
 // of the app prisma singleton and safe to import from prisma/seed.ts.
@@ -140,13 +141,7 @@ export function normalizeLodgeText(value: string | null | undefined) {
 }
 
 export function slugifyLodgeName(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug || "lodge";
+  return slugify(name) || "lodge";
 }
 
 export async function buildUniqueLodgeSlug(
@@ -223,6 +218,10 @@ export async function countActiveLodgesForBookingList(
  * officer coverage list: here a count of 0 shows the name (there, 0 hides it),
  * and the archived test is per ROW (there, any archived row names every row).
  * A member's list names only the booking that is actually elsewhere.
+ *
+ * Two officer alerts ask the same question (#5403): the booking-bumped alert
+ * with its booking's lodge, and the capacity warning with `active: true` (it
+ * only walks active lodges). Admin emails sit outside INV-CAP-039 itself.
  *
  * The name is always the BOOKING's own lodge, never the club default (#2918,
  * #2919). The screens that ask a member to review or pay for one booking (the

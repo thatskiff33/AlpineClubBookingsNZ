@@ -110,6 +110,7 @@ function upsertLink(link: Row) {
 
 const CRASH = new Error("process died");
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => {
   const prisma = {
     payment: {
@@ -201,6 +202,12 @@ vi.mock("@/lib/prisma", () => {
   };
   return { prisma };
 });
+
+// #4279: the payment manifest the settlement leg records (#4525), observed rather than written.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as object),
+  recordRefundNotePaymentManifest: vi.fn(async () => undefined),
+}));
 
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -746,6 +753,26 @@ describe("a refund note interrupted between the two persists (#3548)", () => {
     expect(state.links).toEqual(
       expect.arrayContaining([expect.objectContaining({ role: "REFUND_PAYMENT", xeroObjectId: "pay_1", metadata: expect.objectContaining({ amountCents: 5000 }) })]),
     );
+  });
+
+  it("MUTATION (#4279): a repair whose payment went to Xero and whose completion then failed still records the payment's manifest; the replay pays nothing more", async () => {
+    const { recordRefundNotePaymentManifest } = await import("@/lib/member-money/doors");
+    vi.mocked(recordRefundNotePaymentManifest).mockClear();
+    await firstAttemptDies("at-settlement");
+    // As a completion that could not get the Payment row in time throws after the payment was sent.
+    state.crash = "at-completion";
+    await expect(retry()).rejects.toBe(CRASH);
+    expect(state.xero.createPaymentsCalls).toHaveLength(1);
+    expect(recordRefundNotePaymentManifest).toHaveBeenCalledTimes(1);
+    expect(recordRefundNotePaymentManifest).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: PAYMENT_ID, creditNoteId: "cn_1", operationId: "op_crashed", sent: expect.objectContaining({ xeroPaymentId: "pay_1", amountCents: 5000 }) }),
+    );
+
+    // The replay reads the payment back as already settled: no second payment, and no second manifest to write.
+    await retry();
+    expect(state.xero.createPaymentsCalls).toHaveLength(1);
+    expect(recordRefundNotePaymentManifest).toHaveBeenCalledTimes(1);
+    expect(row()).toMatchObject({ status: "SUCCEEDED" });
   });
 
   it("a payment committed in Xero whose response was lost ends PARTIAL, and the repair leg records it rather than paying again", async () => {

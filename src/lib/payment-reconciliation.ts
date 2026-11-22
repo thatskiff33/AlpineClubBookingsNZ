@@ -105,34 +105,15 @@ type ReconciliationBooking = Prisma.BookingGetPayload<{
   };
 }>;
 
-import type { CapacityCancellationRefund } from "@/lib/booking-card-refund-copy";
-
-export type MarkBookingPaymentSucceededResult = {
-  outcome:
-    | "paid"
-    | "already_paid"
-    | "cancelled_refunded"
-    | "cancelled_refund_failed"
-    // #1992 — a SECOND, distinct Stripe capture arrived on an already-PAID
-    // (or, #4285, COMPLETED) booking (the residual #1967 split-child window). The duplicate capture
-    // was auto-refunded (or a durable refund operation is pending for the
-    // recovery cron when the inline attempt failed). The booking itself stays
-    // settled by the other capture, so callers that only branch on the
-    // cancelled_* outcomes keep treating these as "settled".
-    | "duplicate_capture_refunded"
-    | "duplicate_capture_refund_failed"
-    // #4211 (`INV-PAY-043`): a different capture on a PAID or COMPLETED booking with no usable record of
-    // its settler, beside another payment holding money (or, #4285, alone and never recorded before) -
-    // KEPT, nothing refunded, the admins asked to check by hand. Settled like
-    // the two above: no confirmation email, no invoice of its own.
-    | "duplicate_capture_kept"
-    // #4300 (`INV-PAY-138`): the superseded machinery's; NOT settled, no confirmation or invoice.
-    | "superseded_capture";
-  bookingId: string;
-  bumpedBookingIds: string[];
-  refundError?: string;
-  capacityRefund?: CapacityCancellationRefund;
-};
+import type {
+  BookingSettlementSource,
+  ManualAdditionalCoverage,
+  ManualSettlementSource,
+  MarkBookingPaymentSucceededResult,
+  StripeSettlementSource,
+} from "@/lib/payment-reconciliation-sources";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { readClearedCreditElectionCents, readSettledAdditionalPayment } from "@/lib/manual-mark-paid-metadata";
 
 const PAYABLE_SUCCESS_STATUS_LIST = [
   BookingStatus.PAYMENT_PENDING,
@@ -180,67 +161,6 @@ async function alertRefundFailure({
     )
   );
 }
-
-/**
- * B5 (#2262) — a booking settlement is now described by its SOURCE, so the one
- * settlement body below serves both the Stripe capture and the admin recording
- * a cash / off-Xero bank transfer. Guard 1 of #2262 is discharged structurally:
- * there is no second path that could drift from this one's lock ordering,
- * capacity check, status fence, bed reconciliation or event recording.
- */
-type StripeSettlementSource = {
-  kind: "stripe";
-  capturedAt?: Date;
-  paymentIntentId: string;
-  amountCents: number;
-  paymentMethodId: string | null;
-  /** #3864: for the applied-credit give-back, resolved before the transaction. */
-  format: ClubFormat;
-  /** #4285 review: the caller wrote this capture SUCCEEDED just before (`newlyCaptured`), so it is not a replay. */
-  recordedByCaller?: boolean;
-};
-
-/**
- * #2397 — the admin's answer to "does this cash also cover the outstanding
- * extra?", asked ONLY when the booking carries one.
- *
- * `expectedAdditionalAmountCents` is the figure the dialog showed, and follows
- * the same law as `expectedAmountCents`: the settle never takes an amount from
- * the client, it re-derives the outstanding extra under the locks and refuses
- * when the two disagree, so an extra that moved since the dialog rendered is
- * never settled at a figure the admin never saw.
- */
-export type ManualAdditionalCoverage = {
-  /** True = the cash covers the extra too; false = leave it outstanding. */
-  covered: boolean;
-  expectedAdditionalAmountCents: number;
-};
-
-type ManualSettlementSource = {
-  kind: "manual";
-  actingAdminMemberId: string;
-  note: string | null;
-  /**
-   * The amount the admin was shown in the dialog. The settlement amount itself
-   * is NEVER taken from the client — it is recomputed under the locks — but a
-   * mismatch means the price or the applied credit moved since the dialog
-   * rendered, so the settle is refused rather than recorded at a figure the
-   * admin never agreed to.
-   */
-  expectedAmountCents: number;
-  notifyMember: boolean;
-  /**
-   * #2397. `null` is not "no opinion": it is the caller's positive claim that
-   * the dialog showed NO outstanding extra, and the settle checks that claim
-   * under the locks — an extra that exists with `null` here is a 409, exactly
-   * as a moved price is. That keeps the common screen unchanged (no extra, no
-   * question, no field) without letting a stale client silently settle only the
-   * primary on a booking that has since grown an extra.
-   */
-  additionalCoverage: ManualAdditionalCoverage | null;
-};
-
-type BookingSettlementSource = StripeSettlementSource | ManualSettlementSource;
 
 const MANUAL_XERO_INVOICE_REFUSAL =
   "This booking has an outstanding Xero invoice — record the payment against the invoice in Xero instead.";
@@ -1208,7 +1128,7 @@ async function settleBookingPaymentInTransaction(
         heldBackByTransaction: heldBack.byTransaction,
       });
       // #4154 (`INV-PAY-135`): what the plan does not carry is a hand-back task to check, raised with the cancel.
-      const shortfallTaskRaised = await raiseCapacityRaceRefundShortfallTask(tx, { bookingId: booking.id, paymentId: payment.id, paymentIntentId, chargedCents: amountCents, plannedRefundCents, format: settlement.format });
+      const shortfallTaskRaised = await raiseCapacityRaceRefundShortfallTask(tx, { bookingId: booking.id, paymentId: payment.id, paymentIntentId, chargedCents: amountCents, plannedRefundCents, format: settlement.format, journal });
       if (plannedRefundCents > 0) {
         await enqueueCapacityClaimFailedRefundRecovery({
           bookingId: booking.id,
@@ -1327,10 +1247,7 @@ async function settleBookingPaymentInTransaction(
     // that somehow raced past the lock cannot be resurrected to PAID.
     const claimed = await tx.booking.updateMany({
       where: { id: booking.id, status: { in: [...PAYABLE_SUCCESS_STATUS_LIST] } },
-      data: {
-        status: BookingStatus.PAID,
-        draftExpiresAt: null,
-      },
+      data: { status: BookingStatus.PAID, draftExpiresAt: null, savedCardClaimAt: null },
     });
     if (claimed.count === 0) {
       throw new Error(
@@ -1686,7 +1603,7 @@ export async function markBookingPaymentSucceeded({
       paymentMethodId,
       format,
       recordedByCaller, capturedAt,
-    }, journal)
+    }, journal), LOCK1_HOLDER_TRANSACTION_BUDGET
   );
 
 
@@ -2099,60 +2016,6 @@ const MANUAL_MARK_PAID_ADDITIONAL_AUDIT_ACTION =
 const MANUAL_MARK_PAID_ADDITIONAL_REASON = "manual_mark_paid_additional";
 const MANUAL_MARK_PAID_ADDITIONAL_REVERSED_REASON = "manual_mark_paid_additional_reversed";
 
-/**
- * Read `clearedCreditElectionCents` back off a mark-paid audit row's metadata.
- *
- * Defensive on purpose: `metadata` is free-form JSON, and rows written before
- * this key existed (or by a future writer that drops it) must read as "nothing
- * was cleared" rather than throw or restore a nonsense figure. Only a positive
- * integer counts — money stays in integer cents, and a zero or negative
- * "election" is not one.
- */
-function readClearedCreditElectionCents(
-  metadata: Prisma.JsonValue | null | undefined
-): number | null {
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-    return null;
-  }
-  const raw = (metadata as Prisma.JsonObject).clearedCreditElectionCents;
-  return typeof raw === "number" && Number.isInteger(raw) && raw > 0
-    ? raw
-    : null;
-}
-
-/**
- * #2397 — read back what a mark-paid audit row says it settled of the booking's
- * outstanding extra, so the REVERSAL can put it back exactly as it was.
- *
- * Defensive for the same reason as the credit-election reader above: `metadata`
- * is free-form JSON, and every row written before this key existed must read as
- * "this settle covered no extra" rather than throw. Returns null in that case;
- * `previousStatus` is deliberately allowed to BE null, because a legacy delta
- * with no recorded status is a real state the reversal has to restore
- * faithfully.
- */
-function readSettledAdditionalPayment(
-  metadata: Prisma.JsonValue | null | undefined
-): { amountCents: number; previousStatus: string | null } | null {
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-    return null;
-  }
-  const object = metadata as Prisma.JsonObject;
-  const amountCents = object.settledAdditionalAmountCents;
-  if (
-    typeof amountCents !== "number" ||
-    !Number.isInteger(amountCents) ||
-    amountCents <= 0
-  ) {
-    return null;
-  }
-  const previousStatus = object.previousAdditionalPaymentStatus;
-  return {
-    amountCents,
-    previousStatus: typeof previousStatus === "string" ? previousStatus : null,
-  };
-}
-
 export type ManualBookingSettlementResult = {
   bookingId: string;
   paymentId: string;
@@ -2200,6 +2063,36 @@ export type ManualBookingSettlementResult = {
 };
 
 /**
+ * #5005 (child A, `INV-PAY-161`) — the paid-booking import's settle: a SIBLING
+ * ENTRY POINT into the manual arm of the one settlement body, called inside the
+ * import's own creating transaction. That transaction already holds lock(1) and
+ * the lodge key (both re-entrant), so this adds nothing a manual settle does not
+ * already do: the same member-credit lock, refusals, capacity check, fenced PAID
+ * claim, CASH_RECORDED line and bed reconciliation. It sends nothing — the
+ * member is not told (`notifyMember: false`) — and a booking created moments
+ * ago has no outstanding extra to cover. The caller resolves `journal` before
+ * its transaction opens (`INV-LOCK-004`).
+ */
+export async function settleImportedBookingInTransaction(
+  tx: Prisma.TransactionClient,
+  bookingId: string,
+  settlement: { actingAdminMemberId: string; note: string; expectedAmountCents: number },
+  journal: BookingJournalContext,
+) {
+  const result = await settleAndPostBookingReceipts(tx, bookingId, {
+    kind: "manual",
+    ...settlement,
+    notifyMember: false,
+    additionalCoverage: null,
+  }, journal);
+  if (result.outcome !== "manual_paid") {
+    // Unreachable, as on the officer's door: the manual source pays or throws.
+    throw new Error(`Unexpected settlement outcome on the import path: ${result.outcome}`);
+  }
+  return result;
+}
+
+/**
  * B5 (#2262) — record a cash / off-Xero bank-transfer settlement for a booking.
  *
  * A SIBLING ENTRY POINT into the settlement core above, not a second settlement
@@ -2238,7 +2131,7 @@ export async function markBookingPaymentManuallySettled({
       expectedAmountCents,
       notifyMember,
       additionalCoverage,
-    }, journal)
+    }, journal), LOCK1_HOLDER_TRANSACTION_BUDGET
   );
 
 
@@ -2813,7 +2706,7 @@ export async function reverseManualBookingPayment({
       restoredCreditElectionCents,
       restoredAdditionalAmountCents,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   // Recorded as a CANCELLED event carrying the reversal discriminator (#2008
   // pattern): durable and never pruned, rendered honestly on the admin

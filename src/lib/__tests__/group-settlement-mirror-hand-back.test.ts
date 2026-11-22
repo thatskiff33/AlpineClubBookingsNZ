@@ -27,7 +27,7 @@ vi.mock("@/lib/email", () => ({ sendAdminXeroSyncErrorAlert: (input: unknown) =>
 import { bankTransferRefundPayee, paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { paymentShowsCaptureEvidence } from "@/lib/booking-payment-state";
 import { netCollectedPaymentTookMoney } from "@/lib/payment-net-collected";
-import { paymentHasCaptureEvidence as flattenedCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
+import { paymentHasCaptureEvidence } from "@/lib/payment-capture-evidence";
 import {
   alertGroupMirrorRefundXeroByHand,
   applyGroupSettlementMirrorRefund,
@@ -65,10 +65,10 @@ describe("the payee: who a bank transfer on a booking goes back to", () => {
   });
 
   it("names the payee of an edit's refund only when it goes back by hand", () => {
-    expect(editRefundBankTransferPayee({ refundAmountCents: 1500, hasSucceededPayment: false }, GROUP_CHILD)).toBe("organiser");
-    expect(editRefundBankTransferPayee({ refundAmountCents: 1500, hasSucceededPayment: false }, { ...GROUP_CHILD, organiserSettled: false })).toBe("member");
-    expect(editRefundBankTransferPayee({ refundAmountCents: 0, hasSucceededPayment: false }, GROUP_CHILD)).toBeNull();
-    expect(editRefundBankTransferPayee({ refundAmountCents: 1500, hasSucceededPayment: true }, GROUP_CHILD)).toBeNull();
+    expect(editRefundBankTransferPayee({ refundAmountCents: 1500, hasSucceededPayment: false, refundHeldForDispute: false }, GROUP_CHILD)).toBe("organiser");
+    expect(editRefundBankTransferPayee({ refundAmountCents: 1500, hasSucceededPayment: false, refundHeldForDispute: false }, { ...GROUP_CHILD, organiserSettled: false })).toBe("member");
+    expect(editRefundBankTransferPayee({ refundAmountCents: 0, hasSucceededPayment: false, refundHeldForDispute: false }, GROUP_CHILD)).toBeNull();
+    expect(editRefundBankTransferPayee({ refundAmountCents: 1500, hasSucceededPayment: true, refundHeldForDispute: false }, GROUP_CHILD)).toBeNull();
   });
 });
 
@@ -246,9 +246,9 @@ describe("the words name the group organiser as the payee (owner decision, 21 Oc
       "Booking b1 lowered by a date change; the group organiser paid for it by internet banking, so the club refunds the difference to the group organiser by bank transfer.",
     );
     expect(refundRequestHandBackReason({ bookingId: "b1", payee: "organiser" })).toContain("refunds this to the group organiser by bank transfer");
-    // The member wording is exactly what it was.
+    // The member wording, which also covers a card payment with no Stripe record (#5212).
     expect(editRefundHandBackReason({ bookingId: "b1", editLabel: "date change", payee: "member" })).toBe(
-      "Booking b1 lowered by a date change; paid by internet banking or by hand, so the club refunds the difference by bank transfer (#3827).",
+      "Booking b1 lowered by a date change; paid by internet banking or by hand, or by a card payment with no Stripe record, so the club refunds the difference by bank transfer (#3827).",
     );
     expect(refundRequestHandBackReason({ bookingId: "b1", payee: "member" })).toBe(
       "Refund appeal approved on booking b1; not paid by card, so the club refunds this by bank transfer (#3827).",
@@ -277,12 +277,12 @@ describe("review round 3: an IB organiser child's settle mirror is capture evide
     expect(paymentShowsCaptureEvidence(partlyRefunded, false, member)).toBe(false);
   });
 
-  it("Net Collected counts a paid-back IB organiser child as money taken; the flattened backfill restores one", () => {
+  it("Net Collected counts a paid-back IB organiser child as money taken, and so does the loaded-ledger capture evidence", () => {
     const row = { ...partlyRefunded, amountCents: 4_500, _count: { transactions: 0 }, recoveryOperations: [], refunds: [] };
     expect(netCollectedPaymentTookMoney({ ...row, booking: organiser })).toBe(true);
     expect(netCollectedPaymentTookMoney({ ...row, booking: member })).toBe(false);
     const flattened = { id: "p", bookingId: "b", source: "INTERNET_BANKING" as const, status: "FAILED" as const, amountCents: 4_500, refundedAmountCents: 1_500, transactions: [] };
-    expect(flattenedCaptureEvidence({ ...flattened, status: "PARTIALLY_REFUNDED", booking: organiser })).toBe(true);
-    expect(flattenedCaptureEvidence({ ...flattened, status: "PARTIALLY_REFUNDED", booking: member })).toBe(false);
+    expect(paymentHasCaptureEvidence({ ...flattened, status: "PARTIALLY_REFUNDED", booking: organiser })).toBe(true);
+    expect(paymentHasCaptureEvidence({ ...flattened, status: "PARTIALLY_REFUNDED", booking: member })).toBe(false);
   });
 });

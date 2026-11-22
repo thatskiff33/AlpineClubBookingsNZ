@@ -39,6 +39,7 @@ export interface MemberMoneyFunctionShape {
  */
 export const MEMBER_MONEY_DATABASE_SHAPE = {
   functions: {
+    member_money_require_export_coverage: {"source":"4a0a39b22c1c55e82b0eeb18c3c04986","volatility":"volatile","securityDefiner":false,"config":["search_path=pg_catalog, public"]},
     member_money_application_state: {"source":"5cc318ede0f6b1b24e0c37d4b213cbc9","volatility":"stable","securityDefiner":false,"config":["search_path=pg_catalog, public"]},
     member_money_require_reservation: {"source":"dfa3c9cf89ec21379d47739531fce19f","volatility":"volatile","securityDefiner":false,"config":["search_path=pg_catalog, public"]},
     member_money_reservation_errors: {"source":"30967e7cec4e6f34f100a0fc631cfc9e","volatility":"stable","securityDefiner":false,"config":["search_path=pg_catalog, public"]},
@@ -156,6 +157,24 @@ export const MEMBER_MONEY_DATABASE_SHAPE = {
       MemberMoneySourcePosting_sourceLinkId_journalId_fkey:
         `FOREIGN KEY ("sourceLinkId", "journalId") REFERENCES "MemberMoneySourceLink"(id, "journalId") ON UPDATE RESTRICT ON DELETE RESTRICT`,
     },
+    MemberMoneyExportManifest: {
+      MemberMoneyExportManifest_bookingId_fkey:
+        `FOREIGN KEY ("bookingId") REFERENCES "Booking"(id) ON UPDATE RESTRICT ON DELETE RESTRICT`,
+      MemberMoneyExportManifest_pkey:
+        `PRIMARY KEY (id)`,
+      member_money_export_manifest_shape:
+        `CHECK ((("renderRevision" = 1) AND (length("legacyKey") > 0) AND (length("providerInvoiceId") > 0) AND ("payloadHash" ~ '^[0-9a-f]{64}$'::text) AND (jsonb_typeof("frozenMapping") = 'object'::text) AND ((outcome = 'COVERED'::"MemberMoneyExportOutcome") = (reason IS NULL))))`,
+    },
+    MemberMoneyExportCoverage: {
+      MemberMoneyExportCoverage_manifestId_documentRole_fkey:
+        `FOREIGN KEY ("manifestId", "documentRole") REFERENCES "MemberMoneyExportManifest"(id, "documentRole") ON UPDATE RESTRICT ON DELETE RESTRICT`,
+      MemberMoneyExportCoverage_pkey:
+        `PRIMARY KEY (id)`,
+      member_money_export_coverage_shape:
+        `CHECK ((("coveredCents" > 0) AND (length("chargeIdentity") > 0)))`,
+      member_money_export_coverage_slice:
+        `CHECK ((("sliceKey" = ''::text) OR ("documentRole" <> 'PRIMARY_BOOKING_INVOICE'::"MemberMoneyExportDocumentRole")))`,
+    },
   },
   triggers: {
     MemberMoneyRefundReservation: {
@@ -232,6 +251,22 @@ export const MEMBER_MONEY_DATABASE_SHAPE = {
       member_money_no_truncate:
         `CREATE TRIGGER member_money_no_truncate BEFORE TRUNCATE ON public."MemberMoneySourcePosting" FOR EACH STATEMENT EXECUTE FUNCTION member_money_refuse_mutation()`,
     },
+    MemberMoneyExportManifest: {
+      member_money_export_complete:
+        `CREATE CONSTRAINT TRIGGER member_money_export_complete AFTER INSERT ON public."MemberMoneyExportManifest" DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION member_money_require_export_coverage()`,
+      member_money_immutable:
+        `CREATE TRIGGER member_money_immutable BEFORE DELETE OR UPDATE ON public."MemberMoneyExportManifest" FOR EACH ROW EXECUTE FUNCTION member_money_refuse_mutation()`,
+      member_money_no_truncate:
+        `CREATE TRIGGER member_money_no_truncate BEFORE TRUNCATE ON public."MemberMoneyExportManifest" FOR EACH STATEMENT EXECUTE FUNCTION member_money_refuse_mutation()`,
+    },
+    MemberMoneyExportCoverage: {
+      member_money_export_complete:
+        `CREATE CONSTRAINT TRIGGER member_money_export_complete AFTER INSERT ON public."MemberMoneyExportCoverage" DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION member_money_require_export_coverage()`,
+      member_money_immutable:
+        `CREATE TRIGGER member_money_immutable BEFORE DELETE OR UPDATE ON public."MemberMoneyExportCoverage" FOR EACH ROW EXECUTE FUNCTION member_money_refuse_mutation()`,
+      member_money_no_truncate:
+        `CREATE TRIGGER member_money_no_truncate BEFORE TRUNCATE ON public."MemberMoneyExportCoverage" FOR EACH STATEMENT EXECUTE FUNCTION member_money_refuse_mutation()`,
+    },
   },
   uniqueIndexes: {
     MemberMoneyRefundReservation: {
@@ -293,6 +328,20 @@ export const MEMBER_MONEY_DATABASE_SHAPE = {
         `CREATE UNIQUE INDEX "MemberMoneySourcePosting_pkey" ON public."MemberMoneySourcePosting" USING btree (id)`,
       MemberMoneySourcePosting_sourceLinkId_lineId_key:
         `CREATE UNIQUE INDEX "MemberMoneySourcePosting_sourceLinkId_lineId_key" ON public."MemberMoneySourcePosting" USING btree ("sourceLinkId", "lineId")`,
+    },
+    MemberMoneyExportManifest: {
+      MemberMoneyExportManifest_documentRole_legacyKey_key:
+        `CREATE UNIQUE INDEX "MemberMoneyExportManifest_documentRole_legacyKey_key" ON public."MemberMoneyExportManifest" USING btree ("documentRole", "legacyKey")`,
+      MemberMoneyExportManifest_id_documentRole_key:
+        `CREATE UNIQUE INDEX "MemberMoneyExportManifest_id_documentRole_key" ON public."MemberMoneyExportManifest" USING btree (id, "documentRole")`,
+      MemberMoneyExportManifest_pkey:
+        `CREATE UNIQUE INDEX "MemberMoneyExportManifest_pkey" ON public."MemberMoneyExportManifest" USING btree (id)`,
+    },
+    MemberMoneyExportCoverage: {
+      MemberMoneyExportCoverage_documentRole_account_chargeIdenti_key:
+        `CREATE UNIQUE INDEX "MemberMoneyExportCoverage_documentRole_account_chargeIdenti_key" ON public."MemberMoneyExportCoverage" USING btree ("documentRole", account, "chargeIdentity", "sliceKey")`,
+      MemberMoneyExportCoverage_pkey:
+        `CREATE UNIQUE INDEX "MemberMoneyExportCoverage_pkey" ON public."MemberMoneyExportCoverage" USING btree (id)`,
     },
   },
 } as const satisfies {

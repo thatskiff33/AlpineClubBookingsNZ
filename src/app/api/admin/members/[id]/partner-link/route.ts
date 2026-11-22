@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import {
   getPartnerLinkState,
   adminAssignPartnerLink,
@@ -48,12 +50,9 @@ export async function POST(
   });
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = assignSchema.safeParse(body);
   if (!parsed.success) {
@@ -122,12 +121,24 @@ export async function DELETE(
   // URL shape (member-scoped resource) cannot be bypassed with a foreign
   // link id.
   const { id: memberId } = await params;
-  const result = await adminRemovePartnerLink({
-    adminMemberId: guard.session.user.id,
-    linkId,
-    memberScopeId: memberId,
-    notifyMember: parsedBody.data.notifyMember,
-  });
+  let result: Awaited<ReturnType<typeof adminRemovePartnerLink>>;
+  try {
+    result = await adminRemovePartnerLink({
+      adminMemberId: guard.session.user.id,
+      linkId,
+      memberScopeId: memberId,
+      notifyMember: parsedBody.data.notifyMember,
+    });
+  } catch (err) {
+    // INV-LOCK-006: the removal's transaction is the first write.
+    const contended = transactionContendedResponse(
+      err,
+      "Admin partner link removal contended for the lock(1) budget",
+      { context: { memberId, linkId } },
+    );
+    if (contended) return contended;
+    throw err;
+  }
 
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: result.status });

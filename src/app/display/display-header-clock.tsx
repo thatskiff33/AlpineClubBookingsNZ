@@ -15,6 +15,7 @@ import {
   bindClubTime,
   formatClubWeekdayDate,
   formatClubWeekdayDayMonth,
+  isCalendarDate,
   parseCalendarDate,
   requireClubTimeZone,
   type BoundClubTime,
@@ -100,9 +101,7 @@ function formatClock(club: BoundClubTime, date: Date): string {
   follow the one setting.
 */
 
-const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-
-/** Preview-mode state for the header (issue #60): whether the URL marks this
+/** Preview-mode state for the header (issue hoppers99/AlpineClubBookingsNZ#60): whether the URL marks this
  * as an admin preview, and any active simulated date. Computed after mount so
  * the server render and first client render match (the page is force-dynamic
  * and client-hydrated). */
@@ -120,7 +119,9 @@ export function readPreviewState(): {
     params.has("previewDevice") ||
     params.has("previewGrant");
   const raw = params.get("previewDate");
-  const previewDate = raw && DATE_ONLY_REGEX.test(raw) ? raw : null;
+  // A real calendar day or no simulated date at all: `2026-02-30` used to
+  // switch the clock to "simulating" a day the state route refuses.
+  const previewDate = raw && isCalendarDate(raw) ? raw : null;
   return { isPreview, previewDate };
 }
 
@@ -140,9 +141,9 @@ function formatSimulatedDate(
   return formatClubWeekdayDate(parsed, format);
 }
 
-/** Live clock + payload freshness for the header (issue #56). Ticks on the
+/** Live clock + payload freshness for the header (issue hoppers99/AlpineClubBookingsNZ#56). Ticks on the
  * client only; the server render shows a blank slot for one frame. In an admin
- * preview (issue #60) the date line becomes a date picker that rewrites
+ * preview (issue hoppers99/AlpineClubBookingsNZ#60) the date line becomes a date picker that rewrites
  * ?previewDate and reloads — a testing tool, so a full reload is fine. While a
  * previewDate is active the clock recolours amber (data-simulated) and its date
  * line shows the simulated window start instead of today; the layout never
@@ -175,7 +176,7 @@ export function HeaderClock({
   const simulated = preview.isPreview && preview.previewDate !== null;
 
   const applyPreviewDate = (value: string) => {
-    if (!DATE_ONLY_REGEX.test(value)) return;
+    if (!isCalendarDate(value)) return;
     const params = new URLSearchParams(window.location.search);
     params.set("previewDate", value);
     // A testing tool: a full reload keeps the fetch/render path identical to a
@@ -220,7 +221,7 @@ export function HeaderClock({
     >
       <span className="display-clock-time">{formatClock(club, now)}</span>
       {preview.isPreview ? (
-        // #65 fix: the date <input> is a SIBLING of the button, not its child.
+        // hoppers99/AlpineClubBookingsNZ#65 fix: the date <input> is a SIBLING of the button, not its child.
         // A native date input nested inside a <button> is invalid HTML and its
         // selection does not reliably fire `change`, so picking a date never
         // applied; as siblings the picker fires normally and the button just

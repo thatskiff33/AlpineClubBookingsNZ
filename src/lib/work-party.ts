@@ -25,6 +25,12 @@ import {
   formatDateOnly,
 } from "@/lib/date-only";
 import { parsedDateOnlySchema } from "@/lib/date-only-schema";
+import {
+  isOpenWorkPartyEvent,
+  OPEN_WORK_PARTY_EVENT_WHERE,
+  workPartyNightCount,
+} from "@/lib/work-party-rules";
+import { MAX_OCCURRENCES } from "@/lib/calendar-recurrence";
 
 type WorkPartyDbClient = typeof prisma | Prisma.TransactionClient;
 
@@ -173,13 +179,12 @@ export async function findActiveWorkPartyEventsForRange(
 ) {
   return db.workPartyEvent.findMany({
     where: {
-      active: true,
+      ...OPEN_WORK_PARTY_EVENT_WHERE,
       // startDate < checkOut means the event starts on or before the last
       // booking night; endDate >= checkIn means it ends on or after the
       // first night.
       startDate: { lt: checkOut },
       endDate: { gte: checkIn },
-      promoCode: { active: true, archivedAt: null },
       ...(lodgeId ? { OR: [{ lodgeId: null }, { lodgeId }] } : {}),
     },
     select: {
@@ -191,6 +196,10 @@ export async function findActiveWorkPartyEventsForRange(
       discountPercent: true,
       lodgeId: true,
       lodge: { select: { name: true } },
+      // Fork triyder/AlpineClubBookingsNZ#119: what `workPartyEventRefusal` reads, so a caller can judge
+      // a listed event with the one rule rather than trust the filter.
+      active: true,
+      promoCode: { select: { active: true, archivedAt: true } },
     },
     orderBy: { startDate: "asc" },
   });
@@ -231,23 +240,52 @@ export async function resolveWorkPartyEventPromoForBooking(
   if (!event) {
     return { ok: false, error: "Working bee event not found" };
   }
-  if (!event.active || !event.promoCode.active || event.promoCode.archivedAt) {
-    return { ok: false, error: "This working bee event is no longer active" };
+  switch (workPartyEventRefusal(event, checkIn, checkOut, bookingLodgeId)) {
+    case "inactive":
+      return { ok: false, error: "This working bee event is no longer active" };
+    case "no-overlap":
+      return {
+        ok: false,
+        error: "This working bee event does not overlap your booking dates",
+      };
+    case "other-lodge":
+      return {
+        ok: false,
+        error: `This working bee is held at ${event.lodge?.name ?? "another lodge"} — book that lodge to attend it`,
+      };
+    case null:
+      return { ok: true, promoCodeStr: event.promoCode.code, eventName: event.name };
   }
-  if (!workPartyWindowOverlapsStay(event, checkIn, checkOut)) {
-    return {
-      ok: false,
-      error: "This working bee event does not overlap your booking dates",
-    };
-  }
-  if (event.lodgeId && bookingLodgeId && event.lodgeId !== bookingLodgeId) {
-    return {
-      ok: false,
-      error: `This working bee is held at ${event.lodge?.name ?? "another lodge"} — book that lodge to attend it`,
-    };
-  }
+}
 
-  return { ok: true, promoCodeStr: event.promoCode.code, eventName: event.name };
+export type WorkPartyEventRefusal = "inactive" | "no-overlap" | "other-lodge";
+
+/**
+ * Whether a work party can discount this stay, as a reason code — the ONE rule
+ * for "this event applies to this booking" (INV-SSOT). The member's booking
+ * create (`resolveWorkPartyEventPromoForBooking`) and the officer's "Add
+ * booking to work party" (fork triyder/AlpineClubBookingsNZ#119) each word the reason for their own reader.
+ * A lodge-bound event discounts only stays at that lodge; a club-wide one
+ * (null lodge) any lodge.
+ */
+export function workPartyEventRefusal(
+  event: {
+    active: boolean;
+    startDate: Date;
+    endDate: Date;
+    lodgeId: string | null;
+    promoCode: { active: boolean; archivedAt: Date | null };
+  },
+  checkIn: Date,
+  checkOut: Date,
+  bookingLodgeId: string | null | undefined,
+): WorkPartyEventRefusal | null {
+  if (!isOpenWorkPartyEvent(event)) return "inactive";
+  if (!workPartyWindowOverlapsStay(event, checkIn, checkOut)) return "no-overlap";
+  if (event.lodgeId && bookingLodgeId && event.lodgeId !== bookingLodgeId) {
+    return "other-lodge";
+  }
+  return null;
 }
 
 // Shared by the admin work-parties create and update routes.
@@ -264,12 +302,34 @@ export const workPartyEventSchema = z
   })
   .strict();
 
-export function workPartyEventDatesError(data: {
-  startDate: Date;
-  endDate: Date;
-}): string | null {
+/** The longest window a work party may have: the calendar's series cap. */
+const MAX_WORK_PARTY_NIGHTS = MAX_OCCURRENCES;
+
+/**
+ * Why a work party's dates cannot be saved, or null. `existing` is the row an
+ * edit changes (omit it on create).
+ *
+ * #5148: the calendar shows a work party as one entry per night, and a
+ * calendar series holds at most MAX_OCCURRENCES of them, so a NEW window
+ * longer than that is refused rather than cut short on the calendar without a
+ * word. The cap applies only when the dates themselves change: a work party
+ * saved longer before the cap existed can still be deactivated, renamed or
+ * re-described with its dates as they are (its calendar shows its first
+ * MAX_OCCURRENCES nights), and is refused only when its dates are edited.
+ */
+export function workPartyEventDatesError(
+  data: { startDate: Date; endDate: Date },
+  existing?: { startDate: Date; endDate: Date },
+): string | null {
   if (formatDateOnly(data.endDate) < formatDateOnly(data.startDate)) {
     return "End date must be on or after the start date";
+  }
+  const datesUnchanged =
+    existing !== undefined &&
+    formatDateOnly(existing.startDate) === formatDateOnly(data.startDate) &&
+    formatDateOnly(existing.endDate) === formatDateOnly(data.endDate);
+  if (!datesUnchanged && workPartyNightCount(data) > MAX_WORK_PARTY_NIGHTS) {
+    return `A work party can run for at most ${MAX_WORK_PARTY_NIGHTS} nights`;
   }
   return null;
 }
@@ -399,31 +459,32 @@ export async function createWorkPartyEventWithPromo(input: WorkPartyEventInput) 
 }
 
 /**
- * Update an event and keep its internal promo in sync. Deactivating stops
- * new applications only — existing redemptions and bookings are never
- * touched.
+ * Update an event and keep its internal promo in sync, inside the caller's
+ * transaction. Deactivating stops new applications only — existing
+ * redemptions and bookings are never touched. The admin edit runs it after
+ * taking the work party's calendar lock, so the entries are rewritten in the
+ * same transaction (`updateWorkPartyWithCalendar`, #5148).
  */
 export async function updateWorkPartyEventAndPromo(
+  tx: Prisma.TransactionClient,
   id: string,
   input: WorkPartyEventInput
 ) {
-  return prisma.$transaction(async (tx) => {
-    const event = await tx.workPartyEvent.update({
-      where: { id },
-      data: {
-        name: input.name,
-        description: input.description ?? null,
-        startDate: input.startDate,
-        endDate: input.endDate,
-        discountPercent: input.discountPercent,
-        active: input.active,
-        lodgeId: input.lodgeId ?? null,
-      },
-    });
-    await tx.promoCode.update({
-      where: { id: event.promoCodeId },
-      data: internalPromoDataForEvent(input),
-    });
-    return event;
+  const event = await tx.workPartyEvent.update({
+    where: { id },
+    data: {
+      name: input.name,
+      description: input.description ?? null,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      discountPercent: input.discountPercent,
+      active: input.active,
+      lodgeId: input.lodgeId ?? null,
+    },
   });
+  await tx.promoCode.update({
+    where: { id: event.promoCodeId },
+    data: internalPromoDataForEvent(input),
+  });
+  return event;
 }

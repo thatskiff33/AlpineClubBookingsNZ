@@ -60,7 +60,7 @@ Journey: Fill in personal details and nominators, submit the application, and fo
 
 Screen: `/dashboard`.
 
-Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay. Next Stay, draft and Recent Bookings rows name a booking's lodge once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). The Lodge Kiosk card offers Open Kiosk and, while the roster module is on, Who's at the lodge.
+Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay. Next Stay, draft and Recent Bookings rows name a booking's lodge once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). The Lodge Kiosk card offers Open Kiosk and, while the roster module is on, Who's at the lodge. Members see a Work Parties card listing upcoming work parties, when there is at least one; each opens its work party page. The Events card shows a work party once, and only to members.
 
 [Guide](user-guide/README.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -68,7 +68,7 @@ Journey: Read upcoming stays and account notices, then open a booking or choose 
 
 Screen: `/book`.
 
-Journey: Choose lodge and nights, add guests, review the price and rules, then confirm and follow the offered payment step. If a rule blocks the stay, use the available exception-request journey. A refused confirm, draft or waitlist join, or a Continue from the guests step that is stopped, moves the page and focus to the explanation above the steps, with any button that fixes it (or a link down to the Booking Officer request, when one is offered); a full lodge does the same with its waitlist offer.
+Journey: Choose lodge and nights, add guests, review the price and rules, then confirm and follow the offered payment step. If a rule blocks the stay, use the available exception-request journey. A refused confirm, draft or waitlist join, or a Continue from the guests step that is stopped, moves the page and focus to the explanation above the steps, with any button that fixes it (or a link down to the Booking Officer request, when one is offered); a full lodge does the same with its waitlist offer. Work survives profile detours and refreshes in the same tab; expired dates are dropped. A Join Work Party visit does not bring back older kept work; once its dates are filled in it is kept itself, so a detour returns to the Join booking, and a Join that fills nothing in leaves the older work for the next visit. Submit, waitlist join, draft save, exception request, sign-out or Start again clears it.
 
 [Guide](user-guide/booking-a-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -76,7 +76,7 @@ Journey: Choose lodge and nights, add guests, review the price and rules, then c
 
 Screen: `/bookings`, `/bookings/[id]`.
 
-Journey: Find a stay and open its detail. Review lodge, status, guests and amounts before paying, requesting a change or cancelling. Stay Details always names the lodge; list rows do once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). Pending consent appears on the booking for an eligible invited member.
+Journey: Find a stay and open its detail. Review lodge, status, guests and amounts before paying, requesting a change or cancelling. Stay Details always names the lodge; list rows do once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). Pending consent appears on the booking for an eligible invited member. **Download invoice** beside Edit Booking gives the booker and officers the invoice PDF ([Xero's or the app's](user-guide/paying-for-your-stay.md)), and an **Invoice and credits** card under Payment lists each Xero credit note raised against the booking with a summary from the app's own records and a plain-words line when the invoice in Xero does not show the latest change; a booking that may have more than one invoice asks the booker to contact the club for copies (an officer or admin on someone else's booking is told to check the club's accounts), and a guest on someone else's booking sees none of these.
 
 [Guide](user-guide/changing-or-cancelling-a-booking.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -115,9 +115,15 @@ Journey: Join the waitlist for full nights, open an offer, and accept before its
 
 Screen: `/profile`.
 
-Journey: Use the section rail to open personal details, sign-in security, notification preferences or privacy controls. Stage and save the relevant section. Sign-in security lists saved passkeys and can add or remove one without changing the authenticator-app or email enrolment. A deletion request awaiting review, or an email change awaiting its link, stays shown in its section after a reload until it resolves.
+Journey: Use the section rail to open personal details, sign-in security, notification preferences or privacy controls. Stage and save the relevant section. Privacy & Data downloads the member's own subject access file. Sign-in security lists saved passkeys and can add or remove one without changing the authenticator-app or email enrolment. A deletion request awaiting review, or an email change awaiting its link, stays shown in its section after a reload until it resolves.
 
 [Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Connect an AI app
+
+Screen: `/connect/authorize`; `/profile`.
+
+[Guide](guides/mcp-server.md)
 
 ### Family and household
 
@@ -143,6 +149,22 @@ Journey: When enabled, read recent posts, page to older posts, or compose a mess
 
 [Guide](user-guide/the-message-board.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
+### Work party page
+
+Screen: `/dashboard/work-parties/{id}`.
+
+Journey: Members only. Open a work party from the dashboard's Work Parties card or its calendar entry, read its nights, lodge, discount and description, then choose Join Work Party. That opens Book a Stay with the dates, the lodge and "I am attending a working bee" filled in; choose guests and pay as usual. A finished work party has no Join button.
+
+[Guide](guides/work-parties.md#members-join-a-work-party) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Order food and food orders
+
+Screen: `/food-order` and `/food-orders`.
+
+Journey: When enabled, open Order food from the dashboard, choose the lodge (only those the member may book) and needed-by date, add item lines (description, quantity and type, such as 2 Loaves), then send. Food orders lists your orders. Committee and Lodge Operations admins see every order, and a current hut leader the orders at their lodge; hut leaders at that order's lodge and Lodge Operations edit admins tick items received as they arrive (the order closes on the last) or record its price. The totals panel adds a By year breakdown, earlier years collapsed under Previous years. An emailed link pins its order at the top.
+
+[Guide](guides/food-orders.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
 ## Admin overview
 
 ### AI Diagnostics deployment and operator guide — ai-diagnostics
@@ -159,9 +181,9 @@ Journey: Inspect diagnostic access and follow the deployment guide to provision 
 
 Screen: `/admin/dashboard`.
 
-Shows: Attention queues, headline statistics, recent bookings and quick-action links.
+Shows: Attention cards for the officer work queues the sidebar's Needs Attention section lists, with the same numbers; headline statistics; recent bookings and quick-action links. A count that failed to load is named above the cards.
 
-Journey: Scan attention cards, follow a queue, or use a quick action to open its screen.
+Journey: Scan attention cards, follow a queue, or use a quick action to open its screen. The sidebar's counts refresh on each admin page change, on returning to the tab and after a queue decision, and offer Retry when they fail.
 
 [Guide](guides/dashboard.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -231,6 +253,10 @@ Journey: Follow the redirect into the Changes tab of Booking Requests.
 
 Screen: `/admin/booking-policies`.
 
+The Cancellation section includes club-wide reminder and policy-exception hold
+timings. Choose Edit, adjust days, then Save or Cancel; existing requests keep
+their stamped hold deadlines.
+
 Shows: Booking rules and cancellation-policy settings.
 
 Journey: Review booking rules and cancellation policies before staging a change.
@@ -241,9 +267,9 @@ Journey: Review booking rules and cancellation policies before staging a change.
 
 Screen: `/admin/booking-requests`.
 
-Shows: Tabbed request queues and request details with their current status and actions.
+Shows: Four request queue tabs, each with its pending count across every page, and request details with their current status and actions. Each queue pages 25 rows with a "Showing 1–25 of 40" total line; pending filters list the oldest first (INV-OPS-020). A deep link to one booking or request pins it above the page when it is elsewhere.
 
-Journey: Choose a queue tab, open a request, inspect the proposed stay, and use its available actions.
+Journey: Open on the first tab with pending work (Approvals when none), open a request, inspect the proposed stay, and use its available actions.
 
 [Guide](guides/booking-requests.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -327,7 +353,7 @@ Screen: `/admin/communications`.
 
 Shows: Member communication composition and audience selection.
 
-Journey: Choose recipients (the help line says who each reaches) and compose a message; Send to Members opens a confirmation naming the recipient count, audience and subject, with Cancel focused; confirm to send. The result is announced in a status region.
+Journey: Choose recipients (the help line says who each reaches), choose the kind of message (club notice or club newsletter, nothing preselected; a live count shows who it reaches and who is left out) and compose a message; Send to Members opens a confirmation naming the recipient count, audience, kind and subject, with Cancel focused; confirm to send. The result is announced in a status region.
 
 [Guide](guides/communications.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -393,11 +419,11 @@ Journey: Choose a lodge, inspect lockers and assignments, and manage the selecte
 
 [Guide](guides/lockers.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
-### Member Applications — member-applications
+### Applications — member-applications
 
 Screen: `/admin/member-applications`.
 
-Shows: Applications, nomination progress and officer decisions.
+Shows: Applications, nomination progress and officer decisions. The list pages 25 rows with a "Showing 1–25 of 40" total line; Pending admin lists the oldest first (INV-OPS-020).
 
 Journey: Review an application and its nominations, then approve or reject. Action failures take focus and scroll into view; successes are announced and brought into view.
 
@@ -419,7 +445,7 @@ Screen: `/admin/members`.
 
 Shows: A searchable member list and individual membership records.
 
-Journey: Search or filter members, open a profile, and use its permitted membership actions. Merge preview and execution failures take focus and scroll into view.
+Journey: Search or filter members, open a profile, and use its permitted membership actions. A Full Admin answers an access request from a profile's Lifecycle & Deletion section: download that member's subject access report, or find someone else by email or a non-member guest by name. Merge preview and execution failures take focus and scroll into view.
 
 [Guide](guides/members.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -429,7 +455,7 @@ Screen: `/admin/membership-cancellations`.
 
 Merged in (#4796): a Requests tab and a Settings tab (`?tab=settings`); `/admin/membership-cancellation` and `/admin/setup/cancellation` redirect to the Settings tab.
 
-Shows: The membership cancellation review queue; on the Settings tab, the cancellation copy and Xero handling.
+Shows: The membership cancellation and archive review queues, each paged 25 rows with its own total line (INV-OPS-020); on the Settings tab, the cancellation copy and Xero handling.
 
 Journey: Open a cancellation request and review its consequences before deciding it; or open Settings, from here or from Notifications & Email, to change the cancellation wording.
 
@@ -455,6 +481,16 @@ Journey: Inspect a type, its eligibility and subscription settings before saving
 
 [Guide](guides/membership-types.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
+### Subscription Categories — subscription-categories
+
+Screen: `/admin/subscription-categories`.
+
+Shows: Subscription categories and their fee, the second billing axis alongside membership type.
+
+Journey: Create or edit a category and its flat fee, then assign members from their profile.
+
+[Guide](guides/subscription-categories.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
 ### Subscription Lockout — subscription-lockout
 
 Screen: `/admin/subscription-lockout`.
@@ -473,11 +509,11 @@ Screen: `/admin/calendar`.
 
 Shows: Club events and the controls for managing them.
 
-Journey: Choose a date range, inspect events, and open an event to manage it.
+Journey: Choose a date range, inspect events, and open an event to manage it. A work party's entries show to members only and open read-only, with a link to Work Parties, where they are changed.
 
 [Guide](guides/calendar.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
-### Chore Templates — chores
+### Chores — chores
 
 Screen: `/admin/chores`.
 
@@ -493,7 +529,7 @@ Screen: `/admin/display`.
 
 Shows: The lobby-display hub, device management, templates, layouts and previews.
 
-Journey: Open Devices, Visual builder, Layouts, Templates or Reference from the display hub.
+Journey: Open Display Devices, Display Builder, Display Layouts, Display Templates or Display Reference from the display hub.
 
 [Guide](guides/display.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -547,6 +583,16 @@ Journey: Filter faults by lodge and status, inspect a report, then record the ne
 
 [Guide](guides/maintenance-reports.md) · [History](UX_FLOW_HISTORY.md#lodge-maintenance-reports-2780)
 
+### Food Orders — food-orders
+
+Screen: `/admin/food-orders`.
+
+Shows: The food officer email orders go to and the officer label.
+
+Journey: Edit, change the address or label, then save or cancel.
+
+[Guide](guides/food-orders.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
 ### Rooms & Beds — rooms-beds
 
 Screen: `/admin/rooms-beds`.
@@ -571,9 +617,9 @@ Journey: Choose a lodge and day, inspect arrivals and departures, stage roster e
 
 Screen: `/admin/work-parties`.
 
-Shows: Work-party dates, participation and attendance.
+Shows: Work-party dates, participation and attendance, and whether each is on the Events Calendar.
 
-Journey: Inspect a work party, its participants and attendance before recording changes.
+Journey: Inspect a work party, its participants and attendance before recording changes. Creating one adds it to the Events Calendar when that module is on; Add to calendar puts an older one there, says so in a status line that takes focus, and goes.
 
 [Guide](guides/work-parties.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -635,7 +681,7 @@ Screen: `/admin/payments`.
 
 Shows: Payment records, statuses and links to related bookings.
 
-Journey: Filter payments, open a record, and inspect its booking and provider status.
+Journey: Filter payments, open a record, and inspect its booking and provider status. On **Money to settle**, a refund handed to the treasurer because its card payment is disputed offers **Reduce by lost dispute** when the dispute was lost for part of it: the confirmation states what the refund was, what it is reduced by and what is still owed, and the task stays open for the rest (#4516). The same holds for a booking change's refund held by a dispute; lost money is counted once across a payment's refunds, oldest first, and a row with lost money set against it offers no **Mark paid back** (`INV-PAY-157`).
 
 [Guide](guides/payments.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -643,7 +689,7 @@ Journey: Filter payments, open a record, and inspect its booking and provider st
 
 Screen: `/admin/refund-requests`.
 
-Shows: Refund requests with booking context and decision controls. A credit approval shows the account the requester chose.
+Shows: Refund requests with booking context and decision controls, paged 25 rows with a total line (INV-OPS-020). A credit approval shows the account the requester chose.
 
 Journey: Open a request, inspect the booking and amounts, then use the permitted decision action.
 
@@ -693,11 +739,21 @@ Journey: Open the linked calendar event and join or manage its video meeting.
 
 Screen: `/admin/xero`.
 
-Shows: Connection setup, the health snapshot (including credit used in Xero outside the app), accounting operations and failure details.
+Shows: Connection setup, the health snapshot (including credit used in Xero outside the app), the GST/tax treatment schedule and tax category mapping, accounting operations and failure details.
 
 Journey: Inspect connection and operations status; open a failed item to follow its documented recovery.
 
 [Guide](guides/xero.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Xero Unallocated Payments — xero
+
+Screen: `/admin/xero/unallocated-payments`.
+
+Shows: Open Xero overpayments and prepayments: date, balance, member or "No member linked", contact link (#5204).
+
+Journey: Read the nightly list; finance edit can Refresh from Xero.
+
+[Guide](guides/xero.md#unallocated-payments) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ## Admin content
 
@@ -793,6 +849,12 @@ Journey: Read usage and the spend cap before changing the assistant settings.
 
 [Guide](guides/ai-help.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
+### AI app connections — ai-connections
+
+Screen: `/admin/ai-connections`.
+
+[Guide](guides/mcp-server.md)
+
 ### Audit Log — audit-log
 
 Screen: `/admin/audit-log`.
@@ -879,7 +941,7 @@ Screen: `/admin/email-deliverability`.
 
 Shows: Email delivery results and eligible retry controls.
 
-Journey: Filter delivery outcomes and inspect a failure before retrying eligible mail.
+Journey: Filter delivery outcomes and inspect a failure before retrying eligible mail. A failed booking confirmation, pre-arrival reminder or guest payment link links to its booking, where an officer sends a fresh copy.
 
 [Guide](guides/email-deliverability.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -987,7 +1049,7 @@ Screen: `/admin/setup`.
 
 Shows: The installation setup hub and configuration cards.
 
-Journey: Open a setup card, run a provider test, or update a step. Failed provider tests and step or finish actions take focus and scroll into view; finishing setup announces completion.
+Journey: Open the setup card for the configuration task you need, run a provider test, or update a step. No card links back to Setup itself; each sub-hub returns here by its Setup back link (#4968). Failed provider tests and step or finish actions take focus and scroll into view; finishing setup announces completion.
 
 [Guide](guides/setup.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -998,6 +1060,10 @@ Screen: `/admin/stuck-states`.
 Shows: Operational incidents and guided repair actions.
 
 Journey: Inspect flagged records and use the documented recovery for the selected state.
+A signal over particular bookings lists them under it (at most 50, then "and N
+more"), each linking to the booking; its **Open** link goes to that list, or to
+Background Jobs for operations still retrying (#4959). Payment lists need
+Finance view and Membership view; the unnamed-guest list needs Membership view.
 A card refund Stripe gave up on is settled on its row, never with a new Stripe
 dashboard refund (#4368): **Paid another way**, or **Try the card again** after a
 confirm dialog; a row a later Stripe refund covers reads "nothing left owed" and
@@ -1048,6 +1114,9 @@ every screen:
 - **Destructive confirmations** use `useConfirm()` from
   `src/components/confirm-dialog.tsx`, never `window.confirm`. Lint enforces
   it (`design-system/no-native-confirm`), with today's calls on a ratchet.
+  The prompt names what it acts on and says what will change and what cannot
+  be undone (#4973); when the server gains a side effect, the prompt that
+  guards it changes in the same PR.
 
 New code follows this rule; existing inline success panels are converted
 opportunistically when a file is already being touched.
@@ -1058,7 +1127,13 @@ so a blind member can miss a declined card or a wrong sign-in code:
 
 - **A failure** goes in `FocusedActionError`
   (`src/components/focused-action-error.tsx`): mounted empty with its own
-  unique `id`, filled when the action fails, and focused.
+  unique `id`, filled when the action fails, and focused. The message and the
+  counter that re-fires it when the same failure repeats have one home,
+  `useActionFailure` (`src/hooks/use-action-failure.ts`, #4975): `fail`
+  records and counts, `clear` empties without counting. The setup wizards use
+  it. Four older pages still keep the same pair by hand (Chores, Lockers,
+  Lodges and Hut fees); they predate the hook and are unconverted, so new code
+  uses the hook rather than a fifth copy.
 - **A success or progress message** goes in a `StatusRegion`
   (`src/components/status-region.tsx`): a `role="status"` region mounted
   before the request, `sr-only` while empty, so only its text changes. It is the

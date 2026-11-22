@@ -104,6 +104,7 @@ import logger from "@/lib/logger";
 import { resendUnsentGroupOrganiserHandBackAlerts } from "@/lib/group-organiser-hand-back";
 import { clubFormatValues } from "@/lib/club-format-server";
 import type { ClubFormat } from "@/lib/club-format";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const GROUP_SETTLEMENT_REAP_HOURS =
   Number(process.env.GROUP_SETTLEMENT_REAP_HOURS) || 48;
@@ -814,7 +815,7 @@ async function releaseSettlementChildren(
       memberEmail: bookingOwner(child).member.email,
       memberFirstName: bookingOwner(child).member.firstName,
     }));
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 /**
@@ -893,7 +894,7 @@ async function cancelReapedChildren(
       memberEmail: bookingOwner(child).member.email,
       memberFirstName: bookingOwner(child).member.firstName,
     }));
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 /** Post-commit side effects of the expiry phase: record events and notify. */

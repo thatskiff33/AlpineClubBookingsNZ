@@ -1,48 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import {
   SameOwnerCoverageOverrideRequiredError,
   SameOwnerCoverageWouldBreakError,
   buildSameOwnerCoverageOverrideRequiredBody,
   buildSameOwnerCoverageRefusalBody,
-  hostingCoverageOverrideSchema,
 } from "@/lib/adult-member-hosting-same-owner";
 import { auth } from "@/lib/auth";
 import { cancelBooking } from "@/lib/booking-cancel";
+import { cancelBookingMutationSchema, bookingIdParamsSchema } from "@/lib/booking-cancel-schema";
 import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
-import { z } from "zod";
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 import {
   bookingManagementAuthorizationRole,
   hasAdminAreaAccess,
 } from "@/lib/admin-permissions";
 import { clubFormatValues } from "@/lib/club-format-server";
-
-const cancelBookingParamsSchema = z.object({
-  id: z.string().min(1),
-});
-
-const cancelBookingMutationSchema = z.object({
-  refundMethod: z.enum(["card", "credit"]),
-  // Issue #1705: per-action member-email choice for admin cancellations, same
-  // semantics as the modify routes (#1696): booking-management ADMIN only,
-  // absent means notify.
-  notifyMember: z.boolean().optional(),
-  // #2576 §7: the officer's explicit confirmation and mandatory reason for
-  // overriding a same-owner coverage refusal. Optional in the shape because the
-  // first submission never carries it — the officer is asked only when the cancel
-  // would actually strand another booking on the account.
-  hostingCoverageOverride: hostingCoverageOverrideSchema.optional(),
-});
+import { arrivesAsMcpConnection, connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
+import { CANCEL_BOOKING_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const parsedParams = cancelBookingParamsSchema.safeParse(await params);
+    const parsedParams = bookingIdParamsSchema.safeParse(await params);
     if (!parsedParams.success) {
       return NextResponse.json(
         { error: "Invalid input", details: parsedParams.error.flatten() },
@@ -60,20 +49,10 @@ export async function POST(
       return inactiveResponse;
     }
 
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      return NextResponse.json(
-        {
-          error: "Invalid JSON",
-          details: { body: ["Request body must be valid JSON"] },
-        },
-        { status: 400 }
-      );
-    }
+    const json = await parseJsonRequestBody(request);
+    if (!json.ok) return json.response;
 
-    const parsed = cancelBookingMutationSchema.safeParse(body);
+    const parsed = cancelBookingMutationSchema.safeParse(json.body);
     if (!parsed.success) {
       return NextResponse.json(
         { error: "Invalid input", details: parsed.error.flatten() },
@@ -86,9 +65,23 @@ export async function POST(
     // including the booking owner cancelling their own booking — is refused
     // before the service runs, so a member can never suppress their own
     // cancellation email.
+    // ALP-653 (INV-MCP-006): stage 1's `cancel_my_booking` cancels the
+    // member's OWN booking. An AI app connection never carries an officer's
+    // authority here (`memberOnlySessionUser`), so for it the Full Admin role
+    // and the Booking Officer flag are both off and the service applies the
+    // member rules: owner only, the started-stay block and the member door.
+    // Nor may it send an officer's hosting-coverage override (ALP-718).
+    // Officer booking actions are a later stage (ALP-719).
+    const actor = memberOnlySessionUser(request, session.user);
+    if (arrivesAsMcpConnection(request) && parsed.data.hostingCoverageOverride !== undefined) {
+      return NextResponse.json(
+        { error: "Admin override is not available for this account" },
+        { status: 403 }
+      );
+    }
     if (
       parsed.data.notifyMember !== undefined &&
-      bookingManagementAuthorizationRole(session.user) !== "ADMIN"
+      bookingManagementAuthorizationRole(actor) !== "ADMIN"
     ) {
       return NextResponse.json(
         { error: "Admin override is not available for this account" },
@@ -102,7 +95,7 @@ export async function POST(
     const result = await cancelBooking(
       parsedParams.data.id,
       session.user.id,
-      authorizationRoleFromAccessRoles(session.user),
+      authorizationRoleFromAccessRoles(actor),
       getClientIp(request),
       format,
       parsed.data.refundMethod,
@@ -114,10 +107,11 @@ export async function POST(
         // authorization role stays honest ("USER" for an officer); this flag
         // ONLY widens the internal authorization gate, never the refund
         // computation (which keys off booking state + policy tier only).
-        hasBookingsEditAccess: hasAdminAreaAccess(session.user, {
-          area: "bookings",
-          level: "edit",
-        }),
+        hasBookingsEditAccess:
+          hasAdminAreaAccess(actor, {
+            area: "bookings",
+            level: "edit",
+          }),
         // Issue #1705: the admin's explicit per-cancel member-email choice.
         // Absent means notify; the service additionally forces notify for any
         // non-admin actor (defence in depth behind the 403 gate above).
@@ -140,13 +134,25 @@ export async function POST(
     );
 
     if (result.status === 200) {
-      return NextResponse.json(result.data);
+      return connectionJson(request, result.data, CANCEL_BOOKING_CONNECTION_SHAPE);
     }
     return NextResponse.json(
       { error: result.error },
       { status: result.status }
     );
   } catch (error) {
+    // A cancel commits in steps - Stripe intent cancels before its lock(1)
+    // claim, card refunds and linked-child cancels after it - so a contended
+    // transaction (INV-LOCK-006) asks the member to check before retrying.
+    const contended = transactionContendedResponse(
+      error,
+      "Booking cancel contended for the lock(1) budget",
+      {
+        message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+        context: { bookingId: (await params).id },
+      },
+    );
+    if (contended) return contended;
     const hostingRetry = hostingCoverageParticipantRetryResponse(error);
     if (hostingRetry) return hostingRetry;
     // #2576 §6. ABOVE the generic branch, and that position is the whole point:

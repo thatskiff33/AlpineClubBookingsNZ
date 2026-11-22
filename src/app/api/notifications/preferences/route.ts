@@ -1,57 +1,22 @@
 import { NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { z } from "zod";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
+import { MEMBER_NOTIFICATION_PREFERENCES_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import {
+  MEMBER_NOTIFICATION_PREFERENCE_KEYS,
+  memberNotificationPreferencesConnectionUpdateSchema,
+  memberNotificationPreferencesUpdateSchema,
+  resolveMemberNotificationPreferences,
+} from "@/lib/member-notification-preferences";
 
-const updateSchema = z.object({
-  bookingConfirmation: z.boolean().optional(),
-  bookingReminder: z.boolean().optional(),
-  bookingBumped: z.boolean().optional(),
-  bookingCancelled: z.boolean().optional(),
-  bookingAddedByFamily: z.boolean().optional(),
-  choreRoster: z.boolean().optional(),
-  marketingEmails: z.boolean().optional(),
-});
-
-const MEMBER_NOTIFICATION_PREFERENCE_KEYS = [
-  "bookingConfirmation",
-  "bookingReminder",
-  "bookingBumped",
-  "bookingCancelled",
-  // #2284 (S2): the family-scope "you were added to a booking" FYI opt-out.
-  "bookingAddedByFamily",
-  "choreRoster",
-  "marketingEmails",
-] as const;
-
-type MemberNotificationPreferenceKey =
-  (typeof MEMBER_NOTIFICATION_PREFERENCE_KEYS)[number];
-
-type MemberNotificationPreferences = Record<
-  MemberNotificationPreferenceKey,
-  boolean
->;
-
-function resolveMemberNotificationPreferences(
-  preferences?: Partial<MemberNotificationPreferences> | null
-): MemberNotificationPreferences {
-  return {
-    bookingConfirmation: preferences?.bookingConfirmation ?? true,
-    bookingReminder: preferences?.bookingReminder ?? true,
-    bookingBumped: preferences?.bookingBumped ?? true,
-    bookingCancelled: preferences?.bookingCancelled ?? true,
-    bookingAddedByFamily: preferences?.bookingAddedByFamily ?? true,
-    choreRoster: preferences?.choreRoster ?? true,
-    marketingEmails: preferences?.marketingEmails ?? false,
-  };
-}
-
-export async function GET() {
+export async function GET(request: Request) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -72,15 +37,11 @@ export async function GET() {
     });
   }
 
-  return NextResponse.json({
-    bookingConfirmation: prefs.bookingConfirmation,
-    bookingReminder: prefs.bookingReminder,
-    bookingBumped: prefs.bookingBumped,
-    bookingCancelled: prefs.bookingCancelled,
-    bookingAddedByFamily: prefs.bookingAddedByFamily,
-    choreRoster: prefs.choreRoster,
-    marketingEmails: prefs.marketingEmails,
-  });
+  return connectionJson(
+    request,
+    resolveMemberNotificationPreferences(prefs),
+    MEMBER_NOTIFICATION_PREFERENCES_CONNECTION_SHAPE,
+  );
 }
 
 export async function PUT(request: Request) {
@@ -93,14 +54,16 @@ export async function PUT(request: Request) {
     return inactiveResponse;
   }
 
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = updateSchema.safeParse(body);
+  const schema = arrivesAsMcpConnection(request)
+    ? memberNotificationPreferencesConnectionUpdateSchema
+    : memberNotificationPreferencesUpdateSchema;
+  const parsed = schema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -152,13 +115,9 @@ export async function PUT(request: Request) {
     ),
   ]);
 
-  return NextResponse.json({
-    bookingConfirmation: prefs.bookingConfirmation,
-    bookingReminder: prefs.bookingReminder,
-    bookingBumped: prefs.bookingBumped,
-    bookingCancelled: prefs.bookingCancelled,
-    bookingAddedByFamily: prefs.bookingAddedByFamily,
-    choreRoster: prefs.choreRoster,
-    marketingEmails: prefs.marketingEmails,
-  });
+  return connectionJson(
+    request,
+    resolveMemberNotificationPreferences(prefs),
+    MEMBER_NOTIFICATION_PREFERENCES_CONNECTION_SHAPE,
+  );
 }

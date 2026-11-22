@@ -1,4 +1,4 @@
-import { Contact, CreditNote, LineAmountTypes, type Contacts, type LineItem } from "xero-node";
+import { Contact, CreditNote, type Contacts, type LineItem } from "xero-node";
 import { getManagedGroupUniverse } from "@/lib/xero-member-grouping";
 import { buildMembershipCancellationApprovalBlockedMessage } from "@/lib/membership-cancellation-blocker-messages";
 import { loadMembershipCancellationInvoiceBlockersByMemberId } from "@/lib/membership-cancellation-invoice-blockers";
@@ -9,6 +9,8 @@ import {
   type MembershipCancellationXeroContactGroupSetting,
 } from "@/lib/membership-cancellation-settings";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroLineTax } from "@/lib/xero-tax-rendering";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { postCancellationCreditToJournal } from "@/lib/subscription-journal-postings";
 import { prisma } from "@/lib/prisma";
@@ -560,6 +562,12 @@ export async function createXeroMembershipCancellationCreditNote(
 
   const mapping = await getResolvedAccountMapping("membershipCancellationCredit");
   const accountCode = mapping.code ?? "203";
+  // #4632: the note returns money under the treatment its invoice was charged under.
+  const taxRendering = await resolveXeroTaxRendering({
+    kind: "subscription-invoice",
+    invoiceId,
+    subscriptionId: subscription.id,
+  });
   const creditLineItem: LineItem = {
     // The club's own year-end names the season, resolved not defaulted because
     // this runs from the outbox worker (#3116). A credit note derives at send
@@ -569,7 +577,7 @@ export async function createXeroMembershipCancellationCreditNote(
     description: `Membership cancellation credit for ${seasonYearsLabel(subscription.seasonYear, await refreshFinancialYearConfig())} annual subscription`,
     quantity: 1,
     unitAmount: amountCents / 100,
-    taxType: "OUTPUT2",
+    ...xeroLineTax(taxRendering),
     accountCode,
   };
   if (mapping.itemCode) {
@@ -586,7 +594,7 @@ export async function createXeroMembershipCancellationCreditNote(
     type: CreditNote.TypeEnum.ACCRECCREDIT,
     contact: { contactID: contactId },
     date: cancellationCreditNoteDate,
-    lineAmountTypes: LineAmountTypes.Inclusive,
+    lineAmountTypes: taxRendering.lineAmountTypes,
     lineItems: [creditLineItem],
     reference: `Membership Cancellation ${params.participantId.slice(0, 8)}`,
     status: CreditNote.StatusEnum.AUTHORISED,

@@ -1,13 +1,21 @@
 "use client";
 
 import { adminHref } from "@/lib/admin-hubs";
-import { useCallback, useState, useEffect, useLayoutEffect, useRef } from "react";
+import {
+  useCallback,
+  useState,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+} from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { toast } from "sonner";
 import { type GuestData } from "@/components/guest-form";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { useClubFormat } from "@/components/club-format-provider";
+import { useClubTime } from "@/components/club-time-provider";
 import { useLodgeOptions } from "@/components/lodge-select";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope";
 import { BOOKING_LODGE_UNRESOLVED_MEMBER_MESSAGE } from "@/lib/booking-lodge-scope";
@@ -23,6 +31,10 @@ import {
 } from "@/components/promo-code-list-client";
 import { useWorkingBeeDiscount } from "./use-working-bee-discount";
 import { useSelectionCancellationSchedule } from "./use-selection-cancellation-schedule";
+import { useWizardWorkPersistence } from "./use-wizard-work-persistence";
+import type { SavedWizardWork } from "@/lib/booking-wizard-work";
+import { readWorkPartyJoinId, useWorkPartyPrefill } from "./use-work-party-prefill";
+import { fetchStayWorkParties, reconcileWorkPartySelection } from "./stay-work-parties";
 import {
   getBookingErrorPaymentTargets,
   type BookingErrorPaymentTarget,
@@ -264,6 +276,8 @@ export function useBookingWizard() {
    */
   const replaceExceptionRequestId =
     searchParams?.get("replaceRequest")?.trim() || null;
+  // #5148: a "Join Work Party" link's work party: a fresh entry (see useWizardWorkPersistence).
+  const workPartyJoinId = readWorkPartyJoinId(searchParams);
   const { lodgeCapacity } = useClubIdentity();
   const [step, setStep] = useState<BookingWizardStep>("dates");
   // Lodge being booked (multi-lodge phase 8). /api/lodges only returns
@@ -466,6 +480,9 @@ export function useBookingWizard() {
   // instead of the default partial bump for non-member guests.
   const [cancelIfGuestsBumped, setCancelIfGuestsBumped] = useState(false);
   const [roomOptions, setRoomOptions] = useState<RoomOption[]>([]);
+  // Which lodge `roomOptions` was answered for, so a room request can be checked
+  // only against its own lodge's list (#4950).
+  const [roomOptionsLodgeId, setRoomOptionsLodgeId] = useState<string | null>(null);
   const [roomRequestEnabled, setRoomRequestEnabled] = useState(false);
   const [useCredit, setUseCredit] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<BookingPaymentMethod>("stripe");
@@ -798,6 +815,9 @@ export function useBookingWizard() {
   // never a per-guest stay range or a live quote/promo/credit to invalidate;
   // the resets below match that helper for parity and are no-ops here.
   const selfSeededRef = useRef(false);
+  // The same fact as `selfSeededRef`, readable while rendering so the kept copy
+  // can say whether an empty party was the member's choice (#4950).
+  const [selfSeedSettled, setSelfSeedSettled] = useState(false);
   useEffect(() => {
     if (selfSeededRef.current) return;
     const self = familyMembers.find((fm) => fm.relationship === "self");
@@ -809,6 +829,7 @@ export function useBookingWizard() {
 
     // Consume the one-shot opportunity now — seeding must never fire later.
     selfSeededRef.current = true;
+    setSelfSeedSettled(true);
 
     // Only a fresh, bookable, within-capacity party gets self injected. Case (a)
     // (a non-empty party) falls through here having spent the opportunity.
@@ -832,6 +853,108 @@ export function useBookingWizard() {
     setUseCredit(false);
     setMemberNightConflicts([]);
   }, [familyMembers, guests, partySizeCeiling]);
+
+  /* ---- Work kept in this tab (#4950) -----------------------------------
+   *
+   * The guests step sends members to their profile "then return here", and a
+   * refresh used to throw the whole wizard away. The member's inputs are kept
+   * in this tab and brought back on return; the rules for what is kept live in
+   * `src/lib/booking-wizard-work.ts`, the timing in `useWizardWorkPersistence`.
+   *
+   * Restoring applies the inputs, then re-runs the same date check a pick
+   * would, so availability, capacity and policy are read afresh; a copy that
+   * had reached review is then re-quoted. Nothing fetched or priced is kept.
+   */
+  const clubTime = useClubTime();
+  const restoredDatesRef = useRef<{
+    lodgeId: string;
+    checkIn: string;
+    checkOut: string;
+    requote: boolean;
+    advance: boolean;
+  } | null>(null);
+  const [restoredRequotePending, setRestoredRequotePending] = useState(false);
+  // The step restored work is on its way back to. Resuming re-runs the date
+  // check and quote, which takes a moment, and a save in that moment would keep
+  // the dates step in place of the step the member had reached. Until the wizard
+  // gets there (or the resume ends without getting there) the kept step is this.
+  const [restoredStepTarget, setRestoredStepTarget] = useState<
+    SavedWizardWork["step"] | null
+  >(null);
+  function applyRestoredWork(work: SavedWizardWork) {
+    // A kept party is the member's own choice, including one that leaves
+    // themselves out, so the one-shot self seed is spent rather than run over
+    // it. An empty party kept before the seed had run was nobody's choice: the
+    // seed stays open and the family list decides, as on a fresh visit.
+    const seedSpent = work.guests.length > 0 || work.selfSeedSettled;
+    selfSeededRef.current = seedSpent;
+    setSelfSeedSettled(seedSpent);
+    setLodgeId(work.lodgeId);
+    setCheckIn(work.checkIn);
+    setCheckOut(work.checkOut);
+    setGuests(work.guests);
+    setNotes(work.notes);
+    setPerGuestDatesEnabled(work.perGuestDatesEnabled);
+    setMultiDateRangesEnabled(work.multiDateRangesEnabled);
+    setExpectedArrivalTime(work.expectedArrivalTime);
+    setRequestedRoomId(work.requestedRoomId);
+    setCancelIfGuestsBumped(work.cancelIfGuestsBumped);
+    setGroupTrip(work.groupTrip);
+    setGroupPaymentMode(work.groupPaymentMode);
+    setMemberReviewJustification(work.memberReviewJustification);
+    setUseCredit(work.useCredit);
+    setAttendingWorkParty(work.attendingWorkParty);
+    setSelectedWorkPartyEventId(work.selectedWorkPartyEventId);
+    setWaitlistAlternateLodgeIds(work.waitlistAlternateLodgeIds);
+    setRestoredStepTarget(
+      work.checkIn && work.checkOut && work.step !== "dates" ? work.step : null,
+    );
+    restoredDatesRef.current =
+      work.checkIn && work.checkOut
+        ? {
+            lodgeId: work.lodgeId,
+            checkIn: work.checkIn,
+            checkOut: work.checkOut,
+            requote: work.step === "review",
+            advance: work.step !== "dates",
+          }
+        : null;
+  }
+  const workPersistence = useWizardWorkPersistence({
+    enabled: replaceExceptionRequestId === null,
+    freshEntry: workPartyJoinId !== null,
+    memberId: session?.user?.id ?? null,
+    lodges,
+    lodgesLoading,
+    lodgesFailed,
+    lodgesForbidden,
+    today: clubTime.today(),
+    work:
+      lodgeId && step !== "pay"
+        ? {
+            lodgeId,
+            checkIn,
+            checkOut,
+            step: restoredStepTarget ?? step,
+            guests,
+            notes,
+            perGuestDatesEnabled,
+            multiDateRangesEnabled,
+            expectedArrivalTime,
+            requestedRoomId,
+            cancelIfGuestsBumped,
+            groupTrip,
+            groupPaymentMode,
+            memberReviewJustification,
+            useCredit,
+            attendingWorkParty,
+            selectedWorkPartyEventId,
+            waitlistAlternateLodgeIds,
+            selfSeedSettled,
+          }
+        : null,
+    onRestore: applyRestoredWork,
+  });
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -958,6 +1081,7 @@ export function useBookingWizard() {
       // preference; the picker is simply absent until a lodge is known.
       setRoomRequestEnabled(false);
       setRoomOptions([]);
+      setRoomOptionsLodgeId(null);
       return;
     }
     let cancelled = false;
@@ -967,16 +1091,29 @@ export function useBookingWizard() {
         if (cancelled) return;
         setRoomRequestEnabled(Boolean(data?.enabled));
         setRoomOptions(data?.rooms ?? []);
+        setRoomOptionsLodgeId(scopedLodgeId);
       })
       .catch(() => {
         if (cancelled) return;
         setRoomRequestEnabled(false);
         setRoomOptions([]);
+        setRoomOptionsLodgeId(scopedLodgeId);
       });
     return () => {
       cancelled = true;
     };
   }, [scopedLodgeId]);
+
+  // #4950 — work kept in this tab can name a room that has since gone, or that
+  // the club no longer lets members request, and nothing on screen would offer a
+  // way to clear it before the create route refused it. Once this lodge's rooms
+  // are known, a request they do not list is forgotten.
+  useEffect(() => {
+    if (!requestedRoomId || roomOptionsLodgeId !== scopedLodgeId) return;
+    if (!roomRequestEnabled || !roomOptions.some((room) => room.id === requestedRoomId)) {
+      setRequestedRoomId(null);
+    }
+  }, [requestedRoomId, roomOptions, roomOptionsLodgeId, roomRequestEnabled, scopedLodgeId]);
 
   // Fetch subscription status for the current season
   useEffect(() => {
@@ -1387,9 +1524,24 @@ export function useBookingWizard() {
   }
 
   async function handleDateSelect(ci: string, co: string) {
+    await selectDates(ci, co, false);
+  }
+
+  /**
+   * Check the chosen dates and move to the guests step. Resolves true only when
+   * it did move there. `keepGuestStayRanges` is for restoring kept work
+   * (#4950), whose per-guest ranges were chosen for these very dates; a fresh
+   * pick clears them because they belong to the dates being replaced.
+   */
+  async function selectDates(
+    ci: string,
+    co: string,
+    keepGuestStayRanges: boolean,
+    advance = true,
+  ): Promise<boolean> {
     if (!scopedLodgeId) {
       returnToUnresolvedLodge();
-      return;
+      return false;
     }
     const requestedLodgeId = scopedLodgeId;
     const sequence = ++dateSelectionSequenceRef.current;
@@ -1412,9 +1564,11 @@ export function useBookingWizard() {
     setMemberNightConflicts([]);
     setAppliedPromos([]);
     setPriceQuote(null);
-    setUseCredit(false);
-    setPerGuestDatesEnabled(false);
-    setGuests((current) => clearGuestStayRanges(current));
+    if (!keepGuestStayRanges) {
+      setUseCredit(false);
+      setPerGuestDatesEnabled(false);
+      setGuests((current) => clearGuestStayRanges(current));
+    }
     setActiveWorkPartyEvents([]);
     setWorkPartyError("");
     setWorkPartyClearedNotice(null);
@@ -1430,10 +1584,10 @@ export function useBookingWizard() {
         `/api/availability/check?checkIn=${ciStr}&checkOut=${coStr}${lodgeParam}`,
         { signal: controller.signal },
       );
-      if (lostSelectionOwnership()) return;
+      if (lostSelectionOwnership()) return false;
       if (res.ok) {
         const data = await res.json();
-        if (lostSelectionOwnership()) return;
+        if (lostSelectionOwnership()) return false;
         setAvailabilityNightDetails(data.nightDetails || []);
         // The selected lodge's own capacity (#2930). Only ever overwritten by a
         // real number, so a malformed response leaves the previous value rather
@@ -1453,10 +1607,10 @@ export function useBookingWizard() {
         `/api/booking-policies/check?checkIn=${ciStr}&checkOut=${coStr}${lodgeParam}`,
         { signal: controller.signal },
       );
-      if (lostSelectionOwnership()) return;
+      if (lostSelectionOwnership()) return false;
       if (policyRes.ok) {
         const policyData = await policyRes.json();
-        if (lostSelectionOwnership()) return;
+        if (lostSelectionOwnership()) return false;
         recordCancellationSchedule(requestedLodgeId, ci, policyData.cancellationSchedule);
         if (!policyData.valid) {
         // #2562: the date precheck must not strand a member before they can
@@ -1474,16 +1628,28 @@ export function useBookingWizard() {
           });
           if (!reviewable) {
             setError(policyData.message);
-            return;
+            if (keepGuestStayRanges) {
+              workPersistence.noteDatesDropped();
+              setCheckIn(null);
+              setCheckOut(null);
+              setPerGuestDatesEnabled(false);
+              setMultiDateRangesEnabled(false);
+              setGuests((current) => clearGuestNights(clearGuestStayRanges(current)));
+              setStep("dates");
+            }
+            return false;
           }
         }
       }
-      if (ownsSelection()) setStep("guests");
+      if (!ownsSelection()) return false;
+      if (advance) setStep("guests");
+      return advance;
     } catch (requestError) {
-      if (requestError instanceof DOMException && requestError.name === "AbortError") return;
+      if (requestError instanceof DOMException && requestError.name === "AbortError") return false;
       if (!lostSelectionOwnership()) {
         setError("Failed to check availability. Please try again.");
       }
+      return false;
     } finally {
       if (dateSelectionAbortRef.current === controller) {
         dateSelectionAbortRef.current = null;
@@ -1590,56 +1756,35 @@ export function useBookingWizard() {
           .then((codes) => setAvailablePromoCodes(codes))
           .catch(() => {});
 
-        // Fetch active working bee events that overlap these dates; events
-        // bound to another lodge are filtered out server-side.
-        const workPartySequence = ++workPartySequenceRef.current;
-        workPartyAbortRef.current?.abort();
-        const workPartyController = new AbortController();
-        workPartyAbortRef.current = workPartyController;
-        const ownsWorkPartyRequest = () =>
-          workPartySequence === workPartySequenceRef.current &&
-          activeScopedLodgeIdRef.current === requestedLodgeId;
-        fetch(
-          `/api/work-parties/active?checkIn=${checkInStr}&checkOut=${checkOutStr}${
-            `&lodgeId=${encodeURIComponent(requestedLodgeId)}`
-          }`,
-          { signal: workPartyController.signal },
-        )
-          .then((r) => r.ok ? r.json() : { events: [] })
-          .then((data) => {
-            const events: WorkPartyEvent[] = data.events || [];
-            if (!ownsWorkPartyRequest()) return;
+        // Fetch active working bee events that overlap these dates.
+        fetchStayWorkParties({
+          checkIn: checkInStr,
+          checkOut: checkOutStr,
+          lodgeId: requestedLodgeId,
+          sequenceRef: workPartySequenceRef,
+          abortRef: workPartyAbortRef,
+          stillCurrent: () => activeScopedLodgeIdRef.current === requestedLodgeId,
+          onFailure: () => setActiveWorkPartyEvents([]),
+          onEvents: (events) => {
             setActiveWorkPartyEvents(events);
-            if (
-              selectedWorkPartyEventId &&
-              !events.some((e) => e.id === selectedWorkPartyEventId)
-            ) {
-              const previous = activeWorkPartyEvents.find(
-                (e) => e.id === selectedWorkPartyEventId
-              );
-              setSelectedWorkPartyEventId(null);
-              setAttendingWorkParty(false);
-              if (previous) {
-                setWorkPartyClearedNotice(previous.name);
-              }
-              // Combined, the codes stay and the working-bee effect re-prices
-              // them without it; alone, the discount just goes.
-              setAppliedPromos((current) =>
-                current.some((promo) => promo.workPartyEvent) && !combineWorkPartyWithCodesRef.current
-                  ? []
-                  : current
-              );
-            }
-          })
-          .catch((requestError) => {
-            if (requestError instanceof DOMException && requestError.name === "AbortError") return;
-            if (ownsWorkPartyRequest()) setActiveWorkPartyEvents([]);
-          })
-          .finally(() => {
-            if (workPartyAbortRef.current === workPartyController) {
-              workPartyAbortRef.current = null;
-            }
-          });
+            reconcileWorkPartySelection(
+              events,
+              {
+                selectedId: selectedWorkPartyEventId,
+                previousEvents: activeWorkPartyEvents,
+                // #5148: the hook declared below is initialised by now.
+                joinedId: workPartyPrefill.takePendingWorkPartySelection(events),
+              },
+              {
+                select: setSelectedWorkPartyEventId,
+                setAttending: setAttendingWorkParty,
+                noticeCleared: setWorkPartyClearedNotice,
+                setAppliedPromos,
+                combineWithCodesRef: combineWorkPartyWithCodesRef,
+              },
+            );
+          },
+        });
       } else {
         handleBookingApiError((await readJsonOrNull(res)) ?? {}, "Failed to calculate price");
       }
@@ -1651,6 +1796,109 @@ export function useBookingWizard() {
     } finally {
       setPriceLoading(false);
     }
+  }
+
+  // #4941 — the fact and its consequence are separate values. An unpaid
+  // subscription only stops a member starting a booking under HARD_BLOCK; the
+  // mode is read once here so the banner and the dates step cannot disagree.
+  // A failed fetch (UNKNOWN) is not unpaid, so it blocks nobody.
+  const subscriptionIsUnpaid =
+    subscriptionStatus?.status === "UNPAID" ||
+    subscriptionStatus?.status === "OVERDUE";
+  const subscriptionLockout = readSubscriptionLockoutView(subscriptionStatus);
+  const bookingBlockedBySubscription = isBookingBlockedBySubscription(
+    subscriptionIsUnpaid,
+    subscriptionLockout,
+  );
+
+  // #4950 — resuming restored work re-runs the same date check and quote a
+  // member's clicks would, so it is wired up after both are declared.
+  //
+  // The "booking is disabled until your subscription is paid" gate exists only
+  // on the dates step, so restored work must not walk round it: resuming waits
+  // for the subscription status, and a blocked member stays on the dates step
+  // with their party kept.
+  const resumeRestoredDates = useEffectEvent(
+    (restored: NonNullable<typeof restoredDatesRef.current>) => {
+      const advance = restored.advance && !bookingBlockedBySubscription;
+      void selectDates(restored.checkIn, restored.checkOut, true, advance).then(
+        (advanced) => {
+          if (advanced && restored.requote) setRestoredRequotePending(true);
+          if (!advanced) setRestoredStepTarget(null);
+        },
+      );
+    },
+  );
+  useEffect(() => {
+    const restored = restoredDatesRef.current;
+    if (!restored || scopedLodgeId !== restored.lodgeId) return;
+    if (subscriptionStatus === null) return;
+    restoredDatesRef.current = null;
+    resumeRestoredDates(restored);
+  }, [scopedLodgeId, workPersistence.restoreSettled, subscriptionStatus]);
+  const resumeRestoredQuote = useEffectEvent(() => {
+    void handleGuestsDone().finally(() => setRestoredStepTarget(null));
+  });
+  useEffect(() => {
+    if (restoredStepTarget !== null && step === restoredStepTarget) {
+      setRestoredStepTarget(null);
+    }
+  }, [restoredStepTarget, step]);
+  useEffect(() => {
+    if (!restoredRequotePending) return;
+    if (step === "dates") {
+      setRestoredRequotePending(false);
+      return;
+    }
+    // Wait for the family list so the guests-step checks the quote runs behind
+    // see the same party they would on a click.
+    if (step !== "guests" || !(familyMembersLoaded || familyMembersLoadFailed)) {
+      return;
+    }
+    setRestoredRequotePending(false);
+    resumeRestoredQuote();
+  }, [restoredRequotePending, step, familyMembersLoaded, familyMembersLoadFailed]);
+
+  /**
+   * The fields every create-booking POST carries (#5398): submit, join waitlist
+   * and save draft each add only their own. One builder, so a field cannot again
+   * travel on one path and not another.
+   *
+   * #2930 fix round: the applied credit travels with the waitlist post too. THAT
+   * POST CAN CREATE A REAL BOOKING: `POST /api/bookings` runs the ordinary create
+   * first and only falls through to `createWaitlistedBooking` when capacity
+   * refuses, so a member who pressed Join Waitlist with the credit on screen got
+   * the booking without it when beds freed up. On the waitlist arm it is simply
+   * ignored: a waitlist place moves no money.
+   *
+   * #5398: a blank review reason is left out, never sent as an empty string. The
+   * schema refuses `""` with a generic "Invalid input"; left out, a draft reaches
+   * the route's own refusal. Submit and waitlist stop a blank reason in the
+   * browser before this is built.
+   */
+  function buildCreateBookingBody(guestPayload: GuestData[]) {
+    return {
+      checkIn: checkIn!,
+      checkOut: checkOut!,
+      lodgeId: scopedLodgeId,
+      guests: guestPayload,
+      // #2721: only the declarations that still describe a live collision
+      // travel; see `declarationsPayload`.
+      dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
+      notes: notes || undefined,
+      ...createRequestPromoFields(appliedPromos),
+      workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
+      expectedArrivalTime: expectedArrivalTime || undefined,
+      requestedRoomId: requestedRoomId || undefined,
+      cancelIfGuestsBumped:
+        guests.some((g) => !g.isMember) && cancelIfGuestsBumped
+          ? true
+          : undefined,
+      applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
+      memberReviewJustification: requiresAdminReviewLocal
+        ? memberReviewJustification.trim() || undefined
+        : undefined,
+    };
   }
 
   async function handleSubmit() {
@@ -1703,8 +1951,6 @@ export function useBookingWizard() {
     // A fresh attempt retires the previous refusal's offer: the payload may have
     // changed, so the rules the server would freeze may have too (#2562).
     setExceptionOffer(null);
-    const checkInStr = checkIn!;
-    const checkOutStr = checkOut!;
 
     let navigating = false;
     try {
@@ -1712,28 +1958,9 @@ export function useBookingWizard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          checkIn: checkInStr,
-          checkOut: checkOutStr,
-          lodgeId: scopedLodgeId,
-          guests: guestPayload,
-          // #2721: only the declarations that still describe a live collision
-          // travel; see `declarationsPayload`.
-          dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
-          notes: notes || undefined,
-          ...createRequestPromoFields(appliedPromos),
-          workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
-          expectedArrivalTime: expectedArrivalTime || undefined,
-          requestedRoomId: requestedRoomId || undefined,
-          cancelIfGuestsBumped:
-            guests.some((g) => !g.isMember) && cancelIfGuestsBumped
-              ? true
-              : undefined,
-          applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
+          ...buildCreateBookingBody(guestPayload),
           paymentMethod:
             paymentMethod === "internet_banking" ? paymentMethod : undefined,
-          memberReviewJustification: requiresAdminReviewLocal
-            ? memberReviewJustification.trim()
-            : undefined,
         }),
       });
 
@@ -1744,6 +1971,7 @@ export function useBookingWizard() {
         setError(CREATE_UNVERIFIED_MESSAGE);
         takeErrorAttention();
       } else if (res.ok) {
+        workPersistence.stopKeepingWork();
         // The group call has its own catch, so its failure is a toast and never
         // reaches the "could not verify" catch below: this booking exists.
         if (groupTrip && groupBookingsEnabled) {
@@ -1784,7 +2012,6 @@ export function useBookingWizard() {
             id: data.id,
             status: data.status,
             amountCents: remainingToPay,
-            returnUrl: `${window.location.origin}/bookings/${data.id}`,
           });
           setStep("pay");
           setSubmitting(false);
@@ -1854,8 +2081,6 @@ export function useBookingWizard() {
     // changes a real booking, so offering it as the answer to a refused
     // waitlist join would answer a different question than the member asked.
     setExceptionOffer(null);
-    const checkInStr = checkIn!;
-    const checkOutStr = checkOut!;
 
     let navigating = false;
     try {
@@ -1863,48 +2088,12 @@ export function useBookingWizard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          checkIn: checkInStr,
-          checkOut: checkOutStr,
-          guests: guestPayload,
-          // #2721: only the declarations that still describe a live collision
-          // travel; see `declarationsPayload`.
-          dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
-          notes: notes || undefined,
-          ...createRequestPromoFields(appliedPromos),
-          workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
-          expectedArrivalTime: expectedArrivalTime || undefined,
-          requestedRoomId: requestedRoomId || undefined,
-          cancelIfGuestsBumped:
-            guests.some((g) => !g.isMember) && cancelIfGuestsBumped
-              ? true
-              : undefined,
-          lodgeId: scopedLodgeId,
-          /**
-           * #2930 fix round: the credit the member applied on the review step
-           * travels with the waitlist post too.
-           *
-           * THIS POST CAN CREATE A REAL BOOKING. `POST /api/bookings` runs the
-           * ordinary create first and only falls through to
-           * `createWaitlistedBooking` when capacity refuses — `waitlist: true`
-           * says "and if it refuses, waitlist me", not "do not book me". Since
-           * this became the review step's PRIMARY action rather than a fallback
-           * after a 409, the member reaches it with the credit control on screen
-           * and the total reading as covered; if beds freed up between the
-           * advisory and the press, they got the booking without the credit and
-           * owed more than the screen quoted. `handleSubmit` has always sent it.
-           *
-           * On the waitlist arm it is simply ignored: `createWaitlistedBooking`
-           * takes no `applyCreditCents` and a waitlist place moves no money.
-           */
-          applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
+          ...buildCreateBookingBody(guestPayload),
           waitlist: true,
           alternateLodgeIds:
             waitlistAlternateLodgeIds.length > 0
               ? waitlistAlternateLodgeIds
               : undefined,
-          memberReviewJustification: requiresAdminReviewLocal
-            ? memberReviewJustification.trim()
-            : undefined,
         }),
       });
 
@@ -1913,6 +2102,7 @@ export function useBookingWizard() {
         setError(WAITLIST_UNVERIFIED_MESSAGE);
         takeErrorAttention();
       } else if (res.ok) {
+        workPersistence.stopKeepingWork();
         navigating = true;
         router.push(`/bookings/${data.id}`);
       } else {
@@ -1948,8 +2138,6 @@ export function useBookingWizard() {
     setGuestProfileBlocks([]);
     setMemberNightConflicts([]);
     setExceptionOffer(null);
-    const checkInStr = checkIn!;
-    const checkOutStr = checkOut!;
 
     let navigating = false;
     try {
@@ -1957,27 +2145,8 @@ export function useBookingWizard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          checkIn: checkInStr,
-          checkOut: checkOutStr,
-          guests: guestPayload,
-          // #2721: only the declarations that still describe a live collision
-          // travel; see `declarationsPayload`.
-          dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
-          notes: notes || undefined,
-          ...createRequestPromoFields(appliedPromos),
-          workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
-          expectedArrivalTime: expectedArrivalTime || undefined,
-          requestedRoomId: requestedRoomId || undefined,
-          cancelIfGuestsBumped:
-            guests.some((g) => !g.isMember) && cancelIfGuestsBumped
-              ? true
-              : undefined,
-          applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
-          lodgeId: scopedLodgeId,
+          ...buildCreateBookingBody(guestPayload),
           draft: true,
-          memberReviewJustification: requiresAdminReviewLocal
-            ? memberReviewJustification.trim() || undefined
-            : undefined,
         }),
       });
 
@@ -1986,6 +2155,7 @@ export function useBookingWizard() {
         setError(DRAFT_UNVERIFIED_MESSAGE);
         takeErrorAttention();
       } else if (res.ok) {
+        workPersistence.stopKeepingWork();
         if (groupTrip && groupBookingsEnabled) {
           // Drafts can't anchor a group; tell the member where the option went.
           toast.info("You can open the group trip after confirming your booking.");
@@ -2071,6 +2241,8 @@ export function useBookingWizard() {
       }
       throw failure;
     }
+    // The proposal is now an officer's to decide; the wizard's copy is done.
+    workPersistence.stopKeepingWork();
     return {
       id: String(data.id),
       proposal: data.proposal,
@@ -2184,18 +2356,6 @@ export function useBookingWizard() {
       "Internet Banking is not available for this check-in date. Please pay by card to secure the booking immediately."
     );
 
-  // #4941 — the fact and its consequence are separate values. An unpaid
-  // subscription only stops a member starting a booking under HARD_BLOCK; the
-  // mode is read once here so the banner and the dates step cannot disagree.
-  // A failed fetch (UNKNOWN) is not unpaid, so it blocks nobody.
-  const subscriptionIsUnpaid =
-    subscriptionStatus?.status === "UNPAID" ||
-    subscriptionStatus?.status === "OVERDUE";
-  const subscriptionLockout = readSubscriptionLockoutView(subscriptionStatus);
-  const bookingBlockedBySubscription = isBookingBlockedBySubscription(
-    subscriptionIsUnpaid,
-    subscriptionLockout,
-  );
   const showInviteFamilyGroupMembersLink =
     shouldShowInviteFamilyGroupMembersLink(familyMembers);
   /**
@@ -2298,6 +2458,20 @@ export function useBookingWizard() {
     appliedPromosRef,
     setAppliedPromos,
     setWorkPartyError,
+  });
+
+  // #5148: the Join prefill, after every existing effect so their order is unchanged.
+  const workPartyPrefill = useWorkPartyPrefill({
+    workPartyId: workPartyJoinId,
+    lodgeIds: lodges.map((lodge) => lodge.id),
+    lodgesSettled: !lodgesLoading && !lodgesFailed && !lodgesForbidden,
+    lodgeId,
+    scopedLodgeId,
+    onDatesStep: step === "dates",
+    memberStarted: checkIn !== null || step !== "dates",
+    bookingBlocked: subscriptionLoading ? null : bookingBlockedBySubscription,
+    selectLodge: handleLodgeChange,
+    selectDates: (ci, co) => void handleDateSelect(ci, co),
   });
 
   const wizardSteps: Array<{ id: BookingWizardStep; label: string }> = [
@@ -2410,6 +2584,7 @@ export function useBookingWizard() {
     // #2562 — the member-facing exception-request surface.
     exceptionOffer,
     replaceExceptionRequestId,
+    workPartyPrefillNotice: workPartyPrefill.workPartyPrefillNotice,
     submitExceptionRequest,
     getGuestProfileBlockMessage,
     getGuestProfileActionLabel,
@@ -2449,5 +2624,13 @@ export function useBookingWizard() {
     cancellationSchedule,
     waitlistAlternateLodgeIds,
     setWaitlistAlternateLodgeIds,
+    // #4950 — work brought back from this tab, and the way to throw it away.
+    // "Its dates can no longer be booked. Choose new dates." stops being true
+    // once the member has chosen new ones.
+    restoredWorkNotice:
+      workPersistence.restoredWorkNotice === "datesDropped" && checkIn
+        ? null
+        : workPersistence.restoredWorkNotice,
+    startAgain: workPersistence.startAgain,
   };
 }

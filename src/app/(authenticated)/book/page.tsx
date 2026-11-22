@@ -6,6 +6,7 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { StatusRegion } from "@/components/status-region";
 import { scrollToError } from "@/hooks/use-scroll-to-feedback";
 import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
 import { useHelpWidgetHint } from "@/components/help-widget/help-widget-context";
@@ -19,6 +20,7 @@ import {
   WizardErrorActions,
 } from "./_components/wizard-error-actions";
 import { BOOKING_WIZARD_ERROR_ID } from "@/components/book/booking-wizard-types";
+import { RestoredWorkNotice } from "./_components/restored-work-notice";
 import { useBookingWizard } from "./_hooks/use-booking-wizard";
 
 const PROFILE_RETURN_TO_BOOK = buildProfilePathWithReturnTo("/book");
@@ -119,6 +121,7 @@ export default function BookPage() {
     handleSaveAsDraft,
     exceptionOffer,
     replaceExceptionRequestId,
+    workPartyPrefillNotice,
     submitExceptionRequest,
     getGuestProfileBlockMessage,
     getGuestProfileActionLabel,
@@ -151,6 +154,8 @@ export default function BookPage() {
     cancellationSchedule,
     waitlistAlternateLodgeIds,
     setWaitlistAlternateLodgeIds,
+    restoredWorkNotice,
+    startAgain,
   } = useBookingWizard();
 
   // Hint the help widget which wizard step is active so its chips lead with the
@@ -336,6 +341,15 @@ export default function BookPage() {
         </Alert>
       )}
 
+      {/* #5148: a Join link whose work party cannot be filled in, in a region
+          mounted before the work party is fetched (#4949). */}
+      <StatusRegion
+        visible={Boolean(workPartyPrefillNotice)}
+        visibleClassName="rounded-md bg-muted p-3 text-sm text-muted-foreground"
+      >
+        {workPartyPrefillNotice}
+      </StatusRegion>
+
       {/*
         #4945: the wizard's ONE failure slot, rendered through the shared
         recovery box so it is permanently mounted (one live region, registered
@@ -485,6 +499,11 @@ export default function BookPage() {
           {wizardSteps[activeStepIndex]?.label}
         </p>
       </nav>
+
+      {/* #4950 — never on the pay step, where the booking already exists. */}
+      {restoredWorkNotice && step !== "pay" && (
+        <RestoredWorkNotice notice={restoredWorkNotice} onStartAgain={startAgain} />
+      )}
 
       {/* Step 1: Dates */}
       {step === "dates" && (

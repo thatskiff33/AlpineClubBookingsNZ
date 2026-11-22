@@ -34,8 +34,13 @@ export const STEP_UP_OPERATIONS = [
   { file: "src/lib/card-refund-paid-twice.ts", exportName: "resolveCardRefundPaidTwice" },
   { file: "src/lib/manual-refund-task-resolution.ts", exportName: "resolveManualRefundTask" },
   { file: "src/lib/manual-refund-task-reopen.ts", exportName: "reopenManualRefundTask" },
+  { file: "src/lib/manual-refund-task-dispute-reduction.ts", exportName: "reduceDisputedHandBack" },
   { file: "src/lib/bank-refund-void-follow-up.ts", exportName: "pickRefundForUnmatchedVoid" },
   { file: "src/lib/member-contact-erasure.ts", exportName: "MEMBER_CONTACT_ERASURE_PATCH" },
+  // Not destructive, but a whole person's record in one file (#4915): an admin
+  // handler that builds a subject access report asks for the same fresh proof as
+  // the member CSV export. The member's own download is not an admin route.
+  { file: "src/lib/subject-access-export.ts", exportName: "buildSubjectAccessExport" },
   { file: "src/lib/officer-factor-reset.ts", exportName: "clearMemberSecondFactors" },
 ] as const;
 
@@ -48,6 +53,8 @@ export const STEP_UP_PRISMA_WRITES = {
   accessRoleDefinition: ["create", "createMany", "delete", "deleteMany", "update", "updateMany", "upsert"],
   loginSecuritySetting: ["create", "update", "updateMany", "upsert"],
   clubModuleSettings: ["create", "update", "updateMany", "upsert"],
+  // ALP-653: who may connect an AI app, and how much a connection may do.
+  mcpSettings: ["create", "update", "updateMany", "upsert"],
 } as const;
 
 /**
@@ -108,6 +115,7 @@ export const STEP_UP_ROUTES = [
   { method: "PUT", file: "src/app/api/admin/security/magic-link/route.ts" },
   { method: "PUT", file: "src/app/api/admin/security/officer-two-factor/route.ts" },
   { method: "PUT", file: "src/app/api/admin/modules/route.ts" },
+  { method: "PUT", file: "src/app/api/admin/mcp/settings/route.ts" },
   { method: "PUT", file: "src/app/api/admin/refund-requests/[id]/route.ts" },
   { method: "POST", file: "src/app/api/admin/payments/card-refunds/[id]/try-card-again/route.ts" },
   { method: "POST", file: "src/app/api/admin/payments/card-refunds/[id]/paid-another-way/route.ts" },
@@ -115,6 +123,7 @@ export const STEP_UP_ROUTES = [
   { method: "POST", file: "src/app/api/admin/payments/card-refunds/[id]/nothing-left-owed/route.ts" },
   { method: "POST", file: "src/app/api/admin/payments/manual-refund-tasks/[id]/route.ts" },
   { method: "POST", file: "src/app/api/admin/payments/manual-refund-tasks/[id]/reopen/route.ts" },
+  { method: "POST", file: "src/app/api/admin/payments/manual-refund-tasks/[id]/reduce-by-lost-dispute/route.ts" },
   { method: "POST", file: "src/app/api/admin/payments/bank-refund-voids/[id]/pick/route.ts" },
   { method: "PATCH", file: "src/app/api/admin/booking-change-requests/[id]/route.ts" },
   { method: "PATCH", file: "src/app/api/admin/booking-exception-requests/[id]/route.ts" },
@@ -124,7 +133,9 @@ export const STEP_UP_ROUTES = [
   { method: "POST", file: "src/app/api/admin/booking-requests/[id]/decline/route.ts" },
   { method: "POST", file: "src/app/api/admin/booking-requests/[id]/release-hold/route.ts" },
   { method: "POST", file: "src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts" },
+  { method: "POST", file: "src/app/api/admin/bookings/[id]/work-party/route.ts" },
   { method: "GET", file: "src/app/api/admin/members/export/route.ts" },
+  { method: "GET", file: "src/app/api/admin/members/subject-access/route.ts" },
   { method: "POST", file: "src/app/api/admin/security/two-factor-reset/[memberId]/route.ts" },
 ] as const satisfies readonly StepUpRoute[];
 

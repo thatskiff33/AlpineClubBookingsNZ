@@ -11,11 +11,14 @@
  */
 
 import { z } from "zod";
+import { rateLimitedResponse } from "./rate-limit-http";
+export { getClientIp, rateLimitedResponse } from "./rate-limit-http";
 
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { decodeRawRows, rawIntColumn } from "@/lib/raw-sql-rows";
 import { DEGRADED_AUTH_LIMIT_DIVISOR } from "@/lib/degraded-auth-limit";
+import { rateLimitSubject } from "@/lib/rate-limit-subject";
 
 interface RateLimitEntry {
   count: number;
@@ -266,57 +269,13 @@ function scheduleSharedCleanup() {
 }
 
 /**
- * Get the client IP from a request, considering common proxy headers.
- */
-export function getClientIp(request: Request): string {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) {
-    // Use the LAST IP in the chain — Caddy (our reverse proxy) appends the real client IP,
-    // so the first value is attacker-controllable but the last one is trustworthy.
-    const parts = forwarded.split(",").map((s) => s.trim()).filter(Boolean);
-    return parts[parts.length - 1] || "unknown";
-  }
-  const realIp = request.headers.get("x-real-ip");
-  if (realIp) {
-    return realIp;
-  }
-  return "unknown";
-}
-
-/**
- * Build the standard 429 response for a rate-limit denial, with Retry-After and
- * X-RateLimit-* headers. Shared by applyRateLimit (per-IP) and any handler that
- * calls checkRateLimit directly (e.g. per-member / global limiters) so every
- * 429 carries identical headers.
- */
-export function rateLimitedResponse(result: RateLimitResult): Response {
-  const retryAfter = Math.ceil((result.resetAt - Date.now()) / 1000);
-  return new Response(
-    JSON.stringify({
-      error: "Too many requests. Please try again later.",
-    }),
-    {
-      status: 429,
-      headers: {
-        "Content-Type": "application/json",
-        "Retry-After": String(retryAfter),
-        "X-RateLimit-Limit": String(result.limit),
-        "X-RateLimit-Remaining": "0",
-        "X-RateLimit-Reset": String(result.resetAt),
-      },
-    }
-  );
-}
-
-/**
  * Apply rate limiting to a request. Returns a Response if rate limited, null if allowed.
  */
 export async function applyRateLimit(
   config: RateLimitConfig,
   request: Request
 ): Promise<Response | null> {
-  const ip = getClientIp(request);
-  const result = await checkRateLimit(config, ip);
+  const result = await checkRateLimit(config, rateLimitSubject(request));
 
   if (!result.success) {
     return rateLimitedResponse(result);
@@ -385,7 +344,7 @@ export async function applyMemberScopedRateLimit(
     // Same limiter id, so the counter row is the same one it always was — only
     // the threshold this key is judged against changes.
     { ...config, limit: config.limit * MEMBER_SCOPED_IP_LIMIT_MULTIPLIER },
-    `ip:${getClientIp(request)}`,
+    `ip:${rateLimitSubject(request)}`,
   );
   if (!ipResult.success) {
     return rateLimitedResponse(ipResult);
@@ -462,6 +421,8 @@ export const rateLimiters = {
   familyGroupJoinRequest: { id: "family-group-join-request", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Personal data export: 5 per day */
   dataExport: { id: "data-export", limit: 5, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
+  /** Full Admin subject access report (#4915): 20 per officer per day */
+  subjectAccessReport: { id: "subject-access-report", limit: 20, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
   /** Account deletion request: 3 per day */
   deletionRequest: { id: "deletion-request", limit: 3, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
   /** Membership cancellation request: 3 per day */
@@ -692,6 +653,33 @@ export const rateLimiters = {
   // a decoded bitmap in memory while sharp works, so THIS limit rather than the
   // byte cap is what stops one member exhausting the container.
   clubPostImageUpload: { id: "club-post-image-upload", limit: 30, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /**
+   * AI app registration (ALP-653): 20 per hour per address. Anonymous by
+   * design (an app registers before any member signs in), and each call can
+   * write a row, so the budget is what bounds the table.
+   */
+  mcpClientRegister: { id: "mcp-client-register", limit: 20, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /**
+   * AI app token exchange, renewal and revocation (ALP-653): 60 per 10
+   * minutes per address. Not `authSensitive`: the codes and tokens are
+   * 256-bit, so this bounds cost rather than guessing, and it is generous
+   * because one AI provider's servers present many members' apps from few
+   * addresses.
+   */
+  mcpToken: { id: "mcp-token", limit: 60, windowSeconds: 10 * 60 } as RateLimitConfig,
+  /**
+   * AI app requests without a valid token (ALP-653): 60 per minute per
+   * address. A valid token is limited per connection instead (`mcpCall`).
+   */
+  mcpUnauthenticated: { id: "mcp-unauthenticated", limit: 60, windowSeconds: 60 } as RateLimitConfig,
+  /**
+   * AI app requests (ALP-653): 120 per minute per CONNECTION, not per
+   * address: every member using one AI provider arrives from that provider's
+   * addresses, so an address key would have them spend each other's budget.
+   */
+  mcpCall: { id: "mcp-call", limit: 120, windowSeconds: 60 } as RateLimitConfig,
+  /** Approving an AI app connection (ALP-653): 20 per hour per member */
+  mcpApprove: { id: "mcp-approve", limit: 20, windowSeconds: 60 * 60 } as RateLimitConfig,
 } as const;
 
 // Test seam: exported for testing

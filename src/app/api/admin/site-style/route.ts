@@ -1,8 +1,10 @@
 import { revalidatePath } from "next/cache";
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import {
   MissingLogoImageError,
+  UncleanLogoError,
   getClubThemeForAdmin,
   saveClubTheme,
 } from "@/lib/club-theme";
@@ -36,12 +38,11 @@ export async function PUT(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = clubThemeUpdateSchema.safeParse(body);
   if (!parsed.success) {
@@ -153,6 +154,12 @@ export async function PUT(request: NextRequest) {
         },
         { status: 409 },
       );
+    }
+
+    // An inline logo that could not be confirmed free of hidden details
+    // (#5244): the admin needs a fresh copy, so say why in plain words.
+    if (error instanceof UncleanLogoError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
     // Config-transfer apply holds the ClubTheme row for its whole bundle

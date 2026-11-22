@@ -28,6 +28,7 @@ import {
   auditWordBudgets,
   auditIndexCatalogueRows,
   auditInvisibleCharacters,
+  markdownLinkTargets,
   WORD_BUDGET_EXCEPTION_CEILING_MAX,
   countWords,
   formatWordInventory,
@@ -253,6 +254,23 @@ function family(prefix, numbers) {
     ...numbers.flatMap((n) => [`## INV-${prefix}-${n}`, "", "- A rule.", ""]),
   ].join("\n");
 }
+
+describe("markdownLinkTargets", () => {
+  // #5214: the link patterns come from scripts/lib/markdown-links.mjs, shared
+  // with check-doc-links.mjs and the changelog compiler, so a linked image
+  // yields both the image and the outer link here too.
+  it("sees both targets of an image wrapped in a link", () => {
+    expect(
+      markdownLinkTargets(
+        "docs/guide.md",
+        "[![Badge](badge.md)](other.md) and [ref]: ../README.md\n",
+      ),
+    ).toEqual(["docs/badge.md", "docs/other.md"]);
+    expect(markdownLinkTargets("docs/guide.md", "[ref]: ../README.md\n")).toEqual([
+      "README.md",
+    ]);
+  });
+});
 
 describe("scannableLines", () => {
   it("drops fenced blocks so a document can show an example id", () => {
@@ -1470,7 +1488,9 @@ describe("tracked citation source extensions", () => {
     // and its recovery replay send one Stripe request.
     // Moved up again by #4924, which shipped INV-MOD-062: an edit settles only
     // the figures its preview showed the member.
-    const planted = "INV-MOD-063";
+    // Moved up again by fork triyder/AlpineClubBookingsNZ#133, which shipped INV-MOD-063: an officer's
+    // work-party correction on a started stay, and its Remove.
+    const planted = "INV-MOD-064";
     // The precondition the fixture rests on. When this fails, `planted` has been
     // taken by a real invariant: move it up one, and no further.
     expect(files.get("docs/DOMAIN_INVARIANTS.md")).not.toContain(planted);
@@ -2198,7 +2218,7 @@ describe("doc-index CLI baseline wiring", () => {
     );
   });
 
-  it("wires both immutable event SHAs into the CI doc-index step", () => {
+  it("wires the immutable base SHAs into the CI doc-index step (main push: the last judged main commit)", () => {
     const workflow = readFileSync(path.join(REPO_ROOT, ".github", "workflows", "ci.yml"), "utf8");
     const start = workflow.indexOf(
       "- name: Check doc index integrity (reachability + invariant ids)",
@@ -2212,7 +2232,7 @@ describe("doc-index CLI baseline wiring", () => {
       "          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}",
     ]);
     expect(step.match(/^ {10}PUSH_BASE_SHA:.*$/gm)).toEqual([
-      "          PUSH_BASE_SHA: ${{ github.event.before }}",
+      "          PUSH_BASE_SHA: ${{ steps.main-push-base.outputs.sha || github.event.before }}",
     ]);
     expect(step.match(/^ {8}env:\s*$/gm)).toHaveLength(1);
     expect(step.match(/^ {8}run:.*$/gm)).toEqual([

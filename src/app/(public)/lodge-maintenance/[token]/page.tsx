@@ -25,6 +25,8 @@ import { LodgeMaintenanceReportClient } from "./lodge-maintenance-report-client"
  * failure. There is nothing here to tell the two apart, which is the point.
  */
 
+// The same title as the signed-in `/maintenance-report`, on purpose: it is the
+// QR-code door to the same form. Change both together (#5217).
 export const metadata: Metadata = {
   title: "Report a maintenance issue",
   robots: { index: false, follow: false },

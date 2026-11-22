@@ -712,8 +712,8 @@ describe("the SELECT-only grant allowlist matches what the statements read", () 
   /**
    * THE SIZE OF THE ALLOWLIST, PINNED.
    *
-   * Not a ceiling and not a preference — a census, in the same spirit as
-   * `AUDIT_CENSUS_TOTALS`. Two documents quote these figures as the reach of the
+   * Not a ceiling and not a preference: a census of a reviewed grant, which
+   * changes only when someone decides to widen or narrow it. Two documents quote these figures as the reach of the
    * credential (`docs/ai-diagnostics/deployment.md` and
    * `docs/ai-diagnostics/tool-pack-booking-membership.md`), and both were stale by
    * four before #2376 re-measured them: an earlier revision of AID-6B trimmed four
@@ -731,7 +731,7 @@ describe("the SELECT-only grant allowlist matches what the statements read", () 
         0,
       ),
       "update docs/ai-diagnostics/deployment.md and tool-pack-booking-membership.md in the same commit",
-    ).toBe(244);
+    ).toBe(243);
   });
 
   it("pins the documented column census for every relation, not only the total", () => {
@@ -749,7 +749,7 @@ describe("the SELECT-only grant allowlist matches what the statements read", () 
       XeroObjectLink: 10,
       XeroSyncOperation: 17,
       Member: 24,
-      Booking: 25,
+      Booking: 24,
       Lodge: 2,
       BookingGuest: 15,
       MemberPartnerLink: 3,

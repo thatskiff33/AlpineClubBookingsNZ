@@ -1,5 +1,12 @@
+import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
+import {
+  TRANSACTION_CONTENDED_CODE,
+  TRANSACTION_CONTENDED_MESSAGE,
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+} from "@/lib/transaction-contended-response";
+import { SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE } from "@/lib/saved-card-charge-claim";
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
@@ -34,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   sendPaymentFailureAlert: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
   createStructuredAuditLog: vi.fn(),
+  createAuditLog: vi.fn(),
   getAuditRequestContext: vi.fn(),
   // #2576: no hosting policy row, so the rule resolves off and the coverage
   // machinery is a no-op. Present because the production path reads them.
@@ -134,6 +142,7 @@ vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
 }));
 vi.mock("@/lib/audit", () => ({
   createStructuredAuditLog: mocks.createStructuredAuditLog,
+  createAuditLog: mocks.createAuditLog,
   getAuditRequestContext: mocks.getAuditRequestContext,
 }));
 vi.mock("@/lib/logger", () => ({
@@ -418,7 +427,7 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     // BEFORE Stripe is touched, mirroring the cron.
     expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
       where: { id: "b1", status: "PENDING" },
-      data: { status: "CONFIRMED", nonMemberHoldUntil: null },
+      data: { status: "CONFIRMED", nonMemberHoldUntil: null, savedCardClaimAt: expect.any(Date) },
     });
     expect(
       mocks.bookingUpdateMany.mock.invocationCallOrder[0]
@@ -808,13 +817,16 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     const body = await res.json();
 
     expect(res.status).toBe(502);
-    expect(body.error).toContain("charge failed");
+    expect(body.error).toBe(
+      "The card charge failed; the booking was returned to pending and admins have been alerted."
+    );
     // Claim released: CONFIRMED -> PENDING with the original hold restored.
     expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
       where: { id: "b1", status: "CONFIRMED" },
       data: {
         status: "PENDING",
         nonMemberHoldUntil: new Date("2026-07-08"),
+        savedCardClaimAt: null,
       },
     });
     // #172: BOTH transactions on this path — the claim and the release —
@@ -841,6 +853,48 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     );
     expect(mocks.markBookingPaymentSucceeded).not.toHaveBeenCalled();
     expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
+  });
+
+  it("a release that fails twice on contention leaves the marker for recovery and writes the critical release-failed audit row (#4993)", async () => {
+    primeBooking(makeBooking());
+    mocks.chargePaymentMethod.mockRejectedValue(new Error("card_declined"));
+    const contention = Object.assign(new Error("Transaction API error"), { code: "P2034" });
+    mocks.transaction.mockImplementation(
+      async (fn: (tx: unknown) => unknown, options?: { maxWait?: number }) => {
+        // The release is the only transaction run with the compensating budget.
+        if (options?.maxWait === 5_000) throw contention;
+        return fn(txClient);
+      },
+    );
+
+    const res = await POST(makeRequest(), { params });
+    const body = await res.json();
+
+    expect(res.status).toBe(502);
+    // #5279: the booking is still CONFIRMED, so the officer is not told it was
+    // returned to pending — only that the job's recovery will return it.
+    expect(body.error).toMatch(/^The card charge failed/);
+    expect(body.error).not.toMatch(/was returned to pending/);
+    expect(body.error).toContain(SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE);
+    expect(SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE).toMatch(/returns it to pending automatically/);
+    const releaseBudgets = mocks.transaction.mock.calls.filter(
+      ([, options]) => (options as { maxWait?: number } | undefined)?.maxWait === 5_000,
+    );
+    expect(releaseBudgets).toHaveLength(2);
+    expect(releaseBudgets[0]![1]).toEqual({ maxWait: 5_000, timeout: 10_000 });
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ status: "CONFIRMED" }) }),
+    );
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.saved_card_claim_release_failed",
+        entityId: "b1",
+        category: "payment",
+        severity: "critical",
+        outcome: "failure",
+        metadata: { lodgeId: "lodge-1", errorCode: "P2034" },
+      }),
+    );
   });
 
   it("#4357: charges the booking's worth - its price plus a change fee recorded on its payment - as the cron does", async () => {
@@ -915,12 +969,19 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     const body = await res.json();
 
     expect(res.status).toBe(409);
-    expect(body).toMatchObject({ paymentStatus: "requires_action" });
+    // The officer's sentence, as text (#5346): comparing against the function
+    // that words it would pass whatever it said.
+    expect(body).toMatchObject({
+      paymentStatus: "requires_action",
+      error:
+        "The saved card needs the cardholder to complete authentication (3D Secure), which cannot be done automatically; the booking stays pending until they do, or until the member saves a different card.",
+    });
     expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
       where: { id: "b1", status: "CONFIRMED" },
       data: {
         status: "PENDING",
         nonMemberHoldUntil: new Date("2026-07-08"),
+        savedCardClaimAt: null,
       },
     });
     // The answer is recorded on the attempt row through the transaction
@@ -942,6 +1003,27 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     expect(mocks.reconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: "pay1", store: txClient });
     expect(mocks.markBookingPaymentSucceeded).not.toHaveBeenCalled();
     expect(mocks.sendPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
+  it("an uncaptured answer whose release loses both attempts does not say the booking stays pending (#5279)", async () => {
+    primeBooking(makeBooking());
+    mocks.chargePaymentMethod.mockResolvedValue({ id: "pi_1", status: "requires_action", amount: 10000, payment_method: "pm_1" });
+    const contention = Object.assign(new Error("Transaction API error"), { code: "P2034" });
+    mocks.transaction.mockImplementation(
+      async (fn: (tx: unknown) => unknown, options?: { maxWait?: number }) => {
+        if (options?.maxWait === 5_000) throw contention;
+        return fn(txClient);
+      },
+    );
+
+    const res = await POST(makeRequest(), { params });
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(releaseCall()).toBeUndefined();
+    expect(body.paymentStatus).toBe("requires_action");
+    expect(body.error).not.toMatch(/stays pending/);
+    expect(body.error).toContain(SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE);
   });
 
   it("does NOT release a claim the webhook has already settled: the retrieve said processing, the booking reads PAID under the release's locks — the stale answer is refused by the row's own guard and the booking is left alone (#3267)", async () => {
@@ -1596,5 +1678,88 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
       expect(mocks.sendConfirmedEmail).not.toHaveBeenCalled();
       expect(mocks.createStructuredAuditLog).not.toHaveBeenCalled();
     });
+  });
+
+  // INV-LOCK-006: a spent lock(1) budget before any charge saved nothing; after
+  // a capture the captured-payment recovery answer wins; after the no-card move
+  // committed the admin is asked to check the status.
+  describe("lock(1) budget contention", () => {
+    const contention = (code: string) =>
+      new Prisma.PrismaClientKnownRequestError("x", { code, clientVersion: "test" });
+
+    it.each(["P2028", "P2034"])(
+      "answers %s on the claim with a retryable 503 and charges nothing",
+      async (code) => {
+        mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+        mocks.transaction.mockRejectedValue(contention(code));
+
+        const res = await POST(makeRequest(), { params });
+
+        expect(res.status).toBe(503);
+        expect(res.headers.get("Retry-After")).toBe("2");
+        await expect(res.json()).resolves.toEqual({
+          error: TRANSACTION_CONTENDED_MESSAGE,
+          code: TRANSACTION_CONTENDED_CODE,
+        });
+        expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
+      },
+    );
+
+    it("keeps an unrelated claim failure on the generic 500", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+      mocks.transaction.mockRejectedValue(new Error("boom"));
+
+      const res = await POST(makeRequest(), { params });
+
+      expect(res.status).toBe(500);
+      expect(res.headers.get("Retry-After")).toBeNull();
+      await expect(res.json()).resolves.toEqual({
+        error: "Failed to confirm pending guests",
+      });
+    });
+
+    it("keeps the captured-payment answer when the settle contends after the capture", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+      mocks.chargePaymentMethod.mockResolvedValue({
+        id: "pi_contended",
+        status: "succeeded",
+        amount: 10000,
+        payment_method: "pm_1",
+      });
+      mocks.markBookingPaymentSucceeded.mockRejectedValue(contention("P2028"));
+
+      const res = await POST(makeRequest(), { params });
+      const body = await res.json();
+
+      expect(res.status).toBe(500);
+      expect(res.headers.get("Retry-After")).toBeNull();
+      expect(body).toMatchObject({ paymentReceived: true, finalisationPending: true });
+      expect(body.code).not.toBe(TRANSACTION_CONTENDED_CODE);
+      expect(mocks.sendPaymentFailureAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentIntentId: "pi_contended" }),
+        CLUB_FORMAT_TEST,
+      );
+    });
+
+    it.each(["P2028", "P2034"])(
+      "asks the admin to check the status when the no-card bed reconcile hits %s after the move committed",
+      async (code) => {
+        mocks.bookingFindUnique.mockResolvedValue(makeBooking({ payment: null }));
+        mocks.reconcile.mockRejectedValueOnce(contention(code));
+
+        const res = await POST(makeRequest(), { params });
+
+        expect(res.status).toBe(503);
+        expect(res.headers.get("Retry-After")).toBe("2");
+        await expect(res.json()).resolves.toEqual({
+          error: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+          code: TRANSACTION_CONTENDED_CODE,
+        });
+        expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+          where: { id: "b1", status: "PENDING" },
+          data: { status: "PAYMENT_PENDING", nonMemberHoldUntil: null },
+        });
+      },
+    );
   });
 });

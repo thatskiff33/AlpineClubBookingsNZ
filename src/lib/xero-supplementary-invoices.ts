@@ -10,7 +10,6 @@
 import {
   Invoice,
   LineItem,
-  LineAmountTypes,
   Payment as XeroPayment,
 } from "xero-node";
 import { prisma } from "./prisma";
@@ -19,6 +18,7 @@ import { sendGroupOrganiserExtraInvoiceEmail } from "@/lib/email/groups";
 import { ORGANISER_EXTRA_WAIVED_UNRAISED_CODE, organiserExtraWaivedBeforeRaised, readOrganiserExtraState } from "@/lib/organiser-extra-state";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
+import { recordCaptureReceiptManifest } from "@/lib/member-money/doors";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { asRecord } from "@/lib/xero-json";
 import { buildXeroSupplementaryInvoiceKey } from "@/lib/xero-supplementary-invoice-key";
@@ -45,6 +45,9 @@ import {
 import { readStripeCaptureDocumentDate } from "@/lib/stripe-capture-date";
 import { queueWaitingPaidAnotherWayNote } from "@/lib/paid-another-way-receipt-note";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { isCalendarDate } from "@/lib/club-time";
+import { xeroLineTax } from "@/lib/xero-tax-rendering";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import {
   xeroDocumentDateForClubToday,
   xeroDocumentDateFromInstant,
@@ -56,6 +59,7 @@ import {
 } from "@/lib/xero-modification-line-items";
 import type { ClubFormat } from "@/lib/club-format";
 import { ownRunningClaim, type XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { recordSupplementaryInvoiceManifest } from "@/lib/member-money/doors";
 
 export async function createXeroSupplementaryInvoice(params: {
   bookingId: string;
@@ -99,6 +103,14 @@ export async function createXeroSupplementaryInvoice(params: {
   recordPayment?: boolean;
   repairExistingLink?: boolean;
   syncOperation?: XeroOperationClaim;
+  /**
+   * #4525 review: the card capture the payment records, for a call with no
+   * outbox row to read it from (an officer's inline retry of a FAILED row
+   * passes its queued payload's `paymentIntentId`). It names the capture
+   * receipt's capture only; the queued payload's own intent wins, and the
+   * late-capture note step below still reads the queued payload alone.
+   */
+  captureIntentId?: string;
   /**
    * The club's format (#3565), for any amount a line description renders (a
    * promotion delta reads "reduced by $20.00" on the Xero line). Resolved once
@@ -181,6 +193,9 @@ export async function createXeroSupplementaryInvoice(params: {
     ? await resolveOrganiserXeroContact(organiserBilling, contactOptions)
     : await findOrCreateXeroContactForInvoicedParty(booking, contactOptions);
   const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
+  // #4632: the booking's treatment; a group place's is its organiser's
+  // booking's (`booking-tax-anchor.ts`), as its combined invoice and journal split are.
+  const taxRendering = await resolveXeroTaxRendering({ kind: "booking", bookingId });
   // A negative price adjustment is a give-back, so it posts to the
   // hutFeeRefunds mapping like the standalone-reduction credit-note path
   // (owner decision on #1356): clubs that prefer a single account map
@@ -209,6 +224,7 @@ export async function createXeroSupplementaryInvoice(params: {
     billedCents: netAmountCents,
     billedFigures: { priceDiffCents, changeFeeCents },
     secondAsk: Boolean(shortfallReviewTaskId),
+    taxRendering,
   }, params.format);
 
   const lineItems: LineItem[] = itemised.lineItems ?? [];
@@ -236,7 +252,7 @@ export async function createXeroSupplementaryInvoice(params: {
         : `Booking modification - price adjustment (Booking ${bookingId.slice(0, 8)})`,
       quantity: 1,
       unitAmount: priceDiffCents / 100,
-      taxType: "OUTPUT2",
+      ...xeroLineTax(taxRendering),
     };
     if (lineMapping.itemCode) li.itemCode = lineMapping.itemCode;
     if (!lineMapping.itemCode || lineCode !== "200" || lineMapping.codeExplicitlyConfigured) {
@@ -246,7 +262,7 @@ export async function createXeroSupplementaryInvoice(params: {
   }
 
   if (!itemised.lineItems && changeFeeCents > 0) {
-    lineItems.push(changeFeeLineItem(changeFeeCents, incomeMapping));
+    lineItems.push(changeFeeLineItem(changeFeeCents, incomeMapping, taxRendering));
   }
 
   // Both halves of this are real instants — `BookingModification.createdAt` is a
@@ -306,7 +322,7 @@ export async function createXeroSupplementaryInvoice(params: {
       ? `Further supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`
       : `Supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`,
     status: Invoice.StatusEnum.AUTHORISED,
-    lineAmountTypes: LineAmountTypes.Inclusive,
+    lineAmountTypes: taxRendering.lineAmountTypes,
   });
 
   // #3193: a second ask is anchored on the review task whose share it bills, so
@@ -417,6 +433,7 @@ export async function createXeroSupplementaryInvoice(params: {
   }
 
   let createdInvoiceId: string;
+  let sentPayment: { paymentId: string; key: string; reference: string; bankCode: string } | null = null; // #4525: once Xero returns its id
   try {
     const response = await retryXeroWriteWithContactRepair({
       memberId: organiserBilling?.organiserMemberId ?? bookingOwner(booking).memberId,
@@ -467,6 +484,7 @@ export async function createXeroSupplementaryInvoice(params: {
     if (recordPayment) {
       try {
         const stripeBankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
+        const paymentReference = `Stripe payment for booking modification ${bookingId.slice(0, 8)}`;
         // The recorded payment is the NET — exactly what the additional
         // Stripe PaymentIntent captured (#1356). Recording anything larger
         // than the capture overstates the Stripe clearing account.
@@ -500,7 +518,7 @@ export async function createXeroSupplementaryInvoice(params: {
                   account: { code: stripeBankCode },
                   amount: netAmountCents / 100,
                   date: supplementaryPaymentDate,
-                  reference: `Stripe payment for booking modification ${bookingId.slice(0, 8)}`,
+                  reference: paymentReference,
                 }],
               },
               undefined,
@@ -514,6 +532,7 @@ export async function createXeroSupplementaryInvoice(params: {
           }
         );
         paymentResponseBody = paymentResponse.body.payments?.[0] ?? null;
+        if (paymentResponseBody?.paymentID) sentPayment = { paymentId: paymentResponseBody.paymentID, key: paymentIdempotencyKey, reference: paymentReference, bankCode: stripeBankCode };
       } catch (error) {
         paymentError = error;
         // Non-fatal: invoice exists, payment recording is for reconciliation convenience
@@ -599,6 +618,21 @@ export async function createXeroSupplementaryInvoice(params: {
     throw error;
   }
 
+  // #4525 (ALP-436): what this invoice bills of the journal, recorded once the
+  // operation has completed. Never throws; nothing about the send changes.
+  await recordSupplementaryInvoiceManifest({
+    bookingId,
+    anchor: shortfallReviewTaskId
+      ? { kind: "SECOND_ASK", modificationId: bookingModificationId, taskId: shortfallReviewTaskId }
+      : { kind: "MODIFICATION", modificationId: bookingModificationId },
+    legacyKey: invoiceIdempotencyKey,
+    lines: lineItems,
+    taxRendering,
+    priceLines: itemised.record,
+    itemisedShareTaskIds: itemised.itemisedShareTaskIds,
+    providerInvoiceId: createdInvoiceId,
+  });
+
   // #3924 round 8 (owner, 8 Oct 2026: "Raise a refund note for all";
   // `INV-PAY-122`): this invoice may be the receipt of a late card charge
   // whose approved refund was closed as paid another way while it was still
@@ -610,6 +644,9 @@ export async function createXeroSupplementaryInvoice(params: {
   // Read off this row's queued payload, so only the outbox path runs it - an
   // officer's retry of a FAILED one goes back through the outbox (round 9).
   const releasedForIntent = queuedRequestPayload?.paymentIntentId;
+  // #4525 (Ledger M13): the payment's capture receipt, after the row stored its link; a capture neither the queued payload nor the caller names is a conflict.
+  if (sentPayment) await recordCaptureReceiptManifest({ bookingId, paymentIntentId: (typeof releasedForIntent === "string" && releasedForIntent) || params.captureIntentId || null,
+    paymentKey: sentPayment.key, amountCents: netAmountCents, providerPaymentId: sentPayment.paymentId, invoiceId: createdInvoiceId, reference: sentPayment.reference, bankCode: sentPayment.bankCode });
   if (typeof releasedForIntent === "string" && releasedForIntent) {
     await queueWaitingPaidAnotherWayNote(releasedForIntent).catch((error: unknown) =>
       logger.error(
@@ -638,7 +675,9 @@ async function readKeptLateCaptureChargeDate(
   queuedRequestPayload: Record<string, unknown> | null,
 ): Promise<string | null> {
   const stored = queuedRequestPayload?.keptLateCaptureDay;
-  if (typeof stored === "string" && /^\d{4}-\d{2}-\d{2}$/.test(stored)) return stored;
+  // Strict on purpose: a stored non-day is corruption, and falling through
+  // re-reads the real day from Stripe instead of sending it to Xero.
+  if (typeof stored === "string" && isCalendarDate(stored)) return stored;
   const paymentIntentId = queuedRequestPayload?.paymentIntentId;
   if (typeof paymentIntentId !== "string" || !paymentIntentId) return null;
   const task = await prisma.manualRefundTask.findUnique({

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Eye, EyeOff, Pencil, Plus, Save, Trash2, UsersRound, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,9 @@ import {
   type AncestorViewOnlyBannerProps,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { useActionFailure } from "@/hooks/use-action-failure";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -87,8 +90,24 @@ export function MemberCommitteeAssignmentsCard({
   );
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  // A failed role load stays passive. A refused save or removal is the admin's
+  // own action, so it takes focus and is re-announced on a repeat (#4975).
+  const [loadError, setLoadError] = useState("");
+  const actionFailure = useActionFailure();
+  const { fail: failAction, clear: clearActionFailure } = actionFailure;
   const [message, setMessage] = useState("");
+  // A save closes the form and a removal drops its row, each taking the
+  // focused button with it, so the outcome positions at the top of this card;
+  // failure still wins (#2934).
+  const cardRef = useRef<HTMLDivElement>(null);
+  useActionAttention({
+    // `FocusedActionError` owns the failure focus; the error is passed only so
+    // a failure suppresses the success position.
+    error: actionFailure.error,
+    errorTarget: null,
+    success: message,
+    successTarget: cardRef,
+  });
 
   const activeRoles = useMemo(
     () => roles.filter((role) => role.isActive),
@@ -121,7 +140,7 @@ export function MemberCommitteeAssignmentsCard({
 
   async function loadRoles() {
     setRolesLoading(true);
-    setError("");
+    setLoadError("");
     try {
       const response = await fetch("/api/admin/committee/roles", {
         credentials: "same-origin",
@@ -136,10 +155,10 @@ export function MemberCommitteeAssignmentsCard({
         );
       }
       setRoles(body.roles);
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
+    } catch (loadFailure) {
+      setLoadError(
+        loadFailure instanceof Error
+          ? loadFailure.message
           : "Failed to load committee roles",
       );
     } finally {
@@ -155,9 +174,9 @@ export function MemberCommitteeAssignmentsCard({
     setShowForm(false);
     setEditingAssignmentId(null);
     setForm(emptyForm);
-    setError("");
+    clearActionFailure();
     setMessage("");
-  }, [member.id]);
+  }, [clearActionFailure, member.id]);
 
   function openAddForm() {
     const maxOrder = assignments.reduce(
@@ -171,7 +190,7 @@ export function MemberCommitteeAssignmentsCard({
       sortOrder: maxOrder + 1,
     });
     setShowForm(true);
-    setError("");
+    clearActionFailure();
     setMessage("");
   }
 
@@ -189,7 +208,7 @@ export function MemberCommitteeAssignmentsCard({
       isActive: assignment.isActive,
     });
     setShowForm(true);
-    setError("");
+    clearActionFailure();
     setMessage("");
   }
 
@@ -202,7 +221,7 @@ export function MemberCommitteeAssignmentsCard({
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!form.committeeRoleId) {
-      setError("Select a committee role");
+      failAction("Select a committee role");
       return;
     }
 
@@ -212,12 +231,12 @@ export function MemberCommitteeAssignmentsCard({
       form.contactEmailMode === "CUSTOM" &&
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedOverride)
     ) {
-      setError("Enter a valid custom committee email");
+      failAction("Enter a valid custom committee email");
       return;
     }
 
     setSaving(true);
-    setError("");
+    clearActionFailure();
     setMessage("");
 
     const contactEmailMode = form.contactable ? form.contactEmailMode : "ROLE";
@@ -275,7 +294,7 @@ export function MemberCommitteeAssignmentsCard({
       await onSaved();
       await loadRoles();
     } catch (saveError) {
-      setError(
+      failAction(
         saveError instanceof Error
           ? saveError.message
           : "Failed to save committee assignment",
@@ -291,7 +310,7 @@ export function MemberCommitteeAssignmentsCard({
     }
 
     setSaving(true);
-    setError("");
+    clearActionFailure();
     setMessage("");
     try {
       const response = await fetch(
@@ -311,7 +330,7 @@ export function MemberCommitteeAssignmentsCard({
       await onSaved();
       await loadRoles();
     } catch (removeError) {
-      setError(
+      failAction(
         removeError instanceof Error
           ? removeError.message
           : "Failed to remove committee assignment",
@@ -322,7 +341,7 @@ export function MemberCommitteeAssignmentsCard({
   }
 
   return (
-    <Card className={className}>
+    <Card ref={cardRef} className={className}>
       <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <CardTitle className="flex items-center gap-2">
@@ -353,11 +372,16 @@ export function MemberCommitteeAssignmentsCard({
             or remove them.
           </AdminViewOnlyNotice>
         ) : null}
-        {error ? (
+        {loadError ? (
           <div className="rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11">
-            {error}
+            {loadError}
           </div>
         ) : null}
+        <FocusedActionError
+          id="committee-assignment-action-error"
+          error={actionFailure.error}
+          attentionKey={actionFailure.attentionKey}
+        />
         {message ? (
           <div className="rounded-md border border-success-6 bg-success-3 p-3 text-sm text-success-11">
             {message}

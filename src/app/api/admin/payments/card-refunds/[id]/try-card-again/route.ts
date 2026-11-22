@@ -1,9 +1,11 @@
 import { revalidateAdminPage } from "@/lib/admin-page-revalidation";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
-import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
+import { nonNegativeCentsSchema } from "@/lib/cents-schema";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL } from "@/lib/card-refund-group-copy";
 import { tryOrganiserChildCardRefundAgain } from "@/lib/card-refund-group-try-again";
 import { DeadCardRefundActionError, tryDeadCardRefundAgain } from "@/lib/card-refund-dead-row-actions";
@@ -40,14 +42,13 @@ export async function POST(
 
   const { id } = await params;
 
-  let body: unknown;
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON." }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON.",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
@@ -83,6 +84,12 @@ export async function POST(
     if (error instanceof DeadCardRefundActionError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
+    const contended = transactionContendedResponse(
+      error,
+      "Card refund try-card-again contended for the lock(1) budget",
+      { context: { operationId: id } },
+    );
+    if (contended) return contended;
     logger.error({ err: error, operationId: id }, "Trying a card refund Stripe gave up on again failed");
     return NextResponse.json({ error: "Could not try the card again." }, { status: 500 });
   }

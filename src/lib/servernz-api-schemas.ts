@@ -20,7 +20,7 @@ import type { ServerNzConnectionIdentity } from "@/lib/servernz-version-record";
 
 /**
  * The Alpine Central Server's WIRE SHAPES, as `servernz-api.ts` validates them
- * (#49 review split). Declarative only: every schema here is what one of that
+ * (triyder/AlpineClubBookingsNZ#49 review split). Declarative only: every schema here is what one of that
  * module's request functions parses a response with, and the long comments
  * are the contract each shape carries. Nothing here makes a request, reads a
  * setting or touches the version gate, which is why this module can sit
@@ -33,11 +33,11 @@ import type { ServerNzConnectionIdentity } from "@/lib/servernz-version-record";
  * set for that lodge. The server's item schema is `.strict()`, so this must
  * carry exactly the keys it knows — `serializeOtherLodgeData` is the one list,
  * except the rates: those leave as the server's dollar keys (`ServerRates`,
- * from `ratesToServer`), never as this site's `…Cents` columns (#61).
- * `distribute` and provenance are never sent by clients. `id` (API 2.3, #64)
+ * from `ratesToServer`), never as this site's `…Cents` columns (triyder/AlpineClubBookingsNZ#61).
+ * `distribute` and provenance are never sent by clients. `id` (API 2.3, triyder/AlpineClubBookingsNZ#64)
  * is the lodge's central id, once known: the server matches the item by it, so
  * a changed `name` renames the lodge there rather than creating a second one.
- * `siteUrl` may be left out (#55): the server leaves a field it is not sent
+ * `siteUrl` may be left out (triyder/AlpineClubBookingsNZ#55): the server leaves a field it is not sent
  * alone, and an address it would refuse is not sent.
  */
 export type OtherLodgeUploadItem = Omit<SerializedOtherLodgeData, OtherLodgeRateField | "siteUrl"> &
@@ -58,7 +58,7 @@ export const uploadResultSchema = z.object({
   results: z
     .array(
       z.object({
-        // The lodge's central id (API 2.5, #69), whenever the item reached
+        // The lodge's central id (API 2.5, triyder/AlpineClubBookingsNZ#69), whenever the item reached
         // one: how a lodge this site uploaded without an id learns it. Taken
         // as `unknown` and checked where it is used, so one malformed id
         // costs that link, not the whole upload's answer.
@@ -80,7 +80,7 @@ export type OtherLodgesUploadResult = z.infer<typeof uploadResultSchema>;
  * 0..100000, room type `ROOM` or `DORMITORY`, booking page URL 500 and
  * `http(s)` only, cancellation period 200, season starts a real `YYYY-MM-DD`
  * calendar date, at most 50 amenities of name 120 / description 1000 with names
- * unique ignoring case). The rates (#61) are the one difference in FORM, not in
+ * unique ignoring case). The rates (triyder/AlpineClubBookingsNZ#61) are the one difference in FORM, not in
  * bound: the admin route takes them as integer cents, the server sends dollars,
  * so they are checked against the same 0..99999.99 here and converted to cents
  * by `@/lib/servernz-rate` before the row leaves this schema.
@@ -113,7 +113,7 @@ export const distributedLodgeSchema = z
     id: z.string().max(64),
     name: otherLodgeNameSchema,
     ...otherLodgeCommonDataShape,
-    // The rates arrive as dollars under the server's names (#61) and leave this
+    // The rates arrive as dollars under the server's names (triyder/AlpineClubBookingsNZ#61) and leave this
     // schema as cents under this site's column names: the conversion happens
     // HERE, at the wire, so nothing downstream ever holds dollars.
     ...serverRateWireShape,
@@ -127,7 +127,7 @@ export const distributedLodgeSchema = z
 const MAX_LODGES_PER_PULL = 5_000;
 
 /**
- * Upper bound on one pull's deletions (#58): the same bound as the live lodges.
+ * Upper bound on one pull's deletions (triyder/AlpineClubBookingsNZ#58): the same bound as the live lodges.
  * A whole-registry pull carries every deletion ever made, but the download only
  * acts on the ids it holds locally, and the list is bound to one `IN (...)`
  * (Postgres allows at most 65,535 bound parameters), so it stays small.
@@ -144,7 +144,7 @@ const MAX_DELETED_LODGES_PER_PULL = MAX_LODGES_PER_PULL;
 // cursor advanced, so every subsequent run would re-fetch and re-fail,
 // permanently.
 //
-// `ownLodges` (#52, #62) is the lodges the AUTHENTICATED club owns, each as
+// `ownLodges` (triyder/AlpineClubBookingsNZ#52, triyder/AlpineClubBookingsNZ#62) is the lodges the AUTHENTICATED club owns, each as
 // its permanent id and name, which the server sends on EVERY pull, incremental
 // or not, because it is the club's whole current list rather than a delta.
 // OPTIONAL: absent must survive as `undefined` so the sync leaves the stored
@@ -152,7 +152,7 @@ const MAX_DELETED_LODGES_PER_PULL = MAX_LODGES_PER_PULL;
 // `unknown` here and validated on its own by the pull: a list that breaks its
 // bounds must not fail the WHOLE pull — the lodges still merge and the cursor
 // still advances — it is treated as not sent, and reported so the sync can say
-// so. (API 2.5 dropped the name-only `ownLodgeNames`, #69: names may repeat.)
+// so. (API 2.5 dropped the name-only `ownLodgeNames`, triyder/AlpineClubBookingsNZ#69: names may repeat.)
 /**
  * Just the NAME of a pulled row, read the way `distributedLodgeSchema` reads
  * it (#4262 review): a row dropped for breaking some other bound still says a
@@ -167,7 +167,7 @@ export const pullEnvelopeSchema = z.object({
   cursor: z.string().max(64).nullable(),
   count: z.number(),
   ownLodges: z.unknown().optional(),
-  // Lodges deleted on the server since `since` (API 2.4, #58), or every one on
+  // Lodges deleted on the server since `since` (API 2.4, triyder/AlpineClubBookingsNZ#58), or every one on
   // a whole-registry pull, so its bound is its own and far above the registry's:
   // an over-long list fails the pull (and the cursor stays) rather than being
   // cut short; each entry is validated on its own below.
@@ -194,7 +194,7 @@ export interface OtherLodgesPullResult {
    */
   droppedNames: string[];
   /**
-   * The lodges the server says this club owns, with their central ids (#62),
+   * The lodges the server says this club owns, with their central ids (triyder/AlpineClubBookingsNZ#62),
    * or `undefined` when the server did not send a valid list. Never defaulted
    * to `[]`: absent and "owns nothing" are different answers.
    */
@@ -202,7 +202,7 @@ export interface OtherLodgesPullResult {
   /** True when the server sent `ownLodges` and it failed its bounds. */
   ownLodgesRefused: boolean;
   /**
-   * The central ids of lodges deleted on the server (#58, API 2.4), or
+   * The central ids of lodges deleted on the server (triyder/AlpineClubBookingsNZ#58, API 2.4), or
    * `undefined` when the server did not send the list (an older release),
    * which hides nothing here. An entry that failed its bounds is left out.
    */

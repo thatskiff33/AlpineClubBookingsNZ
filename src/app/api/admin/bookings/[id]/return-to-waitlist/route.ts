@@ -24,7 +24,9 @@ import {
 } from "@/lib/waitlist-return-contract";
 import { isTransactionContention } from "@/lib/prisma-errors";
 import { processWaitlistForDates } from "@/lib/waitlist";
+import { getWaitlistPositionOf, isWaitlistPositionShown } from "@/lib/waitlist-queue";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * #2649 review — the repair's own lock budget.
@@ -34,18 +36,15 @@ import { clubFormatValues } from "@/lib/club-format-server";
  * the confirm's compensating release, and that compensation was deliberately
  * given 5s/10s for the same reason (`waitlist-confirm/route.ts`). Running the
  * repair on the defaults would mean the button 503s during exactly the
- * contention that creates strands: the longest-lived holder of `lock(1)` in the
- * tree is `assignBedRange`, inside a 30s transaction.
+ * contention that creates strands: the longest-lived holders of `lock(1)` in the
+ * tree, such as `assignBedRange`, run on the shared lock(1) budget.
  *
- * So this takes the ADMIN precedent rather than the member one — the same
- * `{ maxWait: 10_000, timeout: 30_000 }` as `assignBedRange`
- * (`bed-allocation-range-assign.ts`), above `saveClubTheme`'s 10s/15s. The member
- * budget is tighter on purpose (a member is watching the request); an officer
- * pressing a recovery button can wait out the worst contender, and a repair that
- * fails safely is still a repair that did not happen.
+ * So this runs on the shared lock(1) budget, `LOCK1_HOLDER_TRANSACTION_BUDGET`
+ * (`INV-LOCK-006`), the one `assignBedRange` holds the key under. The member
+ * offer release is tighter on purpose (a member is watching the request); an
+ * officer pressing a recovery button can wait out the worst contender, and a
+ * repair that fails safely is still a repair that did not happen.
  */
-const RETURN_TO_WAITLIST_MAX_WAIT_MS = 10_000;
-const RETURN_TO_WAITLIST_TIMEOUT_MS = 30_000;
 
 /**
  * Return a stranded zero-dollar waitlist confirm to the waitlist (#2649).
@@ -163,6 +162,7 @@ export async function POST(
             wholeLodgeHold: true,
             wholeLodgeHoldAt: true,
             wholeLodgeHoldByMemberId: true,
+            noEmails: true, // #5402: a silenced entry shows no position
             member: { select: { email: true, firstName: true } },
             // #3369: the owner may be an Organisation; bookingOwner() reads both.
             organisation: { select: { name: true, email: true } },
@@ -202,11 +202,9 @@ export async function POST(
         }
 
         // The same field set the three in-tree reverts write, plus
-        // `waitlistPosition` and the two hold fragments. The confirm's first
-        // phase already nulled the position on its way out of the queue, so
-        // nulling it here is a no-op on the stranded shape — but it makes the
-        // documented outcome ("back of the queue by the ordinary rule") true by
-        // construction rather than by inheritance. `finalPriceCents` is
+        // `waitlistPosition` and the two hold fragments. Nothing reads the
+        // stored position any more (#5402): it is null everywhere and is
+        // written null here until the column is retired. `finalPriceCents` is
         // re-asserted in the guard so a concurrent re-price cannot turn this
         // into an un-confirm of a priced booking.
         const restored = await tx.booking.updateMany({
@@ -239,20 +237,12 @@ export async function POST(
           previousRange: { checkIn: booking.checkIn, checkOut: booking.checkOut },
         });
 
-        // The place the member is told they hold. Same rule as the offer-expiry
-        // email quotes (`waitlist.ts` `expireStaleOffers`): per-lodge queue,
-        // overlapping nights, FIFO on `createdAt`. Counted under the locks, so it
-        // cannot be quoted from a queue that moved.
-        const ahead = await tx.booking.count({
-          where: {
-            status: BookingStatus.WAITLISTED,
-            lodgeId: key.lodgeId,
-            checkIn: { lt: booking.checkOut },
-            checkOut: { gt: booking.checkIn },
-            createdAt: { lt: key.createdAt },
-          },
+        // The place the member is told they hold, read from the live queue under
+        // the locks (#5402, `INV-CAP-041`). It keeps `createdAt`, so its old place.
+        const waitlistPosition = await getWaitlistPositionOf(tx, {
+          id: bookingId, lodgeId: key.lodgeId, createdAt: key.createdAt,
+          checkIn: booking.checkIn, checkOut: booking.checkOut,
         });
-        const waitlistPosition = ahead + 1;
 
         await createAuditLog(
           {
@@ -318,12 +308,11 @@ export async function POST(
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           waitlistPosition,
+          // What the officer's screen shows: no number for a silenced entry.
+          displayedWaitlistPosition: isWaitlistPositionShown({ status: BookingStatus.WAITLISTED, noEmails: booking.noEmails }) ? waitlistPosition : null,
         };
       },
-      {
-        maxWait: RETURN_TO_WAITLIST_MAX_WAIT_MS,
-        timeout: RETURN_TO_WAITLIST_TIMEOUT_MS,
-      },
+      LOCK1_HOLDER_TRANSACTION_BUDGET,
     );
 
     if ("error" in result) {
@@ -367,8 +356,8 @@ export async function POST(
     //
     // The lodge is the BOOKING's own, never `waitlistOfferedLodgeId`. This is
     // where `expireStaleOffers` deliberately differs and must: there the entry
-    // is still WAITLIST_OFFERED, holding a bed at the OFFERED lodge, so that is
-    // what its revert frees. Here the booking is PAYMENT_PENDING, whose
+    // is still WAITLIST_OFFERED, and the place it was offered is at the OFFERED
+    // lodge, so its re-offer goes there. Here the booking is PAYMENT_PENDING, whose
     // allocations, the lodge key held above, and the reconcile that just pruned
     // them are all keyed on `lodgeId`. Sweeping any other lodge would process a
     // queue whose beds this repair did not free and leave the ones it did free
@@ -391,7 +380,7 @@ export async function POST(
     return NextResponse.json({
       success: true,
       status: BookingStatus.WAITLISTED,
-      waitlistPosition: result.waitlistPosition,
+      waitlistPosition: result.displayedWaitlistPosition,
     });
   } catch (err) {
     logger.error(

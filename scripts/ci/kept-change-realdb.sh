@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Disposable, loopback-only PostgreSQL proof for #4324, #3403 and #4930 in Sekreton.
+# Disposable, loopback-only PostgreSQL proof for #4324, #3403, #4930 and #4069 in Sekreton.
 set -euo pipefail
 
 # The cluster start lives in one sourced helper (INV-SSOT); it sets pg_dir,
@@ -16,14 +16,20 @@ export CONCURRENCY_RACE_DATABASE_URL="$DATABASE_URL"
 export RUN_CONCURRENCY_RACE_TESTS=1
 export TMPDIR=/tmp/scratch
 export NODE_OPTIONS=--max-old-space-size=1800
+# Regenerate the client from this tree's schema: a workspace generated before a
+# merge added an enum value rejects it client-side (PrismaClientValidationError).
+pnpm run db:generate
 pnpm run db:migrate
 files=(
+  # #4069: cash-cover evidence and snapshot coherence over the real writers.
+  src/lib/__tests__/booking-cash-evidence.realdb.test.ts
   src/lib/__tests__/kept-change-capture-record.realdb.test.ts
   src/lib/__tests__/superseded-ask-invoice-carry.realdb.test.ts
   src/lib/__tests__/additional-capture-receipt.realdb.test.ts
   src/lib/__tests__/additional-capture-receipt-legs.realdb.test.ts
   src/lib/__tests__/primary-invoice-edit-race.realdb.test.ts
   src/lib/__tests__/unpaid-edit-change-fee-owed.realdb.test.ts
+  src/lib/__tests__/price-preserving-edit-preview-save.realdb.test.ts
   src/lib/__tests__/edit-quoted-figures.realdb.test.ts
   # #4930: exercise reconciliation, cancellation and group settlement after
   # moving their shared imports; a skipped suite is rejected below.

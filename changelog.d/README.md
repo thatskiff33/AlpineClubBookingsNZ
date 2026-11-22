@@ -20,7 +20,7 @@ never one shared file** - a lane adds a file rather than editing a shared list,
 so two lanes cannot collide. That rule lives in `AGENTS.md` -> "Change
 Discipline", and the row in its routing table points back here for the detail.
 
-There are five instances, and until [#3111](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3111)
+There are six instances, and until [#3111](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3111)
 they read as four unrelated special cases rather than as one rule - which is how
 a fifth artifact came to be appended to by four lanes at once before anyone
 recognised what it was:
@@ -32,6 +32,7 @@ recognised what it was:
 | `dependency-mitigations.d/` | fragment directory | Each owner-approved, expiring dependency-audit mitigation is one record (#3843) |
 | `CHANGELOG.md` | `merge=union` (#2451) | A flat list of released lines, none of which refers to another |
 | `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv` | `merge=union` (#3111) | One row per migration, hand-appended by every schema lane |
+| `scripts/audit/audit-write-sites.ts` | `merge=union` (#5211) | One GENERATED line per audit write site; every lane that adds a writer regenerates it |
 
 **The fragment directory is the default; `merge=union` is the exception.** Union
 keeps both sides' added lines, which is precisely the resolution a human would
@@ -43,7 +44,7 @@ document several lanes co-edit stays an ordinary file and takes the conflicts.
 seven-section topical reference each lane revises in place - rather than a
 ledger, which is why it was left alone.
 
-`src/lib/__tests__/additive-artifact-fragments.test.ts` checks the five artifacts
+`src/lib/__tests__/additive-artifact-fragments.test.ts` checks the six artifacts
 above have not regressed, and fails a new top-level `*.d/` directory that nobody
 registered. It cannot recognise a newly invented shared **file** that should have
 been a fragment directory - no offline check can, and #3111 records the two
@@ -61,6 +62,21 @@ routing row are for.
    no version number, no date.
 3. Commit it with the rest of the pull request. The `verify` job checks that a
    code-bearing pull request carries one.
+
+### Linking a doc from a fragment
+
+Write a relative link the way it works from this directory, so it is correct
+where you write it: `[the guide](../docs/guides/club-time.md)`. When the
+compiler copies the fragment into `CHANGELOG.md` at the repository root, it
+rewrites each relative link to resolve from there instead
+(`docs/guides/club-time.md`), so `docs:linkcheck` passes both before and after
+a release (#5214). That covers a link whose text wraps onto the next line,
+both targets of an image used as a link (`[![alt](../img.png)](../docs/A.md)`)
+or of a link inside an image's alt text, and reference definitions, including
+`[ref]: <../docs/a file.md>`. Absolute URLs, `#anchor` links and links shown
+inside code are left alone. A link that climbs out of the repository
+(`../../x.md`) has no root-relative form; `changelog-fragment-shape` refuses
+it, and so does the compiler.
 
 ## Patch or minor: the `.feature.md` suffix
 
@@ -171,6 +187,17 @@ sections are never rewritten. A failed removal restores the original changelog
 and fragments for a safe retry; if restoration itself fails, stop and inspect
 the files named by the error. The compiler cannot prove an unfetched remote
 update does not exist, so refresh `origin/main` before running it.
+
+Straight after a release, this directory and `size-allowances.d/` hold only
+their `README.md`. That is their normal state, so a check that reads either
+directory must pass when it is empty: assert that it read the right directory,
+never that it found a fragment. `changelog-fragment-shape` tests this itself:
+its rules pass on a directory holding only a `README.md` and still flag a bad
+fragment in a populated one. These other checks read either directory from
+disk and must pass when it is empty: `late-capture-decision-provenance`,
+`cli-server-only-reach-census`, `additive-artifact-fragments`,
+`agent-workflow-contract`, and the two censuses that scan
+`live-doc-surfaces` (`audit-writer-census`, `view-only-banner-contract`).
 
 A version that already has a section is refused — except with `--append`,
 which adds the fragments (and any direct `## Unreleased` entries) to the end of

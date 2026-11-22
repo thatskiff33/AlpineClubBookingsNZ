@@ -31,7 +31,11 @@ import {
 // both (docs/TESTING.md, "Census tests and the merge hazard"). Re-derive it from
 // the scanner, never by incrementing.
 
-type Classification = "chosen" | "exempt";
+// "reencoded": the member's existing password, just proved, stored again at
+// the current bcrypt cost (#5261). Nobody chooses it, so there is nothing to
+// screen; it is no generated value either, so it is held to one writer and
+// its callers below.
+type Classification = "chosen" | "exempt" | "reencoded";
 
 type ReviewedWriter = {
   file: string;
@@ -55,7 +59,10 @@ type ReviewedWriter = {
 };
 
 /** The only exempt writers allowed an untraced value: local demo data. */
-const UNTRACED_EXEMPT_WRITERS = ["prisma/demo-seed.ts#makeMember", "prisma/demo-seed.ts#main"];
+const UNTRACED_EXEMPT_WRITERS = [
+  "prisma/demo-seed-writers.ts#createDemoMember",
+  "prisma/demo-seed.ts#main",
+];
 
 // A directory whose raw-SQL writers are exempt as a class: every SQL site
 // under it is covered, and a property writer there still needs its own entry.
@@ -106,6 +113,14 @@ const REVIEWED_PASSWORD_HASH_WRITERS: readonly ReviewedWriter[] = [
     count: 2,
     classification: "chosen",
     reason: "The operator chooses SEED_ADMIN_PASSWORD and SEED_LODGE_PASSWORD; the install-time seed screens each and stops on a breached one.",
+  },
+  // The proved password re-hashed at the current cost.
+  {
+    file: "src/lib/password-rehash.ts",
+    scope: "upgradePasswordHashAfterProof",
+    count: 2,
+    classification: "reencoded",
+    reason: "After a proved sign-in or step-up, the same password is stored again at the current cost; the second site is the compare-and-swap guard on the proved hash.",
   },
   // Generated or unusable hashes: nobody chooses these.
   {
@@ -224,13 +239,15 @@ const REVIEWED_PASSWORD_HASH_WRITERS: readonly ReviewedWriter[] = [
     valueFrom: "prisma/seed.ts#main",
   },
   {
-    file: "prisma/demo-seed.ts",
-    scope: "makeMember",
+    // Shared by prisma/demo-seed.ts and the load volume seeder (#4940).
+    file: "prisma/demo-seed-writers.ts",
+    scope: "createDemoMember",
     count: 1,
     classification: "exempt",
-    reason: "Local demo data with a published demo password; never a production account.",
+    reason: "Local demo and load-test data with a published demo password; never a production account.",
 
-    untracedValue: "DEMO_SEED_PASSWORD or its published default; the demo seed refuses to run without ALLOW_DEMO_SEED=1.",
+    untracedValue:
+      "demoSeedPasswordHash(): DEMO_SEED_PASSWORD or its published default; both callers refuse to run without ALLOW_DEMO_SEED=1.",
   },
   {
     file: "prisma/demo-seed.ts",
@@ -408,6 +425,19 @@ describe("passwordHash writer census (#4610, INV-AUTH-006)", () => {
     expect(scanPasswordHashWriters(file, source).map((site) => site.source)).toEqual(["placeholder"]);
     const fromBody = source.replace("passwordHash: UNUSABLE_PLACEHOLDER_PASSWORD_HASH,", "passwordHash: parsedBody.passwordHash,");
     expect(scanPasswordHashWriters(file, fromBody).map((site) => site.source)).toEqual(["unknown"]);
+  });
+
+  it("re-encodes a proved password in one writer, called only after a password proof (#5261)", () => {
+    const reencoded = REVIEWED_PASSWORD_HASH_WRITERS.filter((w) => w.classification === "reencoded");
+    expect(reencoded.map((w) => key(w.file, w.scope, w.kind))).toEqual([
+      "src/lib/password-rehash.ts#upgradePasswordHashAfterProof",
+    ]);
+    const callers = passwordHashScanFiles().filter(
+      (file) =>
+        file !== "src/lib/password-rehash.ts" &&
+        /\bupgradePasswordHashAfterProof\s*\(/.test(fs.readFileSync(file, "utf8")),
+    );
+    expect(callers.sort()).toEqual(["src/lib/auth.ts", "src/lib/session-reauth.ts"]);
   });
 
   it("allows an untraced exempt value only for the local demo seed", () => {

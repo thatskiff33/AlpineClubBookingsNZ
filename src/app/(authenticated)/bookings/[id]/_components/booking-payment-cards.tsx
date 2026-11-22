@@ -11,7 +11,7 @@ import { ConfirmDraftButton } from "@/components/confirm-draft-button";
 import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
 import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { WAITLIST_OFFER_HOURS } from "@/lib/waitlist";
-import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
+import { isBookingOwnAmountOwed } from "@/lib/booking-status";
 import type { BookingDetailRecord } from "../_lib/load-booking-detail";
 import type { BoundClubTime } from "@/lib/club-time";
 import type { BookingDetailViewer } from "../_lib/booking-detail-viewer";
@@ -20,6 +20,22 @@ import type { BookingDetailLinkedParty } from "../_lib/booking-detail-linked-par
 import { savedCardChargeCents } from "@/lib/booking-payment-state";
 import type { BookingDetailPayment } from "../_lib/booking-detail-payment";
 import type { BookingDetailMessages } from "../_lib/booking-detail-messages";
+
+type BookingPaymentCardsProps = {
+  booking: BookingDetailRecord;
+  /**
+   * #5402: the booking's place in its lodge's queue, read on this request by
+   * the page (`loadBookingDetailWaitlistPosition`). Null when none is shown.
+   */
+  waitlistPosition: number | null;
+  club: BoundClubTime;
+  money: BoundClubFormat;
+  viewer: BookingDetailViewer;
+  access: BookingDetailEditAccess;
+  party: BookingDetailLinkedParty;
+  payment: BookingDetailPayment;
+  messages: BookingDetailMessages;
+};
 
 /**
  * THE PAY DOORS (#2958): the draft confirm and complete-booking cards, the
@@ -34,6 +50,7 @@ import type { BookingDetailMessages } from "../_lib/booking-detail-messages";
  */
 export function BookingPaymentCards({
   booking,
+  waitlistPosition,
   club,
   money,
   viewer,
@@ -41,16 +58,7 @@ export function BookingPaymentCards({
   party,
   payment,
   messages,
-}: {
-  booking: BookingDetailRecord;
-  club: BoundClubTime;
-  money: BoundClubFormat;
-  viewer: BookingDetailViewer;
-  access: BookingDetailEditAccess;
-  party: BookingDetailLinkedParty;
-  payment: BookingDetailPayment;
-  messages: BookingDetailMessages;
-}) {
+}: BookingPaymentCardsProps) {
   const {
     canManageBooking,
     isBookingOwner,
@@ -137,7 +145,6 @@ export function BookingPaymentCards({
               bookingId={booking.id}
               amountCents={booking.finalPriceCents}
               paymentMode={getBookingPaymentMode(booking.status)}
-              returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
               showOnMount={false}
               gateDescription="Draft bookings stay editable until you explicitly continue to payment. Payment is still collected immediately once you choose to complete the booking."
               gateCtaLabel="Confirm & Continue to Payment"
@@ -150,12 +157,12 @@ export function BookingPaymentCards({
       {isWaitlisted && (
         <Card className="border-cat1-6 bg-cat1-3">
           <CardHeader>
-            <CardTitle className="text-cat1-11">On the Waitlist</CardTitle>
+            <CardTitle headingLevel={2} className="text-cat1-11">On the Waitlist</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {booking.waitlistPosition && (
+            {waitlistPosition !== null && (
               <p className="text-sm font-medium text-cat1-11">
-                Position: #{booking.waitlistPosition}
+                Position: #{waitlistPosition}
               </p>
             )}
             <p className="text-sm text-cat1-11">
@@ -189,11 +196,10 @@ export function BookingPaymentCards({
       {!isDeleted &&
         canManageBooking &&
         internetBankingPayment &&
-        isPaymentOwedBookingStatus(booking.status) &&
-        internetBankingPayment.status !== "SUCCEEDED" && (
+        isBookingOwnAmountOwed(booking) && (
           <Card className="border-warning-6 bg-warning-3">
             <CardHeader>
-              <CardTitle className="text-warning-11">Internet Banking Payment</CardTitle>
+              <CardTitle headingLevel={2} className="text-warning-11">Internet Banking Payment</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm text-warning-11">
               <p>
@@ -239,7 +245,7 @@ export function BookingPaymentCards({
       {showGuestPaymentLinkStandalone && (
         <Card className="border-warning-6 bg-warning-3">
           <CardHeader>
-            <CardTitle className="text-warning-11">
+            <CardTitle headingLevel={2} className="text-warning-11">
               Your guests still need paying for
             </CardTitle>
           </CardHeader>
@@ -263,7 +269,7 @@ export function BookingPaymentCards({
       {showPaymentOnHoldNotice && (
         <Card className="border-info-6 bg-info-3">
           <CardHeader>
-            <CardTitle className="text-info-11">Payment on hold</CardTitle>
+            <CardTitle headingLevel={2} className="text-info-11">Payment on hold</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-info-11">
@@ -322,7 +328,6 @@ export function BookingPaymentCards({
               bookingId={booking.id}
               amountCents={cardAmountDueCents}
               paymentMode={getBookingPaymentMode(booking.status)}
-              returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />
             {canSwitchToInternetBanking && (
               <>
@@ -365,7 +370,7 @@ export function BookingPaymentCards({
       {showSavePaymentMethodCard && (
         <Card>
           <CardHeader>
-            <CardTitle>Save Payment Method</CardTitle>
+            <CardTitle headingLevel={2}>Save Payment Method</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-muted-foreground mb-4">
@@ -377,7 +382,6 @@ export function BookingPaymentCards({
               // #4357 (`INV-PAY-119`): what the saved card will be charged.
               amountCents={savedCardChargeCents(booking)}
               paymentMode={getBookingPaymentMode(booking.status)}
-              returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />
           </CardContent>
         </Card>

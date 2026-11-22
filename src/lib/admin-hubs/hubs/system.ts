@@ -32,8 +32,16 @@ export const SYSTEM_HUB = defineHub({
       label: "Stuck States",
       oldPath: "/admin/stuck-states",
       area: "support",
-      // The voided bank refund notes panel (#4162), linked from its stuck-state row.
-      anchors: ["bank-refund-voids"],
+      // The voided bank refund notes panel (#4162), linked from its stuck-state
+      // row, and the rows that name their bookings on this page (#4959).
+      anchors: [
+        "bank-refund-voids",
+        "payment-group-settlement-refund-unexecuted",
+        "payment-cancelled-refund-unrecorded",
+        "payment-recovery-exhausted",
+        "payment-group-settlement-stale",
+        "booking-unnamed-placeholder-guests",
+      ],
       moved: true,
     },
     {
@@ -81,6 +89,18 @@ export const SYSTEM_HUB = defineHub({
       moved: true,
     },
     {
+      // ALP-653: who may connect an AI app, and every connection in the club.
+      id: "ai-connections",
+      label: "AI app connections",
+      oldPath: "/admin/ai-connections",
+      area: "support",
+      flags: ["mcpServer"],
+      keywords: [
+        "mcp", "claude", "chatgpt", "connector", "connected apps", "ai", "oauth",
+      ],
+      moved: true,
+    },
+    {
       id: "backups",
       label: "Database Backups",
       oldPath: "/admin/backups",
@@ -91,6 +111,7 @@ export const SYSTEM_HUB = defineHub({
     {
       id: "backups-setup",
       label: "Backup Setup",
+      keywords: ["database backup setup"],
       oldPath: "/admin/backups/setup",
       area: "support",
       moved: true,

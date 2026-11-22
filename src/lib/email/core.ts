@@ -610,46 +610,26 @@ export async function sendEmail({
 
 /**
  * N-08: Check notification preferences before sending a member email.
- * Maps template categories to preference fields.
- * Admin alerts bypass preferences entirely.
+ * Only the two member emails with an opt-out ask here: the check-in reminder
+ * and the chore roster. Both preferences default on, so a member with no
+ * preference record is sent the email. The bulk categories (club notices,
+ * newsletter) are decided by `bulk-audience.ts` (INV-PRIV-026), and admin
+ * alerts bypass preferences entirely.
  */
-const CATEGORY_TO_PREFERENCE: Record<
-  string,
-  keyof Omit<
-    import("@prisma/client").NotificationPreference,
-    "id" | "memberId" | "createdAt" | "updatedAt"
-  >
-> = {
-  bookingConfirmation: "bookingConfirmation",
-  bookingReminder: "bookingReminder",
-  bookingBumped: "bookingBumped",
-  bookingCancelled: "bookingCancelled",
-  choreRoster: "choreRoster",
-  bookingWaitlist: "bookingWaitlist",
-  marketingEmails: "marketingEmails",
-};
+type MemberEmailPreferenceCategory = "bookingReminder" | "choreRoster";
 
-// test seam
 export async function shouldSendEmail(
   memberId: string,
-  category: string,
+  category: MemberEmailPreferenceCategory,
 ): Promise<boolean> {
-  const prefField = CATEGORY_TO_PREFERENCE[category];
-  if (!prefField) {
-    // Unknown category — default to sending
-    return true;
-  }
-
   const pref = await prisma.notificationPreference.findUnique({
     where: { memberId },
   });
 
-  if (!pref) {
-    // No preference record = defaults (all true except marketingEmails)
-    return category !== "marketingEmails";
-  }
+  // No preference record: both categories default to sending.
+  if (!pref) return true;
 
-  return Boolean(pref[prefField]);
+  return Boolean(pref[category]);
 }
 
 /**

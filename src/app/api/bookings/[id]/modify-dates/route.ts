@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { z } from "zod";
 
@@ -19,6 +20,7 @@ import { modifyBookingDatesWithLinkedMoveSupport } from "@/lib/booking-linked-da
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
 import { auth } from "@/lib/auth";
+import { getClientIp } from "@/lib/rate-limit-http";
 import { clubTime } from "@/lib/club-time/server";
 import { adminShiftBookingDates } from "@/lib/booking-date-modification-service";
 import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
@@ -36,6 +38,10 @@ import {
 } from "@/lib/booking-member-night-conflicts";
 import { isBookingEnvelopeInvariantViolation } from "@/lib/booking-envelope-invariants";
 import logger from "@/lib/logger";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 import {
   getMembershipTypeBookingPolicyErrorBody,
   MembershipTypeBookingPolicyError,
@@ -77,6 +83,19 @@ const modifyDatesSchema = z
     message: "At least one of checkIn or checkOut is required",
   });
 
+/**
+ * The move commits before its refund and additional-ask steps, so a contended
+ * lock(1) transaction (`INV-LOCK-006`) asks for a status check. The linked move
+ * answers its own LINKED_MOVE_CONTENDED 503 further down the route's catch.
+ */
+function dateModificationContended(err: unknown, bookingId: string): NextResponse | null {
+  return transactionContendedResponse(
+    err,
+    "Booking date modification contended for the lock(1) budget",
+    { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, context: { bookingId } },
+  );
+}
+
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -101,20 +120,10 @@ export async function PUT(
 
   const { id: bookingId } = await params;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json(
-      {
-        error: "Invalid JSON",
-        details: { body: ["Request body must be valid JSON"] },
-      },
-      { status: 400 },
-    );
-  }
+  const json = await parseJsonRequestBody(request);
+  if (!json.ok) return json.response;
 
-  const parsed = modifyDatesSchema.safeParse(body);
+  const parsed = modifyDatesSchema.safeParse(json.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -122,8 +131,7 @@ export async function PUT(
     );
   }
 
-  const ipAddress =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const ipAddress = getClientIp(request);
 
   // Issue #1668: admin-only date override gating. The booking-management role
   // (Booking Officer / Full Admin → ADMIN) applies ONLY when the override is
@@ -224,8 +232,8 @@ export async function PUT(
 
     return NextResponse.json(result);
   } catch (err) {
-    const hostingRetry = hostingCoverageParticipantRetryResponse(err);
-    if (hostingRetry) return hostingRetry;
+    const retry = dateModificationContended(err, bookingId) ?? hostingCoverageParticipantRetryResponse(err);
+    if (retry) return retry;
     if (err instanceof OverCapacityConfirmationRequiredError) {
       return NextResponse.json(
         {

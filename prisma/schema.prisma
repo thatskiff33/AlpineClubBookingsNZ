@@ -582,7 +582,7 @@ model Member {
   phoneAreaCode    String? // e.g. "27"
   phoneNumber      String? // e.g. "4224115"
   // Per-member opt-in to show this member's phone number on lodge screens
-  // (kiosk + lobby display), default OFF (#37/#124). Only ever surfaced when the
+  // (kiosk + lobby display), default OFF (hoppers99/AlpineClubBookingsNZ#37/#124). Only ever surfaced when the
   // lodge also enables it (Lodge.showGuestPhonesOnScreens) AND the member is an
   // adult — enforced in the serving serialisers, never in templates.
   lodgeScreenPhoneOptIn Boolean @default(false)
@@ -708,6 +708,7 @@ model Member {
   twoFactorSessionChallenges                 TwoFactorSessionChallenge[]
   sessionReauthChallenges                    SessionReauthChallenge[]
   webAuthnCredentials                        WebAuthnCredential[]
+  mcpGrants                                  McpGrant[]
   webAuthnChallenges                         WebAuthnChallenge[]
   subscriptions                              MemberSubscription[]
   memberSubscriptionsManuallyPaid            MemberSubscription[]                    @relation("MemberSubscriptionManualPaidBy")
@@ -748,6 +749,8 @@ model Member {
   credits                                    MemberCredit[]
   requestedCreditAdjustments                 MemberCredit[]                             @relation("RequestedAdminCredits")
   approvedCreditAdjustments                  MemberCredit[]                             @relation("ApprovedAdminCredits")
+  postedOpeningCreditBatches                 OpeningCreditBatch[]                       @relation("PostedOpeningCreditBatches")
+  reversedOpeningCreditBatches               OpeningCreditBatch[]                       @relation("ReversedOpeningCreditBatches")
   adminCreditAdjustmentRequestsRequested     AdminCreditAdjustmentRequest[]             @relation("AdminCreditAdjustmentRequestsRequested")
   adminCreditAdjustmentRequestsReviewed      AdminCreditAdjustmentRequest[]             @relation("AdminCreditAdjustmentRequestsReviewed")
   bookingsCreatedOnBehalf                    Booking[]                                  @relation("BookingsCreatedBy")
@@ -775,6 +778,10 @@ model Member {
   // onDelete: SetNull rather than Cascade — a deleted account must not take a
   // still-broken heater off the maintenance officer's queue.
   maintenanceReportsReported                 MaintenanceReport[]                        @relation("MaintenanceReportReporter")
+  // Fork triyder/AlpineClubBookingsNZ#121: food orders this member placed. onDelete: SetNull, like the
+  // maintenance reporter — a deleted account must not take the club's record of
+  // what food cost out of the history.
+  foodOrdersPlaced                           FoodOrder[]                                @relation("FoodOrderMember")
   adminCreditAdjustmentRequests              AdminCreditAdjustmentRequest[]             @relation("AdminCreditAdjustmentTarget")
   membershipCancellationRequestsRequested    MembershipCancellationRequest[]            @relation("MembershipCancellationRequestRequester")
   membershipCancellationRequestsReviewed     MembershipCancellationRequest[]            @relation("MembershipCancellationRequestReviewer")
@@ -1202,9 +1209,35 @@ model MembershipSubscriptionCharge {
   source                MembershipSubscriptionChargeSource
   status                MembershipSubscriptionChargeStatus @default(QUEUED)
   membershipAnnualFeeId String?
-  membershipTypeId      String
-  membershipTypeKey     String
-  membershipTypeName    String
+  // Exactly one of the membershipType* trio or the subscriptionCategory*
+  // quartet below is populated per charge, the OTHER left entirely null —
+  // never a half-populated group (DB CHECK MembershipCharge_type_xor_category:
+  // num_nonnulls(membershipTypeId, subscriptionCategoryId) = 1 AND each
+  // group's own columns are all-null or all-set together) — a charge bills
+  // either on the MembershipType axis (today's behaviour, unchanged) or on
+  // the independent SubscriptionCategory axis (couple/family-style flat fees
+  // decoupled from booking rights). The membershipType* trio widened from
+  // required to nullable across a WINDOWED pair of migrations
+  // (20261220044900/20261220044910 — see their headers and
+  // docs/BLUE_GREEN_MIGRATION_SAFETY.tsv), not an ordinary rolling expand:
+  // this repo's own precedent for "a second mutually-exclusive axis takes
+  // over a long-required column" (`Booking.memberId`/`organisationId`,
+  // INV-SSOT-005) is to null the column honestly and pay for it with a
+  // maintenance window, never to fake a placeholder value into it. Every
+  // pre-existing charge keeps membershipTypeId populated and
+  // subscriptionCategoryId null, so old rows are unaffected. Every reader of
+  // these columns off a persisted row — rather than off a freshly-looked-up
+  // MembershipType — must go through `chargeFamilyAxisKey`/
+  // `chargeAxisDisplayName` in `src/lib/membership-charge-axis.ts`
+  // (INV-SSOT-009), guarded by a census test, never a raw template literal:
+  // TypeScript does not flag a null inside `${...}`.
+  membershipTypeId      String?
+  membershipTypeKey     String?
+  membershipTypeName    String?
+  subscriptionCategoryId    String?
+  subscriptionCategoryKey   String?
+  subscriptionCategoryName  String?
+  subscriptionCategoryFeeId String?
   billingBasis          MembershipFeeBillingBasis
   prorationRule         MembershipFeeProrationRule
   annualAmountCents     Int
@@ -1244,6 +1277,7 @@ model MembershipSubscriptionCharge {
   @@index([seasonYear, status, createdAt])
   @@index([recipientMemberId, seasonYear])
   @@index([familyGroupId, seasonYear])
+  @@index([subscriptionCategoryId, seasonYear])
   // #4110: at most one LIVE family charge per (seasonYear, membershipTypeId,
   // familyGroupId) is enforced by the raw-SQL partial unique index
   // MembershipCharge_family_type_year_live_key (prisma/partial-unique-indexes.tsv),
@@ -1251,6 +1285,18 @@ model MembershipSubscriptionCharge {
   // family whose charge was voided (#2147) or closed as already paid (#4098) can
   // be billed again beside the retained row. Prisma cannot express it, which is
   // why the plain @@unique was dropped.
+  //
+  // Subscription-category decoupling: a sibling raw-SQL partial unique index,
+  // MembershipCharge_family_category_year_live_key, gives category charges the
+  // SAME at-most-one-live-charge-per-family + re-bill-after-void/close semantics
+  // on (seasonYear, subscriptionCategoryId, familyGroupId) — also recorded in
+  // prisma/partial-unique-indexes.tsv. A raw-SQL CHECK
+  // (MembershipCharge_type_xor_category) enforces num_nonnulls(membershipTypeId,
+  // subscriptionCategoryId) = 1 AND each axis's own column group (the
+  // membershipType* trio, the subscriptionCategory* quartet) is all-null or
+  // all-set together, so every charge is unambiguously one axis or the
+  // other with no half-populated group; not modelled here (Prisma cannot
+  // express CHECK constraints).
 }
 
 // Frozen per-line snapshot of an annual-fee component at the moment the charge
@@ -1365,6 +1411,12 @@ model MembershipBillingException {
   memberId       String?
   familyGroupId  String?
   membershipTypeId String?
+  // Subscription-category decoupling: populated instead of membershipTypeId
+  // when the exception was raised while resolving a member's category-based
+  // billing. Folded into the fingerprint alongside membershipTypeId so a
+  // category exception never shadows/collides with a type exception for the
+  // same member+family+code.
+  subscriptionCategoryId String?
   context        Json?
   firstSeenAt    DateTime                         @default(now())
   lastSeenAt     DateTime                         @default(now())
@@ -1380,6 +1432,7 @@ model MembershipBillingException {
   @@index([status, seasonYear, lastSeenAt])
   @@index([memberId, status])
   @@index([familyGroupId, status])
+  @@index([subscriptionCategoryId, status])
 }
 
 model MembershipSubscriptionBillingSettings {
@@ -1623,6 +1676,15 @@ model SeasonalMembershipAssignment {
   memberId           String
   seasonYear         Int
   membershipTypeId   String
+  // Independent billing axis (subscription-category decoupling project): which
+  // flat SubscriptionCategoryFee this member's annual subscription bills
+  // under, e.g. "Couple" or "2 Adults + 2+ Children", instead of their
+  // MembershipType's own per-member/per-family fee. Null (the default) means
+  // "Individual" — fall through to today's unchanged type-keyed billing. This
+  // has ZERO effect on booking rights/rate/lockout: those stay governed
+  // entirely by membershipTypeId above. Manually admin-assigned, same as
+  // membershipTypeId — never auto-derived from family composition.
+  subscriptionCategoryId String?
   applyFrom          DateTime?                  @db.Date
   assignedByMemberId String?
   source             MembershipAssignmentSource @default(ADMIN)
@@ -1630,15 +1692,101 @@ model SeasonalMembershipAssignment {
   createdAt          DateTime                   @default(now())
   updatedAt          DateTime                   @updatedAt
 
-  member         Member         @relation("SeasonalMembershipAssignmentMember", fields: [memberId], references: [id], onDelete: Cascade)
-  membershipType MembershipType @relation(fields: [membershipTypeId], references: [id], onDelete: Restrict)
-  assignedBy     Member?        @relation("SeasonalMembershipAssignmentAssignedBy", fields: [assignedByMemberId], references: [id], onDelete: SetNull)
+  member               Member                @relation("SeasonalMembershipAssignmentMember", fields: [memberId], references: [id], onDelete: Cascade)
+  membershipType       MembershipType        @relation(fields: [membershipTypeId], references: [id], onDelete: Restrict)
+  subscriptionCategory SubscriptionCategory? @relation(fields: [subscriptionCategoryId], references: [id], onDelete: Restrict)
+  assignedBy           Member?               @relation("SeasonalMembershipAssignmentAssignedBy", fields: [assignedByMemberId], references: [id], onDelete: SetNull)
 
   @@unique([memberId, seasonYear])
   @@index([seasonYear])
   @@index([membershipTypeId])
   @@index([seasonYear, membershipTypeId])
   @@index([assignedByMemberId])
+  @@index([subscriptionCategoryId])
+  @@index([seasonYear, subscriptionCategoryId])
+}
+
+// ---------------------------------------------------------------------------
+// Subscription Categories (billing axis decoupled from MembershipType)
+// ---------------------------------------------------------------------------
+
+// Admin-configurable billing category, independent of MembershipType. A
+// club defines as many categories as it needs (e.g. "Couple", "Adult +
+// Child", "2 Adults + 2+ Children") — not limited to a fixed set. Mirrors
+// MembershipType's shape but carries NO booking-rights fields: category only
+// ever affects which flat SubscriptionCategoryFee a member's subscription
+// resolves to, never bookingBehavior/rate/eligibility. The built-in
+// "individual" row (isBuiltIn = true) is a routing sentinel, not a priced
+// category — SeasonalMembershipAssignment.subscriptionCategoryId is null for
+// an Individual member (the common case), so this row is never looked up by
+// id at billing time; it exists only so the admin UI has an explicit,
+// non-deletable "Individual" option to select back to.
+model SubscriptionCategory {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String?  @db.Text
+  isActive    Boolean  @default(true)
+  isBuiltIn   Boolean  @default(false)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  assignments SeasonalMembershipAssignment[]
+  fees        SubscriptionCategoryFee[]
+
+  @@index([isActive, sortOrder])
+}
+
+// Flat annual fee for one SubscriptionCategory — deliberately has NO
+// membershipTypeId and NO ageTier: a category fee is one number, independent
+// of which MembershipType(s) the covered members hold or their ages. Unlike
+// MembershipAnnualFee there is no flat-vs-tier split to represent, so (unlike
+// that model) this needs no partial unique index or GiST no-overlap
+// EXCLUDE — a plain composite unique on (subscriptionCategoryId,
+// effectiveFrom) is sufficient, matching JoiningFee's pre-age-tier shape.
+// Always resolves and bills "PER_FAMILY-shaped" (one charge per set of family
+// members sharing the category, collapsing to size 1 with no partner) — there
+// is no PER_MEMBER/PER_FAMILY/NO_INVOICE choice for a category fee the way
+// there is for MembershipAnnualFee.billingBasis.
+model SubscriptionCategoryFee {
+  id                     String                     @id @default(cuid())
+  subscriptionCategoryId String
+  amountCents            Int
+  prorationRule          MembershipFeeProrationRule @default(NONE)
+  effectiveFrom          DateTime                   @db.Date
+  effectiveTo            DateTime?                  @db.Date
+  createdAt              DateTime                   @default(now())
+  updatedAt              DateTime                   @updatedAt
+
+  subscriptionCategory SubscriptionCategory              @relation(fields: [subscriptionCategoryId], references: [id], onDelete: Restrict)
+  components           SubscriptionCategoryFeeComponent[]
+
+  @@unique([subscriptionCategoryId, effectiveFrom])
+  @@index([subscriptionCategoryId, effectiveFrom, effectiveTo], map: "SubscriptionCategoryFee_effective_lookup_idx")
+}
+
+// Named components of a SubscriptionCategoryFee (mirrors
+// MembershipAnnualFeeComponent). INVARIANT: Σ(amountCents) == the parent
+// fee's amountCents, validated server-side in one transaction. Every
+// SubscriptionCategoryFee carries >=1 component at all times; the default
+// component (label "Subscription fee", prorate true) is auto-created on fee
+// creation.
+model SubscriptionCategoryFeeComponent {
+  id                        String   @id @default(cuid())
+  subscriptionCategoryFeeId String
+  label                     String
+  amountCents               Int
+  prorate                   Boolean  @default(true)
+  xeroAccountCode           String?
+  xeroItemCode              String?
+  sortOrder                 Int      @default(0)
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  subscriptionCategoryFee SubscriptionCategoryFee @relation(fields: [subscriptionCategoryFeeId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionCategoryFeeId, sortOrder])
 }
 
 // ---------------------------------------------------------------------------
@@ -1841,6 +1989,7 @@ model Booking {
   // non-member guests cannot be accommodated, instead of the default partial
   // bump (drop the non-members, keep the members). Both happen pre-charge.
   cancelIfGuestsBumped      Boolean            @default(false)
+  savedCardClaimAt          DateTime? // Durable off-session charge claim; swept after interruption.
   nonMemberHoldUntil        DateTime?
   // Split-booking group link (issue #738). A mixed member/non-member party is
   // stored as two bookings: a member booking that is paid up front and holds
@@ -1945,9 +2094,9 @@ model Booking {
   // cancelled booking never re-enters a re-check, so the audit fact is kept.
   capacityOverriddenAt         DateTime?
   capacityOverriddenByMemberId String?
-  // Exclusive whole-lodge hold (#117 / epic #116, ADR-001): when true this
+  // Exclusive whole-lodge hold (hoppers99/AlpineClubBookingsNZ#117 / epic hoppers99/AlpineClubBookingsNZ#116, ADR-001): when true this
   // booking reserves SOLE OCCUPANCY of the lodge for its nights. The capacity
-  // engine (#118) hard-blocks any other admission on a held night — independent
+  // engine (hoppers99/AlpineClubBookingsNZ#118) hard-blocks any other admission on a held night — independent
   // of headcount and bed allocation, and NOT bypassable by the admin
   // over-capacity override. Set by an admin (audited via the two fields below,
   // mirroring the capacity-override audit pattern) or by approving a
@@ -2053,6 +2202,7 @@ model Booking {
   linkedBookings              Booking[]                       @relation("BookingGroup")
   guests                      BookingGuest[]
   payment                     Payment?
+  importRow                   BookingImportRow?
   choreAssignments            ChoreAssignment[]
   // #3826 (epic #3813, C1): one redemption PER PROMO CODE, not per booking.
   // Read it only through `bookingPromoRedemptions()` (booking-promo-redemptions.ts).
@@ -2115,6 +2265,7 @@ model Booking {
   @@index([otherLodgeId])
   @@index([organisationId])
   memberMoneyLines MemberMoneyLine[]
+  memberMoneyExportManifests MemberMoneyExportManifest[]
 }
 
 // Durable booking-lifecycle event store (issue #740). One row per transition
@@ -2129,6 +2280,84 @@ enum BookingEventType {
   CANCELLED
   REFUNDED
   CREDITED
+}
+
+// #5005 (child A): a club moving in imports the fully paid future bookings it
+// already sold, one lodge per batch (`INV-PAY-161`, `INV-CAP-040`). The batch
+// is found again by `batchKey`, a hash of the lodge and the file's normalised
+// rows, so the same content resumes the same batch rather than creating its
+// bookings twice. The uploaded file itself is never stored: a row keeps the
+// old system's Booking Ref, its first line number, its totals and its outcome,
+// and no name or email (`INV-PRIV-011`). Actor ids are plain columns, as the
+// audit log keeps them, so no `Member` relation needs a merge rule.
+model BookingImportBatch {
+  id                  String                   @id @default(cuid())
+  lodgeId             String
+  batchKey            String                   @unique
+  status              BookingImportBatchStatus @default(OPEN)
+  // The digest of the preview the confirming officer saw.
+  digest              String
+  // File totals: every booking in the file, imported or refused.
+  bookingCount        Int
+  guestCount          Int
+  guestNightCount     Int
+  amountCents         Int
+  confirmedByMemberId String
+  confirmedAt         DateTime                 @default(now())
+  completedAt         DateTime?
+  // Reversal (#5005 child B) fills these.
+  reversedByMemberId  String?
+  reversedAt          DateTime?
+
+  lodge Lodge              @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+  rows  BookingImportRow[]
+
+  @@index([lodgeId, confirmedAt])
+}
+
+enum BookingImportBatchStatus {
+  OPEN
+  COMPLETED
+  REVERSED
+}
+
+// One booking of an import batch (all the file rows sharing one Booking Ref).
+// A Booking Ref imports once per lodge across every batch: the raw-SQL partial
+// unique index `BookingImportRow_imported_lodgeId_bookingRef_unique` covers
+// IMPORTED rows only, so a refused or reversed row frees the ref for a
+// corrected file. Listed in `prisma/partial-unique-indexes.tsv`.
+model BookingImportRow {
+  id              String                 @id @default(cuid())
+  batchId         String
+  // Copied from the batch so the partial unique index can name it.
+  lodgeId         String
+  bookingRef      String
+  firstLineNumber Int
+  status          BookingImportRowStatus @default(PENDING)
+  // Plain-language reason, never a name or email (`INV-PRIV-011`), and the
+  // planner's code for it (`BookingImportRefusalCode` in
+  // src/lib/booking-import/plan.ts), which the refused totals group by.
+  refusalReason   String?
+  refusalCode     String?
+  amountCents     Int
+  guestCount      Int
+  guestNightCount Int
+  bookingId       String?                @unique
+  createdAt       DateTime               @default(now())
+  decidedAt       DateTime?
+
+  batch   BookingImportBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  booking Booking?           @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+
+  @@unique([batchId, bookingRef])
+  @@index([lodgeId, bookingRef])
+}
+
+enum BookingImportRowStatus {
+  PENDING
+  IMPORTED
+  REFUSED
+  REVERSED
 }
 
 model BookingEvent {
@@ -2529,7 +2758,7 @@ model BookingRequest {
   guests           Json
   message          String?              @db.VarChar(1000)
 
-  // Exclusive whole-lodge hold — request path (#117 / epic #116, ADR-001). A
+  // Exclusive whole-lodge hold — request path (hoppers99/AlpineClubBookingsNZ#117 / epic hoppers99/AlpineClubBookingsNZ#116, ADR-001). A
   // requester (school/group front-door, or — since #2263 — a signed-in member
   // through the member whole-lodge door) can ask for sole occupancy of the
   // lodge. This is only the REQUEST signal; an admin approving the request may
@@ -2764,10 +2993,10 @@ model BookingRequestSettings {
   quoteReminderLeadDays            Int      @default(3)
   // RETIRED by #3819: no runtime code reads or writes it. #3416's club-wide
   // switch, replaced by the per-lodge LodgeSettings.schoolHutLeader* kinds; the
-  // expand migration 20261114020000 copied its value into every lodge. Kept
-  // only so the draining colour can still read it; a later contract release
-  // drops it.
-  assignSchoolTeachersAsHutLeaders Boolean  @default(false)
+  // expand migration 20261114020000 copied its value into every lodge.
+  // `@ignore`d (#5396) so no query names the column before its contract DROP
+  // (INV-OPS-005); the column keeps its default meanwhile.
+  assignSchoolTeachersAsHutLeaders Boolean  @default(false) @ignore
   // Soft link for the phase-7 singleton-to-per-lodge conversion
   // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
   lodgeId                          String?
@@ -3504,6 +3733,12 @@ model PaymentRecoveryOperation {
   lastError            String?                        @db.Text
   processingStartedAt  DateTime?
   succeededAt          DateTime?
+  // #4755: the carried ask the replay last saw in a 3D Secure challenge, and
+  // when it first saw it; null when none. Only `CREATE_ADDITIONAL_PAYMENT_INTENT`
+  // rows set them (`carriedAskPaymentWait`): the replay waits up to an hour from
+  // that first sighting before it supersedes the ask the member is confirming.
+  carriedAskChallengeIntentId String?
+  carriedAskChallengeSeenAt   DateTime?
   createdAt            DateTime                       @default(now())
   updatedAt            DateTime                       @updatedAt
 
@@ -3746,6 +3981,10 @@ model WorkPartyEvent {
 
   promoCode PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
   lodge     Lodge?    @relation(fields: [lodgeId], references: [id], onDelete: SetNull)
+  // The Events Calendar entries this work party manages (#5148): one
+  // all-day occurrence per night of the window, as one series. Written only by
+  // src/lib/calendar-work-party-entries.ts (replaceWorkPartyCalendarEvents).
+  calendarEvents CalendarEvent[]
 
   @@index([active])
   @@index([startDate, endDate])
@@ -3925,6 +4164,17 @@ model BookingDefaults {
   // refunds it from the finance queue or keeps it.
   // Club-wide, because it is how the club handles money, not a lodge's policy.
   lateCaptureRefundNeedsApproval Boolean @default(false)
+  // #4932 (`INV-CONFIG-001`): three timings a club may set, each defaulting to
+  // the value it had as a constant, and each CHECKed to 1-30 days by the
+  // migration. Club-wide, like the hold above. They must agree with
+  // DEFAULT_BOOKING_DEFAULTS (src/config/club-settings-defaults.ts).
+  // Days before check-in the pre-arrival reminder goes out.
+  preArrivalReminderDays        Int @default(3)
+  // Days after an extra amount is raised before the first reminder to pay it.
+  additionalPaymentReminderDays Int @default(3)
+  // Days a policy-exception request holds its beds. Read only when a request is
+  // raised: its deadline is stamped then and never moves (INV-EXCEPT).
+  policyExceptionHoldDays       Int @default(7)
   // Soft link for the phase-7 singleton-to-per-lodge conversion
   // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
   lodgeId                 String?
@@ -4554,18 +4804,18 @@ model XeroSyncOperation {
   lastErrorCode          String?
   lastErrorMessage       String?
   requestPayload         Json?
-  // Denormalized copy of the outbox discriminator, captured once at enqueue in
+  // The outbox discriminator, captured once at enqueue in
   // `startXeroSyncOperation` and never updated afterward (#1271, item 3 of
-  // #1208). Dispatch reads queueType from `requestPayload` (not this column),
-  // BEFORE handlers may overwrite `requestPayload` -- so after dispatch this
-  // column can diverge from the payload (some handlers, e.g. the booking-invoice
-  // create/update, rewrite requestPayload wholesale and drop queueType). That is
-  // expected and safe: the pending-outbox scan (processQueuedXeroOutboxOperations,
-  // #1272) filters on this column only for rows still awaiting dispatch (PENDING /
-  // WAITING_PAYMENT), where it faithfully mirrors the enqueue-time queueType, so
-  // post-dispatch divergence is never observed. Because that scan depends on it,
-  // the column MUST remain immutable after enqueue. Null for REQUEUE, BACKFILL,
-  // inbound, and any other row enqueued with no queueType.
+  // #1208). Handlers may overwrite `requestPayload` with their execution request
+  // (e.g. the booking invoice and refund note rewrite it wholesale and drop
+  // queueType), so after dispatch the payload can lose it while this column
+  // keeps it. A row CAN come back to PENDING after that: a pre-HTTP cooldown
+  // give-back or an officer's Retry (#2423). So the pending-outbox scan
+  // (processQueuedXeroOutboxOperations, #1272) selects AND claims on this
+  // column, and every PENDING writer leaves a queued request for it
+  // (`returnOutboxRowToPending`, #5228; docs/xero/ARCHITECTURE.md). Because both
+  // depend on it, the column MUST remain immutable after enqueue. Null for
+  // REQUEUE, BACKFILL, inbound, and any other row enqueued with no queueType.
   queueType              String?
   // The creation-time Xero-invoice-email delivery instruction (#2929, MAD epic
   // #2725), captured once at enqueue and, like `queueType` above, NEVER updated
@@ -4844,13 +5094,17 @@ model ProcessedWebhookEvent {
   // F16 (issue #1887): the dedup claim is a processing LEASE, not a bare
   // "seen" marker. `status` is "PROCESSING" (claimed, handler in flight) or
   // "COMPLETED" (handler finished). `processingStartedAt` stamps when the
-  // current attempt took the lease. A redelivery hitting an existing claim
-  // returns 200 only when COMPLETED; a PROCESSING claim still inside the lease
-  // window forces a provider retry (500), and an expired lease (a crashed
-  // prior attempt) is taken over and reprocessed. This closes the two
-  // lost-event windows: (a) a crash between claim-insert and completion no
-  // longer ACKs every redelivery as a duplicate, and (b) a concurrent
-  // redelivery is no longer ACKed while the in-flight attempt later fails.
+  // current attempt took the lease. Stripe and SES/SNS claim through
+  // `webhook-claim-lease.ts` (INV-INT-039, #4921). A redelivery hitting an
+  // existing claim returns 200 only when COMPLETED; a PROCESSING claim still
+  // inside the lease window forces a provider retry (Stripe 500, SES 503), and
+  // an expired lease (a crashed prior attempt) is taken over and reprocessed.
+  // Xero rows are plain dedup markers, never COMPLETED: the XeroInboundEvent
+  // row holds that claim, and its stale-event takeover deletes the marker.
+  // This closes the two lost-event windows: (a) a crash between claim-insert
+  // and completion no longer ACKs every redelivery as a duplicate, and (b) a
+  // concurrent redelivery is no longer ACKed while the in-flight attempt
+  // later fails.
   //
   // Blue/green-safe: `status` defaults to "PROCESSING" so an old-colour insert
   // (which omits the column and never marks COMPLETED) is reprocessed by the
@@ -5333,7 +5587,9 @@ model ClubModuleSettings {
   hutLeaders              Boolean  @default(true)
   communications          Boolean  @default(true)
   skifieldConditions      Boolean  @default(true)
-  multiLodge              Boolean  @default(false)
+  // RETIRED (ADR-005). `@ignore`d (#5396) so no query names the column before
+  // its contract DROP, hoppers99/AlpineClubBookingsNZ#139 (INV-OPS-005).
+  multiLodge              Boolean  @default(false) @ignore
   twoFactor               Boolean  @default(false)
   magicLink               Boolean  @default(false)
   analytics               Boolean  @default(false)
@@ -5418,6 +5674,26 @@ model ClubModuleSettings {
   // cut-over. Safe to add as a defaulted column because every read narrows to
   // CLUB_MODULE_SETTINGS_COLUMN_SELECT.
   multiPromoCodes         Boolean  @default(false)
+  // Food orders (fork triyder/AlpineClubBookingsNZ#121). Default OFF: it needs the food officer's email
+  // address (FoodOrderSettings) before an order reaches anybody. Safe to add as
+  // a defaulted column because every read narrows to
+  // CLUB_MODULE_SETTINGS_COLUMN_SELECT, so a previously deployed client never
+  // names it.
+  foodOrders              Boolean  @default(false)
+  // Whakapapa (Mt Ruapehu) conditions report (#4932): the /api/skifield-whakapapa
+  // feed, its admin cache and the admin Mountain Conditions page, split out of
+  // skifieldConditions, which keeps only the generic widget. Default OFF so a new
+  // install opts in; migration 20261221010000_add_skifield_whakapapa_module
+  // copies each existing install's skifieldConditions value across. Safe to add
+  // as a defaulted column because every read narrows to
+  // CLUB_MODULE_SETTINGS_COLUMN_SELECT.
+  skifieldWhakapapa       Boolean  @default(false)
+  // AI app connections (ALP-653): the MCP endpoint at /api/mcp, its OAuth
+  // endpoints, the approval screen and the member and admin connection lists.
+  // Default OFF so a club opts in: a connection sends the connected person's
+  // club data to their AI app's provider. Safe to add as a defaulted column
+  // because every read narrows to CLUB_MODULE_SETTINGS_COLUMN_SELECT.
+  mcpServer               Boolean  @default(false)
   updatedByMemberId       String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @default(now()) @updatedAt
@@ -5429,8 +5705,9 @@ model ClubModuleSettings {
 // migration/seed). Multi-lodge is core (ADR-005): the Lodges admin UI is always
 // available (no module flag), and booking data scopes to this table. While
 // exactly one active lodge exists the per-page lodge selectors auto-resolve to
-// it (ADR-002 presentation rule); the vestigial ClubModuleSettings.multiLodge
-// column is retired in a follow-up (#129).
+// it (ADR-002 presentation rule). The vestigial ClubModuleSettings.multiLodge
+// column was retired by hoppers99/AlpineClubBookingsNZ#129 and is `@ignore`d
+// (#5396); its DROP is tracked as hoppers99/AlpineClubBookingsNZ#139.
 model Lodge {
   id         String   @id @default(cuid())
   name       String
@@ -5454,11 +5731,11 @@ model Lodge {
   // existing default lodge with the historical hardcoded string.
   address    String?  @db.VarChar(300)
   // Per-lodge config glob for the lobby display's {{config:<key>}}
-  // placeholders (docs/lobby-display/design.md §3, fork issue #26): free-form
+  // placeholders (docs/lobby-display/design.md §3, fork issue hoppers99/AlpineClubBookingsNZ#26): free-form
   // string key/value pairs, validated at the admin edit surface. Null = none.
   displayConfig Json?
   // Per-lodge override of the lobby display name granularity (fork issue
-  // #28, design.md §10). Null = the club-wide code default
+  // hoppers99/AlpineClubBookingsNZ#28, design.md §10). Null = the club-wide code default
   // (FIRST_NAME_SURNAME_INITIAL). Enum defined with the lobby-display
   // models at the end of this file.
   displayNameGranularity DisplayNameGranularity?
@@ -5472,16 +5749,16 @@ model Lodge {
   // FIRST_NAME_SURNAME_INITIAL. Both reduce through the one shared
   // implementation in src/lib/display-name-granularity.ts.
   rosterNameGranularity  DisplayNameGranularity?
-  // Committee notice board for the lobby display (fork issue #36): the one
+  // Committee notice board for the lobby display (fork issue hoppers99/AlpineClubBookingsNZ#36): the one
   // deliberately AUTHORED display surface — free text, admin-edited,
   // rendered as text nodes only ({{config:<key>}} placeholders resolve
   // inside it). Null = no notice.
   displayNotice          String?  @db.VarChar(2000)
   // Per-lodge toggle: show guest phone numbers on this lodge's screens (kiosk +
-  // lobby display), default OFF (#37/#124). Combined with the per-member opt-in
+  // lobby display), default OFF (hoppers99/AlpineClubBookingsNZ#37/#124). Combined with the per-member opt-in
   // and an adults-only rule, enforced in the serving serialisers.
   showGuestPhonesOnScreens Boolean @default(false)
-  // Which lodge in the Alpine Central Server's registry THIS lodge is (#62):
+  // Which lodge in the Alpine Central Server's registry THIS lodge is (triyder/AlpineClubBookingsNZ#62):
   // the central lodge's permanent id, chosen by an administrator from the
   // lodges the server says this club owns (`ServerNzSettings
   // .otherLodgesOwnedLodges`). By id, never by name, because a lodge can be
@@ -5502,6 +5779,7 @@ model Lodge {
   rooms                    LodgeRoom[]
   lockers                  Locker[]
   seasons                  Season[]
+  bookingImportBatches     BookingImportBatch[]
   bookings                 Booking[]
   bookingLedgerLines       BookingLedgerLine[]
   choreTemplates           ChoreTemplate[]
@@ -5532,6 +5810,9 @@ model Lodge {
   // QR token with it, because neither means anything without the building.
   maintenanceReports      MaintenanceReport[]
   maintenanceReportToken  LodgeMaintenanceReportToken?
+  // Fork triyder/AlpineClubBookingsNZ#121: food orders for this lodge, by a direct NOT NULL lodgeId. CASCADE
+  // like the maintenance reports: an order means nothing without the building.
+  foodOrders              FoodOrder[]
   memberMoneyLines MemberMoneyLine[]
 }
 
@@ -5546,17 +5827,17 @@ model Lodge {
 // it (there is no active/inactive state — that was dropped as unneeded).
 model OtherLodge {
   id                  String   @id @default(cuid())
-  // Not unique (#69): two lodges may share a name, and the central id is what
+  // Not unique (triyder/AlpineClubBookingsNZ#69): two lodges may share a name, and the central id is what
   // makes them distinct. Drop-downs show the location beside it to tell two
   // apart.
   name                String
-  // The Alpine Central Server's PERMANENT id for this lodge (#64): the key the
+  // The Alpine Central Server's PERMANENT id for this lodge (triyder/AlpineClubBookingsNZ#64): the key the
   // download merges by, so a lodge renamed there is renamed here in place, and
   // the id an owned lodge is uploaded under (server API 2.3). Null until a
   // download has matched the row by name once; a row still null after a whole
   // registry download is one the central server no longer has.
   centralId           String?  @unique @db.VarChar(64)
-  // Hidden here (#58): set when the central server reports the lodge deleted,
+  // Hidden here (triyder/AlpineClubBookingsNZ#58): set when the central server reports the lodge deleted,
   // or when an administrator hides a lodge the server does not list. The row
   // and its data stay, so every booking and booking request that names it
   // keeps it; it is left out of the Other lodges list and every drop-down.
@@ -5567,7 +5848,7 @@ model OtherLodge {
   bookingOfficerEmail String?  @db.VarChar(320)
   bookingOfficerPhone String?  @db.VarChar(50)
   bedCapacity         Int?
-  // Lodge details shared with the Alpine Central Server (#50). Text is capped to
+  // Lodge details shared with the Alpine Central Server (triyder/AlpineClubBookingsNZ#50). Text is capped to
   // the server's lengths, yes/no fields default to no for every existing row, and
   // the season starts are calendar dates (INV-DATE-026), never instants.
   // `siteUrl` is the lodge's non-member booking page; the free-text
@@ -5591,18 +5872,18 @@ model OtherLodge {
   dinnerIncluded         Boolean   @default(false)
   cancellationPeriod     String?   @db.VarChar(200)
   winterSeasonStart      DateTime? @db.Date
-  // A season's LAST day (#75, server API 2.6). Seasons recur: only day and
+  // A season's LAST day (triyder/AlpineClubBookingsNZ#75, server API 2.6). Seasons recur: only day and
   // month count. Unset, the season runs up to the other season's start.
   winterSeasonEnd        DateTime? @db.Date
   summerSeasonStart      DateTime? @db.Date
   summerSeasonEnd        DateTime? @db.Date
-  // This club's own lodge only (#77): when true, its non-member rates and
+  // This club's own lodge only (triyder/AlpineClubBookingsNZ#77): when true, its non-member rates and
   // season dates are filled from the Fees page (the Non-Member type's rates and
   // their seasons) and are read-only in the editor. A LOCAL setting: never
   // sent to or taken from the central server. Ignored for another club's lodge.
   ratesFromFees          Boolean   @default(true)
-  // Server API 2.2 (#61): non-member rates per person per night, NZD incl.
-  // GST, a winter and a summer rate for each age group (#77). INTEGER
+  // Server API 2.2 (triyder/AlpineClubBookingsNZ#61): non-member rates per person per night, NZD incl.
+  // GST, a winter and a summer rate for each age group (triyder/AlpineClubBookingsNZ#77). INTEGER
   // CENTS (INV-MONEY-001), 0..9999999 (a CHECK in the migration), null = not
   // set; the central server carries dollars and `@/lib/servernz-rate` is the
   // one conversion. Display only: nothing is charged from them.
@@ -5632,7 +5913,7 @@ enum OtherLodgeRoomType {
 }
 
 // A free-form extra an other lodge offers (name plus optional description),
-// mirrored from the Alpine Central Server's Amenity table (#50). Many per lodge,
+// mirrored from the Alpine Central Server's Amenity table (triyder/AlpineClubBookingsNZ#50). Many per lodge,
 // name unique within the lodge, deleted with the lodge. The sync and the admin
 // routes replace a lodge's whole set at once, keyed on (otherLodgeId, name).
 model Amenity {
@@ -5674,11 +5955,11 @@ model ServerNzSettings {
   // across the central server's HTTP calls.
   otherLodgesSyncStartedAt DateTime?
 
-  // NO LONGER READ (#69, server API 2.5, which no longer sends the names):
+  // NO LONGER READ (triyder/AlpineClubBookingsNZ#69, server API 2.5, which no longer sends the names):
   // ownership is decided by `otherLodgesOwnedLodges` below, by central id. Kept,
   // and left as last written, for the draining colour of the upgrade that
   // stopped reading it; a later release drops it. As it was:
-  // The lodge NAMES the central server says this club owns (#52), as it sends
+  // The lodge NAMES the central server says this club owns (triyder/AlpineClubBookingsNZ#52), as it sends
   // them on every pull (`ownLodgeNames`): a JSON array of strings, keyed by name
   // because that is how the registry is keyed. THREE states, and the shape
   // carries all three: NULL means the server has never said (not connected,
@@ -5692,12 +5973,12 @@ model ServerNzSettings {
   otherLodgesOwnedNames   Json?
   otherLodgesOwnedNamesAt DateTime?
   // The same owned lodges with their PERMANENT central ids, `[{ id, name }]`
-  // (server API 2.2 `ownLodges`, #62). Same three states as the names and
+  // (server API 2.2 `ownLodges`, triyder/AlpineClubBookingsNZ#62). Same three states as the names and
   // written in the same download: NULL = never told (or an older server that
   // does not send it), [] = owns none. Read by the "Central lodge" setting and
   // the availability endpoint, which link by id because a name can change.
   otherLodgesOwnedLodges  Json?
-  // When a WHOLE-registry download last merged to the end (#64): until then
+  // When a WHOLE-registry download last merged to the end (triyder/AlpineClubBookingsNZ#64): until then
   // every download asks for the whole registry, so every Other lodges row is
   // matched by name once and keyed by its central id, and a row still unkeyed
   // after it is one the server does not list. NULL = not yet (a site just
@@ -5728,7 +6009,7 @@ model ServerNzSettings {
   commsPoisonCount    Int      @default(0)
 
   // The central server's API version as last reported by GET /api/v1/version
-  // (#49), and when it was asked. THREE states: NULL means never checked (no
+  // (triyder/AlpineClubBookingsNZ#49), and when it was asked. THREE states: NULL means never checked (no
   // key stored, or the key was replaced and the old answer forgotten); the
   // literal "unknown" means the server answered 404 - it predates versioning -
   // which this site treats as a mismatch; otherwise a canonical `major.minor`.
@@ -5856,6 +6137,12 @@ model ClubIdentitySettings {
   shortName         String?
   hutLeaderLabel    String?
   facebookUrl       String?
+  // The supplier on the app's generated booking invoice (#5066, Xero off): the
+  // club's legal name (null prints the club name) and its postal address,
+  // free text, one line per line (null prints no address). No club.json
+  // fallback; admin-edited on Club identity.
+  legalName         String?
+  postalAddress     String?
   updatedByMemberId String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -5940,23 +6227,51 @@ model ClubFormatSettings {
   @@index([updatedByMemberId])
 }
 
-// The club's GST treatment for member-money journal postings (#4626, Ledger
-// M3a; D3 in docs/design/member-money-ledger.md). Singleton (id="default"). An
-// ABSENT row resolves to the code defaults in src/lib/club-tax-settings.ts —
-// registered, 1500 basis points, in force from 2010-10-01 — which reproduce the
-// GST-inclusive 15% treatment every Xero document already renders, so no seed or
-// backfill is needed. The column defaults equal those values. The migration adds
-// a CHECK holding the rate to whole basis points from 0 to 10000. Nothing writes
-// the row yet; the journal posting command reads a treatment its caller resolves
-// from it before the transaction (INV-LOCK-004). The admin surface that first
-// writes it adds its audit columns (updatedByMemberId) with their registrations.
+// The club's GST treatment (#4626 Ledger M3a; D3 in
+// docs/design/member-money-ledger.md), the one answer the member-money journal
+// and every Xero document render from (#4632). A SCHEDULE of dated periods: the
+// row id="default" is the baseline, and an ABSENT baseline resolves to the code
+// defaults in src/lib/club-tax-settings.ts (registered, 1500 basis points, Xero
+// tax type OUTPUT2, from 2010-10-01), which these column defaults equal. Every
+// other row is a change a Full Admin scheduled from a FUTURE club date through
+// the one writer, src/lib/club-tax-settings-write.ts, which never edits the
+// baseline or a period that has started. CHECKs hold the rate to whole basis
+// points from 0 to 10000, and xeroTaxType to a non-blank code when registered and
+// NULL when not; effectiveFrom is unique, so a date has one period. Readers read
+// the schedule before their transaction (INV-LOCK-004). updatedByMemberId is the
+// Full Admin who scheduled the period, kept as tax-record attribution; no foreign key.
 model ClubTaxSettings {
   id                 String   @id @default("default")
   gstRegistered      Boolean  @default(true)
   taxRateBasisPoints Int      @default(1500)
-  effectiveFrom      DateTime @default(dbgenerated("'2010-10-01'::date")) @db.Date
+  xeroTaxType        String?  @default("OUTPUT2")
+  effectiveFrom      DateTime @unique @default(dbgenerated("'2010-10-01'::date")) @db.Date
+  updatedByMemberId  String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @default(now()) @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
+// The club's tax categories mapped to its own Xero organisation's tax rates
+// (#5209; INV-CONFIG-007). Sales tax on income is NOT stored here: it is the
+// dated ClubTaxSettings schedule above, so the enum has no income value and the
+// fact cannot be recorded twice. One row per remaining category, undated, and
+// scoped to the Xero organisation it was chosen in: a row whose xeroTenantId is
+// not the connected tenant reads as unmapped. An absent row is an unmapped
+// category, which a registered club's line in that category refuses to send.
+// Written only by src/lib/xero-tax-category-write.ts (Full Admin, audited);
+// updatedByMemberId is that admin, kept as attribution, with no foreign key.
+model XeroTaxCategoryMapping {
+  id                String          @id @default(cuid())
+  category          XeroTaxCategory @unique
+  taxType           String
+  xeroTenantId      String
+  updatedByMemberId String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @default(now()) @updatedAt
+
+  @@index([updatedByMemberId])
 }
 
 // Club-wide login & security policy singleton (epic #2030, child #2033). Mirrors
@@ -7482,13 +7797,20 @@ model NotificationPreference {
   bookingReminder            Boolean  @default(true)
   bookingBumped              Boolean  @default(true)
   bookingCancelled           Boolean  @default(true)
-  bookingWaitlist            Boolean  @default(true)
+  // RETIRED: never offered or read. `@ignore`d (#5396) so no query names the
+  // column before its contract DROP (INV-OPS-005); its default fills new rows.
+  bookingWaitlist            Boolean  @default(true) @ignore
   // #2284 (S2): FYI when a family co-member adds you (or someone you are the
   // login-holding adult for) to a booking. General family behaviour, sent
   // regardless of the memberGuests module; default on, personally opt-outable.
   bookingAddedByFamily       Boolean  @default(true)
   choreRoster                Boolean  @default(true)
+  // Club newsletters: opt-in, so a member with no row is never sent one.
   marketingEmails            Boolean  @default(false)
+  // #4987: club-business bulk email (AGM, closures, subscriptions due) from
+  // Communications and emailed Notices. Opt-out, so it starts on; the rule for
+  // both bulk categories lives in src/lib/email/bulk-audience.ts (INV-PRIV-026).
+  clubNotices                Boolean  @default(true)
   adminNewBooking            Boolean  @default(true)
   adminPaymentFailure        Boolean  @default(true)
   adminPendingDeadline       Boolean  @default(true)
@@ -7508,7 +7830,7 @@ model NotificationPreference {
   // (ADMIN_NOTIFICATION_PREFERENCE_REQUIREMENT), so "the maintenance officer" is
   // whoever the club has given that area to — never a hard-coded address.
   adminMaintenanceReport     Boolean  @default(true)
-  // #49: the Alpine Central Server is on a different API version, so syncing
+  // triyder/AlpineClubBookingsNZ#49: the Alpine Central Server is on a different API version, so syncing
   // is paused. Rides the Daily digest template; audience is Lodge Operations
   // edit (ADMIN_NOTIFICATION_PREFERENCE_REQUIREMENT) in ADDITION to the
   // digest's own audience, and a lodge-only recipient gets the version entry
@@ -7526,7 +7848,7 @@ model NotificationPreference {
 
 model XeroAccountMapping {
   id        String   @id @default(cuid())
-  key       String   @unique // hutFeesIncome | hutFeeRefunds | goodwillWriteOffs | stripeBankAccount | stripeFees | subscriptionIncome | membershipCancellationCredit | hutFeeItem | hutFeeRefundItem | entranceFeeItem | entranceFeeAmountCents
+  key       String   @unique // hutFeesIncome | hutFeeRefunds | goodwillWriteOffs | openingCredits | stripeBankAccount | stripeFees | subscriptionIncome | membershipCancellationCredit | hutFeeItem | hutFeeRefundItem | entranceFeeItem | entranceFeeAmountCents
   code      String? // null = not configured, use application default (GL account code or amount string)
   itemCode  String? // Xero Item Code — when set, Xero auto-fills account from Item config
   createdAt DateTime @default(now())
@@ -7683,6 +8005,14 @@ model MemberCredit {
   // spendable lot: the release is a positive row, and without this marker the
   // planner would count it as the member's own money and mint a Xero note for it.
   outsideSpendConvergedAt     DateTime?
+  // #5204: the Xero overpayment or prepayment this credit is backed by. Set on a
+  // lot converted from one (no credit note is ever minted for it) and on a
+  // deduction of such credit. Null on every other row.
+  xeroCashCreditId            String?
+  // #4988: the opening-credit batch that posted (or reversed) this row. Null on
+  // every other credit. Nullable, so the previous colour keeps inserting rows
+  // that do not mention it.
+  openingCreditBatchId        String?
   createdAt                   DateTime   @default(now())
 
   member                    Member                        @relation(fields: [memberId], references: [id], onDelete: Restrict)
@@ -7700,12 +8030,49 @@ model MemberCredit {
   // allocated to booking invoices as Xero credit notes. Empty for negative
   // BOOKING_APPLIED rows and for lots never used to reduce an IB invoice.
   noteAllocations           MemberCreditNoteAllocation[]  @relation("CreditLotAllocations")
+  xeroCashCredit            XeroCashCredit?               @relation(fields: [xeroCashCreditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // #5204: slices of THIS backed lot allocated to booking invoices as Xero
+  // overpayment or prepayment allocations, and the restorations that hand
+  // a slice back.
+  cashAllocations           MemberCreditCashAllocation[]  @relation("CreditLotCashAllocations")
+  cashReturns               MemberCreditCashReturn[]      @relation("CreditCashReturnRestoration")
+  openingCreditBatch        OpeningCreditBatch?           @relation(fields: [openingCreditBatchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([memberId])
   @@index([requestedById])
   @@index([approvedById])
+  @@index([xeroCashCreditId])
+  // #5204: the target of a cash slice's (lot, document) foreign key.
+  @@unique([id, xeroCashCreditId], map: "MemberCredit_id_xeroCashCreditId_key")
   @@index([sourceBookingId])
   @@index([appliedToBookingId])
+  @@index([openingCreditBatchId])
+}
+
+/// #4988 — one approved opening-credit CSV batch: the balances a club carries
+/// over from its old system, posted once as ADMIN_ADJUSTMENT credit rows.
+/// `batchKey` is the SHA-256 of the batch's canonical rows, so the same file can
+/// be posted only once (a second confirm, concurrent or later, hits the unique
+/// key). Reversal stamps `reversedAt` once and posts negative rows linked here;
+/// nothing is deleted (`INV-PAY-162`).
+model OpeningCreditBatch {
+  id             String    @id @default(cuid())
+  batchKey       String    @unique
+  totalCents     Int
+  rowCount       Int
+  /// Negative ledger row count for the batch members, captured under their locks.
+  negativeCreditCountAtPost Int @default(0)
+  postedById     String?
+  postedAt       DateTime  @default(now())
+  reversedAt     DateTime?
+  reversedById   String?
+  reversalReason String?
+
+  postedBy   Member?        @relation("PostedOpeningCreditBatches", fields: [postedById], references: [id], onDelete: SetNull)
+  reversedBy Member?        @relation("ReversedOpeningCreditBatches", fields: [reversedById], references: [id], onDelete: SetNull)
+  credits    MemberCredit[]
+
+  @@index([postedAt])
 }
 
 /// #1620 — per-note credit-lot allocation ledger for "allocate-existing" applied
@@ -7755,6 +8122,10 @@ model AdminCreditAdjustmentRequest {
   description    String
   /// Null on a deduction, and on a grant requested before an account was chosen.
   grantAccount   AdminCreditGrantAccount?
+  /// #5204: the Xero overpayment or prepayment a conversion turns into credit,
+  /// or whose credit a deduction takes. Never set with `grantAccount`
+  /// (CHECK `admin_credit_request_backing_or_grant_account`).
+  xeroCashCreditId String?
   idempotencyKey String
   status         AdminCreditAdjustmentRequestStatus @default(PENDING)
   requestedById  String
@@ -7767,11 +8138,104 @@ model AdminCreditAdjustmentRequest {
   requestedBy    Member        @relation("AdminCreditAdjustmentRequestsRequested", fields: [requestedById], references: [id])
   reviewedBy     Member?       @relation("AdminCreditAdjustmentRequestsReviewed", fields: [reviewedById], references: [id], onDelete: SetNull)
   approvedCredit MemberCredit? @relation("ApprovedAdminCreditAdjustment")
+  xeroCashCredit XeroCashCredit? @relation(fields: [xeroCashCreditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([requestedById, idempotencyKey])
   @@index([memberId, status, createdAt])
   @@index([requestedById, createdAt])
   @@index([reviewedById, createdAt])
+  @@index([xeroCashCreditId])
+}
+
+// ---------------------------------------------------------------------------
+// Xero cash credits: overpayments and prepayments (#5204)
+// ---------------------------------------------------------------------------
+
+enum XeroCashCreditKind {
+  OVERPAYMENT
+  PREPAYMENT
+}
+
+/// #5204: the app's snapshot of one receive overpayment or receive prepayment
+/// in Xero: money a contact paid the club that no invoice has taken yet. Written
+/// only by the refresh in `src/lib/xero-cash-credits.ts`, from a complete read of
+/// every page of both kinds; a document missing from that read is left with a
+/// zero balance, never deleted, because credit may still name it. `syncedAt` is
+/// when the read that wrote the row began, and a refresh writes a row only when
+/// its read began later, so an older read never overwrites a newer one. The
+/// member is not stored: it is the member whose `xeroContactId` is this
+/// document's contact, matched when the queue is read.
+model XeroCashCredit {
+  id             String             @id @default(cuid())
+  kind           XeroCashCreditKind
+  xeroDocumentId String             @unique
+  xeroContactId  String
+  /// ISO 4217 code Xero gave the document, e.g. `NZD`. Cents are in this
+  /// currency, which need not be the club's.
+  currencyCode   String
+  documentDate   DateTime?          @db.Date
+  totalCents     Int
+  remainingCents Int
+  syncedAt       DateTime
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  backedCredits      MemberCredit[]
+  conversionRequests AdminCreditAdjustmentRequest[]
+  cashAllocations    MemberCreditCashAllocation[]
+
+  @@index([xeroContactId])
+  @@index([remainingCents])
+}
+
+/// #5204: one slice of a backed credit lot allocated against one booking's Xero
+/// invoice from the lot's overpayment or prepayment. Shaped like
+/// `MemberCreditNoteAllocation`: the booking is a bare scalar, one slice per
+/// (lot, booking). `heldCents` is allocated in Xero (or about to be);
+/// `returningCents` is on its way back to the document after a cancel or hold
+/// expiry; `generation` keys each allocation request so a re-spend after a
+/// return never replays an old one. Written from the spend work (a later
+/// release); this release only creates the table.
+model MemberCreditCashAllocation {
+  id                 String   @id @default(cuid())
+  memberCreditId     String
+  xeroCashCreditId   String
+  appliedToBookingId String
+  heldCents          Int
+  returningCents     Int      @default(0)
+  generation         Int      @default(1)
+  xeroAllocationId   String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  // A slice draws on its lot's own document: the lot is referenced by
+  // (id, xeroCashCreditId), so a slice naming another document, or hanging off
+  // an unbacked lot, cannot be written.
+  memberCredit   MemberCredit             @relation("CreditLotCashAllocations", fields: [memberCreditId, xeroCashCreditId], references: [id, xeroCashCreditId], onDelete: Restrict, onUpdate: Restrict)
+  xeroCashCredit XeroCashCredit           @relation(fields: [xeroCashCreditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  returns        MemberCreditCashReturn[]
+
+  @@unique([memberCreditId, appliedToBookingId], map: "MemberCreditCashAllocation_lot_booking_key")
+  @@index([appliedToBookingId])
+  @@index([xeroCashCreditId])
+}
+
+/// #5204: which slice a credit restoration (a positive `MemberCredit` row
+/// written on cancel or hold expiry) handed back, and how much. One row per
+/// (restoration, slice). Written from the return work (a later release).
+model MemberCreditCashReturn {
+  id                  String   @id @default(cuid())
+  restorationCreditId String
+  cashAllocationId    String
+  amountCents         Int
+  generation          Int
+  createdAt           DateTime @default(now())
+
+  restorationCredit MemberCredit               @relation("CreditCashReturnRestoration", fields: [restorationCreditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  cashAllocation    MemberCreditCashAllocation @relation(fields: [cashAllocationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([restorationCreditId, cashAllocationId], map: "MemberCreditCashReturn_restoration_slice_key")
+  @@index([cashAllocationId])
 }
 
 // ---------------------------------------------------------------------------
@@ -8228,7 +8692,7 @@ model MembershipLockoutSettings {
 }
 
 // ---------------------------------------------------------------------------
-// Lobby TV Display (docs/lobby-display/design.md, fork epic #25)
+// Lobby TV Display (docs/lobby-display/design.md, fork epic hoppers99/AlpineClubBookingsNZ#25)
 // ---------------------------------------------------------------------------
 
 // A page layout (ADR-003 §1, LTV-024): the structural HTML body with named
@@ -8289,8 +8753,8 @@ model LodgeDisplayDevice {
   pairingCodeExpiresAt DateTime?
   tokenHash            String?   @unique
   templateId           String?
-  // Per-device state-poll cadence in seconds (LTV-039, issue #85; consolidates
-  // #66). null = the client default (~60s). Clamped server-side to 15–600 on
+  // Per-device state-poll cadence in seconds (LTV-039, issue hoppers99/AlpineClubBookingsNZ#85; consolidates
+  // triyder/AlpineClubBookingsNZ#66). null = the client default (~60s). Clamped server-side to 15–600 on
   // read and write. The poll doubles as the device heartbeat, so this also
   // governs how often lastSeenAt refreshes.
   pollSeconds          Int?
@@ -8307,7 +8771,7 @@ model LodgeDisplayDevice {
 }
 
 // How guest names are reduced by the lobby display's privacy serialiser
-// (fork issue #28, docs/lobby-display/design.md §10). Enforcement lives in
+// (fork issue hoppers99/AlpineClubBookingsNZ#28, docs/lobby-display/design.md §10). Enforcement lives in
 // src/lib/lodge-display-state.ts — the single choke point for what a public
 // screen may show. Minors are never individually named at ANY level.
 enum DisplayNameGranularity {
@@ -8357,8 +8821,17 @@ model CalendarEvent {
   detachedFromSeries Boolean              @default(false)
   series             CalendarEventSeries? @relation(fields: [seriesId], references: [id], onDelete: SetNull)
 
+  // Work party this entry belongs to (#5148). Null = an ordinary calendar
+  // event. A linked entry is managed from Work Parties: the calendar API refuses
+  // to edit or delete it, and it is hidden while its work party is inactive.
+  // Club-wide like every calendar row; the work party carries the lodge
+  // (docs/multi-lodge/lodge-scoping-contract.md).
+  workPartyEventId String?
+  workPartyEvent   WorkPartyEvent? @relation(fields: [workPartyEventId], references: [id], onDelete: Cascade)
+
   @@index([startsAt])
   @@index([seriesId])
+  @@index([workPartyEventId])
 }
 
 // How a recurring calendar event repeats. The weekday / day-of-month / nth
@@ -9380,6 +9853,89 @@ model MemberMoneyRefundReservationRelease {
   @@index([applicationId])
 }
 
+/// M13 (#4525): the outbound document families whose coverage a manifest records.
+enum MemberMoneyExportDocumentRole {
+  PRIMARY_BOOKING_INVOICE
+  /// #4525 (ALP-436): an edit's supplementary invoice, or a review's second ask.
+  SUPPLEMENTARY_BOOKING_INVOICE
+  /// #4525 (ALP-436): a rewrite of an issued primary invoice's descriptions and dates.
+  PRIMARY_BOOKING_INVOICE_UPDATE
+  /// #4525 (ALP-439): a refund credit note, covering the one live R05 refund debt it answers.
+  REFUND_NOTE
+  /// #4525 (ALP-439): the cash payment that settles a refund note, covering its R12 or R14 slice.
+  REFUND_NOTE_PAYMENT
+  /// #4525 (ALP-439): reserved for the failed-later refund reversal invoice; nothing writes it yet.
+  FAILED_LATER_REFUND_REVERSAL
+  /// #4525 (ALP-605): a stored Xero payment's cents of one card capture, under its own idempotency key.
+  CAPTURE_RECEIPT
+}
+
+enum MemberMoneyExportOutcome {
+  COVERED
+  CONFLICT
+}
+
+/// Why a document's lines could not be matched to the journal components they bill.
+enum MemberMoneyExportConflictReason {
+  STAY_CENTS
+  FEE_CENTS
+  COMPONENT_UNUSABLE
+  /// A supplementary invoice nets a price reduction against a fee: no component is billed whole or as a slice.
+  REDUCTION_NETTED
+  /// A primary-invoice update whose total is not its covered primary manifest's.
+  PRIMARY_UNMATCHED
+  /// A refund note whose cents are not its one obligation's.
+  CENTS
+  /// The component is already covered by an earlier document of the same role.
+  ALREADY_COVERED
+  /// A receipt's cents exceed what is left of its capture's live cash debit.
+  CAPTURE_CENTS
+  /// The receipt names no capture, or the journal holds no live receipt for it.
+  CAPTURE_NOT_JOURNALLED
+}
+
+/// M13 (#4525): what one sent provider document covers, written once under its
+/// legacy correlation key. Immutable; the sender's XeroSyncOperation stays the
+/// delivery record and Payment.xeroInvoiceId the provider link.
+model MemberMoneyExportManifest {
+  id String @id @default(cuid())
+  documentRole MemberMoneyExportDocumentRole
+  legacyKey String
+  renderRevision Int
+  bookingId String
+  outcome MemberMoneyExportOutcome
+  reason MemberMoneyExportConflictReason?
+  payloadHash String
+  frozenMapping Json
+  lineTotalCents Int
+  providerInvoiceId String
+  createdAt DateTime @default(now())
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  coverage MemberMoneyExportCoverage[]
+  @@unique([documentRole, legacyKey])
+  @@unique([id, documentRole])
+  @@index([bookingId])
+}
+
+/// One journal component a manifest's document covers: whole (sliceKey ''), the
+/// slice one journal event moved (sliceKey: that event's key, supplementary only),
+/// or the cents of one card capture a Xero payment applied (sliceKey: that
+/// payment's idempotency key, capture receipts only). A component is covered
+/// whole by at most one document of each role, and each slice by at most one.
+model MemberMoneyExportCoverage {
+  id String @id @default(cuid())
+  manifestId String
+  documentRole MemberMoneyExportDocumentRole
+  account MemberMoneyAccount
+  chargeIdentity String
+  sliceKey String @default("")
+  coveredCents Int
+  taxCode String?
+  manifest MemberMoneyExportManifest @relation(fields: [manifestId, documentRole], references: [id, documentRole], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([documentRole, account, chargeIdentity, sliceKey])
+  @@index([manifestId, documentRole])
+}
+
 /// Privacy disclosure is its own domain singleton: branding saves must not
 /// replace its updater attribution. Club-wide; no hosting facts are inferred.
 model PrivacyHostingSettings {
@@ -9391,4 +9947,237 @@ model PrivacyHostingSettings {
   updatedAt         DateTime @default(now()) @updatedAt
 
   @@index([updatedByMemberId])
+}
+
+// ---------------------------------------------------------------------------
+// AI app connections (ALP-653, INV-MCP). A member approves an AI app (an MCP
+// client) to act as them through /api/mcp. All five models are club-wide, not
+// lodge-scoped: a connection is a way of signing in, and a sign-in has no lodge.
+// ---------------------------------------------------------------------------
+
+/// The most a connection may do. READ runs view-only actions; READ_WRITE also
+/// runs actions that change something.
+enum McpGrantScope {
+  READ
+  READ_WRITE
+}
+
+/// ACTIVE until the member or an officer removes it (REVOKED) or the sign-in
+/// that approved it ends (EXPIRED). Neither end state returns to ACTIVE.
+enum McpGrantStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum McpTokenKind {
+  ACCESS
+  REFRESH
+}
+
+/// An AI app that registered itself (OAuth dynamic client registration). A
+/// public client: it holds no secret, so PKCE and the exact redirect address
+/// are what bind an authorisation to it.
+model McpClient {
+  id           String        @id @default(cuid())
+  name         String        @db.VarChar(120)
+  /// Exact-match redirect addresses, each checked against the approved-app
+  /// list when registered and again when a member approves.
+  redirectUris String[]
+  createdAt    DateTime      @default(now())
+  grants       McpGrant[]
+  authCodes    McpAuthCode[]
+
+  @@index([createdAt])
+}
+
+/// One member's approval of one AI app. The connection signs in as the member
+/// through the same session refresh a browser session uses, measured from
+/// `sessionIssuedAt`, so it ends when that sign-in would.
+model McpGrant {
+  id                String         @id @default(cuid())
+  memberId          String
+  clientId          String
+  scope             McpGrantScope  @default(READ)
+  status            McpGrantStatus @default(ACTIVE)
+  /// When the browser session that approved this connection signed in. Never
+  /// moved forward: session max age and revocation are measured from it.
+  sessionIssuedAt   DateTime
+  /// Whether that browser session had passed its two-factor challenge.
+  twoFactorVerified Boolean        @default(false)
+  /// Why the connection ended, for the member and admin lists.
+  endedReason       String?        @db.VarChar(40)
+  endedAt           DateTime?
+  lastUsedAt        DateTime?
+  createdAt         DateTime       @default(now())
+  member            Member         @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  client            McpClient      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  tokens            McpToken[]
+  authCodes         McpAuthCode[]
+
+  @@index([memberId, status])
+  @@index([clientId])
+  @@index([status, createdAt])
+}
+
+/// A single-use authorisation code, stored as a SHA-256 hash and bound to the
+/// client, its redirect address and its PKCE challenge.
+model McpAuthCode {
+  id            String    @id @default(cuid())
+  codeHash      String    @unique
+  grantId       String
+  clientId      String
+  redirectUri   String
+  codeChallenge String
+  expiresAt     DateTime
+  usedAt        DateTime?
+  createdAt     DateTime  @default(now())
+  grant         McpGrant  @relation(fields: [grantId], references: [id], onDelete: Cascade)
+  client        McpClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([grantId])
+  @@index([clientId])
+  @@index([expiresAt])
+}
+
+/// An access or refresh token, stored as a SHA-256 hash. A refresh token is
+/// single-use: `usedAt` is stamped when it is exchanged, and presenting it
+/// again revokes the whole connection.
+model McpToken {
+  id        String       @id @default(cuid())
+  tokenHash String       @unique
+  kind      McpTokenKind
+  grantId   String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime     @default(now())
+  grant     McpGrant     @relation(fields: [grantId], references: [id], onDelete: Cascade)
+
+  @@index([grantId])
+  @@index([expiresAt])
+}
+
+/// The club's AI-connection policy. A singleton; a missing row reads as these
+/// defaults. Members may connect, officers may not until the club says so,
+/// and a connection is view-only until the club raises `maxScope`.
+model McpSettings {
+  id                   String        @id @default("default")
+  membersMayConnect    Boolean       @default(true)
+  officersMayConnect   Boolean       @default(false)
+  maxScope             McpGrantScope @default(READ)
+  /// Hosts an AI app's redirect address may use. An app on the person's own
+  /// computer (a loopback address) is always allowed.
+  allowedRedirectHosts String[]      @default(["claude.ai", "claude.com", "chatgpt.com"])
+  updatedByMemberId    String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @default(now()) @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
+// The tax categories a club maps to its Xero organisation's tax rates (#5209).
+// Sales tax on income has no value: it is the ClubTaxSettings schedule.
+enum XeroTaxCategory {
+  SALES_TAX_ON_EXPENSES
+  EXEMPT
+  ZERO_RATED
+}
+
+/// Food orders (fork triyder/AlpineClubBookingsNZ#121). Whether an order is open or the food arrived.
+/// Received closes it; there is no reopening (the price can still change).
+enum FoodOrderStatus {
+  OPEN
+  RECEIVED
+}
+
+/// The one food-order settings row ("default"), created lazily on first save
+/// like MaintenanceReportSettings. No row reads as no officer email (ordering
+/// not set up) and the default label.
+model FoodOrderSettings {
+  id String @id @default("default")
+
+  /// Where every new order is emailed. Checked only as a valid address, never
+  /// against members or committee roles: keeping it current is the committee's
+  /// job (fork triyder/AlpineClubBookingsNZ#121 owner decision 10). Null or empty means ordering is not set up.
+  officerEmail String? @db.VarChar(254)
+  /// What this club calls the person (INV-CONFIG-001): "Food officer" by default.
+  officerLabel String  @default("Food officer") @db.VarChar(60)
+
+  updatedAt         DateTime @default(now()) @updatedAt
+  updatedByMemberId String?
+}
+
+/// A member's food order for a lodge (fork triyder/AlpineClubBookingsNZ#121). Not linked to a booking
+/// (fork triyder/AlpineClubBookingsNZ#121 owner decision 9): the officer matches it to a stay by lodge and neededBy.
+model FoodOrder {
+  id       String  @id @default(cuid())
+  lodgeId  String
+  /// Who placed it. Nullable only so a deleted account keeps the order's cost
+  /// history (SetNull); every order is created with a member.
+  memberId String?
+  /// The club calendar day the food is needed by (INV-DATE, date-only).
+  neededBy DateTime        @db.Date
+  notes    String?         @db.VarChar(1000)
+  status   FoodOrderStatus @default(OPEN)
+
+  /// Set once, by the status-guarded OPEN -> RECEIVED claim. receivedById is a
+  /// snapshot member id, not a relation, like MaintenanceReport.resolvedById.
+  receivedAt   DateTime?
+  receivedById String?
+
+  /// The whole order's cost in integer cents (INV-MONEY). A record only: never
+  /// charged, invoiced, posted to the ledger or sent to Xero (fork triyder/AlpineClubBookingsNZ#121 owner decision 8).
+  priceCents       Int?
+  priceUpdatedAt   DateTime?
+  priceUpdatedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  lodge  Lodge           @relation(fields: [lodgeId], references: [id], onDelete: Cascade)
+  member Member?         @relation("FoodOrderMember", fields: [memberId], references: [id], onDelete: SetNull)
+  items  FoodOrderItem[]
+
+  @@index([status, neededBy])
+  @@index([lodgeId])
+  @@index([memberId])
+}
+
+/// The unit a food-order quantity is counted in (owner change, 13 Nov 2026).
+/// Labels, singular and plural, live in src/lib/food-order-rules.ts.
+enum FoodOrderUnit {
+  ITEMS
+  GRAMS
+  KILOGRAMS
+  LITERS
+  LOAVES
+  PACKETS
+  BOTTLES
+  CANS
+  BAGS
+  BOXES
+  PUNNETS
+  MILLILITERS
+}
+
+/// One line of a food order: a description, a quantity and its unit.
+/// 1-50 lines per order; the quantity is more than 0 and at most 99999.99,
+/// to two decimal places (grams need more than 999).
+model FoodOrderItem {
+  id          String        @id @default(cuid())
+  foodOrderId String
+  description String        @db.VarChar(200)
+  quantity    Decimal       @db.Decimal(7, 2)
+  unit        FoodOrderUnit @default(ITEMS)
+  sortOrder   Int
+
+  /// Set once when this line is ticked received (owner change, 13 Nov 2026:
+  /// food can arrive in parts). The order closes when its last line is.
+  /// receivedById is a snapshot member id, not a relation, like the order's.
+  receivedAt   DateTime?
+  receivedById String?
+
+  foodOrder FoodOrder @relation(fields: [foodOrderId], references: [id], onDelete: Cascade)
+
+  @@index([foodOrderId, sortOrder])
 }

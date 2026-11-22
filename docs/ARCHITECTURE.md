@@ -729,13 +729,16 @@ page — and `getByRole("heading", …)` can never match it.
 
 Four rules, and they are all deliberate:
 
-1. **There is no default level, and adding one is not a developer's decision.**
-   A card that is a page's main section and a card nested inside another card's
-   content cannot share a level, so a global default would give roughly 167 call
-   sites a level nobody chose. A silently wrong level is worse for a
+1. **There is no default level, and every title classifies itself.** A card
+   that is a page's main section and a card nested inside another card's
+   content cannot share a level, so a global default would give hundreds of
+   call sites a level nobody chose. A silently wrong level is worse for a
    screen-reader user than no heading at all, because it corrupts the outline
-   they navigate by. Whether `CardTitle` should ever gain a default is an open
-   question on #2796 and belongs to the repository owner.
+   they navigate by. The owner decided this on #2796 (D1, 13 Aug 2026): no
+   default, and every `CardTitle` says whether it is a heading — a level from
+   1 to 6, or `headingLevel="none"` when the call site has looked and decided
+   it is not part of the outline. `"none"` renders exactly what an omitted prop
+   renders.
 2. **Pick the level from the page's real outline.** Find the page's `<h1>`, do
    not skip a level, and go one deeper for a card rendered inside another card's
    `CardContent`. If the page has no `<h1>` at all, that is a different bug —
@@ -758,8 +761,32 @@ Four rules, and they are all deliberate:
    renders — a positive assertion of that shape can never pass, and a negative
    one (`toHaveCount(0)`) passes *vacuously*, which is worse.
 
-The sweep is partial by design. #2796 covered the member-facing journeys; the
-admin, finance and lodge screens are the long tail and are tracked separately.
+**The census enforces D1 while the sweep finishes** (#4951,
+`INV-PUB-006`). `src/components/ui/__tests__/card-title-classification-census.test.ts`
+fails when any `CardTitle` under `src/app/(public)`, `src/app/(authenticated)`,
+`src/app/(website-dynamic)`, `src/app/(website)`, `src/components/website` or
+in the shared member cards it lists omits `headingLevel`, and holds the count
+of unclassified titles
+everywhere else at exactly `UNCLASSIFIED_BASELINE` (253 when #4951 landed, 231
+after the member sweep, #5216). It fails both ways: a new unclassified title
+must be classified rather than raise the number, and a sweep that classifies
+titles lowers the constant in the same change and adds what it swept to the
+census's forbidden roots or shared-file list, so it cannot regress. The member
+sweep covered the components several kinds of page share (the booking editor,
+the edit-booking panel, the guest-consent card, the officer's cards on
+`/bookings/[id]`) and the public website, including the membership application
+page. The admin, finance and lodge screens are swept by area. When the baseline
+reaches zero, `headingLevel` becomes required by the type and the census
+retires.
+
+A screen's heading test asserts its outline with
+`src/lib/__tests__/support/heading-outline.ts`: exactly one named level-1
+heading, and no heading more than one level deeper than the one before it.
+
+A screen that is one card is the page: give that card's title
+`headingLevel={1}` in every render state, and give a loading state with no
+visible title an sr-only `<h1>`, as #1242 did for `/login/enroll`. Where the page
+already renders an `<h1>`, its cards are level 2 — never two `<h1>`s.
 
 ### What a browser may say about a write it never saw an answer to (#2668)
 
@@ -921,6 +948,7 @@ Use these ownership boundaries when adding new code:
 | Booking lifecycle | `src/lib/booking-create.ts`, `src/lib/booking-create-types.ts`, `src/lib/booking-create-promo.ts`, `src/lib/booking-create-guests.ts`, `src/lib/booking-modify.ts` (barrel over `booking-modify-validation` / `booking-modify-plan` / `booking-modify-settlement`), `src/lib/booking-payment-cleanup.ts`, `src/lib/payment-recovery.ts` | Keep route handlers thin; booking orchestration and durable payment recovery live behind these services. |
 | Bed allocation | `src/lib/bed-allocation.ts`, `src/lib/bed-allocation-lifecycle.ts`, `src/lib/bed-allocation-*.ts` (the admin surface, split by responsibility in #2688 — `-rooms` / `-beds` / `-bunk-pairing` inventory, `-board` / `-board-records` / `-board-payload` / `-warnings` read model, `-placement` / `-manual-writes` / `-auto-allocate` / `-range-assign` / `-range-audit` / `-range-report` / `-approval` writers, over `-admin-contract` / `-date-range` / `-display-names` / `-admin-settings`), `src/lib/bed-allocation-removal.ts` | Room/bed inventory, family-aware allocation planning, lifecycle reconciliation, manual admin allocation, reviewed removal, and approval state live behind focused services. Each `LodgeBed` carries a descriptive **bed type** (`SINGLE` / `BUNK_TOP` / `BUNK_BOTTOM` / `DOUBLE`) and an optional `bunkGroup` label; a group holds at most two beds — one top and one bottom — enforced in `bed-allocation-bunk-pairing.ts` (serialised by a room-row lock, no partial index) and shown as an icon on the setup list and allocation board (#1675). Bed type is mostly descriptive, with one capacity exception (#1701): a **DOUBLE** bed may hold **two** occupants for a night when they are declared partners (two `ADULT` members holding a **CONFIRMED** `MemberPartnerLink` (#1742/#1744), the single-source `mayShareDoubleBed()` rule in `double-bed-sharing.ts`), added by an admin on the board onto a bed whose primary already holds capacity. Every other bed type stays one person per night. The bed-night uniqueness is `@@unique([bedId, stayDate, isSecondOccupant])` (≤1 primary + ≤1 second occupant) plus a raw-SQL partial unique index capping non-DOUBLE beds at exactly one (`WHERE "bedType" <> 'DOUBLE'`, in `prisma/partial-unique-indexes.tsv`); `BedAllocation.bedType` is a denormalized copy the partial index reads. The **base** capacity figure is unchanged — a shared double is still **one bed** of `activeBedCount` and each occupant is a full person-night — but each active DOUBLE adds one reserved, bounded **partner-shared admission slot** above it (#1745: `getLodgePartnerSharedCapacityStatus` + `checkCapacityForPartnerSharedAdmission`, admin-initiated only, never visible to public availability; see docs/CAPACITY_MODEL.md); auto-allocation never creates a second occupant. Beds may be pre-assigned on provisional statuses (`BED_ALLOCATABLE_BOOKING_STATUSES`) before a booking holds capacity, so the admin board tags each bed **Held** vs **Provisional** (#1251). The state is a server-computed flag from `bookingHoldsCapacity` (booking-status.ts) — not a per-row status check — because holding is no longer purely status-based: an accepted-but-unpaid quote is `PENDING` but holds (#1254). In the AUTOMATIC on-payment/confirmation reconcile (`bed-allocation-lifecycle.ts` → the planner's `prioritizeCapacityHolding` mode), **capacity-holding bookings get first claim**: they are allocated before provisional ones, and a held booking blocked only by a **Provisional** allocation moves that provisional aside (to a free bed) — or, if the night is otherwise full, unallocates it back to the awaiting-allocation queue — then takes the freed bed. A **Held** or admin-**approved** (#776 lock) allocation is never displaced, and displacement never strands a same-booking minor; each displacement is applied atomically and writes a `lodge` audit row on the displaced provisional booking (#1387). The planner keeps bed-night **capacity** (`bedId:stayDate` — is this bed taken?) separate from occupant **identity** (`bedId:stayDate:bookingGuestId` — who is in it?), because a shared DOUBLE holds two occupant rows on one bed-night, possibly from two different bookings (#2656): an eviction releases the physical bed-night only when no occupant remains, displacement credit is counted in beds actually freed rather than rows or bookings displaced, a bed-night whose occupants span two bookings is never a *single-bed* displacement target (the whole-stay room path instead makes every occupant a candidate and gains the bed only once ALL of them are being evicted — so both bookings on a shared double go together or the room is not chosen; see docs/CAPACITY_MODEL.md rule 3), and the apply path promotes any second occupant its displacements orphan and refuses to write onto a bed-night the database still shows as occupied rather than relying on `skipDuplicates`. The planner enforces the cross-booking age-mix invariant on every placement path (#1768): a room-night holding one booking's minors never also holds another booking's adult (in either direction), minors may fill rooms of their own once the booking has an adult on-site that night (the adult count no longer caps the rooms a large group fills), a SCHOOL-request booking rooms its adults together and its students separately (`isSchoolGroup`), and persisted violations surface as `MINOR_ADULT_MIX` board warnings. That automatic reconcile auto-places **only the reconciled booking's own** guests on its current nights (#1686): editing, confirming, promoting, or cancelling one booking never opportunistically drafts *other* bookings' guests into idle or freed beds — a cancellation's freed beds stay in the awaiting-allocation queue rather than being auto-refilled. It still loads lodge-wide occupancy so it can seat that booking whole-stay and displace blocking provisionals to seat a held booking (#1387/#1677); opportunistic lodge-wide re-planning of *everyone* is exclusively the explicit board action below. The manual board **Run auto-allocation** button (`runAutoBedAllocation`) runs pure first-fit and does NOT displace — only the automatic reconcile does. One further occupancy class has **no `BedAllocation` row at all** (#2286): a `HutLeaderAssignment` carrying a `bedId` is a **custodian bed hold**, which takes that bed out of both the bookable and the allocatable pool for every night from `startDate` to `endDate` *inclusive*, with no `Booking`, no `BookingGuest` and no allocation row anywhere (`src/lib/custodian-occupancy.ts` read side, `src/lib/custodian-assignment.ts` write side). It is counted as an **occupant** rather than as a smaller lodge, so `occupiedBeds + availableBeds === lodgeCapacity` still holds; it is fed to the planner as a #1768 blocking, never-evictable unknown occupant; and because nothing in the database enforces it, every placing write re-reads the live holds on its own client immediately before writing, inside the per-lodge advisory lock where it owns the transaction — and where it does not, which is the common no-displacement path, that re-read is the only thing standing between a hold and a bed-night written over it. The three re-filters doing it (occupied / custodian-held / whole-lodge-held) live in `bed-allocation-write-rechecks.ts` (#3128); their call sites stay in `bed-allocation-lifecycle.ts`, which is where the contract test below proves them. `custodian-write-path-contract.test.ts` scans the whole `src/` tree and fails CI when a `bedAllocation.create*` site appears undeclared — counting them per site, so a second write in an already-declared file fails too — and pins the global → per-lodge lock order over each self-wrapping writer's own body. See docs/CAPACITY_MODEL.md and DOMAIN_INVARIANTS.md. |
 | Member-guest consent | `src/lib/member-guest-consent.ts`, `src/lib/member-guest-settings.ts`, `src/lib/booking-guests.ts` | Adding another club member as a guest ("+ Add Member Guest", epic #2305). `member-guest-consent.ts` is the pure model: the named widening predicate `MEMBER_GUEST_WIDENING_ENABLED`, the `FAMILY` / `BEYOND_FAMILY` boundary types, and the eight-shape consent sub-state table with its classifier. `booking-guests.ts` computes each prospective guest's boundary scope on **every** path — the admin `skipAuthorization` paths included — so no caller can end up persisting a consent-free cross-family row by default. Policy lives in the `MemberGuestSettings` singleton (`member-guest-settings.ts`, lazily created, read through the shared defaults in `src/config/club-settings-defaults.ts`) alongside the other club-settings singletons; its two open-search privacy toggles are excluded from config transfer. **The feature is live behind the `memberGuests` module** (MG2 #2307 turned MG1's dark constant into the per-club flag; MG3 #2308 added the finder; MG4 #2309 covered the edit path, admin parity and the booking-request pipeline). With the module off — the shipped default — a cross-family add is refused with the byte-for-byte pre-existing error and nothing writes a non-null `BookingGuest.consentStatus`, so a club that never opts in sees no change. Every persisting path plans its consent columns through the single writer in `member-guest-consent.ts` by way of `member-guest-add-policy.ts`, and every one of them dispatches its notifications AFTER the transaction commits. |
+| AI app connections | `src/lib/mcp/`, `src/app/api/mcp/**`, `src/app/.well-known/**`, `src/lib/session-refresh.ts` | The `mcpServer` module (ALP-653): an MCP server and its OAuth endpoints that let a member's AI app act as that member. `oauth.ts`, `approval.ts`, `connection-gate.ts`, `grants.ts` and `settings.ts` own who may connect and the connection's life; `catalogue.ts` and `exclusions.ts` classify every API route method; `dispatch.ts` and `loopback.ts` send each action back through the site's front door, never importing a route handler; `principal.ts` and `grant-session.ts` turn the signed internal header into the member's session through `session-refresh.ts`, the same code a browser session runs. Rules: `INV-MCP` ([`mcp-connections.md`](invariants/mcp-connections.md)); guide: [`mcp-server.md`](guides/mcp-server.md). |
 | Policy rules | `src/lib/policies/` | Pricing, age-tier, cancellation, change-fee, minimum-stay, member-credit, and booking-route decisions live as testable policy helpers. |
 | Operational Xero | `src/lib/xero-*.ts` | Import the focused module that owns the behavior. The `src/lib/xero.ts` compatibility facade was retired in #4930, and the module-graph census fails any import of it. |
 | Admin/member services | `src/lib/admin-member-xero-actions.ts`, `src/lib/member-serialization.ts`, `src/lib/member-lifecycle-actions.ts`, `src/lib/membership-cancellation-*.ts` | Shared admin/member request wrappers, DTO shape, lifecycle actions, and cancellation workflows live outside page files. |
@@ -929,6 +957,15 @@ Use these ownership boundaries when adding new code:
 | Database | `prisma/schema.prisma`, `prisma/migrations/` | Schema changes must include deployable migrations and respect the blue/green migration policy. |
 | Operations | `scripts/`, `deploy/`, Compose files | Deployment helpers should be reusable by forks through environment overrides. |
 | Function length | every production file | A top-level function, const-assigned function or class member over 300 lines may not appear or grow (`pnpm run quality:budget`, #4927; object-literal methods are not measured); split a long function into typed top-level functions that read only what they are given. See docs/MAINTENANCE.md → "Function-length ratchet". |
+
+### Paid-booking import engine
+
+`src/lib/booking-import/` separates pure CSV parsing, read-only planning and
+one-booking-per-transaction confirmation. It composes the existing booking
+rules and manual settlement body rather than calling the ordinary booking
+create service. Child A of #5005 is intentionally unreachable from routes and
+screens. Its [engine contract](design/booking-import.md) describes the preview,
+reconciliation totals, batch identity and later children.
 
 ### Bed-allocation preference resolution
 
@@ -1121,7 +1158,14 @@ same permission `/api/admin/members` requires); the count and the card-level
 link stay for every support admin (#2823). Both callers (the page and
 `/api/admin/stuck-states`) resolve that flag from the acting admin's permission
 matrix and default it to `false`, so a caller that omits it fails closed to no
-names.
+names. Since #4959 the *Bookings with unnamed guests* card names its bookings
+under the same flag, and the payment signals (cancelled refunds unrecorded,
+the three recovery-operation signals, the two stale group settlements and
+undelivered bank transfer amount alerts) name theirs only when the caller also
+passes `viewerCanViewFinance`. Each row set is read with the count's own
+`where` and capped at `STUCK_STATE_DETAIL_ROW_CAP`; the page says how many more
+there are (`INV-PAY-156`). The payment counts, their row reads and the shared
+row shape live in `src/lib/stuck-state-payment-signals.ts`.
 The page also lists the card refunds Stripe gave up on (#3372), each with its
 "Paid another way" close: the list names bookings and money still owed, so the
 page loads it only for `{ area: "finance", level: "view" }`, and the close
@@ -1202,6 +1246,21 @@ parse error (`INV-SSOT`). Put the region where the officer is looking, never
 inside a closed form, and prefer `FocusedActionError` so it takes focus and
 scrolls into view. A plain banner above a long list can be off screen. The
 Seasons page still uses one, which is a known gap and not a model to copy.
+A handler that throws a refusal into its own `catch` reads the failed reply with
+`apiRefusalFromResponse` and shows `refusalMessageOr(err, fallback)`: the
+catch also sees a dropped connection and any bug in the success path, and those
+show the screen's own fallback, never the browser's words or a parse error.
+When one body decides between success and failure, parse it once with
+`readApiObjectOrEmpty` (or `readApiObjectOrNull` when a missing body must be
+told apart) and hand the result to `apiErrorMessageFromBody`; do not spell the
+"unreadable counts as empty" rule again.
+`admin-failed-response-json-census.test.ts` fails on a new bare
+`await res.json()` read of a failed reply under `src/app/(admin)`, and in the
+admin components its own header names. That header, not this page, says how far
+into `src/components/admin` the census reaches. It does
+not see a `.then((r) => r.json())` chain or an `err.message` shown from a catch,
+so review those by eye. It has no allowance list: an unguarded failure read
+anywhere it scans fails.
 
 Admin settings sections follow one canonical edit model (developer rule, binding
 for new or modified sections; the `AGENTS.md` routing table sends you here for it, and this page is where it is stated in full).
@@ -1237,64 +1296,57 @@ one commit, and because a scope change is itself a load it unmounts the
 for the duration of the round trip. That banner shape started in the five
 Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
-Measured
-on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **108 components render a banner, and
- 341 of the 396 `ViewOnlyActionButton` call sites opt out** of the per-button
-reason. (Earlier revisions of this page published 76/232/264/211 — those were
-upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 341 split by WHICH rule
-covers them: **301** pass the literal
-`describeReason={false}` and are covered by a banner in the same file, and **40**
-pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
-verified vouching parent — 35 by a parent's own JSX render site (#2168), 5 by the
+`view-only-banner-contract.test.ts` classifies every `ViewOnlyActionButton`
+call site rather than counting them, and this page publishes no totals (#5211):
+a total moved with every pull request that added a gated control or a banner,
+so any two such pull requests conflicted over the same sentence. Run the test
+for the live picture. Most call sites opt out of the per-button reason, under
+one of two rules. Some pass the literal `describeReason={false}` and are covered
+by a banner in the same file. Others pass
+`describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a verified
+vouching parent, either at a parent's own JSX render site (#2168) or through the
 guided-setup shell (#2324); see *Vouching for a child's coverage* and *Vouching
-through the wizard shell* below. The
-remaining **55 controls across 30 files deliberately keep the per-button
-default** (`describeReason` left at `true`), in three shapes:
+through the wizard shell* below. The rest deliberately keep the per-button
+default (`describeReason` left at `true`). Each file that does is listed, with
+how many controls it holds, in the test's `KEEPS_OWN_REASON`, so a new keeper
+is a reviewed line there. They fall into three shapes:
 
 - **Controls inside a dialog, sheet, popover, or dropdown menu.** These live in
-  a separate accessibility container — focus is trapped and the page behind is
-  commonly inert — so a banner rendered in the page body does not reach them.
-  (11 controls across 5 files, including the confirmed bed-allocation move
-  dialog, which the test enumerates by name; three further
-  controls of this shape live in files counted under the next bucket, see
-  there.)
+  a separate accessibility container (focus is trapped and the page behind is
+  commonly inert), so a banner rendered in the page body does not reach them.
+  The test names these files, including the confirmed bed-allocation move
+  dialog; a few further controls of this shape live in files read under the
+  next shape, see there.
 - **Leaf components with no section of their own**, which a parent drops into
   someone else's layout (for example the member detail header's action toolbar,
   the booking capacity/exclusive hold controls, the family-group login-holder
   and request-review sub-sections, and the non-member contact form). Nothing
   local proves an ancestor renders a banner above them, so the reason stays on
-  the control. (40 controls across 24 files.) Nine of those 40 sit inside a
-  setup wizard and are **scope** exceptions rather than indirection ones: each is
-  gated on a permission NARROWER than the banner its shell renders, so an admin
-  who has the wizard's area but not that narrower one meets no banner at all.
-  Eight are new to this bucket with #2324, and are the four provider wizards'
-  credential-ish writes — Xero credentials and webhook key, Stripe keys and
-  signing secret, Google credentials and verify, the backups credentials and
-  destination — all of which additionally need Full Admin. The ninth, the Lodge
-  Display wizard's `support`-gated module switch under a `lodge` banner, has been
-  an exception since #2249 and stays one for the same reason; #2324 moved its
-  three lodge-gated siblings out of this bucket and into the vouched one. Before
-  those, the per-booking "No emails" switch (#2259), dropped into the Admin tools
-  card's layout beside the capacity and exclusive holds. Newest are the
-  cash / off-Xero payment feature's four controls (#2262): Record and Reverse
-  manual payment, a leaf dropped into that same Admin tools card, and the
+  the control. Some of these sit inside a setup wizard and are **scope**
+  exceptions rather than indirection ones: each is gated on a permission
+  NARROWER than the banner its shell renders, so an admin who has the wizard's
+  area but not that narrower one meets no banner at all. They are the four
+  provider wizards' credential-ish writes (Xero credentials and webhook key,
+  Stripe keys and signing secret, Google credentials and verify, the backups
+  credentials and destination), all of which additionally need Full Admin, and
+  the Lodge Display wizard's `support`-gated module switch under a `lodge`
+  banner, an exception since #2249; #2324 moved its three lodge-gated siblings
+  into the vouched rule. Also here: the per-booking "No emails" switch (#2259),
+  dropped into the Admin tools card's layout beside the capacity and exclusive
+  holds, and the cash / off-Xero payment feature's controls (#2262): Record and
+  Reverse manual payment, a leaf in that same Admin tools card, and the
   manual-refund-task queue's Mark-paid-back and Dismiss pair, a card on the
-  Payments page with no banner of its own. Read that
-  bucket as the
-  REMAINDER — everything that is neither a member detail card nor one of the
-  five dialog-only files — rather than as a claim that all 36 are leaves.
-  Thirteen of the twenty-one files are (24 controls); six are the wizard step
-  files just described (9 controls); and the last two, `page-content-panel.tsx`
-  and `site-banners-panel.tsx`, are full banner-bearing panels whose last 3
-  controls sit inside their own edit/create `Dialog`, so those 3 are really the
-  first shape occurring inside a file that also has the third. Nothing is
-  mis-gated either way — the point is only that the bucket boundary is where the
-  test can draw one mechanically, not a clean taxonomy.
+  Payments page with no banner of its own. Read this shape as the REMAINDER
+  (everything that is neither the member detail card below nor one of the
+  dialog-only files) rather than as a claim that all are leaves: two of its
+  files, `page-content-panel.tsx` and `site-banners-panel.tsx`, are full
+  banner-bearing panels whose last controls sit inside their own edit/create
+  `Dialog`, so those are really the first shape occurring inside a file that
+  also has the third. Nothing is mis-gated either way; the bucket boundary is
+  where the test can draw one mechanically, not a clean taxonomy.
 - **A member detail per-record card gated on a DIFFERENT permission area than
-  the page banner** — today exactly one: `member-credit-card.tsx` (4 controls
-  across 1 file). The other eight cards in
+  the page banner**: today exactly one, `member-credit-card.tsx`, which the
+  test holds as a review gate. The other eight cards in
   `src/app/(admin)/admin/membership/members/[id]/_components/` were converted under #2168
   and now take their coverage from the page banner. The credit card did not,
   and that is deliberate rather than a leftover: the page banner states the
@@ -1303,7 +1355,7 @@ default** (`describeReason` left at `true`), in three shapes:
   edit but finance view-only would meet no banner at all while looking at four
   dead buttons. Any second banner for the finance scope would break the owner's
   one-banner-per-page decision and trip the nesting rule, so the per-button
-  reason stays. Bucket by SCOPE, not by folder, when reading this figure.
+  reason stays. Bucket by SCOPE, not by folder.
 
 The Setup Wizard gates checklist progress, provider tests and completion on
 `support` edit access (#4971). Its support banner stays mounted through loading
@@ -1826,8 +1878,23 @@ input rather than clamping it, so the client value always matches storage. The
 same shortcut against a normalising route would silently diverge. Each card
 keeps its own `save` callback — the
 GET-fresh-then-merge step above, multi-endpoint writes, and per-endpoint failure
-copy all stay local — and throws the hook's `ForbiddenSaveError` for a 403 so it
-maps to the shared `ADMIN_FORBIDDEN_SAVE_REASON` copy. Feedback rendering stays
+copy all stay local — and throws what the hook's `saveRefusalFromResponse` returns for a refused save.
+That helper returns a `ForbiddenSaveError`, which maps to the shared
+`ADMIN_FORBIDDEN_SAVE_REASON` copy, or the
+route's own worded 403 ("Two-factor verification required") when it carries
+one: only the bare word "Forbidden" or an unreadable body, such as a proxy's
+HTML page, becomes the shared copy (`wordedForbiddenRefusal`).
+A new card uses `saveRefusalFromResponse` and nothing else for a refused save: its callback
+throws what `saveRefusalFromResponse` returns for every non-2xx reply. It does
+not test for a 403 and throw `ForbiddenSaveError` itself, which shows the shared
+copy even when the server sent a more useful sentence; a card that still does
+is not a model to copy (#5347). Any other sentence the
+officer should read is thrown as an `ApiRefusalError`
+(`src/lib/api-error-message.ts`; `apiRefusalFromResponse` reads a route's
+refusal into one). Everything else (a request that never got an answer, an
+unreadable body, a bug) shows the section's required `saveErrorFallback`, and
+its `loadErrorFallback` when it has a `load`, never the browser's own words such
+as "Failed to fetch" (#4976). Feedback rendering stays
 in the component, because booking-policy sections use `PolicyFeedback` while the
 security cards use `Alert`. Where the admin's attention goes is not per-card
 either, and the section wires nothing for the way in: Edit unmounts the button
@@ -1842,11 +1909,17 @@ already change, such as a scope select, is not what Edit opened and is skipped,
 as is an unchecked radio whose group has a checked one (Tab's own rule). The
 reveal moves nothing when focus has moved off the control that opened the
 editor — an opening that awaited a fetch first ("Create override", which
-carries Edit's `editTriggerProps` so the reveal knows it opened) — or when
-the card is hidden behind a modal, as the analytics card is while its dialog
-holds Edit. The hook's `revealTarget` option instead reveals a given element at
-the top; it exists only for the two sections whose card reveal predates #4115 —
-allocation preferences and club identity — and a new section omits it. The way back out: Save and Cancel unmount
+carries Edit's `editTriggerProps` so the reveal knows it opened). An Edit that
+lives in a dialog outside the section's card, as the analytics card's does
+(the card is `aria-hidden` while the dialog is open), reveals inside that
+dialog instead: focus goes to the first control the edit made editable there,
+never to the hidden card. The dialog's own focus scope cannot be relied on for
+it: React reuses the Edit button as the disabled Save, a browser drops focus
+from a control that becomes disabled, and Radix's focus scope notices only a
+removed node (#5183). The hook's `revealTarget` option instead reveals a given
+element at the top; it exists only for the two sections whose card reveal
+predates #4115 — allocation preferences and club identity — and a new section
+omits it. The way back out: Save and Cancel unmount
 the button that held focus too, so the hook records the focused element when
 `startEditing` runs and, after Cancel or a successful save, returns focus to it,
 to the Edit re-rendered in its place, or — when Edit is missing or disabled for
@@ -1923,6 +1996,39 @@ disappear as their fields are fixed, so nothing is announced while the person
 types. The first form on the layer is the committee page's role form, a
 submit-style form rather than a staged section; no staged section uses the
 layer yet.
+
+**A row-capped admin list shows its total and reaches every row
+(`INV-OPS-020`, #4960).** An admin route that answers one page of a list
+answers through `adminListPage` (`src/lib/admin-list-page.ts`), and each
+officer queue screen that reads it for that list pages through `useAdminQueuePage`
+(`src/components/admin/use-admin-queue-page.ts`) and renders the shared
+`Pagination` with its "Showing 1–25 of 40" total line, shown even on a single
+page. The officer queues — member applications, refund appeals, booking
+approvals, change requests, public requests, policy exceptions, the
+membership cancellation and archive queues, both deletion-request
+queues, the maintenance queue and the communications send history (which has
+no filter, and returns to page 1 after a send, where the new send is) — do so
+today: pending filters (the maintenance queue's is Open) read oldest first, a filter change returns to page 1, the page is kept in the URL
+wherever the screen keeps its filter there (not the deletion-request queues,
+the policy exceptions tab, the maintenance queue or the send history, which keep
+it in memory), a slower read for a page
+the officer has left never replaces the list, the pager stays mounted through a
+read so keyboard focus survives a page change, and a focused `bookingId=` /
+`requestId=` link pins its record when it is off the page (approvals, change
+requests and public requests, the queues that read a record by id). The
+policy exceptions queue merges two tables, so it counts each and reads each only
+to the end of the page asked for: its total is exact.
+`admin-queue-pagination-census.test.ts` fails a client file that reads a capped
+queue route without the hook and the pager. The other paged admin lists
+(bookings, members, payments, subscriptions, waitlist, audit log, Xero inbound
+events and operations, promo redemptions) page through their own state rather
+than the hook, show the range line once the list has more than one page, and
+share `formatAdminListRange` for the range text and
+`parseAdminListPageParam` / `setAdminListPageParam` for the URL page; the same
+census fails hand-rolled range arithmetic, an unparsed page read or a
+hand-written page write. Three capped lists sit outside this: system issue
+reports, messages notice reads and the privacy retention preview keep their own
+pagers until next changed.
 
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same
@@ -2187,6 +2293,19 @@ refund is already owed, which re-sends that refund, or a live superseded-intent
 operation holds the settler, a silent keep. The Xero second-instrument conflict names it first
 (`INV-PAY-043`). It has no foreign key, because the guard re-reads the row and
 trusts it only while it still holds money on this payment.
+
+### The saved-card claim marker (#4993)
+
+`Booking.savedCardClaimAt` is when a saved-card door last claimed the booking
+PENDING -> CONFIRMED for an off-session charge (the confirm-pending cron,
+`charge-saved-method`, confirm-pending-guests). Each claim stamps it, and every
+release back to PENDING and every PAID promotion clears it in the same guarded
+write, so a non-NULL value on a CONFIRMED booking means a claim is in flight or
+was stranded. NULL means no claim is open: the booking was never claimed, the
+claim ended, or it was claimed before the column existed. Only
+`recoverStaleSavedCardClaims` reads it, to hand back a claim older than 30
+minutes with no captured money (`INV-PAY-158`). Nullable, no default, no index:
+an expand-only column the old code neither reads nor writes.
 
 ## Booking and Payment Flow
 
@@ -2503,10 +2622,24 @@ operational defaults such as its fallback capacity override and school-group
 soft cap; the hut-leader lookahead window used by dashboard and Needs Attention
 warnings stays a club-wide knob on the legacy row. Single-lodge clubs keep one
 row (ADR-002); additional lodges get their own keyed by lodge id.
-The sidebar's Needs Attention Booking Requests badge sums pending internal
-booking reviews, requested change requests, and queued public booking requests.
-Pending self-service account deletion requests are also counted there and link
-admins to the deletion request queue. Unpaid finished stays (#1709/#1731) —
+Officer work queues (#4962) are one registry, `ADMIN_WORK_QUEUES` in the
+client-safe `src/lib/admin-work-queues.ts`: each queue's key, label, href,
+icon, tone, the pending counts its number sums and its dashboard card wording.
+The admin dashboard's attention cards (`AdminWorkQueueCards`) and the sidebar's
+Needs Attention section both render that list, and both decide visibility the
+same way, from the queue's href: `isFeatureHrefVisible` for its module and
+`canViewAdminHrefWithMatrix` for the viewer, so for one admin they show the same
+queues with the same numbers. Adding a queue is one registry entry plus its
+counter. The Booking Requests number sums internal booking reviews, requested
+change requests, new-booking policy exception requests and queued public
+booking requests; the deletion queue sums self-service account deletions and
+admin-initiated member deletions; open manual refund tasks are a Payments
+entry; the Stuck States headline (`getStuckStateAffectedCount` in
+`src/lib/stuck-state-affected-count.ts`, the dashboard scan cached per
+process for 60 seconds, failures not cached) shows only with
+`support:view`. `INV-SSOT-011` and `admin-work-queue-census.test.ts` keep both
+surfaces from counting or linking a queue around the registry.
+Unpaid finished stays (#1709/#1731) —
 `PAYMENT_PENDING` bookings whose check-out is on or before NZ today — badge an
 "Unpaid Finished Stays" entry deep-linking to the pre-filtered bookings list;
 its predicate lives in `src/lib/unpaid-finished-stays.ts` and its href in the
@@ -2530,9 +2663,36 @@ of that predicate is `isAdditionalPaymentOwed`
 (`src/lib/additional-payment-chase.ts`), which takes the booking status as a
 required argument and shares one status list with the SQL builder, so no
 surface can read a cancelled booking's untouched delta columns as money owed.
-All sidebar badge counts come from the single `GET /api/admin/pending-counts`
-endpoint (`src/lib/admin-pending-counts.ts`), whose per-queue where-clauses
-mirror the individual queue routes. Sidebar sections render expanded by
+Every queue count comes from `getAdminPendingCounts`
+(`src/lib/admin-pending-counts.ts`): the dashboard calls it while rendering and
+the sidebar reads it through `GET /api/admin/pending-counts`. Its per-queue
+where-clauses mirror the individual queue routes. The four Booking Requests queues in it
+(Approvals, Changes, Policy Exceptions, Public Requests) are defined once, in
+`getBookingRequestPendingCounts` (`src/lib/admin-booking-request-pending-counts.ts`,
+#4969), and each count builds its query from the where-builder its list uses
+(`src/lib/booking-request-queue-where.ts` and `buildBookingRequestListWhere`),
+so a list and its badge are narrowed together. The same helper feeds,
+through the bookings-area `GET /api/admin/booking-requests/pending-counts`,
+the Booking Requests page's tab badges and landing tab, so a bookings-only
+role still gets them; the work queue's card opens the same first tab with
+work. Each counter settles on its
+own (`Promise.allSettled`): a failed one reads as zero and is named in the
+payload's `unavailable` list, so both surfaces say which counts are missing
+rather than reading the failure as "nothing to do". A caller that already reads
+a queue's rows for its own page passes that count in `supplied`, so the page
+holds one number from one read: the dashboard does this for uncovered
+hut-leader nights, and its two hut-leader cards and the listed nights cannot
+disagree. The admin layout is
+persistent, so the sidebar refetches on every pathname change, on window focus,
+when the tab becomes visible, and on the `admin-queue-changed` window event a
+queue page fires after a decision (`notifyAdminQueueChanged` in
+`src/lib/admin-queue-events.ts`). One load runs at a time: a navigation,
+decision or retry mid-load queues one more, while focus and visibility do not.
+These triggers live in `useAdminQueueRefresh` (`src/hooks/use-admin-queue-refresh.ts`),
+which the Booking Requests page's tab badges share, so after a decision they
+still add up to the sidebar's badge.
+A failed load shows "Couldn't load counts" with Retry and keeps the last good
+badges. Sidebar sections render expanded by
 default; a per-section collapse preference persists in localStorage.
 
 The admin command palette (#2092, `src/components/admin-command-palette.tsx`)
@@ -3490,7 +3650,7 @@ flowchart TD
     Leader --> Q15["Every 15 min<br/>payment-recovery, internet-banking-hold-release,<br/>xero-waiting-invoice-reaper, late-capture-held-alert,<br/>credit-release-asks, duplicate-capture-kept-alert, xero-outbox,<br/>xero-operation-replay, xero-inbound-reconcile,<br/>xero-credit-note-outside-spend-mirror"]
     Leader --> Q30["Every 30 min<br/>waitlist-processor, email-retry"]
     Leader --> Q3h["Every 3 h<br/>additional-payment-reminders, confirm-pending,<br/>placeholder-guest-name-reminders, pre-arrival-reminders,<br/>purge-booking-requests, quote-expiry-reminders,<br/>school-attendee-confirmations, group-settlement-reaper,<br/>policy-exception-hold-reaper, hosting-coverage-reevaluation"]
-    Leader --> Daily["Daily<br/>complete-bookings, data-pruning, draft-cleanup,<br/>age-up, email-inheritance-reconcile,<br/>capacity-warnings, admin-digest,<br/>credit-reconciliation, hut-leader-auto-assign,<br/>checkin-reminders, pending-deadline-alerts,<br/>member-guest-consent-expiry,<br/>nomination-reminders, finance-daily-sync,<br/>xero-membership-refresh, xero-link-backfill,<br/>xero-link-cleanup, xero-bank-refund-void-follow-up,<br/>xero-reconciliation-report,<br/>xero-credit-sync-check"]
+    Leader --> Daily["Daily<br/>complete-bookings, data-pruning, draft-cleanup,<br/>age-up, email-inheritance-reconcile,<br/>capacity-warnings, admin-digest,<br/>credit-reconciliation, hut-leader-auto-assign,<br/>checkin-reminders, pending-deadline-alerts,<br/>member-guest-consent-expiry,<br/>nomination-reminders, finance-daily-sync,<br/>xero-membership-refresh, xero-link-backfill,<br/>xero-link-cleanup, xero-bank-refund-void-follow-up,<br/>xero-reconciliation-report,<br/>xero-credit-sync-check, xero-cash-credit-refresh"]
     Leader --> Cfg["Configurable<br/>backup"]
 ```
 
@@ -3525,6 +3685,7 @@ flowchart TD
 | `xero-bank-refund-void-follow-up` | Daily | Right after the link cleanup: undo each voided bank-transfer refund note and put it back on the refund list (#4162; report-only until `XERO_ENABLE_BANK_REFUND_VOID_WRITES=true`) |
 | `xero-reconciliation-report` | Daily | Send the Xero reconciliation report |
 | `xero-credit-sync-check` | Daily | Reconcile BookingApp's stamped applied credit against Xero's live invoice allocations and warn admins on drift with the exact amount (#2501); read-only, self-throttled |
+| `xero-cash-credit-refresh` | Daily (in the credit-sync check's slot) | Refresh the snapshot of unallocated Xero overpayments and prepayments the finance queue shows (#5204); reads Xero, writes only that snapshot, and a failed read changes nothing |
 | `finance-daily-sync` | Daily when the finance dashboard module is enabled | Refresh finance report/invoice/balance snapshots from the operational Xero connection |
 | `data-pruning` | Daily | Prune expired tokens/logs and idle login-throttle rows, and run audit retention |
 | `draft-cleanup` | Daily | Delete expired draft bookings; leave out and report any that financial history names (`INV-MONEY-043`) |

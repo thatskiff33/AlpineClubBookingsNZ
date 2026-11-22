@@ -4,7 +4,7 @@ vi.mock("server-only", () => ({}));
 
 /**
  * Companion to `scripts/ci/check-prerendered-script-nonces.mjs` (#2356), and the
- * mirror of the same guard on `/display` (`display-screen.test.ts`, fork #54).
+ * mirror of the same guard on `/display` (`display-screen.test.ts`, fork hoppers99/AlpineClubBookingsNZ#54).
  *
  * The CI script is the real gate — it inspects the emitted build — but it needs
  * a full `pnpm run build` to run. This runs in the unit suite, so deleting the

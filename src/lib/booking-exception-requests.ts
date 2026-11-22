@@ -1,3 +1,4 @@
+import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
 import { MEMBER_MESSAGE_MAX_LENGTH } from "@/lib/booking-exception-request-shared";
 import { parseCalendarDate, startOfClubDay } from "@/lib/club-time";
 import type { ClubTimeZone } from "@/lib/club-time";
@@ -68,65 +69,25 @@ export const POLICY_EXCEPTION_REQUEST_STATUSES = [
 export type PolicyExceptionRequestStatus =
   (typeof POLICY_EXCEPTION_REQUEST_STATUSES)[number];
 
-/**
- * The four statuses that release a held request's provisional reservation and
- * admit no further transition. APPROVED is deliberately NOT terminal here: an
- * approval releases its reservation by turning it into the executed booking's
- * own beds INSIDE the same transaction, which is a different discipline from the
- * plain release the rejected/withdrawn/replaced/expired outcomes perform.
- */
-export const TERMINAL_RELEASING_STATUSES = [
-  "REJECTED",
-  "CANCELLED",
-  "SUPERSEDED",
-  // #2553: the reaper's release runs the SAME atomic path as the other three
-  // (guarded version CAS then request-scoped delete, under global -> lodge).
-  "EXPIRED",
-] as const satisfies readonly PolicyExceptionRequestStatus[];
-
-export function isTerminalReleasingStatus(
-  status: PolicyExceptionRequestStatus,
-): status is (typeof TERMINAL_RELEASING_STATUSES)[number] {
-  return (TERMINAL_RELEASING_STATUSES as readonly string[]).includes(status);
-}
-
-/**
- * Whether a request in `status` may still be moved to `next` by the workflow.
- * REQUESTED is the only non-terminal state; every terminal state is a dead end.
- * A guarded `updateMany` enforces this at the database, but the predicate is
- * shared so the route, the service and the tests cannot disagree about it.
- */
-export function isPolicyExceptionTransitionAllowed(
-  from: PolicyExceptionRequestStatus,
-  to: PolicyExceptionRequestStatus,
-): boolean {
-  if (from !== "REQUESTED") return false;
-  return (
-    to === "APPROVED" ||
-    to === "REJECTED" ||
-    to === "CANCELLED" ||
-    to === "SUPERSEDED" ||
-    to === "EXPIRED"
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Provisional-hold time to live (#2553)
 // ---------------------------------------------------------------------------
 
 /**
  * How long a HOLD-mode policy-exception request may keep the beds it reserved
- * before the reaper releases them (#2553).
+ * before the reaper releases them (#2553), when nothing else says: the length a
+ * request raised before #4932 was given, and the default of the club's own
+ * `BookingDefaults.policyExceptionHoldDays` setting.
  *
- * Seven days is the officer-review window the club actually works to: long
+ * Seven days is the officer-review window the reference club works to: long
  * enough that a request raised on a Friday survives a whole week of Booking
  * Officer availability, short enough that an abandoned request cannot phantom-
- * block a lodge for a season. It is a CONSTANT rather than a setting on purpose:
- * the deadline is stamped onto each request at creation and never rewritten, so
- * a hold's expiry is a stable, auditable fact rather than something a later
- * settings edit can move under a member.
+ * block a lodge for a season. Since #4932 a club may set its own length, but it
+ * is read ONLY when a request is raised: the deadline is stamped onto the request
+ * then and never rewritten, so a hold's expiry stays a stable, auditable fact
+ * rather than something a later settings edit can move under a member.
  */
-export const POLICY_EXCEPTION_HOLD_TTL_DAYS = 7;
+export const POLICY_EXCEPTION_HOLD_TTL_DAYS = DEFAULT_BOOKING_DEFAULTS.policyExceptionHoldDays;
 
 /**
  * The floor on that window. A request raised the day before (or during) the
@@ -144,8 +105,9 @@ const DAY_MS = 24 * HOUR_MS;
  * The moment a request's provisional hold runs out — pure, deterministic, and
  * the single definition both the request-creation path and the reaper use.
  *
- * Three rules, in plain English: a hold lasts {@link POLICY_EXCEPTION_HOLD_TTL_DAYS}
- * days; it never outlives the start of the first night it is holding (past that
+ * Three rules, in plain English: a hold lasts `ttlDays` days (the club's
+ * setting when the request is raised; {@link POLICY_EXCEPTION_HOLD_TTL_DAYS} for
+ * the reaper's fallback on a row that predates the stamped deadline); it never outlives the start of the first night it is holding (past that
  * point the stay has begun and an unactioned request is moot, so the beds should
  * go back into the pool); and it always lasts at least
  * {@link POLICY_EXCEPTION_HOLD_MIN_TTL_HOURS}, so a late request still gets a
@@ -170,12 +132,11 @@ const DAY_MS = 24 * HOUR_MS;
 export function computePolicyExceptionHoldExpiry(input: {
   createdAt: Date;
   firstHeldNight?: string | null;
-  ttlDays?: number;
+  ttlDays: number;
   zone: ClubTimeZone;
 }): Date {
-  const ttlDays = input.ttlDays ?? POLICY_EXCEPTION_HOLD_TTL_DAYS;
   const createdMs = input.createdAt.getTime();
-  const ttlDeadline = createdMs + ttlDays * DAY_MS;
+  const ttlDeadline = createdMs + input.ttlDays * DAY_MS;
   const floor = createdMs + POLICY_EXCEPTION_HOLD_MIN_TTL_HOURS * HOUR_MS;
 
   let deadline = ttlDeadline;

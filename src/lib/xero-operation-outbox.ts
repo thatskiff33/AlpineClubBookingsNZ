@@ -1,3 +1,4 @@
+import { bookingHasExternalSettlement, externalSettlementCause } from "@/lib/booking-external-settlement";
 import { ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE, ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL } from "@/lib/organiser-billing";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { executeOrganiserExtraAdjustment } from "@/lib/organiser-extra-adjustment";
@@ -53,11 +54,11 @@ import {
   type RefundNoteWording,
 } from "@/lib/xero-refund-method";
 import { createXeroEntranceFeeInvoice } from "@/lib/xero-entrance-fee-invoices";
+import { buildPrecomputedEntranceFeeContext } from "@/lib/xero-outbox-entrance-fee-context";
 import {
   buildEntranceFeeInvoiceIdempotencyKey,
   ENTRANCE_FEE_EXEMPT_MESSAGE,
   getEntranceFeeContext,
-  type EntranceFeeContext,
 } from "@/lib/xero-mappings";
 import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
 import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-allocation";
@@ -67,7 +68,6 @@ import { createAdminGrantCreditNote } from "@/lib/xero-admin-grant-credit-note";
 import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
 import { deallocateExcessAppliedCreditForBooking } from "@/lib/xero-applied-credit-deallocation";
 import { outboxScanLeavesAwaitingOwnNote, OWN_NOTE_EXPECTED_KEY } from "@/lib/unpaid-ask-billed-offset-order";
-import { isXeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import {
   findResolvedBookingInvoiceCreate,
   findResolvedSiblingSince,
@@ -82,8 +82,11 @@ import { XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE } from "@/lib/xero-card-r
 import { recordAdditionalCaptureReceipt } from "@/lib/additional-capture-xero-receipt";
 import { outboxScanSpacesWaitingReceipts } from "@/lib/additional-capture-receipt-gate";
 import { scanSpacesRefundNotesAwaitingResolve } from "@/lib/xero-refund-note-in-flight";
+import { scanSpacesTaxCategoriesAwaitingMapping, xeroOutboxWaitOf } from "@/lib/xero-tax-category-hold";
 import { XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE } from "@/lib/admin-grant-credit-note-payload";
 import { isXeroConnected } from "@/lib/xero-token-store";
+import { returnOutboxRowToPending, UNCLAIMED } from "@/lib/xero-outbox-pending-request";
+import { countStuckQueuedRequestRows, NAMES_NO_QUEUE_TYPE, OUTBOX_PENDING_WHERE } from "@/lib/xero-stuck-queued-request";
 import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
 import {
   voidXeroInvoiceForAbandonedGroupSettlement,
@@ -100,8 +103,7 @@ import {
 } from "@/lib/xero-invoice-email-instruction";
 import {
   getQueuedOutboxExpectedOperation,
-  readQueuedOutboxPayload,
-  readQueueType,
+  readQueuedOutboxRequestFor,
   subscriptionInvoiceChargeId,
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
@@ -118,12 +120,10 @@ import {
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
-  XERO_OUTBOX_QUEUE_TYPES,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
   XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
   type QueuedOutboxExpectedOperation,
-  type QueuedOutboxPayload,
 } from "@/lib/xero-operation-outbox-payload";
 import { linkReviewTaskId, queuedReviewTaskId, reviewTaskKeyParts } from "@/lib/xero-review-task-key";
 import { supplementaryInvoicePayload } from "@/lib/xero-supplementary-invoice-enqueue";
@@ -209,32 +209,6 @@ async function claimQueuedOutboxOperation(
       in: [...expectedOperation.localModels],
     },
   });
-}
-
-function buildPrecomputedEntranceFeeContext(
-  payload: QueuedOutboxPayload
-): EntranceFeeContext | null {
-  if (
-    payload.queueType !== XERO_OUTBOX_ENTRANCE_FEE_TYPE ||
-    !payload.category ||
-    payload.feeAmountCents === null ||
-    payload.feeAmountCents === undefined
-  ) {
-    return null;
-  }
-
-  const entranceFeeContext: EntranceFeeContext = {
-    category: payload.category,
-    feeMapping: {
-      itemCode: payload.itemCode ?? null,
-      amountCents: payload.feeAmountCents,
-    },
-  };
-  if (payload.description) {
-    entranceFeeContext.description = payload.description;
-  }
-
-  return entranceFeeContext;
 }
 
 export async function enqueueXeroEntranceFeeInvoiceOperation(
@@ -480,6 +454,7 @@ export async function enqueueXeroBookingInvoiceOperation(
     where: { id: bookingId },
     select: {
       id: true,
+      importRow: { select: { amountCents: true } },
       organiserSettled: true,
       parentBookingId: true,
       payment: {
@@ -523,7 +498,7 @@ export async function enqueueXeroBookingInvoiceOperation(
   // invoice precisely when source is INTERNET_BANKING) for money the club
   // already holds in cash.
   //
-  // Provenance is `manuallyMarkedPaidAt` ALONE — never conjoined with "has no
+  // Cash provenance is `manuallyMarkedPaidAt` ALONE — never conjoined with "has no
   // Xero id" — because two stampers outside the cash-settle loop can
   // legitimately stamp a Xero id onto a manual row, and that must not launder
   // the row's provenance away from this fence.
@@ -531,8 +506,9 @@ export async function enqueueXeroBookingInvoiceOperation(
   // Returns the existing skip shape, which every caller already handles (the
   // repair pass maps a null queueOperationId to "skipped"; the force-sync and
   // missing-invoices routes surface the message), but logs at WARN so a
-  // repeated attempt is visible rather than silent.
-  if (booking.payment.manuallyMarkedPaidAt) {
+  // repeated attempt is visible rather than silent. Imported free stays have
+  // no cash provenance; their import row is the equivalent fence (#5005).
+  if (bookingHasExternalSettlement(booking)) {
     logger.warn(
       {
         bookingId,
@@ -543,8 +519,7 @@ export async function enqueueXeroBookingInvoiceOperation(
     );
     return {
       queueOperationId: null,
-      message:
-        "Booking was manually marked paid (cash / off-Xero) — no Xero invoice is expected.",
+      message: `Booking was ${externalSettlementCause(booking.payment)} — no Xero invoice is expected.`,
     };
   }
 
@@ -2172,6 +2147,7 @@ export interface ProcessQueuedXeroOutboxOperationsResult {
   failed: number;
   skipped: number;
   cooldownDeferred?: number; // #4375: of `skipped`, refused before any call; set only when non-zero
+  unclaimableRequest?: number; // #5228: PENDING rows never scanned, their request naming no queue type (`pnpm run xero:stuck-queued-report`); set only when non-zero
 }
 
 export async function kickQueuedXeroOutboxOperationsIfConnected(options?: {
@@ -2189,25 +2165,16 @@ export async function processQueuedXeroOutboxOperations(options?: {
 }): Promise<ProcessQueuedXeroOutboxOperationsResult> {
   const limit = Math.min(Math.max(options?.limit ?? 10, 1), 50);
   const queuedOperations = await prisma.xeroSyncOperation.findMany({
-    // Scan the indexed, denormalized `queueType` column (#1271, item 3 of
-    // #1208) instead of a 12-branch `requestPayload->>'queueType'` OR predicate.
-    // Behavior-identical for this scan: the column is written at enqueue in
-    // `startXeroSyncOperation` from the same sanitized payload and never updated
-    // afterward, and the only non-enqueue path into PENDING (the
-    // WAITING_PAYMENT -> PENDING supplementary release) only flips status. So
-    // for every PENDING row the column mirrors the enqueue-time
-    // `payload.queueType` exactly (#1271's migration also backfilled existing
-    // rows), and this selects the identical set the OR predicate did — now via
-    // the `(queueType, status, createdAt)` index. Dispatch below still reads
-    // `queueType` from the payload, so routing is unchanged.
+    // The indexed, immutable `queueType` column (#1271, item 3 of #1208): written
+    // once at enqueue and never updated, so it names the row's queue type even
+    // after a handler saved its execution request over the queued one (#5228).
     where: {
-      status: "PENDING",
-      direction: "OUTBOUND",
-      queueType: {
-        in: [...XERO_OUTBOX_QUEUE_TYPES],
-      },
-      // Rows waiting their turn are looked at only every few minutes, not on every kick (#3954, #3953, #4692 `INV-INT-035`); an owed group invoice email every minute (#4919).
-      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date()), scanSpacesRefundNotesAwaitingResolve(new Date()), scanSpacesAdminGrantNotesAwaitingRetry(new Date()), scanSpacesGroupInvoiceEmailsDeferred(new Date())],
+      ...OUTBOX_PENDING_WHERE,
+      // Rows waiting their turn are looked at only every few minutes, not on every kick (#3954, #3953, #4692 `INV-INT-035`); an owed group invoice email every minute (#4919); a line whose tax category is not mapped yet, every five (#4988).
+      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date()), scanSpacesRefundNotesAwaitingResolve(new Date()), scanSpacesAdminGrantNotesAwaitingRetry(new Date()), scanSpacesGroupInvoiceEmailsDeferred(new Date()), scanSpacesTaxCategoriesAwaitingMapping(new Date())],
+      // #5228: never a row whose request names no queue type - it is not sent
+      // from a guess, and must not fill the batch ahead of the work behind it.
+      NOT: NAMES_NO_QUEUE_TYPE,
     },
     // Ties on `createdAt` (same ms; all rows under the frozen clock) fall to `id`:
     // deterministic, not insertion order (#4663; STATE_MACHINES.md).
@@ -2226,9 +2193,14 @@ export async function processQueuedXeroOutboxOperations(options?: {
     failed: 0,
     skipped: 0,
   };
+  // #5228: the rows that exclusion leaves for the owner's report, so the run says so.
+  const unclaimableRequest = await countStuckQueuedRequestRows(prisma);
+  if (unclaimableRequest > 0) result.unclaimableRequest = unclaimableRequest;
 
   for (const queuedOperation of queuedOperations) {
-    const queueType = readQueueType(queuedOperation.requestPayload);
+    // #5228: the claim is built from the row's own column, never from the stored
+    // request - a handler may have replaced that with its execution request.
+    const queueType = queuedOperation.queueType;
     const expectedOperation = getQueuedOutboxExpectedOperation(queueType);
     // #4373: the claim this dispatch's outcomes are written under (`INV-INT-029`).
     const claimed = await claimQueuedOutboxOperation(queuedOperation.id, expectedOperation);
@@ -2241,51 +2213,28 @@ export async function processQueuedXeroOutboxOperations(options?: {
 
     /**
      * THE PAYLOAD IS RE-READ AFTER THE CLAIM, NOT TAKEN FROM THE SCAN (#3170
-     * fix round, F1).
+     * fix round, F1). The scan loads every row at once and this loop makes a
+     * Xero round trip per row, so a scanned payload can be minutes old. A
+     * restate (`restatePendingSupplementaryInvoiceAmount`) only matches PENDING
+     * or WAITING_PAYMENT, and the claim has committed RUNNING, so the payload
+     * read here is the one the row still holds when the handler sends it: a
+     * restate either landed first and is read, or is refused and reports
+     * `restated: 0`. Every queue type is re-read; one rule, no carve-out.
      *
-     * The scan above loads every row's `requestPayload` in one query and this
-     * loop then does a Xero round trip per row before claiming the next, so by
-     * the time row N is claimed its scanned payload is N-1 provider calls old -
-     * tens of seconds to minutes at a limit of 50. That mattered the moment an
-     * amount became restatable: `restatePendingSupplementaryInvoiceAmount`
-     * guards its write on `status IN (PENDING, WAITING_PAYMENT)`, so a restate
-     * landing in that window MATCHES, writes, and truthfully reports
-     * `restated: 1` - while the send that follows used the figure from the scan.
-     * Its caller returns early believing the combined total is billed, and on
-     * the internet-banking route, where the supplementary invoice IS the ask,
-     * the second share is then invoiced nowhere.
-     *
-     * Re-reading here closes that window rather than documenting it. The claim
-     * has already committed `status: RUNNING`, and RUNNING is outside the
-     * restatable set, so after this point no restate can match the row: the
-     * payload read here is the one the row will still hold when the handler
-     * sends it. A restate is therefore either taken (it landed first, and this
-     * read sees it) or refused and reported as `restated: 0` (it landed second),
-     * with nothing in between.
-     *
-     * Every queue type is re-read, not just the supplementary invoice, because
-     * "send what the row says now" is the correct rule for all of them and a
-     * type-specific carve-out would be a second answer to the same question.
-     * ROUTING still comes from the scan's `queueType`: the column and the
-     * payload key are written once at enqueue and never updated, so re-deriving
-     * dispatch from the fresh row could only ever agree - and pinning the two to
-     * the same value the claim guard was built from keeps that true by
-     * construction rather than by comment. A row that vanished between the claim
-     * and this read is impossible (the claim just updated it), but the fallback
-     * to the scanned payload keeps this a strictly-fresher read rather than a
-     * new way to fail.
+     * Both reads count only as a queued request for the row's own column
+     * (`readQueuedOutboxRequestFor`), so dispatch can never route on another
+     * queue type than the claim. #5228: the raw request read is kept as
+     * `claimedRequest`, the one a give-back puts back if the handler saved its
+     * execution request over it before a refusal (`returnOutboxRowToPending`).
      */
     const claimedOperation = await prisma.xeroSyncOperation.findUnique({
       where: { id: queuedOperation.id },
       select: { requestPayload: true },
     });
-    const claimedPayload = claimedOperation
-      ? readQueuedOutboxPayload(claimedOperation.requestPayload)
-      : null;
-    const payload =
-      claimedPayload && claimedPayload.queueType === queueType
-        ? claimedPayload
-        : readQueuedOutboxPayload(queuedOperation.requestPayload);
+    const claimedPayload = claimedOperation ? readQueuedOutboxRequestFor(queueType, claimedOperation.requestPayload) : null;
+    const scannedPayload = readQueuedOutboxRequestFor(queueType, queuedOperation.requestPayload);
+    const payload = claimedPayload ?? scannedPayload;
+    const claimedRequest = claimedPayload ? claimedOperation!.requestPayload : scannedPayload ? queuedOperation.requestPayload : null;
 
     // #3635 round 4 (review N3, `INV-INT-025`): a copy queued before an
     // officer resolved a sibling for the same document is stale - the
@@ -2519,26 +2468,26 @@ export async function processQueuedXeroOutboxOperations(options?: {
         result.skipped += 1;
         continue;
       }
-      if (isXeroAppliedCreditOperationBusyError(error)) {
+      const wait = xeroOutboxWaitOf(error);
+      if (wait) {
         // Two independent outbox runners can claim allocation and deallocation
         // for the same Payment before either handler observes the other. That
         // collision is transient: return this row to PENDING so the next scan
-        // serializes them, rather than stranding both rows as FAILED.
-        // #3791: the reason stays on the row, so a note waiting on a
-        // deallocation says what it is waiting for.
-        await prisma.xeroSyncOperation.updateMany({
+        // serializes them, rather than stranding both rows as FAILED. #3791: the
+        // reason stays on the row. #4988: a tax category Xero cannot carry yet waits the same way.
+        // #5228: with a request the next pass can claim, else it fails below.
+        const busy = await returnOutboxRowToPending({
+          operationId: queuedOperation.id,
           // #4356: never take back a repair's marked claim; #4373: nor any claim but this dispatch's (`INV-INT-029`).
-          where: { id: queuedOperation.id, ...ownRunningClaim(outcomeClaim), ...NOT_A_XERO_REPAIR_CLAIM },
-          data: {
-            status: "PENDING",
-            startedAt: null,
-            // #3954 round 8: a wait the scan spaces out names itself here.
-            lastErrorCode: error.waitCode,
-            lastErrorMessage: error.message,
-          },
+          where: { ...ownRunningClaim(outcomeClaim), ...NOT_A_XERO_REPAIR_CLAIM },
+          // #3954 round 8: a wait the scan spaces out names itself here.
+          data: { startedAt: null, lastErrorCode: wait.code, lastErrorMessage: wait.message },
+          request: { keep: true, fallback: claimedRequest },
         });
-        result.skipped += 1;
-        continue;
+        if (busy.outcome !== "unclaimable") {
+          result.skipped += 1;
+          continue;
+        }
       }
       if (isXeroCooldownRefusal(error)) {
         // Same shape, same reason (#2423 review F2). A process-global cooldown
@@ -2582,30 +2531,30 @@ export async function processQueuedXeroOutboxOperations(options?: {
         // BEFORE the subscription-charge error exposure below, so a genuinely
         // un-attempted operation leaves its charge exactly as the enqueue left it
         // (QUEUED / INVOICE_CREATED, errors cleared), which is the truth.
-        const returned = await prisma.xeroSyncOperation.updateMany({
+        //
+        // #5228: "the same queued work" means the queued request. The refund
+        // note, booking and group invoices (and others) saved their execution
+        // request over it before the refused call; left so, the next pass could
+        // not claim or send the row and skipped it for ever. The give-back keeps
+        // a request that is still a queued one for the row's queue type (a
+        // handler's checkpoint), else lays `claimedRequest` back over what the
+        // handler recorded, in the same guarded write; with neither, the row
+        // is not returned and fails below.
+        const returned = await returnOutboxRowToPending({
+          operationId: queuedOperation.id,
           where: {
-            id: queuedOperation.id,
             // #4373/#4687: RUNNING or self-failed FAILED only under this dispatch's own claim, never a later one's (`INV-INT-029`).
             AND: [{ status: { in: ["RUNNING", "FAILED"] }, startedAt: outcomeClaim.startedAt }],
             // Never revive a row an officer resolved (#3635, `INV-INT-025`), nor a repair's marked claim (#4356).
             manuallyResolvedAt: null,
             ...NOT_A_XERO_REPAIR_CLAIM,
           },
-          data: {
-            status: "PENDING",
-            startedAt: null,
-            completedAt: null,
-            lastErrorCode: null,
-            lastErrorMessage: null,
-          },
+          data: UNCLAIMED,
+          request: { keep: true, fallback: claimedRequest },
         });
-        if (returned.count > 0) {
+        if (returned.outcome === "pending") {
           logger.warn(
-            {
-              err: error,
-              queueOperationId: queuedOperation.id,
-              queueType: payload?.queueType ?? null,
-            },
+            { err: error, queueOperationId: queuedOperation.id, queueType, requestRestored: returned.requestWritten },
             "Returned un-attempted Xero outbox operation to PENDING: a Xero cooldown refused it before any call"
           );
           result.skipped += 1;
@@ -2621,17 +2570,14 @@ export async function processQueuedXeroOutboxOperations(options?: {
           continue;
         }
         // The row was not this claim's RUNNING or FAILED row (e.g. a concurrent
-        // worker moved it out from under us). Do NOT report a return-to-PENDING
-        // that did not happen — that false "skipped" is what let an incident
-        // summary tell an operator the queue would self-heal while invoices sat
-        // stuck. Fall through to the failure path: the row counts failed when the
-        // failure lands, and skipped when INV-INT-029 refuses it (#4673).
+        // worker moved it out from under us), or (#5228) it holds no request the
+        // next pass could claim. Do NOT report a return-to-PENDING that did not
+        // happen — that false "skipped" is what let an incident summary tell an
+        // operator the queue would self-heal while invoices sat stuck. Fall
+        // through to the failure path: the row counts failed when the failure
+        // lands, and skipped when INV-INT-029 refuses it (#4673).
         logger.warn(
-          {
-            err: error,
-            queueOperationId: queuedOperation.id,
-            queueType: payload?.queueType ?? null,
-          },
+          { err: error, queueOperationId: queuedOperation.id, queueType, giveBack: returned.outcome },
           "Xero cooldown refused an outbox operation but the row was not in a returnable state; failing it"
         );
       }

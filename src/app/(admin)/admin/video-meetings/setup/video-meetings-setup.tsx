@@ -35,6 +35,7 @@ import {
   ForbiddenSaveError,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
+import { ApiRefusalError, apiErrorMessageFromBody } from "@/lib/api-error-message";
 // `mirotalk-settings-shared`, never `mirotalk-config`: the latter is
 // `server-only`, and importing a VALUE from it here fails `pnpm run build` with
 // "'server-only' cannot be imported from a Client Component module". See that
@@ -56,6 +57,8 @@ import {
   type MirotalkSettingField,
   type MirotalkSettingsDraft,
 } from "@/lib/mirotalk-settings-shared";
+
+const SAVE_FALLBACK = "Could not save these settings.";
 
 /**
  * Video meetings (MiroTalk) setup — the club-editable half of the
@@ -212,7 +215,7 @@ export function VideoMeetingsSetup({
       if (res.status === 403) throw new ForbiddenSaveError();
       const data = await res.json().catch(() => null);
       if (!res.ok) {
-        throw new Error(data?.error ?? "Could not save these settings.");
+        throw new ApiRefusalError(apiErrorMessageFromBody(data, SAVE_FALLBACK));
       }
       const payload = data as SettingsPayload;
       setStatus(payload.status);
@@ -228,6 +231,7 @@ export function VideoMeetingsSetup({
       return payload.settings;
     },
     successMessage: "Video meeting settings saved.",
+    saveErrorFallback: SAVE_FALLBACK,
     // Both text fields are optional — empty means "use the environment" — so a
     // draft is invalid only when something was typed and is wrong.
     isValid: (draft) =>

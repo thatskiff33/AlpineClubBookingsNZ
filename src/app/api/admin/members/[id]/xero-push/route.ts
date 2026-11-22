@@ -1,7 +1,9 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
+import { invalidJsonBodyResponse } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
+import { TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { prisma } from "@/lib/prisma";
 import {
   createXeroContactForMember,
@@ -109,7 +111,7 @@ export async function POST(
       try {
         body = JSON.parse(rawBody);
       } catch {
-        return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+        return invalidJsonBodyResponse({ error: "Invalid JSON" });
       }
     }
 
@@ -350,6 +352,12 @@ export async function POST(
         status: 409,
       });
     }
+    const contended = transactionContendedResponse(
+      err,
+      "Member Xero push contended for the lock(1) budget",
+      { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, context: { memberId: id } },
+    );
+    if (contended) return contended;
     if (err instanceof XeroContactValidationError) {
       return NextResponse.json(
         {

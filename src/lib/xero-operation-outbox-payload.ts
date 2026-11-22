@@ -7,8 +7,10 @@ import {
   parseRefundMethod, readModificationNoteWording, readRefundNoteWording,
   type ModificationNoteWording, type RefundMethod, type RefundNoteWording,
 } from "@/lib/xero-refund-method";
+import { readKeptLateCaptureInvoicePayload, XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE, type QueuedKeptLateCaptureInvoiceOutboxPayload } from "@/lib/kept-late-capture-invoice-payload";
 import { readAdditionalCaptureReceiptPayload, XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE, type QueuedAdditionalCaptureReceiptOutboxPayload } from "@/lib/additional-capture-receipt-payload";
 export { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE }; // #3953: a change's card capture's own receipt
+export { XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE }; // #3635: a kept late capture's invoice (`xero-kept-late-capture-invoice.ts`)
 
 export const XERO_OUTBOX_ENTRANCE_FEE_TYPE = "ENTRANCE_FEE_INVOICE";
 export const XERO_OUTBOX_BOOKING_INVOICE_TYPE = "BOOKING_INVOICE";
@@ -27,10 +29,6 @@ export const XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE = "MEMBERSHIP_CANC
 export const XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE = "GROUP_SETTLEMENT_INVOICE";
 export const XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE = "GROUP_SETTLEMENT_INVOICE_VOID";
 export const XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE = "MEMBERSHIP_SUBSCRIPTION_INVOICE";
-// #3635: the invoice, paid from the Stripe account, that records a late card
-// capture on a cancelled booking a treasurer KEPT. Anchored on the #3639
-// approval task (`xero-kept-late-capture-invoice.ts`).
-export const XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE = "KEPT_LATE_CAPTURE_INVOICE";
 
 /** Pending-scan queue types (#1272). Later types are appended. REQUEUE, BACKFILL and inbound rows have none. */
 export const XERO_OUTBOX_QUEUE_TYPES = [
@@ -215,29 +213,6 @@ export function subscriptionInvoiceOutboxRow(chargeId: string) {
   } as const;
 }
 
-/**
- * #3635: the GROSS captured cents and the club day Stripe took them, frozen
- * when the treasurer kept them, so a retry sends the same receipt on the same
- * date (orchestrator decision 29 Sep 2026). `paymentIntentId` names the
- * capture whose refunds the refund note answers.
- */
-interface QueuedKeptLateCaptureInvoiceOutboxPayload {
-  queueType: typeof XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE;
-  bookingId: string;
-  manualRefundTaskId: string;
-  paymentIntentId: string;
-  capturedCents: number;
-  /** `YYYY-MM-DD`, the club's calendar day of the capture. */
-  capturedOn: string;
-  /**
-   * #3635 round-3 R2: set once `capturedOn` was read from the Stripe charge
-   * (`readStripeCaptureDocumentDate`) and stored before the Xero call, so a
-   * retry never reads it again or drifts. Absent, `capturedOn` is the task's
-   * raise day, the enqueue's estimate.
-   */
-  capturedOnFromStripe?: boolean;
-}
-
 export type QueuedOutboxPayload =
   | OrganiserExtraAdjustmentPayload
   | QueuedEntranceFeeOutboxPayload
@@ -299,6 +274,26 @@ export function readQueueType(value: unknown): string | null {
   }
 
   return readString(payload.queueType);
+}
+
+/**
+ * THE REQUEST A PENDING OUTBOX ROW MUST HOLD (#5228, `INV-INT-025`): a queued
+ * request the outbox can read, naming the row's own `queueType` column. The
+ * column never changes after enqueue, so the outbox builds its claim from it;
+ * this says whether the stored request can then be sent under that claim.
+ * Null for anything else - a handler's execution request (`invoices`,
+ * `creditNotes`, no `queueType`), a request for another queue type, one too
+ * incomplete to read, or a row with no outbox queue type. Every writer that
+ * puts an outbound row with a queue type back on PENDING checks the request it
+ * leaves there with this one reading (`docs/xero/ARCHITECTURE.md`).
+ */
+export function readQueuedOutboxRequestFor(
+  queueType: string | null,
+  requestPayload: unknown,
+): QueuedOutboxPayload | null {
+  if (!queueType || !(XERO_OUTBOX_QUEUE_TYPES as readonly string[]).includes(queueType)) return null;
+  const payload = readQueuedOutboxPayload(requestPayload);
+  return payload?.queueType === queueType ? payload : null;
 }
 
 export function readQueuedOutboxPayload(
@@ -521,34 +516,7 @@ export function readQueuedOutboxPayload(
   if (queueType === XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE) return readAdditionalCaptureReceiptPayload(value);
   if (queueType === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE) return readCardRefundReversalInvoicePayload(value);
 
-  if (queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE) {
-    const bookingId = readString(payload.bookingId);
-    const manualRefundTaskId = readString(payload.manualRefundTaskId);
-    const paymentIntentId = readString(payload.paymentIntentId);
-    const capturedCents = readNumber(payload.capturedCents);
-    const capturedOn = readString(payload.capturedOn);
-    if (
-      !bookingId ||
-      !manualRefundTaskId ||
-      !paymentIntentId ||
-      capturedCents === null ||
-      !Number.isInteger(capturedCents) ||
-      capturedCents <= 0 ||
-      !capturedOn ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(capturedOn)
-    ) {
-      return null;
-    }
-    return {
-      queueType,
-      bookingId,
-      manualRefundTaskId,
-      paymentIntentId,
-      capturedCents,
-      capturedOn,
-      ...(payload.capturedOnFromStripe === true ? { capturedOnFromStripe: true } : {}),
-    };
-  }
+  if (queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE) return readKeptLateCaptureInvoicePayload(value);
 
   if (queueType !== XERO_OUTBOX_ENTRANCE_FEE_TYPE) {
     return null;

@@ -1,6 +1,7 @@
 import type { AgeTier, MemberGuestConsentStatus } from "@prisma/client";
 import type { MinimumStayViolation } from "@/lib/booking-policies";
 import type { AggregatedPolicyExceptions } from "@/lib/booking-policy-exceptions";
+import type { MemberGuestConsentPreview } from "@/lib/member-guest-consent-preview";
 import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 
 /**
@@ -235,7 +236,7 @@ export interface NewGuest {
    * fake deadline ends up on screen. The server recomputes the family boundary
    * and is the only thing that decides what is persisted.
    */
-  memberGuestConsentPreview?: "PENDING" | "NOTIFY_ONLY" | "ADMIN_ASSIGNED";
+  memberGuestConsentPreview?: MemberGuestConsentPreview;
 }
 
 // Server-computed partner-sharer quick-add candidate (#1746): a confirmed
@@ -265,6 +266,15 @@ export interface SettlementOptions {
   returnsToOrganiser: boolean;
   /** #3949: by bank transfer, the organiser having paid by Internet Banking; else to their card. */
   organiserRefundByBankTransfer: boolean;
+  /**
+   * #5303: the member's own refund is a bank transfer the treasurer sends (an
+   * Internet Banking payment, or a card payment Stripe holds no record of), not
+   * a refund to the card. Optional only because an older server omits it
+   * during a blue-green cutover; absent reads as the card, as it did before.
+   */
+  refundByBankTransfer?: boolean;
+  /** #5061 follow-up (`INV-PAY-154`): the card payment is disputed, so the treasurer hands the reduction back; no choice. */
+  refundHeldForDispute: boolean;
 }
 
 export interface QuoteResult {

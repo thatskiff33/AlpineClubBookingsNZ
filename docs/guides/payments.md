@@ -189,8 +189,49 @@ member is told the club will arrange their refund.
 2. Click **Mark paid back** on the task. Only do this once the money has
    actually gone — that click is what records the refund in the payment ledger
    and on the booking's history.
-3. If the member declined the refund, or it was settled another way, click
-   **Dismiss** and say which. A note is required.
+3. **For now these tasks cannot be dismissed** (#4516, owner decision 14 Nov
+   2026). The card shows "This refund can't be dismissed yet" where the
+   **Dismiss** button was, and the app refuses a dismissal. If the member
+   declined the refund, or it was settled another way, leave the task open:
+   a later update adds a dismissal that asks why and records each answer
+   exactly. This applies to every hand-back the club pays by bank transfer or
+   in cash: a cash cancellation's, a booking change's, an approved appeal's,
+   and the bank-transfer part of a card refund shortfall. A card refund
+   shortfall's part to check can still be dismissed, once you have confirmed
+   the card refund reached the member (owner decision, 15 Nov 2026; see below).
+   So can the hand-back a cancellation or a booking change raises when the
+   cardholder is disputing the card payment (owner decisions, 15 and 18 Nov
+   2026), once Stripe records the dispute as lost for at least the refund due:
+   the cardholder already has the money back through their bank, so dismiss it
+   with a note. Lost money is counted once across all the refunds on that card
+   payment, oldest refund first: a $100 loss on a payment with a $100 refund
+   from a booking change and a later $200 refund from its cancellation lets you
+   dismiss the $100 one and leaves the $200 one owed in full, never both. A
+   refund the loss does not reach says so, and is paid as usual. While the dispute is open, if the club won it, or
+   if it was lost for less than the refund, the app refuses Dismiss and says
+   why: the club may still owe that refund. For a dispute lost for part of the
+   refund, use **Reduce by lost dispute** instead (owner decision, 15 Nov 2026):
+   the confirmation shows what the refund was, what it is reduced by and what
+   is still owed, and the task stays open for the rest, which you then pay and
+   mark paid back as usual. Each further dispute lost on the same payment can
+   reduce it again; once the lost disputes cover all of it, dismiss it. The app
+   refuses **Mark paid back** at the full amount while a lost dispute has not
+   yet reduced the refund (it would pay the lost part twice), including while
+   another dispute on the same payment is still open (wait for that one first),
+   and refuses it altogether once the lost disputes cover all of it. If you paid
+   the member by bank while the dispute was open and it was then lost, they have
+   had that money twice and the app cannot record your payment: take it to the
+   treasurer. In rare cases Stripe turns a
+   lost dispute into a "late win" and returns the money to the club; the app
+   sends Finance a "Lost card payment dispute now won" alert but does not yet
+   reopen the task itself (#5197 will), so reopen the dismissed task (the
+   recently dismissed list offers it for 30 days; after that, take it to the
+   treasurer) and pay the member. A booking change's refund dismissed for a
+   lost dispute after its booking was cancelled cannot be reopened in the app
+   yet: the treasurer handles it by hand until #5197 ships. A late win after a
+   reduction is the same limit: the reduction stays, so take the restored
+   amount to the treasurer.
+   A task dismissed before this change can still be reopened.
 
 **The same task for a booking change (#3827).** When a member or an officer
 changes a booking that was paid by internet banking or in cash, and the change
@@ -203,6 +244,28 @@ change itself, so marking the task paid back sends nothing further to Xero: in
 Xero, record the refund against that credit note. Each change raises at most
 one task. A card-paid booking is refunded to the card automatically and raises
 none.
+
+One kind of card payment is treated like a bank payment here (#5212): a booking
+recorded as paid by card that Stripe holds no record of, so there is nothing
+for a card refund to be made against. A change that lowers its price raises the
+same task and sends the same email, and no card refund is promised or tried.
+The edit screen's price summary offers that refund as **Refund by bank
+transfer**, as it does for an Internet Banking booking, never as a refund to
+the original card (#5303). So does the **Return method** choice when moving a
+linked booking, and the offer's own sentence about where the money goes; where
+that one choice covers a card booking and a bank-transfer booking, it names
+both.
+For now, **Mark paid back** is refused on most of these tasks, because the
+payment has no card charge on record for the refund to be recorded against.
+
+**Warning: an open task of this kind may already have been paid.** Because it
+cannot be closed, it still looks unpaid after someone has paid the member, and
+a second officer following "pay it and mark it paid back" above would pay the
+member twice. Before paying one, check Xero and the club's bank account for a
+refund already sent for that booking. After paying, record the refund in Xero
+against the change's credit note, tell the other finance officers (the
+booking, the amount and the date paid) and your club administrator, and leave
+the task open until #5290 lets you close it.
 
 While such a task is open, its amount counts as already promised back. A later
 change or a cancellation of the same booking refunds only what is left of the
@@ -246,8 +309,9 @@ included, any account credit already given for a bank transfer that
 arrived after the cancellation, and any card refund on the payment not yet
 made (being retried, or stopped and listed on
 [Stuck States](stuck-states.md#close-a-card-refund-stripe-gave-up-on)). Because an appeal is only ever
-made after the booking is cancelled, the cancellation never counted this task,
-and it can be dismissed (with a note) if the club settles it another way.
+made after the booking is cancelled, the cancellation never counted this task.
+Like every bank or cash hand-back, it cannot be dismissed for now (see step 3
+above).
 
 **On a joiner's booking the group organiser paid for by internet banking
 (#3949).** Both tasks above can be raised on such a booking: a joiner's change
@@ -293,8 +357,8 @@ charges a change fee (adding a guest included), and an approved appeal that
 would raise a new one, is refused too - the member's edit screen says so before
 they save; once the booking shows as cancelled, decide whether anything more is
 owed. The rules above are unchanged: once the organiser has
-cancelled the group, a change's task can only be marked paid back, while an
-appeal's can still be dismissed with a note. Tasks raised before this change,
+cancelled the group, a change's task can only be marked paid back. For now an
+appeal's cannot be dismissed either (see step 3 above). Tasks raised before this change,
 which could not be marked paid back at all, now can.
 
 **The same task for a group paid by internet banking (#4042).** When the
@@ -357,14 +421,16 @@ by the club", worked out the same way the cancel works them out.
 - **The part to check before paying** is anything beyond that: the payment's
   records show it already refunded, or nothing holds it. The member is told
   only that the club will be in touch. Check Stripe and the bank, then contact
-  the member with what you found. If they have had the money, dismiss it with
-  a note saying how. If it really is owed, mark it paid back first - after the
+  the member with what you found. Dismiss it, with a note saying how, only
+  once you have confirmed the card refund reached them. If it really is owed, mark it paid back first - after the
   bank-transfer part, which the app requires, since both are settled on the
   same money. The app first checks it can record it: pay it by bank transfer
   straight after it accepts. Where the payment's records show nothing left to
-  refund, the app refuses and says what to do instead: dismiss it with a note,
-  and if the member really is owed, pay them anyway and raise the refund credit
-  note in Xero by hand where the booking has a Xero invoice.
+  refund, the app refuses and says what to do instead: dismiss it once you have
+  confirmed the card refund reached the member, and if the member really is
+  owed, take it to the treasurer before paying anything, since the app cannot
+  record that payment. (The bank-transfer part's refusal says to leave it open,
+  because it cannot be dismissed yet.)
 
 **Neither part can be marked paid back until the card refund itself has gone
 through.** While Stripe is still making it, the app says to mark the part once
@@ -381,8 +447,9 @@ the charge, or nothing, the rest appears here as one part to check, and the
 officers are emailed once. The member's booking page says the club will be in
 touch about it; no email goes to the member about it. Check Stripe and the
 bank first, because the records may be wrong and the money may already have
-gone back. If it has, dismiss it with a note saying how, and the member's
-page then says the club checked it and closed it. If it really is owed, use
+gone back. Once you have confirmed the card refund reached the member, dismiss
+it with a note saying how, and the member's page then says the club checked it
+and closed it. If it really is owed, use
 **Mark paid back** first, once the card refund has gone through, and pay
 straight after the app accepts. The app first checks it can record it, only on
 that card charge:
@@ -391,8 +458,8 @@ that card charge:
   app has recorded (a refund made in the Stripe dashboard that has not reached
   the app yet), or Stripe cannot be reached, it refuses for now: try again in a
   few minutes, and do not pay until it accepts. If it keeps refusing, check the
-  charge in Stripe; if the member is owed, refund them by bank transfer and
-  dismiss the task with a note saying when and how much.
+  charge in Stripe; if the member is owed, take it to the treasurer before
+  paying anything: the app cannot record it.
 - Where the charge's records read more refunded than its card refunds on
   record, it corrects them itself first, and logs the correction in the audit
   log, but only for a charge made since the app has kept a record of each card
@@ -407,15 +474,16 @@ rest. If the app cannot tell that note apart from one for another charge on the
 payment, it refuses and says so, and its message then never asks for a note by
 hand. A booking with no Xero invoice to credit gets no
 note - usual here, since a payment that lost the race is rarely invoiced. If it
-refuses, it says why: pay the member anyway if they are owed, and dismiss the
-task with a note saying when and how much. Raise the refund credit note in Xero
-by hand only where it says to (the booking has an invoice and no note covers it
-yet).
+refuses, it says why: if the member is owed, take it to the treasurer before
+paying anything, because the app cannot record that payment. Raise the refund
+credit note in Xero by hand only where it says to (the booking has an invoice
+and no note covers it yet).
 
 If the card refund itself stopped retrying, close it as **Paid another way**
 on Stuck States once the member has had that money back, but do not then mark
 this part: that close is another refund task, so the app cannot record this
-one. Dismiss it with a note instead, as the app says.
+one. Take it to the treasurer, as the app says, or dismiss it once you have
+confirmed a card refund already reached the member for it.
 
 One gap the app cannot close: a refund made in the Stripe dashboard in the
 moments between **Mark paid back** and your bank transfer. When that refund
@@ -528,267 +596,24 @@ record, so do not wait for the email.
 
 ### Decide a booking change the system would not price
 
-**No new row of this kind appears any more.** Every booking change is now priced
-automatically when it is saved — see
+**There is nothing left to decide here: officer reviews were retired.** Every
+booking change is now priced automatically when it is saved — see
 [Bookings — How a booking change is priced](bookings.md#how-a-booking-change-is-priced).
-The rows still on this card were raised before that. Work them as described below
-until the club's clean-up has settled them; while one is open, a further price
-change to its booking is refused. **A row warned that a guest "was removed
-from the booking after this review was raised"** names a guest whose nights that
-change moved and who came off the booking since. The removal credited the
-guest's stored total, which a held change never altered: it still included the
-nights the change gave back, so settling could credit those nights again, and it
-never included the nights the change added, so settling could charge for nights
-the guest no longer holds. The warning says which applies. Check Xero and the
-booking before settling: the row may still hold money owed for another guest.
-The clean-up closes such a row with no money moved.
+Before that, a change the records could not price was saved with its money held
+as a review on this card, for an officer to settle by hand. The club's clean-up
+settled or closed every review that was still open, and the screens that priced
+them went with them: the settle box, its per-night price boxes, the
+**Record the adjustment** and **No adjustment** buttons, and the **Nights whose
+sold price the records cannot tell us** tool on a booking's **Admin tools** card.
 
-Before that, sometimes a member changed a booking — gave back a night, took a
-guest off — and the change itself was fine, but the club's records did not say clearly enough
-what those nights were sold for. Rather than work out a plausible-looking number
-that was never actually charged, the system **saved the booking change and held
-the money for you to decide**. No refund was made, no account credit was created,
-nothing was sent to Xero, and no amount was assumed.
-
-The member is told their change saved and that the club is working the amount
-out. They are not shown a figure, and they are not told anything about why.
-
-**One change, one row.** It did not always work that way. Because saving a change
-rewrites the night prices of *every* guest on the booking — whether or not the
-change touched them — the club used to get one row per guest: taking one guest off
-a seven-guest booking put seven rows in this card, six of them guests nobody
-touched and against whom no money could change hands. They all looked the same,
-and the only thing separating the one that mattered was a line reading
-**Nights given back:** with dates on it rather than **none**. A parked change now
-raises a single row, headed by the guest whose nights actually moved, with what
-was stored for every other guest the change touched shown underneath it as
-supporting detail. None of those figures is lost — they are on the one row instead
-of spread across several — and there is one adjustment to record, not one per
-guest.
-
-One exception: a change that moves **two or more** guests' nights still gets a
-row each, because a row carries one amount and two moved stays need two. Every
-row says in words whether the change moved that guest's nights or merely rewrote
-what was stored for them, so the row carrying the money is never the one you have
-to spot by squinting at a date list.
-
-The row appears in the same card, with **Awaiting pricing** where an amount would
-normally be, and carries the evidence recorded at the moment the change was made:
-
-- **why the amount could not be worked out** — in plain words, about the records
-  and never about the member;
-- **which nights were given back**, and any the same change added;
-- **the stored total for that guest**, and whatever per-night prices were on
-  file. "No stored price" and "$0.00" mean different things and are shown
-  differently: a $0.00 night was genuinely charged nothing, while "no stored
-  price" is the gap that raised the task in the first place;
-- **the booked stay**, so you can see which season's rates applied at the time;
-- **a link to the booking's own payment and rate history**, which is the live
-  record. That link appears if your admin role lets you open a booking, or if the
-  booking is your own; if neither, the booking identifier is printed instead, so
-  you can quote it to somebody who can open it.
-
-Work the amount out from that evidence and the booking's payment history, then:
-
-- if something is owed, record the confirmed adjustment. **Record the adjustment**
-  stays disabled until an amount has been confirmed, because closing one of these
-  with no figure is refused. If the club owes the member and the booking was not
-  paid by card, the club pays them back by hand, and the screen also asks **How
-  did the club pay the member back?**: **By bank transfer** or **In cash**. Your
-  answer only sets the wording on the Xero credit note ("Refunded in cash" for
-  cash), including when the booking has since been cancelled and the refund goes
-  to Xero as a refund note. The system never guesses cash from a payment being
-  marked paid by hand, and if you leave it blank the note says the money went
-  back by bank transfer;
-- if, on the evidence, nothing is owed, click **No adjustment**. That closes the
-  review as *looked at, nothing due* — it moves no money and records none as
-  having moved. A note is required, and it should say what the evidence showed.
-
-**A settlement of $0.00 is refused, and the screen says so rather than simply
-refusing to move.** "Settled at nothing" and "nothing to settle" are different
-statements, and once one is recorded as a zero nobody reading it later can tell
-which was meant — so the second one has its own button. If you have decided the
-answer really is nothing, use **No adjustment**.
-
-**If you close one by mistake, you can put it back.** A row closed with
-**No adjustment** appears for the next thirty days in a third card,
-**Closed with no adjustment, lately**, with the note that was written on it and
-one button: **Put back on the queue**. Putting it back makes it an open question
-again — it returns to the settle queue, the member is told again that the club is
-still working the change out, and further price changes to that booking are held
-until it is settled. Nothing is paid, charged or credited by pressing it, and the
-note saying why it was closed is kept. Say why you are putting it back; that note
-is required, and it is the record of the correction.
-
-**A row you have already settled is not on that card and cannot be put back.**
-The money has moved, by refund, credit or a charge to the member, and each of
-those can only happen once against a change — so re-opening it would mean pricing
-it a second time and being refused afterwards. If a settled amount turns out to be
-wrong, correct it on the booking rather than here. Rows the system closed itself —
-a late payment Stripe had already refunded — are not on that card either: they
-record money that has already gone back, so there is no decision to undo.
-
-Every amount, note and status change is written to the booking's audit log,
-including putting a row back — that entry keeps who closed it, when, and what
-they said, because the row itself stops carrying them once it is open again.
-
-#### Say what the unpriced nights sold for, so the booking stops coming back
-
-Some of these bookings have nights with **no stored price at all** — that is
-usually why the change could not be worked out. Such a booking used to come back
-to this queue every time it was changed; now that every change is priced
-automatically it no longer does, but a row that shows these boxes still needs
-them filled in to close.
-
-So when a row has nights like that, the settle box lists them and asks. It is on
-both buttons: **Record the adjustment** and **No adjustment**, because a change
-that turns out to owe nothing is one of the commonest ones to have this problem.
-
-- **Nothing is filled in for you.** Not from the amount you are settling, not
-  from an even share, not from today's rates. An amount nobody decided is exactly
-  what this queue exists to avoid, so there is no button that produces one.
-- **Fill in every night or none of them.** A half-answered set is not accepted —
-  the missing ones would have to be invented.
-- **The figures have to add up.** They must come to what that guest's stay is
-  stored as being worth, adjusted by whatever you are settling: less if the club
-  is paying the member back, more if the member is being asked for money. The box
-  tells you what they currently come to and what they need to come to; it does
-  not close the gap for you.
-- **$0.00 is a real answer for a night** that was genuinely free, and it is not
-  the same as leaving the box empty.
-- **You cannot leave them blank.** Where a row shows these boxes, the review
-  cannot be closed until they are filled in — whether you close it with **Record
-  the adjustment** or with **No adjustment**. That is because the booking's own
-  price is worked out again from its nights when the review closes, and a review
-  closed with the boxes blank leaves the booking's headline saying something its
-  guests no longer agree with — including, after a guest was taken off, still
-  counting that guest. Rows that show no boxes never ask you for figures and
-  close exactly as they always did — the booking's own price is still worked out
-  again when they close, from whatever its guests can be read as being worth.
-- **Do not change a night's price to make the arithmetic work.** The screen says
-  this in the sentence it shows when your figures do not add up. A figure typed
-  to close a gap is a price nobody decided, which is the one thing this whole
-  queue exists to prevent. If the amount you are settling is not simply what the
-  nights were worth — a change fee, or a refund reduced by policy — the figures
-  still have to be the honest night prices; the amount you are settling is
-  already accounted for separately.
-- **If a box will not take what you typed**, the sentence names the night. It
-  wants plain dollars and cents — `45.00` — with no dollar sign, no comma and no
-  minus.
-
-**Closing the review works the booking's own price out again.** While a booking
-is waiting for review its headline price is deliberately frozen, because nobody
-yet knows what the change was worth — so the figure at the top of the booking and
-the figures on its nights can be saying different things while you are looking at
-it. Closing the review ends that: the booking's price is worked out again from
-its guests and written back, on **No adjustment** exactly as on **Record the
-adjustment**. It is worked out from the guests, not from the amount you settled,
-so it can move by more or less than you just settled — for example when the
-change that parked the booking also took a guest off it. Any promotion on the
-booking is worked out again at the same time, against the new total, so a
-discount can never end up larger than the stay it is discounting. If somebody
-edits the booking while your settle box is open the save is refused and nothing
-is written, and you can reload and try again.
-
-**Three things follow from that, and you should know all three before you close
-a review.**
-
-- **The new price is the booking's price for everything afterwards** — including
-  what a later cancellation refunds. A member who paid $240, had a guest taken
-  off on a review you then closed with **No adjustment**, and who cancels later
-  under a full-refund policy, gets back $120 and not $240: the booking is worth
-  $120 now. The reason is written into the booking's own history as **Price
-  Recalculated**, with the figures before and after, so you can always show
-  somebody why.
-- **Closing with No adjustment does not change the club's invoice.** Nothing is
-  sent to Xero when you close a review that way, so if the booking had already
-  been invoiced, the invoice still says the old figure while the booking says the
-  new one. The booking's history says so in as many words, and the audit entry
-  for that closure is raised to **critical**. Check the invoice before you record
-  a bank payment against the new figure — otherwise you will mark the booking
-  paid for less than the club actually billed.
-- **Figures for months you have already reported can move.** Working the price
-  out again changes what the club counts as income for the nights involved, and
-  what the member's lifetime spend comes to. Where a stay crosses the end of a
-  month, a figure you have already reported for the earlier month may stop coming
-  out the same. This is deliberate — the new numbers are the truer ones — and it
-  is always traceable, because the audit entry keeps every figure from before.
-
-**If a guest's nights still cannot be read at all**, nothing is written: the
-booking's price is left exactly where the freeze put it rather than worked out
-from evidence the club does not have. That is on purpose — a total built from
-guests the system has just said it cannot value would look freshly calculated and
-be wrong, which is worse than a figure that is merely stale. The audit entry for
-the closure says the price was not worked out, and why. Nothing then puts the
-booking's own price right on its own: recording those nights from the booking
-afterwards makes the guest's stay readable again, but it does not move the
-booking's stored price. That happens the next time the whole booking is priced
-again — another review on the same booking being closed once its nights can be
-read, or a later change to the booking.
-
-Closing the review is a money-affecting act and is audited as one, in its own
-entry: what each night was set to, what the guest's stay was worth before and
-after, and every one of the booking's money figures before and after.
-
-**It settles that guest, not the whole booking.** A change to a booking raises
-one review for each guest whose nights could not be read, so a booking with two
-such guests gets two rows here. Filling in the boxes on one of them stops *that
-guest* sending the booking back; the other row is still waiting, and until it is
-dealt with the booking will keep returning. The message you get after settling
-says so.
-
-**Some rows will never show the boxes here**, and that is deliberate: these
-boxes fill in *blanks*, and some guests have no blanks to fill. A guest whose
-nights all carry a price but whose prices do not add up to what their stay is
-recorded as being worth has nothing blank; neither does a guest with no stored
-night prices at all, whose nights the system works out from their arrival and
-departure dates.
-
-**Those are recorded from the booking's own page instead** — see
-"[Recording what a guest's nights sold for](#recording-what-a-guests-nights-sold-for)"
-below. A guest with a negative or otherwise unusable stored figure for the stay
-as a whole is the one case neither surface can take: there is nothing sound for
-the night figures to add up to, and what should happen to those bookings has not
-been decided.
-
-### Recording what a guest's nights sold for
-
-Open the booking, find **Admin tools**, and look for **Nights whose sold price
-the records cannot tell us**. It lists each guest the club cannot price, says
-why, and shows what is on file for each of their nights.
-
-- **You give a figure for every night of that guest's stay** — all of them,
-  including any that already show an amount — and they have to come to what
-  that guest's stay is already stored as being worth. The total is shown, and the
-  running total under the boxes says what you have typed and what it needs to be.
-- **It cannot change what anybody owes.** Because the figures have to come to
-  the figure already on file, what the guest owes is exactly the same
-  afterwards. What changes is how that figure is made up, night by night — which
-  matters, because a later part-refund is worked out from those nights.
-- **One thing that does move: which month the income lands in.** If the stay
-  crosses the end of a month and you move an amount from a night in one month to
-  a night in the next, the club's income for those two months changes to match —
-  so a revenue figure you have already reported for the earlier month will no
-  longer come out the same. The booking's own total is untouched, and the audit
-  entry keeps what each night held before, so the change can always be traced.
-  Where it matters, say so in the note.
-- **Nothing is filled in for you**, here or anywhere in this feature. If the
-  figures will not add up honestly, do not adjust one to close the gap; a figure
-  typed to close a gap is a price nobody decided.
-- **One guest at a time.** A booking with two such guests needs each recorded.
-- **It is not offered while the booking has a review waiting** on this queue.
-  Settle that first — its boxes ask for the same figures, against a total that
-  also includes the amount being settled — and record anything still missing
-  afterwards.
-- **It is audited**, with the figures you gave, what each night held before, and
-  what the stay was worth before and after, which are the same number.
-
-You need **Finance — Edit** to use it; a finance viewer sees the section and
-every control disabled.
-
-**Why this existed.** Until every change was priced automatically, a change to
-such a booking had to be priced by hand. A booking no longer needs this to be
-changed or re-rated, and the tool is due to be removed.
+- **No review appears on this card any more**, and none can be put back on it.
+- **A review that was settled or closed is still on record.** Its amount, who
+  closed it, when and their note are in the booking's history and its audit log,
+  and any refund, credit or charge it made is in the booking's payments and in
+  Xero as before.
+- **If a page you had open still shows a review**, it is from before the change:
+  it has no buttons, and closing it is refused with a sentence saying the review
+  was retired. Reload the page.
 
 A booking with a review waiting also shows a **Money waiting for review** warning
 on its own page, under **Admin tools**, with a link back to this page.
@@ -1111,9 +936,8 @@ Payments is a read-only ledger (aside from Generate Invoice). Its controls:
 | Reset | Restore filters, sort, and page | rolling three-month Updated range through today | Disabled while the ledger is already at its defaults |
 | Generate Invoice | Create a Xero invoice for a succeeded payment | — | Needs finance **edit**; only for succeeded, non-Internet-Banking payments with no invoice. Never offered for a manually recorded cash payment — no invoice is expected for one |
 | Record / Reverse manual payment | Record a cash or off-Xero bank-transfer settlement on a booking, or undo one | — | On the booking page, not here. Needs finance **edit**. Never contacts Xero |
-| Mark paid back / Dismiss | Close a hand-back task for a cancelled cash booking, for a price cut on a booking paid by internet banking or cash, or for a group's organiser repaid by bank transfer | — | Needs finance **edit**. "Mark paid back" writes the refund into the ledger (a group organiser's refund is already there, so it records only that the money went); "Dismiss" needs a note, and a group organiser's repayment cannot be dismissed |
+| Mark paid back / Dismiss | Close a hand-back task for a cancelled cash booking, for a price cut on a booking paid by internet banking or cash (or by a card payment Stripe has no record of), or for a group's organiser repaid by bank transfer | — | Needs finance **edit**. "Mark paid back" writes the refund into the ledger (a group organiser's refund is already there, so it records only that the money went); "Dismiss" needs a note; a group organiser's repayment cannot be dismissed, and for now (#4516) neither can any hand-back paid by bank transfer or in cash, except a card refund shortfall's part to check and a disputed card payment's once its dispute is lost |
 | Refund to card / Close without refunding | Decide a card payment that went through after its booking was cancelled and was held for a treasurer's approval | — | Needs finance **edit**. "Refund to card" refunds the card through Stripe now; "Close without refunding" refunds nothing and needs a note. Only appears on a payment held for approval, which stays held if the club later switches back to automatic refunds |
-| Record the adjustment / No adjustment | Close a booking change the system would not price | — | Needs finance **edit**. "Record the adjustment" is disabled until an amount has been confirmed; "No adjustment" closes the review as looked-at with nothing due, moves no money, and needs a note |
 | Refunded automatically — nothing to pay back | Read-only record of a payment Stripe returned by itself, because the booking had already been cancelled — the booking's own payment or one for a change to it | last 30 days | No controls at all: the money has already gone back. Every such refund of the last 30 days is listed, grouped into bookings that were deleted (worth a look) and bookings still on file (normally nothing to do); the audit log holds anything older. A capture you had already paid back by hand is not refunded again and is not listed here — you are emailed instead |
 
 Page size is fixed at 25. **Net Collected** and **Refunded / Credited**
@@ -1196,9 +1020,48 @@ joiners', whose Net Collected already treats that money as refunded.
 | **Record manual payment** says there is a Xero invoice | The booking already has an invoice in Xero, or one is queued | Record the payment against that invoice in Xero instead — recording it here would leave the two systems permanently disagreeing |
 | An admin alert says a cash settlement and a Xero payment disagree | The member (or their employer) later paid the Xero invoice for a booking already recorded as paid in cash | Check whether the two are genuinely separate money. Reverse the manual record, or refund the duplicate — the system deliberately changed nothing |
 | **Reverse manual payment** is not offered | A refund, a card payment, an open task against **that payment**, or a Xero invoice has appeared since | Cancel the booking instead; a reversal can no longer be undone cleanly |
-| A row says **Awaiting pricing** instead of an amount | It is a booking change the system would not price. The amount is genuinely unknown, not zero | Work it out from the evidence on the row and the booking's payment history, then record it — or click **No adjustment** if nothing is owed |
-| A review row says its recorded evidence **cannot be read** | The evidence was written by a different version of the site | Decide the amount from the booking's own payment and rate history instead, and tell your club administrator — that evidence is the only record of what the change removed |
-| The evidence shows a booking identifier instead of a link | Your admin role covers finance but not bookings, and the booking is not your own | Quote the identifier to an admin who can open bookings, or ask for bookings view access |
+| An old review row still shows pricing or settlement controls | The page was loaded before officer edit reviews were retired | Reload the page. Reviews can no longer be settled or closed here; their recorded history remains on the booking and in the audit log |
+| A row shows a booking identifier instead of a link | Your admin role covers finance but not bookings, and the booking is not your own | Quote the identifier to an admin who can open bookings, or ask for bookings view access |
+
+### Find older edit refunds with no card recovery record
+
+Before #5212, a price reduction could record a card refund as owed even when
+the payment had no Stripe intent. The fix does not rewrite posted money.
+A database operator can use this read-only query to identify candidates for
+reconciliation; review the payment history before arranging any payment.
+
+```sql
+SELECT e."id" AS "eventId", e."eventKey", e."effectiveAt", m."bookingId"
+FROM "MemberMoneyEvent" e
+JOIN "MemberMoneyJournal" j ON j."eventId" = e."id"
+JOIN "BookingModification" m ON m."id" = split_part(e."eventKey", '|', 3)
+WHERE e."kind" = 'REFUND_OBLIGATION'
+  AND e."eventKey" LIKE 'refund-obligation|modification|%'
+  AND NOT EXISTS (
+    SELECT 1 FROM "MemberMoneyJournal" reversal
+    WHERE reversal."reversesJournalId" = j."id"
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM "PaymentRecoveryOperation" recovery
+    WHERE recovery."idempotencyKey" =
+      'payment_recovery_modification_refund_' || m."id"
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM "MemberMoneyRefundReservation" reservation
+    JOIN "MemberMoneyObligation" o ON o."id" = reservation."obligationId"
+    WHERE o."obligationKey" LIKE 'refund-obligation|modification|%'
+      AND split_part(o."obligationKey", '|', 3) = m."id"
+  )
+ORDER BY e."effectiveAt", e."id";
+```
+
+The key encoding is defined in `src/lib/member-money/internal/keys.ts`:
+the third pipe-separated part is the modification id. Hand-back obligations
+use a different scope and are excluded. So is an edit whose card refund was
+tried without a recovery record, as edits before #4992 were: the journal
+reserved that refund against a Stripe charge, which a payment with no Stripe
+record cannot have. These results identify missing recovery records, not proof
+that a member has never been paid another way.
 
 ## Related links
 

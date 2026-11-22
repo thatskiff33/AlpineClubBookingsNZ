@@ -73,6 +73,16 @@ cents; dates are NZ date-only.
    is on, a **Dietary/allergy information** column is imported too (any age,
    up to 500 characters; a longer value blocks the row). While it is off, or if
    your admin role lacks membership edit access, that column is ignored.
+4. Two optional columns save work when a club moves in
+   ([Moving in from your old system](moving-in.md)):
+   - **Membership Type** names one of the club's active types, ignoring
+     capitals and spaces. Each new member gets that type for the current
+     season, recorded as an import. An unknown or archived type blocks the row.
+     A member who already has a type keeps it, and a cancelled member gets none.
+   - **Family Key** is any code you choose. New members sharing a key become
+     one family group. A key shared by more than 10 rows blocks those rows.
+   The result shows how many family groups were made and types assigned, and
+   lists any member whose type could not be saved.
 
 ### Send login invites and password resets
 
@@ -85,7 +95,21 @@ cents; dates are NZ date-only.
 
 1. Select members (editors only) and use the bulk bar to **Deactivate**,
    **Reactivate**, **Change Access** (pick a new access role), or send login
-   emails to the selection. Confirm the dialog to apply.
+   emails to the selection. The dialog names the selected members (the first
+   ten, then "and N more") and says what the action does. Members stay ticked
+   across pages, searches and filters, and the dialog names them wherever they
+   were ticked.
+   - **Deactivate** sets each leaving date to today (an inactive member's
+     existing leaving date is kept), removes each member from their family
+     groups and clears future shared-room bed placements.
+   - **Reactivate** clears the leaving date. It restores neither the family
+     groups nor the placements that Deactivate removed.
+   - **Change Access** replaces every access role each member holds with the one
+     you pick. Choosing **Organisation** also sets each member's age tier to
+     N/A and can clear future shared-room bed placements; replacing Organisation
+     with another role can restore a person age tier.
+
+   Confirm the dialog to apply.
 2. **Set Membership Type** applies one seasonal membership type to the whole
    selection — handy at season start. Pick the type and season year, then
    **Preview**: the dialog aggregates how many members will change, how many
@@ -235,7 +259,7 @@ than with a screenshot:
 - **History & Activity** — bookings, Xero activity, and the audit log.
 - **Lifecycle & Deletion** — cancellation, archive (two-admin), hard-delete
   request (two-admin), and, for Full Admins, **Merge a duplicate** into this
-  record.
+  record and the **Subject access report**.
 
 ### Merge a duplicate
 
@@ -244,6 +268,14 @@ than with a screenshot:
    identity; the duplicate's history moves onto the master and the duplicate is
    deleted. You **Preview merge**, then type the exact server-issued confirmation
    phrase to execute — it cannot be undone.
+
+### Subject access report
+
+Full Admins answer a request for a copy of someone's personal information from
+a member's **Lifecycle & Deletion** section: this member, anyone by email, or a
+non-member guest picked from a name search. Each report asks you to confirm your
+sign-in and is audited. Who to check and what the file holds:
+[Answering an access request](../PRIVACY_RETENTION.md#answering-an-access-request).
 
 ## Settings reference
 
@@ -282,7 +314,7 @@ The list is a working roster; its controls:
 ## Related links
 
 - Back to the [documentation hub](../README.md).
-- Sibling guides: [Member Applications](member-applications.md),
+- Sibling guides: [Applications](member-applications.md),
   [Member Fields](member-fields.md), [Membership Types](membership-types.md),
   [Family Groups](family-groups.md), [Subscriptions](subscriptions.md),
   [Cancellation Requests](membership-cancellations.md),

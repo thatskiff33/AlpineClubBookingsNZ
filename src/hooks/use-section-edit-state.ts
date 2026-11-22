@@ -8,6 +8,13 @@ import {
   type RefObject,
 } from "react";
 import { ADMIN_FORBIDDEN_SAVE_REASON } from "@/components/admin/view-only-action";
+import {
+  ApiRefusalError,
+  apiErrorMessageFromBody,
+  readApiErrorBody,
+  refusalMessageOr,
+  wordedForbiddenRefusal,
+} from "@/lib/api-error-message";
 import { useEditorFocusReturn } from "@/hooks/use-editor-focus-return";
 import {
   captureFocusReturn,
@@ -62,6 +69,15 @@ import {
  * page, focus goes back to the control that started the save, and any failure
  * position the card takes for its error still wins.
  *
+ * What a failure SAYS is the section's choice, and it is made in one way only:
+ * the hook shows an `ApiRefusalError`'s message (the route's own sentence, or a
+ * sentence the section chose) and the section's `loadErrorFallback` /
+ * `saveErrorFallback` for anything else. A request that never got an answer
+ * rejects with the browser's own words — "Failed to fetch", Safari's "Load
+ * failed" — and a JSON parse or code error carries an engine message; none of
+ * those is a sentence for an officer, so a plain `Error` never reaches the
+ * screen (#4976, ALP-650).
+ *
  * The transport also stays in the caller's `save` callback, so idioms that are
  * genuinely per-card survive untouched: the security cards' GET-fresh-settings-
  * then-merge step (never clobber a module another card changed since page
@@ -79,7 +95,49 @@ import {
  */
 export class ForbiddenSaveError extends Error {}
 
-export interface UseSectionEditStateOptions<T extends object> {
+/**
+ * Read a refused save into the error a `save` callback throws, parsing the
+ * body once and never as text (ALP-749). A 403 keeps the route's own worded
+ * refusal ("Two-factor verification required") and otherwise — the bare word
+ * "Forbidden", or an HTML page from the proxy in front of the app — becomes a
+ * {@link ForbiddenSaveError}. Any other status throws the route's sentence, or
+ * `fallback` when the body carries none.
+ */
+export async function saveRefusalFromResponse(
+  response: Response,
+  fallback: string,
+): Promise<Error> {
+  const body = await readApiErrorBody(response);
+  if (response.status === 403) {
+    return wordedForbiddenRefusal(body) ?? new ForbiddenSaveError();
+  }
+  return new ApiRefusalError(apiErrorMessageFromBody(body, fallback));
+}
+
+/**
+ * A section with a `load` must word its failure; one without has none to word.
+ */
+type LoadOptions<T> =
+  | {
+      /**
+       * Fetch the persisted value. When provided it runs once on mount (and
+       * again via `reload`), and `loading` starts `true`. The `AbortSignal` is
+       * aborted on unmount; an `AbortError` is swallowed rather than surfaced
+       * as an error.
+       *
+       * NOTE: this runs on mount only. A section whose fetch is keyed on some
+       * other state (a lodge scope, say) must re-fetch through `reload` itself.
+       *
+       * Throw an `ApiRefusalError` for a sentence the officer should read;
+       * anything else shows `loadErrorFallback`.
+       */
+      load: (signal: AbortSignal) => Promise<T>;
+      /** Shown for a failed load that is not an `ApiRefusalError`. */
+      loadErrorFallback: string;
+    }
+  | { load?: undefined; loadErrorFallback?: undefined };
+
+export type UseSectionEditStateOptions<T extends object> = LoadOptions<T> & {
   /**
    * Seed value for props-seeded cards, and the value a card with a `load` falls
    * back to while (or after a failed) load. Omit it for cards that render
@@ -87,29 +145,23 @@ export interface UseSectionEditStateOptions<T extends object> {
    */
   initial?: T;
   /**
-   * Fetch the persisted value. When provided it runs once on mount (and again
-   * via `reload`), and `loading` starts `true`. The `AbortSignal` is aborted on
-   * unmount; an `AbortError` is swallowed rather than surfaced as an error.
-   *
-   * NOTE: this runs on mount only. A section whose fetch is keyed on some other
-   * state (a lodge scope, say) must re-fetch through `reload` itself.
-   */
-  load?: (signal: AbortSignal) => Promise<T>;
-  /**
    * Persist `draft` and return the AUTHORITATIVE value to re-seed both the
    * draft and the snapshot from — the parsed server response wherever the write
    * returns one. `saved` is the current snapshot, so a callback can skip an
    * endpoint whose slice of the draft did not change. Throw
-   * {@link ForbiddenSaveError} for a 403; throw any other `Error` to surface
-   * its message.
+   * {@link ForbiddenSaveError} for a 403 and an `ApiRefusalError` for a
+   * sentence the officer should read; anything else shows `saveErrorFallback`.
    */
   save: (draft: T, saved: T | null) => Promise<T>;
   /** Success message, or a function of the saved value when it is conditional. */
   successMessage: string | ((saved: T) => string);
-  /** Message for a non-`Error` throw from `save`. */
-  saveErrorFallback?: string;
-  /** Message for a non-`Error` throw from `load`. */
-  loadErrorFallback?: string;
+  /**
+   * Shown for a failed save that is not an `ApiRefusalError` or a 403. Required.
+   * The options are a union on `load`, so on a card with no `load` the compiler
+   * words a forgotten `saveErrorFallback` as a missing `load`; this is the
+   * property to add.
+   */
+  saveErrorFallback: string;
   /**
    * Override the dirty check. The default is a shallow comparison of the
    * draft's own keys, which is correct for flat scalar drafts; a draft holding
@@ -145,7 +197,7 @@ export interface UseSectionEditStateOptions<T extends object> {
    * their named card, as they did before. A new section omits it.
    */
   revealTarget?: RefObject<HTMLElement | null>;
-}
+};
 
 export interface SectionEditState<T extends object> {
   /** Live form value. `null` only before a `load`-only section has resolved. */
@@ -246,22 +298,18 @@ export function useSectionEditState<T extends object>(
   });
 
   const runLoad = useCallback(async (signal: AbortSignal) => {
-    const load = callbacks.current.load;
-    if (!load) return;
+    const options = callbacks.current;
+    if (options.load === undefined) return;
     setLoading(true);
     try {
-      const next = await load(signal);
+      const next = await options.load(signal);
       if (signal.aborted) return;
       setSaved(next);
       setDraftState(next);
       setEditing(false);
     } catch (loadError) {
       if (isAbortError(loadError) || signal.aborted) return;
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : (callbacks.current.loadErrorFallback ?? "Unknown error"),
-      );
+      setError(refusalMessageOr(loadError, options.loadErrorFallback));
     } finally {
       if (!signal.aborted) setLoading(false);
     }
@@ -344,9 +392,7 @@ export function useSectionEditState<T extends object>(
         setError(ADMIN_FORBIDDEN_SAVE_REASON);
       } else {
         setError(
-          saveError instanceof Error
-            ? saveError.message
-            : (callbacks.current.saveErrorFallback ?? "Unknown error"),
+          refusalMessageOr(saveError, callbacks.current.saveErrorFallback),
         );
       }
     } finally {

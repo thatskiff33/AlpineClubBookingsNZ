@@ -58,7 +58,9 @@ date-only lodge nights, interpreted in the club time zone.
 2. The charts show **Occupancy Rate**, **Booked Revenue by Day/Week/Month** (the
    granularity is chosen automatically from the range length), **Booking Trends
    (by week)**, **Member vs Non-Member Guests**, and **Booking Status
-   Breakdown**.
+   Breakdown**. The charts' date labels, and the revenue period column in the
+   CSV, are written in the club's date format
+   ([Club Currency & Locale](club-format.md)).
 
 ### Export
 
@@ -84,7 +86,7 @@ This page is read-only. Its controls:
 | Deleted | Include soft-deleted bookings | Hide deleted | Include deleted, or Deleted only |
 | Reset | Restore the date range and Deleted filter | start of the month three months prior through current month-end; Hide deleted | Keeps the selected lodge; disabled at defaults |
 | Update | Re-run the query | — | — |
-| CSV | Download the figures as CSV | — | Filename `tac-report-<date>.csv` |
+| CSV | Download the figures as CSV | — | Filename `<club>-report-<date>.csv`, from the club's short name |
 | Download PDF | Generate a printable PDF | — | Falls back to the browser print dialog on error; always rendered light-on-white regardless of your theme |
 
 Notes: **Booked Revenue** is the booking system's price allocated over lodge

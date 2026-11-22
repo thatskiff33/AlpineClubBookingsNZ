@@ -26,14 +26,14 @@ received it.
 
 There are two ways in:
 
-- **Guided setup wizard** (`/admin/backups/setup`) — the **Database Backups** card
+- **Guided setup wizard** (`/admin/backups/setup`) — the **Backup Setup** card
   on **Admin → Integrations** opens this. It walks first-time setup step by step
   (S3 credentials → destination → turn on nightly backups → a real verification
   run) with the same guided experience as Stripe, Xero and Google sign-in, and
   will not let you jump ahead until each step is done.
-- **Flat backups page** (`/admin/backups`, also under the **System** section of
-  the admin sidebar) — the post-setup editing surface: status, configuration,
-  credentials, and run history all on one page.
+- **Flat backups page** (`/admin/backups`, the **Database Backups** link under
+  **Monitoring & Support** in the admin sidebar) — the post-setup editing
+  surface: status, configuration, credentials, and run history all on one page.
 
 Since #2095 the backup configuration lives entirely in the app (encrypted in the
 `IntegrationCredential` store) — there are no more `BACKUP_*` environment
@@ -67,7 +67,7 @@ procedure](privacy-incidents.md) for containment, evidence and notification.
 
 ### First-time setup with the wizard (recommended)
 
-Open **Admin → Integrations → Database Backups** to start the guided wizard. It
+Open **Admin → Integrations → Backup Setup** to start the guided wizard. It
 has four steps and gates each one until it is satisfied:
 
 1. **S3 credentials** (Full Admin) — enter the S3 **access key ID** and **secret
@@ -99,7 +99,7 @@ ongoing configuration, credential rotation, and run history.
 The flat page exposes the same settings without the step gating, for edits after
 initial setup:
 
-1. Go to **Admin → Integrations → Database Backups**.
+1. Go to **Admin → Monitoring & Support → Database Backups**.
 2. In **AWS S3 Backup → Credentials (Full Admin only)**, enter the S3 **access
    key ID** and **secret access key**. These are write-only — once saved they are
    never shown again; leave a field blank to keep the current value.
@@ -117,8 +117,8 @@ initial setup:
 A local backup writes each dump to a directory on the machine running the app,
 as well as — or instead of — uploading it to S3.
 
-1. Go to **Admin → Integrations → Database Backups** and press **Edit** on the
-   **Local backup** panel.
+1. Go to **Admin → Monitoring & Support → Database Backups** and press **Edit**
+   on the **Local backup** panel.
 2. Tick **Enable local backups**.
 3. Check the **backup directory**. It is mandatory, and on a Docker deployment
    it is normally **already filled in** from `BACKUP_LOCAL_DIR` (see below) —
@@ -238,6 +238,7 @@ finishes or fails — so a restore is always traceable even if it dies part-way.
 | Local backups configured but the directory is empty after a deploy | The path is inside the container rather than on a mounted volume | Mount a host directory or named volume at that path |
 | "A backup is running. Wait for it to finish before restoring." | A backup and a restore cannot run at once | Wait for the run to finish, then retry |
 | "pg_dump is not installed on the server" (or psql / gunzip / aws) | The host is missing the PostgreSQL client tools or the AWS CLI | The app's Docker image installs both (`postgresql16-client`, `aws-cli`). A server or development machine running the app OUTSIDE that image needs them installed and on `PATH` — on Windows, install the PostgreSQL client tools and add their `bin` directory to `PATH`, or run the app through Docker |
+| "pg_dump 17… is newer than the PostgreSQL 16… server it was backing up" | The PostgreSQL client tools on the host are a newer major version than the database server, and their dump might not restore into it | Install the client tools of the server's major version. The app's Docker image already matches the bundled PostgreSQL 16 server; this happens only outside that image or against a different server |
 
 ## Related links
 

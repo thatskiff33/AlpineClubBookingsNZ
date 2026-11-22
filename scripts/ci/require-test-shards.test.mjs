@@ -4,6 +4,7 @@ import path from "node:path";
 import { BaseSequencer } from "vitest/node";
 
 import { parseWorkflowYaml } from "./check-workflow-suite-checkout-depth.mjs";
+import { escapeRegex } from "./escape-regex.mjs";
 import { parseArtifactWaitArgs } from "./wait-for-run-artifacts.mjs";
 import {
   EXPECTED_SHARD_COUNT,
@@ -11,7 +12,9 @@ import {
   classifyTestShardJobs,
   getAttemptJobs,
   parseShardGateArgs,
+  RUN_END_GRACE_MINUTES,
   requireTestShards,
+  shardGateWaitMs,
 } from "./require-test-shards.mjs";
 
 const root = path.resolve(import.meta.dirname, "..", "..");
@@ -26,6 +29,10 @@ function shard(index, status = "completed", conclusion = "success") {
 const passed = () => Array.from({ length: EXPECTED_SHARD_COUNT }, (_, i) => shard(i + 1));
 
 const GATE = "node scripts/ci/require-test-shards.mjs";
+// Any allowances will do where a test is not about the wait itself.
+const ALLOW = { maxQueueMinutes: 60, maxRunMinutes: 45 };
+// A clock past any wait from its second reading on: the gate's first timeout check fires.
+const expiredClock = () => { let ms = 0; return () => (ms += 1e9); };
 const splitArgs = (command) => command.match(/"[^"]*"|\S+/g).map((arg) => arg.replace(/^"|"$/g, ""));
 const verifyGateStep = () => workflow.jobs.verify.steps.find((step) => step.run?.startsWith(`${GATE} `) || step.run === GATE);
 
@@ -89,6 +96,7 @@ describe("required verify's independent test-shard gate", () => {
         if (calls === 2) return [shard(1, "in_progress", null), ...passed().slice(1)];
         return passed();
       },
+      ...ALLOW,
       sleep: async () => {},
     })).resolves.toBeUndefined();
     expect(calls).toBe(3);
@@ -100,13 +108,14 @@ describe("required verify's independent test-shard gate", () => {
       loadJobs: async () => passed().slice(0, -1),
       now: () => clock,
       sleep: async (ms) => { clock += ms; },
-      maxWaitMs: 20,
-      intervalMs: 10,
-    })).rejects.toThrow(/Timed out.*missing 4\/4/);
+      maxQueueMinutes: 1,
+      maxRunMinutes: 1,
+      intervalMs: 60_000,
+    })).rejects.toThrow(/Timed out after 1 minutes' runner queue \+ 1 minutes' job limit \+ 5 minutes' grace waiting for Test shard jobs: missing 4\/4/);
   });
 
   it("fails closed on an API/auth error without treating it as an empty successful run", async () => {
-    await expect(requireTestShards({ loadJobs: async () => { throw new Error("HTTP 403"); } }))
+    await expect(requireTestShards({ ...ALLOW, loadJobs: async () => { throw new Error("HTTP 403"); } }))
       .rejects.toThrow(/HTTP 403/);
   });
 });
@@ -125,7 +134,7 @@ describe("verify's typecheck, lint and build jobs (#4425)", () => {
 
   it("gates exactly these jobs, by the names GitHub reports them under", () => {
     const options = parseShardGateArgs(splitArgs(verifyGateStep().run.slice(GATE.length)));
-    expect(options.required.toSorted()).toEqual(SPLIT_JOBS.map(({ id }) => workflow.jobs[id].name).toSorted());
+    expect(options.required.toSorted()).toEqual([...SPLIT_JOBS.map(({ id }) => workflow.jobs[id].name), workflow.jobs["realdb-all"].name].toSorted());
   });
 
   it.each(SPLIT_JOBS)("$id has no needs/if/continue-on-error, verify's env, and runs `$command` unconditionally, not in verify", ({ id, command }) => {
@@ -220,15 +229,151 @@ describe("verify's typecheck, lint and build jobs (#4425)", () => {
     let calls = 0;
     await expect(requireTestShards({
       required: ["Lint"],
+      ...ALLOW,
       loadJobs: async () => (++calls === 1 ? [...passed(), lint("in_progress", null)] : [...passed(), lint("completed", "success")]),
       sleep: async () => {},
     })).resolves.toBeUndefined();
     expect(calls).toBe(2);
     await expect(requireTestShards({
       required: ["Lint"],
+      ...ALLOW,
       loadJobs: async () => [shard(1, "in_progress", null), lint("completed", "failure")],
       sleep: async () => { throw new Error("waited instead of failing"); },
     })).rejects.toThrow(/Required job "Lint" completed as failure/);
+  });
+});
+
+// #4907 (owner decision, 11 Nov 2026, option B): every real-PostgreSQL suite
+// reaches the merge gate through `verify`'s poll, by the job's display name.
+// `realdb-ci-coverage-census.test.ts` pins that name and the job's wiring.
+describe("verify's real-database gate (#4907)", () => {
+  const options = () => parseShardGateArgs(splitArgs(verifyGateStep().run.slice(GATE.length)));
+  const name = workflow.jobs["realdb-all"].name;
+  const realdb = (conclusion = "success", status = "completed") => ({ name, status, conclusion });
+  const otherJobs = () => [...passed(), ...["typecheck", "lint", "build"].map((id) => ({
+    name: workflow.jobs[id].name, status: "completed", conclusion: "success",
+  }))];
+
+  it("polls the real-database job by the name GitHub reports it under", () => {
+    expect(options().required).toContain(name);
+  });
+
+  it.each(["failure", "cancelled", "timed_out", "skipped", null])(
+    "fails verify at once when the real-database result is %s",
+    async (conclusion) => {
+      await expect(requireTestShards({
+        ...options(),
+        loadJobs: async () => [...otherJobs(), realdb(conclusion)],
+        sleep: async () => { throw new Error("waited instead of failing"); },
+      })).rejects.toThrow(new RegExp(`Required job "${escapeRegex(name)}" completed as`));
+    },
+  );
+
+  it("fails verify when this attempt has no real-database result", async () => {
+    await expect(requireTestShards({
+      ...options(), loadJobs: async () => otherJobs(), now: expiredClock(), sleep: async () => {},
+    })).rejects.toThrow(new RegExp(`Timed out.*missing "${escapeRegex(name)}"`));
+  });
+
+  it("cannot reuse a successful real-database result from an earlier attempt", async () => {
+    const urls = [];
+    await expect(requireTestShards({
+      ...options(),
+      now: expiredClock(),
+      sleep: async () => {},
+      loadJobs: () => getAttemptJobs({
+        apiUrl: "https://api.github.com",
+        repository: "club/repo",
+        runId: "123",
+        attempt: "2",
+        token: "test-token",
+        fetchImpl: async (url) => {
+          urls.push(url.pathname);
+          // A run-wide lookup can include the successful first attempt.
+          // Only the second attempt lacks the real-database result.
+          const jobs = url.pathname.includes("/attempts/2/")
+            ? otherJobs() : [...otherJobs(), realdb()];
+          return { ok: true, json: async () => ({ total_count: jobs.length, jobs }) };
+        },
+      }),
+    })).rejects.toThrow(new RegExp(`Timed out.*missing "${escapeRegex(name)}"`));
+    expect(urls).toEqual(["/repos/club/repo/actions/runs/123/attempts/2/jobs"]);
+  });
+
+  it("waits for the real-database job, then accepts its success", async () => {
+    let calls = 0;
+    await expect(requireTestShards({
+      ...options(),
+      loadJobs: async () => [...otherJobs(), ++calls === 1 ? realdb(null, "in_progress") : realdb()],
+      sleep: async () => {},
+    })).resolves.toBeUndefined();
+    expect(calls).toBe(2);
+  });
+});
+
+// #5222: `realdb-all` queued 37 minutes for a runner and ran 24 (PR #5176,
+// run 43902903981, 17 Nov 2026), past the old flat 45-minute wait, so
+// `verify` went red over a green run. The wait is now the runner-queue
+// allowance plus the longest limit among the awaited jobs, each pinned here
+// to the workflow, and `verify`'s own limit outlasts it.
+describe("verify's gate outwaits every job it awaits (#5222)", () => {
+  const options = () => parseShardGateArgs(splitArgs(verifyGateStep().run.slice(GATE.length)));
+  const awaited = () => ["test-shard", "typecheck", "lint", "build", "realdb-all"].map((id) => workflow.jobs[id]);
+  // The longest runner queue seen before an awaited job started.
+  const OBSERVED_QUEUE_MINUTES = 37;
+  // Checkout, install and `verify`'s own gates before it starts polling.
+  const PRE_GATE_MINUTES = 15;
+
+  it("awaits exactly the jobs whose limits it is pinned to", () => {
+    const names = awaited().map((job) => job.name);
+    expect(names[0]).toBe(`Test shard (${"${{ matrix.shard }}"}/${EXPECTED_SHARD_COUNT})`);
+    expect(options().required.toSorted()).toEqual(names.slice(1).toSorted());
+  });
+
+  it("allows the longest awaited job its whole limit after a queue longer than any seen", () => {
+    const limits = awaited().map((job) => Number(job["timeout-minutes"]));
+    expect(limits.every((minutes) => Number.isInteger(minutes) && minutes > 0), String(limits)).toBe(true);
+    expect(options().maxRunMinutes).toBe(Math.max(...limits));
+    expect(options().maxQueueMinutes).toBeGreaterThan(OBSERVED_QUEUE_MINUTES);
+  });
+
+  it("is outlasted by verify's own timeout, so the gate's error is the one reported", () => {
+    const waitMinutes = shardGateWaitMs(options()) / 60_000;
+    expect(waitMinutes).toBe(options().maxQueueMinutes + options().maxRunMinutes + RUN_END_GRACE_MINUTES);
+    expect(Number(workflow.jobs.verify["timeout-minutes"])).toBeGreaterThanOrEqual(PRE_GATE_MINUTES + waitMinutes);
+  });
+
+  it("passes when the real-database job queues 37 minutes and runs 24, as in run 43902903981", async () => {
+    const name = workflow.jobs["realdb-all"].name;
+    const others = [...passed(), ...["typecheck", "lint", "build"].map((id) => ({ name: workflow.jobs[id].name, status: "completed", conclusion: "success" }))];
+    let clock = 0;
+    const minutes = () => clock / 60_000;
+    await expect(requireTestShards({
+      ...options(),
+      now: () => clock,
+      sleep: async (ms) => { clock += ms; },
+      loadJobs: async () => {
+        if (minutes() < 37) return [...others, { name, status: "queued", conclusion: null }];
+        if (minutes() < 37 + 24) return [...others, { name, status: "in_progress", conclusion: null }];
+        return [...others, { name, status: "completed", conclusion: "success" }];
+      },
+    })).resolves.toBeUndefined();
+    expect(minutes()).toBeGreaterThanOrEqual(61);
+  });
+
+  it("still fails at once when a job fails late in a long wait", async () => {
+    const name = workflow.jobs["realdb-all"].name;
+    let clock = 0;
+    await expect(requireTestShards({
+      ...options(),
+      now: () => clock,
+      sleep: async (ms) => { clock += ms; },
+      loadJobs: async () => [...passed(), {
+        name, status: clock < 90 * 60_000 ? "in_progress" : "completed", conclusion: clock < 90 * 60_000 ? null : "cancelled",
+      }],
+      required: [name],
+    })).rejects.toThrow(/completed as cancelled/);
+    expect(clock).toBe(90 * 60_000);
   });
 });
 
@@ -263,13 +408,15 @@ describe("attempt-scoped GitHub jobs read", () => {
 });
 
 it("the CLI fails closed without a GitHub run identity", () => {
-  const result = spawnSync(process.execPath, [path.join(root, "scripts", "ci", "require-test-shards.mjs")], {
+  // #5222: with both allowances, so it fails on the identity, not on a missing flag.
+  const result = spawnSync(process.execPath, [path.join(root, "scripts", "ci", "require-test-shards.mjs"), "--max-queue-minutes", "1", "--max-run-minutes", "1"], {
     cwd: root,
     encoding: "utf8",
     env: { ...process.env, GITHUB_REPOSITORY: "", GITHUB_TOKEN: "" },
   });
   expect(result.status).toBe(1);
   expect(result.stderr).toContain('Shard gate for "Test shard" failed');
+  expect(result.stderr).toMatch(/failed: (Invalid GITHUB_|GITHUB_TOKEN is required)/);
 });
 
 // #4397: e2e.yml's required jobs reuse this gate for their own matrices.
@@ -277,8 +424,14 @@ describe("the gate for another matrix (--label/--count)", () => {
   const e2e = (index, status = "completed", conclusion = "success") => ({ name: `E2E shard (${index}/3)`, status, conclusion });
 
   it("parses its arguments, defaulting to the unit-test matrix, and refuses anything else", () => {
-    expect(parseShardGateArgs([])).toEqual({ label: "Test shard", count: EXPECTED_SHARD_COUNT, maxWaitMs: 45 * 60_000, upstream: [], from: 1, required: [] });
-    expect(parseShardGateArgs(["--label", "E2E shard", "--count", "3", "--max-wait-minutes", "55"])).toEqual({ label: "E2E shard", count: 3, maxWaitMs: 55 * 60_000, upstream: [], from: 1, required: [] });
+    const allow = ["--max-queue-minutes", "25", "--max-run-minutes", "45"];
+    expect(parseShardGateArgs(allow)).toEqual({ label: "Test shard", count: EXPECTED_SHARD_COUNT, maxQueueMinutes: 25, maxRunMinutes: 45, upstream: [], from: 1, required: [] });
+    expect(parseShardGateArgs(["--label", "E2E shard", "--count", "3", ...allow])).toEqual({ label: "E2E shard", count: 3, maxQueueMinutes: 25, maxRunMinutes: 45, upstream: [], from: 1, required: [] });
+    // #5222: no default wait. Each caller states its queue and run allowances.
+    expect(() => parseShardGateArgs([])).toThrow(/--max-queue-minutes is required/);
+    expect(() => parseShardGateArgs(["--max-queue-minutes", "25"])).toThrow(/--max-run-minutes is required/);
+    expect(() => parseShardGateArgs([...allow, "--max-run-minutes", "0"])).toThrow(/Invalid --max-run-minutes: 0/);
+    expect(() => parseShardGateArgs(["--max-wait-minutes", "75"])).toThrow(/Unknown argument/);
     expect(() => parseShardGateArgs(["--count", "0"])).toThrow(/Invalid --count/);
     expect(() => parseShardGateArgs(["--label", "x\"; rm"])).toThrow(/Invalid --label/);
     expect(() => parseShardGateArgs(["--label"])).toThrow(/needs a value/);
@@ -314,7 +467,7 @@ describe("the gate for another matrix (--label/--count)", () => {
     expect(() => classifyTestShardJobs([e2e(1), e2e(2), e2e(3)], 3, "E2E shard", [], 2)).toThrow(/run by the gate job itself/);
     expect(() => classifyTestShardJobs([], 3, "E2E shard", [], 4)).toThrow(/past --count/);
     expect(() => parseShardGateArgs(["--count", "3", "--from", "4"])).toThrow(/past --count/);
-    expect(parseShardGateArgs(["--upstream", "E2E app image", "--upstream", "E2E seeded database"]).upstream).toEqual(["E2E app image", "E2E seeded database"]);
+    expect(parseShardGateArgs(["--max-queue-minutes", "1", "--max-run-minutes", "1", "--upstream", "E2E app image", "--upstream", "E2E seeded database"]).upstream).toEqual(["E2E app image", "E2E seeded database"]);
   });
 
   it("names the matrix in a timeout", async () => {
@@ -325,9 +478,8 @@ describe("the gate for another matrix (--label/--count)", () => {
       label: "E2E shard",
       now: () => clock,
       sleep: async (ms) => { clock += ms; },
-      maxWaitMs: 30_000,
-      intervalMs: 15_000,
-    })).rejects.toThrow(/Timed out waiting for E2E shard jobs: missing 2\/3, missing 3\/3/);
+      ...ALLOW,
+    })).rejects.toThrow(/waiting for E2E shard jobs: missing 2\/3, missing 3\/3/);
   });
 });
 
@@ -445,8 +597,9 @@ describe("e2e.yml's required jobs, their shards and the run action", () => {
     const QUEUE_MINUTES = 25;
     const SETUP_MINUTES = 10;
     const OWN_SHARD_MINUTES = 30;
-    const gateMinutes = options.maxWaitMs / 60_000;
-    expect(gateMinutes).toBeGreaterThanOrEqual(Number(shards["timeout-minutes"]) + QUEUE_MINUTES);
+    expect(options.maxQueueMinutes).toBeGreaterThanOrEqual(QUEUE_MINUTES);
+    expect(options.maxRunMinutes).toBe(Number(shards["timeout-minutes"]));
+    const gateMinutes = shardGateWaitMs(options) / 60_000;
     const artifactWait = parseArtifactWaitArgs(action.runs.steps.find((step) => step.run?.startsWith("node scripts/ci/wait-for-run-artifacts.mjs")).run.replaceAll("${{ github.run_id }}", "1").replace("node scripts/ci/wait-for-run-artifacts.mjs", "").match(/"[^"]*"|\S+/g).map((arg) => arg.replace(/^"|"$/g, "")));
     const waitMinutes = artifactWait.maxWaitMs / 60_000;
     expect(waitMinutes).toBeGreaterThanOrEqual(Number(e2e.jobs["e2e-image"]["timeout-minutes"]));
@@ -509,11 +662,12 @@ describe("e2e.yml's required jobs, their shards and the run action", () => {
 
 // #5192: `ubuntu-latest` is a moving label. While GitHub rolled it from 24.04
 // to 26.04, the same commit got either image by chance, and on 26.04 the
-// runner's PostgreSQL 17 `pg_dump` broke the required roles proof against the
+// runner's newer `pg_dump` broke the required roles proof against the
 // PostgreSQL 16 service. Every job in every workflow names one pinned image;
-// moving to a newer one changes this constant and every workflow together.
+// moving to a newer one changes this constant and every workflow together
+// (#5193 made the move to 26.04).
 describe("every workflow job runs on the one pinned runner image (#5192)", () => {
-  const RUNNER_IMAGE = "ubuntu-24.04";
+  const RUNNER_IMAGE = "ubuntu-26.04";
 
   it("names the pinned image on every job, never a moving label", () => {
     const workflowsDir = path.join(root, ".github", "workflows");
@@ -529,5 +683,96 @@ describe("every workflow job runs on the one pinned runner image (#5192)", () =>
     }
     // Vacuity guard: the census read real workflows.
     expect(jobs.length).toBeGreaterThanOrEqual(30);
+  });
+});
+
+// #5362: CONTRIBUTING.md (Branch protection) carries the one human-readable
+// table of each gate's limits, and the workflows set the real numbers. This
+// reads both and fails when they part, so the table cannot drift. It reads the
+// files only; it changes no workflow.
+describe("the CONTRIBUTING.md gate-limits table matches the workflows (#5362)", () => {
+  const workflowsDir = path.join(root, ".github", "workflows");
+  const contributing = readFileSync(path.join(root, "CONTRIBUTING.md"), "utf8");
+  const HEADER = "| Gate | Runner queue | Longest job limit | Total wait | Gate job's limit |";
+
+  // The table's body rows, from the header to the first line that is not a row.
+  const tableRows = () => {
+    const lines = contributing.split(/\r?\n/);
+    // Runs of spaces collapsed, so re-padding the table's columns does not fail this.
+    const start = lines.findIndex((line) => line.replace(/ +/g, " ").trim() === HEADER);
+    expect(start, "the limits table's header row").toBeGreaterThan(-1);
+    const rows = [];
+    for (const line of lines.slice(start + 2)) {
+      if (!line.startsWith("|")) break;
+      const cells = line.split("|").slice(1, -1).map((cell) => cell.replace(/ +/g, " ").trim());
+      expect(cells, line).toHaveLength(5);
+      rows.push({ line, gate: cells[0].match(/^`([^`]+)`/)?.[1], cells });
+    }
+    return rows;
+  };
+
+  // Every gate step in every workflow, with the job it runs in.
+  const gateSteps = () => {
+    const found = [];
+    for (const file of readdirSync(workflowsDir).filter((name) => /\.ya?ml$/.test(name)).sort()) {
+      const parsed = parseWorkflowYaml(readFileSync(path.join(workflowsDir, file), "utf8"));
+      for (const [id, job] of Object.entries(parsed.jobs ?? {})) {
+        for (const step of job.steps ?? []) {
+          if (!step.run?.startsWith(`${GATE} `)) continue;
+          found.push({ where: `${file} → ${id}`, jobs: parsed.jobs, job, name: job.name ?? id, options: parseShardGateArgs(splitArgs(step.run.slice(GATE.length))) });
+        }
+      }
+    }
+    return found;
+  };
+
+  const leadingMinutes = (cell) => {
+    const match = cell.match(/^(\d+)(?:\s|$)/);
+    expect(match, `a cell that starts with its minutes: ${cell}`).not.toBeNull();
+    return Number(match[1]);
+  };
+
+  it("has one row per gate step in the workflows, and no other", () => {
+    const steps = gateSteps();
+    // Vacuity guard: both known gates were read.
+    expect(steps.length).toBeGreaterThanOrEqual(2);
+    expect(tableRows().map((row) => row.gate).toSorted()).toEqual(steps.map((step) => step.name).toSorted());
+  });
+
+  it("states each gate's queue and run flags, its total wait and its job's timeout-minutes", () => {
+    const rows = new Map(tableRows().map((row) => [row.gate, row]));
+    for (const step of gateSteps()) {
+      const row = rows.get(step.name);
+      expect(row, `a table row for ${step.where}`).toBeDefined();
+      const [, queue, longest, total, gateLimit] = row.cells;
+      expect(leadingMinutes(queue), `${step.where}: runner queue`).toBe(step.options.maxQueueMinutes);
+      expect(leadingMinutes(longest), `${step.where}: longest job limit`).toBe(step.options.maxRunMinutes);
+      expect(leadingMinutes(total), `${step.where}: total wait`).toBe(shardGateWaitMs(step.options) / 60_000);
+      expect(leadingMinutes(gateLimit), `${step.where}: gate job's limit`).toBe(Number(step.job["timeout-minutes"]));
+    }
+  });
+
+  it("names jobs in the longest-limit column whose timeout-minutes are the figures it gives", () => {
+    const jobsByName = (jobs) => Object.values(jobs).map((job) => ({ name: String(job.name ?? ""), minutes: Number(job["timeout-minutes"]) }));
+    const rows = new Map(tableRows().map((row) => [row.gate, row]));
+    let checked = 0;
+    for (const step of gateSteps()) {
+      const cell = rows.get(step.name).cells[2];
+      // `45 (`Test shard`; `Real-PostgreSQL suites (all)` is 35)`: the first name
+      // carries the leading figure, and any `<name>` is N carries its own.
+      const first = cell.match(/^\d+ \(`([^`]+)`/)?.[1];
+      expect(first, `${step.where}: the job the longest limit belongs to`).toBeDefined();
+      const owner = jobsByName(step.jobs).filter((job) => job.name.startsWith(first));
+      expect(owner, `${step.where}: one job named ${first}`).toHaveLength(1);
+      expect(owner[0].minutes, `${step.where}: ${first}`).toBe(leadingMinutes(cell));
+      checked += 1;
+      for (const [, name, minutes] of cell.matchAll(/`([^`]+)` is (\d+)/g)) {
+        const job = jobsByName(step.jobs).find((candidate) => candidate.name === name);
+        expect(job, `${step.where}: a job named ${name}`).toBeDefined();
+        expect(job.minutes, `${step.where}: ${name}`).toBe(Number(minutes));
+        checked += 1;
+      }
+    }
+    expect(checked).toBeGreaterThanOrEqual(3);
   });
 });

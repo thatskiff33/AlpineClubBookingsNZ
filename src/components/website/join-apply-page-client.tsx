@@ -28,6 +28,7 @@ import {
 } from "./join-apply-error-summary";
 import { JOIN_APPLY_INPUT_IDS, familyMemberInputId } from "./join-apply-input-ids";
 import { JoinApplyPhoneRow } from "./join-apply-phone-row";
+import { JoinApplySubmitted } from "./join-apply-submitted";
 
 type FamilyMemberForm = {
   id: string;
@@ -305,46 +306,12 @@ export function JoinApplyPageClient({
   }
 
   if (submitted) {
+    // The page keeps exactly one level-1 heading once the form is gone
+    // (INV-PUB-006). With `showHero` the hero's h1 went with the form, so the
+    // confirmation takes its place; without it the host page still shows its
+    // own h1 above, and the confirmation sits under it.
     return (
-      <section className="bg-brand-mist/40 py-12 sm:py-16">
-        <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
-          <Card className="border-brand-ridge/20 bg-card shadow-[0_22px_46px_-34px_rgba(47,47,43,0.38)]">
-            <CardHeader className="space-y-3 text-center">
-              <CardTitle className="font-heading text-3xl text-brand-charcoal">
-                Application submitted
-              </CardTitle>
-              <CardDescription className="text-base text-brand-deep/75">
-                Your details are in. We have asked both nominators to confirm
-                your nomination before the committee review step.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4 text-sm text-brand-deep/78">
-              <p>
-                Once both nominators approve, the application moves to the club
-                admin panel for committee consideration.
-              </p>
-              <p>
-                Nomination emails occasionally go missing. If a nominator has
-                not received theirs, ask them to check their spam folder first
-                — then contact the club and an administrator can send them a
-                fresh nomination link.
-              </p>
-              {warnings.length > 0 && (
-                <div className="rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-warning-11">
-                  {warnings.join(". ")}
-                </div>
-              )}
-              <p>
-                Existing members can return to{" "}
-                <Link className="underline underline-offset-4" href="/login">
-                  login
-                </Link>
-                . If you need to update the application, contact the club.
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-      </section>
+      <JoinApplySubmitted headingLevel={showHero ? 1 : 2} warnings={warnings} />
     );
   }
 
@@ -370,7 +337,7 @@ export function JoinApplyPageClient({
         <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
           <Card id="joinApplyForm" className="border-brand-ridge/20 bg-card shadow-[0_22px_46px_-34px_rgba(47,47,43,0.38)]">
             <CardHeader className="space-y-2">
-              <CardTitle className="font-heading text-3xl text-brand-charcoal">
+              <CardTitle headingLevel={2} className="font-heading text-3xl text-brand-charcoal">
                 Enter your details
               </CardTitle>
               <CardDescription className="text-base text-brand-deep/75">

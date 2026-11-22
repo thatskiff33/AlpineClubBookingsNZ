@@ -13,8 +13,8 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Client } from "pg";
-import { CLUB_TAX_SETTINGS_DEFAULTS, type ClubTaxSettings } from "@/lib/club-tax-settings";
-import { requireClubTimeZone, requireInstant } from "@/lib/club-time";
+import { CLUB_TAX_SETTINGS_DEFAULTS, type ClubTaxPeriod, type ClubTaxSchedule } from "@/lib/club-tax-settings";
+import { clubCalendarDateOf, requireClubTimeZone, requireInstant, type CalendarDate } from "@/lib/club-time";
 import { buildDatabaseRolesSql } from "@/lib/database-roles";
 import {
   resolveMemberMoneyPostingContext,
@@ -27,27 +27,43 @@ import type { MemberMoneyEventKey } from "@/lib/member-money/internal/keys";
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "../helpers/clock";
 import { CLUB_FORMAT_TEST } from "./club-format-fixture";
 import { assertSafeRaceDbUrl } from "./race-db-url";
+import { runEveryTeardownStep } from "./teardown-steps";
 
 export const MEMBER_MONEY_JOURNAL_MIGRATION = "prisma/migrations/20261127010000_member_money_journal/migration.sql";
 
-/** A context resolved as a door resolves it before its transaction, on the frozen test clock. */
+const TEST_ZONE = requireClubTimeZone("Pacific/Auckland");
+
+/** The frozen clock's club date: the tax anchor of every fixture booking charge unless a test names another (#4632). */
+export const MEMBER_MONEY_TEST_TAX_ANCHOR: CalendarDate = clubCalendarDateOf(requireInstant(FROZEN_TEST_CLOCK_BASE_ISO), TEST_ZONE);
+
+/**
+ * A context resolved as a door resolves it before its transaction, on the frozen
+ * test clock. `taxSettings` overrides the one baseline period; `taxSchedule`
+ * gives a whole schedule instead (#4632).
+ */
 export function memberMoneyTestContext(
-  overrides: { taxSettings?: Partial<ClubTaxSettings>; effectiveAt?: string } = {},
+  overrides: { taxSettings?: Partial<ClubTaxPeriod>; taxSchedule?: ClubTaxSchedule; effectiveAt?: string } = {},
 ): MemberMoneyPostingContext {
   return resolveMemberMoneyPostingContext({
     effectiveAt: requireInstant(overrides.effectiveAt ?? FROZEN_TEST_CLOCK_BASE_ISO),
-    zone: requireClubTimeZone("Pacific/Auckland"),
+    zone: TEST_ZONE,
     format: CLUB_FORMAT_TEST,
     policyVersion: "policy-test-1",
     codingVersion: "coding-test-1",
-    taxSettings: { ...CLUB_TAX_SETTINGS_DEFAULTS, ...overrides.taxSettings },
+    taxSchedule: overrides.taxSchedule ?? [{
+      ...CLUB_TAX_SETTINGS_DEFAULTS,
+      // An unregistered period names no Xero code (the schema's CHECK).
+      ...(overrides.taxSettings?.gstRegistered === false ? { xeroTaxType: null } : {}),
+      ...overrides.taxSettings,
+    }],
   });
 }
 
 /**
  * A booking charge as R01 posts one: Dr receivable for the total against a new
  * charge obligation, Cr booking revenue for each component at its gross (split
- * by the context's tax treatment into net revenue and GST).
+ * by the treatment in force on its tax anchor, the frozen clock's date unless
+ * given, into net revenue and GST).
  */
 export function bookingChargePlan(input: {
   eventKey: MemberMoneyEventKey;
@@ -58,6 +74,7 @@ export function bookingChargePlan(input: {
   booking?: { bookingId: string; lodgeId: string };
   source?: MemberMoneySource;
   additionalSources?: MemberMoneySource[];
+  taxAnchorDate?: CalendarDate;
 }): Extract<MemberMoneyPlan, { legs: unknown }> {
   const components = input.components ?? [{ chargeIdentity: `${input.eventKey}:nights`, grossCents: input.grossCents }];
   const obligationKey = `${input.eventKey}:obligation`;
@@ -77,7 +94,8 @@ export function bookingChargePlan(input: {
       },
       ...components.map(({ chargeIdentity, grossCents }) => ({
         type: "revenue" as const, account: "BOOKING_REVENUE" as const, side: "CREDIT" as const, grossCents,
-        booking: input.booking, chargeIdentity, source: revenueSource, evidence: { test: "nights" },
+        booking: input.booking, chargeIdentity, source: revenueSource,
+        taxAnchorDate: input.taxAnchorDate ?? MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: { test: "nights" },
       })),
     ],
   };
@@ -101,8 +119,20 @@ export interface MemberMoneyScratchDatabase {
   owner: Client;
   /** A URL for the scratch database as the INSERT/SELECT-only application role. */
   appUrl: string;
+  /**
+   * Ends the owner connection, drops the database and each role, and ends the
+   * admin connection, attempting every step even after one fails; it logs and
+   * then throws what it could not do (#5349).
+   */
   drop(): Promise<void>;
 }
+
+/**
+ * The hook timeout for a suite that creates and drops a member-money scratch
+ * database: `drop()` force-drops the database and then each role, which a loaded
+ * runner can stretch past vitest's 10-second hook default (#5283).
+ */
+export const MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS = 30_000;
 
 /**
  * A disposable database on the race server holding the journal migration, the
@@ -124,12 +154,12 @@ export async function createMemberMoneyScratchDatabase(
   ownerUrl.pathname = `/${name}`;
   const owner = new Client({ connectionString: ownerUrl.toString() });
   let connected = false;
-  const drop = async () => {
-    if (connected) await owner.end();
-    await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
-    for (const role of Object.values(roles)) await admin.query(`DROP ROLE IF EXISTS "${role}"`);
-    await admin.end();
-  };
+  const drop = () => runEveryTeardownStep(`member-money scratch ${name}`, [
+    { what: "end the owner connection", run: () => (connected ? owner.end() : undefined) },
+    { what: `drop database "${name}"`, run: () => admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`) },
+    ...Object.values(roles).map((role) => ({ what: `drop role "${role}"`, run: () => admin.query(`DROP ROLE IF EXISTS "${role}"`) })),
+    { what: "end the admin connection", run: () => admin.end() },
+  ]);
   try {
     await admin.query(`CREATE DATABASE "${name}"`);
     await owner.connect();
@@ -143,6 +173,10 @@ export async function createMemberMoneyScratchDatabase(
       CREATE TABLE "PaymentRefund" (id text PRIMARY KEY, "stripeRefundId" text UNIQUE, "stripePaymentIntentId" text, "paymentId" text REFERENCES "Payment"(id))`);
     await owner.query(readFileSync(MEMBER_MONEY_JOURNAL_MIGRATION, "utf8"));
     await owner.query(readFileSync("prisma/migrations/20261210080000_member_money_applications/migration.sql", "utf8"));
+    await owner.query(readFileSync("prisma/migrations/20261221030000_member_money_export_manifest/migration.sql", "utf8"));
+    await owner.query(readFileSync("prisma/migrations/20261222050000_member_money_export_supplementary/migration.sql", "utf8"));
+    await owner.query(readFileSync("prisma/migrations/20261223010000_member_money_refund_note_manifest/migration.sql", "utf8"));
+    await owner.query(readFileSync("prisma/migrations/20261223050000_member_money_capture_receipt_manifest/migration.sql", "utf8"));
     const statements = buildDatabaseRolesSql({
       databaseName: name,
       migrator: { roleName: roles.migrator, password: "m".repeat(28) },
@@ -158,8 +192,9 @@ export async function createMemberMoneyScratchDatabase(
       throw error;
     }
   } catch (error) {
-    // Nothing a half-built scratch database made may outlive the failure.
-    await drop();
+    // Nothing a half-built scratch database made may outlive the failure. A
+    // clean-up failure is logged by drop() and must not hide the set-up error.
+    await drop().catch(() => {});
     throw error;
   }
   const appUrl = new URL(ownerUrl);

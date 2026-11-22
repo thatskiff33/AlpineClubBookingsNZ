@@ -30,6 +30,7 @@ import {
 import logger from "@/lib/logger";
 import { journalRowsNamingDebtor } from "@/lib/member-money";
 import { prisma } from "@/lib/prisma";
+import { adminListPage, adminQueueCreatedOrder } from "@/lib/admin-list-page";
 import { retireInheritedEmailCopies } from "@/lib/member-email-inheritance";
 import {
   EMPTY_ORPHANED_FAMILY_LINKS,
@@ -729,12 +730,14 @@ export async function getAdminMemberLifecycleRequests({
           action,
           status,
         };
+  // INV-OPS-020: a pending archive or deletion queue reads oldest first.
+  const direction = adminQueueCreatedOrder(status === MemberLifecycleActionRequestStatus.REQUESTED);
 
   const [requests, total, pendingCount] = await Promise.all([
     prisma.memberLifecycleActionRequest.findMany({
       where,
       include: lifecycleActionRequestInclude,
-      orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
+      orderBy: [{ requestedAt: direction }, { id: direction }],
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
@@ -762,33 +765,8 @@ export async function getAdminMemberLifecycleRequests({
       ),
     ),
     pendingCount,
-    total,
-    page,
-    pageSize,
-    totalPages: Math.ceil(total / pageSize),
+    ...adminListPage({ page, pageSize, total }),
   };
-}
-
-/**
- * Back-compat wrapper: the membership-cancellations page and its tests call the
- * ARCHIVE list by this name. New callers should use
- * getAdminMemberLifecycleRequests with an explicit action.
- */
-export async function getAdminMemberArchiveLifecycleRequests({
-  status = MemberLifecycleActionRequestStatus.REQUESTED,
-  page = 1,
-  pageSize = 25,
-}: {
-  status?: AdminMemberLifecycleActionStatusFilter;
-  page?: number;
-  pageSize?: number;
-}) {
-  return getAdminMemberLifecycleRequests({
-    action: MemberLifecycleAction.ARCHIVE,
-    status,
-    page,
-    pageSize,
-  });
 }
 
 function assertEligibleForDelete(eligibility: MemberDeleteEligibility) {

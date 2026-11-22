@@ -9,6 +9,7 @@ import {
   useState,
   type RefObject,
 } from "react";
+import { DIALOG_SELECTOR } from "@/hooks/use-inert-outside-popup";
 import {
   captureFocusReturn,
   elementByMarker,
@@ -113,12 +114,42 @@ export interface EditorOpening {
   /** The controls that were ALREADY editable before it opened. */
   editableBefore: ReadonlySet<Element>;
   /**
+   * The open dialog the opening control sits in, when the section's own card is
+   * outside it ({@link openingDialog}): the card is then hidden behind the modal,
+   * and the editor the opening reveals is the one in the dialog. `null` for the
+   * ordinary section whose Edit sits in its own card.
+   */
+  dialog: HTMLElement | null;
+  /**
    * Where focus was when the opening ran, if that is where the admin opened
    * the editor from: `null` for the page, or the opening control itself. A
    * focus anywhere else — the admin moved on while a delayed opening awaited
    * a fetch — is recorded as `false`, and the reveal moves nothing.
    */
   openedFrom: HTMLElement | null | false;
+}
+
+/**
+ * The dialog an opening control sits in, when the section's card is a separate
+ * surface from it: neither around the control nor inside the dialog (#5183).
+ * The analytics card is the one section like it: its card on the integrations
+ * hub is a button, and Edit lives in the dialog the button opens, so the
+ * reveal has to act in the dialog. Found from the control the opening started
+ * on: the one carrying this opening's trigger marker, or else whatever holds
+ * focus (a mouse click in a browser that does not focus buttons leaves nothing
+ * focused, and the marker still leads to it).
+ */
+function openingDialog(
+  triggerId: string | undefined,
+  active: Element | null,
+  region: HTMLElement | null,
+): HTMLElement | null {
+  const opener =
+    elementByMarker(RETURN_FOCUS_TRIGGER_ATTRIBUTE, triggerId) ??
+    (isHTMLElement(active) && !isPageRoot(active) ? active : null);
+  const dialog = opener?.closest(DIALOG_SELECTOR);
+  if (!isHTMLElement(dialog)) return null;
+  return region?.contains(opener) || dialog.contains(region) ? null : dialog;
 }
 
 /**
@@ -141,7 +172,12 @@ export function captureEditorOpening(
   triggerId?: string,
 ): EditorOpening {
   if (typeof document === "undefined") {
-    return { regionId, editableBefore: new Set(), openedFrom: false };
+    return {
+      regionId,
+      editableBefore: new Set(),
+      dialog: null,
+      openedFrom: false,
+    };
   }
   const region = elementByMarker(RETURN_FOCUS_REGION_ATTRIBUTE, regionId);
   const active = document.activeElement;
@@ -156,9 +192,11 @@ export function captureEditorOpening(
   ) {
     openedFrom = active;
   }
+  const dialog = openingDialog(triggerId, active, region);
   return {
     regionId,
-    editableBefore: new Set(editableControlsIn(region)),
+    editableBefore: new Set(editableControlsIn(dialog ?? region)),
+    dialog,
     openedFrom,
   };
 }
@@ -166,18 +204,23 @@ export function captureEditorOpening(
 /**
  * Whether the reveal may move focus now: the opening started where the admin
  * was, focus has not moved off it since (it is still there, or the render
- * dropped it to the page), and the section is not hidden behind a modal. A
- * section whose Edit lives in a dialog rendered outside it is `aria-hidden`
- * while the dialog is open; the dialog's own focus scope keeps control there.
+ * dropped it to the page), and `scope`, where the reveal would act, is not
+ * hidden behind a modal. A section whose Edit lives in a dialog rendered
+ * outside it is `aria-hidden` while the dialog is open, so the reveal acts in
+ * that dialog instead ({@link EditorOpening.dialog}). The dialog's own focus
+ * scope does not do it: a browser drops focus from a control that has become
+ * disabled, as Edit does when the editor's Save takes its place, and Radix's
+ * focus scope notices only a removed node, so focus would be left on the page
+ * behind the modal (#5183).
  */
 // test seam
 export function mayRevealOpenedEditor(
   opening: EditorOpening | null,
-  region: HTMLElement | null,
+  scope: HTMLElement | null,
 ): boolean {
   if (!opening || opening.openedFrom === false) return false;
   if (typeof document === "undefined") return false;
-  if (region?.closest('[aria-hidden="true"], [inert]')) return false;
+  if (scope?.closest('[aria-hidden="true"], [inert]')) return false;
   const active = document.activeElement;
   return isPageRoot(active) || active === opening.openedFrom;
 }
@@ -188,6 +231,12 @@ export function mayRevealOpenedEditor(
  * order; when it made none (an editor with no form fields, or one rendered
  * outside the section), focus the section itself, the region its title names.
  * The first candidate that actually TAKES focus wins.
+ *
+ * An Edit that sits in a dialog outside the section's card (the analytics
+ * card's) reveals inside that dialog instead, and a dialog editor that made no
+ * control editable leaves focus to the dialog: the card behind the modal is
+ * never a fallback. If that dialog has closed by the time the editor renders,
+ * nothing is revealed (#5183).
  *
  * The scroll is `block: "nearest"`, unlike `revealEditor`'s `"start"`: the
  * admin pressed Edit (or Add, or a row's Edit) inside this section, so it is
@@ -200,12 +249,17 @@ export function mayRevealOpenedEditor(
 export function revealOpenedEditor(opening: EditorOpening | null) {
   if (!opening || typeof document === "undefined") return;
   const region = elementByMarker(RETURN_FOCUS_REGION_ATTRIBUTE, opening.regionId);
-  if (!region || !mayRevealOpenedEditor(opening, region)) return;
-  for (const control of editableControlsIn(region)) {
+  // The dialog stays the scope even if it has closed since: `editableBefore` was
+  // taken from its controls, so the region cannot stand in for it (a control that
+  // was already editable there would read as newly opened). A closed dialog has
+  // no connected control to focus, so nothing is revealed.
+  const scope = opening.dialog ?? region;
+  if (!scope || !mayRevealOpenedEditor(opening, scope)) return;
+  for (const control of editableControlsIn(scope)) {
     if (opening.editableBefore.has(control)) continue;
     if (focusAndKeepInView(control)) return;
   }
-  focusAndKeepInView(region);
+  if (!opening.dialog) focusAndKeepInView(region);
 }
 
 /**
@@ -216,11 +270,12 @@ export function revealOpenedEditor(opening: EditorOpening | null) {
  *  - `capture(key)` from the action that opens the editor. It records where to
  *    return to and, once the editor has rendered, REVEALS it (#4115): focus
  *    goes to the first control the opening made editable, or to the section
- *    (`revealOpenedEditor`). `revealTarget` replaces that with a
- *    `revealEditor` of the given element; it exists for the two sections
- *    whose card reveal predates #4115, and a new section omits it. Neither
- *    moves focus the admin has moved elsewhere, nor into a section hidden
- *    behind a modal (`mayRevealOpenedEditor`);
+ *    (`revealOpenedEditor`), or, for an Edit in a dialog outside the section's
+ *    card, to the first control editable in that dialog. `revealTarget`
+ *    replaces that with a `revealEditor` of the given element; it exists for
+ *    the two sections whose card reveal predates #4115, and a new section
+ *    omits it. Neither moves focus the admin has moved elsewhere, nor into a
+ *    section hidden behind a modal (`mayRevealOpenedEditor`);
  *  - `close()` from every user action that closes it (Cancel, a successful
  *    save, a save conflict that closes the stale editor) — never from a scope
  *    change or a background refresh, which are not the admin leaving it;

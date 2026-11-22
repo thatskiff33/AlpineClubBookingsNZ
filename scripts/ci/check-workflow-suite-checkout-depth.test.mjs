@@ -451,7 +451,7 @@ describe("this repository", () => {
     // #3431 moved CI's full suite to Vitest's four-file shards. The canary is
     // now the one unsharded run; require-test-shards.test.mjs pins the matrix
     // checkout depth and partition, so neither path can quietly lose coverage.
-    // The advisory realdb-all job (#4458) is the second: it passes its file list
+    // The realdb-all job (#4458) is the second: it passes its file list
     // as a shell array the gate cannot read, so the gate counts it as a whole
     // suite and holds it to fetch-depth: 0, which it has. The money-coverage
     // workflow's shards (#4459) are the third: they run the suite under
@@ -471,11 +471,25 @@ describe("this repository", () => {
       env: {
         BUDGET_BASE:
           "${{ (github.event_name == 'push' && github.event.created == false && " +
-          "!startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || " +
+          "!startsWith(github.ref, 'refs/heads/epic/')) && (steps.main-push-base.outputs.sha || github.event.before) || " +
           "'origin/main' }}",
+        BUDGET_UPSTREAM_REPO: "${{ vars.QUALITY_BUDGET_UPSTREAM_REPO }}",
       },
-      run: 'pnpm run quality:budget --base "$BUDGET_BASE"',
+      run: "node scripts/ci/run-budget-gate.mjs",
     });
+  });
+
+  it("runs that gate on pushes to main as well as on pull requests (#5196)", () => {
+    const workflow = readFileSync(
+      path.join(REPO_ROOT, ".github", "workflows", "ci.yml"),
+      "utf8",
+    );
+    const parsed = parseWorkflowYaml(workflow);
+    const triggers = parsed.on ?? parsed[true];
+    expect(triggers.push.branches).toContain("main");
+    expect(triggers.pull_request.branches).toContain("main");
+    expect(parsed.jobs.verify.if).toBeUndefined();
+    expect(parsed.jobs.verify.steps.at(-1).if).toBeUndefined();
   });
 
   it("sees ci.yml's sharded suite and the canary's unsharded suite", () => {

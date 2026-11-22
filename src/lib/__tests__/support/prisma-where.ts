@@ -24,7 +24,9 @@
  *   evaluated as the nested conditions on the same row;
  * - a Json column's `path` filter with `equals` (#3403): the value at that key
  *   path compared to a scalar, as PostgreSQL's `#>` then `=` does, so a
- *   missing key or a NULL column is NULL and matches nothing;
+ *   missing key or a NULL column is NULL and matches nothing; and (#5228)
+ *   `equals: Prisma.AnyNull`, Prisma's two-valued IS NULL at the path, true for
+ *   a missing key, a JSON null or a NULL column, and so safe under `NOT`;
  * - a condition of `undefined`, which Prisma drops and so does this.
  *
  * NULL is where a two-valued evaluator and PostgreSQL part company, and this
@@ -60,6 +62,8 @@
  * booking-evidence double — passes `relation` to look them up, and `column` to
  * check a filter key against its model spec rather than against the row.
  */
+
+import { Prisma } from "@prisma/client";
 
 /** A row as a fake store holds it: plain columns, plain nested relations. */
 export type WhereRow = Record<string, unknown>;
@@ -334,12 +338,14 @@ function matchesJsonPath(
   if (!Array.isArray(path) || path.length === 0 || !path.every((part) => typeof part === "string")) {
     unsupported(label, `Json path ${JSON.stringify(path)} on ${at}`);
   }
-  if (operand === null || (typeof operand === "object" && operand !== null)) {
-    unsupported(label, `Json path equals ${JSON.stringify(operand)} on ${at} (only a scalar is modelled)`);
-  }
   let value: unknown = actual;
   for (const part of path as string[]) {
     value = isPlainObject(value) ? value[part] : undefined;
+  }
+  // #5228: IS NULL at the path, as PostgreSQL answers it for Prisma.AnyNull - never unknown.
+  if (operand === Prisma.AnyNull) return value === undefined || value === null;
+  if (operand === null || (typeof operand === "object" && operand !== null)) {
+    unsupported(label, `Json path equals ${JSON.stringify(operand)} on ${at} (only a scalar or Prisma.AnyNull is modelled)`);
   }
   if (value === undefined || value === null) {
     if (negated) nullUnderNegation(label, "NOT", `${at}.${(path as string[]).join(".")}`);

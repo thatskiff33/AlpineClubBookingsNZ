@@ -9,7 +9,7 @@ import { logAudit } from "@/lib/audit";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { lockRosterDate } from "@/lib/roster-lock";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const rosterActionSchema = z.discriminatedUnion("action", [
   z.object({
@@ -44,14 +44,7 @@ async function handleGet(req: NextRequest, dateStr: string) {
     return NextResponse.json({ error }, { status: status! });
   }
 
-  if (!dateOnlyStringSchema.safeParse(dateStr).success) {
-    return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
-  }
-
   const date = parseDateOnly(dateStr);
-  if (isNaN(date.getTime())) {
-    return NextResponse.json({ error: "Invalid date" }, { status: 400 });
-  }
 
   let lodgeId: string;
   try {
@@ -129,20 +122,11 @@ export async function PUT(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (!dateOnlyStringSchema.safeParse(dateStr).success) {
-    return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
-  }
   const date = parseDateOnly(dateStr);
-  if (isNaN(date.getTime())) {
-    return NextResponse.json({ error: "Invalid date" }, { status: 400 });
-  }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = rosterActionSchema.safeParse(body);
   if (!parsed.success) {

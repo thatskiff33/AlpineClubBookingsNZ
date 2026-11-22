@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
+import { invalidJsonBodyResponse, parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -187,12 +188,11 @@ export async function PUT(request: NextRequest) {
     return guard.response;
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const parsedJson = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!parsedJson.ok) return parsedJson.response;
+  const body = parsedJson.body;
 
   const rawJson =
     body && typeof body === "object" && "rawJson" in body
@@ -262,7 +262,7 @@ export async function POST(request: NextRequest) {
     const text = await request.text();
     body = text ? JSON.parse(text) : null;
   } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    return invalidJsonBodyResponse({ error: "Invalid JSON" });
   }
 
   const isPreview = Boolean(
@@ -322,6 +322,15 @@ export async function POST(request: NextRequest) {
   }
 
   const storedConfig = coerceWhakapapaSourceConfig(existing?.config);
+  // A selector saved under an older selector engine can be one the current engine
+  // refuses (jsdom 31 does, for `:contains()`; #5183). Name the field, as save and
+  // preview do, instead of letting the scrape throw as a bare 500.
+  const storedSelectorError = invalidSelectorResponse(
+    storedConfig.selectorOverrides,
+  );
+  if (storedSelectorError) {
+    return storedSelectorError;
+  }
   const payload = await fetchWhakapapaCurlData({
     sourceUrl: storedConfig.sourceUrl,
     selectors: resolveWhakapapaSelectors(storedConfig.selectorOverrides),
@@ -366,12 +375,11 @@ export async function PATCH(request: NextRequest) {
     return guard.response;
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   // A `{ config }` body saves the source URL + selector overrides, which live in
   // the separate `config` column so an upstream refresh never wipes them.

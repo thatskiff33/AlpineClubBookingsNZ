@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { BookingRequestError, serializeBookingRequestForAdmin } from "@/lib/booking-request";
 import { BookingRequestQuoteError } from "@/lib/booking-request-quotes";
 import { prisma } from "@/lib/prisma";
 import { resolveAcceptedSchoolPendingAdults } from "@/lib/school-pending-adult-resolution";
 import { schoolTeacherSchema } from "@/lib/school-teacher-schema";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
 const inputSchema = z.object({
   expectedVersion: z.number().int().min(0),
@@ -20,12 +22,11 @@ export async function POST(
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const { id } = await params;
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = inputSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Enter the real names for the pending adults", details: parsed.error.flatten().fieldErrors }, { status: 422 });
@@ -48,6 +49,13 @@ export async function POST(
       version: resolved.version,
     });
   } catch (err) {
+    // `INV-LOCK-006`: the naming's one transaction rolled back.
+    const contended = transactionContendedResponse(
+      err,
+      "School pending-adult naming contended for the lock(1) budget",
+      { context: { requestId: id } },
+    );
+    if (contended) return contended;
     if (err instanceof BookingRequestError || err instanceof BookingRequestQuoteError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }

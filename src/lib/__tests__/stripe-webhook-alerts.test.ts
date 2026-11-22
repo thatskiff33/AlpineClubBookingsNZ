@@ -361,9 +361,14 @@ vi.mock("@/lib/xero-token-store", () => ({
 // #3635 (review F2): "was this capture ever recorded in Xero?" is asked of the
 // capture's own invoice rows. Here the only such row is a released change
 // invoice, which the supplementary double below answers.
-vi.mock("@/lib/late-capture-xero-receipt", () => ({
-  hasXeroReceiptForLateCapture: (paymentIntentId: string) =>
-    mockHasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent(paymentIntentId),
+// #4383: that invoice records the whole capture, so nothing caps its refunds.
+vi.mock("@/lib/late-capture-xero-receipt", async (importOriginal) => ({
+  lateCaptureNotableRefundCents: ((await importOriginal()) as typeof import("@/lib/late-capture-xero-receipt"))
+    .lateCaptureNotableRefundCents,
+  readLateCaptureXeroReceipt: async (paymentIntentId: string) =>
+    (await mockHasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent(paymentIntentId))
+      ? { kind: "recorded", invoiceId: null, recordedCents: 24000 }
+      : { kind: "none" },
   // #3635 round-3: no charge.refunded here is of a late capture unless a case says so.
   findLateCapturePaymentIntents: (...args: unknown[]) => mockFindLateCapturePaymentIntents(...args),
   findClosedLateCaptureRecords: (...args: unknown[]) => mockFindClosedLateCaptureRecordIntents(...args),
@@ -699,6 +704,65 @@ describe("Stripe webhook Xero alerting", () => {
         eventType: "payment_intent.succeeded",
         status: "success",
       })
+    );
+  });
+
+  // #772, #5398: the webhook is one of the two racing halves of the paid
+  // confirmation. A fresh "paid" settle sends it, once, with the booking's own
+  // figures; the "already_paid" and superseded cases below send nothing.
+  it("sends the paid confirmation exactly once on a fresh paid settle (#772)", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_paid_confirmation",
+      type: "payment_intent.succeeded",
+      data: {
+        object: {
+          id: "pi_primary",
+          amount: 5000,
+          metadata: { bookingId: "booking-1" },
+          payment_method: "pm_123",
+        },
+      },
+    } as any);
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({
+      id: "txn-1",
+      paymentId: "payment-1",
+      bookingId: "booking-1",
+      kind: "PRIMARY",
+      amountCents: 5000,
+      status: "PENDING",
+    });
+    const checkIn = new Date("2026-07-01");
+    const checkOut = new Date("2026-07-03");
+    mockBookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      lodgeId: "lodge-1",
+      status: "CONFIRMED",
+      checkIn,
+      checkOut,
+      finalPriceCents: 5000,
+      discountCents: 0,
+      guests: [{ id: "g1" }, { id: "g2" }],
+      member: { id: "member-1", firstName: "Alice", lastName: "Example", email: "alice@example.com" },
+      organisation: null,
+      promoRedemptions: [],
+      payment: { changeFeeCents: null },
+    });
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockSendBookingConfirmedEmail).toHaveBeenCalledTimes(1);
+    expect(mockSendBookingConfirmedEmail).toHaveBeenCalledWith(
+      { bookingId: "booking-1", recipientMemberId: "member-1" },
+      "alice@example.com",
+      "Alice",
+      checkIn,
+      checkOut,
+      2,
+      5000,
+      CLUB_FORMAT_TEST,
+      expect.objectContaining({ lodgeId: "lodge-1" }),
     );
   });
 

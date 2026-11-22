@@ -5,6 +5,7 @@ import * as Sentry from "@sentry/nextjs";
 import { getSessionForAuthDiagnostics } from "./auth";
 import { createAuditLog, type AuditSeverity } from "./audit";
 import { prisma } from "./prisma";
+import { clientIpFromHeaders } from "./rate-limit-http";
 import logger from "./logger";
 
 /**
@@ -172,20 +173,6 @@ function describeProbeError(error: unknown): string {
       ? `${error.name}: ${error.message}`
       : String(error);
   return text.replace(JWT_LIKE_PATTERN, "[REDACTED]").slice(0, 200);
-}
-
-// Mirrors getAuditRequestContext() in audit.ts, which takes a Request; the
-// layouts only have ReadonlyHeaders.
-function resolveClientIp(requestHeaders: Headers): string | null {
-  const forwarded = requestHeaders.get("x-forwarded-for");
-  const forwardedParts = forwarded
-    ?.split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-  return (
-    forwardedParts?.[forwardedParts.length - 1] ??
-    requestHeaders.get("x-real-ip")
-  );
 }
 
 function bounceSeverity(record: AuthBounceRecord): AuditSeverity {
@@ -437,7 +424,7 @@ export async function recordAuthBounce(input: {
       probeMismatch,
       probeError,
       suppressedSinceLastWrite: 0,
-      ipAddress: resolveClientIp(requestHeaders),
+      ipAddress: clientIpFromHeaders(requestHeaders),
       userAgent: requestHeaders.get("user-agent"),
     };
 

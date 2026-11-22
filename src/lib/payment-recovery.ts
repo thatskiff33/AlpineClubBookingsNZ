@@ -27,7 +27,6 @@ import {
   rearmEditFinancialReviewChargeRecovery,
 } from "@/lib/edit-financial-review-charge-recovery";
 import { clubFormatValues } from "@/lib/club-format-server";
-import { loadPersistedClubFormatSettings } from "@/lib/club-format-settings";
 import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
 import { prisma } from "@/lib/prisma";
 import { cancelPaymentIntentIfCancellableWithResult, getPaymentIntent, processRefund } from "@/lib/stripe";
@@ -67,11 +66,10 @@ import {
   planReissuedAskMint,
   resolveAskCustomerId,
 } from "@/lib/reissued-ask-mint";
-import { CARRIED_ASK_STRIPE_READ, carriedAskPaymentWait, findOwnRecoveryRow, isRecoveryReplaySettled, sizeRecoveryReplayAsk } from "@/lib/additional-ask-recovery-replay";
+import { CARRIED_ASK_STRIPE_READ, type CarriedAskChallengeSighting, carriedAskChallengeColumns, carriedAskPaymentWait, findOwnRecoveryRow, isRecoveryReplaySettled, sizeRecoveryReplayAsk, storedCarriedAskChallenge } from "@/lib/additional-ask-recovery-replay";
 import { mintOrdinaryAskIntent, refuseAdoptedIntentOnLedger } from "@/lib/ordinary-ask-mint";
 import { recoveryFailureAlertMessage, unretryableRecoveryCause } from "@/lib/recovery-unretryable-cause";
 import { ORDINARY_ASK_RECOVERY_REASON, planOrdinaryAskMint } from "@/lib/ordinary-ask-request";
-import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { closeCancellationRefundAfterReplay, closeCapacityRaceRefundRecordingEvent, recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
 import { reportSupersededPaymentRefund, reportUnannouncedSupersededPaymentRefund, SUPERSEDED_REFUND_REPORT_IN_FLIGHT_MESSAGE } from "@/lib/superseded-additional-refund";
 import logger from "@/lib/logger";
@@ -79,19 +77,19 @@ import { createAuditLog } from "@/lib/audit";
 import {
   heldPaymentRecoveryClaimWhere,
   MAX_PAYMENT_RECOVERY_ATTEMPTS,
-  PAYMENT_RECOVERY_CLAIMABLE_LATER_WHERE,
   PAYMENT_RECOVERY_STALE_PROCESSING_MS,
   type PaymentRecoveryClaim,
 } from "@/lib/payment-recovery-constants";
 import { stripeReferenceId } from "@/lib/stripe-references";
-import { claimAlertCooldown } from "@/lib/alert-cooldown";
+import { alertStalePaymentRecoveryQueueIfNeeded } from "@/lib/payment-recovery-stale-alert";
 import { formatCents } from "@/lib/utils";
 import { CAPTURED_TRANSACTION_STATUS_LIST, isCapturedTransactionStatus, OPEN_INTENT_TRANSACTION_STATUS_LIST, SUPERSEDED_ASK_TRANSACTION_REASON } from "@/lib/payment-transaction-status";
 import { replayNotingEachRefund } from "@/lib/card-refund-own-note";
 import { finishApprovedLateCaptureRefundAfterReplay } from "@/lib/late-capture-refund-credit-note";
 import { holdSupersededLateCaptureIfRequired } from "@/lib/late-capture-refund-hold";
 import { supersededMachineryOwnsCapture } from "@/lib/superseded-capture-ownership";
-import { LEDGER_ROWS_NEWEST_FIRST, LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
+import { readRefundableCardIntentId } from "@/lib/refundable-card-intent";
 
 type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
 
@@ -233,6 +231,14 @@ export async function enqueuePaymentIntentCancellationRecovery({
   });
 }
 
+/** #4992: the payment has no Stripe intent, so there is no card to owe this refund to. */
+export class NoRefundPaymentIntentError extends Error {
+  constructor() {
+    super("Cannot enqueue ledger refund recovery without a payment intent");
+    this.name = "NoRefundPaymentIntentError";
+  }
+}
+
 async function enqueueLedgerRefundRecovery({
   bookingId,
   paymentId,
@@ -258,30 +264,11 @@ async function enqueueLedgerRefundRecovery({
   allocationPlan?: RefundAllocationSlice[];
   store?: PaymentRecoveryStore;
 }) {
-  const payment = await store.payment.findUnique({
-    where: { id: paymentId },
-    include: {
-      transactions: {
-        orderBy: [...LEDGER_ROWS_NEWEST_FIRST],
-      },
-    },
-  });
-
-  const capturedTransaction = payment?.transactions.find(
-    (transaction) =>
-      transaction.source === PaymentSource.STRIPE &&
-      Boolean(transaction.stripePaymentIntentId) &&
-      isCapturedTransactionStatus(transaction.status),
-  );
-  const representativePaymentIntentId =
-    capturedTransaction?.stripePaymentIntentId ??
-    payment?.stripePaymentIntentId ??
-    null;
+  // #5212 (`INV-PAY-160`): the read an edit asked before it promised this debt.
+  const representativePaymentIntentId = await readRefundableCardIntentId(store, paymentId);
 
   if (!representativePaymentIntentId) {
-    throw new Error(
-      "Cannot enqueue ledger refund recovery without a payment intent",
-    );
+    throw new NoRefundPaymentIntentError();
   }
 
   const allocationPlanJson =
@@ -337,6 +324,9 @@ async function enqueueLedgerRefundRecovery({
   }
   return { created: inserted.count > 0, paymentIntentId: representativePaymentIntentId };
 }
+
+/** #4992: close only the pre-persisted edit debt on the frozen plan actually sent. */
+export const markBookingModificationRefundRecoverySucceeded = (args: DoorCloseArgs) => closePrePersistedRefundRow(args);
 
 export async function enqueueBookingModificationRefundRecovery({
   bookingId,
@@ -1262,6 +1252,7 @@ async function markPaymentRecoveryOperationFailed({
   fromAttempts,
   format,
   handBackAttempt = false,
+  carriedAskChallenge,
 }: {
   operation: PaymentRecoveryOperation;
   /** Recorded verbatim on `lastError`, and quoted in the exhaustion alert. */
@@ -1308,6 +1299,11 @@ async function markPaymentRecoveryOperationFailed({
    * with `terminal: false`, which it can never make terminal.
    */
   handBackAttempt?: boolean;
+  /**
+   * #4755: the carried ask's 3D Secure sighting to leave on the row (`null` clears it), written in
+   * this same fenced write. Omitted: the columns are left as they are.
+   */
+  carriedAskChallenge?: CarriedAskChallengeSighting | null;
 }): Promise<PaymentRecoveryFailureOutcome> {
   // Both fences apply when both are given: each is its own clause, so neither
   // can overwrite the other's `processingStartedAt`.
@@ -1326,6 +1322,7 @@ async function markPaymentRecoveryOperationFailed({
       ...(terminal
         ? { nextRetryAt: null, attempts: Math.max(operation.attempts, MAX_PAYMENT_RECOVERY_ATTEMPTS) }
         : { nextRetryAt, ...(handBackAttempt ? { attempts: Math.max(operation.attempts - 1, 0) } : {}) }),
+      ...(carriedAskChallenge === undefined ? {} : carriedAskChallengeColumns(carriedAskChallenge)),
     },
   });
 
@@ -1672,19 +1669,52 @@ async function failPaymentRecoveryOperation(
  * Back to a non-terminal retry at the longest interval with its claim's attempt handed back, so a
  * wait never runs out of attempts, goes terminal or alerts by itself; the carried-ask wait's caller
  * caps it and then fails for good (`carriedAskPaymentWait`). One chokepoint, fenced on this attempt.
+ * #4755: a carried ask in a 3D Secure challenge comes back sooner (`nextRetryAt`) and records its
+ * sighting (`carriedAskChallenge`), both in the same fenced write.
  */
-async function waitPaymentRecoveryOperation(operation: PaymentRecoveryOperation, message: string, format: ClubFormat) {
+async function waitPaymentRecoveryOperation(
+  operation: PaymentRecoveryOperation,
+  message: string,
+  format: ClubFormat,
+  { nextRetryAt, carriedAskChallenge }: { nextRetryAt?: Date; carriedAskChallenge?: CarriedAskChallengeSighting | null } = {},
+) {
   return markPaymentRecoveryOperationFailed({
     operation,
     format,
     message,
     terminal: false,
     // The schedule's last (longest) step: the attempt index clamps to it.
-    nextRetryAt: nextRetryDate(MAX_PAYMENT_RECOVERY_ATTEMPTS),
+    nextRetryAt: nextRetryAt ?? nextRetryDate(MAX_PAYMENT_RECOVERY_ATTEMPTS),
     fromStatuses: NON_TERMINAL_PAYMENT_RECOVERY_STATUSES,
     fromAttempts: operation.attempts,
     handBackAttempt: true,
+    carriedAskChallenge,
   });
+}
+
+/**
+ * #4015 review: never supersede an ask Stripe is taking money on - wait, capped. #4755: nor one the
+ * member is confirming with their bank, for up to an hour from first sighting (`carriedAskPaymentWait`).
+ * True when the row waited. On a carry, a sighting it no longer stands on (the challenge failed, the
+ * ask changed) is cleared before the mint, fenced on this attempt's claim, so a mint that then fails
+ * cannot time out a later challenge on that intent early; a lost claim writes nothing.
+ */
+async function waitForCarriedAsk(
+  operation: PaymentRecoveryOperation,
+  payment: Parameters<typeof carriedAskPaymentWait>[0],
+  format: ClubFormat,
+): Promise<boolean> {
+  const stored = storedCarriedAskChallenge(operation);
+  const carried = await carriedAskPaymentWait(payment, (id) => getPaymentIntent(id, CARRIED_ASK_STRIPE_READ), operation.createdAt, stored);
+  if (carried.kind === "wait") {
+    const nextRetryAt = carried.recheckAt ?? undefined;
+    await waitPaymentRecoveryOperation(operation, carried.message, format, { nextRetryAt, carriedAskChallenge: carried.challenge });
+    return true;
+  }
+  if (stored && !carried.challenge) {
+    await prisma.paymentRecoveryOperation.updateMany({ where: heldPaymentRecoveryClaimWhere(operation), data: carriedAskChallengeColumns(null) });
+  }
+  return false;
 }
 
 async function claimPaymentRecoveryOperation(operationId: string) {
@@ -3071,9 +3101,7 @@ async function processCreateAdditionalPaymentIntentOperation(
     return "done";
   }
 
-  // #4015 review: never supersede an ask Stripe is taking money on - wait, capped (`carriedAskPaymentWait`).
-  const carriedAskBeingPaid = await carriedAskPaymentWait(payment, (paymentIntentId) => getPaymentIntent(paymentIntentId, CARRIED_ASK_STRIPE_READ), operation.createdAt);
-  if (carriedAskBeingPaid) return (await waitPaymentRecoveryOperation(operation, carriedAskBeingPaid, format), "waited");
+  if (await waitForCarriedAsk(operation, payment, format)) return "waited";
 
   // #3954 round 7: one resolution, shared with the door's re-issue mint, so
   // the two minters of one key send one request (`resolveAskCustomerId`).
@@ -3315,70 +3343,6 @@ async function processPaymentRecoveryOperation(
   // failure path records it and alerts on exhaustion) instead of moving money.
   throw new Error(
     `Unhandled payment recovery operation type: ${operation.type}`
-  );
-}
-
-const PAYMENT_RECOVERY_STALE_ALERT_THRESHOLD_MS = 30 * 60 * 1000;
-const PAYMENT_RECOVERY_STALE_ALERT_COOLDOWN_MS = 60 * 60 * 1000;
-// #1211: shared AlertCooldown key that all instances contend on so the stale
-// payment-recovery-queue alert fires at most once per cooldown window across
-// the whole fleet, not once per process.
-const STALE_PAYMENT_RECOVERY_ALERT_COOLDOWN_KEY = "payment-recovery:stale-queue";
-
-// #3567: card charges are not a stalled cron while card payments are off (the
-// admin banner says so), nor within this window of the club format last changing:
-// charges that waited out a refusal are old, and the next run claims them.
-async function alertStalePaymentRecoveryQueueIfNeeded(format: ClubFormat, chargesRefused: boolean) {
-  const now = new Date();
-  const staleThreshold = new Date(
-    now.getTime() - PAYMENT_RECOVERY_STALE_ALERT_THRESHOLD_MS,
-  );
-  const formatChangedAt = chargesRefused ? null : (await loadPersistedClubFormatSettings())?.updatedAt;
-  const quietCharges = chargesRefused || (formatChangedAt != null && formatChangedAt > staleThreshold);
-  const oldest = await prisma.paymentRecoveryOperation.findFirst({
-    where: {
-      status: PaymentRecoveryOperationStatus.PENDING,
-      createdAt: { lt: staleThreshold },
-      ...PAYMENT_RECOVERY_CLAIMABLE_LATER_WHERE, // #4104: a dead row is not a stalled cron
-      ...(quietCharges ? { type: { not: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT } } : {}),
-    },
-    orderBy: { createdAt: "asc" },
-    // #3369: the owner may be an Organisation; bookingOwner() reads both.
-    include: { booking: { include: { member: true, organisation: { select: { name: true, email: true } } } } },
-  });
-  if (!oldest) return;
-
-  // Shared cross-instance cooldown: atomically CLAIM the window before sending
-  // so N instances raise at most one alert per
-  // PAYMENT_RECOVERY_STALE_ALERT_COOLDOWN_MS (not one per instance). The
-  // claim-before-send pattern was extracted verbatim to @/lib/alert-cooldown
-  // under #2262 so the manual-settlement conflict alert can share it.
-  const holdsClaim = await claimAlertCooldown({
-    key: STALE_PAYMENT_RECOVERY_ALERT_COOLDOWN_KEY,
-    windowMs: PAYMENT_RECOVERY_STALE_ALERT_COOLDOWN_MS,
-    now,
-  });
-  if (!holdsClaim) return;
-  // We hold the claim → send exactly once cross-instance. The provider call is
-  // claim-first and outside any DB transaction; the tiny residual double-send
-  // window (two instances reading between claim attempts) is bounded and this
-  // is a noise-only alert.
-  await sendAdminPaymentFailureAlert({
-    memberName:
-      oldest.booking && bookingOwner(oldest.booking).member
-      ? `${bookingOwner(oldest.booking).member.firstName} ${bookingOwner(oldest.booking).member.lastName}`
-      : "Unknown member",
-    checkIn: oldest.booking?.checkIn ?? null,
-    checkOut: oldest.booking?.checkOut ?? null,
-    amountCents: oldest.amountCents,
-    errorMessage:
-      "Stripe payment recovery queue is stalled. Confirm the cron leader's 15-minute payments cycle is running (payment-recovery on admin cron health).",
-    paymentIntentId: oldest.paymentIntentId,
-  }, format).catch((alertError) =>
-    logger.error(
-      { err: alertError, operationId: oldest.id },
-      "Failed to send stale payment recovery queue alert",
-    ),
   );
 }
 

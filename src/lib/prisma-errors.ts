@@ -66,17 +66,34 @@ export function isPostgresLockNotAvailable(
  *
  * The one reading (#4656): the linked date move, the refund-note create's
  * record, `waitlist-confirm/route.ts`, `admin/site-style/route.ts`, the
- * deletion release, the return to the waitlist and the group invoice email
- * fence (#4919) all ask it. Four writers
- * keep their own set - `admin/club-time-zone/route.ts`,
- * `admin/club-format/route.ts`, `admin/ai-spend-currency/route.ts` and
- * `environment-safety-override-write.ts` - because theirs also carries
- * `P2002`: a racing first insert of a singleton row, retried as contention
- * there, which is a unique-constraint violation everywhere else.
+ * deletion release, the return to the waitlist, the group invoice email
+ * fence (#4919) and the booking create route (#4933) all ask it. This list is
+ * a sample, not the census: search for the callers. A few settings writers ask
+ * `isSingletonUpsertContention` below instead, because theirs also counts
+ * `P2002`.
  */
 export function isTransactionContention(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
   return code === "P2028" || code === "P2034";
+}
+
+/**
+ * `isTransactionContention` plus `P2002`, for the settings writers where a
+ * unique-constraint violation can only mean a concurrent save won a race (the
+ * create arm of a constant-id singleton upsert, or club-tax's same-date
+ * period) and the loser wrote nothing, so it is retried as contention there.
+ * Everywhere else `P2002` is a real unique-constraint violation.
+ *
+ * Whether `P2002` is safe depends on every table that transaction writes, so
+ * each caller states its own reason (or a pointer to it) directly above the
+ * call, and must stop using this if that reason stops holding. Find the callers
+ * with `git grep -n "isSingletonUpsertContention("` rather than a list here.
+ */
+export function isSingletonUpsertContention(error: unknown): boolean {
+  return (
+    isTransactionContention(error) ||
+    (error as { code?: unknown } | null)?.code === "P2002"
+  );
 }
 
 export function isPrismaUniqueConstraintError(error: unknown) {

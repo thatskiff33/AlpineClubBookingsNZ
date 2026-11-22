@@ -52,6 +52,7 @@ const mocks = vi.hoisted(() => ({
   reverseSubscriptionChargeForCredit: vi.fn(),
 }));
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: {

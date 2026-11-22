@@ -20,7 +20,7 @@ The cards are:
 | **Site Content** | `/admin/site-content` | Shared site chrome such as the footer columns. See [Site Content](site-content.md). |
 | **Page Content** | `/admin/page-content` | The database-backed public pages, menus, tokens, and publishing state. See [Page Content](page-content.md). |
 | **Site Banners** | `/admin/site-banners` | Dated notice banners for public visitors and members. See [Site Banners](site-banners.md). |
-| **Mountain Conditions** | `/admin/mountain-conditions` | The Whakapapa Snow.nz condition widget content. See [Mountain Conditions](mountain-conditions.md). |
+| **Mountain Conditions** | `/admin/mountain-conditions` | The cached Whakapapa (Mt Ruapehu) conditions report; shown only when the Whakapapa conditions report module is on. See [Mountain Conditions](mountain-conditions.md). |
 | **Image Manager** | `/admin/image-manager` | Upload and organise images used by the content editors. See [Image Manager](image-manager.md). |
 
 Everything here is edited under the **content** permission area: you need
@@ -49,11 +49,16 @@ change these pages.
 
 1. Open the **Club Identity** card (`/admin/appearance/identity`).
 2. Under **Club identity**, the fields open read-only. Click **Edit**, then
-   change the **Club name**, **Short name**, **Hut-leader label**, and
-   **Facebook URL**. These override the file configuration — leave a field
-   blank to fall back to the configured default. Click **Save club identity**
-   to save all four at once; changes appear across the site and in emails
-   within a few seconds. **Save club identity** stays greyed out until a value
+   change the **Club name**, **Short name**, **Hut-leader label**,
+   **Facebook URL**, **Legal name** and **Postal address**. These override the
+   file configuration — leave a field blank to fall back to the configured
+   default. Click **Save club identity** to save them all at once; changes
+   appear across the site and in emails within a few seconds. The **Legal
+   name** and **Postal address** are who a booking invoice is from when your
+   club does not use Xero (see [Paying for your
+   stay](../user-guide/paying-for-your-stay.md#download-your-invoice)): the
+   legal name falls back to the club name, and a blank address is left off.
+   Type the address one line per line. **Save club identity** stays greyed out until a value
    actually changes (extra spaces at either end don't count), and **Cancel**
    puts every field back to what was last saved without saving anything. If
    your role can view but not change club identity, a note at the top of the
@@ -90,6 +95,8 @@ change these pages.
 | Short name | The abbreviated club name (e.g. "EMC") | Configured default | Blank falls back to the file config |
 | Hut-leader label | What the role is called throughout the app, in the singular (e.g. "Hut Leader") | Configured default | Renames the sidebar entry and member-facing wording. The app adds the plural itself ("Hut Leaders"), and leaves a label that already ends in "s" as typed |
 | Facebook URL | The club's Facebook link used in the footer/contact | Configured default | Full URL |
+| Legal name | Who a booking invoice is from, when the club's Xero module is off | The club name | Up to 200 characters. Not used while Xero is on: Xero's own invoice is the one offered |
+| Postal address | The address printed under the legal name on that invoice | Blank (no address printed) | Up to 500 characters, one line per line; blank lines and spaces at either end of a line are dropped |
 
 **Lodge details**
 
@@ -104,7 +111,7 @@ change these pages.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| A card is missing from the hub | The feature is gated off (e.g. Mountain Conditions needs the `skifieldConditions` module) | Enable the module at **Admin → Modules** |
+| A card is missing from the hub | The feature is gated off (e.g. Mountain Conditions needs the `skifieldWhakapapa` module) | Enable the module at **Admin → Modules** |
 | Everything is read-only | Your admin role can view but not edit under the content area | Ask a full admin for content edit access |
 | A changed name still shows the old value | The DB-first identity cache updates within a few seconds; a stale tab may hold the old value | Reload the page |
 | A field went back to the old default | You cleared it — blank falls back to the file configuration | Re-enter the value and save |

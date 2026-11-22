@@ -11,10 +11,14 @@ import {
   POINTER_NOTE_END,
   POINTER_NOTE_START,
   readFragments,
+  releaseHeading,
+  releaseHeadingDate,
   releaseSection,
   retiredAllowancePaths,
   releaseDateToday,
+  toLines,
 } from "./compile-changelog.mjs";
+import { rebaseFragmentLink, rebaseFragmentLinks } from "./fragment-links.mjs";
 
 const NOTE_BODY = "Entries for the next release live in `changelog.d/` — one file per PR.";
 /** The note exactly as CHANGELOG.md carries it: prose inside its sentinels. */
@@ -737,6 +741,198 @@ describe("compile-changelog", () => {
     expect(log.text()).toContain("No files were changed");
   });
 
+  it("rewrites a fragment's relative links so they resolve from the repository root (#5214)", () => {
+    const root = makeRepo({
+      fragments: {
+        "5214-links.md": [
+          "- **Links survive compiling (#5214).** See [the guide](../docs/guides/club-time.md#setup),",
+          "  the ![diagram](<../docs/images/flow chart.png>) and [the changelog README](README.md).",
+          "",
+          "  [ref]: ../CONFIGURATION.md",
+          "",
+        ].join("\n"),
+      },
+    });
+    for (const file of ["docs/guides/club-time.md", "docs/images/flow chart.png", "CONFIGURATION.md"]) {
+      fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      fs.writeFileSync(path.join(root, file), "");
+    }
+
+    compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog() });
+
+    const compiled = read(root);
+    expect(compiled).toContain("[the guide](docs/guides/club-time.md#setup)");
+    expect(compiled).toContain("![diagram](<docs/images/flow chart.png>)");
+    expect(compiled).toContain("[the changelog README](changelog.d/README.md)");
+    expect(compiled).toContain("  [ref]: CONFIGURATION.md");
+    // Each rewritten target names a real file relative to CHANGELOG.md's directory.
+    for (const target of ["docs/guides/club-time.md", "docs/images/flow chart.png", "CONFIGURATION.md"]) {
+      expect(fs.existsSync(path.join(root, target))).toBe(true);
+    }
+  });
+
+  it("leaves external, absolute, same-page and example links alone when rebasing (#5214)", () => {
+    for (const target of ["https://example.test/a.md", "mailto:x@example.test", "//cdn.example.test/x", "/docs/A.md", "#heading", ""]) {
+      expect(rebaseFragmentLink(target)).toBe(target);
+    }
+    expect(rebaseFragmentLink("../docs/A.md?plain=1#L3")).toBe("docs/A.md?plain=1#L3");
+    expect(rebaseFragmentLink("./other.md")).toBe("changelog.d/other.md");
+
+    const body = [
+      "- Prose [real](../docs/A.md), code `[example](../docs/B.md)`, and [`code text`](../docs/C.md).",
+      "",
+      "  ```markdown",
+      "  [fenced example](../docs/D.md)",
+      "  ```",
+    ].join("\n");
+    expect(rebaseFragmentLinks(body, "x.md")).toBe(
+      [
+        "- Prose [real](docs/A.md), code `[example](../docs/B.md)`, and [`code text`](docs/C.md).",
+        "",
+        "  ```markdown",
+        "  [fenced example](../docs/D.md)",
+        "  ```",
+      ].join("\n"),
+    );
+  });
+
+  it("rebases both targets of an image wrapped in a link (#5214)", () => {
+    expect(rebaseFragmentLinks("- Badge [![alt](../img/a.png)](../docs/A.md).", "x.md")).toBe(
+      "- Badge [![alt](img/a.png)](docs/A.md).",
+    );
+  });
+
+  it("rewrites a link whose text or target wraps onto the next line (#5214)", () => {
+    const body = [
+      "- See the [hut leader",
+      "  guide](../docs/g.md#x), the [badge",
+      "  ![alt](../img/a.png)](",
+      "  ../docs/A.md) and a `[wrapped",
+      "  example](../docs/B.md)` in code.",
+    ].join("\n");
+    expect(rebaseFragmentLinks(body, "x.md")).toBe(
+      [
+        "- See the [hut leader",
+        "  guide](docs/g.md#x), the [badge",
+        "  ![alt](img/a.png)](",
+        "  docs/A.md) and a `[wrapped",
+        "  example](../docs/B.md)` in code.",
+      ].join("\n"),
+    );
+    // A blank line ends the paragraph, so brackets either side are not one link.
+    expect(rebaseFragmentLinks("- [not\n\n  a link](../docs/A.md)", "x.md")).toBe("- [not\n\n  a link](../docs/A.md)");
+  });
+
+  it("refuses a wrapped link that points outside the repository (#5214)", () => {
+    expect(() => rebaseFragmentLinks("- See [the\n  outside](../../x.md).", "w.md")).toThrow(
+      /changelog\.d\/w\.md links "\.\.\/\.\.\/x\.md", which points outside the repository/,
+    );
+  });
+
+  it("rebases a link nested in an image's alt text without corrupting either target (#5214)", () => {
+    expect(rebaseFragmentLinks("- ![see [x](../docs/y.md)](../img/a.png)", "x.md")).toBe(
+      "- ![see [x](docs/y.md)](img/a.png)",
+    );
+  });
+
+  it("rebases an angle-bracket reference definition, spaces and next-line targets included (#5214)", () => {
+    const body = [
+      "- See [ref] and [other].",
+      "",
+      "  [ref]: <../docs/y.md>",
+      "  [spaced]: <../docs/my file.md#a>",
+      "  [other]:",
+      "    ../docs/z.md \"Title\"",
+    ].join("\n");
+    expect(rebaseFragmentLinks(body, "x.md")).toBe(
+      [
+        "- See [ref] and [other].",
+        "",
+        "  [ref]: <docs/y.md>",
+        "  [spaced]: <docs/my file.md#a>",
+        "  [other]:",
+        "    docs/z.md \"Title\"",
+      ].join("\n"),
+    );
+    expect(() => rebaseFragmentLinks("  [out]: <../../x.md>", "x.md")).toThrow(/points outside the repository/);
+  });
+
+  it("leaves prose after a bare `[label]:` and definition-shaped prose lines unchanged (#5214)", () => {
+    const body = ["- Notes follow.", "", "  [note]:", "  See below for the details.", "  [Label]: text that is prose, not a link."].join("\n");
+    expect(rebaseFragmentLinks(body, "x.md")).toBe(body);
+  });
+
+  it("leaves links in a backtick fence alone past a `~~~` line inside it (#5214)", () => {
+    const body = ["- Example:", "  ```md", "  ~~~", "  [a](../docs/A.md)", "  ```", "  See [b](../docs/B.md)."].join("\n");
+    expect(rebaseFragmentLinks(body, "x.md")).toBe(body.replace("(../docs/B.md)", "(docs/B.md)"));
+  });
+
+  it("rebases fragments but leaves legacy Unreleased entries as written (#5214)", () => {
+    // A legacy entry was written in CHANGELOG.md itself, so its links already
+    // resolve from the root; rebasing it would break them.
+    const root = makeRepo({
+      changelog: changelogWith("- **Legacy (#2400).** See [root](docs/A.md) and [up](../outside.md)."),
+      fragments: { "5214-new.md": "- **Fragment (#5214).** See [it](../docs/A.md).\n" },
+    });
+
+    compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog() });
+
+    expect(releaseSection(read(root), "0.14.0").body).toBe(
+      "- **Legacy (#2400).** See [root](docs/A.md) and [up](../outside.md).\n" +
+        "- **Fragment (#5214).** See [it](docs/A.md).",
+    );
+  });
+
+  it("rebases late fragments under --append and leaves the prepared section's links alone (#5214)", () => {
+    const prepared = [
+      "# Changelog",
+      "",
+      "## Unreleased",
+      "",
+      NOTE,
+      "",
+      "## 0.13.3 - 2026-10-31",
+      "",
+      "- **Prepared (#4400).** See [root](docs/A.md).",
+      "",
+      HISTORY,
+    ].join("\n");
+    const root = makeRepo({
+      changelog: prepared,
+      fragments: { "4500-late.md": "- **Late (#4500).** See [the\n  guide](../docs/B.md#x).\n" },
+    });
+
+    compileChangelog({ repoRoot: root, version: "0.13.3", date: "2026-11-02", append: true, log: silentLog() });
+
+    expect(releaseSection(read(root), "0.13.3").body).toBe(
+      "- **Prepared (#4400).** See [root](docs/A.md).\n- **Late (#4500).** See [the\n  guide](docs/B.md#x).",
+    );
+
+    const escaping = makeRepo({
+      changelog: prepared,
+      fragments: { "4501-bad.md": "- **Bad (#4501).** See [it](../../x.md).\n" },
+    });
+    expect(() =>
+      compileChangelog({ repoRoot: escaping, version: "0.13.3", date: "2026-11-02", append: true, log: silentLog() }),
+    ).toThrow(/points outside the repository/);
+    expect(read(escaping)).toBe(prepared);
+    expect(fragmentFiles(escaping)).toEqual(["4501-bad.md"]);
+  });
+
+  it("refuses a fragment link that points outside the repository, before writing anything (#5214)", () => {
+    const changelog = changelogWith("");
+    const root = makeRepo({
+      changelog,
+      fragments: { "5214-escape.md": "- **Bad link (#5214).** See [it](../../elsewhere.md).\n" },
+    });
+
+    expect(() => compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog() })).toThrow(
+      /changelog\.d\/5214-escape\.md links "\.\.\/\.\.\/elsewhere\.md", which points outside the repository/,
+    );
+    expect(read(root)).toBe(changelog);
+    expect(fragmentFiles(root)).toEqual(["5214-escape.md"]);
+  });
+
   it("normalises a CRLF fragment written by a Windows editor", () => {
     const root = makeRepo({
       fragments: { "2452-fragments.md": "- **CRLF entry (#2452).**\r\n\r\n  Second paragraph.\r\n" },
@@ -829,6 +1025,22 @@ describe("compile-changelog", () => {
     expect(classifyUnreleased("# Changelog\n\n## 0.1.0 - 2026-01-01\n")).toBeNull();
   });
 
+  it("reads the date back from a compiled heading, and refuses a hand-edited one", () => {
+    expect(releaseHeadingDate(releaseHeading("0.14.0", "2026-11-20"), "0.14.0")).toBe("2026-11-20");
+    expect(releaseHeadingDate("## 0.14.0 - 2026-11-20  ", "0.14.0")).toBe("2026-11-20");
+    // releaseSection finds a section by version alone, so these reach a reader of the date.
+    expect(releaseHeadingDate("## 0.14.0 (2026-11-20)", "0.14.0")).toBeNull();
+    expect(releaseHeadingDate("## 0.14.0 - 2026-11-20)", "0.14.0")).toBeNull();
+    expect(releaseHeadingDate("## 0.14.0 - soon", "0.14.0")).toBeNull();
+    expect(releaseHeadingDate("## 0.14.0 -", "0.14.0")).toBeNull();
+    expect(releaseHeadingDate("## 0.14.1 - 2026-11-20", "0.14.0")).toBeNull();
+  });
+
+  it("splits text into lines whatever its line endings", () => {
+    expect(toLines("a\r\nb\nc")).toEqual(["a", "b", "c"]);
+    expect(toLines("")).toEqual([""]);
+  });
+
   it("rejects a malformed version or date", () => {
     const root = makeRepo();
     expect(() => compileChangelog({ repoRoot: root, version: "v0.14", log: silentLog() })).toThrow(
@@ -903,7 +1115,7 @@ describe("compile-changelog", () => {
   });
 
   it("names no time zone in the release tooling (#4571, INV-CONFIG-002)", () => {
-    for (const file of ["scripts/release/compile-changelog.mjs", "scripts/release/cut-release.mjs"]) {
+    for (const file of ["scripts/release/compile-changelog.mjs", "scripts/release/cut-release.mjs", "scripts/release/release-notes.mjs", "scripts/release/upgrade-docs.mjs"]) {
       expect(fs.readFileSync(file, "utf8"), file).not.toMatch(/timeZone:\s*["'][A-Za-z]+\/[A-Za-z_]+["']/);
     }
   });

@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { ApiError } from "@/lib/api-error";
 import { copyBookingToDraft } from "@/lib/admin-booking-copy";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
 const copyBookingSchema = z.object({
   checkIn: z.string().min(1),
@@ -19,20 +21,10 @@ export async function POST(
   });
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json(
-      {
-        error: "Invalid JSON",
-        details: { body: ["Request body must be valid JSON"] },
-      },
-      { status: 400 },
-    );
-  }
+  const json = await parseJsonRequestBody(request);
+  if (!json.ok) return json.response;
 
-  const parsed = copyBookingSchema.safeParse(body);
+  const parsed = copyBookingSchema.safeParse(json.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -49,6 +41,13 @@ export async function POST(
     });
     return NextResponse.json(result);
   } catch (error) {
+    // `INV-LOCK-006`: the draft's one transaction rolled back.
+    const contended = transactionContendedResponse(
+      error,
+      "Admin booking copy contended for the lock(1) budget",
+      { context: { bookingId } },
+    );
+    if (contended) return contended;
     if (error instanceof ApiError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }

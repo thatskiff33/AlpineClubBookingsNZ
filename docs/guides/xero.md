@@ -54,6 +54,17 @@ does not record a refund (#4315).
    > what did and did not reach Xero. A booking whose records hold neither is
    > listed, and **Trigger All Missing** raises an invoice for it.
 
+   > **Group mismatches** counts two kinds of entry (#5234). One *to re-sync*
+   > is a member a grouping rule matches whose Xero contact sits in the wrong
+   > managed group; the bulk re-sync on **Xero member grouping** repairs it.
+   > One *to review by hand* is a member no rule matches (often an
+   > organisation) whose contact still sits in a managed group. The re-sync
+   > never touches those, so the panel names each one with the group it sits
+   > in: remove the contact from that group in Xero, or add a grouping rule
+   > that covers the member, then press the panel's **Refresh**, which
+   > re-fetches both kinds from Xero. Stuck States counts both kinds and its
+   > link opens the panel.
+
    > The whole Xero area (`/admin/xero`, `/admin/xero/*`, `/admin/internet-banking`)
    > is gated by the **Xero integration** module (`src/config/feature-routes.ts`)
    > and returns *Not Found* when it is off. The demo seed leaves Xero disabled,
@@ -91,10 +102,15 @@ does not record a refund (#4315).
    run may already have created a document. **Reset stale running** does the
    same for every stuck operation at once.
    A stuck inbound `WEBHOOK_RECONCILE` operation needs none of this: **Replay** its
-   event and that attempt takes the operation over. A crashed event stays
-   Processing and is not retried by itself, so it waits for a Replay. The
-   automatic retry takes the operation over only for an event that has already
-   ended Failed. Mark failed still works on it.
+   event and that attempt takes the operation over. An event whose worker
+   crashed is no longer left waiting: once it has been **Processing** for 15
+   minutes the automatic worker resets it and processes it again, taking the
+   operation over too. **Replay** does the same at once for an event already
+   past those 15 minutes, and is refused while it is still being processed.
+   An event that has stopped the server three times running is not retried by
+   itself again: it stays **Processing**, an error is logged on each run, and
+   only **Replay** retries it. Mark failed still works on the operation, and
+   lets the automatic retry start counting again.
    Mark one **resolved** only after you have fixed it in Xero yourself: it is
    then treated as done and is never retried or recreated automatically,
    though the repair tool still lists it for information. You cannot resolve
@@ -328,6 +344,28 @@ Operators can switch the writes off with no deploy
 ([how](../xero/ARCHITECTURE.md#the-inbound-credit-note-mirror-4270)); while off, the log
 says what it would have done.
 
+### Unallocated payments
+
+Sometimes a member pays more than they owe, or pays before any invoice exists.
+Xero records that money as an **overpayment** or a **prepayment** on the
+member's contact. **Finance → Xero Unallocated Payments**
+(`/admin/xero/unallocated-payments`) lists every one that still has a balance:
+
+- its type, date and balance left (and the original amount when some has been
+  used), marked with its currency when that is not the club's;
+- the member whose Xero contact it is, or **No member linked** when no member is
+  linked to that contact (an organisation, or a contact not yet linked);
+- a link to the contact in Xero, where the document is listed.
+
+The list refreshes nightly. **Refresh from Xero** reads it again now (finance
+edit only, a few times a minute at most). A refresh reads every page from Xero
+before it changes anything, so a failed read leaves the list as it was and says
+so. A document that is fully used or voided in Xero drops off the list at the
+next refresh.
+
+For now the list is for looking only: allocate the money in Xero as before.
+Turning one into member credit is coming in a later release.
+
 ### Manage auto-grouping (Xero member grouping)
 
 1. **Xero member grouping** (`/admin/xero/member-grouping`, also linked from the
@@ -344,6 +382,109 @@ says what it would have done.
    invalidates any prior dry-run. For the full cutover procedure, follow the
    [Xero member grouping runbook](../XERO_MEMBER_GROUPING_RUNBOOK.md).
 
+### Change the club's GST treatment
+
+The **GST / tax treatment** card on **Finance → Xero** shows how the club's
+prices are taxed on Xero documents and in the member-money journal: whether the
+club is GST-registered, the rate, and the Xero tax code. Prices members pay
+never change; only how much of each price is GST does.
+
+1. A Full Admin chooses **Edit**, sets the new treatment and a **Takes effect
+   from** date (tomorrow at the earliest), ticks the confirmation, and saves.
+   Other officers see the card read-only.
+2. A GST-registered treatment is checked against Xero's tax rates before it is
+   saved, so the tax code must be active in Xero and usable on revenue. If Xero
+   cannot be read, the change waits until the connection works. A
+   registration is saved even while the **Opening Credits** account is mapped
+   and **Exempt** has no usable rate; the health check then warns, and spent
+   opening credits wait until Exempt is mapped. On a card booking, the
+   booking's Xero invoice operation fails instead; retry it from the **Xero
+   Operations** list once Exempt is mapped.
+3. Bookings, subscriptions and entrance fees made on or after the date use the
+   new treatment. A booking already made keeps the treatment in force when it
+   was made for its whole life, including later edits, credit notes and
+   refunds; the card counts how many have nights after the date. A place in a
+   group booking takes the organiser's booking's treatment, as the group's
+   combined invoice does. Nothing already in Xero or the journal changes.
+4. A scheduled change can be cancelled before it starts. Saving and cancelling
+   are both in the audit log.
+
+The Xero health check warns if the tax code in force is missing or inactive in
+Xero, its rate differs, Xero's GST registration disagrees with the card, a
+mapped tax category's rate has gone, the **Opening Credits** account is
+mapped while a GST-registered club has no usable **Exempt** rate, or the
+**Opening Credits** account is stored on the Xero account another mapping
+uses. The account mapping refuses to save that last one, so it appears only
+if two people saved mappings, or one saved while a configuration import ran,
+at the same moment; choose an account for **Opening Credits** that no other
+mapping uses. How
+it works: [Tax treatment](../xero/ARCHITECTURE.md#tax-treatment).
+It checks only today's treatment. Bookings made under an earlier treatment
+still use that treatment's tax code on their later edits, credit notes and
+refunds, so keep an earlier code active in Xero while such bookings remain:
+archiving it makes those documents fail in Xero.
+
+### Map the club's tax categories (Xero Setup)
+
+Once Xero is connected, the **Tax categories** card sits under the account
+mappings on **Xero Setup**'s **Account mapping** step, and on **Finance →
+Xero**. It maps each of the club's four tax categories to a tax rate your own
+Xero organisation provides, so the app never assumes a Xero tax code:
+
+| Category | Where its Xero tax rate comes from | Used by |
+| --- | --- | --- |
+| Sales tax on income | The **GST / tax treatment** card above, read-only here | Bookings, subscriptions, fees and their credit notes |
+| Sales tax on expenses | This card | Nothing yet |
+| Exempt | This card | A spent opening credit coded to the Opening Credits liability account |
+| Zero rated | This card | Nothing yet |
+
+1. A Full Admin chooses **Map** on a category, picks a rate and saves. Other
+   finance admins see the card read-only. Each picker offers only rates that
+   are active in Xero and suit the category: Exempt and Zero rated must be 0%,
+   and Sales tax on expenses must be usable on expenses.
+2. **Clear** removes a mapping. Saving and clearing are both in the audit log.
+   **Exempt** cannot be cleared while the **Opening Credits** account is
+   mapped and the club is, or is scheduled to be, GST-registered: unset that
+   account on the account mapping first. That holds while Xero is disconnected
+   too, so the mapping is still there when you reconnect; only a mapping
+   chosen in a different Xero organisation from the one connected now clears.
+3. A mapping belongs to the Xero organisation it was chosen in. If you connect
+   a different organisation, the card and the health check say so; map the
+   category again.
+
+While the club is not GST-registered, Xero documents carry no tax and no
+category is used. While it is, a line in a category that is not mapped — or
+whose rate Xero has removed, made inactive or changed so it no longer suits the
+category (an Exempt rate edited to a non-zero percentage, say) — is held back
+with an error, not sent with a guessed code. **If your club is GST-registered and is moving in
+with opening credits, map Exempt before you map the Opening Credits account.**
+The account mapping refuses to save **Opening Credits** until you do, and
+refuses it on an account another mapping already uses, naming that mapping. A
+spent opening credit that cannot be sent waits in the Xero queue with a message
+naming the category, and is tried again by itself every few minutes; where it
+is part of a card booking's invoice operation, that operation fails with the
+same message and is retried by hand once the category is mapped
+([Moving in](moving-in.md#6-credit-post-the-opening-credits)).
+Nothing changes on upgrade: until you map a category, every document is sent
+exactly as before. How it works:
+[`INV-CONFIG-008`](../invariants/product-configuration.md#inv-config-008).
+
+**The app checks a rate against its own copy of Xero's tax rates, which can be
+up to 15 minutes old** (#5375). When the app sends a line in a mapped category,
+such as the Exempt line of a spent opening credit, it reads Xero's tax rates
+from a copy it keeps for up to 15 minutes (`CACHE_TTL_MS` in
+`src/lib/xero-tax-rates.ts`); it does not ask Xero each time. So for up to 15
+minutes after a rate is changed or archived in Xero, the app can still send a
+line with that rate. Once the copy is renewed, a line with that rate is no
+longer sent: it waits in the Xero queue or, on a card booking, the booking's
+invoice operation fails, as described above. This card, the **GST / tax
+treatment** card and the Xero health check also read a copy of that age, so
+they can take as long to show the change. A save does not use a copy: mapping
+a category on this card, saving a GST-registered treatment, and the Exempt
+check made when the **Opening Credits** account is saved each read Xero's
+rates fresh. A copy belongs to the Xero organisation it was read from, so
+after you connect a different organisation it is not used.
+
 ## Settings reference
 
 | Area | What it does | Notes / constraints |
@@ -354,6 +495,8 @@ says what it would have done.
 | Xero Operations | Filter and page outbound work; retry / reset / mark non-replayable / resolve it | Dataset Reset keeps the section and Inbound state; write actions need finance edit and are idempotent |
 | Inbound Events | Filter and page stored webhooks; replay an event | Dataset Reset keeps the section and Operations state; Replay needs finance edit |
 | Xero Setup → Mappings | Account/item code mappings and hut/joining fee item codes | Finance edit; joining-fee amounts live in [Fees](fees.md) |
+| GST / tax treatment | Schedule a change to GST registration, rate or Xero tax code from a future date | Full Admin only; checked against Xero; bookings already made keep their treatment |
+| Tax categories | Map Sales tax on expenses, Exempt and Zero rated to Xero tax rates; shows Sales tax on income | Full Admin only; shown once Xero is connected; checked against Xero |
 | Member grouping | Grouping mode + rules, dry-run, bulk re-sync | Finance edit; never auto-re-groups; runbook-driven cutover |
 | Members with no Xero contact | Dry run over unlinked members, then create or link in small batches | Finance edit to create; needs a Contact Sync first; schools and ambiguous rows are never acted on; the batch size is shown on the button |
 | API budget / Usage | Daily call volume, rate limits, recent failures | Read-only meter |
@@ -437,6 +580,14 @@ Attention** entry and a Stuck States item. The default is 24 hours. Use
 **Edit → Save/Cancel** to choose 1–720 hours. A connection that has never received
 a webhook gets the full threshold from its connection time. No quiet-period
 warning appears while disconnected or while the Xero module is disabled.
+
+**Refund notes voided before #4288 (#4336).** A club that ran a version before
+#4341 may hold refund credit notes that Xero voided but the app still counts.
+The owner finds them with the read-only report
+`pnpm run xero:revived-refund-note-report`, then uses **Sync from Xero now** on
+each listed booking. **Sync everything from Xero now** does not revisit them.
+What each line needs and what happens next:
+[MAINTENANCE.md](../MAINTENANCE.md#find-refund-notes-xero-voided-that-the-app-still-counts-4336).
 
 Webhook receipt history and the quiet-period policy remain local to each
 installation during configuration transfer, like the Xero connection itself.

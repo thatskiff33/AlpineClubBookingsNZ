@@ -25,6 +25,7 @@ export const FINANCE_HUB = defineHub({
     {
       id: "refund-requests",
       label: "Refunds & Credits",
+      keywords: ["refund appeals", "pending review queue"],
       oldPath: "/admin/refund-requests",
       area: "finance",
       moved: true,
@@ -59,6 +60,16 @@ export const FINANCE_HUB = defineHub({
       oldPath: "/admin/xero/member-grouping",
       area: "finance",
       flags: ["xeroIntegration"],
+      moved: true,
+    },
+    {
+      // #5204: unallocated overpayments and prepayments in Xero.
+      id: "xero-unallocated-payments",
+      label: "Xero Unallocated Payments",
+      oldPath: "/admin/xero/unallocated-payments",
+      area: "finance",
+      flags: ["xeroIntegration"],
+      keywords: ["overpayments", "prepayments", "unallocated", "credit"],
       moved: true,
     },
     {

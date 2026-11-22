@@ -31,6 +31,9 @@ vi.mock("@/lib/logger", () => ({ default: log }));
 vi.mock("@/lib/email", () => ({ sendAdminManualRefundTaskAlert: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("server-only", () => ({}));
+// #4516 (M4d review B): the part's R05 is the journal's (`member-money-hand-backs.test.ts`); here, that the raise asks for it.
+const handBackDoor = vi.hoisted(() => ({ postHandBackObligation: vi.fn(async () => null) }));
+vi.mock("@/lib/member-money/doors", () => handBackDoor);
 
 import {
   alertCapacityRaceRefundShortfall,
@@ -146,11 +149,23 @@ describe("the capacity race's refund shortfall task (#4154, INV-PAY-135)", () =>
     expect(capacityRaceShortfallIntentId({ kind: "EDIT_FINANCIAL_REVIEW", occurrenceKey: CHECK_KEY, bookingId: "booking-1" })).toBeNull();
     // The officer is told it is records drift to check first, and how to close it either way.
     expect(task.reason).toContain("only $80.00 of the $100.00 charge refundable");
-    expect(task.reason).toContain("Check Stripe and the bank before paying: dismiss this with a note if it was refunded.");
+    expect(task.reason).toContain("Check Stripe and the bank before paying; dismiss only once its refund is confirmed."); // #4516: a part to check keeps its dismissal (owner, 15 Nov 2026)
     // #4154 review (M3): mark first, then pay - one order on every officer surface.
     expect(task.reason).toContain("If it is owed, mark this paid back first, once the card refund has gone through, then pay it by bank transfer straight after the app accepts");
     expect(task.reason).not.toMatch(/pay it by bank transfer and mark/i);
     expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#4516 review B): with the void's journal context, the part's R05 posts beside it for its cents; without one, none", async () => {
+    const store = claimTx();
+    const journal = { inactive: "unusable-currency", detail: "a stand-in context; the door is a double here" } as const;
+    expect(await raiseCapacityRaceRefundShortfallTask(store as never, { bookingId: "booking-1", paymentId: "payment-1", paymentIntentId: "pi_1", chargedCents: 10000, plannedRefundCents: 8000, format: CLUB_FORMAT_TEST, journal })).toBe(true);
+    expect(handBackDoor.postHandBackObligation).toHaveBeenCalledExactlyOnceWith(store, journal, expect.objectContaining({
+      bookingId: "booking-1", taskId: store.rows[CHECK_KEY]!.id, amountCents: 2000, debtorRead: "booking-row" }));
+
+    vi.clearAllMocks();
+    await raiseTask(claimTx(), 8000);
+    expect(handBackDoor.postHandBackObligation).not.toHaveBeenCalled();
   });
 
   it("the reason fits its limit at its longest, so nothing is cut", () => {
@@ -196,7 +211,7 @@ describe("the capacity race's refund shortfall task (#4154, INV-PAY-135)", () =>
   it("MUTATION: the alert names the task to check once it is raised, and only then", () => {
     const raised = capacityRaceRefundShortfallMessage({ chargedCents: 10000, plannedRefundCents: 8000 }, CLUB_FORMAT_TEST, true);
     expect(raised).toContain("It is under Money to settle on the payments board, as a task to check");
-    expect(raised).toContain("dismiss the task with a note saying how");
+    expect(raised).toContain("Once you have confirmed the card refund reached the member, dismiss the task with a note saying how."); // #4516 (owner, 15 Nov 2026)
     // #4154 review (M3, M4): mark first, then pay; and no Xero promise for a booking with no invoice.
     expect(raised).toContain("If it really is owed, mark the task paid back first, once the card refund has gone through: the app first checks it can record it");
     expect(raised).toContain("Pay the $20.00 by bank transfer straight after it accepts; if it refuses, follow what it says.");

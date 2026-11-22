@@ -73,8 +73,8 @@ describe("Admin Modules effective state", () => {
       internetBankingPayments: true,
     });
     // The read uses an explicit column select (derived from MODULE_KEYS) so the
-    // generated SQL never names a retired column like the former multiLodge flag,
-    // keeping a future DROP (#139) blue/green-safe from this release on.
+    // generated SELECT never names a retired column; it does not make a DROP
+    // safe on its own (INV-OPS-005).
     expect(findUnique).toHaveBeenCalledWith({
       where: { id: "default" },
       select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,

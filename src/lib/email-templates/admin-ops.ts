@@ -22,6 +22,11 @@ import {
   paragraph,
 } from "./layout";
 import { emailPalette } from "@/lib/email-theme";
+import {
+  FOOD_ORDER_NO_NOTE_TEXT,
+  formatFoodOrderItemLine,
+  type FoodOrderUnitValue,
+} from "@/lib/food-order-rules";
 import { describeServerVersionPause } from "@/lib/servernz-api-version";
 
 // ---- N-13: Admin Daily Digest ----
@@ -203,6 +208,50 @@ export function adminMaintenanceReportTemplate(data: {
 }
 
 /**
+ * `food-order-placed` (fork triyder/AlpineClubBookingsNZ#121): a member ordered food for a lodge, delivered
+ * to the address in the Food Orders settings (the club's food officer).
+ *
+ * Every member-typed value — the item descriptions and the note — is escaped,
+ * and the items render through the shared `infoTable` block, one row per item.
+ * The only link is one this application built from the order id
+ * (`sameOrigin`), never anything the member supplied.
+ */
+export function foodOrderPlacedTemplate(data: {
+  officerLabel: string;
+  lodgeName: string;
+  neededBy: string;
+  orderedBy: string;
+  items: Array<{ description: string; quantity: string; unit: FoodOrderUnitValue }>;
+  notes: string | null;
+  foodOrderUrl: string;
+}): string {
+  return layout(`
+    ${heading("Food Order Placed")}
+    ${paragraph(
+      "A food order has been placed for " +
+        escapeHtml(data.lodgeName) +
+        ". You are receiving it as the club's " +
+        escapeHtml(data.officerLabel) +
+        ".",
+    )}
+    ${infoTable([
+      { label: "Lodge", value: escapeHtml(data.lodgeName) },
+      { label: "Needed by", value: escapeHtml(data.neededBy) },
+      { label: "Ordered by", value: escapeHtml(data.orderedBy) },
+    ])}
+    ${infoTable(
+      data.items.map((item, index) => ({
+        label: `Item ${index + 1}`,
+        // The one line format (`formatFoodOrderItemLine`), escaped whole.
+        value: escapeHtml(formatFoodOrderItemLine(item)),
+      })),
+    )}
+    ${data.notes ? multilineBlock(escapeHtml(data.notes)) : paragraph(FOOD_ORDER_NO_NOTE_TEXT)}
+    ${button("View Food Order", data.foodOrderUrl, { sameOrigin: true })}
+  `);
+}
+
+/**
  * The public website's contact form, delivered to whoever the committee
  * assignment routes it to.
  *
@@ -229,7 +278,7 @@ export function websiteContactTemplate(data: {
 
 /**
  * `admin-email-failure`, as the retry cron sends it: a member's email has now
- * failed MAX_ATTEMPTS times and will not be tried again.
+ * failed EMAIL_RETRY_MAX_ATTEMPTS times and will not be tried again.
  *
  * This is the shape the registry's default body describes, which is why it is
  * the one `REGISTRY_KEY_RENDERERS` maps the key to. Moved out of

@@ -33,6 +33,7 @@ vi.mock("../_components/panels", async () => {
   return {
     GoToXeroButton: actual.GoToXeroButton,
     xeroLinkState: actual.xeroLinkState,
+    ClubTaxCard: stub,
     ConnectionStatusPanel: stub,
     ContactSyncPanel: stub,
     ErasedMemberContactsPanel: stub,
@@ -42,6 +43,7 @@ vi.mock("../_components/panels", async () => {
     MissingContactsPanel: stub,
     OperationsPanel: stub,
     SyncResultsPanel: stub,
+    TaxCategoryMappingCard: stub,
     UsagePanel: stub,
   };
 });

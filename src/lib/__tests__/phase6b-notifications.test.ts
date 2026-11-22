@@ -7,6 +7,7 @@ import { EMAIL_DEFAULT_FROM_NAME } from "@/lib/email-message-settings";
 import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /*
  * The zone the capacity-warning fixtures are built in (#3123).
@@ -69,6 +70,7 @@ const { mockPrisma, mockTransporter } = vi.hoisted(() => {
       findUnique: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
       groupBy: vi.fn().mockResolvedValue([]),
+      count: vi.fn().mockResolvedValue(0),
     },
     auditLog: {
       create: vi.fn().mockResolvedValue({}),
@@ -170,48 +172,30 @@ describe("N-08: shouldSendEmail", () => {
     vi.resetModules();
   });
 
-  it("returns true when no preference record exists (defaults)", async () => {
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue(null);
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "bookingConfirmation")).toBe(true);
-  });
+  // Only the check-in reminder and the chore roster ask (the bulk categories'
+  // defaults are bulk-audience.ts's, INV-PRIV-026). Both default on.
+  it.each(["bookingReminder", "choreRoster"] as const)(
+    "returns true for %s when no preference record exists (defaults)",
+    async (category) => {
+      mockPrisma.notificationPreference.findUnique.mockResolvedValue(null);
+      const { shouldSendEmail } = await import("../email");
+      expect(await shouldSendEmail("member-1", category)).toBe(true);
+    },
+  );
 
-  it("returns false for marketingEmails when no preference record exists", async () => {
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue(null);
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "marketingEmails")).toBe(false);
-  });
-
-  it("respects stored preference (false)", async () => {
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue({
-      bookingConfirmation: false,
-      bookingReminder: true,
-      bookingBumped: true,
-      bookingCancelled: true,
-      choreRoster: true,
-      marketingEmails: false,
-    });
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "bookingConfirmation")).toBe(false);
-  });
-
-  it("respects stored preference (true)", async () => {
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue({
-      bookingConfirmation: true,
-      bookingReminder: true,
-      bookingBumped: true,
-      bookingCancelled: true,
-      choreRoster: true,
-      marketingEmails: true,
-    });
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "marketingEmails")).toBe(true);
-  });
-
-  it("returns true for unknown categories", async () => {
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "unknownCategory")).toBe(true);
-  });
+  it.each(["bookingReminder", "choreRoster"] as const)(
+    "honours a stored %s opt-out and leaves the other category alone",
+    async (category) => {
+      mockPrisma.notificationPreference.findUnique.mockResolvedValue({
+        bookingReminder: category !== "bookingReminder",
+        choreRoster: category !== "choreRoster",
+      });
+      const { shouldSendEmail } = await import("../email");
+      expect(await shouldSendEmail("member-1", category)).toBe(false);
+      const other = category === "bookingReminder" ? "choreRoster" : "bookingReminder";
+      expect(await shouldSendEmail("member-1", other)).toBe(true);
+    },
+  );
 });
 
 describe("sendEmail logging safeguards", () => {
@@ -612,8 +596,10 @@ describe("exhausted email failure review", () => {
         createdAt: new Date("2026-05-14T00:00:00.000Z"),
       },
     ]);
+    mockPrisma.emailLog.count.mockResolvedValue(2);
     mockPrisma.auditLog.findMany.mockResolvedValue([
       {
+        action: "email.failure.reviewed",
         targetId: "reviewed-failure",
         actorMemberId: "admin_1",
         memberId: "admin_1",
@@ -678,6 +664,50 @@ describe("exhausted email failure review", () => {
 // N-13: Admin daily digest
 // ============================================================================
 
+/** One row of the digest's `emailLog.groupBy` (#5407 item 12). */
+function digestGroup(templateName: string, subject: string, to: string, copies = 1) {
+  return { templateName, subject, to, _count: { _all: copies } };
+}
+
+/** The EmailLog rows the real senders wrote in this test. */
+function writtenEmailRows() {
+  return mockPrisma.emailLog.create.mock.calls.map(
+    (call) => call[0].data as { templateName: string; subject: string; to: string },
+  );
+}
+
+/**
+ * Answer the digest's `groupBy` from the rows the real senders wrote, grouped
+ * on the keys the digest asks for, so the test exercises the real subjects
+ * and recipients rather than hand-built groups.
+ */
+function groupWrittenRowsForDigest() {
+  const written = writtenEmailRows();
+  mockPrisma.emailLog.groupBy.mockImplementation(
+    async ({ by }: { by: Array<"templateName" | "subject" | "to"> }) => {
+      const groups = new Map<string, ReturnType<typeof digestGroup>>();
+      for (const row of written) {
+        const key = JSON.stringify(by.map((field) => row[field]));
+        const group = groups.get(key);
+        if (group) group._count._all++;
+        else groups.set(key, digestGroup(row.templateName, row.subject, row.to));
+      }
+      return [...groups.values()];
+    },
+  );
+}
+
+function newBookingAlert(memberName: string) {
+  return {
+    memberName,
+    checkIn: new Date("2026-08-01"),
+    checkOut: new Date("2026-08-03"),
+    guestCount: 2,
+    totalCents: 24_000,
+    status: "PENDING",
+  };
+}
+
 describe("N-13: sendAdminDigest", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -691,12 +721,12 @@ describe("N-13: sendAdminDigest", () => {
   });
 
   it("sends digest with alert counts from past 24h", async () => {
-    mockPrisma.emailLog.findMany.mockResolvedValue([
-      { templateName: "admin-new-booking", subject: "New booking: Alice" },
-      { templateName: "admin-new-booking", subject: "New booking: Bob" },
-      { templateName: "admin-new-booking", subject: "New booking: Carol" },
-      { templateName: "admin-payment-failure", subject: "Payment failed: xyz" },
-      { templateName: "admin-xero-repeated-failure", subject: "Repeated Xero Failure: booking:1" },
+    mockPrisma.emailLog.groupBy.mockResolvedValue([
+      digestGroup("admin-new-booking", "New booking: Alice", "support@example.org"),
+      digestGroup("admin-new-booking", "New booking: Bob", "support@example.org"),
+      digestGroup("admin-new-booking", "New booking: Carol", "support@example.org"),
+      digestGroup("admin-payment-failure", "Payment failed: xyz", "support@example.org"),
+      digestGroup("admin-xero-repeated-failure", "Repeated Xero Failure: booking:1", "support@example.org"),
     ]);
 
     const { sendAdminDigest } = await import("../cron-admin-digest");
@@ -712,8 +742,146 @@ describe("N-13: sendAdminDigest", () => {
     });
   });
 
+  // #5407 item 12: the read groups per officer, and still counts only copies
+  // somebody received (SENT, or QUEUED mid-send) in the last 24 hours.
+  it("groups by template, subject and recipient over SENT and QUEUED rows", async () => {
+    mockPrisma.emailLog.groupBy.mockResolvedValue([]);
+
+    const { sendAdminDigest } = await import("../cron-admin-digest");
+    await sendAdminDigest();
+
+    expect(mockPrisma.emailLog.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.emailLog.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        by: ["templateName", "subject", "to"],
+        where: expect.objectContaining({
+          status: { in: ["SENT", "QUEUED"] },
+          createdAt: { gte: expect.any(Date) },
+        }),
+        _count: { _all: true },
+      }),
+    );
+  });
+
+  // #5403: the confirm-pending cron sends the bumped alert again, so its line
+  // in the digest counts real events instead of always reading zero. #5407
+  // item 12: the groups are built from the rows the real sender writes, so
+  // two bumps for one owner must stay two.
+  it("counts two bumps for the same owner as two", async () => {
+    const { sendAdminBookingBumpedAlert } = await import("../email");
+    const bump = {
+      bumpedMemberName: "Jane Doe",
+      lodgeName: null,
+      guestCount: 2,
+      reason: "These dates filled up before the provisional guests were confirmed.",
+    };
+    await sendAdminBookingBumpedAlert({ ...bump, bookingReference: "CKAAAA11", checkIn: new Date("2026-08-01"), checkOut: new Date("2026-08-03") });
+    await sendAdminBookingBumpedAlert({ ...bump, bookingReference: "CKBBBB22", checkIn: new Date("2026-08-10"), checkOut: new Date("2026-08-12") });
+    await flushAsyncEmailSends();
+    expect(
+      writtenEmailRows().filter((row) => row.templateName === "admin-booking-bumped"),
+    ).toHaveLength(2);
+    groupWrittenRowsForDigest();
+
+    const { sendAdminDigest } = await import("../cron-admin-digest");
+    const result = await sendAdminDigest();
+    await flushAsyncEmailSends();
+
+    expect(result.totalAlerts).toBe(2);
+    const digestHtml = mockTransporter.sendMail.mock.calls
+      .map((call) => call[0] as { html: string })
+      .find((mail) => mail.html.includes("Admin Daily Digest"))?.html;
+    // The row's own Count cell, the one straight after its label.
+    expect(digestHtml).toMatch(/Bookings Bumped<\/td>\s*<td[^>]*>2<\/td>/);
+  });
+
+  // #5407 item 12: the payment-failure subject never changes, so the old
+  // distinct-subject read counted two failures as one.
+  it("counts two payment failures sent to two officers as two", async () => {
+    mockPrisma.member.findMany.mockResolvedValue([
+      adminRecipient("treasurer@example.org"),
+      adminRecipient("support@example.org"),
+    ]);
+    const { sendAdminPaymentFailureAlert } = await import("../email");
+    const failure = {
+      memberName: "Jane Doe",
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      amountCents: 12_000,
+      errorMessage: "card_declined",
+    };
+    await sendAdminPaymentFailureAlert({ ...failure, paymentIntentId: "pi_one" }, CLUB_FORMAT_TEST);
+    await sendAdminPaymentFailureAlert({ ...failure, memberName: "Sam Roe", paymentIntentId: "pi_two" }, CLUB_FORMAT_TEST);
+    await flushAsyncEmailSends();
+    const failures = writtenEmailRows().filter(
+      (row) => row.templateName === "admin-payment-failure",
+    );
+    expect(failures).toHaveLength(4);
+    expect(new Set(failures.map((row) => row.subject)).size).toBe(1);
+    groupWrittenRowsForDigest();
+
+    const { sendAdminDigest } = await import("../cron-admin-digest");
+    const result = await sendAdminDigest();
+
+    expect(result.totalAlerts).toBe(2);
+  });
+
+  it("counts one alert sent to three officers as one", async () => {
+    mockPrisma.member.findMany.mockResolvedValue([
+      adminRecipient("one@example.org"),
+      adminRecipient("two@example.org"),
+      adminRecipient("three@example.org"),
+    ]);
+    const { sendAdminNewBookingAlert } = await import("../email");
+    await sendAdminNewBookingAlert(newBookingAlert("Jane Doe"), CLUB_FORMAT_TEST);
+    await flushAsyncEmailSends();
+    expect(
+      writtenEmailRows().filter((row) => row.templateName === "admin-new-booking"),
+    ).toHaveLength(3);
+    groupWrittenRowsForDigest();
+
+    const { sendAdminDigest } = await import("../cron-admin-digest");
+    const result = await sendAdminDigest();
+
+    expect(result.totalAlerts).toBe(1);
+  });
+
+  it("counts two new-booking alerts with the same subject as two", async () => {
+    const { sendAdminNewBookingAlert } = await import("../email");
+    await sendAdminNewBookingAlert(newBookingAlert("Jane Doe"), CLUB_FORMAT_TEST);
+    await sendAdminNewBookingAlert(
+      { ...newBookingAlert("Jane Doe"), checkIn: new Date("2026-09-05"), checkOut: new Date("2026-09-07") },
+      CLUB_FORMAT_TEST,
+    );
+    await flushAsyncEmailSends();
+    const rows = writtenEmailRows().filter(
+      (row) => row.templateName === "admin-new-booking",
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.subject).toBe(rows[1]!.subject);
+    groupWrittenRowsForDigest();
+
+    const { sendAdminDigest } = await import("../cron-admin-digest");
+    const result = await sendAdminDigest();
+
+    expect(result.totalAlerts).toBe(2);
+  });
+
+  it("counts an uneven audience by the officer who received the most", async () => {
+    // Alert A reached officers X and Y; alert B, same subject, reached X only.
+    mockPrisma.emailLog.groupBy.mockResolvedValue([
+      digestGroup("admin-payment-failure", "Payment Failed", "x@example.org", 2),
+      digestGroup("admin-payment-failure", "Payment Failed", "y@example.org", 1),
+    ]);
+
+    const { sendAdminDigest } = await import("../cron-admin-digest");
+    const result = await sendAdminDigest();
+
+    expect(result.totalAlerts).toBe(2);
+  });
+
   it("does not send digest when no alerts occurred by default", async () => {
-    mockPrisma.emailLog.findMany.mockResolvedValue([]);
+    mockPrisma.emailLog.groupBy.mockResolvedValue([]);
 
     const { sendAdminDigest } = await import("../cron-admin-digest");
     const result = await sendAdminDigest();
@@ -732,7 +900,7 @@ describe("N-13: sendAdminDigest", () => {
   });
 
   it("sends zero-alert digest when policy is always", async () => {
-    mockPrisma.emailLog.findMany.mockResolvedValue([]);
+    mockPrisma.emailLog.groupBy.mockResolvedValue([]);
     mockPrisma.notificationDeliveryPolicy.findUnique.mockResolvedValue({
       templateName: "admin-daily-digest",
       mode: "ALWAYS",
@@ -747,8 +915,8 @@ describe("N-13: sendAdminDigest", () => {
   });
 
   it("does not send digest when policy is disabled", async () => {
-    mockPrisma.emailLog.findMany.mockResolvedValue([
-      { templateName: "admin-new-booking", subject: "New booking: Alice" },
+    mockPrisma.emailLog.groupBy.mockResolvedValue([
+      digestGroup("admin-new-booking", "New booking: Alice", "support@example.org"),
     ]);
     mockPrisma.notificationDeliveryPolicy.findUnique.mockResolvedValue({
       templateName: "admin-daily-digest",

@@ -32,6 +32,7 @@ import {
   guestIsStayingOn,
   resolveBedLodgeIdForLock,
 } from "@/lib/bed-allocation-placement";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { assertGlobalLockHeld } from "@/lib/global-lock-held";
 import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 
@@ -93,7 +94,7 @@ export async function manuallyAllocateBed(
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     if (lockLodgeId) await acquireLodgeCapacityLock(tx, lockLodgeId);
     return manuallyAllocateBedWithLocksHeld({ ...input, db: tx });
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 export interface SameDateAllocationMoveResult {
@@ -308,7 +309,7 @@ export async function moveBedAllocationsSameDate(
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       if (lockLodgeId) await acquireLodgeCapacityLock(tx, lockLodgeId);
       return moveBedAllocationsSameDateWithLocksHeld({ ...input, db: tx });
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (error) {
     if (
       error instanceof BedAllocationAdminError &&
@@ -482,7 +483,7 @@ export async function manuallyAllocateBedForNights(
         stayDates: [stayDate],
         db: tx,
       });
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
     combined.allocations.push(...result.allocations);
     combined.conflicts.push(...result.conflicts);
     combined.skipped.push(...result.skipped);
@@ -540,5 +541,5 @@ export async function deleteBedAllocation(
       await acquireLodgeCapacityLock(tx, allocationKey.room.lodgeId);
     }
     return deleteBedAllocationWithLocksHeld({ ...input, db: tx });
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }

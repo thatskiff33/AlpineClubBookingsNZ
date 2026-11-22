@@ -47,7 +47,8 @@ answers the question, so nobody has to work out which of two is winning. The
   dates, an audit-log entry, the health dashboard (its "Last refresh" line as
   well as its rows), the stuck-states page, the induction record, the lobby
   display's date and clock, the month headings and weekday column heads on the
-  booking calendars, and the month options in the bookings filter;
+  booking calendars, the month options in the bookings filter, and the date
+  labels along the bottom of the report charts and in their tooltips;
 - **the currency card payments are charged in** (see below);
 - the currency code shown beside a fee or a monthly AI spend cap, **and the
   currency AI spend is counted in** (see below);
@@ -68,20 +69,23 @@ currency either way.
 **What does not follow it.** A few labels stay in English whatever is set
 here, and are recorded rather than fixed for now:
 
-- the date labels along the bottom of the report charts (for example
-  "Apr 16") — the figures and every other date on the reports page do follow
-  this page;
 - the day-of-week names on the chore schedule and minimum-stay setup screens,
   which are fixed lists of choices rather than dates;
 - the month names in the subscription lockout page's "Financial year-end
   month" choice ("January" to "December"), also a fixed list of choices;
 - the minimum-stay check-in days on the public booking-policy page ("Friday,
   Saturday"), written from the same fixed list of day names;
+- the words "Week of" and "to" around the dates in the Reports page's weekly
+  chart labels and tooltips and in its CSV's revenue period column ("Week of
+  30.03.2026 to 05.04.2026" on `de-CH`): the dates follow the setting, the
+  words stay English;
 - relative times such as "3 hours ago", which are wording, not a date format.
 
-On `en-NZ` the one visible change this brought is September: the bookings
-filter's month options and the reports page's "Joined between" line now write
-"Sept", the way every other `en-NZ` date on the site already did.
+On `en-NZ` the visible changes this brought are September and the report
+charts. The bookings filter's month options and the reports page's "Joined
+between" line now write "Sept", the way every other `en-NZ` date on the site
+already did. The report charts' date labels now read "16 Apr" rather than
+"Apr 16", the same way as the dates in the tables beside them.
 
 **Expect some screens to look different on another format.** A different
 language tag does more than reorder the day and month. `de-CH`, for example,
@@ -260,7 +264,6 @@ is older than the currency.
 | Changing `CURRENCY` on the server did not change this page | Expected. The server value seeded the setting once; this page is the authority for it now | Change it here instead |
 | Changing `LOCALE` on the server did not change the dates | Expected. The server value seeded the setting once; this page is the authority for dates as well as money | Change it here instead |
 | An email still shows dates the old way just after a change | It was sent by a second copy of the app (for example during a blue/green switch-over), which refreshes its copy of the setting only when it sends an email more than five minutes after its last check | Nothing to fix. The next email that copy sends uses the new format |
-| The report charts' date labels are still in English | A known limitation: the chart axis labels ("Apr 16") are written in English whatever the format | Nothing to fix. The figures and the other dates follow this page |
 | The AI settings page says the conversion rate is not set | The club's currency was changed, which clears the rate set for the old one | Enter the rate for the new currency on the AI settings page. **Admin → Audit Log**, action `AI_SPEND_CURRENCY_RATE_CLEARED`, says when and by whom |
 | Saving an AI spend rate says the club's currency changed | Someone changed the currency while the rate was being saved, so it was not stored | Reload the page and enter the rate for the new currency |
 | "Not usable" appears under a value | Something was written straight into the database, or restored from a backup that held a value this app cannot read | Save the value again on this page. Restarting will not repair it |

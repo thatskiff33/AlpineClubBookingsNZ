@@ -23,6 +23,14 @@
  * population is pinned as a SET keyed by stable symbol, so fixing a writer means
  * deleting its manifest entry in the same diff, and adding one means adding an
  * entry a reviewer will see.
+ *
+ * NO TOTAL IS PUBLISHED OR PINNED (#5211). The site count, the per-sink split
+ * and the per-category distribution used to be pinned here and quoted in a dozen
+ * documents, so every pull request that recorded something new edited the same
+ * lines as every other and any two of them conflicted. The per-site ledger
+ * (`scripts/audit/audit-write-sites.ts`, generated) replaced them: one line per
+ * site, so a new writer is still a reviewed diff, and a swap or sink move at any
+ * site is caught by name rather than only when it fails to cancel out.
  */
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -38,18 +46,22 @@ import {
   isAuditCategory,
 } from "@/lib/audit-categories";
 import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
+import { liveDocSurfaces } from "@/lib/__tests__/support/live-doc-surfaces";
 
 import {
+  auditWriteSiteLedgerEntry,
   describeCategory,
+  type AuditWriteSiteLedgerEntry,
   scanAuditWriterCensus,
   type AuditWriteSite,
 } from "../../../scripts/audit/audit-writer-census";
+import { AUDIT_WRITE_SITES } from "../../../scripts/audit/audit-write-sites";
+import * as MANIFEST from "../../../scripts/audit/audit-writer-census-manifest";
 import {
   APPLIED_AUDIT_CATEGORIES,
   APPROVED_FORWARDED_CATEGORY_SITES,
   APPROVED_MIGRATION_AUDIT_SQL,
   APPROVED_NON_PRODUCING_AUDIT_DML,
-  AUDIT_CENSUS_TOTALS,
   AUDIT_WRITER_WRAPPERS,
   AUDIT_WRITERS_WITHOUT_ENTITY_IDENTIFIER,
   LODGE_GATED_ADMIN_ACTIONS_2765,
@@ -64,6 +76,7 @@ import {
   MEMBER_RECORD_ADMIN_SURFACES_2755,
   OFFICER_DRIVEN_MEMBER_VISIBLE_WRITERS_2755,
   REVIEWED_ADMIN_CATEGORIES_2730,
+  REVIEWED_SITE_RECORDS,
   UNCATEGORISED_AUDIT_WRITERS,
 } from "../../../scripts/audit/audit-writer-census-manifest";
 
@@ -83,39 +96,17 @@ function ids(sites: readonly AuditWriteSite[]): string[] {
 
 type CurrentCensusClaim = {
   file: string;
-  writeSites: number;
-  /**
-   * `null` for a claim whose wording states the SITE TOTAL and nothing about
-   * uncategorised sites — "the site total is unchanged at N", "every one of the N
-   * places does it". Those copies drift on the total exactly like the others, and
-   * requiring them to mention a second number they never mention would either
-   * leave them unpinned or invent an assertion the page did not make.
-   */
-  uncategorised: number | null;
+  /** The matched text, so a failure names the sentence to reword. */
+  text: string;
 };
 
 function currentAuditCensusClaims(): CurrentCensusClaim[] {
   const repoRoot = process.cwd();
-  const sourceFiles: string[] = [];
-  const walk = (directory: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) {
-        if (entry.name !== "__tests__") walk(path);
-      } else if (entry.name.endsWith(".md") || entry.name.endsWith(".ts")) {
-        sourceFiles.push(path);
-      }
-    }
-  };
-  walk(resolve(repoRoot, "docs"));
-  walk(resolve(repoRoot, "src", "lib", "diagnostics", "tools", "packs"));
+  // #5211: the same live surfaces the view-only census scans, and no history
+  // (`CHANGELOG.md`, `docs/releases/`). See `liveDocSurfaces`.
+  const sourceFiles = liveDocSurfaces(repoRoot).map((rel) => join(repoRoot, rel));
 
-  const patterns: readonly {
-    pattern: RegExp;
-    implicitUncategorised?: number;
-    /** The wording states the site total only; see `CurrentCensusClaim`. */
-    totalOnly?: boolean;
-  }[] = [
+  const patterns: readonly { pattern: RegExp }[] = [
     {
       pattern:
         /\b(\d+)\s+row-producing\s+production\s+audit\s+write\s+sites\b[^.]{0,120}?\b(zero|\d+)\b[^.]{0,50}\b(?:record no category|uncategorised)\b/giu,
@@ -134,7 +125,6 @@ function currentAuditCensusClaims(): CurrentCensusClaim[] {
     },
     {
       pattern: /\ball\s+(\d+)\s+now\s+record\s+a\s+category\b/giu,
-      implicitUncategorised: 0,
     },
     /*
       THE FOUR COPIES THE FIVE PATTERNS ABOVE COULD NOT SEE (#2679's review).
@@ -159,13 +149,15 @@ function currentAuditCensusClaims(): CurrentCensusClaim[] {
     {
       // "The site total is unchanged at N" — a total-only claim.
       pattern: /\bsite\s+total\s+is\s+unchanged\s+at\s+(\d+)\b/giu,
-      totalOnly: true,
     },
     {
       // "every one of the N sites in the tree" and "every one of the N places does
       // it" — the two prose forms that assert the total as a completeness claim.
       pattern: /\bevery\s+one\s+of\s+the\s+(\d+)\s+(?:sites|places)\b/giu,
-      totalOnly: true,
+    },
+    {
+      // #5211: the admin category's site count, in the support pack's table.
+      pattern: /\blargest\s+category\s+in\s+the\s+codebase\s+\(\d+\s+write\s+sites\b/giu,
     },
   ];
 
@@ -175,18 +167,11 @@ function currentAuditCensusClaims(): CurrentCensusClaim[] {
       .replaceAll("**", "")
       .replace(/\s+\*\s+/g, " ")
       .replace(/\s+/g, " ");
-    for (const { pattern, implicitUncategorised, totalOnly } of patterns) {
+    for (const { pattern } of patterns) {
       for (const match of contents.matchAll(pattern)) {
-        const uncategorised = match[2];
         claims.push({
           file: relative(repoRoot, sourceFile).replaceAll("\\", "/"),
-          writeSites: Number(match[1]),
-          uncategorised: totalOnly
-            ? null
-            : (implicitUncategorised ??
-              (uncategorised?.toLowerCase() === "zero"
-                ? 0
-                : Number(uncategorised))),
+          text: match[0],
         });
       }
     }
@@ -204,27 +189,250 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     expect(census().sites.length).toBeGreaterThan(300);
   });
 
-  it("finds exactly the pinned number of production audit write sites", () => {
+  it("records every production audit write site in the per-site ledger, and nothing else (#5211)", () => {
+    /*
+      The gate that replaced the pinned site count, per-sink split and category
+      distribution. Each entry is one site's category, sink, action and the
+      reviewed per-site records that name it, so:
+
+        - a NEW writer fails until its line is added;
+        - a REMOVED or MOVED writer fails until its line goes;
+        - a RECLASSIFIED writer (same function, same action, different
+          category) is named as such: that is a readership change;
+        - a SINK move at any site is named, and every other attribute that
+          changed with it is named too, so a sink move cannot hide a
+          reclassification;
+        - deleting a site from a reviewed record (`REVIEWED_SITE_RECORDS`)
+          changes its `reviewed` tags and is named.
+
+      THE `#n` ORDINAL IS POSITIONAL. A site added earlier in a function shifts
+      the ordinals after it, so comparing id by id would report every later site
+      as changed. So the comparison is per function (`file::symbol`), pairing
+      measured and recorded sites by sink and action: a shifted site matches its
+      old entry and is not reported. The remaining limit: two sites in ONE
+      function with the same sink and action are told apart only by order.
+
+      Regenerate with `pnpm run audit:census --write` and review the diff of
+      `scripts/audit/audit-write-sites.ts`.
+    */
+    const measured = Object.fromEntries(
+      census().sites.map((site) => [site.id, auditWriteSiteLedgerEntry(site)]),
+    );
+    const recorded: Readonly<Record<string, AuditWriteSiteLedgerEntry>> = AUDIT_WRITE_SITES;
+    const same = (a: AuditWriteSiteLedgerEntry, b: AuditWriteSiteLedgerEntry) =>
+      JSON.stringify(a) === JSON.stringify(b);
+    const show = (entry: AuditWriteSiteLedgerEntry) =>
+      `${entry.action} (${entry.category}, ${entry.sink}${entry.reviewed ? `, reviewed: ${entry.reviewed.join(" ")}` : ""})`;
+
+    const functionOf = (id: string) => id.replace(/#\d+$/, "");
+    const byFunction = new Map<
+      string,
+      { measured: AuditWriteSiteLedgerEntry[]; recorded: AuditWriteSiteLedgerEntry[]; renumbered: boolean }
+    >();
+    const slot = (id: string) => {
+      const key = functionOf(id);
+      let group = byFunction.get(key);
+      if (!group) {
+        group = { measured: [], recorded: [], renumbered: false };
+        byFunction.set(key, group);
+      }
+      return group;
+    };
+    for (const [id, entry] of Object.entries(measured)) {
+      const group = slot(id);
+      group.measured.push(entry);
+      if (!recorded[id] || !same(recorded[id], entry)) group.renumbered = true;
+    }
+    for (const [id, entry] of Object.entries(recorded)) {
+      const group = slot(id);
+      group.recorded.push(entry);
+      if (!measured[id] || !same(measured[id], entry)) group.renumbered = true;
+    }
+
+    const problems: string[] = [];
+    const reviewedOf = (entry: AuditWriteSiteLedgerEntry) => (entry.reviewed ?? []).join(" ");
+    const readership =
+      "This changes WHO CAN READ the row (INV-PRIV-012) and needs INV-OPS-012's backfill answer.";
+    const shiftedKey = (entry: AuditWriteSiteLedgerEntry) =>
+      entry.reviewed
+        ? ` It carries reviewed tags [${reviewedOf(entry)}]: if it is a new site, a #n-keyed reviewed record ` +
+          "now points at it because an earlier insertion shifted that record's keys, and the record must be " +
+          "re-pointed (the standing weakness of #n-keyed records, INV-OPS-012)."
+        : "";
+    // Every attribute that differs between two entries for the same site is named.
+    const changesAt = (fn: string, before: AuditWriteSiteLedgerEntry, after: AuditWriteSiteLedgerEntry) => {
+      if (after.category !== before.category) {
+        problems.push(
+          `RECLASSIFIED in ${fn}: ${after.action} was ${before.category}, now ${after.category}. ${readership}`,
+        );
+      }
+      if (after.sink !== before.sink) {
+        problems.push(`SINK MOVED in ${fn}: ${after.action} was ${before.sink}, now ${after.sink}.`);
+      }
+      if (reviewedOf(after) !== reviewedOf(before)) {
+        problems.push(
+          `REVIEW RECORD CHANGED in ${fn}: ${after.action} was reviewed by [${reviewedOf(before)}], ` +
+            `now [${reviewedOf(after)}]. Either a reviewed record gained or lost this site, which is ` +
+            "a decision to state, or a site added or removed earlier in this function shifted the #n keys that " +
+            "record uses, and its keys need moving with the sites.",
+        );
+      }
+    };
+    for (const [fn, group] of byFunction) {
+      if (!group.renumbered) continue;
+      const reportedBefore = problems.length;
+      // Take out entries present on both sides (they may only have moved ordinal).
+      const added = [...group.measured];
+      const removed: AuditWriteSiteLedgerEntry[] = [];
+      for (const entry of group.recorded) {
+        const at = added.findIndex((candidate) => same(candidate, entry));
+        if (at >= 0) added.splice(at, 1);
+        else removed.push(entry);
+      }
+      // Pair what is left as the same site, changed: first by sink and action,
+      // then by action alone (a sink move). Each pair names EVERY attribute that
+      // changed, so a sink move cannot hide a reclassification.
+      for (const match of [
+        (a: AuditWriteSiteLedgerEntry, b: AuditWriteSiteLedgerEntry) =>
+          a.sink === b.sink && a.action === b.action,
+        (a: AuditWriteSiteLedgerEntry, b: AuditWriteSiteLedgerEntry) => a.action === b.action,
+      ]) {
+        for (const before of [...removed]) {
+          const at = added.findIndex((after) => match(before, after));
+          if (at < 0) continue;
+          const after = added.splice(at, 1)[0];
+          removed.splice(removed.indexOf(before), 1);
+          changesAt(fn, before, after);
+        }
+      }
+      // What is left differs in its action too. Report each REMOVED+NEW pair in
+      // this function together, saying what else differs, so a readership change
+      // inside the pair is visible, and a pure rewrite of an action expression is
+      // recognisable as one.
+      while (removed.length > 0 && added.length > 0) {
+        const before = removed.shift() as AuditWriteSiteLedgerEntry;
+        const after = added.shift() as AuditWriteSiteLedgerEntry;
+        const differs = [
+          after.category !== before.category ? `category ${before.category} -> ${after.category}` : null,
+          after.sink !== before.sink ? `sink ${before.sink} -> ${after.sink}` : null,
+          reviewedOf(after) !== reviewedOf(before)
+            ? `reviewed [${reviewedOf(before)}] -> [${reviewedOf(after)}]`
+            : null,
+        ].filter(Boolean);
+        problems.push(
+          `REMOVED+NEW in ${fn}: ${show(before)} -> ${show(after)}. ` +
+            (differs.length === 0
+              ? "Identical except for the action text: possibly the same site with its action expression rewritten."
+              : `Besides the action, ${differs.join(", ")}; if this is one site rewritten` +
+                (after.category !== before.category ? `, the category change is a readership change. ${readership}` : ", that is the change.")),
+        );
+      }
+      for (const entry of removed) problems.push(`REMOVED from ${fn}: ${show(entry)}`);
+      for (const entry of added) problems.push(`NEW in ${fn}: ${show(entry)}.${shiftedKey(entry)}`);
+      if (problems.length === reportedBefore) {
+        problems.push(`RENUMBERED in ${fn}: the same sites, at different #n ordinals; nothing changed class.`);
+      }
+    }
     expect(
-      census().sites.length,
-      "The number of production audit write sites moved. That is fine — it moves " +
-        "whenever a feature records something new — but it is not a silent change: " +
-        "update AUDIT_CENSUS_TOTALS.writeSites, and check the new writer appears " +
-        "with a category rather than in UNCATEGORISED_AUDIT_WRITERS.",
-    ).toBe(AUDIT_CENSUS_TOTALS.writeSites);
+      problems.sort(),
+      "The audit write sites in the tree and scripts/audit/audit-write-sites.ts " +
+        "disagree. Run `pnpm run audit:census --write` and commit the result, after " +
+        "checking each line above. NEW and REMOVED are writers added or deleted " +
+        "(REMOVED+NEW pairs one of each in the same function and says what else " +
+        "differs). RENUMBERED is ordinals shifting because a site was added or " +
+        "removed earlier in the same function, which changes nobody's readership. " +
+        "RECLASSIFIED, SINK MOVED and REVIEW RECORD CHANGED are changes at an " +
+        "existing site, paired within its function by sink and action, then by " +
+        "action; two sites in one function sharing them are paired by order. " +
+        "A new site must record a canonical category through an approved sink.",
+    ).toEqual([]);
   });
 
-  it("finds exactly the pinned per-sink split", () => {
-    // Per-sink as well as in total, because a writer moved from `logAudit` to a
-    // hand-built `auditLog.create` leaves the total untouched while losing the
-    // boundary's sanitisation and retention derivation.
-    const measured = Object.fromEntries(
-      Object.entries(census().sinkCounts).map(([sink, counts]) => [
-        sink,
-        { total: counts.total, uncategorised: counts.uncategorised },
-      ]),
-    );
-    expect(measured).toEqual(AUDIT_CENSUS_TOTALS.bySink);
+  it("repeats no site id in the ledger file (#5211 review)", () => {
+    /*
+      The ledger is `merge=union`, and union can leave the same id twice: two
+      branches that each touch the same `#n` line keep both lines. The imported
+      object keeps only the LAST one, so when that last line happens to be right
+      every comparison above passes (trial T5a on PR #5224). The file's TEXT is
+      read here, so a repeated id fails the census by name, not only `tsc`
+      (where it is TS1117).
+    */
+    const text = readFileSync(resolve(process.cwd(), "scripts", "audit", "audit-write-sites.ts"), "utf8");
+    const seen = new Set<string>();
+    const repeated = new Set<string>();
+    for (const match of text.matchAll(/^ {2}("(?:[^"\\]|\\.)*"):/gmu)) {
+      const id = JSON.parse(match[1]) as string;
+      if (seen.has(id)) repeated.add(id);
+      seen.add(id);
+    }
+    expect(
+      [...repeated].sort(),
+      "scripts/audit/audit-write-sites.ts names these ids more than once, usually " +
+        "after a union merge. Do not pick a line by hand: run " +
+        "`pnpm run audit:census --write` on the merged tree.",
+    ).toEqual([]);
+  });
+
+  it("registers every per-site manifest record in REVIEWED_SITE_RECORDS (#5211 review)", () => {
+    /*
+      A reviewed record only shows in the ledger's `reviewed` tags if it is
+      registered. So every manifest export keyed by (or listing) site ids must
+      be registered, or excluded here with the reason it is not a record of
+      row-producing sites.
+    */
+    const NOT_SITE_RECORDS: Readonly<Record<string, string>> = {
+      APPROVED_MIGRATION_AUDIT_SQL: "migration SQL statements, not TypeScript write sites",
+      APPROVED_NON_PRODUCING_AUDIT_DML: "non-row-producing DML, which the ledger does not list",
+    };
+    const looksLikeSiteId = (value: unknown) =>
+      typeof value === "string" && /::.+#\d+$/.test(value);
+    const registered = REVIEWED_SITE_RECORDS.map(([, ids]) => [...ids].sort().join("\n"));
+    const unregistered = Object.entries(MANIFEST)
+      .filter(([name]) => !(name in NOT_SITE_RECORDS) && name !== "REVIEWED_SITE_RECORDS")
+      .map(([name, value]) => {
+        const ids = Array.isArray(value)
+          ? value
+          : value && typeof value === "object"
+            ? Object.keys(value)
+            : [];
+        return [name, ids] as const;
+      })
+      .filter(([, ids]) => ids.length > 0 && ids.every(looksLikeSiteId))
+      .filter(([, ids]) => !registered.includes([...ids].sort().join("\n")))
+      .map(([name]) => name);
+    expect(
+      unregistered,
+      "A manifest export records particular audit write sites but is not in " +
+        "REVIEWED_SITE_RECORDS, so deleting one of its entries would not show in " +
+        "the ledger. Register it there with a tag, or exclude it above with a reason.",
+    ).toEqual([]);
+    // The exclusions must still exist, or the list is rotting.
+    expect(Object.keys(NOT_SITE_RECORDS).filter((name) => !(name in MANIFEST))).toEqual([]);
+  });
+
+  it("tallies its sinks and categories from the same sites it lists", () => {
+    // The scanner keeps running tallies beside its site list. The ledger pins
+    // the list; this keeps the tallies honest against it, so the TSV summary a
+    // reviewer reads cannot disagree with the sites it summarises.
+    const bySink: Record<string, { total: number; uncategorised: number }> = {};
+    const byCategory: Record<string, number> = {};
+    for (const site of census().sites) {
+      const sink = (bySink[site.sink] ??= { total: 0, uncategorised: 0 });
+      sink.total += 1;
+      if (site.category.kind === "absent") sink.uncategorised += 1;
+      if (site.category.kind === "literal") {
+        byCategory[site.category.value] = (byCategory[site.category.value] ?? 0) + 1;
+      }
+    }
+    expect(
+      Object.fromEntries(
+        Object.entries(census().sinkCounts).map(([sink, counts]) => [
+          sink,
+          { total: counts.total, uncategorised: counts.uncategorised },
+        ]),
+      ),
+    ).toEqual(bySink);
+    expect(census().categoryCounts).toEqual(byCategory);
   });
 
   it("has exactly the reviewed set of UNCATEGORISED writers, and no others", () => {
@@ -255,117 +463,56 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     ).toEqual(Object.keys(UNCATEGORISED_AUDIT_WRITERS).sort());
   });
 
-  it("discovers and pins every runtime or document current-census claim", () => {
+  it("publishes no current audit-census total anywhere (#5211)", () => {
     /*
-      Current totals occur in operator docs, model-facing runtime scope, and a
-      runtime source contract. The old hand-maintained four-document list missed
-      the second booking-guide occurrence and both runtime occurrences. Discover
-      the reviewed wording instead, pin the occurrence inventory, and compare every
-      value with the manifest.
+      The census's totals used to be quoted as current fact in the operator docs,
+      the Diagnostics pack docs, a model-facing scope string and three pack
+      docblocks, and this test held every copy to the measured value. That kept
+      them true, and it also meant every pull request that recorded something new
+      edited the same sentences in a dozen files, so any two such pull requests
+      conflicted (#5211).
 
-      Changing a number, deleting/rewording a claim so it escapes the parser, or
-      adding a new current-fact copy all fail visibly. Historical statements such
-      as "82 were still uncategorised when #2581 opened" deliberately do not match:
-      they remain true and are not current-fact copies.
-
-      "EVERY" IS NOW TRUE, AND WAS NOT WHEN THIS TEST WAS NAMED. #2679's review
-      counted twelve current-fact copies against five patterns that matched eight —
-      and because the inventory below pins exactly what the patterns FIND, the four
-      unmatched copies were invisible to the assertion as well as to the discovery.
-      Three more wordings close them; the count is asserted by kind below so a future
-      regex change cannot quietly retire a shape, and the pasted distribution on the
-      category-review page has its own test because a between-category move leaves
-      every total untouched.
+      So no copy is published now: the documents say what is true without the
+      number ("every production writer records a category; the census checks it
+      on every build") and point at `pnpm run audit:census` for the figure. This
+      test refuses a copy coming back, in any of the wordings the copies used.
+      Historical statements ("82 were still uncategorised when #2581 opened")
+      deliberately do not match: they remain true, and nothing moves them.
     */
-    const totals = AUDIT_CENSUS_TOTALS;
-    const claims = currentAuditCensusClaims();
     expect(
-      claims.map((claim) => claim.file),
-      "The inventory of runtime/docs current audit-census claims changed. Keep " +
-        "the wording recognisable, and review every new or removed copy here.",
-    ).toEqual([
-      // The fenced `audit:census` paste. It was unmatched by the five original
-      // patterns, and an unmatched copy was invisible to this inventory as well —
-      // which is how 8/12 could look like "every". The "site total is unchanged
-      // at N" sentence that used to sit beside it became a historical statement
-      // when #2760's new payment writer made it untrue (the paste block above it
-      // carries the current figure), so it is deliberately unmatched now.
-      "docs/ai-diagnostics/audit-admin-category-review.md",
-      "docs/ai-diagnostics/tool-pack-booking-membership.md",
-      "docs/ai-diagnostics/tool-pack-booking-membership.md",
-      "docs/ai-diagnostics/tool-pack-finance.md",
-      "docs/ai-diagnostics/tool-pack-support.md",
-      // "every one of the N sites in the tree".
-      "docs/ai-diagnostics/tool-pack-support.md",
-      "docs/guides/audit-log.md",
-      // "every one of the N places does it".
-      "docs/guides/audit-log.md",
-      "src/lib/diagnostics/tools/packs/booking-records.ts",
-      "src/lib/diagnostics/tools/packs/finance-records.ts",
-      "src/lib/diagnostics/tools/packs/support-correlation.ts",
-    ]);
-    expect(
-      claims,
-      "A runtime or document current-fact copy is stale. Re-run `pnpm run " +
-        "audit:census`, then update every discovered claim in the same commit.",
-    ).toEqual(
-      claims.map(({ file, uncategorised }) => ({
-        file,
-        writeSites: totals.writeSites,
-        // A total-only claim asserts the site count and nothing else; see
-        // `CurrentCensusClaim`. It is still pinned on the number that drifts.
-        uncategorised: uncategorised === null ? null : totals.uncategorised,
-      })),
-    );
-    // Non-vacuous in both directions: the eleven claims must include at least one
-    // of each kind, or a future regex change could quietly retire a whole shape.
-    // (Twelve became eleven when #2760's new writer made the "site total is
-    // unchanged at N" sentence historical; the paste block still pins that page.)
-    expect(claims.filter((claim) => claim.uncategorised === null).length).toBe(2);
-    expect(claims.filter((claim) => claim.uncategorised !== null).length).toBe(9);
+      currentAuditCensusClaims(),
+      "A document or source comment states a current audit-census total again. " +
+        "Do not publish one (#5211): it changes whenever a pull request records " +
+        "something new, so every such pull request would edit the same sentence " +
+        "and conflict with every other. Say what is true without the number, and " +
+        "point at `pnpm run audit:census` for the figure.",
+    ).toEqual([]);
   });
 
-  it("pins the pasted census DISTRIBUTION, not only its total", () => {
+  it("carries no pasted census distribution on the category-review page (#5211)", () => {
     /*
-      The fenced `pnpm run audit:census` output on the category-review page states
-      the eleven per-category counts as well as the total, and nothing read either.
-      A pass that moves a writer between two categories leaves the total untouched —
-      #2755 did exactly that — so a total-only pin would leave that block asserting
-      a stale distribution indefinitely, on the page whose stated job is being the
-      reviewed record of which category each writer records.
-
-      Parsed out of the page rather than duplicated here: the manifest is the one
-      declaration and this asserts the page agrees with it.
+      The category-review page used to paste the `audit:census` summary (site
+      total and per-category counts), and a test held it to the manifest. Every
+      new writer moved it. The page now says how to read the live figures
+      instead, and this refuses a pasted block coming back.
     */
     const page = readFileSync(
       resolve(process.cwd(), "docs", "ai-diagnostics", "audit-admin-category-review.md"),
       "utf8",
     );
-    const block = page.match(/category values:([\s\S]*?)```/);
-    expect(block, "the category-review page has no pasted census distribution").not
-      .toBeNull();
-    const pasted = Object.fromEntries(
-      (block?.[1] ?? "")
-        .replace(/\s+/g, " ")
-        .split(",")
-        .map((pair) => pair.trim())
-        .filter((pair) => pair.length > 0)
-        .map((pair) => {
-          const parts = pair.split(" ");
-          return [parts[0], Number(parts[1])] as const;
-        }),
-    );
     expect(
-      pasted,
-      "The pasted census distribution on docs/ai-diagnostics/audit-admin-category-review.md " +
-        "disagrees with AUDIT_CENSUS_TOTALS.categoryValues. Re-run `pnpm run audit:census` " +
-        "and paste the new block.",
-    ).toEqual(AUDIT_CENSUS_TOTALS.categoryValues);
+      [...page.matchAll(/^(?:row-producing sites|category values):.*\d.*$/gmu)].map(
+        (match) => match[0],
+      ),
+      "docs/ai-diagnostics/audit-admin-category-review.md pastes census figures " +
+        "again. Run `pnpm run audit:census` to read them; do not paste them.",
+    ).toEqual([]);
   });
 
   it("keeps every classification #2581 applied exactly where it was reviewed", () => {
     /*
-      The SWAP gate, and the reason this exists on top of `categoryValues`.
+      The SWAP gate, and the reason this existed on top of the distribution pin
+      (which #5211 replaced with the per-site ledger, a swap gate for every site).
 
       A distribution pin catches a category gaining or losing sites. It does not
       catch a swap: move one writer from `booking` to `payment` and another the
@@ -615,16 +762,27 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
 
     // And the bulk half of the action family is re-derived from the route's own
     // zod enum, so a fourth bulk action cannot mint an unpinned member-record
-    // action name. The enum is the route's whole bound on `action`, and the audit
-    // call interpolates it as `member.bulk-${action}`.
+    // action name. The enum sits in `bulk-update/schema.ts` (moved out of the
+    // route to keep it under its hard ceiling, #4926); it is the route's whole
+    // bound on `action`, the route parses its body with that schema, and the
+    // audit call interpolates the action as `member.bulk-${action}`.
     const bulkRoute = readFileSync(
       join(process.cwd(), "src/app/api/admin/members/bulk-update/route.ts"),
       "utf8",
     );
-    const enumMatch = /action:\s*z\.enum\(\[([^\]]*)\]\)/.exec(bulkRoute);
+    expect(
+      bulkRoute,
+      "The bulk-update route no longer parses its body with `bulkUpdateSchema`, " +
+        "so the enum this test reads is not the route's bound on `action`.",
+    ).toContain("bulkUpdateSchema.safeParse(");
+    const bulkSchema = readFileSync(
+      join(process.cwd(), "src/app/api/admin/members/bulk-update/schema.ts"),
+      "utf8",
+    );
+    const enumMatch = /action:\s*z\.enum\(\[([^\]]*)\]\)/.exec(bulkSchema);
     expect(
       enumMatch,
-      "The bulk-update route no longer bounds `action` with an inline z.enum, so " +
+      "The bulk-update schema no longer bounds `action` with an inline z.enum, so " +
         "this test can no longer derive which `member.bulk-*` audit actions exist. " +
         "Re-establish the bound before relying on MEMBER_RECORD_ADMIN_ACTIONS_2755.",
     ).not.toBeNull();
@@ -799,16 +957,11 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
         "(INV-OPS-012), then this map updated.",
     ).toEqual(LODGE_GATED_ADMIN_CATEGORIES_2765);
 
-    // #2765's fifteen, plus #2749's three other-lodges sites classified under
-    // the same rule on arrival (INV-PRIV-013), plus #2942's member-roster
-    // name-detail writer, classified the same way for the same reason; minus
-    // the two other-lodges writers #52 removed with their handlers; plus #62's
-    // Central lodge link writer, classified the same way; plus #58's Other
-    // lodges removal, beside the registry's update.
-    // name-detail writer, classified the same way for the same reason, plus
-    // #3819's school hut-leader kinds writer, likewise; minus the two
-    // other-lodges writers #52 removed with their handlers.
-    expect(Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765)).toHaveLength(20); // 18/19 -> 20 (central-server lane, 20 Oct 2026): #62 and #58 join #3819's. RE-MEASURED.
+    // #2765's fifteen, plus later arrivals classified under the same rule
+    // (INV-PRIV-013). No length is pinned (#5211): the map is per-site, and the
+    // uniformity gate below re-derives its population from the tree, so a lane
+    // adding a lodge-gated writer adds one entry and edits no shared count.
+    expect(Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765).length).toBeGreaterThan(0);
     expect([
       ...new Set(Object.values(LODGE_GATED_ADMIN_CATEGORIES_2765)),
     ]).toEqual(["admin"]);
@@ -1005,12 +1158,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
       "src/app/api/admin/lockers/bulk/route.ts",
       "src/app/api/admin/lockers/route.ts",
     ]);
-    // Eight files from #2765's fifteen sites, plus #2749's other-lodges item
-    // route file (its list route lost its only writer in #52), plus #2942's
-    // roster-settings route file, plus #62's central-lodge route file and #58's
-    // other-lodges hide route file.
-    // roster-settings route file, plus #3819's school hut-leaders route file.
-    expect(files.filter((file) => gateOf(file) === "lodge")).toHaveLength(13); // 11/12 -> 13 (central-server lane, 20 Oct 2026): the central-lodge and other-lodges hide route files join #3819's. RE-MEASURED.
+    // Every other file in the keep is `lodge`-gated: none is "other", so the
+    // lodge-gated files are exactly the rest. No count is pinned (#5211).
+    expect(files.filter((file) => gateOf(file) === "lodge").length).toBeGreaterThan(0);
     expect(files.filter((file) => gateOf(file) === "other")).toEqual([]);
 
     /*
@@ -1250,257 +1400,46 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     }
   });
 
-  it("counts the pinned population the same way INV-OPS-012 does", () => {
+  it("keeps every reviewed per-site map in agreement with the ledger", () => {
     /*
-      The number INV-OPS-012 quotes for why a GENERAL "did a reclassification ship
-      without a backfill" check is not available: how many write sites carry a
-      per-site baseline, and how many do not.
+      The four reviewed maps record DECISIONS about particular sites (#2581's
+      classifications, #2730's moves, #2755's unification, #2765's keep). The
+      ledger records every site. Where both name a site they must agree, and
+      every site a map names must still exist, so a map entry cannot outlive
+      its writer or contradict the ledger it sits beside.
 
-      It is asserted rather than written down twice because it has already gone
-      stale twice — #2755 left it three low, #2765 sixteen — and it is quoted in two
-      places (INV-OPS-012 and the #2751 backfill test's own docstring). Counted as a
-      UNION of distinct site ids, because a site may appear in more than one map.
+      This replaced a pinned/unpinned split pinned as two numbers (#5211). That split moved
+      with every new writer, and INV-OPS-012 quoted it as the reason a general
+      reclassification gate was not available. The ledger is that gate now.
     */
-    const pinned = new Set<string>([
-      ...Object.keys(APPLIED_AUDIT_CATEGORIES),
-      ...Object.keys(REVIEWED_ADMIN_CATEGORIES_2730),
-      ...Object.keys(MEMBER_RECORD_ADMIN_CATEGORIES_2755),
-      ...Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765),
-    ]);
-    expect(
-      { pinned: pinned.size, unpinned: census().sites.length - pinned.size },
-      "The pinned/unpinned split moved. That is expected whenever a map grows or a " +
-        "feature records something new, but INV-OPS-012 quotes these two numbers as " +
-        "the reason a general reclassification gate is not available, and " +
-        "`bed-allocation-audit-category-backfill.test.ts` quotes them again. Update " +
-        "both, in the same pull request as this line (INV-OPS-012).",
-    // 308 -> 312 (Alpine Central Server, PR #21): the four new write sites are
-    // categorised at the site but named in none of the four per-site maps, so
-    // they land unpinned. `pinned` is unchanged, which is the point — no
-    // existing classification moved.
-    // 316 -> 326 (#2780 merged with main): the ten maintenance-report writers
-    // land unpinned for the same reason — categorised at the site, named in none
-    // of the four maps. 453 sites measured minus 127 pinned. `pinned` is again
-    // unchanged, so no existing classification moved in this merge either.
-    // 326 -> 327 (CT-1, #2989): the club-timezone writer. Categorised `admin` at
-    // the site and named in none of the four per-site maps, so it lands unpinned
-    // like every other new feature's writer. 454 sites measured minus 127 pinned;
-    // `pinned` is unchanged, which is the point — no existing classification moved.
-    // 327/333 -> 335 (upstream merge, 25 Aug 2026): both lanes' writers are
-    // disjoint and all unpinned — upstream's club-time and environment-safety
-    // writers plus this branch's seven communication writers. 462 sites
-    // measured minus 127 pinned; `pinned` is unchanged on both sides.
-    // 336 -> 337 (#3191): one new writer, the stored-night-price record.
-    // 335 -> 336 (#3170): one new writer,
-    // `booking.editFinancialReview.chargeShareUncollected` — the durable record
-    // that a settled review share met an ask it could not join. Categorised
-    // `payment` at the site and named in none of the four per-site maps, so it
-    // lands unpinned like every other new feature's writer. 463 sites measured
-    // minus 127 pinned; `pinned` is unchanged, so no existing classification
-    // moved. Both figures were RE-MEASURED against this branch's head rather
-    // than incremented — the arithmetic in the line above was left stale by the
-    // round that changed this assertion, which is exactly the drift these bump
-    // lines exist to prevent.
-    // 336 -> 337 (#3193): one new writer,
-    // `booking.editFinancialReview.chargeShareReinvoiced` - the record that the
-    // difference the row above used to describe is now BILLED, on a second,
-    // separate supplementary invoice. Categorised `payment` at the site and named
-    // in none of the four per-site maps, so it lands unpinned. 464 sites measured
-    // minus 127 pinned; `pinned` is unchanged, so no existing classification
-    // moved.
-    // 340 -> 341 (#3220 merged with main): #3214's strand night-price reconcile
-    // and this issue's refused-stranded-intent record both land here. Categorised
-    // at the site and named in none of the four per-site maps, so both land
-    // unpinned. 468 sites MEASURED on the merged tree with `npm run audit:census`
-    // minus 127 pinned; `pinned` is unchanged, so no existing classification moved.
-    // 341 -> 343 (#3340): the supersede-refund record and its failed-notice
-    // escalation, both in `superseded-additional-refund.ts`. Categorised
-    // `payment` at the site and named in none of the four per-site maps, so both
-    // land unpinned. 470 sites MEASURED on this branch with
-    // `npm run audit:census` minus 127 pinned; `pinned` is unchanged, so no
-    // existing classification moved.
-    //
-    // 343 -> 345 (#2698): TWO new writers, for FOUR new actions.
-    // `recordHutLeaderAssignmentAudit` is one shared writer covering the
-    // hut-leader assignment create, update and delete — which recorded nothing
-    // at all before — under category `lodge`, the audit guide's roster row.
-    // `recordWholeLodgeHoldAmendment` records the officer's explicit acceptance
-    // that a custodian bed leaves an existing whole-lodge hold's represented
-    // set (INV-CAP-038), under `booking` to match the exclusive-hold writer it
-    // answers. Both are categorised at the site and named in none of the four
-    // per-site maps, so both land unpinned. 470 sites MEASURED with
-    // `npm run audit:census` minus 127 pinned; `pinned` is unchanged, so no
-    // existing classification moved. Both figures were RE-MEASURED, never
-    // incremented — the round before this one moved the assertion and left the
-    // arithmetic above it stale, which is the drift these bump lines exist to
-    // prevent and which a review caught here rather than CI.
-    // 343 -> 344 (#3367): one new writer,
-    // `xero.contact.moved_to_organisation` — the record that a Xero contact
-    // moved from a school's invented member record to the school's own record
-    // (INV-INT-018). Categorised `xero` at the site and named in none of the
-    // four per-site maps, so it lands unpinned like every other new feature's
-    // writer. Re-measured after the merge with the epic, which brought two
-    // writers of its own.
-    // 346 -> 347 (#3367 fix round): a second new writer,
-    // `organisation.contacts.teachers_reconciled` — the record that a school's
-    // contact people were REPLACED by the approved booking's teachers rather
-    // than added to. Categorised `xero` at the site, for the same subsystem
-    // reason as the row above, and named in none of the four per-site maps.
-    // 474 sites MEASURED with `npm run audit:census` minus 127 pinned;
-    // `pinned` is unchanged, so no existing classification moved.
-    // 343 -> 344 (#3354): the AI spend currency-rate writer in
-    // `/api/admin/ai-spend-currency`. Categorised `admin` at the site and named
-    // in none of the four per-site maps, like the two sibling AI settings
-    // writers, so it lands unpinned. 471 sites MEASURED on this branch by
-    // running this suite minus 127 pinned; `pinned` is unchanged, so no
-    // existing classification moved.
-    // 344 -> 345 (#3371): the carried-unpaid-balance record, declared as
-    // `recordCarriedEditReviewChargeBalance` in
-    // `edit-financial-review-carried-balance.ts` and called post-commit from
-    // `edit-financial-review-charge-sync.ts` - not from
-    // `edit-financial-review-charge-request.ts`, which imports only the pure
-    // `measureCarriedAskShortfall`. Categorised `payment` at the site and
-    // named in none of the four per-site maps, so it lands unpinned.
-    // 472 sites MEASURED on this branch with `npm run audit:census` minus 127
-    // pinned; `pinned` is unchanged, so no existing classification moved.
-    // 345/347 -> 349 (sync of `main` into `epic/2725-mad`): the two lanes'
-    // four new writers are disjoint and every one of them is categorised at the
-    // site and named in none of the four per-site maps, so all four land
-    // unpinned and `pinned` does not move. RE-MEASURED on the MERGED tree with
-    // `npm run audit:census`, never by adding the two branches' deltas together.
-    // 349 -> 350 (#2936): `booking_request.corrected`, categorised `booking` at
-    // the site and named in none of the four per-site maps, so it lands unpinned
-    // and `pinned` does not move.
-    // 350 -> 351 (#2939, merged with the epic): the missing-contact seeding
-    // summary row, categorised `xero` at the site and named in none of the four
-    // per-site maps, so it lands unpinned and `pinned` still does not move. The
-    // two branches' rows are disjoint writers, so the merged figure is 351 —
-    // 482 sites RE-MEASURED on this tree with
-    // `npm run audit:census` minus 127 pinned, never by adding the two deltas.
-    // 351 -> 352 (#2703, arriving on the seventh main-to-epic sync):
-    // `issue_report.screenshot_withheld`, categorised `privacy` at the site.
-    // 352 -> 355 (#2940): the three MiroTalk configuration writers. None of the
-    // four is named in a per-site map, so every one lands unpinned and `pinned`
-    // does not move. RE-MEASURED on the composed tree, which is the only place
-    // the figure is true: each branch alone reported a different one.
-    //
-    // pinned 127 -> 128 (#2942, on the eighth sync), and `unpinned` does NOT move with it: the
-    // member-roster name-detail writer is the first addition in a while that
-    // lands INSIDE a per-site map rather than outside every one of them. It
-    // sits under `/api/admin/lodges/`, whose writers `INV-PRIV-013` pins as
-    // uniformly `admin`, so it had to be entered in
-    // `LODGE_GATED_ADMIN_CATEGORIES_2765` to keep that premise measured rather
-    // than merely asserted. the site total MEASURED on the MERGED
-    // tree with `npm run audit:census` minus the pinned union — the epic's
-    // unpinned additions and this pinned one are disjoint, so neither branch's
-    // pair survives the merge and only a run over the composed tree gives it.
-    // 355 -> 356 (#3498): the manual-refund-task reopen record, which is a new
-    // unpinned writer and joins neither map.
-    // 356 -> 357 (#3528): the additional-payment withdrawal record, likewise.
-    // 357 -> 358 (#3563): the club currency and locale record, likewise - a new
-    // unpinned writer under `/api/admin/club-format/`, which no per-site map
-    // covers. RE-MEASURED with `npm run audit:census`, not incremented.
-    // 358 -> 359 (#3531 3b): the rate-derived night-price backfill record,
-    // `payment` at the site, unpinned like every other new feature's writer.
-    // 359 -> 360 (#3029): the booking dietary edit record, `booking` at the
-    // site, unpinned likewise. RE-MEASURED with `npm run audit:census`.
-    // 360 -> 361 (#3566): the AI spend rate clear (`ai-spend-currency-clear.ts`,
-    // run by `/api/admin/club-format/`), unpinned like #3563's writer there.
-    // RE-MEASURED with `npm run audit:census` on the tree merged with #3029.
-    // 361 -> 362 (#3639): the late-notice acknowledgement, a new unpinned
-    // `payment` writer. RE-MEASURED with `npm run audit:census`.
-    // 362 -> 364 (#3639): the two late-capture approval writers, both unpinned
-    // `payment` rows. RE-MEASURED with `npm run audit:census`.
-    // 364 -> 365 (#3639 review): the setting-change record, unpinned
-    // `payment`. RE-MEASURED with `npm run audit:census`.
-    // 365 -> 364 (#3415): the accept-time capacity-block/revert writer retired.
-    // 364 -> 365 (#3413): pending-adult identity resolution is classified.
-    // 365 -> 366 (#3462): the Xero operation Mark failed record, unpinned
-    // `xero`. RE-MEASURED with `pnpm run audit:census`.
-    // 366 -> 367 (#3454): the two-factor enrolment / erasure-clear record,
-    // unpinned `security`. RE-MEASURED with `pnpm run audit:census`.
-    // 367 -> 368 (#3792): the refused restored-booking allocation change
-    // record, unpinned `xero`. RE-MEASURED with `pnpm run audit:census`.
-    // 368 -> 369 (#3653 fix round, composed onto #3792 by #3630): the organiser child refund recovery
-    // record, unpinned `booking`. RE-MEASURED with `pnpm run audit:census`.
-    // 369 -> 370 (#3827, composed by #3829): the guest-acceptance re-price record, unpinned
-    // `booking`. RE-MEASURED with `pnpm run audit:census`.
-    // 370 -> 371 (#3492, composed by #3829): the guest promo-code lookup, unpinned `privacy`.
-    // 128 -> 129 pinned (#3819): the school hut-leader kinds writer, pinned in
-    // LODGE_GATED_ADMIN_CATEGORIES_2765. RE-MEASURED with `pnpm run audit:census`.
-    // 128 -> 126 pinned (#52, other-lodges central-server sync): the
-    // other-lodges CREATE and DELETE writers leave the keep with their
-    // handlers; the unpinned population does not move. RE-MEASURED.
-    // 126 -> 127 pinned (#62): the Central lodge link writer joins the
-    // lodge-gated keep; the unpinned population does not move. RE-MEASURED.
-    // 127 -> 128 pinned (#58): the Other lodges removal joins the keep; the
-    // unpinned population does not move. RE-MEASURED.
-    // 371 -> 372 unpinned (#58): the download's hidden-lodges record, a library
-    // writer outside every keep. RE-MEASURED.
-    // 372 -> 373 unpinned (#77): the Fees-page refill of this club's own Other
-    // lodge, a library writer outside every keep. RE-MEASURED.
-    // handlers; the unpinned population does not move. 371 -> 372 unpinned
-    // (#3750): the executed change-request approval, unpinned `booking`.
-    // RE-MEASURED with `pnpm run audit:census`.
-    // 372 -> 373 (#3372): the paid-another-way close, unpinned `payment`.
-    // 373 -> 374 (#3372, owner 9 Oct 2026): a paid-twice row marked Resolved, unpinned `payment`.
-    // 129/126 -> 127 pinned, 372 unpinned (hand sync of `main` f1ecdb5ff into
-    // epic #3789): #3819's +1 and #52's -2 compose. RE-MEASURED with
-    // `pnpm run audit:census` on the composed tree.
-    // 127/126 pinned, 372/374 unpinned -> 127 pinned, 374 unpinned (sync of
-    // `main` 0ff7e6d46 into epic #3789, #3821): #3819's pinned `admin` site and
-    // #3372's two unpinned `payment` sites compose. RE-MEASURED on the
-    // composed tree.
-    // 374 -> 375 (#4098): the close of an already-paid subscription charge,
-    // unpinned `payment`. RE-MEASURED with `pnpm run audit:census`.
-    // 375 -> 376 (#4104 review, CL3): a failed-later card refund not re-sent,
-    // unpinned `payment`. RE-MEASURED with `pnpm run audit:census`.
-    // 127 -> 127 pinned (#4149): the two late-capture handlers' pinned refund
-    // entries became one pinned shared writer, `reportAutomaticLateCaptureRefund`,
-    // and the lost-record recovery's own entry is pinned beside it.
-    // 127 -> 128 pinned (#4170): the refunded-outside-the-app entry, pinned beside them.
-    // 376 -> 377 unpinned (#4154): a capacity race's charge corrected before its
-    // hand-back, unpinned `payment`. 128 pinned, 377 unpinned RE-MEASURED by this
-    // suite on the sync with #4149/#4170 (505 sites minus 128 pinned).
-    // 377 -> 379 unpinned (#4162): a voided bank-transfer refund note undone and
-    // one answered by a person, unpinned `payment` (507 sites minus 128 pinned).
-    // 379 -> 380 unpinned (#4219): the credit-note convergence's `xero` row, unpinned.
-    // 380 -> 381 unpinned (#4338): its close of a concurrent attempt's failed row, unpinned `xero`.
-    // 381 -> 386 unpinned (#4253): the released-credit request's five rows, all unpinned.
-    // 386 -> 388 unpinned (#4270): the credit-note mirror's two `xero` rows, unpinned.
-    // 388 -> 389 unpinned (#4253 release 2): the backlog run's batch row, unpinned.
-    // 389 -> 390 unpinned (#4253 release 2 fix round): the left-to-officers note, unpinned.
-    // 128/390 -> 130/392: the central-server lane (#4262) merged, its two
-    // pinned and two unpinned sites. RE-MEASURED with `pnpm run audit:census`
-    // on the merged tree (main b7466a631, 27 Oct 2026), never added.
-    // 392 -> 393 unpinned (#4359): the card-refund re-send hold, unpinned `payment`.
-    // RE-MEASURED with `pnpm run audit:census`.
-    // 393 -> 396 unpinned (#4432): the two sync-now rows and the webhook threshold, unpinned `xero`.
-    // RE-MEASURED with `pnpm run audit:census`.
-    // 396 -> 398 unpinned (#4457): the retention settings and member-anonymisation rows.
-    // 398 -> 399 unpinned (#4533): the officer's finished-stay promo correction request.
-    // RE-MEASURED with `pnpm run audit:census`.
-    // 399 -> 400 unpinned (#4426): the late refund note's row, unpinned `xero`.
-    // RE-MEASURED with `pnpm run audit:census`.
-    // 400 -> 401 unpinned (#4655): the late organiser adjustment note's row, unpinned `xero`.
-    // RE-MEASURED with `pnpm run audit:census`.
-    // 401 -> 402 unpinned (#4680): the organiser adjustment run's stand-down row, unpinned `xero`.
-    // RE-MEASURED with `pnpm run audit:census`.
-    // 402 -> 403 unpinned (#4686): the lost-claim part-success's row, unpinned `xero`.
-    // RE-MEASURED with `pnpm run audit:census`.
-    // 403 -> 404 unpinned (triyder/AlpineClubBookingsNZ#97): the link dialog's `admin`
-    // row, on a finance-gated route, so outside the lodge-gated keep: unpinned.
-    // 404 -> 406 unpinned (#4516): the refused card refund reservation and its OPERATOR release, `payment`.
-    // RE-MEASURED with `pnpm run audit:census`.
-    // 406 -> 408 unpinned (#4368): a dead card refund's "Nothing left owed" and "Try the card again", `payment`.
-    // RE-MEASURED with `pnpm run audit:census`.
-    // 408 -> 409 unpinned (#4916): the after-stay dietary clear's count row, `privacy`.
-    // 409 -> 411 unpinned (#4851): a group organiser's dead card refund paid another way (one site) or tried again, `payment`.
-    // 411 -> 412 unpinned (#4918): the privacy hosting disclosure save, unpinned `admin`.
-    // RE-MEASURED with `pnpm run audit:census`.
-    // 412 -> 413 unpinned (#4618): the officer two-factor policy save, `security`.
-    // RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 130, unpinned: 413 });
+    const reviewed: [string, Readonly<Record<string, string>>][] = [
+      ["APPLIED_AUDIT_CATEGORIES", APPLIED_AUDIT_CATEGORIES],
+      ["REVIEWED_ADMIN_CATEGORIES_2730", REVIEWED_ADMIN_CATEGORIES_2730],
+      ["MEMBER_RECORD_ADMIN_CATEGORIES_2755", MEMBER_RECORD_ADMIN_CATEGORIES_2755],
+      ["LODGE_GATED_ADMIN_CATEGORIES_2765", LODGE_GATED_ADMIN_CATEGORIES_2765],
+    ];
+    const disagreements: string[] = [];
+    for (const [name, map] of reviewed) {
+      for (const [id, category] of Object.entries(map)) {
+        const entry = AUDIT_WRITE_SITES[id];
+        if (entry === undefined) {
+          disagreements.push(`${name}: ${id} is not a write site in the ledger`);
+        } else if (entry.category !== category) {
+          disagreements.push(`${name}: ${id} says ${category}, the ledger says ${entry.category}`);
+        }
+      }
+    }
+    // Every reviewed per-site record, not only the category maps, must name
+    // real sites. A deletion from any of them changes the site's `reviewed`
+    // tags in the ledger, which the ledger test names (#5211 review).
+    for (const [tag, ids] of REVIEWED_SITE_RECORDS) {
+      for (const id of ids) {
+        if (!(id in AUDIT_WRITE_SITES)) {
+          disagreements.push(`${tag}: ${id} is not a write site in the ledger`);
+        }
+      }
+    }
+    expect(disagreements).toEqual([]);
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {
@@ -1584,19 +1523,24 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     const visible = classified.filter((category) => memberVisible.has(category));
     const hidden = classified.filter((category) => !memberVisible.has(category));
 
+    // #5211: both sides are derived from the reviewed map itself rather than
+    // pinned as literals, so pinning a new site in APPLIED_AUDIT_CATEGORIES on
+    // arrival edits no shared count. A CROSSING still fails: it changes the
+    // measured side while the map's side stays where it was reviewed.
+    const reviewedVisible = Object.values(APPLIED_AUDIT_CATEGORIES).filter(
+      (category) => memberVisible.has(category),
+    );
     expect(
       visible.length,
       "A writer #2581 classified crossed the MEMBER SELF-TIMELINE boundary. " +
         "That publishes an event on a member-facing surface, or withdraws one " +
         "from it — never a side effect of a refactor. Say which way it moved and " +
         "why the row is safe for the member it is about.",
-      // 57 -> 57 (#4149): two pinned `payment` refund entries became one, and
-      // the recovery's pinned `payment` entry joined them; each carries a
-      // booking id and no member, so no member sees any of them.
-      // 57 -> 58 (#4170): one more pinned `payment` entry, booking id only, no member.
-    ).toBe(58);
+    ).toBe(reviewedVisible.length);
     expect([...new Set(hidden)].sort()).toEqual(["admin", "lodge", "xero"]);
-    expect(hidden).toHaveLength(29);
+    expect(hidden).toHaveLength(
+      Object.keys(APPLIED_AUDIT_CATEGORIES).length - reviewedVisible.length,
+    );
   });
 
   it("names every classified writer that still carries NO entity identifier", () => {
@@ -1629,15 +1573,11 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     ).toEqual(Object.keys(AUDIT_WRITERS_WITHOUT_ENTITY_IDENTIFIER).sort());
   });
 
-  it("pins the uncategorised count the issue and the docs quote", () => {
-    // The same number reaches three prose surfaces — this issue, the Diagnostics
-    // docblock and docs/ai-diagnostics/tool-pack-support.md — and all three have
-    // already carried a stale one (81 of ~350). Pinning it here is what makes them
-    // fixable in lockstep.
-    expect(census().uncategorised.length).toBe(AUDIT_CENSUS_TOTALS.uncategorised);
-    expect(Object.keys(UNCATEGORISED_AUDIT_WRITERS)).toHaveLength(
-      AUDIT_CENSUS_TOTALS.uncategorised,
-    );
+  it("keeps the uncategorised backlog closed", () => {
+    // A review gate, not a moving total: #2581 classified every writer, and the
+    // backlog stays EMPTY. A first entry is a regression to argue for in review.
+    expect(census().uncategorised).toEqual([]);
+    expect(Object.keys(UNCATEGORISED_AUDIT_WRITERS)).toEqual([]);
   });
 
   it("writes only CANONICAL category values", () => {
@@ -1662,17 +1602,6 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
         "canonical value, or add the new one to audit-categories.ts — which also " +
         "requires giving it a badge colour and a correlation domain.",
     ).toEqual([]);
-  });
-
-  it("pins how many sites write each category, so a reclassification is visible", () => {
-    expect(
-      census().categoryCounts,
-      "The distribution of audit categories across production writers changed. " +
-        "That is a change to WHO CAN READ WHAT — `admin`, `security` and `system` " +
-        "are readable with support:view alone, while `family`, `account`, " +
-        "`communication` and `privacy` need membership:view as well. Update " +
-        "AUDIT_CENSUS_TOTALS.categoryValues and say so in the changelog.",
-    ).toEqual(AUDIT_CENSUS_TOTALS.categoryValues);
   });
 
   it("chooses no category by WHO ACTED", () => {
@@ -1738,13 +1667,8 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
         "exists — and check the declared text carries no internal id, no other " +
         "person and no officer-private note.",
     ).toEqual(MEMBER_FACING_AUDIT_WRITERS_2695);
-
-    expect(
-      census().memberFacing.length,
-      "The pinned member-facing COUNT and the pinned member-facing SITES " +
-        "disagree. A swap between two sites leaves the count unchanged, which " +
-        "is why both are pinned.",
-    ).toBe(AUDIT_CENSUS_TOTALS.memberFacingSites);
+    // No separate count (#5211): the site map above is keyed by id, so a swap
+    // between two sites is already a named difference.
   });
 
   it("bounds what the disclosure census cannot see, rather than claiming it sees everything (#2695)", () => {
@@ -1763,10 +1687,6 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
         "the census's sight, so record it in " +
         "APPROVED_FORWARDED_MEMBER_DISCLOSURE_SITES_2695 with the reason.",
     ).toEqual(Object.keys(APPROVED_FORWARDED_MEMBER_DISCLOSURE_SITES_2695).sort());
-
-    expect(census().memberDisclosureForwarded.length).toBe(
-      AUDIT_CENSUS_TOTALS.memberDisclosureForwarded,
-    );
   });
 
   it("declares member-facing text only where the row can actually reach that member (#2695)", () => {
@@ -1957,27 +1877,33 @@ describe("canonical audit taxonomy (#2581)", () => {
     });
   });
 
-  it("pins how many write sites sit behind the WEAKEST gate", () => {
-    // The number the "do not widen" constraint is really about. `admin`, `security`
-    // and `system` are readable with `support:view` alone, so the count of writers
-    // in them is the size of the population a support-only operator can correlate.
-    // It moves only when a classification decision moves it, and then deliberately.
-    const supportOnly = census().sites.filter(
-      (site) =>
-        site.category.kind === "literal" &&
-        isAuditCategory(site.category.value) &&
-        auditCategoryReaderAreas(site.category.value).length === 1,
-    );
-
+  it("names every write site behind the WEAKEST gate", () => {
+    // The population the "do not widen" constraint is really about. `admin`,
+    // `security` and `system` are readable with `support:view` alone, so these are
+    // the sites a support-only operator can correlate. Named per site through the
+    // ledger rather than pinned as a count (#5211): a site moving in or out of
+    // this population changes its ledger line, which the ledger test names.
+    const supportOnlyCategories = ["admin", "security", "system"];
     expect(
-      supportOnly.length,
-      "The number of audit write sites readable with support:view alone changed. " +
-        "That is a widening or a narrowing of who can correlate audit evidence, " +
-        "not a refactor — say which in the changelog and update this pin.",
-    ).toBe(
-      AUDIT_CENSUS_TOTALS.categoryValues.admin +
-        AUDIT_CENSUS_TOTALS.categoryValues.security +
-        AUDIT_CENSUS_TOTALS.categoryValues.system,
+      AUDIT_CATEGORIES.filter(
+        (category) => auditCategoryReaderAreas(category).length === 1,
+      ).sort(),
+      "The set of categories readable with support:view alone changed. That is " +
+        "a widening or a narrowing of who can correlate audit evidence.",
+    ).toEqual(supportOnlyCategories);
+    const supportOnly = census()
+      .sites.filter(
+        (site) =>
+          site.category.kind === "literal" &&
+          isAuditCategory(site.category.value) &&
+          auditCategoryReaderAreas(site.category.value).length === 1,
+      )
+      .map((site) => site.id)
+      .sort();
+    expect(supportOnly).toEqual(
+      Object.keys(AUDIT_WRITE_SITES)
+        .filter((id) => supportOnlyCategories.includes(AUDIT_WRITE_SITES[id].category))
+        .sort(),
     );
   });
 

@@ -5,9 +5,8 @@ import type {
   Prisma,
   Role,
 } from "@prisma/client";
+import { buildUniqueCatalogueKey, normalizeCatalogueText } from "@/lib/catalogue-key";
 import { isKeyResolvedRateHolder } from "@/lib/membership-type-rate-coverage";
-
-const MEMBERSHIP_TYPE_KEY_MAX_LENGTH = 80;
 
 export const MEMBERSHIP_TYPE_BOOKING_BEHAVIORS = [
   "MEMBER_RATE",
@@ -158,14 +157,6 @@ const BUILT_IN_MEMBERSHIP_TYPE_KEYS = BUILT_IN_MEMBERSHIP_TYPES.map(
 
 export type BuiltInMembershipTypeKey =
   (typeof BUILT_IN_MEMBERSHIP_TYPES)[number]["key"];
-
-const LEGACY_MEMBERSHIP_TYPE_KEY_ALIASES = {
-  RESERVE: "ASSOCIATE",
-} as const satisfies Record<string, BuiltInMembershipTypeKey>;
-const LEGACY_MEMBERSHIP_TYPE_KEY_ALIAS_MAP: Record<
-  string,
-  BuiltInMembershipTypeKey
-> = LEGACY_MEMBERSHIP_TYPE_KEY_ALIASES;
 
 const BUILT_IN_MEMBERSHIP_TYPE_ALLOWED_AGE_TIERS = {
   FULL: ["INFANT", "CHILD", "YOUTH", "ADULT"],
@@ -396,19 +387,7 @@ export function serializeMembershipType(type: MembershipTypeWithAssignmentCount)
 export function normalizeMembershipTypeText(
   value: string | null | undefined,
 ): string | null {
-  const trimmed = value?.trim() ?? "";
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-// test seam
-export function normalizeMembershipTypeKey(name: string): string {
-  const normalized = name
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, MEMBERSHIP_TYPE_KEY_MAX_LENGTH);
-  return normalized || "CUSTOM";
+  return normalizeCatalogueText(value);
 }
 
 export async function buildUniqueMembershipTypeKey(
@@ -422,36 +401,13 @@ export async function buildUniqueMembershipTypeKey(
   },
   name: string,
 ): Promise<string> {
-  const base = normalizeMembershipTypeKey(name);
-  let candidate = base;
-  let suffix = 2;
-
-  while (
-    await db.membershipType.findUnique({
-      where: { key: candidate },
-      select: { id: true },
-    })
-  ) {
-    const suffixText = `_${suffix}`;
-    candidate = `${base.slice(
-      0,
-      MEMBERSHIP_TYPE_KEY_MAX_LENGTH - suffixText.length,
-    )}${suffixText}`;
-    suffix += 1;
-  }
-
-  return candidate;
+  return buildUniqueCatalogueKey(name, async (key) =>
+    Boolean(await db.membershipType.findUnique({ where: { key }, select: { id: true } })));
 }
 
 export function defaultMembershipTypeKeyForRole(
   role: Role | string,
 ): BuiltInMembershipTypeKey {
-  if (role === "ASSOCIATE" || role === "RESERVE") {
-    return "ASSOCIATE";
-  }
-  if (role === "LIFE") {
-    return "LIFE";
-  }
   if (role === "SCHOOL") {
     return "SCHOOL";
   }
@@ -568,14 +524,6 @@ export function isSubscriptionNotRequiredForMembershipType(params: {
   return (
     params.ageTier != null && params.notRequiredAgeTiers.has(params.ageTier)
   );
-}
-
-// test seam
-export function canonicalMembershipTypeKey(
-  key: string | null | undefined,
-): string | null {
-  if (!key) return null;
-  return LEGACY_MEMBERSHIP_TYPE_KEY_ALIAS_MAP[key] ?? key;
 }
 
 // test seam

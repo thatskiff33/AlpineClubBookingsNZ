@@ -408,7 +408,30 @@ describe("booking change requests", () => {
         // #2524: the legacy locked-period queue now also filters kind, so
         // POLICY_EXCEPTION rows (decided via #2525) never appear here.
         where: { kind: "LOCKED_PERIOD", status: "REQUESTED" },
+        // INV-OPS-020: the pending queue reads oldest first.
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         take: 25,
+      })
+    );
+    expect(body).toMatchObject({ page: 1, pageSize: 25, totalPages: 1 });
+  });
+
+  it("reads one focused request inside the locked-period scope, newest first on ALL (INV-OPS-020)", async () => {
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
+    mocks.bookingChangeRequestFindMany.mockResolvedValue([]);
+    mocks.bookingChangeRequestCount.mockResolvedValue(0);
+
+    const response = await getAdminBookingChangeRequests(
+      new NextRequest(
+        "http://localhost/api/admin/booking-change-requests?status=ALL&requestId=request-9"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.bookingChangeRequestFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { kind: "LOCKED_PERIOD", id: "request-9" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       })
     );
   });
@@ -465,7 +488,9 @@ describe("booking change requests", () => {
         method: "PATCH",
         headers: {
           "content-type": "application/json",
-          "x-forwarded-for": "127.0.0.1",
+          // #5399: the first address is the caller's claim; the last is the
+          // one the proxy saw, and is the one recorded.
+          "x-forwarded-for": "203.0.113.250, 198.51.100.42",
         },
         body: JSON.stringify({
           status: "APPROVED",
@@ -497,6 +522,7 @@ describe("booking change requests", () => {
       expect.objectContaining({
         action: "booking-change-request.approve",
         subjectMemberId: "member-1",
+        ipAddress: "198.51.100.42",
       })
     );
   });

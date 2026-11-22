@@ -5,6 +5,20 @@
  * `pnpm run quality:budget`                    judge the files this change touched
  * `pnpm run quality:budget --base <ref>`    compare against a different ref
  * `pnpm run quality:budget --report`        print the whole tree's debt
+ * `pnpm run quality:budget --upstream-ref <ref>`
+ *                                           a deployment fork's sync-down:
+ *                                           trust that upstream commit (#5196)
+ *
+ * `--upstream-ref` is for a deployment fork syncing down from upstream `main`.
+ * Files and functions a sync brings in unchanged from that commit are judged
+ * against the longer of their fork-base and upstream lengths, and allowance
+ * fragments byte-identical to upstream's are not live, so upstream's reviewed
+ * code passes without being re-declared by hand. Only the fork's own changes
+ * are judged as before. The rules live in `scripts/lib/budget-upstream-ref.ts`;
+ * CI passes the option only when the repository variable
+ * `QUALITY_BUDGET_UPSTREAM_REPO` is set (`scripts/ci/run-budget-gate.mjs`).
+ * When the upstream commit is `HEAD` itself, trust is ignored and one line
+ * says so; an upstream ref that cannot be resolved fails.
  *
  * The same run also judges FUNCTION length (#4927): the function-length ratchet
  * in `scripts/lib/function-length-ratchet.ts`, against the same base, with the
@@ -19,6 +33,8 @@
  * The rule, in one sentence and unchanged: current size debt may stay, but new
  * debt and debt growth may not appear silently. A file that was not over its
  * budget may not go over it, and a file that was already over may not grow.
+ * A declared allowance may let an over-budget file grow, but never past its
+ * hard ceiling of three times its budget (#4926).
  *
  * WHAT #2979 CHANGED is where "was" comes from. It used to be a checked-in
  * ledger, `scripts/quality/file-size-baseline.txt`. That file was the problem
@@ -48,6 +64,7 @@
 
 import {
   CHECK_COMMAND,
+  HARD_CEILING_MULTIPLE,
   budgetForFile,
   countLines,
   describeBudget,
@@ -70,6 +87,12 @@ import {
   findLongFunctions,
 } from "../lib/function-length-ratchet";
 import { DEFAULT_BASE_REF } from "../lib/budget-base-ref.mjs";
+import {
+  UPSTREAM_IGNORED_LINE,
+  upstreamTrustFor,
+  type UpstreamTrust,
+} from "../lib/budget-upstream-ref";
+import type { TrustedUpstreamSummary } from "../lib/file-size-base";
 import { isMainModule } from "../lib/is-main-module.mjs";
 
 /** The ref a change is judged against unless told otherwise. */
@@ -124,6 +147,21 @@ export function renderAppliedAllowances(
   ].join("\n");
 }
 
+/**
+ * The one line every run on a change prints, pass or fail (#4926): how far this
+ * change moves the tree-wide debt that `--report` totals. A run of small
+ * declared increases is invisible one at a time; the total `--report` prints
+ * is not. A file moved out of the budgeted scope counts as debt removed, as it
+ * does there, so read the diff before taking a negative figure for a split.
+ */
+export function renderDebtDelta(delta: number | null): string {
+  if (delta === null) {
+    return "Size debt change from this PR: not measured — the base ref could not be resolved\n";
+  }
+  const signed = delta > 0 ? `+${delta}` : String(delta);
+  return `Size debt change from this PR: ${signed} lines\n`;
+}
+
 export function renderReport(findings: readonly RenderableFinding[]): string {
   const out: string[] = [];
   for (const severity of ["unusable", "regression"] as const) {
@@ -147,6 +185,42 @@ export function baseRefFrom(argv: readonly string[]): string {
   const index = argv.indexOf("--base");
   if (index !== -1) return argv[index + 1] ?? DEFAULT_BASE_REF;
   return DEFAULT_BASE_REF;
+}
+
+/**
+ * `--upstream-ref <ref>` or `--upstream-ref=<ref>`, or null when not given.
+ * A flag with no value is an error rather than "no upstream": a fork whose CI
+ * lost the value must not quietly judge a sync-down as an ordinary change.
+ */
+export function upstreamRefFrom(
+  argv: readonly string[],
+): { ok: true; ref: string | null } | { ok: false; error: string } {
+  const missing = {
+    ok: false as const,
+    error: "--upstream-ref needs a value: the upstream commit or ref to trust",
+  };
+  const inline = argv.find((arg) => arg.startsWith("--upstream-ref="));
+  if (inline !== undefined) {
+    const ref = inline.slice("--upstream-ref=".length);
+    return ref ? { ok: true, ref } : missing;
+  }
+  const index = argv.indexOf("--upstream-ref");
+  if (index === -1) return { ok: true, ref: null };
+  const ref = argv[index + 1];
+  return ref && !ref.startsWith("--") ? { ok: true, ref } : missing;
+}
+
+/** What a trusted run says it trusted, pass or fail (#5196). */
+function renderTrustedUpstream(
+  summary: TrustedUpstreamSummary | undefined,
+  unit: "file" | "function",
+): string {
+  if (!summary) return "";
+  return (
+    `Trusted upstream ${summary.sha.slice(0, 12)} "${summary.subject}": ` +
+    `${summary.lifted} ${unit}(s) judged against its longer length, ` +
+    `${summary.ignoredFragments} allowance fragment(s) ignored as its own.\n`
+  );
 }
 
 /**
@@ -248,15 +322,30 @@ export function run(root: string, argv: readonly string[]): number {
     return Math.max(runReport(root), runFunctionLengthReport(root));
   }
   if (argv.includes("--update")) return explainRemovedUpdateMode();
-  const fileSize = runFileSizeRatchet(root, argv);
+  const upstreamRef = upstreamRefFrom(argv);
+  if (!upstreamRef.ok) {
+    process.stderr.write(`File-size budget: ${upstreamRef.error}\n`);
+    return 1;
+  }
+  const baseRef = baseRefFrom(argv);
+  const upstream = upstreamTrustFor(root, baseRef, upstreamRef.ref);
+  // Said once, before both phases, which then run exactly as without trust.
+  if (upstream?.kind === "ignored-head") {
+    process.stdout.write(`${UPSTREAM_IGNORED_LINE}\n`);
+  }
+  const fileSize = runFileSizeRatchet(root, baseRef, upstream);
   // Run even when the file-size phase failed, so one push shows both answers.
   // A base that cannot be resolved is reported by both phases, which is noisy
   // but honest: neither has evidence for a pass.
-  const functionLength = runFunctionLengthRatchet(root, baseRefFrom(argv));
+  const functionLength = runFunctionLengthRatchet(root, baseRef, upstream);
   return Math.max(fileSize, functionLength);
 }
 
-function runFileSizeRatchet(root: string, argv: readonly string[]): number {
+function runFileSizeRatchet(
+  root: string,
+  baseRef: string,
+  upstream: UpstreamTrust | undefined,
+): number {
   // The scan is no longer where the comparison comes from — it is here for the
   // scope audit, which asks a question about the WHOLE tree rather than about
   // this change: is there a tracked `src/` file no budget covers? A scope hole
@@ -272,7 +361,6 @@ function runFileSizeRatchet(root: string, argv: readonly string[]): number {
     return 1;
   }
 
-  const baseRef = baseRefFrom(argv);
   const declared = readSizeAllowances(root);
   const result = evaluateComputedRatchet({
     root,
@@ -286,6 +374,7 @@ function runFileSizeRatchet(root: string, argv: readonly string[]): number {
     countLines,
     allowances: declared.allowances,
     allowanceProblems: declared.problems,
+    upstream,
   });
 
   const findings =
@@ -315,6 +404,8 @@ function runFileSizeRatchet(root: string, argv: readonly string[]): number {
       `File-size budget ratchet: OK — ${result.checkedFiles} production file(s) changed ` +
         `since ${against}, ${tail}\n`,
     );
+    process.stdout.write(renderDebtDelta(result.debtDelta));
+    process.stdout.write(renderTrustedUpstream(result.trustedUpstream, "file"));
     process.stdout.write(renderAppliedAllowances(result.allowancesApplied));
     return 0;
   }
@@ -324,6 +415,8 @@ function runFileSizeRatchet(root: string, argv: readonly string[]): number {
       `against ${against}.\n` +
       `Judged ${result.checkedFiles} production file(s) changed since that point.\n`,
   );
+  process.stderr.write(renderDebtDelta(result.debtDelta));
+  process.stderr.write(renderTrustedUpstream(result.trustedUpstream, "file"));
   process.stderr.write(renderReport(findings));
   process.stderr.write(renderAppliedAllowances(result.allowancesApplied));
   process.stderr.write(
@@ -335,7 +428,8 @@ function runFileSizeRatchet(root: string, argv: readonly string[]): number {
       "An already-over-budget file that genuinely has to grow says so out loud, in",
       `${ALLOWANCE_DIR}/<pr-number>-<slug>.md — one file per pull request, so no two`,
       `branches conflict over it. ${ALLOWANCE_DIR}/README.md is the format and the`,
-      "rules; splitting the file is still the better answer where it is available.",
+      "rules; splitting the file is still the better answer where it is available,",
+      `and the only one past the hard ceiling of ${HARD_CEILING_MULTIPLE} times the budget.`,
       "",
       `  ${CHECK_COMMAND}                     re-run this check`,
       `  ${CHECK_COMMAND} --report         the whole tree's debt, for context`,
@@ -354,13 +448,18 @@ function runFileSizeRatchet(root: string, argv: readonly string[]): number {
  * base. Malformed allowance files are not reported again here — the file-size
  * phase reads the same directory and has already said so.
  */
-function runFunctionLengthRatchet(root: string, baseRef: string): number {
+function runFunctionLengthRatchet(
+  root: string,
+  baseRef: string,
+  upstream: UpstreamTrust | undefined,
+): number {
   const declared = readSizeAllowances(root);
   const result = evaluateFunctionLengthRatchet({
     root,
     baseRef,
     isProductionFile,
     allowances: declared.functionAllowances,
+    upstream,
   });
   const applied = result.allowancesApplied.map((a) => ({ ...a, file: a.key }));
   const against =
@@ -375,6 +474,7 @@ function runFunctionLengthRatchet(root: string, baseRef: string): number {
         `${FUNCTION_LENGTH_LIMIT} lines or grew beyond its previous length` +
         `${applied.length === 0 ? "" : " except the declared growth below"}.\n`,
     );
+    process.stdout.write(renderTrustedUpstream(result.trustedUpstream, "function"));
     process.stdout.write(renderAppliedAllowances(applied, "function"));
     return 0;
   }
@@ -383,6 +483,7 @@ function runFunctionLengthRatchet(root: string, baseRef: string): number {
     `Function-length ratchet: FAILED — ${result.findings.length} finding(s) ` +
       `against ${against}.\n`,
   );
+  process.stderr.write(renderTrustedUpstream(result.trustedUpstream, "function"));
   process.stderr.write(renderReport(result.findings));
   process.stderr.write(renderAppliedAllowances(applied, "function"));
   process.stderr.write(

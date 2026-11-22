@@ -46,6 +46,7 @@ const mocks = vi.hoisted(() => ({
   })),
   completeXeroSyncOperation: vi.fn(async () => ({ id: "op-grant" })),
   failXeroSyncOperation: vi.fn(async () => ({ id: "op-grant" })),
+  repairPayloads: [] as unknown[],
   upsertXeroObjectLink: vi.fn(async (link: { localId: string; xeroObjectId: string; role: string }) => {
     const credit = state.credits.get(link.localId);
     if (credit?.xeroCreditNoteId !== link.xeroObjectId) {
@@ -55,6 +56,7 @@ const mocks = vi.hoisted(() => ({
   }),
 }));
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     memberCredit: {
@@ -93,7 +95,10 @@ vi.mock("@/lib/xero-contacts", () => ({
     currentContactId: string;
     buildRequestPayload: (contactId: string) => unknown;
     run: (args: { contactId: string }) => Promise<unknown>;
-  }) => input.run({ contactId: input.currentContactId }),
+  }) => {
+    mocks.repairPayloads.push(input.buildRequestPayload("contact-repaired"));
+    return input.run({ contactId: input.currentContactId });
+  },
 }));
 
 vi.mock("@/lib/xero-api-client", () => ({
@@ -123,6 +128,7 @@ vi.mock("@/lib/xero-sync", () => ({
 }));
 
 import { ADMIN_GRANT_CREDIT_NOTE_ROLE } from "@/lib/admin-grant-credit-note";
+import { readAdminGrantCreditNotePayload } from "@/lib/admin-grant-credit-note-payload";
 import { createAdminGrantCreditNote } from "@/lib/xero-admin-grant-credit-note";
 import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
@@ -164,6 +170,7 @@ describe("createAdminGrantCreditNote (#4431)", () => {
       localId: CREDIT_ID,
     };
     vi.clearAllMocks();
+    mocks.repairPayloads.length = 0;
     seedCredit();
   });
 
@@ -215,6 +222,11 @@ describe("createAdminGrantCreditNote (#4431)", () => {
     await createAdminGrantCreditNote({ syncOperation: xeroClaim("op-grant"), payload });
     expect(mocks.createCreditNotes).not.toHaveBeenCalled();
     expect(state.credits.get(CREDIT_ID)?.xeroCreditNoteId).toBe("cn-new");
+  });
+
+  it("keeps the queue fields on the payload a contact repair stores", async () => {
+    await createAdminGrantCreditNote({ syncOperation: xeroClaim("op-grant"), payload });
+    expect(readAdminGrantCreditNotePayload(mocks.repairPayloads[0])).toEqual(payload);
   });
 
   it("uses the mapping the payload names, including a Goodwill key whose account falls back", async () => {

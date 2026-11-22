@@ -33,6 +33,15 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MembershipType: "non-personal",
   MembershipAnnualFee: "non-personal",
   MembershipAnnualFeeComponent: "non-personal",
+  // Second billing axis (subscription-category-decoupling): the same shape as
+  // MembershipType/MembershipAnnualFee/-Component above — a club-defined
+  // catalog entry and its flat-fee pricing config, no individual subject of
+  // its own. The personal linkage lives on the charge/assignment rows that
+  // reference a category by id (MembershipSubscriptionCharge,
+  // SeasonalMembershipAssignment), both already "personal" above.
+  SubscriptionCategory: "non-personal",
+  SubscriptionCategoryFee: "non-personal",
+  SubscriptionCategoryFeeComponent: "non-personal",
   JoiningFee: "non-personal",
   MembershipTypeAgeTier: "non-personal",
   XeroContactGroupRule: "non-personal",
@@ -49,6 +58,8 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   BookingGuest: "personal",
   BookingGuestNight: "personal",
   BookingGuestNightAdjustment: "personal",
+  BookingImportBatch: "personal",
+  BookingImportRow: "personal",
   GroupBooking: "personal",
   GroupBookingJoin: "personal",
   GroupBookingSettlement: "personal",
@@ -136,7 +147,8 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   PrivacyHostingSettings: "personal",
   ClubTimeSettings: "personal",
   ClubFormatSettings: "personal",
-  ClubTaxSettings: "non-personal",
+  ClubTaxSettings: "personal", // #4632: each period records the Full Admin who scheduled it (updatedByMemberId).
+  XeroTaxCategoryMapping: "personal", // #5209: each mapping records the Full Admin who last chose it (updatedByMemberId).
   LoginSecuritySetting: "personal",
   AnalyticsSettings: "personal",
   EmailTemplateOverride: "personal",
@@ -184,6 +196,12 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MemberCredit: "personal",
   MemberCreditNoteAllocation: "personal",
   AdminCreditAdjustmentRequest: "personal",
+  // #4988: names the officer who posted and reversed the batch, and a free-text reversal reason.
+  OpeningCreditBatch: "personal",
+  // #5204: a contact's unallocated Xero money, and the backed-credit slices and returns.
+  XeroCashCredit: "personal",
+  MemberCreditCashAllocation: "personal",
+  MemberCreditCashReturn: "personal",
   GroupDiscountSetting: "non-personal",
   PublicContentSettings: "personal",
   ClubTheme: "non-personal",
@@ -208,6 +226,12 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MaintenanceReport: "personal",
   MaintenanceReportAnswer: "personal",
   LodgeMaintenanceReportToken: "personal",
+  // Fork triyder/AlpineClubBookingsNZ#121: an order names its member and the officers who closed and priced
+  // it; its items are that member's order; the settings hold the officer's
+  // address and who last saved them.
+  FoodOrderSettings: "personal",
+  FoodOrder: "personal",
+  FoodOrderItem: "personal",
   EnvironmentSafetySettings: "personal",
   XeroSandboxContactContainment: "personal",
   Organisation: "personal",
@@ -224,7 +248,16 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MemberMoneySourcePosting: "personal",
   MemberMoneyRefundReservation: "personal",
   MemberMoneyRefundReservationRelease: "personal",
+  MemberMoneyExportManifest: "personal",
+  MemberMoneyExportCoverage: "personal",
   // #4520: a balance transaction names a member's payment intent or refund; a payout is the club's own.
   StripeBalanceTransactionEvidence: "personal",
   StripePayout: "non-personal",
+  // ALP-653: an AI app's own registration names no person; a connection, its
+  // codes and tokens are one member's; the settings carry who last saved them.
+  McpClient: "non-personal",
+  McpGrant: "personal",
+  McpAuthCode: "personal",
+  McpToken: "personal",
+  McpSettings: "personal",
 } as const;

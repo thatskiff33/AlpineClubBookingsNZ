@@ -30,6 +30,15 @@ const mocks = vi.hoisted(() => {
   accountMappingFindUnique: vi.fn(),
   billingSettingsFindUnique: vi.fn(),
     executeRaw: vi.fn(),
+  subscriptionCategoryFindMany: vi.fn(),
+  subscriptionCategoryFindUnique: vi.fn(),
+  subscriptionCategoryFeeFindFirst: vi.fn(),
+  subscriptionCategoryFeeFindUnique: vi.fn(),
+  subscriptionCategoryFeeCreate: vi.fn(),
+  subscriptionCategoryFeeUpdate: vi.fn(),
+  subscriptionCategoryFeeDelete: vi.fn(),
+  categoryComponentCreateMany: vi.fn(),
+  categoryComponentDeleteMany: vi.fn(),
   };
   const prisma = {
   membershipType: { findMany: values.membershipTypeFindMany, findUnique: values.membershipTypeFindUnique },
@@ -39,6 +48,14 @@ const mocks = vi.hoisted(() => {
   },
   membershipAnnualFeeComponent: {
     createMany: values.componentCreateMany, deleteMany: values.componentDeleteMany,
+  },
+  subscriptionCategory: { findMany: values.subscriptionCategoryFindMany, findUnique: values.subscriptionCategoryFindUnique },
+  subscriptionCategoryFee: {
+    findFirst: values.subscriptionCategoryFeeFindFirst, findUnique: values.subscriptionCategoryFeeFindUnique,
+    create: values.subscriptionCategoryFeeCreate, update: values.subscriptionCategoryFeeUpdate, delete: values.subscriptionCategoryFeeDelete,
+  },
+  subscriptionCategoryFeeComponent: {
+    createMany: values.categoryComponentCreateMany, deleteMany: values.categoryComponentDeleteMany,
   },
   joiningFee: {
     findFirst: values.joiningFeeFindFirst,
@@ -102,6 +119,15 @@ describe("fee configuration route", () => {
     mocks.accountMappingFindUnique.mockResolvedValue(null);
     // No settings row -> behaviour-preserving default (family billing mode).
     mocks.billingSettingsFindUnique.mockResolvedValue(null);
+    mocks.subscriptionCategoryFindMany.mockResolvedValue([]);
+    mocks.subscriptionCategoryFindUnique.mockResolvedValue({ id: "cat-1" });
+    mocks.subscriptionCategoryFeeFindFirst.mockResolvedValue(null);
+    mocks.subscriptionCategoryFeeFindUnique.mockResolvedValue(null);
+    mocks.subscriptionCategoryFeeCreate.mockResolvedValue({ id: "cat-fee-1" });
+    mocks.subscriptionCategoryFeeUpdate.mockResolvedValue({ id: "cat-fee-1" });
+    mocks.subscriptionCategoryFeeDelete.mockResolvedValue({ id: "cat-fee-1" });
+    mocks.categoryComponentCreateMany.mockResolvedValue({ count: 1 });
+    mocks.categoryComponentDeleteMany.mockResolvedValue({ count: 0 });
   });
 
   it("requires finance view for reads", async () => {
@@ -321,6 +347,16 @@ describe("fee configuration route", () => {
     expect(body.familyGroups[0].billingException).toBe(false);
   });
 
+  // Review finding: the built-in "Individual" sentinel must never reach this
+  // card's own category picker (it defaulted to it, being sortOrder 0 and
+  // always first) — excluded at the query itself, not filtered client-side.
+  it("excludes the built-in Individual category from the subscription-category-fees list", async () => {
+    await GET();
+    expect(mocks.subscriptionCategoryFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { isBuiltIn: false } }),
+    );
+  });
+
   it("allows a per-family schedule in family mode", async () => {
     const response = await post({
       action: "CREATE_MEMBERSHIP_FEE", membershipTypeId: "type-1", amountCents: 20000,
@@ -443,6 +479,92 @@ describe("fee configuration route", () => {
       expect(mocks.componentCreateMany).toHaveBeenCalledWith({
         data: [expect.objectContaining({ label: "Youth base", amountCents: 6000 })],
       });
+    });
+  });
+
+  // Subscription-category decoupling: a flat fee, independent of membership
+  // type — no ageTier, no billingBasis, no individual-billing-mode gate.
+  describe("subscription category fees", () => {
+    it("creates a subscription category fee with a default component", async () => {
+      const response = await post({
+        action: "CREATE_SUBSCRIPTION_CATEGORY_FEE", subscriptionCategoryId: "cat-1",
+        amountCents: 20000, prorationRule: "NONE", effectiveFrom: "2026-07-13", effectiveTo: null,
+      });
+      expect(response.status).toBe(200);
+      expect(mocks.subscriptionCategoryFeeCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ subscriptionCategoryId: "cat-1", amountCents: 20000 }),
+      });
+      expect(mocks.categoryComponentCreateMany).toHaveBeenCalledWith({
+        data: [expect.objectContaining({ label: "Subscription fee", amountCents: 20000 })],
+      });
+    });
+
+    it("404s creating a fee for an unknown subscription category", async () => {
+      mocks.subscriptionCategoryFindUnique.mockResolvedValue(null);
+      const response = await post({
+        action: "CREATE_SUBSCRIPTION_CATEGORY_FEE", subscriptionCategoryId: "cat-missing",
+        amountCents: 20000, prorationRule: "NONE", effectiveFrom: "2026-07-13", effectiveTo: null,
+      });
+      expect(response.status).toBe(404);
+      expect(mocks.subscriptionCategoryFeeCreate).not.toHaveBeenCalled();
+    });
+
+    // Review finding: the built-in "Individual" sentinel is a routing signal,
+    // never a priced category — rejected even if something bypasses the
+    // card's own picker (which excludes it via `where: { isBuiltIn: false }`,
+    // asserted separately below).
+    it("rejects creating a fee for the built-in Individual category", async () => {
+      mocks.subscriptionCategoryFindUnique.mockResolvedValue({ id: "cat-individual", isBuiltIn: true });
+      const response = await post({
+        action: "CREATE_SUBSCRIPTION_CATEGORY_FEE", subscriptionCategoryId: "cat-individual",
+        amountCents: 20000, prorationRule: "NONE", effectiveFrom: "2026-07-13", effectiveTo: null,
+      });
+      expect(response.status).toBe(409);
+      expect(mocks.subscriptionCategoryFeeCreate).not.toHaveBeenCalled();
+    });
+
+    it("rejects an overlapping effective window", async () => {
+      mocks.subscriptionCategoryFeeFindFirst.mockResolvedValue({ id: "cat-fee-existing" });
+      const response = await post({
+        action: "CREATE_SUBSCRIPTION_CATEGORY_FEE", subscriptionCategoryId: "cat-1",
+        amountCents: 20000, prorationRule: "NONE", effectiveFrom: "2026-07-13", effectiveTo: null,
+      });
+      expect(response.status).toBe(409);
+      expect(mocks.subscriptionCategoryFeeCreate).not.toHaveBeenCalled();
+    });
+
+    it("rejects unknown fields (no ageTier/billingBasis concept)", async () => {
+      const response = await post({
+        action: "CREATE_SUBSCRIPTION_CATEGORY_FEE", subscriptionCategoryId: "cat-1",
+        amountCents: 20000, prorationRule: "NONE", effectiveFrom: "2026-07-13", effectiveTo: null,
+        billingBasis: "PER_FAMILY",
+      });
+      expect(response.status).toBe(400);
+      expect(mocks.subscriptionCategoryFeeCreate).not.toHaveBeenCalled();
+    });
+
+    it("requires reconciled components when the amount changes on update", async () => {
+      mocks.subscriptionCategoryFeeFindUnique.mockResolvedValue({ id: "cat-fee-1", subscriptionCategoryId: "cat-1", amountCents: 20000 });
+      const response = await post({
+        action: "UPDATE_SUBSCRIPTION_CATEGORY_FEE", id: "cat-fee-1",
+        amountCents: 25000, prorationRule: "NONE", effectiveFrom: "2026-07-13", effectiveTo: null,
+      });
+      expect(response.status).toBe(422);
+      expect(mocks.categoryComponentCreateMany).not.toHaveBeenCalled();
+    });
+
+    it("deletes a subscription category fee", async () => {
+      mocks.subscriptionCategoryFeeFindUnique.mockResolvedValue({ id: "cat-fee-1", subscriptionCategoryId: "cat-1" });
+      const response = await post({ action: "DELETE_SUBSCRIPTION_CATEGORY_FEE", id: "cat-fee-1" });
+      expect(response.status).toBe(200);
+      expect(mocks.subscriptionCategoryFeeDelete).toHaveBeenCalledWith({ where: { id: "cat-fee-1" } });
+    });
+
+    it("404s deleting an unknown subscription category fee", async () => {
+      mocks.subscriptionCategoryFeeFindUnique.mockResolvedValue(null);
+      const response = await post({ action: "DELETE_SUBSCRIPTION_CATEGORY_FEE", id: "cat-fee-missing" });
+      expect(response.status).toBe(404);
+      expect(mocks.subscriptionCategoryFeeDelete).not.toHaveBeenCalled();
     });
   });
 });

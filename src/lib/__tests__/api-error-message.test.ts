@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  ApiRefusalError,
   MODULE_DISABLED_ERROR_CODE,
   apiErrorCodeFromBody,
   apiErrorMessageFromBody,
   apiErrorMessageFromResponse,
+  apiRefusalFromResponse,
   readApiErrorBody,
+  readApiObjectOrEmpty,
+  readApiObjectOrNull,
+  refusalMessageOr,
+  wordedForbiddenRefusal,
 } from "@/lib/api-error-message";
 import { templateErrorMessage } from "@/components/admin/email-settings/email-message-settings-panel";
 
@@ -165,5 +171,71 @@ describe("readApiErrorBody", () => {
     expect(
       await readApiErrorBody(new Response("<html>502</html>", { status: 502 })),
     ).toBeNull();
+  });
+});
+
+describe("readApiObjectOrNull and readApiObjectOrEmpty", () => {
+  it("hand back a JSON object body as it was sent", async () => {
+    const sent = { membershipTypes: [{ id: "t1" }], error: "kept" };
+
+    expect(await readApiObjectOrNull(Response.json(sent))).toEqual(sent);
+    expect(await readApiObjectOrEmpty(Response.json(sent))).toEqual(sent);
+  });
+
+  it.each([
+    ["an HTML error page", () => new Response("<html>502</html>", { status: 502 })],
+    ["an empty body", () => new Response(null, { status: 500 })],
+    ["a truncated JSON body", () => new Response('{"error":', { status: 500 })],
+    ["a JSON array", () => Response.json(["nope"])],
+    ["a JSON string", () => Response.json("nope")],
+    ["a bare null", () => Response.json(null)],
+  ])("count %s as no object: null, and empty where an object is wanted", async (_case, reply) => {
+    expect(await readApiObjectOrNull(reply())).toBeNull();
+    expect(await readApiObjectOrEmpty(reply())).toEqual({});
+  });
+});
+
+describe("refusalMessageOr", () => {
+  it("shows a thrown refusal's own sentence", async () => {
+    const refusal = await apiRefusalFromResponse(
+      Response.json({ error: "Not found" }, { status: 404 }),
+      FALLBACK,
+    );
+    expect(refusalMessageOr(refusal, "Other")).toBe("Not found");
+  });
+
+  it("shows the refusal's fallback when the body is an HTML page", async () => {
+    const refusal = await apiRefusalFromResponse(
+      new Response("<html>502</html>", { status: 502 }),
+      FALLBACK,
+    );
+    expect(refusalMessageOr(refusal, "Other")).toBe(FALLBACK);
+  });
+
+  it.each([
+    ["a request that never got an answer", new TypeError("Failed to fetch")],
+    ["a parse error on the success path", new SyntaxError("Unexpected token <")],
+    ["a non-error value", "boom"],
+  ])("shows the fallback, not the error's text, for %s", (_label, err) => {
+    expect(refusalMessageOr(err, FALLBACK)).toBe(FALLBACK);
+  });
+});
+
+describe("wordedForbiddenRefusal (ALP-749)", () => {
+  it("keeps a worded 403 as its own refusal", () => {
+    const refusal = wordedForbiddenRefusal({ error: "Password change required" });
+    expect(refusal).toBeInstanceOf(ApiRefusalError);
+    expect(refusal?.message).toBe("Password change required");
+  });
+
+  it.each([
+    ["the bare word Forbidden", { error: "Forbidden" }],
+    ["the bare word padded with spaces", { error: "  Forbidden  " }],
+    ["an unreadable body, such as an HTML page", null],
+    ["an object with no error", {}],
+    ["an empty error", { error: "" }],
+    ["a non-string error", { error: 403 }],
+  ])("has nothing worth keeping for %s", (_label, body) => {
+    expect(wordedForbiddenRefusal(body)).toBeNull();
   });
 });

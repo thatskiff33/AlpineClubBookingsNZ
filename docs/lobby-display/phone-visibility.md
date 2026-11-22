@@ -1,7 +1,7 @@
 # Member phone-number visibility (opt-in)
 
-Fork feature #37. This documents the resulting behaviour after the feature
-landed (children #124 schema, #125 enforcement, #126 UI, #127 this doc), so an
+Fork feature hoppers99/AlpineClubBookingsNZ#37. This documents the resulting behaviour after the feature
+landed (children hoppers99/AlpineClubBookingsNZ#124 schema, hoppers99/AlpineClubBookingsNZ#125 enforcement, hoppers99/AlpineClubBookingsNZ#126 UI, hoppers99/AlpineClubBookingsNZ#127 this doc), so an
 operator or reviewer can reason about exactly when a member's phone number is
 shown and where.
 
@@ -45,7 +45,7 @@ on the public display**.
 
 Enforcement lives **only** in the serving serialisers, never in a template or
 client component — no surface can display a number the API did not serve
-(#37 AC4). The single decision point is
+(hoppers99/AlpineClubBookingsNZ#37 AC4). The single decision point is
 [`canServeMemberPhoneOnLodgeSurface`](../../src/lib/phone.ts):
 
 - **Public wall** — [`src/lib/lodge-display-state.ts`](../../src/lib/lodge-display-state.ts)
@@ -59,7 +59,7 @@ client component — no surface can display a number the API did not serve
 
 The display payload is rebuilt on every refresh, so when a member turns their
 opt-in off (or an admin turns the lodge config off) the number stops appearing
-on the public wall within one refresh interval (#37 AC3). No number is cached.
+on the public wall within one refresh interval (hoppers99/AlpineClubBookingsNZ#37 AC3). No number is cached.
 
 ## No-regression guarantee (AC5)
 
@@ -72,5 +72,5 @@ a regression test in
 ## Config transfer
 
 `Lodge.showGuestPhonesOnScreens` is part of the config-transfer lodge-config
-category (#137), so it exports/imports with the rest of the lodge descriptor
+category (hoppers99/AlpineClubBookingsNZ#137), so it exports/imports with the rest of the lodge descriptor
 between environments, alongside the other per-lodge display settings.

@@ -790,8 +790,12 @@ describe("consent columns have exactly one writer", () => {
       "the merge classification of consentRespondedByMemberId",
     // D-12 exclusion sites and the one deliberate non-exclusion.
     "src/lib/double-bed-sharing.ts": "D-12: pending guests do not anchor an offer",
-    "src/app/api/member/data-export/route.ts":
+    // #4915 moved the member export's reads into the shared subject access
+    // builder; the guest-appearance section reads the subject's own row's state.
+    "src/lib/subject-access-export.ts":
       "deliberately NOT excluded — a data-subject export includes their own pending rows",
+    "src/lib/subject-access-export-sections.ts":
+      "a subject's own guest rows on others' bookings, consent state included, not excluded",
     "src/lib/email-templates/member-guest.ts": "the consent email renderers",
     "src/lib/email/member-guest.ts": "the consent email senders",
     // The per-request policy read and the pure write plan every add path uses.
@@ -909,6 +913,11 @@ describe("consent columns have exactly one writer", () => {
     // owed. A null status means no message was ever sent about that row.
     "src/lib/booking-batch-modification-service.ts":
       "the batch edit reads a removed guest's consent state to decide who is owed a withdrawal notice",
+    // #5149: the identity-only pricing echo, moved verbatim out of the batch
+    // service. A READER: it carries each guest's stored `consentStatus` into
+    // the echoed night rates unchanged, and writes nothing.
+    "src/lib/booking-identity-only-pricing.ts":
+      "the identity-only pricing echo carries each guest's stored consent status through unchanged; it writes nothing",
     // The same read on the single-guest removal route. It is the ONE of the
     // three callers of removeBookingGuestInTransaction that owes a withdrawal
     // notice — the decline endpoint and the expiry sweep each have their own
@@ -967,6 +976,10 @@ describe("consent columns have exactly one writer", () => {
       "the create route states each planned row's consent for the adult-supervision pre-flight",
     "src/lib/booking-create-guests.ts":
       "the create services' review gate states each planned row's consent for the adult-supervision rule",
+    // #5005: a READER of nothing stored. The import planner states every
+    // imported row consent-free (null) for the adult-supervision rule.
+    "src/lib/booking-import/plan.ts":
+      "the paid-booking import planner states each imported row consent-free for the adult-supervision rule; writes nothing",
     // The edit PREVIEW. A READER: it maps the rows already on the booking to
     // their stored `consentStatus` so the preview refuses exactly what the save
     // refuses. It persists nothing at all — it is a quote.

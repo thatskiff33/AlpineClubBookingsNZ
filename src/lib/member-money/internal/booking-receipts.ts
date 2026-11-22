@@ -67,8 +67,8 @@ export function receiptFactContext(context: MemberMoneyPostingContext, at: Date)
 
 /** The id of a debtor, member or organisation; one rule for receipts and refunds (`INV-SSOT`). */
 export const debtorId = (debtor: MemberMoneyDebtor) => (debtor.kind === "MEMBER" ? debtor.memberId : debtor.organisationId);
-/** Whether an obligation (or a line) names this debtor. */
-export const ownedBy = (obligation: Pick<ApplicationObligation, "debtorKind" | "memberId" | "organisationId">, debtor: MemberMoneyDebtor) =>
+/** Whether an obligation (or a line) names this debtor. A line whose debtor kind is unset names nobody. */
+export const ownedBy = (obligation: Pick<ApplicationObligation, "memberId" | "organisationId"> & { debtorKind: string | null }, debtor: MemberMoneyDebtor) =>
   obligation.debtorKind === debtor.kind && (obligation.memberId ?? obligation.organisationId) === debtorId(debtor);
 const succeeded = (state: ApplicationState, obligation: ApplicationObligation) =>
   state.obligations.some((o) => memberMoneyApplicationKeys.succeeds(o.key, obligation.key));
@@ -87,7 +87,7 @@ export function lineDebtor(line: { debtorKind: string | null; memberId: string |
  * A ZERO R01 has no obligation. A named debit and unnamed equal credit open its face without charging again.
  * `liveChargeCents` is the collection's one live-charge read, so the face it sizes is the charge it clamps to.
  */
-async function chargeObligation(tx: Db, context: MemberMoneyPostingContext, booking: { bookingId: string; lodgeId: string },
+export async function chargeObligation(tx: Db, context: MemberMoneyPostingContext, booking: { bookingId: string; lodgeId: string },
   debtor: MemberMoneyDebtor, liveChargeCents: number) {
   const rootKey = memberMoneyEventKeys.bookingCharge(booking.bookingId);
   const state = await readMemberMoneyApplicationState(tx, booking.bookingId);
@@ -187,8 +187,12 @@ async function carryResidue(tx: Db, context: MemberMoneyPostingContext, booking:
   }
 }
 
-/** Transfer only an exact event omitted from the merge's snapshot, never a balance attributed by timing or amount. */
-async function moveReceiptResidue(tx: Db, context: MemberMoneyPostingContext, booking: { bookingId: string; lodgeId: string },
+/**
+ * Transfer only an exact event omitted from the merge's snapshot, never a balance attributed by timing or amount:
+ * a receipt or its reversal, or a refund debt's reversal (#5191), posted on a member that has since merged away.
+ * `debtor` is the booking's owner, read under the caller's lock tier.
+ */
+export async function moveMergedDebtorResidue(tx: Db, context: MemberMoneyPostingContext, booking: { bookingId: string; lodgeId: string },
   debtor: MemberMoneyDebtor, eventKey: MemberMoneyEventKey) {
   if (debtor.kind !== "MEMBER") return;
   const event = await tx.memberMoneyEvent.findUniqueOrThrow({ where: { eventKey }, select: { id: true, journal: { select: { lines: {
@@ -308,7 +312,7 @@ export async function postBookingReceipts(tx: Db, context: BookingJournalContext
       await linkLegacyLinesToPostedBatch(tx, { journalId: result.journalId, receivableLegId: credit.id, lines: [{ id: line.id, version: line.postingKey ?? line.id }] });
       posted++;
     }
-    await moveReceiptResidue(tx, factContext, booking, debtor, eventKey);
+    await moveMergedDebtorResidue(tx, factContext, booking, debtor, eventKey);
     const receipt = await tx.memberMoneyEvent.findUniqueOrThrow({ where: { eventKey }, select: { journal: { select: { id: true, eventId: true, reversedBy: { select: { id: true } } } } } });
     if (reversal) {
       if (!receipt.journal!.reversedBy) {
@@ -327,7 +331,7 @@ export async function postBookingReceipts(tx: Db, context: BookingJournalContext
         await linkLegacyLinesToPostedBatch(tx, { journalId: reversed.journalId, receivableLegId: debit.id, lines: [{ id: reversal.id, version: reversal.postingKey ?? reversal.id }] });
         posted++;
       }
-      await moveReceiptResidue(tx, receiptFactContext(context, reversal.postedAt), booking, debtor, memberMoneyEventKeys.reversal(receipt.journal!.id));
+      await moveMergedDebtorResidue(tx, receiptFactContext(context, reversal.postedAt), booking, debtor, memberMoneyEventKeys.reversal(receipt.journal!.id));
       continue;
     }
     if (!selected || !decision!.collect || receipt.journal!.reversedBy) continue;

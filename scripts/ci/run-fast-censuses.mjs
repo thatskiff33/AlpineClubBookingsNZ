@@ -71,7 +71,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 export const FAST_CENSUS_SUITES = [
   {
     path: "src/lib/__tests__/booking-owner-census.test.ts",
-    why: "pins every booking-owner read by line; re-measured after almost every main merge",
+    why: "lists every booking-owner read, keyed by its file and source line rather than a line number (#5232); judged here on the composed tree",
   },
   {
     path: "src/lib/__tests__/audit-writer-census.test.ts",
@@ -88,6 +88,10 @@ export const FAST_CENSUS_SUITES = [
   {
     path: "src/lib/__tests__/advisory-lock-guard.test.ts",
     why: "the registered advisory-lock site inventory (INV-LOCK-003)",
+  },
+  {
+    path: "src/lib/__tests__/lock1-transaction-budget-census.test.ts",
+    why: "every lock(1) site's transaction runs on the shared budget (INV-LOCK-006); a site main adds is judged here",
   },
   {
     path: "src/lib/__tests__/club-time-escape-hatch-census.test.ts",

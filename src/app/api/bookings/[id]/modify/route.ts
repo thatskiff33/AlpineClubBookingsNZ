@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { isDateOnlyOverrideViolation } from "@/lib/booking-modify-quote-request";
 import { batchModifySchema } from "@/lib/booking-modify-request";
@@ -16,6 +17,7 @@ import {
 } from "@/lib/adult-member-hosting-same-owner";
 import { ApiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
+import { getClientIp } from "@/lib/rate-limit-http";
 import {
   OwnDependantIdentityRefusedError,
 } from "@/lib/booking-dependant-identity";
@@ -58,6 +60,10 @@ import {
   MembershipTypeBookingPolicyError,
 } from "@/lib/membership-type-policy";
 import logger from "@/lib/logger";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { getXeroLockGuardErrorResponse } from "@/lib/xero-period-lock-guard";
@@ -93,20 +99,10 @@ export async function PUT(
 
   const { id: bookingId } = await params;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json(
-      {
-        error: "Invalid JSON",
-        details: { body: ["Request body must be valid JSON"] },
-      },
-      { status: 400 },
-    );
-  }
+  const json = await parseJsonRequestBody(request);
+  if (!json.ok) return json.response;
 
-  const parsed = batchModifySchema.safeParse(body);
+  const parsed = batchModifySchema.safeParse(json.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: guestRequestSchemaError(parsed.error, "Invalid input"), details: parsed.error.flatten() },
@@ -114,8 +110,7 @@ export async function PUT(
     );
   }
 
-  const ipAddress =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const ipAddress = getClientIp(request);
 
   // Issue #1313 (option A2): a Booking Officer (bookings:edit) resolves to ADMIN
   // so they receive the SAME admin-on-behalf modify authority as a Full Admin.
@@ -227,6 +222,15 @@ export async function PUT(
     if (err instanceof EditPriceChangedError) {
       return NextResponse.json(editPriceChangedBody(err), { status: err.status });
     }
+    // The edit commits before its refund and additional-ask steps, so a
+    // contended lock(1) transaction (INV-LOCK-006) asks for a status check.
+    // The linked move answers its own LINKED_MOVE_CONTENDED 503 below.
+    const contended = transactionContendedResponse(
+      err,
+      "Booking modification contended for the lock(1) budget",
+      { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, context: { bookingId } },
+    );
+    if (contended) return contended;
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
     // #3451 (`INV-GUEST-019`): an added guest is named as one of the owner's

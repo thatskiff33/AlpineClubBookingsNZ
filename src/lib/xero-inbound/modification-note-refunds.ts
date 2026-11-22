@@ -5,13 +5,14 @@
  * module's `repairRefundedPaymentBusinessState` is the one consumer of the
  * payment-side helpers here, and `credit-note.ts` calls the note-side one.
  */
-import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { PaymentStatus, PaymentTransactionKind, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { isCapturedTransactionStatus, latestTransactionOfKind } from "@/lib/payment-transaction-status";
 import { type AccountCreditAllocationTarget } from "./types";
+import { getNextRefundedPaymentStatus } from "./amounts";
 import { invoiceCorrectionNoteIds, noCashModificationNoteIds } from "./account-credit-modification-notes";
-import { receiptCountsInvoiceCorrections } from "./settle-from-cash";
+import { paymentsCountingInvoiceCorrections } from "./linked-refunded-total";
 import { NOT_CARD_REFUND_REVERSAL_INVOICE_LINK } from "@/lib/xero-card-refund-reversal-outbox";
 
 async function resolvePaymentIdsByInvoiceTargets(
@@ -149,30 +150,16 @@ export async function resolveModificationRefundAmountsByPaymentId(input: {
 }
 
 /**
- * #3979 (`INV-PAY-126`): of these payments, those an invoice correction still
- * counts against (`receiptCountsInvoiceCorrections`).
- */
-export async function paymentsCountingInvoiceCorrections(paymentIds: string[]): Promise<Set<string>> {
-  if (paymentIds.length === 0) return new Set();
-  const rows = await prisma.paymentTransaction.findMany({
-    where: { paymentId: { in: paymentIds }, kind: PaymentTransactionKind.PRIMARY },
-    select: { paymentId: true, kind: true, source: true, status: true, reason: true },
-  });
-  return new Set(
-    paymentIds.filter((paymentId) =>
-      receiptCountsInvoiceCorrections(rows.filter((row) => row.paymentId === paymentId)),
-    ),
-  );
-}
-
-/**
  * A payment's latest PRIMARY row status when it has PRIMARY rows and none of
  * its rows was ever captured; null otherwise - when something was captured, or
  * when there are no rows at all (a legacy payment, or an organiser-settled
  * child, whose mirror keeps today's answer).
  */
-export async function uncapturedPrimaryStatus(paymentId: string): Promise<PaymentStatus | null> {
-  const rows = await prisma.paymentTransaction.findMany({
+async function uncapturedPrimaryStatus(
+  paymentId: string,
+  db: Pick<Prisma.TransactionClient, "paymentTransaction"> = prisma,
+): Promise<PaymentStatus | null> {
+  const rows = await db.paymentTransaction.findMany({
     where: { paymentId },
     select: { kind: true, status: true, createdAt: true, insertionSeq: true },
   });
@@ -180,3 +167,25 @@ export async function uncapturedPrimaryStatus(paymentId: string): Promise<Paymen
   return latestTransactionOfKind(rows, PaymentTransactionKind.PRIMARY)?.status ?? null;
 }
 
+/**
+ * #3979 (`INV-PAY-126`): the status a payment's new refunded total gives it
+ * (`getNextRefundedPaymentStatus`), except that a total falling to nothing on
+ * a payment nothing was ever captured on undoes an older fold (an invoice
+ * correction counted as a refund), never a refund given back: the payment
+ * returns to its uncaptured state, never to SUCCEEDED. An organiser-settled
+ * child is the #3653 mirror's, and a payment with no rows keeps today's
+ * answer. The refunded-total recount and (#4449) the allocation write both
+ * decide by it.
+ */
+export async function refundedTotalStatus(
+  payment: { id: string; status: PaymentStatus; amountCents: number; booking: { organiserSettled: boolean } },
+  refundedAmountCents: number,
+  db: Pick<Prisma.TransactionClient, "paymentTransaction"> = prisma,
+): Promise<PaymentStatus | null> {
+  const next = getNextRefundedPaymentStatus(payment.status, payment.amountCents, refundedAmountCents);
+  const unrefunds =
+    next === PaymentStatus.SUCCEEDED &&
+    (payment.status === PaymentStatus.REFUNDED || payment.status === PaymentStatus.PARTIALLY_REFUNDED);
+  if (!unrefunds || payment.booking.organiserSettled) return next;
+  return (await uncapturedPrimaryStatus(payment.id, db)) ?? next;
+}

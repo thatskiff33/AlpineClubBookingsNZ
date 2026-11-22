@@ -1,6 +1,7 @@
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { postBookingReceipts, type BookingJournalContext } from "@/lib/member-money/doors";
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
+import { SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE } from "@/lib/saved-card-charge-claim";
 /**
  * #3267 (epic #3270) — recording Stripe's answer on a saved-card charge attempt
  * row (`INV-PAY-055`). The other half of `saved-card-charge-attempt.ts`, whose
@@ -80,11 +81,23 @@ export function ledgerStatusForPaymentIntent(
 /**
  * Plain English for an operator when an answered intent did not capture — the
  * admin route's and charge-saved-method's response bodies and alerts share it,
- * so the two cannot describe one Stripe status two ways.
+ * so the two cannot describe one Stripe status two ways. `claimReleased: false`
+ * is the rare answer whose claim release did not land (#5279): every status
+ * sentence below says the booking stays pending or can be retried now, and
+ * neither is true while it is still CONFIRMED awaiting the job's recovery.
  */
 export function describeUnsettledPaymentIntent(
-  status: Stripe.PaymentIntent.Status
+  status: Stripe.PaymentIntent.Status,
+  { claimReleased = true }: { claimReleased?: boolean } = {}
 ): string {
+  if (!claimReleased) {
+    // Recovery skips a payment still processing (it may yet capture), so the
+    // general deferred notice's "returns it to pending" holds only if it fails.
+    if (status === "processing") {
+      return "The charge is still being processed by the card network, and the booking could not be returned to pending just now. It stays confirmed until the payment finishes: if it succeeds the booking is paid; if it fails, the next scheduled pending-booking run returns it to pending automatically.";
+    }
+    return `The charge did not complete (Stripe reports the payment as "${status}"). ${SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE}`;
+  }
   switch (status) {
     case "requires_action":
       return "The saved card needs the cardholder to complete authentication (3D Secure), which cannot be done automatically; the booking stays pending until they do, or until the member saves a different card.";

@@ -36,7 +36,14 @@ knowingly, not to get past a red check.
 ## Writing one
 
 1. Create `size-allowances.d/<pr-number>-<short-slug>.md`, for example
-   `size-allowances.d/2980-membership-type-policy.md`. The name must not be
+   `size-allowances.d/2980-membership-type-policy.md`. The pull-request number
+   is the convention, not a rule the gate enforces: a lane that writes its
+   fragment before the pull request exists may lead with its ticket id instead,
+   as the Sekreton lane's `alp-<n>-<slug>.md` fragments do, and a plain slug is
+   accepted too. Whatever the name, it must be one no other change will use.
+   Leave a fragment `main` has already landed under the name it landed with:
+   it is inert there, and renaming it would bring it back into a diff as a
+   live allowance (see "They cannot rot" below). The name must not be
    `README.md`, and the file must end in `.md`. Use a portable direct-child name
    (interior spaces and Unicode are fine, including existing leading `-` or
    `_` names). Path separators, control and invisible format characters, and
@@ -96,8 +103,10 @@ reason: the guard belongs inside the claim it protects until #4516 splits the
   to its closing one, leading comment excluded.
 - `reason:` — as for a file.
 
-Every rule below applies to it as to a file: it may let a function already over
+The rules below apply to it as to a file: it may let a function already over
 300 lines grow, never a new function or one crossing 300 for the first time.
+The hard ceiling is the exception: it is a file rule (#4926), and a function
+allowance has no upper bound of its own.
 
 ## What an allowance may and may not do
 
@@ -109,10 +118,16 @@ It may **not**:
 - let a file **renamed into** the budgeted scope — from `prisma/`, `scripts/`,
   or a `__tests__/` path — inherit a ceiling from outside it;
 - carry a file **over its budget for the first time**. A module still inside its
-  budget has the cheapest split available to it, so it should take it.
+  budget has the cheapest split available to it, so it should take it;
+- take a file past its **hard ceiling** of three times its budget — 2,100 lines
+  for a domain module, 750 for a route handler, 1,500 for a page shell (owner
+  decision, 11 Nov 2026,
+  [#4926](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4926)).
+  A file already past it may only stay the same length or shrink; split a
+  cohesive part out first. No file is exempt.
 
-Each of those is refused by name, with the reason, rather than ignored. They are
-the bypasses [#2987](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/2987)
+Each of those is refused by name, with the reason, rather than ignored. The first
+three are the bypasses [#2987](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/2987)
 closed, and an escape hatch that quietly reopened one would be worse than no
 escape hatch at all.
 
@@ -143,6 +158,14 @@ The epic sync does the same: `pnpm run ci:fast-censuses` measures the file-size
 ratchet against `origin/main` whatever `--base` it is given (#4831), so a
 `main`-side allowance for a file the epic left longer cannot refuse a sync.
 Only an allowance the epic itself introduced is judged there.
+
+A deployment fork syncing down from upstream has the same problem across
+many upstream pull requests at once. Run with `--upstream-ref` (CI does when
+the fork sets `QUALITY_BUDGET_UPSTREAM_REPO`), and a fragment whose bytes equal
+the trusted upstream commit's copy is upstream's, spent there, so it is not
+live: it neither applies, nor fails as unused, nor collides with a fragment the
+fork adds for the same path. A fragment the fork wrote or edited is judged as
+usual. See [`docs/MAINTENANCE.md`](../docs/MAINTENANCE.md#syncing-a-fork-from-upstream).
 
 **"After merge" means merged into the ratchet's BASE REF, which is always
 `origin/main` — never merely into an epic branch.** A child of an epic measures

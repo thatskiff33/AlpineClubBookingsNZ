@@ -138,7 +138,7 @@ bundle — see [`config-transfer-workflow.md`](config-transfer-workflow.md).
 New auth surface, deliberately weaker than every existing tier. Decided in
 [ADR-001](decisions/ADR-001-device-pairing-auth-model.md) (threat model,
 token lifetime, cookie vs header, rate limiting) and implemented in issue
-#27.
+hoppers99/AlpineClubBookingsNZ#27.
 
 > **Route namespace (ADR-001 §1):** display routes live at `/display` and
 > `/api/display/*` (admin management under `/api/admin/display/*`) — NOT
@@ -185,9 +185,9 @@ validated server-side against configured bounds).
 > route serves three admin previews, all read-only (never stamp `lastSeenAt`):
 > `?previewDevice=<id>` (the device's lodge + template), `?preview=1&templateId=<id>[&previewLodge=<id>]`
 > (an authored v2 template against an **explicit** lodge — validated active,
-> club default when omitted; the old silent default is gone, #64), and
+> club default when omitted; the old silent default is gone, hoppers99/AlpineClubBookingsNZ#64), and
 > `?preview=1` (the club-default fallback board, default lodge; the legacy
-> `&templateKey=…` param was removed in #86 / LTV-040). These honour a
+> `&templateKey=…` param was removed in hoppers99/AlpineClubBookingsNZ#86 / LTV-040). These honour a
 > full-admin session. A fourth caller, `?previewGrant=<token>`, is a signed
 > preview grant (LTV-036, ADR-003 §5): it authorises one template/lodge preview
 > **without** a session so the authoring page can embed it in a sandboxed
@@ -196,7 +196,7 @@ validated server-side against configured bounds).
 > to simulate the window start (device fetches ignore it) — except that when a
 > signed grant already carries a `windowStart`, that signed value is
 > authoritative and a conflicting `?previewDate` on the sandbox-rewritable iframe
-> URL cannot shift the served window beyond it (issue #176); the in-frame date
+> URL cannot shift the served window beyond it (issue hoppers99/AlpineClubBookingsNZ#176); the in-frame date
 > picker still drives the window when the grant carries no signed date. Every
 > payload response also sets `Cache-Control: no-store` so the privacy-reduced
 > feed — which can include guest names and opted-in phone numbers — is never held
@@ -299,7 +299,7 @@ interface DisplayState {
 - Client polls on an interval; the page shows a stale indicator when the
   render ages past a threshold and keeps the last good render on transient
   failures.
-- **Per-device poll cadence** (LTV-039, issue #85; consolidates #66):
+- **Per-device poll cadence** (LTV-039, issue hoppers99/AlpineClubBookingsNZ#85; consolidates hoppers99/AlpineClubBookingsNZ#66):
   `LodgeDisplayDevice.pollSeconds` (nullable) sets a device's refresh cadence.
   The response body carries the effective `pollSeconds` — a device fetch serves
   its configured value, a preview always serves the default — clamped
@@ -599,24 +599,24 @@ client-safe `css-tokens.ts` before they ship in the payload:
 
 ## 8. Admin UI
 
-> **Navigation (LTV-031, ADR-003; fork issue #109).** The display admin is
+> **Navigation (LTV-031, ADR-003; fork issue hoppers99/AlpineClubBookingsNZ#109).** The display admin is
 > reached from **one** sidebar entry — **Lobby Display** (`/admin/display`) —
 > which opens a **hub landing page of cards** rather than a four-item sidebar
-> group, mirroring the "Site Appearance & Content" hub. The hub cards are
-> **Devices** (`/admin/display/devices`, heading "Display Devices"),
-> **Visual builder** (`/admin/display/builder`, ADR-004), **Layouts (Advanced)**
-> (`/admin/display/layouts`), **Templates**
-> (`/admin/display/templates`), and **Reference**
-> (`/admin/display/reference`). The Devices management page moved from
+> group, mirroring the "Site Appearance & Content" hub. The hub cards, each
+> titled with its page's registry label, are **Display Devices**
+> (`/admin/display/devices`), **Display Builder** (`/admin/display/builder`,
+> ADR-004, the visual builder), **Display Layouts** (`/admin/display/layouts`,
+> Advanced mode), **Display Templates** (`/admin/display/templates`), and
+> **Display Reference** (`/admin/display/reference`). The Devices management page moved from
 > `/admin/display` to `/admin/display/devices` when `/admin/display` became the
-> hub (#109); its behaviour is unchanged. The settings card was renamed off the
+> hub (hoppers99/AlpineClubBookingsNZ#109); its behaviour is unchanged. The settings card was renamed off the
 > `/admin/display/templates` path so LTV-033's Template authoring could claim
 > it: LTV-031 parked the path on a temporary redirect to
 > `/admin/display/settings`, and **LTV-033 replaced that redirect with the real
 > Template manager** (the redirect page and its test are gone). The
 > **Reference** entry (`/admin/display/reference`) — the combined
-> Modules/Conditions/CSS-tokens reference — landed with LTV-034 (#80). **LTV-035
-> (#81) then removed the Display Settings entry**: its per-lodge content moved
+> Modules/Conditions/CSS-tokens reference — landed with LTV-034 (hoppers99/AlpineClubBookingsNZ#80). **LTV-035
+> (hoppers99/AlpineClubBookingsNZ#81) then removed the Display Settings entry**: its per-lodge content moved
 > into the lodge configuration hub (see the LTV-035 note below), and
 > `/admin/display/settings` redirects to Devices (`/admin/display/devices`).
 > Terminology follows ADR-003:
@@ -654,7 +654,7 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > widen a name field, and widening is structurally impossible because modules only
 > ever see the already-reduced `DisplayState`.
 
-> **Layouts (LTV-032, #78).** The **Layouts** entry
+> **Layouts (LTV-032, hoppers99/AlpineClubBookingsNZ#78).** The **Layouts** entry
 > (`/admin/display/layouts`) is live: a Layout CRUD list (name, key,
 > description, template-usage count, edit/delete — delete is blocked with a
 > clear 409 while any Template still uses the layout) plus an authoring editor.
@@ -673,11 +673,11 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > errors block the save and render inline (path + message); CSS-sanitiser
 > warnings ride along on an accepted save as amber notices. The layout **key is
 > immutable** after creation so Template bindings and seeds stay stable.
-> Preview-before-save arrives with the sandboxed/template preview (#82/#79); the
+> Preview-before-save arrives with the sandboxed/template preview (hoppers99/AlpineClubBookingsNZ#82/#79); the
 > editor draft is structured so `{ bodyHtml, defaultCss, areas }` can be handed
 > to that future preview call.
 
-> **Templates (LTV-033, #79).** The **Templates** entry
+> **Templates (LTV-033, hoppers99/AlpineClubBookingsNZ#79).** The **Templates** entry
 > (`/admin/display/templates`) is live: a Template CRUD list (name, key, bound
 > layout, device-usage count, edit/delete — delete is blocked with a clear 409
 > while any device is still bound) plus an authoring editor. A Template is built
@@ -687,7 +687,7 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > editor **generates one content box per declared slot** of the bound layout:
 > static/conditional areas key off the area, a rotator gets one box per child
 > (labelled `area / child`), each **seeded from the layout's per-area
-> `defaultContent`** when present. Since **#111** the built-in layouts declare
+> `defaultContent`** when present. Since **hoppers99/AlpineClubBookingsNZ#111** the built-in layouts declare
 > that default content on their static/conditional areas (the everyday-board's
 > `board`/`chores`/`rules`/`notice` areas each name the module they are built to
 > show), so a new template opens **pre-populated with the real default —
@@ -719,13 +719,13 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > by the save contract regardless of the authoring surface. Noted for the owner to
 > revisit if a reusable rich editor is later extracted.
 >
-> *Default-content materialisation (#111).* Per-area `defaultContent` seeds
+> *Default-content materialisation (hoppers99/AlpineClubBookingsNZ#111).* Per-area `defaultContent` seeds
 > a new template **at authoring time** — it is copied into the template's slot
 > content when the author saves, so changing a layout's default **later does not
 > retro-update** templates already authored against it (a new template picks up
 > the new default). Built-ins themselves are **code-managed scaffolding** (owner
 > decision A): `ensureBuiltInDisplays` **refreshes** each built-in layout/template
-> from code on every re-seed, so a built-in layout seeded before #111 **gains the
+> from code on every re-seed, so a built-in layout seeded before hoppers99/AlpineClubBookingsNZ#111 **gains the
 > new `defaultContent` on the next re-seed** (or via a config-transfer import of
 > the refreshed built-ins). To customise a built-in, an admin **duplicates** it
 > into a new (non-`builtin-`) row and edits that; editing a built-in in place is
@@ -733,7 +733,7 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > still seed **empty child slots** because `DisplayAreaChild` has no
 > `defaultContent` field yet — a documented follow-up.
 >
-> *Built-in edit guardrail (#156).* Opening a built-in Layout or Template in its
+> *Built-in edit guardrail (hoppers99/AlpineClubBookingsNZ#156).* Opening a built-in Layout or Template in its
 > authoring editor shows a **persistent notice** that in-place edits are
 > overwritten by re-seed/upgrade, with a one-click **Duplicate to customise**
 > action that forks the definition into a new custom draft; **saving** an
@@ -749,9 +749,9 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > is gone and the PATCH no longer accepts `templateKey`: picking a template
 > PATCHes `templateId`, the club default clears the binding with
 > `templateId: null`. The vestigial `templateKey` device column was removed in
-> #86 (LTV-040) — see the §3 "Built-ins are seeded v2 rows" callout.
+> hoppers99/AlpineClubBookingsNZ#86 (LTV-040) — see the §3 "Built-ins are seeded v2 rows" callout.
 
-> **Reference (LTV-034, #80).** The **Reference** entry
+> **Reference (LTV-034, hoppers99/AlpineClubBookingsNZ#80).** The **Reference** entry
 > (`/admin/display/reference`) is live: one read-only page, three Cards, backed
 > by the closed registries so a new module/condition/token surfaces with no
 > hand-maintained duplication (ADR-003 §3). **Modules** lists each
@@ -774,7 +774,7 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > without a swatch). The page imports only the client-safe registries; the status
 > endpoint owns the server side.
 
-> **Per-lodge settings relocated (LTV-035, #81).** The three per-lodge display
+> **Per-lodge settings relocated (LTV-035, hoppers99/AlpineClubBookingsNZ#81).** The three per-lodge display
 > controls — the `{{config:key}}` config-value glob (`Lodge.displayConfig`), the
 > guest-name **granularity** override (`Lodge.displayNameGranularity`), and the
 > **committee notice** (`Lodge.displayNotice`) — moved out of the standalone
@@ -785,8 +785,8 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > straight to the existing `/api/admin/display/lodge-config` GET/PUT route (which
 > always accepted a `lodgeId` — the old page just never sent it), so the surface
 > now edits the lodge being viewed rather than always the club default lodge.
-> That closes the MVP bug (old backlog #64) where a second lodge's config
-> silently edited the default lodge, and consolidates old backlog #62 ("config
+> That closes the MVP bug (old backlog hoppers99/AlpineClubBookingsNZ#64) where a second lodge's config
+> silently edited the default lodge, and consolidates old backlog hoppers99/AlpineClubBookingsNZ#62 ("config
 > belongs in the lodge configuration UI"). The route, its validation (bad
 > keys/values → 400), and token resolution at serve time are unchanged. The old
 > `/admin/display/settings` path redirects to Devices
@@ -801,7 +801,7 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > losing single-lodge coverage; the two dev lodges exercised here both run
 > multi-lodge.
 
-> **Preview v2 (LTV-036, #82, ADR-003 §5).** The Templates page **Preview**
+> **Preview v2 (LTV-036, hoppers99/AlpineClubBookingsNZ#82, ADR-003 §5).** The Templates page **Preview**
 > button opens a minimal sandbox host, `/admin/display/preview`, rather than
 > `/display` directly. The host mints a **short-lived (5-minute), HMAC-signed,
 > single-purpose preview grant** (`POST /api/admin/display/preview-grant`,
@@ -815,10 +815,10 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > `lastSeenAt`, and works on no other route. The lodge is **explicit**
 > (`?previewLodge`, validated active; club default when omitted; a selector
 > appears next to Preview when multi-lodge is on) and the board shows a
-> "previewing against <lodge>" line near the clock — the old silent default (#64)
+> "previewing against <lodge>" line near the clock — the old silent default (hoppers99/AlpineClubBookingsNZ#64)
 > is gone. The **simulated-date** input (LTV-017) is now a **sibling** of the
 > picker button (it was nested inside it — invalid HTML that stopped a native
-> selection applying, #65). CSP is relaxed **only** for named same-origin paths,
+> selection applying, hoppers99/AlpineClubBookingsNZ#65). CSP is relaxed **only** for named same-origin paths,
 > and the two relaxations are **separate exact-match allowlists** in
 > `src/lib/csp.ts` (never prefix matches, so no future `/admin/display/*` page
 > inherits either by accident):
@@ -827,7 +827,7 @@ client-safe `css-tokens.ts` before they ship in the payload:
 >   `/admin/display/preview` and, since #2246, the Visual builder
 >   `/admin/display/builder` (its **Live preview**, ADR-004 §7 — previously the
 >   builder's own policy blocked its preview with "Content blocked").
-> - the tightened `img-src 'self' data:` (#161) — the routes that RENDER authored
+> - the tightened `img-src 'self' data:` (hoppers99/AlpineClubBookingsNZ#161) — the routes that RENDER authored
 >   display markup: `/display` and `/admin/display/preview`. The builder is
 >   deliberately **excluded**: it is a full admin page inside the admin chrome,
 >   not a sandboxed display document, and the authored markup it previews runs in
@@ -906,7 +906,7 @@ Modelled on the kiosk account management surface (`/admin/lodge`):
   simulated date) so the layout never shifts.
 - **Lodge config glob** and **name-granularity / committee-notice settings**:
   now edited per lodge in the lodge configuration hub, not here — see the
-  LTV-035 (#81) note above. The key/value editor keeps its slug key validation
+  LTV-035 (hoppers99/AlpineClubBookingsNZ#81) note above. The key/value editor keeps its slug key validation
   (bad keys/values → 400 from the shared `/api/admin/display/lodge-config`
   route); the granularity control keeps its privacy explainer.
 
@@ -939,7 +939,7 @@ Modelled on the kiosk account management surface (`/admin/lodge`):
     attached to the payload, so the client always has fallback material.
   - **Save-path validation contract.** `authoring-validation.ts` exposes
     `validateLayoutForSave` / `validateTemplateForSave` — the single server-side
-    contract the authoring UIs (#78/#79) call before persisting. Structural
+    contract the authoring UIs (hoppers99/AlpineClubBookingsNZ#78/#79) call before persisting. Structural
     invalidity is an **error** (save refused); anything the CSS sanitiser would
     strip is a **warning** (save allowed — serve time re-sanitises identically —
     but the author is told what was neutralised). Preview-before-save
@@ -948,6 +948,8 @@ Modelled on the kiosk account management surface (`/admin/lodge`):
 ## 10. Privacy and security
 
 ### Settled naming rules (issue #28, 2026-07-11)
+
+Issue #28 here is `hoppers99/AlpineClubBookingsNZ#28`.
 
 Enforced solely in `src/lib/lodge-display-state.ts` — the serialiser is the
 single choke point; no template or module can display more than it serves.
@@ -970,7 +972,7 @@ upstream owner's input on discussion #964):
    clubs): the booking shows the organisation's full name at every level;
    its guests are never listed individually.
 2. **Whole-lodge blockout**: an explicit exclusive hold
-   (`Booking.wholeLodgeHold`) is **authoritative** (#122 / epic #116, ADR-001
+   (`Booking.wholeLodgeHold`) is **authoritative** (hoppers99/AlpineClubBookingsNZ#122 / epic hoppers99/AlpineClubBookingsNZ#116, ADR-001
    decision 4) — a flagged booking always collapses to its label only,
    regardless of headcount. For **un-flagged** bookings the sole-occupancy
    heuristic is the fallback: a booking that is the sole occupant on every
@@ -1048,7 +1050,7 @@ The exact serialised shape is the `DisplayState` contract in §5 (copied from
   allow-list, rate-limited pairing, no PII in URLs (ADR-001).
 - The serialiser never selects monetary, payment, or member-id fields. The
   one contact exception is a member phone number, released per-guest ONLY
-  under the two-sided consent gate (#125 / #37,
+  under the two-sided consent gate (hoppers99/AlpineClubBookingsNZ#125 / hoppers99/AlpineClubBookingsNZ#37,
   `canServeMemberPhoneOnLodgeSurface`): the lodge has enabled phone display
   (`Lodge.showGuestPhonesOnScreens`) AND the member has opted in
   (`Member.lodgeScreenPhoneOptIn`) AND the guest is an adult on a row that
@@ -1056,7 +1058,7 @@ The exact serialised shape is the `DisplayState` contract in §5 (copied from
   the public payload by default. Enforcement lives only in this serialiser,
   never in a template or client component. The authenticated kiosk
   `guests/[date]` serialiser is a STAFF check-in surface and is deliberately
-  exempt from the opt-in gate (owner decision on #37 AC5) — it keeps the
+  exempt from the opt-in gate (owner decision on hoppers99/AlpineClubBookingsNZ#37 AC5) — it keeps the
   hut-leader contact use case (adults only), so the opt-in gate is a
   public-wall control, not a kiosk one.
 - The display surface performs no writes except its own pairing/heartbeat
