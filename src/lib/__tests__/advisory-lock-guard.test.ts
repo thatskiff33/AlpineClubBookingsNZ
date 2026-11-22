@@ -2200,6 +2200,24 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
     expect(body).toContain("await prisma.booking.findUnique({");
     expect(body).toContain("select: { lodgeId: true },");
     expect(body).not.toMatch(/\btx\b|\$transaction|pg_advisory/);
+
+    // Closed world: the only callers are the two approvals whose order the
+    // tests beside this one check. A third caller, perhaps inside a locked
+    // transaction, fails here until its placement is reviewed.
+    const callers = sources.flatMap(({ rel, text }) => {
+      const code = stripComments(text);
+      return [...code.matchAll(/\bfindHeldApprovalLodge\(/g)]
+        .filter((match) => !code.slice(Math.max(0, (match.index ?? 0) - 30), match.index).includes("function "))
+        .map((match) => {
+          const before = code.slice(0, match.index);
+          const owner = [...before.matchAll(/export async function (\w+)/g)].at(-1)?.[1];
+          return `${rel}::${owner}`;
+        });
+    });
+    expect(callers.sort()).toEqual([
+      "src/lib/booking-request.ts::approveBookingRequest",
+      "src/lib/school-booking-request.ts::approveSchoolBookingRequest",
+    ]);
   });
 
   it("binds generic held conversion to the immutable held-booking lodge", () => {
