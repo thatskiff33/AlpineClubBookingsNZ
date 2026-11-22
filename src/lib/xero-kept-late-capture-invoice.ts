@@ -42,6 +42,7 @@
  * when the receipt does, and never runs before it.
  */
 import { Invoice, type LineItem } from "xero-node";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -99,7 +100,7 @@ export const KEPT_LATE_CAPTURE_WITHDRAWN_ERROR_CODE = "KEPT_LATE_CAPTURE_WITHDRA
 
 /** The one-line description the member and the treasurer read (`INV-CONFIG-001`: no club value). */
 export function keptLateCaptureLineDescription(bookingId: string): string {
-  return `Payment kept after cancellation - booking ${bookingId.slice(0, 8)}`;
+  return `Payment kept after cancellation - booking ${storedShortBookingId(bookingId)}`;
 }
 
 function invoiceKey(taskId: string) {
@@ -558,7 +559,7 @@ export async function createXeroKeptLateCaptureInvoice(
         lineItems: [line],
         date: capturedOn,
         dueDate: capturedOn,
-        reference: `Kept late payment for booking ${bookingId.slice(0, 8)}`,
+        reference: `Kept late payment for booking ${storedShortBookingId(bookingId)}`,
         status: Invoice.StatusEnum.AUTHORISED,
         lineAmountTypes: taxRendering.lineAmountTypes,
       });
