@@ -7,6 +7,7 @@ import { BookingEventType, BookingStatus, PaymentSource, PaymentStatus, PaymentT
 import { OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 import { bookingOwner } from "@/lib/booking-owner";
+import { formatBookingReference } from "@/lib/booking-reference";
 import { alertOfficersOfBump } from "@/lib/booking-bump-alert";
 import { bookingBumpReason } from "@/lib/booking-bump-reason";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
@@ -1384,7 +1385,11 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             // promise "your own booking remains confirmed" when the parent is
             // genuinely settled (parentUnpaid === false).
             parentConfirmed: !resolution.parentUnpaid,
-            parentBookingReference: resolution.booking.parentBookingId,
+            // The short handle the member's other emails show (#5407), never
+            // the whole id; a split child always has a parent.
+            parentBookingReference: resolution.booking.parentBookingId
+              ? formatBookingReference(resolution.booking.parentBookingId)
+              : null,
             lodgeId: resolution.booking.lodgeId,
           });
         } catch (emailErr) {

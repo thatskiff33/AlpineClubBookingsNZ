@@ -2873,7 +2873,8 @@ describe("Cron: Confirm Pending Bookings", () => {
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           parentConfirmed: true,
-          parentBookingReference: "parent_1",
+          // The short reference (#5407), not the whole parent id.
+          parentBookingReference: "PARENT_1",
         })
       );
       expect(mockSendAdminSplitSettlementUnpaidAlert).not.toHaveBeenCalled();
