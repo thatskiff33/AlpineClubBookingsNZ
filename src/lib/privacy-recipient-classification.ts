@@ -98,7 +98,7 @@ export const PRIVACY_RECIPIENTS = {
   },
   sentry: {
     name: "Sentry",
-    dataSent: "Filtered errors and diagnostic context. Neither the server nor the browser sends session data. Optional session replay adds masked browser interaction recordings; filtering and masking do not establish that every possible value is absent.",
+    dataSent: "Filtered errors and diagnostic context. Optional session replay adds masked browser interaction recordings; filtering and masking do not establish that every possible value is absent.",
     enablement: "A configured Sentry DSN enables error reporting. Replay also needs sentryReplayEnabled and eligible browser sampling; it is off by default. Disable replay separately or remove the DSN to stop new reporting.",
     processing: "See the club's Sentry project region, account terms and Sentry's privacy notice.",
     memberFacing: true,

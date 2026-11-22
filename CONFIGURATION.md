@@ -2847,8 +2847,9 @@ browser, `src/instrumentation-client.ts` drops the SDK's `BrowserSession`
 integration. The edge SDK has no session tracking. Sentry therefore gets no
 session data for those figures. Before this change, a server with `SENTRY_DSN`
 set sent Sentry a count of requests by outcome for each minute, with the
-release and environment, and one session record for the server process if an
-error was reported before its first request. Error events and performance
+release and environment, and session updates for the server process when an
+error was reported before its first request, or when it exited without
+serving one. Error events and performance
 traces are unchanged. Nothing to set.
 
 **Upgrade action:** before deploying the first release with runtime browser

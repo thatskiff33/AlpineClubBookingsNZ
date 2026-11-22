@@ -129,15 +129,17 @@ describe("the server sends release-tagged events and no session data (#5262)", (
     }
   });
 
-  it("sends both errors, tagged with the release", () => {
+  it("sends both errors, tagged with the release and environment", () => {
     const events = items()
       .filter(([header]) => header.type === "event")
-      .map(([, payload]) => payload as { release?: string; exception?: { values?: { value?: string }[] } });
+      .map(([, payload]) => payload as { release?: string; environment?: string; exception?: { values?: { value?: string }[] } });
     expect(events.map((event) => event.exception?.values?.[0]?.value).sort()).toEqual([
       "inside a request",
       "outside a request",
     ]);
     expect(events.map((event) => event.release)).toEqual([RELEASE, RELEASE]);
+    // The server config's own environment (NODE_ENV, "test" under vitest).
+    expect(events.map((event) => event.environment)).toEqual(["test", "test"]);
   });
 
   it("sends no session item of either kind", () => {
