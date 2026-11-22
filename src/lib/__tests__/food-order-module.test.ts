@@ -22,9 +22,9 @@ import type { FeatureFlags } from "@/config/schema";
 import { config as proxyConfig } from "@/proxy";
 
 /**
- * Fork #121: the `foodOrders` module, its route gate and its migration.
+ * Fork triyder/AlpineClubBookingsNZ#121: the `foodOrders` module, its route gate and its migration.
  *
- * Off by default (fork #121 owner decision 14): an order goes to the food officer's
+ * Off by default (fork triyder/AlpineClubBookingsNZ#121 owner decision 14): an order goes to the food officer's
  * email, and until the committee enters one there is nobody to send it to.
  * While it is off every food-order page and API is gated to 404 and the admin
  * settings page and its sidebar link disappear; the route handlers' own

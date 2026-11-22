@@ -53,9 +53,9 @@ export interface ServerNzSettingsValues {
   otherLodgesLastDownloadAt: string | null;
   otherLodgesCursor: string | null;
   /**
-   * The lodges the central server says this club owns (#52), with their
-   * permanent central ids (#62), which is how every "is this ours?" check
-   * matches them (#69, `ownsOtherLodge` in `@/lib/other-lodges`): `null` until
+   * The lodges the central server says this club owns (triyder/AlpineClubBookingsNZ#52), with their
+   * permanent central ids (triyder/AlpineClubBookingsNZ#62), which is how every "is this ours?" check
+   * matches them (triyder/AlpineClubBookingsNZ#69, `ownsOtherLodge` in `@/lib/other-lodges`): `null` until
    * a download has recorded the list, or when the stored value does not parse
    * (read-only, like never-told), `[]` when the server said none.
    */
@@ -69,14 +69,14 @@ export interface ServerNzSettingsValues {
    */
   otherLodgesOwnedLodgesUnreadable: boolean;
   /**
-   * When a whole-registry download last merged to the end (#64), or `null`:
+   * When a whole-registry download last merged to the end (triyder/AlpineClubBookingsNZ#64), or `null`:
    * until it is set every download asks for the whole registry, so each Other
    * lodges row is matched once and keyed by its central id, and only after it
    * is a row still unkeyed marked as one the server does not list.
    */
   otherLodgesKeyedAt: string | null;
   /**
-   * The central server's API version as it last reported it (#49): `null`
+   * The central server's API version as it last reported it (triyder/AlpineClubBookingsNZ#49): `null`
    * until asked, `"unknown"` when the server answered 404 (it predates
    * versioning, a mismatch), otherwise a canonical `major.minor`. The mismatch
    * is computed from this and `SERVERNZ_EXPECTED_SERVER_VERSION`, never stored.
@@ -322,7 +322,7 @@ export async function recordOtherLodgesUpload(
  * this writer does not — and it is the reason nothing here needs to re-read the
  * row. Do not "tidy up" either rule by storing whatever the caller had in hand.
  *
- * `ownLodges` (#52, #62) is the owned list the pull carried, recorded ONLY when
+ * `ownLodges` (triyder/AlpineClubBookingsNZ#52, triyder/AlpineClubBookingsNZ#62) is the owned list the pull carried, recorded ONLY when
  * the server sent a valid one: `undefined` means it did not, and the stored
  * list — and its timestamp — are left exactly as they were. An EMPTY array is
  * a real answer ("you own nothing") and IS stored.
@@ -331,7 +331,7 @@ export async function recordOtherLodgesDownload(
   cursor: string | null,
   ownLodges: OwnedCentralLodge[] | undefined,
   options: {
-    /** This download asked for the whole registry and merged all of it (#64). */
+    /** This download asked for the whole registry and merged all of it (triyder/AlpineClubBookingsNZ#64). */
     keyed?: boolean;
     /**
      * REQUIRED (#4262 review; by type since #4470): the download's fenced
@@ -350,7 +350,7 @@ export async function recordOtherLodgesDownload(
   // Written only when the server sent a valid list: absent leaves the stored
   // one alone. `otherLodgesOwnedNamesAt` (named for the list it first timed)
   // records when. The name-only list of API 2.4 and earlier
-  // (`otherLodgesOwnedNames`) is no longer read here (#69) and is LEFT AS IT
+  // (`otherLodgesOwnedNames`) is no longer read here (triyder/AlpineClubBookingsNZ#69) and is LEFT AS IT
   // WAS: the draining colour of a blue/green deploy still reads it, and
   // clearing it would read there as "never told" (every edit refused, and the
   // committee sync falling back to matching lodges by building name).
@@ -377,7 +377,7 @@ export async function recordOtherLodgesDownload(
 }
 
 /**
- * Record what the central server said its API version is (#49): a canonical
+ * Record what the central server said its API version is (triyder/AlpineClubBookingsNZ#49): a canonical
  * `major.minor`, or `SERVER_VERSION_UNKNOWN` when it answered 404. Written
  * AFTER the HTTP call has completed, only through `recordServerVersionIfCurrent`
  * (`servernz-version-record.ts`), whose short transaction passes `db` - there
@@ -405,7 +405,7 @@ export async function recordServerVersionCheck(
 
 /**
  * Forget everything the central server told this connection, in ONE write:
- * the owned-lodge list (#52), transfer cursors and last reported version (#49).
+ * the owned-lodge list (triyder/AlpineClubBookingsNZ#52), transfer cursors and last reported version (triyder/AlpineClubBookingsNZ#49).
  * Called when the connection ends - the key is removed or replaced, or the
  * address moves - because all answers and sync positions belonged to it. One
  * upsert rather than separate writes, so a crash between them cannot
@@ -426,7 +426,7 @@ export async function forgetServerConnectionAnswers(
     update: {
       otherLodgesOwnedNames: Prisma.DbNull,
       otherLodgesOwnedNamesAt: null,
-      // The owned ids are the same connection's answer (#62).
+      // The owned ids are the same connection's answer (triyder/AlpineClubBookingsNZ#62).
       otherLodgesOwnedLodges: Prisma.DbNull,
       // Neither transfer may resume from the previous connection's position.
       otherLodgesLastUploadAt: null,
@@ -437,7 +437,7 @@ export async function forgetServerConnectionAnswers(
       commsLastSyncAt: null,
       commsPoisonChangeId: null,
       commsPoisonCount: 0,
-      // A new connection keys the registry again with a whole download (#64).
+      // A new connection keys the registry again with a whole download (triyder/AlpineClubBookingsNZ#64).
       otherLodgesKeyedAt: null,
       serverVersion: null,
       serverVersionCheckedAt: null,

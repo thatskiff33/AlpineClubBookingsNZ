@@ -636,7 +636,7 @@ export function getEarliestCurrentBedNightDate(today: Date): Date {
  *
  * They refused because of the COUNT, not the rule. `lodge-display-state.ts` is
  * the club's unauthenticated public screen, and its guest-name privacy gate is a
- * sole-occupancy count over NIGHTS (INV-DATE-006, issue #58). That count used to
+ * sole-occupancy count over NIGHTS (INV-DATE-006, issue hoppers99/AlpineClubBookingsNZ#58). That count used to
  * be derived from this list — "everyone visible except whoever's `stayEnd` is
  * today" — so widening this predicate by one morning would have added a phantom
  * NIGHT, dropped a sole-occupancy blockout and published guest names and phone

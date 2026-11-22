@@ -2986,7 +2986,7 @@ mispricing a booking.
 #### Owned-lodge list, Other lodges and central lodge link writers (#4485)
 
 - **Owned-lodge list writer, and every Other lodges download write** —
-  `src/lib/servernz-settings.ts` (`lockServerNzSettings`, #64), through the
+  `src/lib/servernz-settings.ts` (`lockServerNzSettings`, triyder/AlpineClubBookingsNZ#64), through the
   connection fence above (#4262 review): `downloadOtherClubsFromServer` builds
   one `serverNzAnswerWriter` for the identity its pull was sent on
   (`OtherLodgesPullResult.sentOn`: the stored address and API-key credential
@@ -3005,7 +3005,7 @@ mispricing a booking.
   writer takes the settings row before its `Lodge` row, so none inverts it.
   The record step also re-reads the cursor and keyed
   marker under the lock, so a download that ran while another recorded writes
-  nothing back. Since #69 the owned list is stored by central id as the server
+  nothing back. Since triyder/AlpineClubBookingsNZ#69 the owned list is stored by central id as the server
   sent it, so an admin's rename of the club's own lodge no longer rewrites it
   and no longer takes this lock. Singleton-keyed; no advisory lock; disjoint
   from the booking/capacity/credit and money clusters. A missing settings row
@@ -3022,7 +3022,7 @@ mispricing a booking.
 - **Central lodge link writer** — `saveCentralLodgeLinks` in
   `src/lib/central-lodge-link.ts`, called by `PUT /api/admin/lodges/[id]/central-lodge`
   and by the setup page's link step (`/api/admin/alpine-server/lodge-links`)
-  (#62; #4262 review): in one transaction it first takes the settings row lock
+  (triyder/AlpineClubBookingsNZ#62; #4262 review): in one transaction it first takes the settings row lock
   (`lockServerNzSettings`) and re-reads the owned-lodge list under it, so a
   download recording a new list (which unlinks deleted ids under the same
   lock) cannot land between the ownership check and the write; then it takes
@@ -6893,13 +6893,13 @@ finished) claims on `status: REQUESTED` and now bumps `version`, so it and an
 execution cannot both win. Proved against PostgreSQL in
 `booking-change-request-execution.realdb.test.ts`.
 
-### Adding an existing booking to a work party (fork #119)
+### Adding an existing booking to a work party (fork triyder/AlpineClubBookingsNZ#119)
 
 An officer's "Add to work party" (`addBookingToWorkParty`,
 `src/lib/work-party-booking-correction.ts`) composes only existing keys and adds
 one registered global site, `correctWorkParty#1` (`INV-LOCK-002`,
 `INV-LOCK-003`). It is the #3750 execution's shape without a request row.
-Fork #130's "Remove from work party" (`removeBookingFromWorkParty`) is the same
+Fork triyder/AlpineClubBookingsNZ#130's "Remove from work party" (`removeBookingFromWorkParty`) is the same
 writer in the other direction: it adds no key, site or participant, and the
 steps below are its steps too (its eligibility rule is
 `workPartyRemovalEligibility`). Order, in one transaction:
@@ -6930,7 +6930,7 @@ refund of the same booking holds `lock(1)`, and two concurrent applies serialise
 on it — the second re-reads a booking that already carries the work party (or,
 for a removal, no longer does) and is refused, so the discount and its credit,
 refund or amount owed apply once. A refund the
-officer chose (fork #129) is the edit's own: its ledger lines (and, for an
+officer chose (triyder/AlpineClubBookingsNZ#129) is the edit's own: its ledger lines (and, for an
 organiser-paid joiner, the organiser-child refund debt; for Internet Banking,
 the edit's bank-transfer hand-back task, `raiseEditRefundHandBackIfOwed`) are
 written in this transaction; a card refund's Stripe call runs after commit, and

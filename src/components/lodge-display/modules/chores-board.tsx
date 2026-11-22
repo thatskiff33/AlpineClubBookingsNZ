@@ -4,10 +4,10 @@ import { shortDay } from "./status-helpers";
 import type { ClubDateFormat } from "@/lib/club-time";
 import { useClubFormat } from "@/components/club-format-provider";
 
-// The day's chore list (fork issue #31): renders DisplayState.chores exactly
+// The day's chore list (fork issue hoppers99/AlpineClubBookingsNZ#31): renders DisplayState.chores exactly
 // as the privacy serialiser provided them — assignee labels are already
-// reduced (a minor's chore carries the family/group label, issue #28), and
-// this module never re-derives names from any other source (issue #31 AC1).
+// reduced (a minor's chore carries the family/group label, issue hoppers99/AlpineClubBookingsNZ#28), and
+// this module never re-derives names from any other source (issue hoppers99/AlpineClubBookingsNZ#31 AC1).
 
 function choreDayLabel(
   date: string,

@@ -11,7 +11,7 @@ import {
 // client bundle imports it; DB-backed template resolution lives in
 // template-resolution.ts (server-only).
 
-// Lobby display template registry (fork issue #29, ADR-002): data-only
+// Lobby display template registry (fork issue hoppers99/AlpineClubBookingsNZ#29, ADR-002): data-only
 // template definitions validated against closed module/condition name
 // registries. During the v2 rebuild (LTV-024) only these code built-ins are
 // resolved — the DB override/custom rows were retired with the old
@@ -55,7 +55,7 @@ export interface DisplayRegionDefinition {
   /** Seconds per panel when the region rotates (>1 eligible panel). */
   rotateSeconds?: number;
   /**
-   * How a region with several eligible panels presents them (issue #56):
+   * How a region with several eligible panels presents them (issue hoppers99/AlpineClubBookingsNZ#56):
    * "rotate" (default) cycles them; "stack" renders them all at once —
    * the sidebar-card treatment from the approved mockups.
    */
@@ -85,7 +85,7 @@ function isModuleName(name: string): name is DisplayModuleName {
 /**
  * Validates a definition (data-only — ADR-002 §1). Throws
  * InvalidDisplayTemplateError with the offending detail; a template is never
- * accepted partially broken (issue #29 AC6) and no code path exists in a
+ * accepted partially broken (issue hoppers99/AlpineClubBookingsNZ#29 AC6) and no code path exists in a
  * definition (AC7 — options are scalars only).
  */
 export function validateDisplayTemplateDefinition(
@@ -275,7 +275,7 @@ export const DEFAULT_DISPLAY_TEMPLATE_KEY = "everyday-board";
 
 /**
  * Filter a region's panels to those whose condition holds for the current
- * payload (ADR-002 §3; issue #29 AC5). The renderer shows the survivors in
+ * payload (ADR-002 §3; issue hoppers99/AlpineClubBookingsNZ#29 AC5). The renderer shows the survivors in
  * order and rotates when more than one remains.
  */
 export function eligibleDisplayPanels(

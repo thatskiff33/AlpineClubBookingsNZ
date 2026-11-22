@@ -182,7 +182,7 @@ max:…}`, `nameStyle` enum `ARRIVALS_BOARD_NAME_STYLES`; `occupancy-grid` →
 default/bounds/allowed set equals what the module's actual `intOption`/
 `enumOption`/`boolOption` call would accept — so the drawer can never present an
 option the renderer would reject or silently default. The parsers remain the
-runtime authority (`module-options.ts`, issue #30 AC6: a bad value falls back to
+runtime authority (`module-options.ts`, issue hoppers99/AlpineClubBookingsNZ#30 AC6: a bad value falls back to
 default, never throws); the descriptors are a *mirror for the UI*, kept honest by
 the test. Options stay **scalars only** (string/number/boolean) — the same
 constraint the save contract already enforces in `validateSlotContent`
@@ -280,7 +280,7 @@ preview seam at `layouts/page.tsx:117` (`buildAreasPayload`, comment at
 **Gap this ADR closes:** the current grant mint
 (`src/app/api/admin/display/preview-grant/route.ts`) accepts only a **saved**
 `templateId` — it cannot preview an unsaved draft (the `buildAreasPayload`
-comment itself calls draft preview a *future* seam, #82/#79). The decision:
+comment itself calls draft preview a *future* seam, hoppers99/AlpineClubBookingsNZ#82/#79). The decision:
 
 - Add an admin-only **draft-render** step: under the admin session, the mint
   validates the draft (`validateLayoutForSave` + `validateTemplateForSave`) and

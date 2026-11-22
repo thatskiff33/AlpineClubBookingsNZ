@@ -1,4 +1,4 @@
-# Lobby display: config-transfer content workflow (#113)
+# Lobby display: config-transfer content workflow (hoppers99/AlpineClubBookingsNZ#113)
 
 How to move lobby-display content (Layouts, Templates, per-lodge display config)
 between environments as config-transfer bundles, and when to promote it to code
@@ -46,6 +46,6 @@ display.
   file's `sha256` and the manifest `rowCount`; keep `doorCodesIncluded` in the
   manifest. Verify with the repo's `readBundle` (0 integrity warnings) before
   handing it over.
-- Built-ins are code-managed scaffolding (ADR-003 / #111): they refresh from
+- Built-ins are code-managed scaffolding (ADR-003 / hoppers99/AlpineClubBookingsNZ#111): they refresh from
   code on re-seed, so promoting a proven bundle design to `built-in-seeds.ts`
   propagates it to installs on the next seed.

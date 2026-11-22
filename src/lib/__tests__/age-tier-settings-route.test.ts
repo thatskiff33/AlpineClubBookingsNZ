@@ -135,10 +135,13 @@ describe("PUT /api/admin/age-tier-settings — subset save (#2009)", () => {
     // Blue/green safety pin, WRITE half. Prisma emits an implicit RETURNING
     // over every scalar column of an upsert unless a `select` narrows it, so an
     // unnarrowed write would name AgeTierSetting.xeroContactGroupId /
-    // xeroContactGroupName even after the reads were narrowed. That narrowing
-    // is what made the #2130 STEP 2 contract migration
-    // 20260721130000_contract_drop_ismember_and_agetier_xero_columns legal, and
-    // the columns are now gone — so a bare upsert would be a hard 42703 rather
+    // xeroContactGroupName even after the reads were narrowed. A select narrows
+    // a read and a write's RETURNING, never an INSERT's column list, so it does
+    // not make a drop safe on its own (INV-OPS-005). It was enough here only
+    // because those two columns are nullable with no default, so no INSERT named
+    // them; with the select it let the #2130 STEP 2 contract migration
+    // 20260721130000_contract_drop_ismember_and_agetier_xero_columns run. The
+    // columns are now gone — so a bare upsert would be a hard 42703 rather
     // than a latent blue/green break. Guards against someone removing the
     // explicit select.
     const res = await PUT(putRequest([CHILD, ADULT]));

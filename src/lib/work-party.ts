@@ -196,7 +196,7 @@ export async function findActiveWorkPartyEventsForRange(
       discountPercent: true,
       lodgeId: true,
       lodge: { select: { name: true } },
-      // Fork #119: what `workPartyEventRefusal` reads, so a caller can judge
+      // Fork triyder/AlpineClubBookingsNZ#119: what `workPartyEventRefusal` reads, so a caller can judge
       // a listed event with the one rule rather than trust the filter.
       active: true,
       promoCode: { select: { active: true, archivedAt: true } },
@@ -264,7 +264,7 @@ export type WorkPartyEventRefusal = "inactive" | "no-overlap" | "other-lodge";
  * Whether a work party can discount this stay, as a reason code — the ONE rule
  * for "this event applies to this booking" (INV-SSOT). The member's booking
  * create (`resolveWorkPartyEventPromoForBooking`) and the officer's "Add
- * booking to work party" (fork #119) each word the reason for their own reader.
+ * booking to work party" (fork triyder/AlpineClubBookingsNZ#119) each word the reason for their own reader.
  * A lodge-bound event discounts only stays at that lodge; a club-wide one
  * (null lodge) any lodge.
  */

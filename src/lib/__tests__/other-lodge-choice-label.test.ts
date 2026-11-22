@@ -6,7 +6,7 @@ import {
 } from "@/lib/other-lodge-choice-label";
 import { ownedOtherLodgeEditLabel } from "@/lib/other-lodges";
 
-describe("Other lodge choice labels (#69: two lodges may share a name)", () => {
+describe("Other lodge choice labels (triyder/AlpineClubBookingsNZ#69: two lodges may share a name)", () => {
   const choices = [
     { id: "a", name: "Ruapehu Lodge", location: "Whakapapa" },
     { id: "b", name: "Ruapehu Lodge", location: " Turoa " },
