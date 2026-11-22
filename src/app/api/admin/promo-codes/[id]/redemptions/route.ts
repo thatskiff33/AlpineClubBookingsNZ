@@ -251,8 +251,7 @@ export async function GET(
     },
     booking: {
       id: r.booking.id,
-      // The site's one short reference (#5407); the link uses the full id.
-      reference: formatBookingReference(r.booking.id),
+      reference: formatBookingReference(r.booking.id), // the site's one short reference (#5407)
       lodgeId: r.booking.lodge.id,
       lodgeName: r.booking.lodge.name,
       checkIn: formatDateOnly(r.booking.checkIn),
