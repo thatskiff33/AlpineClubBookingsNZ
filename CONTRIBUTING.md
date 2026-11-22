@@ -599,6 +599,18 @@ contract migration landing in the same window. To judge them one at a time,
 re-run the replaced run of the earlier merge, and once it has finished, re-run
 the failed job: it then judges from that commit.
 
+To rename a gate step or its job (`verify`'s `Check doc index integrity
+(reachability + invariant ids)` or `File-size budget ratchet`, or `Migration
+drift check`'s `Check migration safety ledger coverage`), keep the old name on
+the `Find the last judged main commit` step: add `--step-was "<old name>"`
+right after the `--step` it belongs to, or `--job-was "<old name>"` for the
+job. Earlier runs recorded only the old name, so without the alias no run
+matches, every push to `main` fails closed, and no re-run can fix it: the gates
+after the resolver are skipped, so the new name is never recorded. Remove the
+alias in a later pull request, once a `main` run has finished the gate under
+its new name. `scripts/ci/resolve-main-push-base.test.ts` refuses an alias
+that is still a current step or job name.
+
 #### Rebuilding the code-owner configuration
 
 What is owned is `.github/CODEOWNERS` itself: the money surface (#3341) and,

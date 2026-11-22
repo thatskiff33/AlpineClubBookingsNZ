@@ -884,31 +884,31 @@ A newer push to `main` may replace `main`'s queued run of `ci.yml`, `e2e.yml`,
 `money-coverage.yml` and `docs-link-check.yml`, never one that has started.
 Every push to `main` shares one concurrency group per workflow with
 `cancel-in-progress: false`: GitHub keeps one running and one pending run and
-drops the older pending one, so the newest `main` commit always gets its full
-set. Pushes to `epic/**` keep a group per commit. Pull-request runs keep one
-group per ref and cancel superseded runs.
+drops the older pending one, so the newest `main` commit gets its full set
+unless a manual re-run of an older commit replaces its pending run. Pushes to
+`epic/**` keep a group per commit. Pull-request runs keep one group per ref and
+cancel superseded runs.
 
 The push-only gates (doc index, file-size ratchet, migration-safety ledger)
 judge a push to `main` from the last judged `main` commit: the head of the
-newest earlier finished `ci.yml` push run on `main` whose gate steps ran, so a
-merge whose run was dropped is judged with the next. It fails closed when GitHub
-cannot say.
+newest earlier finished `ci.yml` push run on `main`, for an ancestor of HEAD,
+whose gate steps ran, so a merge whose run was dropped is judged with the next.
+It fails closed when no such run exists or GitHub cannot say.
 
 A release tags only a commit whose `ci.yml` push run on `main` had a
 successful `Publish GHCR images` job. `release:cut publish` asks GitHub for
 that job's result on the commit it would tag (on a resume, the tagged commit)
-and refuses before any tag or release when the job did not succeed, no run
-exists, or GitHub's answer cannot be read. A dropped intermediate commit has no images; the default,
+and refuses before any tag or release unless GitHub's answer says that job
+succeeded. A dropped intermediate commit has no images; the default,
 `origin/main`, always has a run.
 
-- Why: one full CI run takes about 48 minutes, and queuing one per merge held
-  every open pull request behind `main` (#5356, owner decision 22 Nov 2026,
-  replacing #4989's rule that every push run completes). A dropped run
-  publishes no images and judges nothing, hence the last-judged base and the
-  release check.
-- Enforced by `scripts/ci/main-push-superseded-runs.test.ts`, which evaluates
-  each workflow's group for each event; `scripts/ci/resolve-main-push-base.test.ts`;
-  and the `requirePublishedImages` cases in `scripts/release/cut-release.test.mjs`.
+- Why: queuing a full CI run (about 48 minutes) per merge held every open
+  pull request behind `main` (#5356, owner decision 22 Nov 2026, replacing
+  #4989's every-push-run-completes rule). A dropped run publishes no images
+  and judges nothing, hence the last-judged base and the release check.
+- Enforced by `scripts/ci/main-push-superseded-runs.test.ts`,
+  `scripts/ci/resolve-main-push-base.test.ts` and the `requirePublishedImages`
+  cases in `scripts/release/cut-release.test.mjs`.
 
 ## INV-OPS-022
 

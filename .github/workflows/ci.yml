@@ -938,7 +938,8 @@ jobs:
       # below (doc index, file-size ratchet). A newer merge may replace main's queued run, so the previous main
       # commit (`github.event.before`) may never have been judged; this finds
       # the last main commit whose `ci.yml` run ran the gate steps named here
-      # (INV-OPS-021). Keep the names in step with those steps. It writes
+      # (INV-OPS-021). Keep the names in step with those steps; a rename keeps
+      # the old name with --step-was or --job-was (CONTRIBUTING.md). It writes
       # nothing for any other event, which keeps its existing base, and fails
       # closed when GitHub cannot say.
       - name: Find the last judged main commit
@@ -1171,7 +1172,8 @@ jobs:
       # ledger check below. A newer merge may replace main's queued run, so the previous main
       # commit (`github.event.before`) may never have been judged; this finds
       # the last main commit whose `ci.yml` run ran the gate steps named here
-      # (INV-OPS-021). Keep the names in step with those steps. It writes
+      # (INV-OPS-021). Keep the names in step with those steps; a rename keeps
+      # the old name with --step-was or --job-was (CONTRIBUTING.md). It writes
       # nothing for any other event, which keeps its existing base, and fails
       # closed when GitHub cannot say.
       - name: Find the last judged main commit
