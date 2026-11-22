@@ -334,7 +334,6 @@ describe("processWaitlistForDates cross-lodge pass", () => {
       const freedAtB = { checkIn: CHECK_IN, checkOut: CHECK_OUT, lodgeId: "lodge-b" };
       const keyFor = (offeredLodgeId: string) => ({
         id: "entry-a",
-        lodgeId: "lodge-a",
         createdAt: new Date("2026-07-01T10:00:00Z"),
         offeredLodgeId,
       });

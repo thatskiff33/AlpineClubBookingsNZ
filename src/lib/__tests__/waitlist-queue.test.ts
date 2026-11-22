@@ -513,7 +513,6 @@ describe("the walk after a lapsed offer (#5410, INV-CAP-042)", () => {
     [...rows].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1));
   const keyOf = (r: Row, offeredLodgeId = r.lodgeId): WaitlistLapseKey => ({
     id: r.id,
-    lodgeId: r.lodgeId,
     createdAt: r.createdAt,
     offeredLodgeId,
   });

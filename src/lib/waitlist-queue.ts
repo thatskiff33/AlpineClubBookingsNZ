@@ -171,12 +171,12 @@ export function orderWaitlistOpportunities<T extends WaitlistQueueEntry>(
 }
 
 /**
- * One offer that lapsed (#5410): the booking, and the lodge whose place it was
- * offered (`waitlistOfferedLodgeId` for a cross-lodge offer, else its own).
+ * One offer that lapsed (#5410): the booking, its join time (to order the
+ * passes, `compareWaitlistJoinOrder`), and the lodge whose place it was offered
+ * (`waitlistOfferedLodgeId` for a cross-lodge offer, else its own).
  */
 export type WaitlistLapseKey = {
   id: string;
-  lodgeId: string;
   createdAt: Date;
   offeredLodgeId: string;
 };

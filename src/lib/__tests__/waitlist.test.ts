@@ -256,6 +256,22 @@ vi.mock("@/lib/booking-guest-removal-service", () => ({
     mockRecalculateBookingPromo(...args),
 }));
 
+// #5410: the club time zone is read before an offer pass opens its transaction,
+// so a throw there escapes the pass. The real reader runs unless a test names
+// which call should fail.
+const zoneReadFault = vi.hoisted(() => ({ call: 0, failOn: 0 }));
+vi.mock("@/lib/club-time-zone-runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/club-time-zone-runtime")>();
+  return {
+    ...actual,
+    readClubTimeZoneOutsideRequest: async () => {
+      zoneReadFault.call += 1;
+      if (zoneReadFault.call === zoneReadFault.failOn) throw new Error("club time zone read failed");
+      return actual.readClubTimeZoneOutsideRequest();
+    },
+  };
+});
+
 vi.mock("@/lib/logger", () => ({
   default: {
     info: vi.fn(),
@@ -267,6 +283,8 @@ vi.mock("@/lib/logger", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  zoneReadFault.call = 0;
+  zoneReadFault.failOn = 0;
   mockPrismaTransaction.mockReset();
   mockBookingFindUnique.mockReset();
   mockBookingFindMany.mockReset();
@@ -1888,7 +1906,7 @@ describe("a lapsed offer's place goes on down the queue (#5410, INV-CAP-042)", (
 
     mockTxBookingFindMany.mockReset();
     mockTxBookingFindMany.mockResolvedValueOnce(queue).mockResolvedValue([]);
-    const key = { id: "q1", lodgeId: "lodge-1", createdAt: queue[0]!.createdAt, offeredLodgeId: "lodge-1" };
+    const key = { id: "q1", createdAt: queue[0]!.createdAt, offeredLodgeId: "lodge-1" };
     const { offeredBookingId } = await processWaitlistForDates(range, CLUB_FORMAT_TEST, { key, run: [key] });
     expect(offeredBookingId).toBe("q2");
   });
@@ -1904,7 +1922,7 @@ describe("a lapsed offer's place goes on down the queue (#5410, INV-CAP-042)", (
 
     const result = await expireStaleOffers(CLUB_FORMAT_TEST);
 
-    expect(result).toEqual({ expiredCount: 1, reofferedCount: 1 });
+    expect(result).toEqual({ expiredCount: 1, reofferedCount: 1, failedReofferCount: 0 });
     expect(offeredIds()).toEqual(["q2"]);
     expect(mockTx.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "q1", status: "WAITLIST_OFFERED" }, data: expect.objectContaining({ status: "WAITLISTED" }) }),
@@ -1928,8 +1946,72 @@ describe("a lapsed offer's place goes on down the queue (#5410, INV-CAP-042)", (
     // to q3 (q2 lapsed in the same run, so it comes after q3 and q4), and q2's
     // to q4: neither member who let an offer lapse is offered straight back.
     expect(candidateReads()).toHaveLength(2);
-    expect(result).toEqual({ expiredCount: 2, reofferedCount: 2 });
+    expect(result).toEqual({ expiredCount: 2, reofferedCount: 2, failedReofferCount: 0 });
     expect(offeredIds()).toEqual(["q3", "q4"]);
+  });
+
+  describe("a pass that throws", () => {
+    const nightsOf = (day: number) => ({
+      checkIn: new Date(`2026-09-${String(day).padStart(2, "0")}`),
+      checkOut: new Date(`2026-09-${String(day + 2).padStart(2, "0")}`),
+    });
+    // Three lapses on separate nights; the second pass's club time-zone read
+    // (before its transaction) throws.
+    function arrangeThreeLapsesSecondPassThrows() {
+      mockTxBookingFindMany
+        .mockResolvedValueOnce([
+          lapsedOffer("l1", "2026-05-01", nightsOf(1)),
+          lapsedOffer("l2", "2026-05-02", nightsOf(10)),
+          lapsedOffer("l3", "2026-05-03", nightsOf(20)),
+        ])
+        .mockResolvedValueOnce([]) // the expiry emails' position read
+        .mockResolvedValueOnce([queued("next-1", "2026-05-11", nightsOf(1))]) // l1's pass
+        .mockResolvedValueOnce([]) // its offer-time position read
+        .mockResolvedValueOnce([queued("next-3", "2026-05-13", nightsOf(20))]) // l3's pass
+        .mockResolvedValue([]);
+      zoneReadFault.failOn = 2;
+    }
+
+    it("is logged with its booking and lodge and counted, and the passes after it still run", async () => {
+      const { expireStaleOffers } = await import("@/lib/waitlist");
+      const logger = (await import("@/lib/logger")).default;
+      arrangeThreeLapsesSecondPassThrows();
+
+      const result = await expireStaleOffers(CLUB_FORMAT_TEST);
+
+      expect(result).toEqual({ expiredCount: 3, reofferedCount: 2, failedReofferCount: 1 });
+      expect(offeredIds()).toEqual(["next-1", "next-3"]);
+      expect(candidateReads().map((args) => args.where.checkIn!.lt)).toEqual([
+        nightsOf(1).checkOut,
+        nightsOf(20).checkOut,
+      ]);
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingId: "l2", lodgeId: "lodge-1", err: expect.any(Error) }),
+        expect.stringContaining("re-offer a lapsed waitlist place"),
+      );
+    });
+
+    it("fails the cron run once the rest of it has run, without retrying the sweep", async () => {
+      const { processWaitlistCron } = await import("@/lib/cron-waitlist");
+      arrangeThreeLapsesSecondPassThrows();
+      mockBookingFindMany.mockResolvedValue([]); // step 2: no past-date entries
+
+      await expect(processWaitlistCron()).rejects.toThrow(
+        /^1 waitlist re-offer pass\(es\) failed after their offers lapsed/,
+      );
+      // Step 2 still ran, after the sweep.
+      expect(mockBookingFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ checkOut: expect.anything() }) }),
+      );
+      // Not retried: the stale offers were read once, and only the revert and
+      // the two passes that ran opened a transaction.
+      const offerReads = mockTxBookingFindMany.mock.calls.filter(
+        ([args]) => (args as { where?: { status?: string } }).where?.status === "WAITLIST_OFFERED",
+      );
+      expect(offerReads).toHaveLength(1);
+      expect(mockPrismaTransaction).toHaveBeenCalledTimes(3);
+      expect(offeredIds()).toEqual(["next-1", "next-3"]);
+    });
   });
 
   it("orders the passes by join time, not by the order the lapsed offers were read", async () => {

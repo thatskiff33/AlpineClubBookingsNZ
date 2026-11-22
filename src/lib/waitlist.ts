@@ -1216,10 +1216,12 @@ export async function confirmWaitlistOffer(
 
 /**
  * Expire stale WAITLIST_OFFERED bookings and re-offer to next candidates.
+ * `failedReofferCount`: re-offer passes that threw (#5410); the cron surfaces it.
  */
 export async function expireStaleOffers(format: ClubFormat): Promise<{
   expiredCount: number;
   reofferedCount: number;
+  failedReofferCount: number;
 }> {
   const { staleOffers } = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -1335,27 +1337,24 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
   }
 
   // #5410 (`INV-CAP-042`): one offer pass per lapsed offer, in join order, each
-  // told whose place lapsed and what else lapsed in this run, so the place goes
-  // on down the queue. The freed place is at the lodge whose place was offered
-  // (the offered lodge for a cross-lodge offer, else the entry's own), read from
-  // the pre-revert snapshot: the revert nulled it in the database, not here.
+  // told whose place lapsed and what else lapsed in this run. The place is at
+  // the offered lodge (cross-lodge) or the entry's own, from the pre-revert
+  // snapshot (the revert nulled `waitlistOfferedLodgeId` in the database only).
+  // A pass that throws is logged and counted and the rest still run: the reverts
+  // are committed, so a retried sweep would find nothing left to re-offer.
   const lapses = staleOffers
-    .map((offer) => ({
-      offer,
-      key: {
-        id: offer.id,
-        lodgeId: offer.lodgeId,
-        createdAt: offer.createdAt,
-        offeredLodgeId: offer.waitlistOfferedLodgeId ?? offer.lodgeId,
-      },
-    }))
+    .map((offer) => ({ offer, key: { id: offer.id, createdAt: offer.createdAt, offeredLodgeId: offer.waitlistOfferedLodgeId ?? offer.lodgeId } }))
     .sort((a, b) => compareWaitlistJoinOrder(a.key, b.key));
   const run = lapses.map(({ key }) => key);
+  let failedReofferCount = 0;
   for (const { offer, key } of lapses) {
     const freed = { checkIn: offer.checkIn, checkOut: offer.checkOut, lodgeId: key.offeredLodgeId };
-    const { offeredBookingId } = await processWaitlistForDates(freed, format, { key, run });
-    if (offeredBookingId) reofferedCount++;
+    try {
+      if ((await processWaitlistForDates(freed, format, { key, run })).offeredBookingId) reofferedCount++;
+    } catch (err) {
+      failedReofferCount++;
+      logger.error({ err, bookingId: offer.id, lodgeId: key.offeredLodgeId }, "Failed to re-offer a lapsed waitlist place; continuing with the next");
+    }
   }
-
-  return { expiredCount: staleOffers.length, reofferedCount };
+  return { expiredCount: staleOffers.length, reofferedCount, failedReofferCount };
 }
