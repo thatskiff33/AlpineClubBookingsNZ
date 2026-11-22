@@ -11,7 +11,6 @@ import {
   isLodgeKioskAccount,
   isMemberLevelRole,
   isMembershipHolderRecord,
-  isOperationalRole,
 } from "@/lib/member-roles";
 import { effectiveSubscriptionBehavior } from "@/lib/membership-types";
 
@@ -64,8 +63,6 @@ describe("member role categories", () => {
 
   it("keeps only ADMIN and LODGE as operational roles", () => {
     expect(OPERATIONAL_ROLE_VALUES).toEqual(["ADMIN", "LODGE"]);
-    expect(isOperationalRole("ADMIN")).toBe(true);
-    expect(isOperationalRole("LODGE")).toBe(true);
     // #2149: role carries no exemption of its own — operational accounts are
     // exempt only because they resolve to a NOT_REQUIRED built-in type, while
     // USER resolves to FULL (REQUIRED).
@@ -88,7 +85,7 @@ describe("non-member booking-request roles", () => {
   it("grants them no member-level or operational access", () => {
     for (const role of NON_MEMBER_ROLE_VALUES) {
       expect(isMemberLevelRole(role)).toBe(false);
-      expect(isOperationalRole(role)).toBe(false);
+      expect(OPERATIONAL_ROLE_VALUES).not.toContain(role);
       // Non-login records, so onboarding never applies even before the role check.
       expect(shouldShowMemberOnboarding(onboardingProfile(role))).toBe(false);
     }
