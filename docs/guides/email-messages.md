@@ -363,6 +363,16 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > needing cleanup. Re-apply your wording to whichever of the two you want to
 > change.
 
+> **Upgrade note (#5403).** The officers' **Admin Booking Bumped** alert is sent
+> again. The pending-booking job sends it, once per booking, when it releases a
+> pending booking at its hold deadline because there is no longer room for its
+> party. Its built-in wording now names the booking's lodge (`{{lodgeName}}`) and
+> the reason (`{{reason}}`), which also says when the member had asked for the
+> whole booking to be cancelled if their guests could not come. It no longer
+> offers `{{triggeringMemberName}}`, because the job has no triggering booking to
+> name. A saved copy still using that token is listed under **Retired tokens**:
+> swap it for the new chips, or restore the default.
+
 ## Settings reference
 
 Shared email variables (top card):
