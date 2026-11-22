@@ -1,5 +1,9 @@
-const normalizeImportIdentityName = (value: string) =>
-  value.trim().replace(/\s+/g, " ").toLowerCase();
+import { normalizeMemberImportText } from "@/lib/member-csv-import-type-family";
+
+// #4988: identity names compare through the member import's one free-text
+// normaliser, so the type name, the family key and "the same person" cannot
+// drift apart (`INV-SSOT`).
+const normalizeImportIdentityName = normalizeMemberImportText;
 
 /**
  * The one member identity key (#5005, `INV-SSOT`): email plus first and last

@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
@@ -629,6 +631,25 @@ describe("admin query validation and pagination", () => {
         })
       );
     });
+
+    it("counts the total with the same filter the page is read with (#5361)", async () => {
+      mocks.auditLogFindMany.mockResolvedValue([auditLogEntry("audit-1")]);
+      mocks.auditLogCount.mockResolvedValue(30);
+
+      const response = await getCommunicationHistory(
+        request("/api/admin/communications/history?page=2")
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ page: 2, total: 30, totalPages: 2 });
+      const filter = { action: "BULK_COMMUNICATION_SENT" };
+      expect(mocks.auditLogFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: filter })
+      );
+      // The whole argument, so a count with no filter, or a wider one, fails.
+      expect(mocks.auditLogCount).toHaveBeenCalledTimes(1);
+      expect(mocks.auditLogCount).toHaveBeenCalledWith({ where: filter });
+    });
   });
 
   // #5202 / INV-OPS-020: the Open filter is the queue's pending work, so it
@@ -663,6 +684,46 @@ describe("admin query validation and pagination", () => {
       expect(mocks.maintenanceReportFindMany).toHaveBeenCalledWith(
         expect.objectContaining({ orderBy: [{ createdAt: "desc" }, { id: "desc" }] })
       );
+    });
+
+    // #5361: the total line and the rows must come from one filter. The route
+    // counts twice, once under the page's filter for the total and once for
+    // the outstanding figure, so each count is answered by the filter it was
+    // asked with and a total read from the wrong one shows in the body.
+    it.each([
+      ["no filter chosen", "", { status: "OPEN" }],
+      ["every status", "?status=ALL", {}],
+      ["a lodge only", "?status=ALL&lodgeId=lodge-1", { lodgeId: "lodge-1" }],
+      [
+        "status, source and lodge all set",
+        "?status=IN_PROGRESS&source=LODGE_QR&lodgeId=lodge-1",
+        { status: "IN_PROGRESS", source: "LODGE_QR", lodgeId: "lodge-1" },
+      ],
+    ])("counts the total with the page's own filter: %s (#5361)", async (_label, query, filter) => {
+      const outstanding = { status: { not: "RESOLVED" } };
+      const answerByFilter = async (...args: unknown[]) =>
+        isDeepStrictEqual((args[0] as { where?: unknown })?.where, outstanding) ? 7 : 40;
+      mocks.maintenanceReportCount
+        .mockImplementationOnce(answerByFilter)
+        .mockImplementationOnce(answerByFilter);
+
+      const response = await getMaintenanceReports(
+        request(`/api/admin/maintenance-reports${query}`)
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        total: 40,
+        totalPages: 2,
+        outstandingCount: 7,
+      });
+      expect(mocks.maintenanceReportFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: filter })
+      );
+      // Whole arguments: exactly these two counts, neither wider than stated.
+      expect(mocks.maintenanceReportCount).toHaveBeenCalledTimes(2);
+      expect(mocks.maintenanceReportCount).toHaveBeenCalledWith({ where: filter });
+      expect(mocks.maintenanceReportCount).toHaveBeenCalledWith({ where: outstanding });
     });
   });
 });

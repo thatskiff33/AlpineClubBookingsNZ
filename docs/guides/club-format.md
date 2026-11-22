@@ -75,6 +75,10 @@ here, and are recorded rather than fixed for now:
   month" choice ("January" to "December"), also a fixed list of choices;
 - the minimum-stay check-in days on the public booking-policy page ("Friday,
   Saturday"), written from the same fixed list of day names;
+- the words "Week of" and "to" around the dates in the Reports page's weekly
+  chart labels and tooltips and in its CSV's revenue period column ("Week of
+  30.03.2026 to 05.04.2026" on `de-CH`): the dates follow the setting, the
+  words stay English;
 - relative times such as "3 hours ago", which are wording, not a date format.
 
 On `en-NZ` the visible changes this brought are September and the report

@@ -9,6 +9,8 @@ import {
 } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { storedPostalAddress } from "@/lib/postal-address-lines";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ForbiddenSaveError,
@@ -28,10 +30,13 @@ type Settings = {
   shortName: string | null;
   hutLeaderLabel: string | null;
   facebookUrl: string | null;
+  /** #5066: the supplier the app's generated booking invoice prints (Xero off). */
+  legalName: string | null;
+  postalAddress: string | null;
 };
 
 /**
- * What the form edits: the same four keys as text, because a controlled
+ * What the form edits: the same keys as text, because a controlled
  * `<Input>` holds a string. A null override shows as an empty box.
  */
 type Draft = Record<keyof Settings, string>;
@@ -67,7 +72,24 @@ const fields: Array<
     "Optional — https://www.facebook.com/yourclub",
     null,
   ],
+  // #5066: the supplier on a booking invoice the app makes itself, which it
+  // does only while the club's Xero module is off (Xero's own invoice
+  // otherwise). The address box is multi-line (`MULTILINE_FIELDS`).
+  [
+    "legalName",
+    "Legal name",
+    "Optional — defaults to the club name",
+    "The club's registered name, printed as who the invoice is from on booking invoices the app makes when the club does not use Xero.",
+  ],
+  [
+    "postalAddress",
+    "Postal address",
+    null,
+    "One line per line. Printed under the legal name on those invoices; left off while blank.",
+  ],
 ];
+
+const MULTILINE_FIELDS: ReadonlySet<keyof Settings> = new Set(["postalAddress"]);
 
 const ENDPOINT = "/api/admin/club-identity";
 const LOAD_ERROR = "Could not load club identity settings.";
@@ -79,6 +101,8 @@ function toDraft(settings: Settings): Draft {
     shortName: settings.shortName ?? "",
     hutLeaderLabel: settings.hutLeaderLabel ?? "",
     facebookUrl: settings.facebookUrl ?? "",
+    legalName: settings.legalName ?? "",
+    postalAddress: settings.postalAddress ?? "",
   };
 }
 
@@ -89,20 +113,22 @@ function toDraft(settings: Settings): Draft {
   already falling back cannot arm a Save that would write an unchanged row and a
   misleading audit entry (#2143).
 */
-function stored(value: string): string | null {
+function stored(key: keyof Settings, value: string): string | null {
+  // The address keeps its lines, each trimmed (`storedPostalAddress`, #5066).
+  if (MULTILINE_FIELDS.has(key)) return storedPostalAddress(value);
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
 }
 
 function identityChanged(draft: Draft, saved: Draft): boolean {
-  return fields.some(([key]) => stored(draft[key]) !== stored(saved[key]));
+  return fields.some(([key]) => stored(key, draft[key]) !== stored(key, saved[key]));
 }
 
 /**
  * Club identity overrides (E3 #1929), on the canonical staged settings model
- * since #3976: read-only on mount, one Edit opens the four fields, Save writes
+ * since #3976: read-only on mount, one Edit opens every field, Save writes
  * them once and is dirty-gated by `useSectionEditState`, and Cancel restores the
- * last saved snapshot. All four fields go out in one whole-object PUT that this
+ * last saved snapshot. All six fields go out in one whole-object PUT that this
  * section alone owns, so there is no sibling card whose fields need merging.
  */
 /** The section's title: the page's visible card title and this panel's
@@ -134,6 +160,8 @@ export function ClubIdentityPanel() {
           shortName: draft.shortName,
           hutLeaderLabel: draft.hutLeaderLabel,
           facebookUrl: draft.facebookUrl,
+          legalName: draft.legalName,
+          postalAddress: draft.postalAddress,
         }),
       });
       if (response.status === 403) throw new ForbiddenSaveError();
@@ -228,23 +256,36 @@ export function ClubIdentityPanel() {
           // reason pointed at the control, so both ids are listed, reason first.
           const hintId = `club-identity-hint-${key}`;
           const viewOnlyId = !canEdit ? viewOnlyReasonId : undefined;
+          const control = {
+            id: `club-identity-${key}`,
+            value: draft[key],
+            placeholder: placeholder ?? undefined,
+            // Read-only until Edit (#3976). Edit itself is permission-gated,
+            // so a view-only admin can never reach an enabled field.
+            disabled: !editing || saving,
+            "aria-describedby": hint
+              ? describedByFieldHint(hintId, viewOnlyId)
+              : viewOnlyId,
+          };
           return (
             <div key={key} className="space-y-1.5">
               <Label htmlFor={`club-identity-${key}`}>{label}</Label>
-              <Input
-                id={`club-identity-${key}`}
-                value={draft[key]}
-                placeholder={placeholder ?? undefined}
-                // Read-only until Edit (#3976). Edit itself is permission-gated,
-                // so a view-only admin can never reach an enabled field.
-                disabled={!editing || saving}
-                aria-describedby={
-                  hint ? describedByFieldHint(hintId, viewOnlyId) : viewOnlyId
-                }
-                onChange={(event) =>
-                  section.setDraft({ [key]: event.target.value })
-                }
-              />
+              {MULTILINE_FIELDS.has(key) ? (
+                <Textarea
+                  {...control}
+                  rows={3}
+                  onChange={(event) =>
+                    section.setDraft({ [key]: event.target.value })
+                  }
+                />
+              ) : (
+                <Input
+                  {...control}
+                  onChange={(event) =>
+                    section.setDraft({ [key]: event.target.value })
+                  }
+                />
+              )}
               {hint ? <FieldHint id={hintId}>{hint}</FieldHint> : null}
             </div>
           );
