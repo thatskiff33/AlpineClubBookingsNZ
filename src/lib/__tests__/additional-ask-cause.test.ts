@@ -9,9 +9,7 @@ import {
   timelineCapturedDetail,
   timelineFailedDetail,
   memberCardFallbackParts,
-  memberCardFallbackSentence,
   officerPanelParts,
-  officerPanelSentence,
   preArrivalOutstandingNote,
   timelinePaidDetail,
   timelinePendingDetail,
@@ -65,15 +63,23 @@ describe("additionalAskCause (#4253, INV-ADDPAY-048)", () => {
 });
 
 describe("the shared sentences", () => {
-  const causes: AdditionalAskCause[] = ["edit", "credit-release", "mixed"];
+  // The panel and the card render the amount, in bold, between the two pieces.
+  const officerPanelText = (cause: AdditionalAskCause, amount: string) => {
+    const { lead, trail } = officerPanelParts(cause);
+    return `${lead}${amount}${trail}`;
+  };
+  const memberCardFallbackText = (cause: AdditionalAskCause, amount: string) => {
+    const { lead, trail } = memberCardFallbackParts(cause);
+    return `${lead}${amount}${trail}`;
+  };
 
   it("keeps the ordinary change wording exactly as it was", () => {
     expect(timelinePendingDetail("edit")).toBe("A booking change increased the total. This extra amount has not been paid yet.");
     expect(timelinePaidDetail("edit")).toBe("A booking change increased the total and the extra payment succeeded.");
-    expect(officerPanelSentence("edit", "$10.00")).toBe(
+    expect(officerPanelText("edit", "$10.00")).toBe(
       "A change to this booking increased the total by $10.00, and that amount has not been collected.",
     );
-    expect(memberCardFallbackSentence("edit", "$10.00")).toBe(
+    expect(memberCardFallbackText("edit", "$10.00")).toBe(
       "A recent booking modification means $10.00 is still owing on this booking according to our records.",
     );
     expect(preArrivalOutstandingNote("edit", "$10.00")).toBe(
@@ -85,8 +91,8 @@ describe("the shared sentences", () => {
     const words = [
       timelinePendingDetail("credit-release"),
       timelinePaidDetail("credit-release"),
-      officerPanelSentence("credit-release", "$10.00"),
-      memberCardFallbackSentence("credit-release", "$10.00"),
+      officerPanelText("credit-release", "$10.00"),
+      memberCardFallbackText("credit-release", "$10.00"),
       preArrivalOutstandingNote("credit-release", "$10.00"),
     ];
     for (const sentence of words) {
@@ -99,22 +105,13 @@ describe("the shared sentences", () => {
     const words = [
       timelinePendingDetail("mixed"),
       timelinePaidDetail("mixed"),
-      officerPanelSentence("mixed", "$10.00"),
-      memberCardFallbackSentence("mixed", "$10.00"),
+      officerPanelText("mixed", "$10.00"),
+      memberCardFallbackText("mixed", "$10.00"),
       preArrivalOutstandingNote("mixed", "$10.00"),
     ];
     for (const sentence of words) {
       expect(sentence).toMatch(/change/);
       expect(sentence).toMatch(/used elsewhere in the club's accounts/);
-    }
-  });
-
-  it("builds the plain sentence from the two pieces either side of the amount", () => {
-    for (const cause of causes) {
-      const officer = officerPanelParts(cause);
-      const member = memberCardFallbackParts(cause);
-      expect(officerPanelSentence(cause, "$1.00")).toBe(`${officer.lead}$1.00${officer.trail}`);
-      expect(memberCardFallbackSentence(cause, "$1.00")).toBe(`${member.lead}$1.00${member.trail}`);
     }
   });
 });

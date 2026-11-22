@@ -15,7 +15,7 @@ import {
   normaliseFoodOrderSettings,
 } from "@/lib/food-order-settings";
 import logger from "@/lib/logger";
-import { isPrismaUniqueConstraintError, isTransactionContention } from "@/lib/prisma-errors";
+import { isSingletonUpsertContention } from "@/lib/prisma-errors";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -129,7 +129,12 @@ export async function PUT(request: NextRequest) {
     );
     return NextResponse.json({ settings });
   } catch (err) {
-    if (isTransactionContention(err) || isPrismaUniqueConstraintError(err)) {
+    // P2002 counts as contention here: the only unique keys this transaction
+    // can hit are FoodOrderSettings' constant id (a racing first save's create
+    // arm, which wrote nothing) and the audit row's per-row cuid. AuditLog has no
+    // other unique constraint and the audit builder makes no nested create. Add
+    // either, and a real bug would be answered "try again".
+    if (isSingletonUpsertContention(err)) {
       return NextResponse.json(
         { error: "Somebody else saved these settings at the same moment. Please try again." },
         { status: 503 },
