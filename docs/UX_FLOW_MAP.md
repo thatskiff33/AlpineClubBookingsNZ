@@ -76,7 +76,7 @@ Journey: Choose lodge and nights, add guests, review the price and rules, then c
 
 Screen: `/bookings`, `/bookings/[id]`.
 
-Journey: Find a stay and open its detail. Review lodge, status, guests and amounts before paying, requesting a change or cancelling. Stay Details always names the lodge; list rows do once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). Pending consent appears on the booking for an eligible invited member. **Download invoice** beside Edit Booking gives the booker and officers the invoice PDF ([Xero's or the app's](user-guide/paying-for-your-stay.md)), and an **Invoice and credits** card under Payment lists each Xero credit note raised against the booking with a summary from the app's own records and a plain-words line when the invoice in Xero does not show the latest change; a booking that may have more than one invoice asks the booker to contact the club for copies (an officer or admin on someone else's booking is told to check the club's accounts), and a guest on someone else's booking sees none of these. A booking the club has removed tells its owner or a member guest on it that it was cancelled or removed; anyone else gets the ordinary not-found page, and a Full Admin still sees the record (`INV-ADDPAY-034`).
+Journey: Find a stay and open its detail. Review lodge, status, guests and amounts before paying, requesting a change or cancelling. Stay Details always names the lodge; list rows do once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). Pending consent appears on the booking for an eligible invited member. **Download invoice** beside Edit Booking gives the booker and officers the invoice PDF ([Xero's or the app's](user-guide/paying-for-your-stay.md)), and an **Invoice and credits** card under Payment lists each Xero credit note raised against the booking with a summary from the app's own records and a plain-words line when the invoice in Xero does not show the latest change; a booking that may have more than one invoice asks the booker to contact the club for copies (an officer or admin on someone else's booking is told to check the club's accounts), and a guest on someone else's booking sees none of these.
 
 [Guide](user-guide/changing-or-cancelling-a-booking.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -99,7 +99,7 @@ messages disclose credit already applied without promising another card charge.
 
 Screen: Booking detail, including `#consent`, or the emailed response link.
 
-Journey: Read the organiser, lodge, dates, your nights and response deadline. Accept or decline using the available controls; a refusal explains who can act if you cannot. If the club has removed the booking, the guest or their accepted family adult is told so; anyone else sees the same neutral "nothing here" as for a made-up link (`INV-ADDPAY-034`).
+Journey: Read the organiser, lodge, dates, your nights and response deadline. Accept or decline using the available controls; a refusal explains who can act if you cannot.
 
 [Guide](user-guide/being-added-to-a-booking.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
