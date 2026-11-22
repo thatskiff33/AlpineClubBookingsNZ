@@ -15,7 +15,12 @@ import {
 } from "@/lib/xero-contact-sync";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
-import { copyStreetAddressToPostal, MEMBER_PHONE_FIELDS } from "@/lib/member-address";
+import {
+  copyStreetAddressToPostal,
+  MEMBER_ADDRESS_FIELDS,
+  MEMBER_PHONE_FIELDS,
+  POSTAL_ADDRESS_FIELDS,
+} from "@/lib/member-address";
 import { parseDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
@@ -85,30 +90,13 @@ const profileSchema = z.object({
   postalSameAsPhysical: z.boolean().optional(),
 });
 
-const STREET_FIELDS = [
-  "streetAddressLine1",
-  "streetAddressLine2",
-  "streetCity",
-  "streetRegion",
-  "streetPostalCode",
-  "streetCountry",
-] as const;
-const POSTAL_FIELDS = [
-  "postalAddressLine1",
-  "postalAddressLine2",
-  "postalCity",
-  "postalRegion",
-  "postalPostalCode",
-  "postalCountry",
-] as const;
 const PROFILE_AUDIT_FIELDS = [
   "firstName",
   "lastName",
   ...MEMBER_PHONE_FIELDS,
   "dateOfBirth",
   "ageTier",
-  ...STREET_FIELDS,
-  ...POSTAL_FIELDS,
+  ...MEMBER_ADDRESS_FIELDS,
   "occupation",
   "lodgeScreenPhoneOptIn",
   "profileCompletedAt",
@@ -186,7 +174,7 @@ export async function PUT(req: NextRequest) {
   }
 
   // Address fields
-  for (const f of [...STREET_FIELDS, ...POSTAL_FIELDS]) {
+  for (const f of MEMBER_ADDRESS_FIELDS) {
     if (data[f] !== undefined) {
       updateData[f] = data[f]?.trim() || null;
     }
@@ -202,7 +190,7 @@ export async function PUT(req: NextRequest) {
       streetCountry: data.streetCountry,
     });
 
-    for (const field of POSTAL_FIELDS) {
+    for (const field of POSTAL_ADDRESS_FIELDS) {
       updateData[field] = postalAddress[field]?.trim() || null;
     }
   }
@@ -412,10 +400,7 @@ export async function PUT(req: NextRequest) {
             fieldGroups: {
               name: hasAnyField(changedFields, ["firstName", "lastName"]),
               phone: hasAnyField(changedFields, MEMBER_PHONE_FIELDS),
-              address: hasAnyField(changedFields, [
-                ...STREET_FIELDS,
-                ...POSTAL_FIELDS,
-              ]),
+              address: hasAnyField(changedFields, MEMBER_ADDRESS_FIELDS),
               dateOfBirth: changedFields.includes("dateOfBirth"),
               ageTier: changedFields.includes("ageTier"),
               occupation: changedFields.includes("occupation"),
