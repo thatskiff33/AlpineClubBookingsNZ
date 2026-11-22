@@ -1,16 +1,14 @@
 /**
  * Review queues and booking reads: change and exception requests, booking
  * reviews, the waitlist, occupancy and promo codes. Part of the Bookings &
- * Beds officer actions (ALP-719): see `index.ts`.
+ * Beds officer actions (ALP-719), spread into `MCP_ACTIONS`.
  */
-import {
-  ADMIN_OCCUPANCY_CONNECTION_SHAPE,
-  adminOccupancyQuerySchema,
-} from "@/lib/admin-bookings-api/occupancy";
+import { adminOccupancyQuerySchema } from "@/lib/admin-bookings-schemas/occupancy";
+import { ADMIN_OCCUPANCY_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-review-queues";
 
 import type { McpAction } from "../catalogue";
 
-export const REVIEW_QUEUE_ACTIONS: readonly McpAction[] = [
+export const BOOKINGS_REVIEW_QUEUE_MCP_ACTIONS: readonly McpAction[] = [
   {
     id: "get_lodge_occupancy",
     title: "Read a lodge's occupancy for a month",

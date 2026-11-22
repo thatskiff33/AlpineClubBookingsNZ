@@ -10,7 +10,7 @@ import {
 } from "@/lib/date-only";
 import { getActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
 import { formatBookingReference } from "@/lib/booking-reference";
-import { OCCUPANCY_MONTH_PATTERN } from "@/lib/admin-bookings-api/occupancy";
+import { OCCUPANCY_MONTH_PATTERN } from "@/lib/admin-bookings-schemas/occupancy";
 
 type OccupancyBookingSummary = {
   id: string;

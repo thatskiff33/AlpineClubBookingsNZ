@@ -55,7 +55,11 @@ import { memberProfileConnectionUpdateSchema } from "@/lib/member-profile-update
 import { noticeIdParamsSchema } from "@/lib/notices-shared";
 import type { StepUpHttpMethod } from "@/lib/step-up-routes";
 
-import { BOOKINGS_OFFICER_ACTIONS } from "./bookings-officer";
+import { BOOKINGS_BEDS_MCP_ACTIONS } from "./catalogue/bookings-beds";
+import { BOOKINGS_BOOKING_MCP_ACTIONS } from "./catalogue/bookings-bookings";
+import { BOOKINGS_REQUEST_MCP_ACTIONS } from "./catalogue/bookings-requests";
+import { BOOKINGS_REVIEW_QUEUE_MCP_ACTIONS } from "./catalogue/bookings-review-queues";
+import { BOOKINGS_SETUP_MCP_ACTIONS } from "./catalogue/bookings-setup";
 
 /**
  * `read` changes nothing. `write` changes something the member can undo.
@@ -399,9 +403,19 @@ const MEMBER_ACTIONS: readonly McpAction[] = [
  * Every action. An officer action is one whose route `getAdminRouteRequirement`
  * resolves to an admin area: it is offered only to someone holding that area
  * at that level (`mcpActionAdminRequirement`), and its route decides with the
- * officer's own permissions, exactly as on the admin screens.
+ * officer's own permissions, exactly as on the admin screens. Each officer
+ * area's actions live in a module of their own under `catalogue/`.
  */
-export const MCP_ACTIONS: readonly McpAction[] = [...MEMBER_ACTIONS, ...BOOKINGS_OFFICER_ACTIONS];
+export const MCP_ACTIONS: readonly McpAction[] = [
+  ...MEMBER_ACTIONS,
+  // Bookings & Beds (ALP-719), every route the `bookings` area guards bar the
+  // fresh-proof ones.
+  ...BOOKINGS_BOOKING_MCP_ACTIONS,
+  ...BOOKINGS_REQUEST_MCP_ACTIONS,
+  ...BOOKINGS_REVIEW_QUEUE_MCP_ACTIONS,
+  ...BOOKINGS_BEDS_MCP_ACTIONS,
+  ...BOOKINGS_SETUP_MCP_ACTIONS,
+];
 
 export const MCP_WEBSITE_ONLY_ACTIONS: readonly McpWebsiteOnlyAction[] = [
   {

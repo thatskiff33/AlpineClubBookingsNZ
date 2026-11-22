@@ -3,10 +3,8 @@ import {
   getAdminOccupancyMonth,
   parseOccupancyMonth,
 } from "@/lib/admin-occupancy";
-import {
-  ADMIN_OCCUPANCY_CONNECTION_SHAPE,
-  adminOccupancyQuerySchema,
-} from "@/lib/admin-bookings-api/occupancy";
+import { adminOccupancyQuerySchema } from "@/lib/admin-bookings-schemas/occupancy";
+import { ADMIN_OCCUPANCY_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-review-queues";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
