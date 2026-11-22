@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/accessibility";
+import { expect, test, type APIRequestContext, type Page } from "./helpers/accessibility";
 import { loginPersona, storageStatePath } from "./helpers/auth";
 import {
   E2E_ADMIN,
@@ -71,10 +71,42 @@ async function expectConfirmationSettled(page: Page) {
   await expect(page).toHaveTitle(/\S/);
 }
 
+/*
+ * RETRIES MOVE FORWARD, NEVER BACK (#5407 items 30 and 38). A retry re-runs
+ * this whole group against the database the failed attempt left, and these
+ * steps only ever advance the seeded application: a nomination once confirmed
+ * stays confirmed, an approval stays approved. So on a retry each step first
+ * looks at where the application already is and accepts a state at or past its
+ * own outcome; the first attempt always takes the strict path and drives the
+ * action itself. No reset is needed, and none could restore the tokens'
+ * one-time confirmations without a test-only endpoint.
+ */
+const ALREADY_CONFIRMED = "You have already confirmed this nomination.";
+
+/** On a retry, whether this nominator's confirmation is already recorded (the button is then gone). */
+async function nominationAlreadyConfirmed(page: Page, retry: number): Promise<boolean> {
+  if (retry === 0) return false;
+  const agree = page.getByRole("button", { name: "Agree to Nominate" });
+  const already = page.getByText(ALREADY_CONFIRMED);
+  await expect(agree.or(already).first()).toBeVisible();
+  return already.isVisible();
+}
+
+/** The seeded application's status, read through the admin queue. */
+async function applicationStatus(request: APIRequestContext, id: string): Promise<string | null> {
+  for (const status of ["PENDING_NOMINATORS", "PENDING_ADMIN", "APPROVED", "REJECTED"]) {
+    const res = await request.get(`/api/admin/member-applications?status=${status}&pageSize=100`);
+    expect(res.ok(), `GET /api/admin/member-applications?status=${status} (${res.status()})`).toBeTruthy();
+    const body = (await res.json()) as { applications?: Array<{ id: string }> };
+    if ((body.applications ?? []).some((application) => application.id === id)) return status;
+  }
+  return null;
+}
+
 test.describe("nomination confirmations then approval", () => {
   test.describe.configure({ mode: "serial" });
 
-  test("nominator one agrees to the seeded nomination", async ({ browser }) => {
+  test("nominator one agrees to the seeded nomination", async ({ browser }, testInfo) => {
     // Confirmation requires being signed in as the specific nominator
     // (confirmNomination checks the id). Nominator1 is Wanda (complete profile →
     // no onboarding modal).
@@ -87,32 +119,43 @@ test.describe("nomination confirmations then approval", () => {
     await expect(
       page.getByText(new RegExp(`Nominate ${MEMBERSHIP_APPLICANT.firstName}`)),
     ).toBeVisible();
-    await page.getByRole("button", { name: "Agree to Nominate" }).click();
-    await expect(page.getByText(/confirmation has been recorded/i)).toBeVisible();
-    await expectConfirmationSettled(page);
+    if (!(await nominationAlreadyConfirmed(page, testInfo.retry))) {
+      await page.getByRole("button", { name: "Agree to Nominate" }).click();
+      await expect(page.getByText(/confirmation has been recorded/i)).toBeVisible();
+      await expectConfirmationSettled(page);
+    }
 
     await context.close();
   });
 
   test("nominator two agrees and the application moves to committee", async ({
     browser,
-  }) => {
+  }, testInfo) => {
     const context = await browser.newContext();
     const page = await context.newPage();
     await loginPersona(page, NOMINATOR_TWO.email);
 
     await page.goto(`/nominations/${NOMINATION_TOKEN_TWO}`);
-    await page.getByRole("button", { name: "Agree to Nominate" }).click();
-    // The second confirmation completes both nominators → committee review.
-    await expect(page.getByText(/moved to committee review/i)).toBeVisible();
-    await expectConfirmationSettled(page);
+    if (await nominationAlreadyConfirmed(page, testInfo.retry)) {
+      // Both nominators are in: the server-rendered status reads "With
+      // committee", or "Approved" if the next step also ran before the retry.
+      await expect(page.getByText(/^(With committee|Approved)$/)).toBeVisible();
+    } else {
+      await page.getByRole("button", { name: "Agree to Nominate" }).click();
+      // The second confirmation completes both nominators → committee review.
+      await expect(page.getByText(/moved to committee review/i)).toBeVisible();
+      // Only the refreshed server render changes the status label, so this
+      // proves the refresh has landed, not just the client's message.
+      await expect(page.getByText("With committee", { exact: true })).toBeVisible();
+      await expectConfirmationSettled(page);
+    }
 
     await context.close();
   });
 
   test("an admin approves the application and the applicant becomes a member", async ({
     browser,
-  }) => {
+  }, testInfo) => {
     // Reuse the E2E admin session saved once in auth.setup.ts instead of a fresh
     // per-spec login (#1779). This test drives the admin API directly, so it
     // needs the session cookies but no page.
@@ -120,23 +163,29 @@ test.describe("nomination confirmations then approval", () => {
       storageState: storageStatePath(E2E_ADMIN.email),
     });
 
+    const alreadyApproved =
+      testInfo.retry > 0 &&
+      (await applicationStatus(context.request, MEMBERSHIP_APPLICATION_ID)) === "APPROVED";
+
     // Approve via the review endpoint. Xero is absent, so skip the entrance-fee
     // invoice (a CREATE would only queue an outbox row that never sends).
-    const approve = await context.request.put(
-      `/api/admin/member-applications/${MEMBERSHIP_APPLICATION_ID}`,
-      {
-        data: {
-          decision: "APPROVE",
-          entranceFeeInvoiceDecision: {
-            action: "SKIP",
-            reason: "E2E: Xero not connected",
+    if (!alreadyApproved) {
+      const approve = await context.request.put(
+        `/api/admin/member-applications/${MEMBERSHIP_APPLICATION_ID}`,
+        {
+          data: {
+            decision: "APPROVE",
+            entranceFeeInvoiceDecision: {
+              action: "SKIP",
+              reason: "E2E: Xero not connected",
+            },
           },
         },
-      },
-    );
-    const approveBody = await approve.json().catch(() => ({}));
-    expect(approve.status(), JSON.stringify(approveBody)).toBe(200);
-    expect(approveBody.status).toBe("APPROVED");
+      );
+      const approveBody = await approve.json().catch(() => ({}));
+      expect(approve.status(), JSON.stringify(approveBody)).toBe(200);
+      expect(approveBody.status).toBe("APPROVED");
+    }
 
     // The approved applicant now exists as a member (admin member search finds
     // the new login by email).
@@ -154,9 +203,23 @@ test.describe("nomination confirmations then approval", () => {
   });
 });
 
+/** The mapped member was updated in place: still exactly ONE member holds the email. */
+async function expectMappedInPlace(request: APIRequestContext) {
+  const members = await request.get(
+    `/api/admin/members?q=${encodeURIComponent(MAPPING_APPLICANT.email)}`,
+  );
+  expect(members.ok(), `GET /api/admin/members (${members.status()})`).toBeTruthy();
+  const membersBody = await members.json();
+  const matches = (membersBody.members ?? []).filter(
+    (member: { email: string }) => member.email === MAPPING_APPLICANT.email,
+  );
+  expect(matches, "exactly one member holds the applicant email").toHaveLength(1);
+  expect(matches[0].id).toBe(MAPPING_TARGET_MEMBER_ID);
+}
+
 test("an admin maps a rejoining applicant onto their existing member record (E10 diff preview + approve)", async ({
   browser,
-}) => {
+}, testInfo) => {
   // The seed stores a PENDING_ADMIN application (Rex Rejoiner) alongside an
   // existing non-login member with the same email — the lapsed-rejoiner shape.
   // Drive the real admin UI: choose Map to existing, preview the field diff,
@@ -165,6 +228,17 @@ test("an admin maps a rejoining applicant onto their existing member record (E10
   const context = await browser.newContext({
     storageState: storageStatePath(E2E_ADMIN.email),
   });
+  // A retry after the approval landed (see "Retries move forward" above): the
+  // card is gone from the pending queue, so check the end state and stop.
+  if (
+    testInfo.retry > 0 &&
+    (await applicationStatus(context.request, MAPPING_APPLICATION_ID)) === "APPROVED"
+  ) {
+    await expectMappedInPlace(context.request);
+    await context.close();
+    return;
+  }
+
   const page = await context.newPage();
   await page.goto("/admin/member-applications");
 
@@ -245,16 +319,7 @@ test("an admin maps a rejoining applicant onto their existing member record (E10
 
   // The existing member was updated in place — and there is still exactly ONE
   // member for this email (no duplicate record was created).
-  const members = await context.request.get(
-    `/api/admin/members?q=${encodeURIComponent(MAPPING_APPLICANT.email)}`,
-  );
-  expect(members.ok(), `GET /api/admin/members (${members.status()})`).toBeTruthy();
-  const membersBody = await members.json();
-  const matches = (membersBody.members ?? []).filter(
-    (member: { email: string }) => member.email === MAPPING_APPLICANT.email,
-  );
-  expect(matches, "exactly one member holds the applicant email").toHaveLength(1);
-  expect(matches[0].id).toBe(MAPPING_TARGET_MEMBER_ID);
+  await expectMappedInPlace(context.request);
 
   await context.close();
 });
