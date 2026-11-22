@@ -2005,10 +2005,12 @@ a typecheck is where it will be crossed again.
 
 Measured under #5407: on unchanged `main`,
 `pnpm run knip` reports `setStripeClientForTests` and `resetStripeClientForTests`
-as unused exports, and CI's Linux run passes. Only
-`src/test/providers/provider-transports.test.ts` imports them, through the `@/`
-alias, and `tsconfig.json` excludes every test file. On that host knip then
-leaves `@/` unresolved for a test file outside a `__tests__` directory;
+as unused exports, and CI's Linux run passes. Two test files reach them through
+the `@/` alias: `src/test/providers/provider-transports.test.ts` (static import)
+and `src/test/providers/stripe-webhook-round-trip.realdb.test.ts` (dynamic
+import). `tsconfig.json` excludes every test file. On that host knip credits
+neither, and leaves `@/` unresolved for a test file outside a `__tests__`
+directory;
 lifting the test exclusions from a copy of `tsconfig.json` clears both lines.
 `knip.jsonc` cannot carry the fix: its `tsConfig` is a command-line flag, CI runs
 `pnpm exec knip`, and a `paths` entry did not change the result. Classify the two

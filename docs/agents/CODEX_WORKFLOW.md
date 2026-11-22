@@ -239,8 +239,9 @@ record the reason and result in the PR.
 Known false greens: a stale Prisma client type-checks clean, so generate first;
 `pnpm test` does not typecheck; a guard must fail under mutation, and the
 mutation must then be restored; a test that agrees with odd behaviour may be
-the wrong one. Failures caused by the environment are listed in
-[`TESTING.md`](../TESTING.md#suites-that-time-out-under-load-and-pass-alone).
+the wrong one. Environmental failures:
+[`TESTING.md`](../TESTING.md#suites-that-time-out-under-load-and-pass-alone),
+[knip on Windows](../TESTING.md#knip-on-a-windows-host-reports-two-unused-exports).
 
 For concurrency-sensitive work, the orchestrator also reviews the open PRs and
 last 10 merged PRs affecting the subsystem, reconciles their lock/state/provider
