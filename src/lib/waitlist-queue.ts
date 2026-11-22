@@ -4,6 +4,7 @@ import {
   type WaitlistCrossLodgeOrder,
 } from "@prisma/client";
 import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
+import { bookingsOverlap } from "@/lib/booking-night-overlap";
 
 // The waitlist queue order (#5402): who the offer pass considers first, and
 // the position a member or officer is shown, both come from this module.
@@ -90,15 +91,16 @@ export type WaitlistOpportunity<T> = {
   cross: boolean;
 };
 
+function compareIds(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /** `WAITLIST_QUEUE_ORDER_BY`, in memory. */
 export function compareWaitlistJoinOrder(
   a: Pick<WaitlistQueueEntry, "id" | "createdAt">,
   b: Pick<WaitlistQueueEntry, "id" | "createdAt">,
 ): number {
-  return (
-    a.createdAt.getTime() - b.createdAt.getTime() ||
-    (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
-  );
+  return a.createdAt.getTime() - b.createdAt.getTime() || compareIds(a.id, b.id);
 }
 
 /**
@@ -136,8 +138,10 @@ export function splitWaitlistOpportunities<T extends WaitlistQueueEntry>(
 
 /**
  * The order the offer pass walks. Under `OWN_LODGE_FIRST`, every own-lodge
- * opportunity, then every cross-lodge one; under `MERGED`, by join order, an
- * entry's own lodge before its cross-lodge opportunity.
+ * opportunity, then every cross-lodge one; under `MERGED`, by `createdAt`, then
+ * own-lodge before cross-lodge (so on an exact tie every own-lodge opportunity
+ * still comes first, as it did before #5402), then `id`. Among own-lodge
+ * opportunities that is exactly `WAITLIST_QUEUE_ORDER_BY`.
  *
  * `crossLodgeOrder` may be `null` only when there are no cross-lodge
  * opportunities, so a caller reads the club setting only when it matters.
@@ -159,9 +163,11 @@ export function orderWaitlistOpportunities<T extends WaitlistQueueEntry>(
   return crossLodgeOrder === "MERGED"
     ? [...own, ...cross].sort(
         (a, b) =>
-          compareWaitlistJoinOrder(a.candidate, b.candidate) ||
-          // Same entry considered at two lodges: its own lodge first.
-          Number(a.cross) - Number(b.cross),
+          a.candidate.createdAt.getTime() - b.candidate.createdAt.getTime() ||
+          // An exact tie: own-lodge before cross-lodge, which also puts an
+          // entry's own lodge before its own cross-lodge opportunity.
+          Number(a.cross) - Number(b.cross) ||
+          compareIds(a.candidate.id, b.candidate.id),
       )
     : [...own, ...cross];
 }
@@ -179,16 +185,6 @@ type WaitlistPositionDb = Pick<
   Prisma.TransactionClient,
   "booking" | "bookingDefaults"
 >;
-
-function overlapsNights(
-  a: { checkIn: Date; checkOut: Date },
-  b: { checkIn: Date; checkOut: Date },
-): boolean {
-  return (
-    a.checkIn.getTime() < b.checkOut.getTime() &&
-    a.checkOut.getTime() > b.checkIn.getTime()
-  );
-}
 
 /**
  * Each booking's true place in its own lodge's waitlist queue (#5402): one
@@ -260,7 +256,7 @@ export async function getWaitlistPositions(
     // In the read's own order, the target in its row's place when the read
     // returned it, otherwise inserted by the same order in memory.
     const entries: WaitlistQueueEntry[] = queue
-      .filter((entry) => entry.id === key.id || overlapsNights(entry, key))
+      .filter((entry) => entry.id === key.id || bookingsOverlap(entry, key))
       .map((entry) => (entry.id === key.id ? target : entry));
     if (!entries.includes(target)) {
       const at = entries.findIndex(

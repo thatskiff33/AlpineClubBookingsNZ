@@ -208,12 +208,17 @@ describe("the queue order shared by the offer pass and the position reader", () 
     });
   });
 
-  it("matches the order processWaitlistForDates walked before the extraction, in both modes", () => {
+  it.each([
+    ["distinct join times", true],
+    ["exact join-time ties", false],
+  ] as const)("matches the order processWaitlistForDates walked before the extraction, in both modes (%s)", (_label, distinct) => {
     for (let seed = 1; seed <= 150; seed += 1) {
-      // Distinct join times: the id tie-break is the one intended change.
-      const candidates = randomTable(seed, 12, true)
+      // In the order the candidate read now returns: (createdAt, id). The old
+      // read had no id tie-break, so with ties this is the one order of the
+      // several it could return that the new code must reproduce exactly.
+      const candidates = randomTable(seed, 12, distinct)
         .map(asEntry)
-        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1));
       for (const freedLodgeId of LODGES) {
         for (const mode of ["OWN_LODGE_FIRST", "MERGED"] as const) {
           const split = splitWaitlistOpportunities(candidates, {
@@ -230,10 +235,10 @@ describe("the queue order shared by the offer pass and the position reader", () 
     }
   });
 
-  it("breaks an exact join-time tie by id under MERGED, and keeps an entry's own lodge before its cross-lodge opportunity", () => {
+  it("on an exact join-time tie under MERGED, puts every own-lodge opportunity first, then breaks by id", () => {
     const candidates = [
-      asEntry(row({ id: "cb", minute: 1, lodgeId: "lodge-a", alternates: ["lodge-b"] })),
       asEntry(row({ id: "ca", minute: 1, lodgeId: "lodge-a", alternates: ["lodge-b"] })),
+      asEntry(row({ id: "cb", minute: 1, lodgeId: "lodge-a", alternates: ["lodge-b"] })),
     ];
     const ordered = orderWaitlistOpportunities(
       splitWaitlistOpportunities(candidates, { freedLodgeId: "lodge-b", defaultLodgeId: "lodge-a" }),
@@ -241,10 +246,27 @@ describe("the queue order shared by the offer pass and the position reader", () 
     );
     expect(ordered.map((o) => `${o.candidate.id}:${o.cross ? "cross" : "own"}`)).toEqual([
       "ca:own",
-      "ca:cross",
       "cb:own",
+      "ca:cross",
       "cb:cross",
     ]);
+  });
+
+  it("keeps a freed lodge's own entry ahead of a tied cross-lodge entry whose id sorts first, and counts positions the same way", async () => {
+    // "ca" waits at lodge B and named lodge A; "cz" waits at lodge A. Same
+    // instant. The offer pass at A considers cz first, so cz is #1 there.
+    const rows = [
+      row({ id: "ca", minute: 1, lodgeId: "lodge-b", alternates: ["lodge-a"] }),
+      row({ id: "cz", minute: 1, lodgeId: "lodge-a" }),
+    ];
+    const ordered = orderWaitlistOpportunities(
+      splitWaitlistOpportunities(rows.map(asEntry), { freedLodgeId: "lodge-a", defaultLodgeId: "lodge-a" }),
+      "MERGED",
+    );
+    expect(
+      ordered.filter((o) => o.offerLodgeId === "lodge-a").map((o) => o.candidate.id),
+    ).toEqual(["cz", "ca"]);
+    expect((await positionsOf(rows, "MERGED")).cz).toBe(1);
   });
 
   it("needs the club's cross-lodge order only when a cross-lodge opportunity exists", () => {

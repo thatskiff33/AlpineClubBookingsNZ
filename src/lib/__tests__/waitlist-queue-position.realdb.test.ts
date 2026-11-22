@@ -12,6 +12,22 @@
  * cron case, which needs a stay ending on the frozen clock's day (1 July 2026).
  * Every lodge here has capacity 0 unless a case sets it, so a sweep a writer
  * triggers after commit offers nothing the case did not ask for.
+ *
+ * EVERY CASE HAS ITS OWN BOOKING IDS AND ITS OWN NIGHTS. `cancelBooking` starts
+ * a waitlist pass after commit and does not await it, so a pass can still be
+ * running when the next case starts. A pass only reads rows overlapping its own
+ * freed nights and only writes rows it read, so with disjoint nights and ids it
+ * cannot see or offer another case's entries, whatever capacity that case sets.
+ *
+ * DATABASE-WIDE WORKERS. `expireStaleOffers` and the waitlist cron act on every
+ * row in the database, so their own counts are never asserted; each case
+ * asserts on its own ids only.
+ *
+ * THIS SUITE OWNS THE CLUB-WIDE `BookingDefaults.waitlistCrossLodgeOrder` WHILE
+ * IT RUNS. That is safe today because real-database files take turns on the race
+ * database (`realdb-file-serialisation.ts`, #4367): no other file runs while this
+ * one holds the file lock. `afterAll` puts the exact prior state back, deleting
+ * the row if it did not exist before.
  */
 import { NextRequest } from "next/server";
 import type { BookingStatus, PrismaClient, WaitlistCrossLodgeOrder } from "@prisma/client";
@@ -52,7 +68,8 @@ let cancelBooking: (typeof import("@/lib/booking-cancel"))["cancelBooking"];
 let processWaitlistCron: (typeof import("@/lib/cron-waitlist"))["processWaitlistCron"];
 let adminWaitlistGet: (typeof import("@/app/api/admin/waitlist/route"))["GET"];
 let email: typeof import("@/lib/email");
-let previousCrossLodgeOrder: WaitlistCrossLodgeOrder | null = null;
+/** The setting before this suite: `undefined` = not read yet, `null` = no row. */
+let previousCrossLodgeOrder: WaitlistCrossLodgeOrder | null | undefined;
 
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 const joined = (minute: number) => new Date(Date.UTC(2026, 4, 1, 9, minute));
@@ -206,78 +223,90 @@ async function status(id: string) {
     await prisma.lodgeSettings.deleteMany({ where: { id: { in: [LODGE_A, LODGE_B] } } });
     await prisma.lodge.deleteMany({ where: { id: { in: [LODGE_A, LODGE_B] } } });
     if (previousCrossLodgeOrder === null) {
-      await prisma.bookingDefaults.updateMany({ where: { id: "default" }, data: { waitlistCrossLodgeOrder: "OWN_LODGE_FIRST" } });
-    } else {
+      // There was no settings row before this suite created one.
+      await prisma.bookingDefaults.deleteMany({ where: { id: "default" } });
+    } else if (previousCrossLodgeOrder !== undefined) {
       await setCrossLodgeOrder(previousCrossLodgeOrder);
     }
   });
 
   describe("three entries on the same nights, and every way out of the queue", () => {
-    const FROM = "2031-03-10";
-    const TO = "2031-03-12";
-    const [E1, E2, E3] = [`${PREFIX}e1`, `${PREFIX}e2`, `${PREFIX}e3`];
-    const seedThree = async (first: Partial<Entry> = {}) => {
-      await seed({ id: E1, checkIn: FROM, checkOut: TO, createdAt: joined(1), ...first });
-      await seed({ id: E2, checkIn: FROM, checkOut: TO, createdAt: joined(2) });
-      await seed({ id: E3, checkIn: FROM, checkOut: TO, createdAt: joined(3) });
+    // Each case: its own three ids and its own two nights (see the header).
+    type Three = { ids: [string, string, string]; from: string; to: string };
+    let nextWindow = 0;
+    const seedThree = async (tag: string, first: Partial<Entry> = {}): Promise<Three> => {
+      const night = 1 + 3 * nextWindow++;
+      const from = `2031-03-${String(night).padStart(2, "0")}`;
+      const to = `2031-03-${String(night + 2).padStart(2, "0")}`;
+      const ids: [string, string, string] = [`${PREFIX}${tag}1`, `${PREFIX}${tag}2`, `${PREFIX}${tag}3`];
+      await seed({ id: ids[0], checkIn: from, checkOut: to, createdAt: joined(1), ...first });
+      await seed({ id: ids[1], checkIn: from, checkOut: to, createdAt: joined(2) });
+      await seed({ id: ids[2], checkIn: from, checkOut: to, createdAt: joined(3) });
+      return { ids, from, to };
     };
-    const expectEverywhere = async (expected: Record<string, number | null>) => {
-      expect(await shown([E1, E2, E3])).toEqual(expected);
-      const listed = await shownByAdminApi(FROM, TO);
-      for (const [id, position] of Object.entries(expected)) {
-        if (id in listed) expect(listed[id], `admin API position for ${id}`).toBe(position);
+    const expectEverywhere = async (
+      { ids, from, to }: Three,
+      expected: [number | null, number | null, number | null],
+    ) => {
+      const want = Object.fromEntries(ids.map((id, index) => [id, expected[index]]));
+      expect(await shown(ids)).toEqual(want);
+      const listed = await shownByAdminApi(from, to);
+      for (const id of ids) {
+        if (id in listed) expect(listed[id], `admin API position for ${id}`).toBe(want[id]);
       }
       // The board lists every entry still waiting or offered.
-      for (const id of [E2, E3]) expect(id in listed).toBe(true);
+      for (const id of [ids[1], ids[2]]) expect(id in listed).toBe(true);
     };
 
     it("numbers them 1, 2, 3 on every screen", async () => {
-      await seedThree();
-      await expectEverywhere({ [E1]: 1, [E2]: 2, [E3]: 3 });
+      const three = await seedThree("n");
+      await expectEverywhere(three, [1, 2, 3]);
     });
 
     it("a no-payment cancel of the first leaves 1 and 2", async () => {
-      await seedThree();
-      const result = await cancelBooking(E1, `${E1}m`, "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST);
+      const three = await seedThree("c");
+      const [first] = three.ids;
+      const result = await cancelBooking(first, `${first}m`, "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST);
       expect(result.status).toBe(200);
-      expect(await status(E1)).toBe("CANCELLED");
-      await expectEverywhere({ [E1]: null, [E2]: 1, [E3]: 2 });
+      expect(await status(first)).toBe("CANCELLED");
+      await expectEverywhere(three, [null, 1, 2]);
     });
 
     it("an offer to the first leaves 1 and 2, and the offer alert quotes the first's place", async () => {
-      await seedThree();
+      const three = await seedThree("o");
+      const [first] = three.ids;
       await setCapacity(LODGE_A, 2);
       const { offeredBookingId } = await waitlist.processWaitlistForDates(
-        { checkIn: day(FROM), checkOut: day(TO), lodgeId: LODGE_A },
+        { checkIn: day(three.from), checkOut: day(three.to), lodgeId: LODGE_A },
         CLUB_FORMAT_TEST,
       );
       await setCapacity(LODGE_A, 0);
-      expect(offeredBookingId).toBe(E1);
-      expect(await status(E1)).toBe("WAITLIST_OFFERED");
+      expect(offeredBookingId).toBe(first);
+      expect(await status(first)).toBe("WAITLIST_OFFERED");
       expect(vi.mocked(email.sendAdminWaitlistOfferAlert)).toHaveBeenCalledWith(
         expect.objectContaining({ position: 1 }),
       );
-      await expectEverywhere({ [E1]: null, [E2]: 1, [E3]: 2 });
+      await expectEverywhere(three, [null, 1, 2]);
     });
 
     it("an expired offer with no bed free takes its original place back", async () => {
-      await seedThree({ status: "WAITLIST_OFFERED", waitlistOfferExpiresAt: day("2026-06-30") });
-      await expectEverywhere({ [E1]: null, [E2]: 1, [E3]: 2 });
-      const result = await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
-      expect(result.expiredCount).toBeGreaterThanOrEqual(1);
-      expect(await status(E1)).toBe("WAITLISTED");
+      const three = await seedThree("x", { status: "WAITLIST_OFFERED", waitlistOfferExpiresAt: day("2026-06-30") });
+      const [first] = three.ids;
+      await expectEverywhere(three, [null, 1, 2]);
+      await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
+      expect(await status(first)).toBe("WAITLISTED");
       // The expiry email quotes the place it now holds, counting the entries
       // already waiting (the pre-#5402 count saw only other lapsed offers).
       expect(vi.mocked(email.sendWaitlistOfferExpiredEmail)).toHaveBeenCalledWith(
-        expect.objectContaining({ bookingId: E1 }),
+        expect.objectContaining({ bookingId: first }),
         expect.any(String),
         expect.any(String),
-        day(FROM),
-        day(TO),
+        day(three.from),
+        day(three.to),
         1,
         LODGE_A,
       );
-      await expectEverywhere({ [E1]: 1, [E2]: 2, [E3]: 3 });
+      await expectEverywhere(three, [1, 2, 3]);
     });
 
     it("an expired offer with a bed free: records what today's code does (evidence for #5410)", async () => {
@@ -287,16 +316,33 @@ async function status(id: string) {
       // and a WAITLIST_OFFERED booking holds no capacity, so the same booking is
       // offered again in the same run. If this case fails, the failure says what
       // the code actually does, and that is the evidence #5410 needs.
-      await seedThree({ status: "WAITLIST_OFFERED", waitlistOfferExpiresAt: day("2026-06-30") });
+      const lapsedOfferedAt = day("2026-06-28");
+      const three = await seedThree("r", { status: "WAITLIST_OFFERED", waitlistOfferExpiresAt: day("2026-06-30") });
+      const [first, second] = three.ids;
       await setCapacity(LODGE_A, 2);
-      const result = await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
+      await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
       await setCapacity(LODGE_A, 0);
-      expect(result.expiredCount, "expired offers in this run").toBeGreaterThanOrEqual(1);
-      expect(result.reofferedCount, "re-offers in this run").toBe(1);
-      expect(await status(E1), "the lapsed booking was offered straight back").toBe("WAITLIST_OFFERED");
-      expect(await status(E2)).toBe("WAITLISTED");
+      const after = await prisma.booking.findUniqueOrThrow({
+        where: { id: first },
+        select: { status: true, waitlistOfferedAt: true },
+      });
+      expect(after.status, "the lapsed booking was offered straight back").toBe("WAITLIST_OFFERED");
+      // A fresh offer made in this run, not the lapsed one left where it was.
+      expect(after.waitlistOfferedAt?.getTime(), "re-offered in the same run").toBeGreaterThan(
+        lapsedOfferedAt.getTime(),
+      );
+      expect(vi.mocked(email.sendWaitlistOfferExpiredEmail)).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingId: first }),
+        expect.any(String),
+        expect.any(String),
+        day(three.from),
+        day(three.to),
+        1,
+        LODGE_A,
+      );
+      expect(await status(second)).toBe("WAITLISTED");
       // Whatever #5410 decides, the numbers shown agree with the queue.
-      await expectEverywhere({ [E1]: null, [E2]: 1, [E3]: 2 });
+      await expectEverywhere(three, [null, 1, 2]);
     });
 
     it("the past-date cron cancelling the first leaves 1 and 2", async () => {
@@ -307,25 +353,25 @@ async function status(id: string) {
       await seed({ id: P2, checkIn: "2026-06-30", checkOut: "2026-07-03", createdAt: joined(2) });
       await seed({ id: P3, checkIn: "2026-06-30", checkOut: "2026-07-03", createdAt: joined(3) });
       expect(await shown([P1, P2, P3])).toEqual({ [P1]: 1, [P2]: 2, [P3]: 3 });
-      const result = await processWaitlistCron();
-      expect(result.autoCancelled).toBeGreaterThanOrEqual(1);
+      await processWaitlistCron();
       expect(await status(P1)).toBe("CANCELLED");
+      expect(await status(P2)).toBe("WAITLISTED");
       expect(await shown([P1, P2, P3])).toEqual({ [P1]: null, [P2]: 1, [P3]: 2 });
     });
 
     it.each([
-      ["force-confirmed", "PAID"],
-      ["accepted offer", "PAYMENT_PENDING"],
-      ["cross-lodge accept (the entry is cancelled for its replacement)", "CANCELLED"],
-    ] as const)("the first leaving by %s leaves 1 and 2", async (_way, resulting) => {
-      await seedThree();
+      ["force-confirmed", "PAID", "f"],
+      ["accepted offer", "PAYMENT_PENDING", "a"],
+      ["cross-lodge accept (the entry is cancelled for its replacement)", "CANCELLED", "l"],
+    ] as const)("the first leaving by %s leaves 1 and 2", async (_way, resulting, tag) => {
+      const three = await seedThree(tag);
       // The resulting row each writer leaves: the status, and the stored
       // position written null as every exit already does.
       await prisma.booking.update({
-        where: { id: E1 },
+        where: { id: three.ids[0] },
         data: { status: resulting, waitlistPosition: null, waitlistOfferedAt: null, waitlistOfferExpiresAt: null },
       });
-      await expectEverywhere({ [E1]: null, [E2]: 1, [E3]: 2 });
+      await expectEverywhere(three, [null, 1, 2]);
     });
   });
 
@@ -387,6 +433,15 @@ async function status(id: string) {
       await seed({ id: late, checkIn: "2031-07-10", checkOut: "2031-07-12", createdAt: joined(2) });
       await seed({ id: spanning, checkIn: "2031-07-09", checkOut: "2031-07-11", createdAt: joined(3) });
       expect(await shown([early, late, spanning])).toEqual({ [early]: 1, [late]: 1, [spanning]: 3 });
+    });
+
+    it("under MERGED, keeps the lodge's own entry ahead of a tied opt-in from another lodge whose id sorts first", async () => {
+      await setCrossLodgeOrder("MERGED");
+      const [crossFirstId, ownLaterId] = [`${PREFIX}tieacross`, `${PREFIX}tiezown`];
+      await seed({ id: crossFirstId, lodgeId: LODGE_B, checkIn: "2031-08-10", checkOut: "2031-08-12", createdAt: joined(5), alternates: [LODGE_A] });
+      await seed({ id: ownLaterId, checkIn: "2031-08-10", checkOut: "2031-08-12", createdAt: joined(5) });
+      // Own lodge before cross-lodge on an exact createdAt tie, whatever the ids.
+      expect(await shown([crossFirstId, ownLaterId])).toEqual({ [crossFirstId]: 1, [ownLaterId]: 1 });
     });
 
     it.each(["OWN_LODGE_FIRST", "MERGED"] as const)(

@@ -19,16 +19,57 @@ const sources = productionSourceFiles()
   }));
 
 /**
- * Files that read a `waitlistPosition` FIELD of something other than a booking
- * row: the API or preview payload the position reader filled in.
+ * The receivers a `.waitlistPosition` read may name, per file: each is an API
+ * or preview payload the position reader filled in, never a booking row.
  */
-const POSITION_PAYLOAD_READERS: Record<string, string> = {
-  "src/app/(admin)/admin/booking-desk/waitlist/page.tsx": "the admin waitlist API's entries",
-  "src/app/(admin)/admin/membership/members/[id]/_components/member-seasonal-membership-card.tsx":
-    "the member record preview's waitlist records",
-  "src/components/admin/admin-return-to-waitlist-controls.tsx": "the return-to-waitlist response",
-  "src/app/api/admin/bookings/[id]/return-to-waitlist/route.ts": "its own transaction result",
+const POSITION_PAYLOAD_RECEIVERS: Record<string, string[]> = {
+  // the admin waitlist API's entries
+  "src/app/(admin)/admin/booking-desk/waitlist/page.tsx": ["entry"],
+  // the member record preview's waitlist records
+  "src/app/(admin)/admin/membership/members/[id]/_components/member-seasonal-membership-card.tsx": ["booking"],
+  // the return-to-waitlist response
+  "src/components/admin/admin-return-to-waitlist-controls.tsx": ["data"],
+  // its own transaction result
+  "src/app/api/admin/bookings/[id]/return-to-waitlist/route.ts": ["result"],
 };
+
+/**
+ * Every `waitlistPosition` used as an object key or shorthand property with a
+ * value other than `null` or `true`, as `file :: line`. Each is a payload field,
+ * a prop or a type, reviewed. A new one anywhere, even in one of these files,
+ * fails until it is reviewed here, which is what catches a non-null write
+ * however deeply it is nested inside a `data: { ... }`.
+ */
+const REVIEWED_POSITION_KEYS: string[] = [
+  // The admin board's entry type, filled by the waitlist API.
+  "src/app/(admin)/admin/booking-desk/waitlist/page.tsx :: waitlistPosition: number | null;",
+  // The member record card's preview type.
+  "src/app/(admin)/admin/membership/members/[id]/_components/member-seasonal-membership-card.tsx :: waitlistPosition: number | null;",
+  // The pay-door cards' prop: its type, its destructure and its render.
+  "src/app/(authenticated)/bookings/[id]/_components/booking-payment-cards.tsx :: Position: #{waitlistPosition}",
+  "src/app/(authenticated)/bookings/[id]/_components/booking-payment-cards.tsx :: waitlistPosition,",
+  "src/app/(authenticated)/bookings/[id]/_components/booking-payment-cards.tsx :: waitlistPosition: number | null;",
+  // Return-to-waitlist: the audit metadata, the transaction result, the response.
+  "src/app/api/admin/bookings/[id]/return-to-waitlist/route.ts :: waitlistPosition,",
+  "src/app/api/admin/bookings/[id]/return-to-waitlist/route.ts :: waitlistPosition,",
+  "src/app/api/admin/bookings/[id]/return-to-waitlist/route.ts :: waitlistPosition: result.displayedWaitlistPosition,",
+  // The admin waitlist API's response field.
+  "src/app/api/admin/waitlist/route.ts :: waitlistPosition: positions.get(b.id) ?? null,",
+  // The member record preview's serialiser: its parameter and its output key.
+  "src/lib/seasonal-membership-assignments.ts :: function serializeBookingSummary(booking: BookingPreviewRecord, waitlistPosition: number | null) {",
+  "src/lib/seasonal-membership-assignments.ts :: waitlistPosition,",
+];
+
+/** `file :: trimmed line` for each key-like use of the name. */
+function positionKeyUses(file: string, code: string): string[] {
+  return [...code.matchAll(/(?<![.\w$])waitlistPosition\??(?=\s*[:,}])/g)]
+    .filter((match) => !/^waitlistPosition\??\s*:\s*(null|true)\b/.test(code.slice(match.index)))
+    .map((match) => {
+      const start = code.lastIndexOf("\n", match.index) + 1;
+      const end = code.indexOf("\n", match.index);
+      return `${file} :: ${code.slice(start, end === -1 ? undefined : end).trim()}`;
+    });
+}
 
 describe("waitlist position census (#5402, INV-CAP-041)", () => {
   it("reads the production tree", () => {
@@ -52,24 +93,29 @@ describe("waitlist position census (#5402, INV-CAP-041)", () => {
     ).toEqual([]);
   });
 
-  it("never selects the stored column, and writes it only as null", () => {
-    const offenders = sources.flatMap(({ file, code }) => {
-      const found: string[] = [];
-      if (/\bwaitlistPosition\s*:\s*true\b/.test(code)) found.push(`${file}: selects the stored column`);
-      for (const match of code.matchAll(/\bdata\s*:\s*\{[^{}]*\bwaitlistPosition\b(?!\s*:\s*null\b)/g)) {
-        found.push(`${file}:${code.slice(0, match.index).split("\n").length}: writes a non-null position`);
-      }
-      return found;
-    });
+  it("never selects the stored column", () => {
+    const offenders = sources
+      .filter(({ code }) => /\bwaitlistPosition\s*:\s*true\b/.test(code))
+      .map(({ file }) => file);
     expect(offenders).toEqual([]);
   });
 
-  it("reads a position field only off a payload the reader filled in", () => {
-    const readers = sources
-      .filter(({ code }) => /\.\s*waitlistPosition\b/.test(code))
-      .map(({ file }) => file)
-      .sort();
-    expect(readers).toEqual(Object.keys(POSITION_PAYLOAD_READERS).sort());
+  it("gives the name no value but null except at the reviewed payload, prop and type keys", () => {
+    const uses = sources.flatMap(({ file, code }) => positionKeyUses(file, code)).sort();
+    expect(
+      uses,
+      "a new waitlistPosition key may be a stored write; positions are read with getWaitlistPositions (INV-CAP-041)",
+    ).toEqual([...REVIEWED_POSITION_KEYS].sort());
+  });
+
+  it("reads a position field only off a named payload the reader filled in", () => {
+    const reads = sources.flatMap(({ file, code }) =>
+      [...code.matchAll(/(\w+)\??\s*\.\s*waitlistPosition\b/g)].map((match) => `${file} :: ${match[1]}`),
+    );
+    const allowed = Object.entries(POSITION_PAYLOAD_RECEIVERS).flatMap(([file, receivers]) =>
+      receivers.map((receiver) => `${file} :: ${receiver}`),
+    );
+    expect([...new Set(reads)].sort()).toEqual(allowed.sort());
   });
 
   it("keeps waitlist-queue.ts a leaf, so booking-create can import it without a cycle", () => {
@@ -78,6 +124,11 @@ describe("waitlist position census (#5402, INV-CAP-041)", () => {
       .filter((entry) => entry.kind !== "type")
       .map((entry) => entry.specifier)
       .sort();
-    expect(runtimeImports).toEqual(["@/config/club-settings-defaults", "@prisma/client"]);
+    expect(runtimeImports).toEqual([
+      "@/config/club-settings-defaults",
+      // No imports of its own; the one definition of a shared night (INV-SSOT-001).
+      "@/lib/booking-night-overlap",
+      "@prisma/client",
+    ]);
   });
 });
