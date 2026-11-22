@@ -53,11 +53,9 @@ export const NOTICE_CONNECTION_SHAPE: ConnectionShape = {
 };
 
 /** `create_notice` and `update_notice` answer with the notice's id only. */
-export const NOTICE_CREATED_CONNECTION_SHAPE = connectionShapeFor<{ notice: { id: string } }>({
+export const NOTICE_SAVED_CONNECTION_SHAPE = connectionShapeFor<{ notice: { id: string } }>({
   notice: { id: true },
 });
-
-export const NOTICE_SAVED_CONNECTION_SHAPE = NOTICE_CREATED_CONNECTION_SHAPE;
 
 export const NOTICE_DELETED_CONNECTION_SHAPE = connectionShapeFor<{ ok: boolean }>({ ok: true });
 

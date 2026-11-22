@@ -21,7 +21,7 @@ import { sendNoticePublishedEmails } from "@/lib/notices-email";
 import { createNoticeSchema } from "@/lib/admin-membership-api/notices";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import {
-  NOTICE_CREATED_CONNECTION_SHAPE,
+  NOTICE_SAVED_CONNECTION_SHAPE,
   NOTICE_LIST_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/membership-notices";
 
@@ -125,7 +125,7 @@ export async function POST(request: Request) {
     }
   }
 
-  return connectionJson(request, { notice: { id: created.id } }, NOTICE_CREATED_CONNECTION_SHAPE, {
+  return connectionJson(request, { notice: { id: created.id } }, NOTICE_SAVED_CONNECTION_SHAPE, {
     status: 201,
   });
 }
