@@ -12,6 +12,9 @@ import {
   usesActiveBookingEditLifecycle,
 } from "@/lib/booking-edit-policy";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #3245 (epic #2797): "IS THIS BOOKING STILL EDITABLE AT ALL?" IS ONE QUESTION
  * WITH ONE ANSWER, AT EVERY EDIT DOOR.
@@ -523,7 +526,7 @@ describe("#3245: no edit door states the eligibility rule a second time", () => 
       policyImporters().some((file) => !NAMED_EDIT_MODULES.includes(file)),
       "the measured half of the population adds files the names do not",
     ).toBe(true);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("NO file near an edit door states a booking-status set of its own", () => {
     const offenders = population().flatMap((file) => {
@@ -558,7 +561,7 @@ describe("#3245: no edit door states the eligibility rule a second time", () => 
         `it. A door outside the population is not seen at all. Passing this ` +
         `is not proof there is no copy.`,
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps the permitted list honest", () => {
     // Both directions: every permitted expression is still present, and the
@@ -621,7 +624,7 @@ describe("#3245: no edit door states the eligibility rule a second time", () => 
         `(INV-SSOT-001) so that a change to the rule cannot leave a door ` +
         `telling a member something untrue — call it instead.`,
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the refusal sentence cannot be built without the status it is about", () => {
     // The structural half of the fix, and the reason the sentence builder is

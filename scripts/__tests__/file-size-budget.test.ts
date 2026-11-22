@@ -26,6 +26,9 @@ import {
   type FileStat,
 } from "../lib/file-size-budget";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 
 /** A small synthetic tree: one file per budget category, all within budget. */
@@ -1298,7 +1301,7 @@ describe("this repository", () => {
     });
     expect(result.findings.filter((f) => f.severity === "unusable")).toEqual([]);
     expect(result.baseSha).toMatch(/^[0-9a-f]{40}$/);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("carries files in every budget category, so no category is silently unenforced", () => {
     const scan = scanRepository(REPO_ROOT);
@@ -1312,7 +1315,7 @@ describe("this repository", () => {
       "route-handler",
       "route-page-shell",
     ]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("classifies every tracked file under src/, leaving no scope hole", () => {
     const scan = scanRepository(REPO_ROOT);
@@ -1321,7 +1324,7 @@ describe("this repository", () => {
     expect(
       scan.trackedFiles.filter((file) => file.startsWith("src/")).length,
     ).toBeGreaterThan(3000);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("reports a git failure instead of throwing out of the scan", () => {
     const scan = scanRepository(path.join(REPO_ROOT, "no-such-directory-2687"));

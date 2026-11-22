@@ -6,6 +6,9 @@ import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 
 import { stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * Unverified-write copy — contract (#2668).
  *
@@ -340,7 +343,7 @@ describe("unverified-write copy contract (#2668)", () => {
     }
 
     expect(findings).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("each honest 'nothing changed' claim still reads before it writes", () => {
     for (const allowed of HONEST_CLAIMS) {

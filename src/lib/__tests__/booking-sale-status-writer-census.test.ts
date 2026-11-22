@@ -41,6 +41,9 @@ import { callsInOwnBody, enclosingFunction } from "./support/function-scope";
 import { productionSourceFiles } from "./support/prisma-delegate-read-scan";
 import { stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const ROOT = process.cwd();
 const WRITE_METHODS = new Set(["create", "createMany", "update", "updateMany", "upsert"]);
 const SALE_STATUSES = new Set(["PAID", "CANCELLED"]);
@@ -519,7 +522,7 @@ describe("every booking PAID/CANCELLED writer is classified (#4628)", () => {
     ]) {
       expect(other).not.toMatch(RAW_STATUS_UPDATE);
     }
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("checks the status-free constants it lets a spread name", () => {
     for (const [name, value] of Object.entries(STATUS_FREE_CONSTANTS)) expect(Object.keys(value), name).not.toContain("status");

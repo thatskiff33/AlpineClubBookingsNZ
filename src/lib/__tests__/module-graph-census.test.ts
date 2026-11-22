@@ -9,6 +9,9 @@ import {
   resolveSpecifier,
 } from "./support/static-import-graph";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * INV-SSOT-008 (#4930): the module graph's three boundary rules.
  *
@@ -146,7 +149,7 @@ describe("module graph census (#4930, INV-SSOT-008)", () => {
     expect(files.length).toBeGreaterThan(100);
     const mentions = files.flatMap((file) => facadeMentions(file, readFileSync(path.join(process.cwd(), file), "utf8")));
     expect(mentions).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("has no src/components import from a src/app route folder", () => {
     expect(componentAppImports(graph)).toEqual([]);

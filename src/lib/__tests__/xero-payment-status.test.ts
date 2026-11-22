@@ -17,6 +17,9 @@ import {
 } from "@/lib/xero-payment-status";
 import { stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const ROOT = path.resolve(__dirname, "../../..");
 const RULE_FILE = path.join("src", "lib", "xero-payment-status.ts");
 
@@ -86,5 +89,5 @@ describe("one live-payment rule: no hand-rolled Xero payment-status comparison (
       offenders,
       "Use isLiveXeroPaymentStatus (or isDeletedXeroPaymentStatus) from src/lib/xero-payment-status.ts",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

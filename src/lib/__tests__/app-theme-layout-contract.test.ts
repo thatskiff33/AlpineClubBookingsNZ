@@ -23,6 +23,9 @@ import { G5A_CARD_SEPARATION } from "@/lib/theme/guarantees";
 import { balancedBrackets } from "./support/balanced-brackets";
 import { blankLiterals, stripCssComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 function readRepoFile(path: string) {
   return readFileSync(join(process.cwd(), path), "utf8");
 }
@@ -583,7 +586,7 @@ describe("database theme app-shell contract", () => {
       );
 
     expect(offenders).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   // The widened scan above is only worth anything if it actually sees the house
   // idiom, so its reach is pinned directly rather than assumed. The three probes
@@ -876,7 +879,7 @@ describe("database theme app-shell contract", () => {
     expect(bedAllocationSources.join("\n")).not.toMatch(
       /bg-[a-z]+-50\/45|dark:bg-[a-z]+-950\/20/,
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps Site Style app chrome semantic while fixed code previews stay isolated", () => {
     const page = readRepoFile("src/app/(admin)/admin/website/site-style/page.tsx");

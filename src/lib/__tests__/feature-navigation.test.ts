@@ -12,6 +12,9 @@ import { MODULE_KEYS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 import { requireCalendarDate } from "@/lib/club-time";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 // All modules on; derived so it covers every module key without drifting.
 const allOn: FeatureFlags = Object.fromEntries(
   MODULE_KEYS.map((key) => [key, true]),
@@ -210,7 +213,7 @@ describe("feature-aware navigation", () => {
         true,
       );
     }
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("preserves old booking request deep-link params on the combined page", () => {
     expect(

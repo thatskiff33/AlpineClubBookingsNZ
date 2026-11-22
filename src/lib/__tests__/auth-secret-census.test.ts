@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 
 import { relativeSource, sourceFiles } from "./support/booking-guest-night-writer-scan";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #4638 / INV-SSOT: new signing paths use requireAuthSecret, not private copies.
  * Run by name: this census reads source from disk, outside the import graph.
@@ -87,5 +90,5 @@ describe("auth secret census", () => {
     }
     expect(env, "Use runtime-config; preserve only the documented distinct readers.").toEqual(ENV_READERS);
     expect(optional, "Use requireAuthSecret for new required signing keys.").toEqual(OPTIONAL_READERS);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

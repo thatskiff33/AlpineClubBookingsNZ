@@ -5,6 +5,9 @@ import { describe, expect, it } from "vitest";
 
 import { stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * `INV-PAY-051` - the expand half of a two-release enum addition, and the rule
  * that the halves stay in different releases (#3213, epic #2797).
@@ -239,7 +242,7 @@ describe("INV-PAY-051: the withheld-share item type is registered, not yet writt
         "release comes, delete this assertion in the same change that starts writing the value.",
       ].join("\n"),
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("would notice a writer - the detector is not blind", () => {
     // The assertion above is an empty-list assertion, so the detector is

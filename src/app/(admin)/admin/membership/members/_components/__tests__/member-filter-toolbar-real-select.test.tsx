@@ -8,6 +8,9 @@ import path from "node:path";
 import { emptyFilters } from "../../_utils";
 import { MemberFilterToolbar } from "../member-filter-toolbar";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * The members filter toolbar rendered against the REAL `@/components/ui/select`.
  *
@@ -124,5 +127,5 @@ describe("every SelectLabel sits inside a SelectGroup", () => {
         "throws rather than degrading - so a bare <SelectLabel> takes the whole " +
         "page down the moment the select renders. Wrap it in <SelectGroup>.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

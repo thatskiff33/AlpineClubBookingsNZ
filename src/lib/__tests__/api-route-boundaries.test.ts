@@ -9,6 +9,9 @@ import {
 import { SHARED_ADMIN_GUARD_WRAPPERS } from "@/lib/__tests__/helpers/admin-route-explicit-permissions";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 function listRouteFiles(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const entryPath = path.join(dir, entry.name);
@@ -366,7 +369,7 @@ describe("API route boundary metadata", () => {
     });
 
     expect(violations).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the shared Alpine Central Server verifier keeps its constant-time compare", () => {
     // Both servernz webhook routes are accepted above because they call
@@ -737,7 +740,7 @@ describe("API route boundary metadata", () => {
       stale: [],
       otherReceivers: [],
     });
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("does not allow SVG uploads through the static image-manager route (stored XSS)", () => {
     // SVG is an XML dialect that can carry inline <script> and event-handler

@@ -11,6 +11,9 @@ import {
 import { auditEnforcedGuardCoverage } from "./support/eslint-guard-coverage";
 import { stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #5399: the caller's IP has one rule (last `X-Forwarded-For` address, then
  * `X-Real-IP`), and it lives in `src/lib/rate-limit-http.ts`. Twenty-five route
@@ -140,5 +143,5 @@ describe("#5399 census: where a client-address header is named in code", () => {
       .map((full) => path.relative(ROOT, full).split(path.sep).join("/"))
       .sort();
     expect(naming).toEqual([HELPER]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

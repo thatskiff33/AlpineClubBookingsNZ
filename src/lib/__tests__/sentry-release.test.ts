@@ -9,6 +9,9 @@ import {
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { APP_VERSION_ENV_VAR, getAppVersion } from "@/lib/app-version";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 // Only `init` matters here: the tests read the options each runtime hands it.
 const sentry = vi.hoisted(() => ({
   init: vi.fn(),
@@ -85,7 +88,7 @@ describe("the Sentry initialisation census (#5262)", () => {
       return /\bSentry\.init\s*\(/.test(source) || namedInit;
     });
     expect(callers.sort()).toEqual([...SENTRY_INIT_FILES].sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 describe("browser Sentry tags releases without session tracking (#5262)", () => {

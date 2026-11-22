@@ -2,6 +2,9 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 function sourceFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const file = path.join(directory, entry.name);
@@ -24,5 +27,5 @@ describe("app version source census (#4985, INV-SSOT)", () => {
       readFileSync(file, "utf8").includes(["npm", "package", "version"].join("_")),
     );
     expect(violations, "Read the build stamp through getAppVersion() instead.").toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

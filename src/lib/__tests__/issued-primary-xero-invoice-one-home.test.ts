@@ -17,6 +17,9 @@ import {
 import { applyPaymentAdjustments } from "@/lib/booking-modify-settlement";
 import { noReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -542,7 +545,7 @@ describe("no edit door states the rule a second time", () => {
       "src/lib/booking-payment-state.ts",
       ...sites.map((site) => site.file),
     ].sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("every file that reaches applyPaymentAdjustments is one of the doors above", () => {
     // The other half of "measure, do not name": if a fifth settlement path
@@ -567,7 +570,7 @@ describe("no edit door states the rule a second time", () => {
     expect(read(SETTLEMENT_MODULE)).toMatch(
       /hasIssuedXeroInvoice\s*=\s*hasIssuedPrimaryXeroInvoice\(booking\)/,
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("INV-PAY-120: every file that settles an edit reads the unpaid ask exactly ONCE, and nothing else reads it raw (#3954 round 4)", () => {
     // Two reads in one transaction split when the member's capture lands
@@ -596,7 +599,7 @@ describe("no edit door states the rule a second time", () => {
       rawReaders,
       "INV-PAY-120: read the ask through readReductionAgainstUnpaidAsk, which carries the net it was read for.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("INV-PAY-120: every edit door that sizes an increase's ask folds in a reduction's waiting re-issue (#3954 round 4)", () => {
     const sizers = filesMentioning(
@@ -620,7 +623,7 @@ describe("no edit door states the rule a second time", () => {
       sizers.filter((file) => !/\bunpaidAskOffsetHistory\(|\bfoldedWaitingAsks,/.test(read(file))),
       "INV-PAY-120 (round 6): record the fold on the increase's history (unpaidAskOffsetHistory), or a failed mint's replay asks without the re-issue.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("INV-PAY-120: every door that records a reduction's unpaid-ask offset makes its re-issued ask and its billed offset's note durable in the same transaction (#3954 rounds 4 and 5)", () => {
     // Round 6: a door that only FOLDS (the guest add, which never reduces)
@@ -634,7 +637,7 @@ describe("no edit door states the rule a second time", () => {
       recorders.filter((file) => (read(file).match(/\bqueueEditAskFollowUps\(/g) ?? []).length !== 1),
       "INV-PAY-120: call queueEditAskFollowUps once, after the BookingModification row exists, or a process dying after commit loses the re-issued ask, a folded increase, or the credit note for an offset the primary invoice had billed.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 describe("why the guest-add correction changes no behaviour today", () => {

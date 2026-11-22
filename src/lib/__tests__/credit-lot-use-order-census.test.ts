@@ -51,6 +51,9 @@ import {
   sourceFiles,
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const USE_ORDER = "CREDIT_LOT_USE_ORDER";
 const ORDER_HOME = "src/lib/xero-applied-credit-plan.ts";
 const READ_METHODS = new Set(["findMany", "findFirst", "findFirstOrThrow"]);
@@ -329,7 +332,7 @@ describe("every credit-lot read ordered by createdAt is classified (#4013, INV-P
     expect(home, `INV-PAY-127: CREDIT_LOT_USE_ORDER in ${ORDER_HOME} must be createdAt asc, then id asc.`).toMatch(
       /export const CREDIT_LOT_USE_ORDER = \[\s*\{ createdAt: "asc" \},\s*\{ id: "asc" \},\s*\]/,
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("finds no raw SQL that orders MemberCredit by createdAt without an id tie-break", () => {
     expect(
@@ -337,5 +340,5 @@ describe("every credit-lot read ordered by createdAt is classified (#4013, INV-P
       'INV-PAY-127: raw SQL orders MemberCredit by "createdAt" with no "id" tie-break. Add one, or declare ' +
         "the file in RAW_SQL_WITHOUT_TIE_BREAK with the reason the order cannot matter.",
     ).toEqual(Object.keys(RAW_SQL_WITHOUT_TIE_BREAK).sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

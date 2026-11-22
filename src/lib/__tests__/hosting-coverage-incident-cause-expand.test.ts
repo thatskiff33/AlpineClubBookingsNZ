@@ -7,6 +7,9 @@ import { describeHostingCoverageIncidentCause } from "@/lib/adult-member-hosting
 
 import { stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * `INV-HOST-052` — a two-release enum addition, and what is left to hold once
  * both halves have landed (#3232 D3, #3241).
@@ -234,7 +237,7 @@ describe("INV-HOST-052: the declined-linked-move cause, registered one release b
       namers,
       `only ${DECLARING_MODULE} may name ${DECLINED_CAUSE} without writing it`,
     ).toEqual([DECLARING_MODULE]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("would notice a writer — the detector is not blind", () => {
     // Both assertions above turn on this regex, and one of them is an exact-list

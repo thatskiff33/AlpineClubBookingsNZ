@@ -18,6 +18,9 @@ import {
   resolveEffectiveLodgeCapacity,
 } from "@/lib/lodge-effective-capacity";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const bookingDoor = (limit: number) => `A booking cannot exceed ${limit} guests`;
 
 describe("isLodgeSetUpForBookings — a resolved zero IS unconfigured_lodge", () => {
@@ -147,7 +150,7 @@ describe("no party-size refusal interpolates a capacity directly (#3407)", () =>
     // add-guests payload pre-check, which measured the default lodge before
     // the booking's own lodge was known.
     expect(helperCalls).toBeGreaterThanOrEqual(15);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("would flag the pre-#3407 spelling", () => {
     expect(

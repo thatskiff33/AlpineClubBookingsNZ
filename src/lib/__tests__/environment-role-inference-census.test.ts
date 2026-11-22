@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 
 import { ENVIRONMENT_ROLE_ENV_VAR } from "@/lib/environment-role-declaration";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * INV-CONFIG-003: nothing decides "is this production?" except the canonical
  * resolver (ENV-SAFETY 1, #3034; epic #2986).
@@ -363,7 +366,7 @@ describe("environment-role inference census (INV-CONFIG-003)", () => {
       unlisted,
       `Unlisted read of a build-mode / slot-name variable. ${REMEDY}`,
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("matches the published read count for every listed file", () => {
     const found = censusReads();
@@ -378,7 +381,7 @@ describe("environment-role inference census (INV-CONFIG-003)", () => {
         `which is what #3035 and #3036 are for — update the count, or delete ` +
         `the entry when it reaches zero.`,
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   /*
     THE DECLARATION VARIABLE ITSELF HAS EXACTLY ONE READER (#3034 review).
@@ -432,7 +435,7 @@ describe("environment-role inference census (INV-CONFIG-003)", () => {
         `effective role — which is what src/lib/health-check.ts does, and why it ` +
         `is not in this list.`,
     ).toEqual([DECLARATION_MODULE]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps the canonical resolver itself free of every one of them", () => {
     for (const file of [

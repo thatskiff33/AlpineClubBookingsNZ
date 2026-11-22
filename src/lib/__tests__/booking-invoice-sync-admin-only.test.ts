@@ -3,6 +3,9 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * THE XERO INVOICE WARNING IS NEVER MEMBER-FACING (#3001, MAD epic #2725).
  *
@@ -92,5 +95,5 @@ describe("the booking's Xero invoice warning stays behind the admin gate", () =>
       .sort();
 
     expect(importers).toEqual(expected);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

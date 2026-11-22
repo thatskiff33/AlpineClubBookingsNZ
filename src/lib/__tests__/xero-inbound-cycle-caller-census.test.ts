@@ -11,6 +11,9 @@ import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const CYCLE = "runXeroInboundReconciliationCycle";
 const DOOR = "src/lib/xero-cron-runner.ts";
 
@@ -67,5 +70,5 @@ describe("Xero inbound cycle callers (#4922, INV-LOCK-003)", () => {
     expect(files).toContain(DOOR);
     const callers = files.flatMap((file) => cycleReferences(file, readFileSync(file, "utf8")).length > 0 ? [file] : []);
     expect(callers, "run the inbound cycle through src/lib/xero-cron-runner.ts, under the xero-inbound-reconcile claim").toEqual([DOOR]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

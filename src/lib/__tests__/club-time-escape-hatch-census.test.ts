@@ -6,6 +6,9 @@ import { describe, expect, it } from "vitest";
 import { blankLiterals, stripComments } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * CT-6 (#2991) — the final escape-hatch census, as a RATCHET.
  *
@@ -478,7 +481,7 @@ describe("the escape-hatch census is exact, and only ever revised downward", () 
       (file) => !ADAPTER_MODULES.has(file) && importsAdapter(read(file), "nzst-date"),
     );
     expect(nzst, nzst.join("\n")).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 describe("the classes CT-6 closed are at zero, and stay there", () => {
@@ -490,14 +493,14 @@ describe("the classes CT-6 closed are at zero, and stay there", () => {
       (file) => findHostClockReads(read(file)) > 0,
     );
     expect(offenders).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("no production file outside the kernel imports Temporal", () => {
     const offenders = PRODUCTION_FILES.filter(
       (file) => findTemporalUse(read(file)) > 0,
     );
     expect(offenders).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("no production file outside the kernel names the environment zone, in ANY spelling", () => {
     // Only the seed reader, excluded above as a kernel sibling, is structurally
@@ -538,7 +541,7 @@ describe("the classes CT-6 closed are at zero, and stay there", () => {
     // stored zone as an argument. Nothing outside the kernel names the
     // environment zone now, so any file this finds is a new leak.
     expect(naming, naming.join("\n")).toHaveLength(0);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("counts the local-midnight constructions no selector can reach", () => {
     const offenders = PRODUCTION_FILES.map((file) => ({
@@ -558,5 +561,5 @@ describe("the classes CT-6 closed are at zero, and stay there", () => {
     expect(
       offenders.reduce((sum, entry) => sum + entry.count, 0),
     ).toBe(CENSUS_CEILING.localMidnightConstructions);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

@@ -60,6 +60,9 @@ import {
   sourceFiles,
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const ORDER_HOME = "src/lib/payment-ledger-order.ts";
 const LEDGER_ORDERS = new Set(["LEDGER_ROWS_OLDEST_FIRST", "LEDGER_ROWS_NEWEST_FIRST"]);
 const READ_METHODS = new Set(["findMany", "findFirst", "findFirstOrThrow"]);
@@ -510,7 +513,7 @@ describe("every capture-ledger read is ordered by the ledger's order, or declare
         "Use compareLedgerRowsOldestFirst / compareLedgerRowsNewestFirst from payment-ledger-order.ts, or " +
         "declare it in CREATED_AT_ONLY_COMPARATORS with the reason a tie cannot matter.",
     ).toEqual(Object.keys(CREATED_AT_ONLY_COMPARATORS).sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps a reason against every entry", () => {
     for (const [entry, reason] of Object.entries({
@@ -533,7 +536,7 @@ describe("every capture-ledger read is ordered by the ledger's order, or declare
     expect(home, `INV-PAY-133: LEDGER_ROWS_NEWEST_FIRST in ${ORDER_HOME} must be createdAt desc, then insertionSeq desc.`).toMatch(
       /export const LEDGER_ROWS_NEWEST_FIRST = \[\s*\{ createdAt: "desc" \},\s*\{ insertionSeq: "desc" \},\s*\]/,
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("finds no raw SQL that orders PaymentTransaction by createdAt without insertionSeq", () => {
     expect(
@@ -541,7 +544,7 @@ describe("every capture-ledger read is ordered by the ledger's order, or declare
       'INV-PAY-133: raw SQL orders PaymentTransaction by "createdAt" with no "insertionSeq" tiebreak. Add one, ' +
         "or declare the file in RAW_SQL_WITHOUT_INSERTION_SEQ with the reason the order cannot matter.",
     ).toEqual(Object.keys(RAW_SQL_WITHOUT_INSERTION_SEQ).sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 describe("unordered first-read scanner regressions (#4180, INV-PAY-133)", () => {

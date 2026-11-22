@@ -6,6 +6,9 @@ import { ADMIN_PAGES } from "@/lib/admin-hubs";
 import type { AdminHubPage } from "@/lib/admin-hubs/define";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 // ---------------------------------------------------------------------------
 // No production code spells a moved admin page's old URL as a string literal
 // (epic #4468, C5 #4802).
@@ -104,7 +107,7 @@ describe("no production code spells a moved admin page's old URL", () => {
     expect(files).toContain("src/app/(admin)/admin/finance/payments/page.tsx");
     expect(files).not.toContain("src/lib/admin-hubs/hubs/finance.ts");
     expect(files.some((file) => file.includes("__tests__"))).toBe(false);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("finds none outside the reviewed list, and every reviewed one still", () => {
     const found = productionFiles("src").flatMap((file) =>
@@ -131,7 +134,7 @@ describe("no production code spells a moved admin page's old URL", () => {
         .map((literal) => `${file}: ${literal}`),
     );
     expect(stale, "a reviewed literal is gone: drop it from ALLOWED").toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("reports each spelling a moved page's URL is written in, and leaves the rest alone", () => {
     // The scanner's own cases, against a synthetic file.

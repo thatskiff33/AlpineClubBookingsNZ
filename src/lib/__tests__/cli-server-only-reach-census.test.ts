@@ -3,6 +3,9 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * AN OPERATOR SCRIPT MAY REACH A `server-only` MODULE ONLY IF EVERY PUBLISHED
  * WAY OF RUNNING IT PASSES `--conditions=react-server`
@@ -661,7 +664,7 @@ describe("CLI entrypoints and the `server-only` boundary", () => {
         "`--help` text and docblock (#2850).\n\n" +
         unswept.join("\n"),
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("would see a raw invocation printed in a script's own usage text", () => {
     // The mutation this guard exists to catch, run as a fixture rather than

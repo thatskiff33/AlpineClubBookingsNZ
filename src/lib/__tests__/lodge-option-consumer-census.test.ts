@@ -2,6 +2,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const EXPECTED_DIRECT_CONSUMERS = [
   "src/app/(admin)/admin/lodge-ops/display/builder/page.tsx",
   "src/app/(admin)/admin/lodge-ops/display/devices/page.tsx",
@@ -85,7 +88,7 @@ describe("production lodge-option consumers stay in the fail-closed census (#288
       .sort();
 
     expect(actual).toEqual([...EXPECTED_DIRECT_CONSUMERS].sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("counts every useLodgeOptions consumer outside the hook implementation", () => {
     const actual = sources
@@ -97,5 +100,5 @@ describe("production lodge-option consumers stay in the fail-closed census (#288
       .sort();
 
     expect(actual).toEqual([...EXPECTED_HOOK_CONSUMERS].sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

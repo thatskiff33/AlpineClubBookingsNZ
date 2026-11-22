@@ -103,6 +103,9 @@ import { GET as getLegacyDashboardBookings } from "@/app/api/finance/legacy-dash
 import { todayDateOnlyForTimeZone } from "@/lib/date-only";
 import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 function mockPublicSettingsFetch() {
   global.fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -276,7 +279,7 @@ describe("#2682 no surface derives today from UTC any more", () => {
       offenders,
       "These files derive today's date in UTC. Lodge nights and finance windows are NZ calendar days — use todayDateOnlyForTimeZone() from @/lib/date-only (#2682).",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("leaves neither public booking form defining a date helper of its own", () => {
     for (const page of [

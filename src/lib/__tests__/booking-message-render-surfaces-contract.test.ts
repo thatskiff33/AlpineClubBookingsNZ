@@ -28,6 +28,9 @@ import {
 } from "@/lib/booking-message-definitions";
 import { balancedBrackets } from "./support/balanced-brackets";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * Files that read booking-message bodies and put them on a screen, with the
  * lodge each one names for `{{CLUB_LODGE_NAME}}`.
@@ -292,7 +295,7 @@ describe("every surface that renders a booking-message body (#2919)", () => {
     );
 
     expect(handSubstitution).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 describe("the client renderer's contract (#2919)", () => {

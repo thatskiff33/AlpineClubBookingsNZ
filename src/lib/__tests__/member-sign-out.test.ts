@@ -11,6 +11,9 @@ vi.mock("next-auth/react", () => nextAuth);
 import { loadWizardWork, saveWizardWork } from "@/lib/booking-wizard-work";
 import { signOutMember } from "@/lib/member-sign-out";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 afterEach(() => {
   window.sessionStorage.clear();
   vi.clearAllMocks();
@@ -76,7 +79,7 @@ describe("signing out forgets the booking wizard's kept work (#4950)", () => {
       return reachesNextAuthSignOut(readFileSync(join(root, file), "utf8"));
     });
     expect(direct).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it.each([
     ['import { signOut } from "next-auth/react";'],

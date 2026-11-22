@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #4961 (`INV-SSOT-007`): an admin read that fails says so through the one
  * shared `AdminLoadError`, and never renders as its own empty state.
@@ -81,7 +84,7 @@ describe("#4961: admin pages that load data render AdminLoadError, never the emp
       importers,
       "A file imports AdminLoadError but is not a SITE here (add it with its gate), or a SITE stopped importing it.",
     ).toEqual(SITES.map((site) => site.file).sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   for (const site of SITES) {
     describe(site.file, () => {

@@ -8,6 +8,9 @@ import { afterAll, describe, expect, it } from "vitest";
 import { blankLiterals } from "@/lib/__tests__/support/strip-comments";
 import { isMainModule } from "./is-main-module.mjs";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const HELPER = "scripts/lib/is-main-module.mjs";
 
@@ -158,7 +161,7 @@ describe("INV-SSOT: one direct-run check (#4598)", () => {
       hits,
       `Use \`isMainModule(import.meta.url)\` from ${HELPER} instead; it realpaths both sides so a run through a symlink still reaches main().`,
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("matches every shape the tree used before #4598, and not the helper call", () => {
     const shapes = [

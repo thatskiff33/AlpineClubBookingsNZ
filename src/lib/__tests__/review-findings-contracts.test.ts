@@ -38,6 +38,9 @@ import {
   bashGateArgs,
 } from "./helpers/bash-fixture-path";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 function readRepoFile(relativePath: string) {
   // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
@@ -605,7 +608,7 @@ describe("review finding source/schema contracts", () => {
         ).toBeLessThan(guardOffset);
       });
     }
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps guest chore token links read-only", () => {
     const source = readRepoFile("src/app/api/chores/[token]/route.ts");

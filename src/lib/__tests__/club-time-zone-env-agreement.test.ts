@@ -8,6 +8,9 @@ import { readEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";
 
 import { stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * The seed reader and the suites' model of the environment's zone must not drift
  * apart (CT-1, #2989; epic #2988).
@@ -178,7 +181,7 @@ describe("the club-timezone seed and the suites' environment zone read the same 
       // The seed for the persisted club timezone — the only reading.
       "src/lib/club-time-zone-env.ts",
     ]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("PREMISE: the census can actually see a reading", () => {
     // Without this leg the assertion above passes just as well when the scanner

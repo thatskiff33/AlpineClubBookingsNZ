@@ -7,6 +7,9 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { productionSourceFiles } from "@/lib/__tests__/support/prisma-delegate-read-scan";
 import { isBookingOwnAmountOwed, PAYMENT_OWED_BOOKING_STATUSES } from "@/lib/booking-status";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * Whether a booking's own price is still owed has one home,
  * `isBookingOwnAmountOwed` (`INV-PAY-119`, `INV-SSOT`). The dashboard's
@@ -58,7 +61,7 @@ describe("the own-amount-owed condition is not restated by hand", () => {
         );
       });
     expect(offenders, "call isBookingOwnAmountOwed from @/lib/booking-status instead").toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the census recognises the inline form it forbids", () => {
     const inline = `const owed =\n  isPaymentOwedBookingStatus(booking.status) &&\n  booking.payment?.status !== "SUCCEEDED";`;

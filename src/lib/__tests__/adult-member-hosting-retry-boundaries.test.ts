@@ -11,6 +11,9 @@ import {
   HOSTING_COVERAGE_RETRY_MESSAGE,
 } from "@/lib/adult-member-hosting-queue-participants";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 function readRepoCode(relativePath: string): string {
   return stripComments(readFileSync(path.resolve(process.cwd(), relativePath), "utf8"));
 }
@@ -104,7 +107,7 @@ describe("adult-member hosting participant retry responses (#2597)", () => {
       // response half, moved out of the route file to keep it in budget.
       "src/lib/booking-change-request-admin-decision.ts",
     ]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("maps only the quote POST and preserves automated retry boundaries", () => {
     const quoteRoute = readRepoCode(

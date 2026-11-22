@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 import { stripComments } from "./support/strip-comments";
 import { BOOKING_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #3635: a `revalidatePath(pattern, "page")` pattern must name a real page
  * file, route groups included, or it refreshes nothing. Two of the patterns in
@@ -51,5 +54,5 @@ describe("revalidatePath page patterns (#3635)", () => {
     // Not vacuous: the tree revalidates the root and group layouts literally.
     expect(seen.length).toBeGreaterThan(0);
     expect(offenders).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

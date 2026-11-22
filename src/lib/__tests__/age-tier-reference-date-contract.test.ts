@@ -50,6 +50,9 @@ import { describe, expect, it } from "vitest";
 import { balancedBrackets } from "./support/balanced-brackets";
 import { blankLiterals } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const SRC = path.join(process.cwd(), "src");
 
 function walk(dir: string): string[] {
@@ -133,7 +136,7 @@ describe("computeAgeTier always receives an explicit reference date (#2870)", ()
         "reached it from inside a lock or a loop. Pass " +
         "getSeasonStartDate(seasonYear) from a season the caller resolved once.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("no longer reaches a club-zone reader from the age-tier module at all", () => {
     // The other half of the same property: with the default gone, `age-tier.ts` has

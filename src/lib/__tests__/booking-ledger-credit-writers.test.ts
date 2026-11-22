@@ -7,6 +7,9 @@ import { describe, expect, it } from "vitest";
 import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #3599 (programme #3527, `INV-MONEY-035`): EVERY CREDIT ROW A BOOKING OWNS
  * REACHES THE LEDGER, AND NO CREDIT ROW IS EVER REWRITTEN IN MONEY TERMS.
@@ -207,7 +210,7 @@ function scan() {
 describe("every booking credit row reaches the ledger, and none is rewritten (#3599, INV-MONEY-035)", () => {
   it("follows every credit-row write with the ledger sync, and rewrites no row's money", () => {
     expect(scan().findings).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("sees the writers it guards, so it cannot pass by seeing nothing", () => {
     const { creates, syncedFiles } = scan();

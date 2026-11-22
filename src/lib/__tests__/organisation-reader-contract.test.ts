@@ -9,6 +9,9 @@ import {
   sourceFiles,
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * WHO READS A SCHOOL'S ORGANISATION RECORD — programme #2912, stages 1 and 2.
  *
@@ -773,7 +776,7 @@ describe("#3367: each declared reader still plays its declared part", () => {
       )
       .map(({ path }) => path);
     expect(callers).toEqual(["src/lib/school-booking-request.ts"]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("derives the named people from the organisation's own contact rows", () => {
     // The reason the split half is declared: it is the reader of

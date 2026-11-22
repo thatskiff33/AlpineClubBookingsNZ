@@ -28,6 +28,9 @@ import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 function readRepoFile(relativePath: string): string {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
@@ -279,7 +282,7 @@ describe("the payment path is DELIBERATELY ungated (#2779, INV-LOCKOUT-069)", ()
           `really does want to refuse payment while a subscription is owed, that ` +
           `is an owner decision and a new issue, not a fix here.`,
       ).toEqual([]);
-    },
+    }, CENSUS_TIMEOUT_MS,
   );
 
   it("confirm-draft's subscription refusal can only ever bite a ZERO-price draft", () => {
@@ -591,7 +594,7 @@ describe("the sixth refusal site, and the paths that were missing (#2543)", () =
         (file) => file !== "src/lib/subscription-lockout-enforcement.ts",
       ),
     ).toEqual(["src/app/api/bookings/[id]/guests/[guestId]/route.ts"]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the modify route answers the refusal with the shared body, before the generic ApiError branch", () => {
     const source = readRepoFile("src/app/api/bookings/[id]/modify/route.ts");
@@ -814,7 +817,7 @@ describe("the booking OWNER reaches every evaluation (#2543, owner decision 3 Au
       "src/lib/waitlist-cross-lodge.ts",
       "src/lib/waitlist.ts",
     ]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("every waitlist-confirm SUCCESS branch carries the rate notice, cross-lodge included", () => {
     // The route has three success returns — cross-lodge promotion, the $0

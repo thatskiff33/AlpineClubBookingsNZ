@@ -19,6 +19,9 @@ import { escapeRegExp } from "@/lib/escape-regexp";
 
 import { stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const ROOT = process.cwd();
 const SRC = path.join(ROOT, "src");
 
@@ -377,7 +380,7 @@ describe("a capped route takes its page fields from one definition (INV-OPS-020)
       return source.includes("pageSize") && SHARED_PAGE_SIZE_DEFINITION.test(stripComments(source));
     });
     expect(redeclared).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("no schema re-declares the shared page field", () => {
     const redeclared = files.filter((file) => {
@@ -385,7 +388,7 @@ describe("a capped route takes its page fields from one definition (INV-OPS-020)
       return source.includes("page") && SHARED_PAGE_DEFINITION.test(stripComments(source));
     });
     expect(redeclared).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the shared page field is still spelled the way the check looks for it (mutation canary)", () => {
     const helper = stripComments(readFileSync(path.join(ROOT, LIST_PAGE_HELPER), "utf8"));

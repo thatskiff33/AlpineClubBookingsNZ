@@ -3,6 +3,9 @@ import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const API_ROOT = path.join(process.cwd(), "src/app/api");
 
 // These endpoints are consumed by authenticated machines or exist expressly to
@@ -269,5 +272,5 @@ describe("client-facing API error response contract (#1888 F31)", () => {
     }
 
     expect(violations).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

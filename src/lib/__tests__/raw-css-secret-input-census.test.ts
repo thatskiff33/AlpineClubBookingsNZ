@@ -7,6 +7,9 @@ import { describe, expect, it } from "vitest";
 // this file's own docblocks quote the defect it looks for.
 import { stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * The bounded census behind #2981: every credential-bearing input rendered on a
  * surface that injects administrator Raw CSS must be a `SecretInput`.
@@ -336,7 +339,7 @@ describe("Raw-CSS surfaces: credential inputs must not reflect the secret (#2981
     // whether it is a fourth SINK — in which case RAW_CSS_SINKS and the surfaces
     // the census walks both have to grow.
     expect(referencing).toEqual(Object.keys(CLUB_THEME_CSS_REFERENCES).sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("resolves the website chrome's surfaces from the tree", () => {
     // A new Raw-CSS route group is censused automatically, but it still has to

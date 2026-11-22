@@ -15,6 +15,9 @@ import { getContextualHelp } from "@/lib/contextual-help";
 import type { AdminHubPage } from "@/lib/admin-hubs/define";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 // ---------------------------------------------------------------------------
 // The registry's `samePage()` for the sidebar (epic #4468, C3 #4800):
 // `activeAdminHref` reads a moved page's old path and hub path as one page.
@@ -272,7 +275,7 @@ describe("no admin active-state check compares raw hrefs", () => {
       /\b[pP]athname\s*[!=]==\s*["'`]\/admin\/|["'`]\/admin\/[^"'`]*["'`]\s*[!=]==\s*\w*[pP]athname\b|\b[pP]athname\??\.startsWith\(\s*["'`]\/admin\//;
     const offenders = files.filter((file) => RAW.test(read(file)));
     expect(offenders).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   /**
    * Every `usePathname()` reader in production code, and how it treats a moved
@@ -343,7 +346,7 @@ describe("no admin active-state check compares raw hrefs", () => {
       .filter((file) => /\busePathname\s*\(/.test(read(file)))
       .sort();
     expect(readers).toEqual(Object.keys(PATHNAME_READERS).sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("puts every admin-path-dependent reader's value through the registry", () => {
     const problems: string[] = [];

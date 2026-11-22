@@ -12,6 +12,9 @@ import { describe, expect, it } from "vitest";
 
 import { stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const ROOT = process.cwd();
 
 function source(relativePath: string): string {
@@ -134,7 +137,7 @@ describe("stay-range model contract (#2622)", () => {
       "src/lib/booking-guest-stay-ranges.ts",
       "src/lib/lodge-display-state.ts",
     ]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("MUTATION PROBE: every converted read surface loads the explicit night rows (#2631)", () => {
     // The operational-day rule is per-night, so a surface that asks it about a

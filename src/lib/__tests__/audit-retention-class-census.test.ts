@@ -6,6 +6,9 @@ import { AUDIT_RETENTION_CLASSES } from "@/lib/audit-retention-classes";
 import { expressionAt } from "./support/balanced-brackets";
 import { blankLiterals, stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #3940: `AuditLog.retentionClass` is free text, so a value outside
  * `AUDIT_RETENTION_CLASSES` is storable. The nightly prune now reads such a
@@ -98,7 +101,7 @@ describe("audit retention class writers stay on the known set (#3940)", () => {
           .map((value) => `${relative(file)}: "${value}"`)
       );
     expect(offenders, `${PREFIX}: unknown retentionClass literal`).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("every migration that inserts an audit row writes a known class", () => {
     const migrations = walk(path.join(ROOT, "prisma", "migrations"), (file) => file.endsWith(".sql"));
@@ -110,7 +113,7 @@ describe("audit retention class writers stay on the known set (#3940)", () => {
       .filter(({ value }) => value === null || !KNOWN.has(value))
       .map(({ file, value }) => `${file}: ${value === null ? "class not readable by this scan" : `"${value}"`}`);
     expect(offenders, `${PREFIX}: an audit-row insert's class is unknown or unreadable`).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the scanners catch what they claim to", () => {
     expect(retentionClassLiteralsIn('logAudit({ retentionClass: "standrad" })')).toEqual(["standrad"]);

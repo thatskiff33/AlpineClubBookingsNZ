@@ -2,6 +2,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 function source(path: string): string {
   return readFileSync(join(process.cwd(), path), "utf8");
 }
@@ -318,7 +321,7 @@ describe("lodge admission and assignment lock topology (#2701)", () => {
     expect(source("src/lib/school-booking-request.ts")).toContain(
       "acquireLodgeCapacityLock(",
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("asks the deactivation predicate the same question before and under the lock", () => {
     // One predicate, two callers. A dependency class added to a copy rather

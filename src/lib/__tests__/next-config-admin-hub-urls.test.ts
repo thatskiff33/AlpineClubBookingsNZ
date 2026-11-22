@@ -14,6 +14,9 @@ import { getPathMatch } from "next/dist/shared/lib/router/utils/path-match";
 import { ASSET_NOT_FOUND_PATH, ASSET_NOT_FOUND_REWRITES } from "@/lib/asset-url-404";
 import { ADMIN_PAGES, ADMIN_RETIRED_PAGES, isInexactAdminPagePath } from "@/lib/admin-hubs";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 // ---------------------------------------------------------------------------
 // `next.config.ts` and the admin hub URLs (epic #4468, C3 #4800).
 //
@@ -128,7 +131,7 @@ describe("next.config.ts with the switch off", () => {
       afterFiles: [...ASSET_NOT_FOUND_REWRITES],
       fallback: [],
     });
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   /**
    * C4 (#4801), C5 (#4802), C6 (#4803), C7 (#4804), C8 (#4805), C9 (#4806), C10

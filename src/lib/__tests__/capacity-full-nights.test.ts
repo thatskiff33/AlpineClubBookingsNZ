@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import { parseDateOnly } from "@/lib/date-only";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #2930 — the night list a capacity refusal carries.
  *
@@ -227,7 +230,7 @@ describe("the capacity refusal is spelled in exactly two files — TEXT scan of 
         "them, and a held night sits at exactly 0 rather than below it — so every " +
         "copy silently dropped the held nights from the list it was building.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   /**
    * The name, still — because the two guards fail differently and say different
@@ -258,5 +261,5 @@ describe("the capacity refusal is spelled in exactly two files — TEXT scan of 
       "INV-SSOT-001: getCapacityFullNights is defined in " +
         "src/lib/capacity-full-nights.ts and imported from there.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

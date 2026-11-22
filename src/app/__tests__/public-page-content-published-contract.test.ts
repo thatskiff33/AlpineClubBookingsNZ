@@ -2,6 +2,9 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * Contract for #2440: every public render path reads PageContent through
  * `getPublishedPageContentByPath()`, which hides unpublished (draft) rows. A
@@ -67,5 +70,5 @@ describe("public PageContent published contract (#2440)", () => {
       "draft pages are never served to the public (#2440):",
       ...offenders,
     ].join("\n")).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

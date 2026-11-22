@@ -10,6 +10,9 @@ import {
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #3276 (INV-MONEY-029): the census that keeps the night adjustment build-up
  * single-homed and every promotion writer paired with it.
@@ -302,7 +305,7 @@ describe("INV-MONEY-029 night adjustment build-up census", () => {
     const writerModule = read(MODULE);
     expect(writerModule).toMatch(/export function deriveNightAdjustmentState\(/);
     expect(writerModule).not.toMatch(/adjustmentsState/);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps the one rule-derived amount to the capped in-progress carry (#4317, owner decision 24 Oct 2026 on #4302)", () => {
     // INV-MONEY-029's exception: a capped carried promotion's surviving rows are
@@ -324,7 +327,7 @@ describe("INV-MONEY-029 night adjustment build-up census", () => {
       if (relative !== CAP) expect(code, relative).not.toMatch(/\bscaleCappedCarriedRows\b/);
     }
     expect(handedOver).toEqual(["src/lib/booking-batch-modification-service.ts"]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("pairs every promotion writer with the recorder, in the order the night rows allow", () => {
     for (const [file, check] of Object.entries(PROMO_WRITERS)) {
@@ -352,7 +355,7 @@ describe("INV-MONEY-029 night adjustment build-up census", () => {
       [...writers].sort(),
       "INV-MONEY-029: a new promotion writer must be added to PROMO_WRITERS with its recording shape.",
     ).toEqual(Object.keys(PROMO_WRITERS).sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps every direct PromoRedemption / allocation / guest-target write inside src/lib/promo.ts", () => {
     const offenders: string[] = [];
@@ -380,7 +383,7 @@ describe("INV-MONEY-029 night adjustment build-up census", () => {
     expect(directDemoWrites.sort()).toEqual([...DEMO_SEED_RESET_WRITES].sort());
     // The control: promo.ts really is where those writes live.
     expect(read("src/lib/promo.ts")).toMatch(REDEMPTION_WRITE);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("requires every discovered night writer to say how it records — paired, or exempt with a reason", () => {
     const discovered = DISCOVERED_NIGHT_WRITERS;
@@ -415,7 +418,7 @@ describe("INV-MONEY-029 night adjustment build-up census", () => {
       }
     }
     expect(importers.sort()).toEqual([...MODULE_IMPORTERS].sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("mutation-proves the pairing helper rejects a site whose record was dropped", () => {
     const paired =

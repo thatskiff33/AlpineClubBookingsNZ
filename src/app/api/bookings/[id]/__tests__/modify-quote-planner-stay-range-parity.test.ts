@@ -222,6 +222,9 @@ import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { GUEST_NIGHT_INVALID_MESSAGE } from "@/lib/booking-guest-stay-range-input";
 import { resolvePromoPreviewStays } from "@/lib/promo-preview-stay-ranges";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 
 const D = (s: string) => parseDateOnly(s);
 const NOW = new Date("2026-08-10T06:00:00.000Z");
@@ -2004,7 +2007,7 @@ describe("#2563 exactly one stay-range resolution exists, and the route calls it
     // generic date helpers several unrelated modules declare for themselves; what
     // must not exist twice is THIS envelope.)
     expect(sourceFilesNaming("const unionEnvelope")).toEqual([RESOLVER_FILE]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the route boundary maps the resolver's error without restating the rule", () => {
     const source = readRepoFile(ROUTE_FILE);

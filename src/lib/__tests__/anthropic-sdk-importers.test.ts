@@ -32,6 +32,9 @@ import { describe, expect, it } from "vitest";
 
 import { stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const SRC_DIR = join(import.meta.dirname, "..", "..");
 
 /**
@@ -116,11 +119,11 @@ describe("the Anthropic SDK has exactly the importers we decided on (#2378)", ()
     // assertion would fail loudly — but a broken walk that returned only the two
     // allowed files would pass while checking nothing.
     expect(discoverSourceFiles(SRC_DIR).length).toBeGreaterThan(200);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("is imported by exactly the allowed modules and no others", () => {
     expect(discoverImporters()).toEqual([...ALLOWED_SDK_IMPORTERS].sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("finds a real import in each allowed module, so neither entry is stale", () => {
     // The other direction. An allowed entry whose file no longer imports the SDK is a

@@ -7,6 +7,9 @@ import { describe, expect, it } from "vitest";
 // as a second implementation, and no wording may hide a real one.
 import { stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * Census: "which membership types carry their own hut rates" is written once
  * (`INV-MOD-007`, `INV-SSOT-001`, #2933).
@@ -173,5 +176,5 @@ describe("INV-MOD-007: the rate-bearing rule is spelled once (#2933)", () => {
       offenders,
       `These files spell "which membership types carry their own hut rates" themselves. That rule is INV-MOD-007 and it has ONE home: import isRateBearingMembershipType, requiresHutRates or selectTypesRequiringHutRates from "@/lib/membership-type-rate-coverage". Seven copies of this sentence existed before #2933 and the one furthest from the others had already dropped the NON_MEMBER exception, which is the type every non-member guest prices from. Offenders: ${offenders.join(", ")}`,
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

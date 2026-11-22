@@ -10,6 +10,9 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * `INV-INT-016` — the no-`lodgeId` mode of `GET /api/bookings/rooms` is kept for
  * consumers OUTSIDE this repository, and no client inside it may use it (#2678
@@ -109,7 +112,7 @@ describe("INV-INT-016: /api/bookings/rooms unscoped mode (#2678)", () => {
         "FORKED and EXTERNAL consumers only — see INV-INT-016 in " +
         "docs/invariants/integrations.md.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("still SERVES the unscoped mode, so a fork's pre-multi-lodge call keeps working", () => {
     // The complement, and the half a "no internal caller" test cannot state on
@@ -161,5 +164,5 @@ describe("INV-INT-016: /api/bookings/rooms unscoped mode (#2678)", () => {
         "live claim that it does not. Rewrite it in the past tense and cite the " +
         "rule — docs/invariants/integrations.md, INV-INT-016.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

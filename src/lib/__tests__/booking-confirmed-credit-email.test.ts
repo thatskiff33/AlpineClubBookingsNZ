@@ -79,6 +79,9 @@ import {
 } from "@/lib/email-message-token-contract";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const GLOBAL_DATA: EmailTemplateData = {
   BASE_URL: "https://bookings.example.org",
   CLUB_LODGE_TRAVEL_NOTE: "Take the Bruce Road.",
@@ -643,7 +646,7 @@ describe("#2328 × #2483 the unpaid branch's live-path premise", () => {
       .sort();
 
     expect(passers).toEqual(["src/lib/school-booking-request.ts"]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("applies account credit on that path only where the member chose it, through the shared writer", () => {
     // THE TRIPWIRE FIRED (#4019). The whole-lodge approval now

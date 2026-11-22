@@ -13,6 +13,9 @@ import { balancedBrackets } from "./support/balanced-brackets";
 import { productionSourceFiles } from "./support/prisma-delegate-read-scan";
 import { blankLiterals } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const ROOT = process.cwd();
 const CALL = /\brefundPaymentTransactions\s*\(/g;
 
@@ -78,5 +81,5 @@ describe("every card refund sender names the debt its slices pay (#4516)", () =>
       return [[file, { withCardRefund, withoutCardRefund: found.length - withCardRefund }] as const];
     });
     expect(Object.fromEntries(sites), "an edit posts its lines without its card refund: its refund would post unapplied").toEqual(MODIFICATION_LINE_SITES);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

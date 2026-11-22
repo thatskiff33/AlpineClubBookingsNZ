@@ -8,6 +8,9 @@ import {
   rosterOperationalDayRange,
 } from "@/lib/roster-lock"
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const ROOT = process.cwd()
 const WRITERS = [
   "src/app/api/lodge/guests/[date]/depart/route.ts",
@@ -64,7 +67,7 @@ describe("roster-date lock source contract (#2586)", () => {
       .map((file) => path.relative(ROOT, file).replaceAll("\\", "/"))
       .sort()
     expect(found).toEqual([...WRITERS].sort())
-  })
+  }, CENSUS_TIMEOUT_MS)
 
   it("pins direct whole-roster and row writers to the shared roster-date lock", () => {
     expect(source("src/lib/admin-roster-service.ts")).toMatch(/await lockRosterEligibilityMutation\(tx, lodgeId, date\)/)
@@ -286,7 +289,7 @@ describe("roster-date lock source contract (#2586)", () => {
     expect(source("src/lib/roster-lock.ts")).toContain(
       "addDaysDateOnly(checkOut, 1)",
     )
-  })
+  }, CENSUS_TIMEOUT_MS)
 })
 
 // ---------------------------------------------------------------------------

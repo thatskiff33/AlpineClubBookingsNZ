@@ -20,6 +20,9 @@ import { describe, expect, it } from "vitest";
 import { balancedBrackets } from "./support/balanced-brackets";
 import { blankLiterals } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const REPO_ROOT = process.cwd();
 const SCAN_DIRS = ["src", "scripts", "e2e", "prisma"].map((dir) => path.join(REPO_ROOT, dir));
 const SOURCE_EXTENSIONS = /\.(ts|tsx|mts|mjs|js|sh|sql)$/;
@@ -119,14 +122,14 @@ describe("XeroToken retirement (#3806)", () => {
       if (xeroTokenDelegateCalls(text).length > 0) offenders.push(rel);
     }
     expect(offenders, FAILURE).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("raw SQL quotes the table only in this drop and in history", () => {
     const sources = productionSources();
     const naming = sources.filter(({ text }) => rawSqlNamesTable(text)).map(({ rel }) => rel);
     expect(naming.sort(), FAILURE).toEqual([...QUOTED_TABLE_ALLOWLIST].sort());
     expect(sources.length).toBeGreaterThan(1000);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("XeroConnection's generated fields are exactly the six non-secret ones", () => {
     expect(

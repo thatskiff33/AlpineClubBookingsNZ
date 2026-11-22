@@ -5,6 +5,9 @@ import { MODULE_KEYS } from "@/config/modules";
 import { blankLiterals, stripComments } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 // The guard from issues 153, 150 and 175 of hoppers99/AlpineClubBookingsNZ: every
 // read AND write of the ClubModuleSettings singleton must use an explicit column `select`
 // (CLUB_MODULE_SETTINGS_COLUMN_SELECT in src/config/modules.ts). A bare
@@ -319,7 +322,7 @@ describe("ClubModuleSettings reads use an explicit column select", () => {
       `INV-SSOT-001: an object literal naming more than ${MAX_HAND_SPELLED_MODULE_KEYS} module keys as \`<key>: true\` is a hoisted copy of MODULE_KEYS, ` +
         "wherever it is later passed. Import CLUB_MODULE_SETTINGS_COLUMN_SELECT (src/config/modules.ts) or derive from MODULE_KEYS instead.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   // The config-transfer club-settings category reads and writes the singleton
   // through generic `delegateOf(...).findUnique(...)` / `.upsert(...)`

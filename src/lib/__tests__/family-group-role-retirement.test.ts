@@ -60,6 +60,9 @@ import { describe, expect, it } from "vitest";
 
 import { stripCommentsAndStrings } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const REPO_ROOT = process.cwd();
 // scripts/ is walked for the same reason it always was: that is where the last
 // survivor hid, in raw fixture SQL a src/+prisma/ scan could never have seen.
@@ -394,7 +397,7 @@ describe("#2520 FamilyGroupMember.role is dropped", () => {
         `SQL at or before ${DROP_MIGRATION_PREFIX} is exempt because applied ` +
         "history is immutable and the drop pair has to name the column.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("finds the raw-SQL surface it is meant to police", () => {
     // If the scan matched no "FamilyGroupMember" raw SQL anywhere it would pass
@@ -404,7 +407,7 @@ describe("#2520 FamilyGroupMember.role is dropped", () => {
       statements.some((statement) => TABLE_REFERENCE.test(statement.text)),
     );
     expect(withTable.length).toBeGreaterThan(0);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the raw-SQL scan catches the shapes that once slipped past it", () => {
     // Pins the three holes closed rather than trusting the regex by eye. Each

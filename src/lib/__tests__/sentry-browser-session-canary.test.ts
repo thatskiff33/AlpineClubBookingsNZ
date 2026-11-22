@@ -4,6 +4,9 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadBrowserSentryInit } from "@/lib/__tests__/helpers/sentry-init-files";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * A canary bound to the INSTALLED Sentry SDK (#5262).
  *
@@ -155,5 +158,5 @@ describe("the installed Sentry SDK still matches the browser's tagging-only filt
     // And that file is the one that names the integration the app drops.
     const namesIt = new RegExp(`name:\\s*["']${SESSION_INTEGRATION}["']`);
     expect(callers.filter(({ source }) => !namesIt.test(source)).map(({ file }) => file)).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

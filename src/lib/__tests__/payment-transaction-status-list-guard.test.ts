@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * Every tree that holds production code a captured-status copy could be
  * written into. `prisma/migrations` is skipped: it is SQL history, never
@@ -297,7 +300,7 @@ describe("INV-SSOT: captured Payment and PaymentTransaction status guard (#3606,
       (subtree) => !scanned.some((file) => file.startsWith(`${subtree}/`)),
     );
     expect(unreached).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("rejects handwritten captured triples and unregistered aggregate authority readers", () => {
     const files = productionSourceFiles();

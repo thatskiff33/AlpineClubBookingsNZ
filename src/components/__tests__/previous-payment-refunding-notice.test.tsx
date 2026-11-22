@@ -8,6 +8,9 @@ import { describe, expect, it } from "vitest";
 import { PreviousPaymentRefundingNotice } from "@/components/previous-payment-refunding-notice";
 import { PREVIOUS_PAYMENT_REFUNDING_NOTICE } from "@/lib/payment-recovery-contract";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #4300 (`INV-PAY-138`, `INV-SSOT`): one going-back notice for both card pages.
  * Its live region stays mounted and only its content changes (#2160's rule).
@@ -44,5 +47,5 @@ describe("PreviousPaymentRefundingNotice", () => {
       .filter((file) => readFileSync(file, "utf8").includes("PREVIOUS_PAYMENT_REFUNDING_NOTICE"))
       .map((file) => relative(REPO_ROOT, file));
     expect(users.sort()).toEqual(["src/components/previous-payment-refunding-notice.tsx", "src/lib/payment-recovery-contract.ts"]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

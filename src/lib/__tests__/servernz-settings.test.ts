@@ -33,6 +33,9 @@ import {
   type ServerNzConnectionTx,
 } from "@/lib/servernz-settings";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 // The mocked global client standing in for the answer fence's transaction:
 // only `withCurrentServerNzConnection` mints the type in production (#4470).
 const answerTx = prisma as unknown as ServerNzAnswerTx;
@@ -362,7 +365,7 @@ describe("the version column has one writer (#4366)", () => {
       .map((file) => file.split("\\").join("/"))
       .sort();
     expect(callers).toEqual(["lib/servernz-settings.ts", "lib/servernz-version-record.ts"]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 describe("recordOtherLodgesDownload: the keyed marker (triyder/AlpineClubBookingsNZ#64)", () => {
   it("sets otherLodgesKeyedAt only when told the whole registry merged", async () => {

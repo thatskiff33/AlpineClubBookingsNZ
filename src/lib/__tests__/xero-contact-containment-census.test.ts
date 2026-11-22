@@ -7,6 +7,9 @@ import { XERO_SANDBOX_CONTACT_EMAIL_DOMAIN } from "@/lib/xero-sandbox-contact-em
 
 import { stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * INV-CONFIG-005: no Xero contact write can put a member's real email address on
  * a contact without asking which installation this is (ENV-SAFETY 3, #3036;
@@ -217,7 +220,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
         ...NO_EMAIL_CONTACT_WRITERS,
       ].sort(),
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps the two no-email writers from COMPOSING an email address", () => {
     /*
@@ -468,7 +471,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
         "rather than putting a member's address on a copy's Xero contact, but " +
         "it must not reach review at all (INV-CONFIG-005).",
     ).toEqual([CONTAINMENT_MODULE]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("reads the environment ROLE for containment, never the delivery policy", () => {
     /*
@@ -538,7 +541,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
         "builder come to disagree about what counts as contained " +
         "(INV-CONFIG-005).",
     ).toEqual([SANDBOX_MODULE]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("never writes a contained address onto a Member row", () => {
     /*

@@ -18,6 +18,9 @@ import {
   PRODUCTION_GUARD_ROSTER,
 } from "./support/eslint-guard-coverage";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * `INV-SSOT-003` (#3126) — a parameter that resolves a CLUB authority may not
  * carry a default.
@@ -1024,7 +1027,7 @@ describe("the census: nothing in the tree binds a club authority", () => {
         "imported from there. Each needs a real binder rather than a scanner, " +
         "and neither has a live instance.\n" + binding.join("\n"),
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("would report more files' worth of prose if it read raw source", () => {
     // The measurement behind the docblock at the top of this file, kept as an
@@ -1043,7 +1046,7 @@ describe("the census: nothing in the tree binds a club authority", () => {
         "applied above before lowering it — the two instruments have to measure " +
         "the same way or they are one instrument and a rubber stamp.",
     ).toBeGreaterThan(code.length);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 // ---------------------------------------------------------------------------

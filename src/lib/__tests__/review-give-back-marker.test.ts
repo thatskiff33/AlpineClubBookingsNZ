@@ -25,6 +25,9 @@ import { describe, expect, it } from "vitest";
 import { balancedBrackets } from "./support/balanced-brackets";
 import { blankLiterals } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const ROOT = join(__dirname, "..", "..", "..");
 
 function sourceFiles(dir: string): string[] {
@@ -71,5 +74,5 @@ describe("only a review's give-back marks an applied-credit row with its source 
       // The give-back writer itself, which sets it only when handed one.
       "src/lib/member-credit.ts giveBackAppliedCredit memberCredit.create",
     ]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

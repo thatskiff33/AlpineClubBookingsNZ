@@ -188,7 +188,7 @@ describe("census: no hand-written date-only pattern outside the allowed files (A
 
   it("finds the shape home's own pattern, so the scan is not blind", () => {
     expect(handSites().filter((file) => file === SHAPE_HOME)).toEqual([SHAPE_HOME]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("counts both spellings it refuses and skips the one ALP-574 owns", () => {
     const count = (code: string) => Array.from(code.matchAll(HAND_PATTERN)).length;
@@ -200,9 +200,9 @@ describe("census: no hand-written date-only pattern outside the allowed files (A
 
   it("finds no hand-written pattern outside the allowed files", () => {
     expect(handSites().filter((file) => !(file in ALLOWED))).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("finds every allowed file still spelling it, so a stale entry is removed", () => {
     expect([...new Set(handSites())].sort()).toEqual(Object.keys(ALLOWED).sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

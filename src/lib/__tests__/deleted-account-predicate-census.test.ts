@@ -5,6 +5,9 @@ import { describe, expect, it } from "vitest";
 
 import { stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const SRC_DIR = join(import.meta.dirname, "..", "..");
 const CANONICAL = "lib/deleted-account.ts";
 const DOMAIN_DEFINITION = "lib/deleted-account-email.ts";
@@ -148,7 +151,7 @@ describe("one canonical erased-member predicate (#3542)", () => {
         "predicate in src/lib/deleted-account.ts. Import it; do not reconstruct " +
         "an erased-member shape.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("mutation: rejects the former canonical password-or-address shape", () => {
     const mutant = `

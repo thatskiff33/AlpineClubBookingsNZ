@@ -5,6 +5,9 @@ import { describe, expect, it } from "vitest";
 import { blankLiterals, stripComments } from "@/lib/__tests__/support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #3980 (`INV-PAY-136`, `INV-LOCK-003`'s spirit for a row-lock site): the
  * inventory of the edit's claim on the Payment row. Every ordinary edit door
@@ -55,7 +58,7 @@ describe("the edit's claim on the unlinked primary invoice: call sites (#3980)",
     const files = sourceFiles();
     expect(files.length).toBeGreaterThan(500);
     for (const file of [CLAIM, SETTLEMENT, GUESTS_ROUTE, ...SETTLEMENT_DOORS]) expect(files).toContain(file);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the claim guards on the link still being unset", () => {
     expect(read(CLAIM)).toMatch(/payment\.updateMany\(\{\s*where: \{ id: input\.paymentId, xeroInvoiceId: null \}/);
@@ -104,7 +107,7 @@ describe("the edit's claim on the unlinked primary invoice: call sites (#3980)",
       "src/lib/xero-primary-invoice-fee-gap.ts update",
       "src/lib/xero-primary-invoice-fee-gap.ts updateMany",
     ]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   /**
    * Review round 2 F3: every door that mints a card ask after its commit hands
@@ -136,7 +139,7 @@ describe("the edit's claim on the unlinked primary invoice: call sites (#3980)",
         expect(call, door).not.toMatch(/additionalPaymentIntentId: null\b/);
       }
     }
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("every price writer outside the edit doors that claims does so through the one write", () => {
     const callers = sourceFiles().filter(
@@ -148,7 +151,7 @@ describe("the edit's claim on the unlinked primary invoice: call sites (#3980)",
       "src/lib/booking-review-price-rebase.ts",
       "src/lib/school-pending-adult-resolution.ts",
     ]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("applyPaymentAdjustments makes it for its doors, and each door marks its history row", () => {
     expect(read(SETTLEMENT)).toContain("await writeEditOnPayment(tx, {");
@@ -171,5 +174,5 @@ describe("the edit's claim on the unlinked primary invoice: call sites (#3980)",
       (file) => file !== SETTLEMENT && /\bapplyPaymentAdjustments\(/.test(read(file)),
     );
     expect(callers).toEqual(SETTLEMENT_DOORS);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

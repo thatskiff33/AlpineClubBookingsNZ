@@ -10,6 +10,9 @@ import { describe, expect, it } from "vitest";
 // Matching raw text enrolled it as a notify-prompt surface.
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /*
   #2259 (owner decision D10) — the two invariants the "No emails" UI must never
   break, checked structurally rather than by review.
@@ -554,7 +557,7 @@ describe("No emails honesty rule (#2259)", () => {
     ).toEqual(
       [...BOOKING_NOTIFY_PROMPTS, ...Object.keys(NOT_BOOKING_BOUND)].sort(),
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("offers no email choice on a silenced booking", () => {
     /*

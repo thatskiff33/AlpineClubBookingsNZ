@@ -452,7 +452,7 @@ describe("#2681 night-occupancy census: one calculation, every term", () => {
         `${file} is declared in the occupancy census but no longer exists`,
       ).toBe(true);
     }
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("enumerates every per-night active-guest counter", () => {
     const declared = new Set(
@@ -474,5 +474,5 @@ describe("#2681 night-occupancy census: one calculation, every term", () => {
         `${counter.file} is declared as a per-night guest counter but no longer uses countActiveGuestsForNight — drop the entry`,
       ).toBe(true);
     }
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

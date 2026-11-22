@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 import { blankLiterals } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 // #2130 guard (same shape as club-module-settings-select-guard.test.ts): every
 // read AND write of XeroItemCodeMapping and AgeTierSetting must name its
 // columns with an explicit `select`. A bare
@@ -140,5 +143,5 @@ describe("doomed-column models are read and written with an explicit select", ()
     // vacuously forever.
     expect(scanned.length).toBeGreaterThan(0);
     expect(offenders).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

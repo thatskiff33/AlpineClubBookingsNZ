@@ -59,6 +59,9 @@ import {
   type AdultMemberHostScopeSet,
 } from "@/lib/policies/adult-member-hosting";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 function readRepoFile(relativePath: string): string {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
@@ -2267,7 +2270,7 @@ describe("the participant fence stays switched ON where a suite claims it (#2623
         "double `fenceHostingPolicyFindMany()` (and make its booking fixtures " +
         "hosting-evaluable), or add it here with a reason.",
     ).toEqual(FENCE_DOUBLES_WITHOUT_AN_ACTIVE_POLICY);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   /**
    * The census above can only see that the helper is CALLED — it cannot see what
@@ -2357,7 +2360,7 @@ describe("the participant fence stays switched ON where a suite claims it (#2623
         "returns first) while every test stays green — the #2675 bypass, " +
         "restored by one word. Use ENFORCED or ADMIN_REVIEW_REQUIRED.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 

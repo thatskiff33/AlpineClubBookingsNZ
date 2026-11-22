@@ -8,6 +8,9 @@ import { relativeSource, sourceFiles } from "@/lib/__tests__/support/booking-gue
 import { cardRefundDoorOf } from "@/lib/card-refund-own-note-share";
 import * as keys from "@/lib/payment-recovery-keys";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #4312 review (`INV-ADDPAY-047`, `INV-SSOT`): EVERY STRIPE REFUND THE APP
  * MAKES STAMPS A `reason` IN ITS METADATA.
@@ -178,7 +181,7 @@ describe("every Stripe refund the app makes stamps a reason (#4312 review)", () 
     const files = scannedFiles();
     expect(refundCalls(files).length).toBeGreaterThan(15); // 18 when written
     expect(refundCallsWithoutReason(files)).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   const at = (text: string) => refundCallsWithoutReason([{ path: "x.ts", text }]).map((finding) => finding.replace(/ \(.*\)$/, ""));
 

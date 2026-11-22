@@ -3,6 +3,9 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * Every `nosemgrep` annotation in the tree, pinned by name (#2842).
  *
@@ -207,7 +210,7 @@ describe("Semgrep suppression census (#2842)", () => {
         (a, b) => a.file.localeCompare(b.file) || a.rule.localeCompare(b.rule),
       ),
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("scans e2e/, the directory the first census missed", () => {
     // The specific regression this suite was written for. `e2e/` is tracked,
@@ -221,7 +224,7 @@ describe("Semgrep suppression census (#2842)", () => {
     expect(covered).toContain("e2e/helpers/stay-dates.ts");
     expect(covered.some((file) => file.startsWith("src/"))).toBe(true);
     expect(covered.some((file) => file.startsWith("scripts/"))).toBe(true);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("sees every spelling Semgrep honours, and no prose", () => {
     // The four spellings the first version of this census missed, each probed

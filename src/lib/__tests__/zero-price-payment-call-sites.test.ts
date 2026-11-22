@@ -28,6 +28,9 @@ import { createZeroPriceConfirmationPayment } from "@/lib/booking-zero-price-pay
 import { callsInOwnBody, enclosingFunction } from "./support/function-scope";
 import { productionSourceFiles } from "./support/prisma-delegate-read-scan";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const ROOT = process.cwd();
 const HELPER = "createZeroPriceConfirmationPayment";
 const HELPER_FILE = "src/lib/booking-zero-price-payment.ts";
@@ -85,7 +88,7 @@ describe("the one $0 confirmation Payment writer (#5167)", () => {
       .filter((file) => calls(parse(file), callsNamed(HELPER)).length > 0)
       .sort();
     expect(callers).toEqual([...CREATORS].sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it.each(CREATORS)("%s writes no zero-amount Payment row inline", (file) => {
     const source = parse(file);

@@ -24,6 +24,9 @@ import {
   type EffectiveLodgeCapacity,
 } from "@/lib/lodge-effective-capacity";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 describe("resolveEffectiveLodgeCapacity — the scenario table in docs/CAPACITY_MODEL.md", () => {
   // Columns match the published table: active beds, configured capacity, then
   // the effective capacity and `source` the table says they resolve to. The
@@ -379,7 +382,7 @@ describe("the effective-capacity rule has one home (INV-SSOT-001)", () => {
       .sort();
 
     expect(importers).toEqual([...EXPECTED_IMPORTERS].sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("would see a relative or dynamic importer, not only an alias one", () => {
     // Mutation-proof for the widening itself: the three forms an importer can

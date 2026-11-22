@@ -10,6 +10,9 @@ import {
 } from "../../../eslint.config.mjs";
 import { stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * `src/config/operational.ts` is gone, with all four of its constants
  * (#3567, the last stage of programme #3205), and nothing may import it again.
@@ -271,5 +274,5 @@ describe("#3567 re-review: no reader of the environment's currency or locale, in
       offenders,
       "Only src/lib/club-format-env.ts may read CURRENCY / LOCALE (the first-boot seed), and nothing reads the NEXT_PUBLIC_ twins (#3567). Read the club's stored format instead.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

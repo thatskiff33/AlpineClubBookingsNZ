@@ -2,6 +2,9 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 // Recursively collect the app/component/lib source files (TS/TSX only). The
 // `.css` sheet and the `__tests__` fixtures are excluded: the shims that map
 // categorical hues in dark mode legitimately name the Tailwind teal utilities,
@@ -71,7 +74,7 @@ describe("brand accent source contract", () => {
             `admin-configured site colours apply, or the cat1..cat6 scales for a ` +
             `categorical status hue. Offenders:\n${offenders.join("\n")}`,
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 // #2188 P2 (R5) — the NEW repo-wide colored-family source contract. The 16
@@ -107,7 +110,7 @@ describe("colored-family source contract (R5, 16 families, repo-wide)", () => {
             `surface follows the club theme. ` +
             `Offenders:\n${offenders.join("\n")}`,
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 // #2188 P2 (lens1 F1) — on-solid AA contract. A saturated step-9 fill carries
@@ -159,7 +162,7 @@ describe("on-solid AA source contract (F1, repo-wide)", () => {
             `bg-success text-success-foreground, …). Step-9 is for decorative, ` +
             `text-free fills only. Offenders:\n${offenders.join("\n")}`,
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 // The /finance and admin surfaces render inside `app-theme-scope` (see
@@ -294,5 +297,5 @@ describe("themed-surface neutral contract (repo-wide, #2188 P2)", () => {
             `deliberate exception needs a per-file THEMED_NEUTRAL_ALLOWLIST ` +
             `entry with a stated reason. Offenders:\n${offenders.join("\n")}`,
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

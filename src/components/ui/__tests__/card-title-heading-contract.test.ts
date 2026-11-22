@@ -8,6 +8,9 @@ import {
   SOURCE_FILES,
 } from "./support/card-title-source";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #2796 — the guard that stops "a card title has no heading semantics" being
  * discovered and hand-patched a fourth time.
@@ -60,7 +63,7 @@ describe("CardTitle heading semantics have exactly one spelling (#2796)", () => 
         "how to see. Offending sites:\n" +
         offenders.join("\n")
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the mechanism itself is still present and still has no default level", () => {
     const card = read("src/components/ui/card.tsx");
@@ -206,7 +209,7 @@ describe("e2e heading assertions target real headings (#2796)", () => {
         "headingLevel from its page's real outline (#2796):\n" +
         findings.join("\n")
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("scans a tree that actually contains the files it claims to scan", () => {
     // A discovery guard that silently discovers nothing is the failure mode
@@ -217,5 +220,5 @@ describe("e2e heading assertions target real headings (#2796)", () => {
     expect(
       E2E_FILES.some((file) => read(file).includes('getByRole("heading"'))
     ).toBe(true);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

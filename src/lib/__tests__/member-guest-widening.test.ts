@@ -650,7 +650,7 @@ describe("call-site survey", () => {
     expect(familyFirstCallers).toEqual(
       FAMILY_FIRST_CALL_SITES.map((site) => site.file).sort(),
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("declares each family-first caller's real authorization modes", () => {
     for (const site of FAMILY_FIRST_CALL_SITES) {
@@ -1102,7 +1102,7 @@ describe("consent columns have exactly one writer", () => {
       .filter((file) => !(file in census));
 
     expect(mentions).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("has no census row that no longer names a consent column", () => {
     // THE OTHER HALF, and it was missing. The sweep above only catches a file
@@ -1218,7 +1218,7 @@ describe("the two open-search privacy toggles are off by default, and have exact
     for (const file of passesThroughOnly) {
       expect(readRepoFile(file)).not.toContain("openMemberSearchIncludesMinors");
     }
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps the honest admin copy in step with reality — the 'not in use yet' notice is gone", () => {
     // The promise src/lib/member-guest-settings.ts made while these values were
@@ -1251,7 +1251,7 @@ describe("the module flag now gates the widening, and says so", () => {
         ),
       );
     expect(readers.length).toBeGreaterThan(0);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("no longer tells an admin the switch does nothing (D-17)", () => {
     // MG1 shipped the switch with a "Not available yet" prefix on its
