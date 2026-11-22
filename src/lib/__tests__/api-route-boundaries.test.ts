@@ -104,6 +104,7 @@ const directJsonReadAllowlist: Record<
       "src/app/api/admin/members/[id]/lifecycle/delete/route.ts",
       "src/app/api/admin/members/[id]/membership-cancellation/route.ts",
       "src/app/api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]/route.ts",
+      "src/app/api/admin/menu-role/route.ts",
       "src/app/api/auth/request-email-change/route.ts",
       "src/app/api/display/pair/route.ts",
       "src/app/api/finance/sync/backfill-monthly-facts/route.ts",
@@ -155,15 +156,6 @@ const directJsonReadAllowlist: Record<
     routes: [
       "src/app/api/admin/roster/[date]/route.ts",
       "src/app/api/lodge-maintenance/[token]/route.ts",
-    ],
-  },
-  ownHelper: {
-    reason:
-      "The route reads the body through its own helper whose failure answer is shared with other faults, or whose sentinel the caller turns into a response. Folding it into the shared reader needs the route reshaped.",
-    routes: [
-      "src/app/api/admin/club-tax/route.ts",
-      "src/app/api/admin/menu-role/route.ts",
-      "src/app/api/admin/xero/tax-categories/route.ts",
     ],
   },
 };
