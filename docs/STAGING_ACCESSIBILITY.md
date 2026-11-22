@@ -547,7 +547,14 @@ screens keeps its own one level-1 heading. That heading is drawn at heading-2
 size; nothing else changes. The stored instructions and the admin editor keep
 the H1 as written. Pinned by
 `src/app/__tests__/instruction-screen-headings.test.tsx`, which renders each
-screen from a stored document holding an H1.
+screen from a stored document holding an H1. Since #5345 each source those
+screens read is pinned too: the three instruction routes
+(`/api/lodge-instructions`, `/api/lodge/instructions` and
+`/api/lodge/instructions/preview`) and the lobby display state each have a
+test that the same stored H1 comes back with no level-1 heading, in
+`lodge-instructions.test.ts`, `lodge-instructions-preview-route.test.ts` and
+`lodge-display-state.test.ts` under `src/lib/__tests__/`. Those tests do not
+pin the level it lands on.
 
 ## #5216 Member card titles as headings (2026-11-22)
 
@@ -566,7 +573,8 @@ and adds `role="heading"` and `aria-level="2"`.
   outstanding" and "Confirm pending guests now" on `/bookings/[id]`; and
   "Enter your details" on `/join/apply`.
 - **Census.** `card-title-classification-census.test.ts` now fails an
-  unclassified title in those 14 files and under `src/app/(website)/`, and
+  unclassified title in those 14 files and under `src/app/(website)/` (and,
+  since #5372, anywhere under `src/components/website/`), and
   `UNCLASSIFIED_BASELINE` falls from 252 to 231, the 21 titles swept. All 231
   that remain are on admin and finance screens, still swept by area, each
   sweep lowering the baseline.
@@ -587,10 +595,14 @@ Stated limits:
 - The booking-detail and edit-booking tests render the real cards under a
   hand-written `<h1>Booking Details</h1>`, not the real async `/bookings/[id]`
   page, so they would not notice a second level-1 heading added to that page.
-  The page's own file holds one `<h1>` today, checked by reading it.
-- On the public website only `src/app/(website)/` is forbidden outright, and it
-  holds no card title. The website's cards live in `src/components/website/`,
-  where only `join-apply-page-client.tsx` is a listed file. The other card
-  titles there are classified today, but only the baseline count holds them.
+  Since #5372 `issue-2779-draft-pickup-card.test.ts` reads the page's own file
+  and fails unless it holds exactly one level-1 heading. It reads that file
+  only, not the components the page renders.
+- On the public website the census forbids an unclassified title under two
+  folders: `src/app/(website)/`, the pages, which hold no card title, and,
+  since #5372, `src/components/website/`, the cards those pages draw. A card a
+  website page takes from any other folder is forbidden only if that folder is
+  one of the member-facing roots or the file is on the census's list.
+  Otherwise only the baseline count holds it.
 - These are DOM-level checks of roles and levels. A real screen-reader
   walkthrough stays a human manual-QA task, as in the earlier sections.
