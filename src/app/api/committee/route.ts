@@ -1,17 +1,20 @@
-import { NextResponse } from "next/server";
 import {
   committeeAssignmentOrderBy,
   publicCommitteeAssignmentSelect,
   serializePublicCommitteeAssignment,
 } from "@/lib/committee";
+import { COMMITTEE_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { prisma } from "@/lib/prisma";
 
 /**
  * GET /api/committee
  * Public endpoint: returns published committee assignments with server-curated
  * contact metadata. Member email addresses are never selected or returned.
+ * An AI app connection (`list_committee`, ALP-718) is sent names, roles and
+ * descriptions only.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const [assignments, settings] = await Promise.all([
     prisma.committeeAssignment.findMany({
       where: {
@@ -44,5 +47,5 @@ export async function GET() {
     serializePublicCommitteeAssignment(assignment, { includePhoto }),
   );
 
-  return NextResponse.json({ members, photoDisplay });
+  return connectionJson(request, { members, photoDisplay }, COMMITTEE_CONNECTION_SHAPE);
 }
