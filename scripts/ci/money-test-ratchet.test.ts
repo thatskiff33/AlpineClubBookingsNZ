@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { toPosix } from "../audit/ts-call-site-scan";
 import {
   COVERAGE_TOLERANCE_PP,
   baselineAtRef,
@@ -159,7 +160,7 @@ describe("the coverage ratchet", () => {
       "/repo/src/lib/b.ts": { lines: { total: 10, covered: 4, pct: 40 } },
       "/repo/src/lib/c.ts": { lines: { total: 100, covered: 90, pct: 90 } },
     };
-    expect(worstFiles(summary, 5, "/repo").map((row) => row.file)).toEqual(["src/lib/c.ts", "src/lib/b.ts"]);
+    expect(worstFiles(summary, 5, "/repo").map((row) => toPosix(row.file))).toEqual(["src/lib/c.ts", "src/lib/b.ts"]);
     const text = renderCoverageReport(evaluateCoverage(total(59, 59, 50, 40), baseline), summary);
     expect(text).toContain("BELOW THE BAR");
     expect(text).toContain("committed floor");
