@@ -366,12 +366,18 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > **Upgrade note (#5403).** The officers' **Admin Booking Bumped** alert is sent
 > again. The pending-booking job sends it, once per booking, when it releases a
 > pending booking at its hold deadline because there is no longer room for its
-> party. Its built-in wording now names the booking's lodge (`{{lodgeName}}`) and
-> the reason (`{{reason}}`), which also says when the member had asked for the
-> whole booking to be cancelled if their guests could not come. It no longer
-> offers `{{triggeringMemberName}}`, because the job has no triggering booking to
-> name. A saved copy still using that token is listed under **Retired tokens**:
-> swap it for the new chips, or restore the default.
+> party. Its subject names the member, the stay dates and the booking reference
+> (`{{bookingReference}}`), so the Daily digest counts each bump separately. Its
+> built-in wording gives the reason (`{{reason}}`), which also says when the
+> member had asked for the whole booking to be cancelled if their guests could
+> not come. In a club with more than one active lodge it names the lodge too, as
+> the capacity warning does; `{{lodgeName}}` is empty in a one-lodge club, so
+> keep it out of a line with a label of its own. It no longer offers
+> `{{triggeringMemberName}}`, because the job has no triggering booking to name.
+> If a saved copy still uses that token, a warning at the top of this page names
+> the template and the token, and the template itself says your saved copy uses
+> a token it no longer supplies: swap it for the chips now shown and save, or
+> restore the default.
 
 ## Settings reference
 
