@@ -10,7 +10,10 @@ import {
   adminPolicyLodgeQuerySchema,
   adultMemberHostingBodySchema,
 } from "@/lib/admin-bookings-schemas/setup";
-import { ADMIN_ADULT_MEMBER_HOSTING_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-setup";
+import {
+  ADMIN_ADULT_MEMBER_HOSTING_CONNECTION_SHAPE,
+  type AdultMemberHostingAnswer,
+} from "@/lib/connection-shapes/bookings-setup";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   INACTIVE_ADULT_MEMBER_HOSTING_LODGE_MESSAGE,
@@ -141,7 +144,7 @@ function storedHostScopes(policy: {
 function effectiveView(
   rows: Parameters<typeof resolveAdultMemberHostingPolicy>[0],
   lodgeId: string | null,
-) {
+): AdultMemberHostingAnswer["effective"] {
   // The resolver is per LODGE. There is no lodge for the club-wide card, so it is
   // resolved against a sentinel that matches no row: the club row and the built-in
   // default are the only possible answers, which is exactly right for that scope.
@@ -450,7 +453,7 @@ export async function PUT(request: NextRequest) {
 async function savedPolicyBody(
   policy: AdultMemberHostingPolicy,
   lodgeId: string | null,
-) {
+): Promise<AdultMemberHostingAnswer> {
   const rows = await prisma.adultMemberHostingPolicy.findMany({
     where: { OR: [{ lodgeId }, { lodgeId: null }] },
   });

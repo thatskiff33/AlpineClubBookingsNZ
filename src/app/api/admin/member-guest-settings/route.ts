@@ -14,7 +14,10 @@ import {
   MEMBER_GUEST_SETTINGS_ID,
   normalizeMemberGuestSettings,
 } from "@/lib/member-guest-settings";
-import { ADMIN_MEMBER_GUEST_SETTINGS_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-setup";
+import {
+  ADMIN_MEMBER_GUEST_SETTINGS_CONNECTION_SHAPE,
+  type MemberGuestSettingsAnswer,
+} from "@/lib/connection-shapes/bookings-setup";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
@@ -75,20 +78,6 @@ const BOUNDS = {
  */
 type MemberGuestSettingsAdminAccess = "manage" | "view" | "none";
 
-type MemberGuestSettingsAdminPayload = {
-  settings: {
-    approvalRequired: boolean;
-    pendingHoldExpiryDays: number;
-    openMemberSearchEnabled: boolean;
-    openMemberSearchIncludesMinors: boolean;
-  };
-  /** ISO 8601, or null while the club has never saved the singleton. */
-  updatedAt: string | null;
-  updatedByMemberId: string | null;
-  access: Exclude<MemberGuestSettingsAdminAccess, "none">;
-  bounds: typeof BOUNDS;
-};
-
 function buildPayload(
   record: {
     approvalRequired: boolean;
@@ -99,7 +88,7 @@ function buildPayload(
     updatedByMemberId: string | null;
   } | null,
   access: Exclude<MemberGuestSettingsAdminAccess, "none">,
-): MemberGuestSettingsAdminPayload {
+): MemberGuestSettingsAnswer {
   return {
     settings: normalizeMemberGuestSettings(record),
     updatedAt: record?.updatedAt?.toISOString() ?? null,

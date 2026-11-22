@@ -22,7 +22,11 @@ import type {
   BedAllocationRemovalApplyResult,
   BedAllocationRemovalPreview,
 } from "@/lib/bed-allocation-removal";
-import type { ImportRoomsAndBedsResult, RoomsAndBedsConfigurationPayload } from "@/lib/bed-allocation-rooms";
+import type {
+  createBedAllocationRoomsBulk,
+  ImportRoomsAndBedsResult,
+  RoomsAndBedsConfigurationPayload,
+} from "@/lib/bed-allocation-rooms";
 import type { EffectiveBedAllocationSettings } from "@/lib/bed-allocation-settings";
 import { connectionShapeFor, eachEntry } from "@/lib/connection-projection";
 
@@ -159,10 +163,9 @@ export const ADMIN_LODGE_ROOM_CONNECTION_SHAPE = connectionShapeFor<{ room: Lodg
   room: { id: true, name: true, sortOrder: true, active: true, notes: true, lodgeId: true },
 });
 
-export const ADMIN_LODGE_ROOMS_BULK_CONNECTION_SHAPE = connectionShapeFor<{
-  createdRoomCount: number;
-  createdBedCount: number;
-}>({
+export const ADMIN_LODGE_ROOMS_BULK_CONNECTION_SHAPE = connectionShapeFor<
+  Awaited<ReturnType<typeof createBedAllocationRoomsBulk>>
+>({
   createdRoomCount: true,
   createdBedCount: true,
 });

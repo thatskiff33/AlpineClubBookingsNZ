@@ -197,9 +197,10 @@ export const ADMIN_GROUP_DISCOUNT_CONNECTION_SHAPE = connectionShapeFor<
 
 /**
  * The route's GET and save body: the scope's row (or the synthesised default),
- * its scope set, and what is in force there.
+ * its scope set, and what is in force there. The save builds its body as this
+ * type (`savedPolicyBody`).
  */
-type AdultMemberHostingAnswer = AdultMemberHostingPolicy & {
+export type AdultMemberHostingAnswer = AdultMemberHostingPolicy & {
   hostScopes: AdultMemberHostScopeSet | null;
   configured: boolean;
   effective: {
@@ -267,8 +268,8 @@ export const ADMIN_BOOKING_REQUEST_SETTINGS_CONNECTION_SHAPE = connectionShapeFo
   attendeeConfirmationReminderDays: true,
 });
 
-/** The member-guest card's payload, as the route builds it. */
-type MemberGuestSettingsAnswer = {
+/** The member-guest card's payload: the route builds its answer as this type. */
+export type MemberGuestSettingsAnswer = {
   settings: ReturnType<typeof normalizeMemberGuestSettings>;
   updatedAt: string | null;
   updatedByMemberId: string | null;
