@@ -28,7 +28,7 @@ function routeContents(filePath: string) {
 }
 
 // `request.json()` on the incoming request, however the call is awaited.
-const DIRECT_REQUEST_JSON_READ = /\b(?:request|req)\.json\(\)/;
+const DIRECT_REQUEST_JSON_READ = /\b(?:request|req)\s*\??\.\s*json\(\)/;
 // Receivers of a `.json()` call that a route file may contain: the incoming
 // request (the two names routes use) and a provider's `response`.
 const JSON_RECEIVER_NAMES = new Set(["request", "req", "response"]);
@@ -713,7 +713,7 @@ describe("API route boundary metadata", () => {
     );
     // A request parameter under another name would slip past the pattern above.
     const otherReceivers = routes.flatMap((routePath) =>
-      [...code(routePath).matchAll(/\b(\w+)\.json\(\)/g)]
+      [...code(routePath).matchAll(/\b(\w+)\s*\??\.\s*json\(\)/g)]
         .map((match) => match[1] ?? "")
         .filter((name) => !JSON_RECEIVER_NAMES.has(name))
         .map((name) => `${routePath}: ${name}.json()`),
