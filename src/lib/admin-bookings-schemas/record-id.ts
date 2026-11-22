@@ -5,8 +5,6 @@
  * own id uses `bookingIdParamsSchema`. The dispatcher also holds every path
  * argument to a plain record id before it is sent.
  */
-import { z } from "zod";
+import { idParamsSchema } from "@/lib/id-params-schema";
 
-export const adminRecordIdParamsSchema = z.object({
-  id: z.string().min(1),
-});
+export const adminRecordIdParamsSchema = idParamsSchema;
