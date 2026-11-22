@@ -5,12 +5,12 @@ import { MODULE_KEYS } from "@/config/modules";
 import { blankLiterals, stripComments } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
 
-// #153 / #150 / #175 guard: every read AND write of the ClubModuleSettings
+// hoppers99/AlpineClubBookingsNZ#153 / hoppers99/AlpineClubBookingsNZ#150 / hoppers99/AlpineClubBookingsNZ#175 guard: every read AND write of the ClubModuleSettings
 // singleton must use an explicit column `select`
 // (CLUB_MODULE_SETTINGS_COLUMN_SELECT in src/config/modules.ts). A bare
 // findUnique/findMany/upsert/create/update has no select, so Prisma names
 // every column the client knows in its SELECT, or in a write's implicit
-// RETURNING (#175). The former multiLodge flag was the trigger
+// RETURNING (hoppers99/AlpineClubBookingsNZ#175). The former multiLodge flag was the trigger
 // (hoppers99/AlpineClubBookingsNZ#139). The select does not reach an INSERT's
 // column list, so it never makes a DROP safe on its own (INV-OPS-005); the
 // guard stays for reads, RETURNING and the single-source rule below.

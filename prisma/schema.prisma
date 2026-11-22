@@ -5827,7 +5827,7 @@ model Lodge {
 // it (there is no active/inactive state — that was dropped as unneeded).
 model OtherLodge {
   id                  String   @id @default(cuid())
-  // Not unique (#69): two lodges may share a name, and the central id is what
+  // Not unique (triyder/AlpineClubBookingsNZ#69): two lodges may share a name, and the central id is what
   // makes them distinct. Drop-downs show the location beside it to tell two
   // apart.
   name                String
@@ -5955,7 +5955,7 @@ model ServerNzSettings {
   // across the central server's HTTP calls.
   otherLodgesSyncStartedAt DateTime?
 
-  // NO LONGER READ (#69, server API 2.5, which no longer sends the names):
+  // NO LONGER READ (triyder/AlpineClubBookingsNZ#69, server API 2.5, which no longer sends the names):
   // ownership is decided by `otherLodgesOwnedLodges` below, by central id. Kept,
   // and left as last written, for the draining colour of the upgrade that
   // stopped reading it; a later release drops it. As it was:

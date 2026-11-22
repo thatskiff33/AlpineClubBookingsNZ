@@ -400,10 +400,10 @@ describe("aiDiagnostics is non-travelling (AID-2, #2371)", () => {
   });
 });
 
-// Guard against the #153 regression: every ClubModuleSettings read in this
+// Guard against the hoppers99/AlpineClubBookingsNZ#153 regression: every ClubModuleSettings read in this
 // category (export, plan, apply) must use the shared column select so a
 // retired-but-not-yet-ignored column never appears in a SELECT or RETURNING (see
-// CLUB_MODULE_SETTINGS_COLUMN_SELECT in src/config/modules.ts, #150 and
+// CLUB_MODULE_SETTINGS_COLUMN_SELECT in src/config/modules.ts, hoppers99/AlpineClubBookingsNZ#150 and
 // hoppers99/AlpineClubBookingsNZ#139).
 describe("club-module-settings singleton reads use the explicit column select", () => {
   it("declares the shared select on the SINGLETONS spec", () => {
