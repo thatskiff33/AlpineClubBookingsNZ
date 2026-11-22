@@ -6,8 +6,16 @@ import type { XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { sendAdminXeroRepeatedFailureAlert } from "@/lib/email";
-import { claimAlertCooldown, releaseAlertCooldown } from "@/lib/alert-cooldown";
-import type { AdminAlertSendResult } from "@/lib/email/admin-alert-send-result";
+import {
+  ALERT_NOBODY_ELIGIBLE_RETRY_MS,
+  claimAlertCooldown,
+  deferAlertCooldown,
+  releaseAlertCooldown,
+} from "@/lib/alert-cooldown";
+import {
+  adminAlertSendOutcome,
+  type AdminAlertSendResult,
+} from "@/lib/email/admin-alert-send-result";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { buildLocalAdminUrl } from "@/lib/xero-record-links";
 import {
@@ -92,12 +100,23 @@ export async function maybeNotifyXeroRepeatedFailure(
 
     The claim asks "has this alert already been RAISED", not "did it arrive"
     (#3035 review), the same question the old lookup answered by listing every
-    status a raised alert's row can have. It is kept whenever the send reached
-    a recipient's mail log at all: sent, queued, FAILED (this template keeps its
-    body, so the email retry cron replays the row), BOUNCED or withheld on a
-    copy (`SKIPPED_NON_PRODUCTION`). It is given back, so the next qualifying
-    failure tries again, exactly where the old lookup found no row: the
-    delivery policy skipped the alert, no admin is opted in, or the send threw.
+    status a raised alert's row can have. After the send it is settled by the
+    shared reading of the result (`adminAlertSendOutcome`) and the house rule
+    in `alert-cooldown.ts` (#3635 F1):
+    - sent, queued for the retry cron, or undelivered (BOUNCED, or withheld on
+      a copy as `SKIPPED_NON_PRODUCTION`): kept for the window;
+    - nobody could receive it (`skipped-by-policy`, `no-recipients`): held for
+      `ALERT_NOBODY_ELIGIBLE_RETRY_MS`, as `sendAdminAlertOnceEver` holds it,
+      then the next qualifying failure tries again (with the default 24-hour
+      window the hold and the window are the same day). The sender reads the
+      policy and the audience before its live Xero read, so each such attempt
+      costs no Xero call;
+    - the send threw: given back, so the next qualifying failure retries.
+
+    A STATED LIMIT: a copy whose send threw before its mail log row existed
+    is counted by `sendAdminAlertTo` as queued for retry, so when every copy
+    fails that way the outcome reads `queued-for-retry`, the claim is kept,
+    nobody has the alert and nothing replays it until the window ends.
 
     Claim first and send after, outside any transaction (`alert-cooldown.ts`),
     so two instances failing the same key at once raise one alert.
@@ -117,13 +136,6 @@ export async function maybeNotifyXeroRepeatedFailure(
     return { triggered: false, failureCount };
   }
 
-  const releaseClaim = () =>
-    releaseAlertCooldown({ key, claimedAt: now }).catch((err) =>
-      logger.error(
-        { err, correlationKey: operation.correlationKey },
-        "Failed to release the repeated Xero failure alert claim"
-      )
-    );
   let result: AdminAlertSendResult;
   try {
     result = await sendAdminXeroRepeatedFailureAlert({
@@ -145,7 +157,12 @@ export async function maybeNotifyXeroRepeatedFailure(
       timestamp: now,
     });
   } catch (error) {
-    await releaseClaim();
+    await releaseAlertCooldown({ key, claimedAt: now }).catch((err) =>
+      logger.error(
+        { err, correlationKey: operation.correlationKey },
+        "Failed to release the repeated Xero failure alert claim"
+      )
+    );
     logger.error(
       {
         err: error,
@@ -156,9 +173,21 @@ export async function maybeNotifyXeroRepeatedFailure(
     );
     return { triggered: false, failureCount };
   }
-  if (!result.deliveryAllowed || result.recipients === 0) {
-    // No mail log row was written, so nothing records the alert as raised.
-    await releaseClaim();
+  // After #5448, which tells a copy that failed before its row existed apart
+  // (`failedBeforeLogged`), that case should be deferred for a day here too.
+  const outcome = adminAlertSendOutcome(result);
+  if (outcome === "skipped-by-policy" || outcome === "no-recipients") {
+    await deferAlertCooldown({
+      key,
+      claimedAt: now,
+      windowMs,
+      retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS,
+    }).catch((err) =>
+      logger.error(
+        { err, correlationKey: operation.correlationKey, outcome },
+        "Failed to defer the repeated Xero failure alert claim"
+      )
+    );
   }
   return { triggered: true, failureCount };
 }

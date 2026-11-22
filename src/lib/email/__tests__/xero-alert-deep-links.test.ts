@@ -15,6 +15,9 @@ const ORG_SHORT_CODE = "!aBc12";
 
 const h = vi.hoisted(() => ({
   sendToAdmins: vi.fn(),
+  sendAdminAlertTo: vi.fn(),
+  getAdminAlertEmails: vi.fn(),
+  shouldSendAdminSystemEmail: vi.fn(),
   getXeroOrgShortCode: vi.fn(),
   settlementTemplate: vi.fn((_data: unknown) => "<html>settlement</html>"),
   repeatedFailureTemplate: vi.fn(
@@ -34,7 +37,13 @@ vi.mock("server-only", () => ({}));
 
 vi.mock("../admin-alerts-shared", () => ({
   sendToAdmins: h.sendToAdmins,
+  sendAdminAlertTo: h.sendAdminAlertTo,
+  getAdminAlertEmails: h.getAdminAlertEmails,
   shouldSendDirectAdminSystemEmail: vi.fn().mockResolvedValue(true),
+}));
+
+vi.mock("@/lib/notification-delivery-policies", () => ({
+  shouldSendAdminSystemEmail: h.shouldSendAdminSystemEmail,
 }));
 
 vi.mock("@/lib/xero-link-short-code", () => ({
@@ -73,6 +82,8 @@ const FOREIGN_URL = buildXeroInvoiceUrl("inv-1", { shortCode: "!old99" });
 beforeEach(() => {
   vi.clearAllMocks();
   h.getXeroOrgShortCode.mockResolvedValue(ORG_SHORT_CODE);
+  h.shouldSendAdminSystemEmail.mockResolvedValue({ send: true, mode: "always" });
+  h.getAdminAlertEmails.mockResolvedValue(["officer@club.test"]);
 });
 
 describe("sendAdminManualSettlementConflictAlert", () => {
@@ -180,7 +191,7 @@ describe("sendAdminXeroRepeatedFailureAlert", () => {
       expect.objectContaining({ xeroObjectUrl: SCOPED_URL }),
     );
 
-    const call = h.sendToAdmins.mock.calls[0][0];
+    const call = h.sendAdminAlertTo.mock.calls[0][0];
     expect(call.templateData.xeroObjectUrl).toBe(SCOPED_URL);
     // The pre-composed flat-body line must carry the same URL — it is a second
     // rendering of the link, and #2268 built it from the raw field.
@@ -206,6 +217,35 @@ describe("sendAdminXeroRepeatedFailureAlert", () => {
     expect(h.getXeroOrgShortCode).toHaveBeenCalledWith({ confirmLive: true });
   });
 
+  it.each([
+    ["the delivery policy skips it", () => h.shouldSendAdminSystemEmail.mockResolvedValue({ send: false, mode: "disabled", reason: "disabled" }), { deliveryAllowed: false, recipients: 0 }],
+    ["no admin is opted in", () => h.getAdminAlertEmails.mockResolvedValue([]), { deliveryAllowed: true, recipients: 0 }],
+  ])("makes no Xero read and sends nothing when %s (#5407)", async (_label, arrange, expected) => {
+    arrange();
+
+    const result = await sendAdminXeroRepeatedFailureAlert(data);
+
+    expect(result).toEqual({ ...expected, sent: 0, queuedForRetry: 0, notDelivered: 0 });
+    expect(h.getXeroOrgShortCode).not.toHaveBeenCalled();
+    expect(h.sendAdminAlertTo).not.toHaveBeenCalled();
+  });
+
+  it("sends to the audience it read, with the policy read once", async () => {
+    await sendAdminXeroRepeatedFailureAlert(data);
+
+    expect(h.shouldSendAdminSystemEmail).toHaveBeenCalledTimes(1);
+    expect(h.shouldSendAdminSystemEmail).toHaveBeenCalledWith({ templateName: "admin-xero-repeated-failure" });
+    expect(h.getAdminAlertEmails).toHaveBeenCalledWith("adminXeroSyncError");
+    expect(h.sendAdminAlertTo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        emails: ["officer@club.test"],
+        templateName: "admin-xero-repeated-failure",
+        preferenceKey: "adminXeroSyncError",
+      }),
+    );
+    expect(h.sendToAdmins).not.toHaveBeenCalled();
+  });
+
   it("strips a previous organisation when none can be confirmed", async () => {
     h.getXeroOrgShortCode.mockResolvedValue(null);
 
@@ -214,7 +254,7 @@ describe("sendAdminXeroRepeatedFailureAlert", () => {
       xeroObjectUrl: FOREIGN_URL,
     });
 
-    const call = h.sendToAdmins.mock.calls[0][0];
+    const call = h.sendAdminAlertTo.mock.calls[0][0];
     expect(call.templateData.xeroObjectUrl).toBe(GENERIC_URL);
     expect(call.templateData.xeroLinksNote).not.toContain("shortcode=");
   });

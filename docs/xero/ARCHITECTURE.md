@@ -2532,7 +2532,13 @@ Scheduled hardening (cron tasks, all idempotent):
   once-per-hour error alert (`notifyXeroSyncError`) keep failure noise bounded.
   The repeated-failure alert goes out once per correlation key per 24-hour
   window, held by an `AlertCooldown` claim on that key (#5407), so a subject
-  the club saves for the alert cannot switch the limit off.
+  the club saves for the alert cannot switch the limit off. The claim is kept
+  once the alert is raised (sent, queued for retry, bounced or withheld on a
+  copy), held for a day when nobody could receive it (the alert switched off
+  or nobody opted in), and given back only when the send threw. Stated limit:
+  when every copy fails before its mail log row exists, the send result reads
+  as queued for retry, so the claim is kept and nobody gets that alert until
+  the window ends (#5448 makes the case tellable apart).
 
 ### Repairing Stripe refund-note links (#2901)
 
@@ -3988,8 +3994,12 @@ settled by owner decision on 1 and 2 August 2026, is three sentences long:
    organisation only when it was confirmed at send time and otherwise degrades
    to the generic link. It is affordable because the senders bound it, not
    traffic: the repeated-failure alert and the settlement conflict are each
-   throttled by a cross-instance `AlertCooldown` claim, and the nightly report takes one read for the whole
-   email.
+   throttled by a cross-instance `AlertCooldown` claim, and the nightly report
+   takes one read for the whole email. The repeated-failure sender also reads
+   the delivery policy and the opted-in audience first and makes no Xero read
+   when either rules the alert out; with the claim held for a day in that
+   case, a switched-off alert costs at most one policy read a day per failing
+   key and no Xero read at all.
 
 The producers behind the six server-fed render sites, all covered:
 

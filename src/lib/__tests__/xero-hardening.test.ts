@@ -145,9 +145,20 @@ describe("maybeNotifyXeroRepeatedFailure", () => {
     });
     mocks.cooldowns.clear();
     mocks.cooldownUpdateMany.mockImplementation(
-      async ({ where, data }: { where: { key: string; lastAlertedAt: { lt: Date } }; data: { lastAlertedAt: Date } }) => {
+      async ({
+        where,
+        data,
+      }: {
+        where: { key: string; lastAlertedAt: { lt: Date } | Date };
+        data: { lastAlertedAt: Date };
+      }) => {
         const held = mocks.cooldowns.get(where.key);
-        if (!held || held.getTime() >= where.lastAlertedAt.lt.getTime()) return { count: 0 };
+        // A claim matches an older stamp (`lt`); a defer matches its own stamp.
+        const matches =
+          where.lastAlertedAt instanceof Date
+            ? held?.getTime() === where.lastAlertedAt.getTime()
+            : held !== undefined && held.getTime() < where.lastAlertedAt.lt.getTime();
+        if (!matches) return { count: 0 };
         mocks.cooldowns.set(where.key, data.lastAlertedAt);
         return { count: 1 };
       }
@@ -297,17 +308,50 @@ describe("maybeNotifyXeroRepeatedFailure", () => {
       expect(mocks.cooldowns.has(COOLDOWN_KEY)).toBe(true);
     });
 
-    it.each([
+    const NOBODY_ELIGIBLE = [
       ["the delivery policy skipped it", sendResult({ deliveryAllowed: false, recipients: 0, sent: 0 })],
       ["no admin is opted in", sendResult({ recipients: 0, sent: 0 })],
-    ])("gives the claim back when no mail log row was written: %s", async (_label, result) => {
-      mocks.sendRepeatedFailureAlert.mockResolvedValue(result);
+    ] as const;
+
+    it.each(NOBODY_ELIGIBLE)(
+      "holds the claim for a day, never giving it back, when nobody could receive it: %s (#3635 F1)",
+      async (_label, result) => {
+        mocks.sendRepeatedFailureAlert.mockResolvedValue(result);
+
+        await maybeNotifyXeroRepeatedFailure(failing());
+        await maybeNotifyXeroRepeatedFailure(failing());
+        await maybeNotifyXeroRepeatedFailure(failing());
+
+        // One attempt (and so at most one Xero read) per day, not one per failure.
+        expect(mocks.sendRepeatedFailureAlert).toHaveBeenCalledTimes(1);
+        expect(mocks.cooldowns.get(COOLDOWN_KEY)?.getTime()).toBe(Date.now());
+      },
+    );
+
+    it.each(NOBODY_ELIGIBLE)(
+      "holds it for a day, not the whole window, under a longer window: %s",
+      async (_label, result) => {
+        mocks.sendRepeatedFailureAlert.mockResolvedValue(result);
+
+        await maybeNotifyXeroRepeatedFailure(failing(), { windowHours: 48 });
+
+        // Moved back so a 48-hour claim succeeds again exactly one day on.
+        expect(mocks.cooldowns.get(COOLDOWN_KEY)?.getTime()).toBe(Date.now() - WINDOW_MS);
+      },
+    );
+
+    it("keeps the claim, a stated limit, when every copy failed before its mail log row existed", async () => {
+      // `sendAdminAlertTo` counts a copy that threw before its row was written
+      // as queued for retry, so nobody has the alert and nothing replays it,
+      // yet the outcome reads `queued-for-retry` and the claim is kept for the
+      // window. #5448 makes this case tellable apart.
+      mocks.sendRepeatedFailureAlert.mockResolvedValue(sendResult({ sent: 0, queuedForRetry: 1 }));
 
       await maybeNotifyXeroRepeatedFailure(failing());
       await maybeNotifyXeroRepeatedFailure(failing());
 
-      expect(mocks.sendRepeatedFailureAlert).toHaveBeenCalledTimes(2);
-      expect(mocks.cooldowns.has(COOLDOWN_KEY)).toBe(false);
+      expect(mocks.sendRepeatedFailureAlert).toHaveBeenCalledTimes(1);
+      expect(mocks.cooldowns.has(COOLDOWN_KEY)).toBe(true);
     });
 
     it("gives the claim back when the send throws, so the next failure alerts", async () => {

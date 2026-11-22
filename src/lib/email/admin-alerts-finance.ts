@@ -33,14 +33,22 @@ import {
 } from "../email-message-notes";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
-import { adminAlertSendOutcome, type AdminAlertSendOutcome } from "./admin-alert-send-result";
+import {
+  adminAlertSendOutcome,
+  type AdminAlertSendOutcome,
+  type AdminAlertSendResult,
+} from "./admin-alert-send-result";
 import { applyXeroOrgShortCode } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { stampXeroOrganisation } from "./admin-alert-xero-links";
 import {
+  getAdminAlertEmails,
+  sendAdminAlertTo,
   sendToAdmins,
   sendUnmuteableAdminAlert,
 } from "./admin-alerts-shared";
+import logger from "@/lib/logger";
+import { shouldSendAdminSystemEmail } from "@/lib/notification-delivery-policies";
 import { renderEmailHtml } from "@/lib/email-theme";
 import {
   emailCalendarDay,
@@ -487,18 +495,39 @@ export async function sendAdminXeroRepeatedFailureAlert(data: {
   xeroObjectUrl: string | null;
   latestErrorMessage: string | null;
   timestamp: Date;
-}) {
+}): Promise<AdminAlertSendResult> {
+  // #5407: the delivery policy and the audience are read BEFORE the
+  // organisation stamp below, because that stamp is a live Xero read
+  // (`confirmLive`) and an alert switched off, or with nobody opted in, must
+  // not cost one on every qualifying failure. The same two reads, in the same
+  // order, as `sendToAdmins`; the delivery half is `sendAdminAlertTo`, as
+  // `sendAdminDailyDigestAlert` does it. Returns the result so the caller can
+  // settle its window claim.
+  const templateName = "admin-xero-repeated-failure";
+  const preferenceKey = "adminXeroSyncError";
+  const delivery = await shouldSendAdminSystemEmail({ templateName });
+  if (!delivery.send) {
+    logger.info(
+      { templateName, deliveryMode: delivery.mode, reason: delivery.reason },
+      "Skipped admin email by delivery policy",
+    );
+    return { deliveryAllowed: false, recipients: 0, sent: 0, queuedForRetry: 0, notDelivered: 0 };
+  }
+  const emails = await getAdminAlertEmails(preferenceKey);
+  if (emails.length === 0) {
+    return { deliveryAllowed: true, recipients: 0, sent: 0, queuedForRetry: 0, notDelivered: 0 };
+  }
+
   // #2314: the operation's stored `xeroObjectUrl` is organisation-agnostic, so
   // the club's organisation is stamped on here, at send time.
   const xeroObjectUrl = await stampXeroOrganisation(data.xeroObjectUrl);
   const stamped = { ...data, xeroObjectUrl };
 
-  // Returns `sendToAdmins`' result so the caller can give back its window
-  // claim when no mail log row was written (#5407 item 29).
-  return sendToAdmins({
+  return sendAdminAlertTo({
+    emails,
     subject: data.subject,
     html: await renderEmailHtml(() => adminXeroRepeatedFailureTemplate(stamped)),
-    templateName: "admin-xero-repeated-failure",
+    templateName,
     templateData: {
       ...stamped,
       localModel: data.localModel ?? "",
@@ -529,7 +558,7 @@ export async function sendAdminXeroRepeatedFailureAlert(data: {
       ),
       timestamp: data.timestamp.toISOString(),
     },
-    preferenceKey: "adminXeroSyncError",
+    preferenceKey,
   });
 }
 
