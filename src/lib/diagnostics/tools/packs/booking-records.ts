@@ -206,7 +206,7 @@
  * cannot see it will confidently advise admitting somebody else.
  *
  * WHAT THE SUMMARY DROPPED, and where the evidence actually lives:
- *   lodgeName, waitlistPosition, requiresAdminReview, adminCapacityHoldAt,
+ *   lodgeName, requiresAdminReview, adminCapacityHoldAt,
  *   capacityOverriddenAt        → all on the `diagnostics.booking_search` row
  *                                 for the same booking (`kind: "booking_id"`),
  *                                 under the same `bookings:view` permission.
