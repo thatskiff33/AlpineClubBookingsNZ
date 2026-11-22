@@ -33,12 +33,13 @@ const sendEmail = vi.hoisted(() =>
   vi.fn<(args: Record<string, unknown>) => Promise<unknown>>(async () => ({ status: "sent", emailLogId: "log-1", messageId: null })),
 );
 vi.mock("@/lib/email/core", () => ({ sendEmail }));
-vi.mock("@/lib/email-admin-alert-escalation", () => ({ recordAdminAlertDeliveryEscalation: vi.fn(async () => undefined) }));
+const escalate = vi.hoisted(() => vi.fn(async (_args: { outcomes: { status: string }[] }) => undefined));
+vi.mock("@/lib/email-admin-alert-escalation", () => ({ recordAdminAlertDeliveryEscalation: escalate }));
 vi.mock("@/lib/admin-permissions", () => ({ hasAdminAreaAccess: () => true }));
 
 import { recordEmailAttempt } from "@/lib/email/attempt-log";
 import { sendAdminAlertTo, sendUnmuteableAdminAlert } from "@/lib/email/admin-alerts-shared";
-import { newOnceEverClaimHandle, runWithOnceEverClaim } from "@/lib/once-ever-claim-context";
+import { newOnceEverClaimHandle, OnceEverClaimRefusedError, runWithOnceEverClaim } from "@/lib/once-ever-claim-context";
 
 const CLAIMED_AT = new Date("2026-07-01T00:00:00.000Z");
 const attempt = {
@@ -76,7 +77,9 @@ describe("recordEmailAttempt under a once-ever claim (#5255)", () => {
     db.confirm.mockResolvedValueOnce({ count: 0 });
     const claim = newOnceEverClaimHandle("once:1", CLAIMED_AT);
 
-    await expect(recordEmailAttempt({ ...attempt, onceEverClaim: claim })).rejects.toThrow(/no longer held/);
+    const refused = recordEmailAttempt({ ...attempt, onceEverClaim: claim });
+    await expect(refused).rejects.toBeInstanceOf(OnceEverClaimRefusedError);
+    await expect(refused).rejects.toMatchObject({ cause: { message: expect.stringMatching(/no longer held/) } });
     expect(db.txCreate).not.toHaveBeenCalled();
     expect(db.topLevelCreate).not.toHaveBeenCalled();
     expect(claim).toMatchObject({ rowWritten: false, rowWriteFailed: true });
@@ -85,7 +88,9 @@ describe("recordEmailAttempt under a once-ever claim (#5255)", () => {
   it("throws on a database error rather than sending with no row, unlike an unclaimed send", async () => {
     db.txCreate.mockRejectedValueOnce(new Error("connection lost"));
     const claim = newOnceEverClaimHandle("once:1", CLAIMED_AT);
-    await expect(recordEmailAttempt({ ...attempt, onceEverClaim: claim })).rejects.toThrow("connection lost");
+    const failed = recordEmailAttempt({ ...attempt, onceEverClaim: claim });
+    await expect(failed).rejects.toBeInstanceOf(OnceEverClaimRefusedError);
+    await expect(failed).rejects.toMatchObject({ cause: { message: "connection lost" } });
     expect(claim.rowWriteFailed).toBe(true);
 
     // Without a claim the row stays best effort, as before #5255.
@@ -139,5 +144,45 @@ describe("only the alert's own emails carry the claim (#5255)", () => {
     );
     expect(claimOf(0)).toBe(handle);
     expect(handle.taken).toBe(true);
+  });
+});
+
+describe("a refused claim is not a delivery failure (#5255)", () => {
+  const alert = { subject: "Alert", html: "<p>Alert</p>", templateName: "admin-payment-failure", preferenceKey: "adminPaymentFailure" as const };
+  const refused = () => new OnceEverClaimRefusedError("once:1", new Error("no longer held"));
+
+  it("records no undeliverable escalation and queues nothing when every recipient's claim was refused", async () => {
+    sendEmail.mockRejectedValue(refused());
+    const result = await sendAdminAlertTo({ ...alert, emails: ["a@example.org", "b@example.org"] });
+    sendEmail.mockReset();
+
+    expect(escalate).not.toHaveBeenCalled();
+    expect(result).toEqual({ deliveryAllowed: true, recipients: 2, sent: 0, queuedForRetry: 0, notDelivered: 2 });
+  });
+
+  it("escalates only the genuine failure when one recipient was refused and another's send failed", async () => {
+    sendEmail.mockRejectedValueOnce(refused()).mockRejectedValueOnce(new Error("SES down"));
+    const result = await sendAdminAlertTo({ ...alert, emails: ["a@example.org", "b@example.org"] });
+
+    expect(escalate).toHaveBeenCalledTimes(1);
+    expect(escalate.mock.calls[0]![0].outcomes).toEqual([{ status: "failed" }]);
+    expect(result).toMatchObject({ sent: 0, queuedForRetry: 1, notDelivered: 1 });
+  });
+
+  it("MUTATION: an ordinary send failure still escalates as undeliverable", async () => {
+    sendEmail.mockRejectedValueOnce(new Error("SES down"));
+    await sendAdminAlertTo({ ...alert, emails: ["a@example.org"] });
+    expect(escalate.mock.calls[0]![0].outcomes).toEqual([{ status: "failed" }]);
+  });
+
+  it("the unmuteable sender records no escalation when every recipient's claim was refused, but still does for a failure", async () => {
+    const unmuteable = { subject: "Alert", html: "<p>Alert</p>", templateName: "admin-payment-failure", requirement: { area: "finance", level: "edit" } } as const;
+    sendEmail.mockRejectedValueOnce(refused());
+    await sendUnmuteableAdminAlert(unmuteable);
+    expect(escalate).not.toHaveBeenCalled();
+
+    sendEmail.mockRejectedValueOnce(new Error("SES down"));
+    await sendUnmuteableAdminAlert(unmuteable);
+    expect(escalate.mock.calls[0]![0].outcomes).toEqual([{ status: "failed" }]);
   });
 });

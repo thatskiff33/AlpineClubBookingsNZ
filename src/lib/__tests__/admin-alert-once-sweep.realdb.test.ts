@@ -127,7 +127,7 @@ function holdTransaction(first: (tx: PrismaClient) => Promise<void>) {
     giveBack.letGo();
     await giveBack.done;
 
-    await expect(recorded).rejects.toThrow(/no longer held/);
+    await expect(recorded).rejects.toMatchObject({ cause: { message: expect.stringMatching(/no longer held/) } });
     expect(handle).toMatchObject({ rowWritten: false, rowWriteFailed: true });
     await expect(emailRows()).resolves.toBe(0);
     await expect(prisma.alertCooldown.findUnique({ where: { key: KEY } })).resolves.toBeNull();

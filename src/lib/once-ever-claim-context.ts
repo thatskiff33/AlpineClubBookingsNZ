@@ -43,3 +43,17 @@ export function takeOnceEverClaim(): OnceEverClaimHandle | null {
   handle.taken = true;
   return handle;
 }
+
+/**
+ * Thrown by an email write under a once-ever claim that was refused: the claim
+ * was no longer this sender's (the sweep gave it back), or the write failed.
+ * Nothing was recorded or sent, and the claim helper or the sweep makes the
+ * next run send it, so the admin senders count it as neither a delivery
+ * failure nor undeliverable (#5255).
+ */
+export class OnceEverClaimRefusedError extends Error {
+  constructor(key: string, cause: unknown) {
+    super(`The email under the once-ever claim ${key} was refused; nothing was recorded or sent`, { cause });
+    this.name = "OnceEverClaimRefusedError";
+  }
+}

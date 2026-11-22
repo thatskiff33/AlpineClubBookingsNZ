@@ -3,7 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { confirmAlertCooldownSend } from "@/lib/alert-cooldown";
 import { hasBookingDetailHref } from "@/lib/booking-email-html";
 import logger from "@/lib/logger";
-import type { OnceEverClaimHandle } from "@/lib/once-ever-claim-context";
+import { OnceEverClaimRefusedError, type OnceEverClaimHandle } from "@/lib/once-ever-claim-context";
 import { prisma } from "@/lib/prisma";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
@@ -123,6 +123,6 @@ async function recordClaimedEmailAttempt(
     return { kind: "created", emailLogId: log.id };
   } catch (err) {
     claim.rowWriteFailed = true;
-    throw err;
+    throw new OnceEverClaimRefusedError(claim.key, err);
   }
 }
