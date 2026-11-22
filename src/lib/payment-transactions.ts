@@ -101,7 +101,12 @@ function mapAdditionalSummaryStatus(status: PaymentStatus | null): string | null
   return "PENDING";
 }
 
-function mapLegacyAdditionalStatus(status: string | null | undefined): PaymentStatus {
+/**
+ * A pre-ledger payment's base status from its legacy `additionalPaymentStatus`
+ * column. Shared with the Xero booking repair pass (`xero-booking-repair-payments.ts`),
+ * which reconstructs the same legacy slices (`INV-SSOT`).
+ */
+export function mapLegacyAdditionalStatus(status: string | null | undefined): PaymentStatus {
   switch (status) {
     case "FAILED":
       return PaymentStatus.FAILED;
@@ -115,7 +120,12 @@ function mapLegacyAdditionalStatus(status: string | null | undefined): PaymentSt
   }
 }
 
-function applyRefundStatus(
+/**
+ * A legacy payment's status once its aggregate refund mirror is applied: fully
+ * refunded, partly refunded, or the base status. Shared with the Xero booking
+ * repair pass and the #1506 cancel-flatten backfill (`INV-SSOT`).
+ */
+export function applyRefundStatus(
   baseStatus: PaymentStatus,
   amountCents: number,
   refundedAmountCents: number
