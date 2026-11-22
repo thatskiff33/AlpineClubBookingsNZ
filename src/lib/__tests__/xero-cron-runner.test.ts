@@ -219,6 +219,33 @@ describe("xero cron runner", () => {
     );
   });
 
+  it("MUTATION (#5228): warns, not green, when the outbox passed over rows it can never send", async () => {
+    const recordCronRun = vi.fn();
+
+    const result = await runXeroCronTaskList(["outbox"], {
+      taskLabel: "xero-queue",
+      recordCronRun,
+      isModuleEnabled: vi.fn(async () => true),
+      isConnected: vi.fn(async () => true),
+      tasks: {
+        processQueuedXeroOutboxOperations: vi.fn(async () => ({
+          found: 2,
+          processed: 0,
+          succeeded: 0,
+          failed: 0,
+          skipped: 2,
+          unclaimableRequest: 2,
+        })),
+      },
+    });
+
+    const warning = expect.stringContaining("2 queued operation(s) hold no request the outbox can send");
+    expect(result.queuedOutboxOperations).toMatchObject({ warning });
+    expect(recordCronRun).toHaveBeenCalledWith(
+      expect.objectContaining({ jobName: "xero-outbox", status: "SUCCESS", resultSummary: expect.objectContaining({ warning }) })
+    );
+  });
+
   it("warns when outbox or replay rows failed, and names both reasons together (#4375)", async () => {
     const recordCronRun = vi.fn();
 

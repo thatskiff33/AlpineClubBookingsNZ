@@ -147,7 +147,7 @@ const ORACLE_ROUTE_AREAS: ReadonlyArray<{
       "/admin/calendar",
       "/admin/display",
       "/admin/maintenance-reports",
-      // Fork #121: the Food Orders settings card.
+      // Fork triyder/AlpineClubBookingsNZ#121: the Food Orders settings card.
       "/admin/food-orders",
     ],
   },
@@ -188,6 +188,9 @@ const ORACLE_ROUTE_AREAS: ReadonlyArray<{
       "/admin/issue-reports",
       "/admin/audit-log",
       "/admin/ai-assistant",
+      // ALP-653: AI app connections, added after C2 in a new directory. The
+      // reviewed answer is support, the area its /api/admin/mcp routes use.
+      "/admin/ai-connections",
     ],
   },
   { area: "overview", prefixes: ["/admin"] },
@@ -248,6 +251,7 @@ const ORACLE_MODULE_GATES: ReadonlyArray<{
   { flag: "aiDiagnostics", prefixes: ["/admin/ai-diagnostics"] },
   { flag: "maintenanceReports", prefixes: ["/admin/maintenance-reports"] },
   { flag: "foodOrders", prefixes: ["/admin/food-orders"] },
+  { flag: "mcpServer", prefixes: ["/admin/ai-connections"] },
   { flag: "commsPortal", prefixes: ["/admin/message-board"] },
   { flag: "alpineCentralServer", prefixes: ["/admin/alpine-server"] },
 ];

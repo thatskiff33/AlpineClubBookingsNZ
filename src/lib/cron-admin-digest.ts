@@ -48,6 +48,64 @@ const TEMPLATE_TO_SECTION: Record<TemplateName, AlertSectionKey> = {
 };
 
 /**
+ * One row of the digest's `emailLog.groupBy`: how many alert emails with this
+ * template and subject one officer (`to`) received in the window.
+ */
+export interface DigestAlertEmailGroup {
+  templateName: string;
+  subject: string;
+  to: string;
+  _count: { _all: number };
+}
+
+/**
+ * #5407 item 12: the alert count for each digest line.
+ *
+ * One alert writes one EmailLog row per officer (`sendAdminAlertTo`), and
+ * nothing links the copies, so the copies have to be folded together. Folding
+ * on the subject alone also folded separate alerts that share a subject (two
+ * payment failures in one night counted as one). Instead, for each template
+ * and subject, the alert count is the most copies any ONE officer received:
+ * every alert of a template goes to the same audience, so one officer's copies
+ * number the alerts. A line is the sum over its template-and-subject pairs.
+ *
+ * Stated limits: if the audience changed between two same-subject alerts so
+ * that no one officer received both, the line counts one; an officer whose
+ * address changed mid-window splits their copies. Neither ever counts lower
+ * than one per distinct subject, which is what this replaced.
+ */
+export function countDigestAlerts(
+  groups: readonly DigestAlertEmailGroup[],
+): Record<AlertSectionKey, number> {
+  const mostCopiesPerPair = new Map<
+    string,
+    { section: AlertSectionKey; alerts: number }
+  >();
+  for (const group of groups) {
+    const section = TEMPLATE_TO_SECTION[group.templateName as TemplateName];
+    if (!section) continue;
+    const pairKey = JSON.stringify([group.templateName, group.subject]);
+    const seen = mostCopiesPerPair.get(pairKey);
+    if (!seen || group._count._all > seen.alerts) {
+      mostCopiesPerPair.set(pairKey, { section, alerts: group._count._all });
+    }
+  }
+
+  const counts: Record<AlertSectionKey, number> = {
+    newBookings: 0,
+    paymentFailures: 0,
+    capacityWarnings: 0,
+    bookingsBumped: 0,
+    pendingDeadlines: 0,
+    xeroErrors: 0,
+  };
+  for (const { section, alerts } of mostCopiesPerPair.values()) {
+    counts[section] += alerts;
+  }
+  return counts;
+}
+
+/**
  * The stored server-version answer as the digest needs it, or null when the
  * versions match (or nothing is connected). A read failure is logged and
  * reads as "no entry": the digest's own counts must still go out.
@@ -78,35 +136,26 @@ export async function sendAdminDigest(): Promise<{
 }> {
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-  // Count distinct events per template (dedup per-admin sends by grouping on templateName+subject)
-  const alertLogs = await prisma.emailLog.findMany({
+  // Copies per officer of each template and subject; `countDigestAlerts`
+  // turns them into alert counts (#5407 item 12). A retry reuses its row, and
+  // a FAILED, withheld or skipped copy is not an alert anyone received.
+  const alertGroups = await prisma.emailLog.groupBy({
+    by: ["templateName", "subject", "to"],
     where: {
       templateName: { in: [...ADMIN_TEMPLATE_NAMES] },
       createdAt: { gte: twentyFourHoursAgo },
       status: { in: ["SENT", "QUEUED"] },
     },
-    distinct: ["templateName", "subject"],
-    select: { templateName: true, subject: true },
+    _count: { _all: true },
   });
 
+  const counts = countDigestAlerts(alertGroups);
   const sections = {
-    newBookings: 0,
-    paymentFailures: 0,
-    capacityWarnings: 0,
-    bookingsBumped: 0,
-    pendingDeadlines: 0,
-    xeroErrors: 0,
-    totalAlerts: 0,
+    ...counts,
+    totalAlerts:
+      counts.newBookings + counts.paymentFailures + counts.capacityWarnings +
+      counts.bookingsBumped + counts.pendingDeadlines + counts.xeroErrors,
   };
-
-  for (const row of alertLogs) {
-    const sectionKey = TEMPLATE_TO_SECTION[row.templateName as TemplateName];
-    sections[sectionKey]++;
-  }
-
-  sections.totalAlerts = sections.newBookings + sections.paymentFailures +
-    sections.capacityWarnings + sections.bookingsBumped +
-    sections.pendingDeadlines + sections.xeroErrors;
 
   const serverVersion = await serverVersionEntry();
   const serverVersionMismatch = serverVersion !== null;

@@ -208,8 +208,8 @@ export async function sendAdminMaintenanceReportAlert(data: {
 const FOOD_ORDER_PLACED_TEMPLATE = "food-order-placed";
 
 /**
- * Fork #121: a member placed a food order. Sent to ONE address, the food
- * officer email in the Food Orders settings (fork #121 owner decisions 6 and 10), not to
+ * Fork triyder/AlpineClubBookingsNZ#121: a member placed a food order. Sent to ONE address, the food
+ * officer email in the Food Orders settings (fork triyder/AlpineClubBookingsNZ#121 owner decisions 6 and 10), not to
  * an admin audience: the officer is whoever the committee names there, admin or
  * not. The order is already stored when this runs, and the caller sends it
  * after the create transaction commits and never awaits it into the response.
@@ -254,7 +254,7 @@ export async function sendFoodOrderPlacedEmail(data: {
       notes: data.notes ?? FOOD_ORDER_NO_NOTE_TEXT,
       foodOrderUrl: data.foodOrderUrl,
     },
-    // A food order is not linked to a booking (fork #121 owner decision 9).
+    // A food order is not linked to a booking (fork triyder/AlpineClubBookingsNZ#121 owner decision 9).
     bookingContext: "none",
     lodgeId: data.lodgeId,
     // One business event per order: a re-drive of the same order is one email.

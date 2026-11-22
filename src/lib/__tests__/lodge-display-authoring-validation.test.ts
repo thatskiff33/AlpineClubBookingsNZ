@@ -87,7 +87,7 @@ describe("validateLayoutForSave (LTV-030 save contract)", () => {
     }
   });
 
-  it("WARNS (but still saves) when bodyHtml carries an external <img> src (issue #161)", () => {
+  it("WARNS (but still saves) when bodyHtml carries an external <img> src (issue hoppers99/AlpineClubBookingsNZ#161)", () => {
     const result = validateLayoutForSave({
       ...CLEAN_LAYOUT,
       bodyHtml: `${CLEAN_LAYOUT.bodyHtml}<img src="https://evil.example/beacon.gif" />`,

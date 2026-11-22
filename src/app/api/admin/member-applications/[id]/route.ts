@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { approveMemberApplication, rejectMemberApplication } from "@/lib/nomination";
 import { MembershipApplicationError } from "@/lib/member-application-fields";
 import { personDecisionsSchema } from "@/lib/member-application-decisions";
@@ -58,12 +59,11 @@ export async function PUT(
   const session = guard.session;
   const { id } = await params;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = reviewSchema.safeParse(body);
   if (!parsed.success) {

@@ -146,16 +146,13 @@ let retry: typeof import("@/lib/xero-operation-retry");
         async (tx) => {
           await tx.$queryRaw`SELECT id FROM "XeroSyncOperation" WHERE id = ${OPERATION_ID} FOR UPDATE`;
           retried = Promise.allSettled(runRetries.map((run) => run()));
-          const started = process.hrtime.bigint();
-          for (;;) {
+          await waitUntil(async () => {
             const waiting = await prisma.$queryRaw<Array<{ n: bigint }>>`
               SELECT count(*)::bigint AS n FROM pg_stat_activity
               WHERE datname = current_database() AND wait_event_type = 'Lock'
                 AND query ILIKE '%UPDATE%XeroSyncOperation%'`;
-            if (Number(waiting[0]?.n ?? 0) >= runRetries.length) break;
-            if (realElapsedMs(started) > 10_000) throw new Error("The retries never reached their claims.");
-            await new Promise((resolve) => setTimeout(resolve, 20));
-          }
+            return Number(waiting[0]?.n ?? 0) >= runRetries.length;
+          }, "The retries never reached their claims.");
           if (officerWrite) await officerWrite(tx);
         },
         { timeout: 20_000 },
@@ -168,18 +165,23 @@ let retry: typeof import("@/lib/xero-operation-retry");
       runRetry: () => Promise<T>,
     ) => (await landWhileClaimsWait(officerWrite, [runRetry]))[0]!;
 
-    /** Wait until the repair's claim is on the row (RUNNING, marked), then make it stale. */
-    async function claimThenStrand() {
+    /** Poll until `done` holds, failing with `failure` after 10s of real time. */
+    async function waitUntil(done: () => boolean | Promise<boolean>, failure: string) {
       const started = process.hrtime.bigint();
-      for (;;) {
-        const row = await readRow();
-        if (row.status === "RUNNING") {
-          expect(row.lastErrorCode).toBe("PARTIAL_REPAIR_RUNNING");
-          break;
-        }
-        if (realElapsedMs(started) > 10_000) throw new Error("The repair never claimed the row.");
+      while (!(await done())) {
+        if (realElapsedMs(started) > 10_000) throw new Error(failure);
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
+    }
+
+    /** Wait until the repair's claim is on the row (RUNNING, marked), then make it stale. */
+    async function claimThenStrand() {
+      await waitUntil(async () => {
+        const row = await readRow();
+        if (row.status !== "RUNNING") return false;
+        expect(row.lastErrorCode).toBe("PARTIAL_REPAIR_RUNNING");
+        return true;
+      }, "The repair never claimed the row.");
       // The process "dies" here: nothing completes the claim, and 20 minutes pass.
       await prisma.xeroSyncOperation.update({
         where: { id: OPERATION_ID },
@@ -306,8 +308,14 @@ let retry: typeof import("@/lib/xero-operation-retry");
     ] as const)("MUTATION: a repair that died mid-claim comes back PARTIAL through %s, and the retry makes one payment write", async (_label, remedy) => {
       await seedPartial(45.67);
       const apiClient = await import("@/lib/xero-api-client");
-      vi.mocked(apiClient.getAuthenticatedXeroClient).mockImplementationOnce(() => new Promise(() => {}));
+      const client = vi.mocked(apiClient.getAuthenticatedXeroClient);
+      client.mockImplementationOnce(() => new Promise(() => {}));
       void retry.retryXeroSyncOperation(OPERATION_ID, CLUB_FORMAT_TEST).catch(() => {});
+
+      // #5215: the claim is written before the run asks for the Xero client, so
+      // the row reading RUNNING does not show the one-shot hang was taken by this
+      // run. Wait for its call, so a second run can never take the hang instead.
+      await waitUntil(() => client.mock.calls.length > 0, "The first run never asked for the Xero client.");
       await claimThenStrand();
 
       const stale = await import("@/lib/xero-stale-operations");
@@ -351,7 +359,7 @@ let retry: typeof import("@/lib/xero-operation-retry");
       expect(await stale.markStaleRunningXeroOperationFailed(OPERATION_ID, async () => {})).toMatchObject({
         returnedTo: "PARTIAL",
       });
-      while (!release) await new Promise((resolve) => setTimeout(resolve, 10));
+      await waitUntil(() => release !== undefined, "The late run never sent its payment.");
 
       release();
       // Never "Repaired": the payment went, but the row is the operator's now.
@@ -402,12 +410,15 @@ let retry: typeof import("@/lib/xero-operation-retry");
           claim.id === OPERATION_ID ? new Promise(() => {}) : original(claim, ...rest)) as typeof original);
       void retry.retryXeroSyncOperation(OPERATION_ID, CLUB_FORMAT_TEST).catch(() => {});
 
-      const started = process.hrtime.bigint();
-      while ((await prisma.xeroObjectLink.count({ where: { localId: PAYMENT_ID, xeroObjectType: "PAYMENT" } })) === 0) {
-        if (realElapsedMs(started) > 10_000) throw new Error("The first run never recorded its payment.");
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      // #5215: restore only once the run is hung inside the mock. The payment
+      // link is written a step before the close, so waiting on it let a slow
+      // run reach the real close after the restore and never strand.
+      await waitUntil(
+        () => hang.mock.calls.some(([claim]) => claim.id === OPERATION_ID),
+        "The first run never reached its close.",
+      );
       hang.mockRestore();
+      expect(await prisma.xeroObjectLink.count({ where: { localId: PAYMENT_ID, xeroObjectType: "PAYMENT" } })).toBe(1);
       await claimThenStrand();
       const stale = await import("@/lib/xero-stale-operations");
       expect(await stale.markStaleRunningXeroOperationFailed(OPERATION_ID, async () => {})).toMatchObject({

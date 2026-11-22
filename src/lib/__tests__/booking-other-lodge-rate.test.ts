@@ -397,7 +397,7 @@ describe("assertOtherLodgeExists", () => {
     expect(findFirst).not.toHaveBeenCalled();
   });
 
-  it("refuses a HIDDEN lodge as a new choice (#58): it asks for a visible one", async () => {
+  it("refuses a HIDDEN lodge as a new choice (triyder/AlpineClubBookingsNZ#58): it asks for a visible one", async () => {
     const findFirst = vi.fn(async () => null);
     await expect(
       assertOtherLodgeExists({ otherLodge: { findFirst } } as never, "lodge-hidden"),

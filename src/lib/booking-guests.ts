@@ -1,7 +1,7 @@
 import type { AgeTier, Prisma, PrismaClient } from "@prisma/client";
 import {
   formatMemberProfileMissingField,
-  getMemberProfileCompleteness,
+  evaluateMemberProfileCompleteness,
   type MemberProfileCompletenessResult,
 } from "@/lib/member-profile-completeness";
 import {
@@ -674,7 +674,7 @@ export async function assertLinkedBookingMembersCanBeBooked(
       isActiveLoginAdult(member.detailsConfirmedByMemberId!) &&
       sharesFamilyGroup(member.id, member.detailsConfirmedByMemberId!);
 
-    const status = getMemberProfileCompleteness(member, {
+    const status = evaluateMemberProfileCompleteness(member, {
       delegatedConfirmationValid,
     });
 
@@ -739,7 +739,7 @@ export async function assertLinkedBookingMembersCanBeBooked(
 }
 
 /** The booker plus every co-member of all their family groups: the member-guest
- * boundary, and the family "Add to work party" refuses (fork #129). */
+ * boundary, and the family "Add to work party" refuses (triyder/AlpineClubBookingsNZ#129). */
 export async function getAllowedGuestMemberIds(
   db: BookingGuestLookupDb,
   bookingMemberId: string

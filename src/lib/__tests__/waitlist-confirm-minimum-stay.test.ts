@@ -215,7 +215,6 @@ vi.mock("@/lib/lodges", () => ({
 }));
 vi.mock("@/lib/waitlist-cross-lodge", () => ({
   confirmCrossLodgeWaitlistOffer: h.confirmCrossLodgeWaitlistOffer,
-  getWaitlistCrossLodgeOrder: vi.fn(),
   quoteWaitlistEntryAtLodge: vi.fn(),
 }));
 vi.mock("@/lib/cancellation", () => ({

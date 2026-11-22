@@ -110,6 +110,44 @@ describe("streamPgDump", () => {
     expect(leftovers()).toEqual(["dump.sql.gz.partial"]);
   }, 15_000);
 
+  // #5193: pg_dump 17 writes `SET transaction_timeout`, which a PostgreSQL 16
+  // server refuses, so its dump of that server would not restore.
+  const header = (server: string, client: string) =>
+    `--\n-- PostgreSQL database dump\n--\n\n-- Dumped from database version ${server}\n-- Dumped by pg_dump version ${client}\n\nSET statement_timeout = 0;\n`;
+
+  it("refuses a dump from a pg_dump newer than the server and keeps nothing", async () => {
+    command(`process.stdout.write(${JSON.stringify(header("16.4", "17.2 (Ubuntu 17.2-1)"))});`);
+    await expect(streamPgDump(input)).rejects.toThrow(
+      "pg_dump 17.2 is newer than the PostgreSQL 16.4 server it was backing up",
+    );
+    expect(leftovers()).toEqual([]);
+  }, 15_000);
+
+  it("finds the versions even when the header arrives split across writes", async () => {
+    const text = header("16.4", "18beta1");
+    command(`
+      const text = ${JSON.stringify(text)};
+      (async () => {
+        for (const char of text) {
+          process.stdout.write(char);
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+      })();
+    `);
+    await expect(streamPgDump(input)).rejects.toThrow("pg_dump 18beta1 is newer");
+    expect(leftovers()).toEqual([]);
+  }, 15_000);
+
+  it.each([
+    ["the same major version", "16.4", "16.8 (Debian 16.8-1.pgdg120+1)"],
+    ["a server newer than the client", "17.2", "16.8"],
+  ])("keeps a dump whose pg_dump has %s", async (_case, server, client) => {
+    const text = `${header(server, client)}COPY example FROM stdin;\n\\.\n`;
+    command(`process.stdout.write(${JSON.stringify(text)});`);
+    await streamPgDump(input);
+    expect(gunzipSync(readFileSync(input.filepath)).toString()).toBe(text);
+  }, 15_000);
+
   it("keeps peak memory flat when a synthetic dump grows from 16 to 512 MiB", async () => {
     // Real processes and streams, isolated from Vitest's heap. The producer reuses
     // one chunk and honours backpressure; resourceUsage catches even synchronous

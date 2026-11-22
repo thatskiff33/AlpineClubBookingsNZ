@@ -96,6 +96,24 @@ vi.mock("@/lib/audit", () => ({
 // the double has to serve the transaction client too. It is the SAME object, so
 // every existing assertion on `mocks.*` reads the in-transaction calls unchanged,
 // and `mocks.executeRaw` is where the lock statement lands.
+/**
+ * #5228: a row's `queueType` column, as `startXeroSyncOperation` writes it at
+ * enqueue - the queued payload's own - unless a case sets it. The outbox claims
+ * from the column, so a double that omitted it would describe no real row.
+ */
+const scannedRows = new Map<string, unknown>();
+
+/** #5228: a give-back's write (`returnOutboxRowToPending`) - the caller's guard, narrowed to the request it read. */
+function givenBackWhere(id: string, guard: Record<string, unknown>) {
+  return { AND: [guard, { id, requestPayload: { equals: expect.anything() } }] };
+}
+function withQueueTypeColumn(row: unknown): unknown {
+  if (!row || typeof row !== "object" || "queueType" in row) return row;
+  const payload = (row as { requestPayload?: unknown }).requestPayload;
+  const queueType = payload && typeof payload === "object" ? (payload as { queueType?: unknown }).queueType : undefined;
+  return typeof queueType === "string" ? { ...row, queueType } : row;
+}
+
 vi.mock("@/lib/prisma", () => {
   const client: Record<string, unknown> = {
     booking: {
@@ -139,8 +157,17 @@ vi.mock("@/lib/prisma", () => {
     },
     xeroSyncOperation: {
       findFirst: mocks.findFirstOperation,
-      findUnique: mocks.findUniqueOperation,
-      findMany: mocks.findManyOperations,
+      // #5228: a row a case does not re-stage reads back as its scan returned it.
+      findUnique: async (...a: unknown[]) => {
+        const staged = await mocks.findUniqueOperation(...a);
+        return withQueueTypeColumn(staged === undefined ? scannedRows.get((a[0] as { where?: { id?: string } })?.where?.id ?? "") : staged);
+      },
+      findMany: async (...a: unknown[]) => {
+        const rows = await mocks.findManyOperations(...a);
+        if (!Array.isArray(rows)) return rows;
+        for (const row of rows) if (row && typeof row === "object" && "id" in row) scannedRows.set(String(row.id), row);
+        return rows.map(withQueueTypeColumn);
+      },
       count: mocks.countOperations,
       updateMany: mocks.updateManyOperation,
       update: mocks.updateOperation,
@@ -368,6 +395,8 @@ import { XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } from "@/lib/xero-operation-err
 import { REFUND_NOTE_AWAITING_RESOLVE_RECHECK_MS } from "@/lib/xero-refund-note-in-flight";
 import { matchesWhere } from "./support/prisma-where";
 import { NOT_A_XERO_REPAIR_CLAIM } from "@/lib/xero-operation-outcome-guard";
+import { SUPPLEMENTARY_INVOICE_CREATE_WHERE } from "@/lib/xero-supplementary-invoice-statuses";
+import { NAMES_NO_QUEUE_TYPE } from "@/lib/xero-stuck-queued-request";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { TEST_XERO_CLAIMED_AT, xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
@@ -2530,23 +2559,27 @@ describe("processQueuedXeroOutboxOperations", () => {
       status: "PENDING",
       direction: "OUTBOUND",
       queueType: { in: [...XERO_OUTBOX_QUEUE_TYPES] },
-      // #3954 round 8, #3953 round 3, #4692 review, #4431 and #4919: rows waiting their turn are spaced out.
+      // #3954 round 8, #3953 round 3, #4692 review, #4431, #4919 and #4988: rows waiting their turn are spaced out.
       AND: [
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
+        expect.objectContaining({ OR: expect.any(Array) }),
       ],
+      // #5228: never a row whose request names no queue type.
+      NOT: NAMES_NO_QUEUE_TYPE,
     });
     // #4299, #4369 and #4431: the pinned types, the organiser extra, the reversal, and the admin grant note.
     expect(args.where.queueType.in).toHaveLength(21);
     expect(args.where.queueType.in).toContain("ORGANISER_EXTRA_ADJUSTMENT");
     expect(args.where.queueType.in).toContain("CARD_REFUND_REVERSAL_INVOICE");
     expect(args.where.queueType.in).toContain("ADMIN_GRANT_CREDIT_NOTE");
-    // The legacy `requestPayload->>'queueType'` OR predicate is gone.
+    // The legacy `requestPayload->>'queueType'` OR predicate is gone; the
+    // payload is read only to leave out the rows #5228's report owns.
     expect(args.where.OR).toBeUndefined();
-    expect(JSON.stringify(args.where)).not.toContain("requestPayload");
+    expect(JSON.stringify({ ...args.where, NOT: undefined })).not.toContain("requestPayload");
     // #4663: oldest first, `createdAt` ties broken by `id`.
     expect(args.orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
     expect(args.take).toBe(7);
@@ -2636,7 +2669,7 @@ describe("processQueuedXeroOutboxOperations", () => {
 
     for (const id of ["op_alloc_busy", "op_dealloc_busy"]) {
       expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-        where: { id, status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
+        where: givenBackWhere(id, { status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM }),
         data: {
           status: "PENDING",
           startedAt: null,
@@ -2655,6 +2688,8 @@ describe("processQueuedXeroOutboxOperations", () => {
     const { ADMIN_GRANT_NOTE_AWAITING_RETRY_RECHECK_MS } = await import("@/lib/admin-grant-credit-note");
     const { ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE, GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CODE } = await import("@/lib/xero-operation-error-codes");
     const { GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_RECHECK_MS } = await import("@/lib/xero-group-settlement-invoice-outbox");
+    const { XERO_TAX_CATEGORY_AWAITING_MAPPING_CODE } = await import("@/lib/xero-operation-error-codes");
+    const { XERO_TAX_CATEGORY_AWAITING_MAPPING_RECHECK_MS } = await import("@/lib/xero-tax-category-hold");
     mocks.findManyOperations.mockResolvedValue([
       {
         id: "op_dealloc_waiting",
@@ -2671,7 +2706,7 @@ describe("processQueuedXeroOutboxOperations", () => {
     await processQueuedXeroOutboxOperations({ limit: 5 });
 
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_dealloc_waiting", status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
+      where: givenBackWhere("op_dealloc_waiting", { status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM }),
       data: expect.objectContaining({ status: "PENDING", lastErrorCode: BILLED_OFFSET_AWAITING_OWN_NOTE_CODE }),
     });
     // The scan leaves such a row out until its recheck is due; every other
@@ -2717,7 +2752,55 @@ describe("processQueuedXeroOutboxOperations", () => {
           { updatedAt: { lte: new Date(Date.now() - GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_RECHECK_MS) } },
         ],
       },
+      // #4988: an operation held for a tax category Xero cannot carry yet.
+      {
+        OR: [
+          { lastErrorCode: null },
+          { lastErrorCode: { not: XERO_TAX_CATEGORY_AWAITING_MAPPING_CODE } },
+          { updatedAt: { lte: new Date(Date.now() - XERO_TAX_CATEGORY_AWAITING_MAPPING_RECHECK_MS) } },
+        ],
+      },
     ]);
+  });
+
+  describe("#4988: an applied-credit allocation whose Exempt line Xero cannot carry is held, not failed", () => {
+    const heldRow = {
+      id: "op_alloc_exempt",
+      localId: "payment_1",
+      localModel: "Payment",
+      createdByMemberId: null,
+      requestPayload: { queueType: "APPLIED_CREDIT_ALLOCATION", bookingId: "booking_1" },
+    };
+
+    it("MUTATION: hands the row back to PENDING under the tax category wait code, with the sentence that says what to map", async () => {
+      const { XeroTaxCategoryUnavailableError } = await import("@/lib/xero-tax-categories");
+      const { XERO_TAX_CATEGORY_AWAITING_MAPPING_CODE } = await import("@/lib/xero-operation-error-codes");
+      mocks.findManyOperations.mockResolvedValue([heldRow]);
+      mocks.allocateAppliedCreditForBooking.mockRejectedValue(new XeroTaxCategoryUnavailableError("EXEMPT", "unmapped"));
+
+      const result = await processQueuedXeroOutboxOperations({ limit: 5 });
+
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+        where: givenBackWhere("op_alloc_exempt", { status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM }),
+        data: expect.objectContaining({
+          status: "PENDING",
+          lastErrorCode: XERO_TAX_CATEGORY_AWAITING_MAPPING_CODE,
+          lastErrorMessage: "The Exempt tax category is not mapped to a Xero tax rate; map it on the Xero setup screen.",
+        }),
+      });
+      // Held, so neither failed nor counted as done.
+      expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ skipped: 1, succeeded: 0, failed: 0 });
+    });
+
+    it("still fails an allocation that stops for any other reason", async () => {
+      mocks.findManyOperations.mockResolvedValue([heldRow]);
+      mocks.allocateAppliedCreditForBooking.mockRejectedValue(new Error("Xero refused the credit note"));
+
+      const result = await processQueuedXeroOutboxOperations({ limit: 5 });
+
+      expect(result).toMatchObject({ skipped: 0, failed: 1 });
+    });
   });
 
   describe("#4692 review (finding 1): a refund note held by an unrecorded one never stalls the outbox", () => {
@@ -2737,7 +2820,7 @@ describe("processQueuedXeroOutboxOperations", () => {
 
       await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toMatchObject({ skipped: 1, failed: 0 });
       expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-        where: { id: "op_fenced", status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
+        where: givenBackWhere("op_fenced", { status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM }),
         data: expect.objectContaining({ status: "PENDING", startedAt: null, lastErrorCode: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE }),
       });
     });
@@ -2749,11 +2832,15 @@ describe("processQueuedXeroOutboxOperations", () => {
         status: "PENDING",
         direction: "OUTBOUND",
         queueType: "REFUND_CREDIT_NOTE",
+        requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 1_000 },
         lastErrorCode: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE,
         updatedAt: new Date(now - 1_000),
         createdAt: new Date(now - 86_400_000 + i),
       }));
-      const invoice = { id: "op_invoice", status: "PENDING", direction: "OUTBOUND", queueType: "BOOKING_INVOICE", lastErrorCode: null, updatedAt: new Date(now), createdAt: new Date(now) };
+      const invoice = {
+        id: "op_invoice", status: "PENDING", direction: "OUTBOUND", queueType: "BOOKING_INVOICE", requestPayload: { queueType: "BOOKING_INVOICE", bookingId: "booking_1" },
+        lastErrorCode: null, updatedAt: new Date(now), createdAt: new Date(now),
+      };
       const scanned: string[][] = [];
       mocks.findManyOperations.mockImplementation(async (args: { where: Record<string, unknown>; take: number }) => {
         const rows = [...fenced, invoice].filter((row) => matchesWhere(row, args.where)).slice(0, args.take);
@@ -2795,7 +2882,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       skipped: 1,
     });
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_dealloc_retry", status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
+      where: givenBackWhere("op_dealloc_retry", { status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM }),
       data: {
         status: "PENDING",
         startedAt: null,
@@ -2940,7 +3027,7 @@ describe("processQueuedXeroOutboxOperations", () => {
 
     // Only the run's own claim; `responsePayload` (the owed-email marker) untouched.
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_settle_1", status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
+      where: givenBackWhere("op_settle_1", { status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM }),
       data: {
         status: "PENDING",
         startedAt: null,
@@ -3100,7 +3187,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       skipped: 1,
     });
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_hand_back_2", status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
+      where: givenBackWhere("op_hand_back_2", { status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM }),
       data: { status: "PENDING", startedAt: null, lastErrorCode: null, lastErrorMessage: expect.stringContaining("op_hand_back_1") },
     });
     expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
@@ -4029,7 +4116,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       });
       await processQueuedXeroOutboxOperations({ limit: 1 });
       expect(mocks.updateManyOperation).toHaveBeenCalledWith(expect.objectContaining({
-        where: expect.objectContaining({ AND: [{ status: { in: ["RUNNING", "FAILED"] }, startedAt: RETAKEN.startedAt }] }),
+        where: { AND: [expect.objectContaining({ AND: [{ status: { in: ["RUNNING", "FAILED"] }, startedAt: RETAKEN.startedAt }] }), expect.anything()] },
         data: expect.objectContaining({ status: "PENDING" }),
       }));
     });
@@ -4042,7 +4129,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       });
       await processQueuedXeroOutboxOperations({ limit: 1 });
       expect(mocks.updateManyOperation).toHaveBeenCalledWith(expect.objectContaining({
-        where: expect.objectContaining({ status: "RUNNING", startedAt: RETAKEN.startedAt }),
+        where: { AND: [expect.objectContaining({ status: "RUNNING", startedAt: RETAKEN.startedAt }), expect.anything()] },
       }));
     });
   });
@@ -5146,6 +5233,8 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
     expect(reviveCalls()).toEqual([
       {
         where: {
+          // #5228: only a supplementary-invoice row, by its immutable column.
+          ...SUPPLEMENTARY_INVOICE_CREATE_WHERE,
           id: "op_retired",
           status: "CANCELLED",
           lastErrorCode: "STALE_WAITING_PAYMENT",
@@ -5187,7 +5276,7 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
     expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.anchorCaptureHasReceipt.mock.invocationCallOrder[0]!);
     expect(reviveCalls()).toEqual([
       {
-        where: { id: "op_retired", status: "CANCELLED", lastErrorCode: "STALE_WAITING_PAYMENT" },
+        where: { ...SUPPLEMENTARY_INVOICE_CREATE_WHERE, id: "op_retired", status: "CANCELLED", lastErrorCode: "STALE_WAITING_PAYMENT" },
         data: expect.objectContaining({
           status: "PENDING",
           requestPayload: { ...payload(12000), recordPayment: false },

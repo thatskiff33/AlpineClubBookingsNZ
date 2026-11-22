@@ -1,7 +1,7 @@
 "use client"
 
 import { WebhookHealthPanel } from "./_components/webhook-health-panel"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
 import { adminHref, servedAdminPathname } from "@/lib/admin-hubs"
@@ -19,6 +19,7 @@ import {
   MissingContactsPanel,
   OperationsPanel,
   SyncResultsPanel,
+  TaxCategoryMappingCard,
   UsagePanel,
   XeroTaxOverridePauseCard,
   xeroLinkState,
@@ -73,12 +74,18 @@ export default function XeroPage() {
     if (message) setUsageRefreshToken((value) => value + 1)
   }
 
+  // A `?section=` link (Stuck States, #5234) opens that section and scrolls to
+  // it. The sections render only after the status read, so the reveal waits
+  // for it, and runs once per requested section so later renders leave the
+  // operator's scroll position alone.
+  const requestedSection = searchParams.get("section")
+  const revealedSectionRef = useRef<string | null>(null)
   useEffect(() => {
-    const section = searchParams.get("section")
-    if (section && section in SECTION_DEFAULTS) {
-      setSectionState(section as SectionKey, true)
-    }
-  }, [searchParams, setSectionState])
+    if (loading || !requestedSection || !(requestedSection in SECTION_DEFAULTS)) return
+    if (revealedSectionRef.current === requestedSection) return
+    revealedSectionRef.current = requestedSection
+    scrollToSection(requestedSection as SectionKey)
+  }, [loading, requestedSection, scrollToSection])
 
   if (loading) {
     return (
@@ -130,6 +137,8 @@ export default function XeroPage() {
 
       {connected && (
         <>
+          {/* The club's tax categories mapped to this Xero organisation's rates (#5209); only meaningful once connected. */}
+          <TaxCategoryMappingCard />
           <HealthAndDiagnosticsPanels
             connected={connected}
             shortCode={orgShortCode}

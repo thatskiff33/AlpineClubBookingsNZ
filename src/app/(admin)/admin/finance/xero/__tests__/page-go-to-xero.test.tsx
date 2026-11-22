@@ -44,6 +44,7 @@ vi.mock("../_components/panels", async () => {
     MissingContactsPanel: stub,
     OperationsPanel: stub,
     SyncResultsPanel: stub,
+    TaxCategoryMappingCard: stub,
     UsagePanel: stub,
   };
 });

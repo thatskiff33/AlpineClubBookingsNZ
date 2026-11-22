@@ -29,8 +29,8 @@ import {
 
 // The API's own shape, not a hand-copied one: a column added to the shared
 // field list in `@/lib/other-lodges` fails to compile here until the form
-// carries it, instead of being silently dropped from the editor (#50). The
-// list row is the ADMIN shape (#52): another club's officer phone is not in
+// carries it, instead of being silently dropped from the editor (triyder/AlpineClubBookingsNZ#50). The
+// list row is the ADMIN shape (triyder/AlpineClubBookingsNZ#52): another club's officer phone is not in
 // it, and `owned` is the route's answer to whether this site may edit it.
 export type OtherLodgeRecord = AdminOtherLodge;
 type OtherLodgePayload = Omit<SerializedOtherLodge, "id" | "createdAt" | "updatedAt"> & {
@@ -90,13 +90,13 @@ export const ROOM_TYPE_CHOICES: ReadonlyArray<readonly [RoomTypeChoice, string]>
   ...OTHER_LODGE_ROOM_TYPES.map((value) => [value, ROOM_TYPE_LABELS[value]] as const),
   ["", "Not stated"],
 ];
-/** A field the Fees page fills (#77): visibly not for typing in. */
+/** A field the Fees page fills (triyder/AlpineClubBookingsNZ#77): visibly not for typing in. */
 export const READ_ONLY_FIELD_CLASS = "read-only:cursor-default read-only:bg-muted read-only:text-muted-foreground";
-/** Said under the season dates (#75): what the dates mean. */
+/** Said under the season dates (triyder/AlpineClubBookingsNZ#75): what the dates mean. */
 export const SEASON_DATES_HINT =
   "Seasons repeat every year: only the day and month are used. The end date is the season's last day. Leave an end blank to run the season until the other one starts.";
 
-// Each season's start and end (#75), shown two to a row.
+// Each season's start and end (triyder/AlpineClubBookingsNZ#75), shown two to a row.
 export const DATE_FIELDS: Record<OtherLodgeDateField, string> = {
   winterSeasonStart: otherLodgeDateLabel("winterSeasonStart"),
   winterSeasonEnd: otherLodgeDateLabel("winterSeasonEnd"),
@@ -116,8 +116,8 @@ export const FACILITY_LABELS: Record<OtherLodgeBooleanField, string> = {
   skiWorkshopArea: "Ski workshop area",
   gamesRoom: "Games room",
 };
-// The non-member rate grid (#61): a block per season, a cell per age group,
-// both read from the one column map in `@/lib/other-lodge-rate-tiers` (#77),
+// The non-member rate grid (triyder/AlpineClubBookingsNZ#61): a block per season, a cell per age group,
+// both read from the one column map in `@/lib/other-lodge-rate-tiers` (triyder/AlpineClubBookingsNZ#77),
 // which the Fees-page fill uses too.
 export const RATE_SEASONS = ["Winter", "Summer"] as const;
 export const RATE_AGE_GROUPS = Object.values(OTHER_LODGE_TIER_LABELS);
@@ -153,7 +153,7 @@ export type OtherLodgeFormState = {
   /** Dollars as typed (`MoneyInput`), or "" for not set. Parsed to cents on save. */
   rates: Record<OtherLodgeRateField, string>;
   amenities: AmenityFormRow[];
-  /** This club's own lodge only (#77): rates and dates come from the Fees page. */
+  /** This club's own lodge only (triyder/AlpineClubBookingsNZ#77): rates and dates come from the Fees page. */
   ratesFromFees?: boolean;
 };
 
@@ -227,7 +227,7 @@ export function formPayload(form: OtherLodgeFormState): OtherLodgePayload {
 
 /**
  * What the panel sends: `formPayload`, less the rates and dates while the
- * Fees page fills them (#77). The route ignores them then anyway; leaving them
+ * Fees page fills them (triyder/AlpineClubBookingsNZ#77). The route ignores them then anyway; leaving them
  * out means a value typed before the switch went on cannot fail the save.
  */
 export function formRequestBody(form: OtherLodgeFormState): Partial<OtherLodgePayload> {
@@ -244,14 +244,14 @@ export function formRequestBody(form: OtherLodgeFormState): Partial<OtherLodgePa
  * copy of its rules, so "needs a name", "unique ignoring case" and the per-lodge
  * cap can only ever disagree with the server by not being run.
  */
-/** A booking page address the central server would refuse (#55); blank is fine. */
+/** A booking page address the central server would refuse (triyder/AlpineClubBookingsNZ#55); blank is fine. */
 export function siteUrlBroken(value: string): boolean {
   const address = value.trim();
   return address !== "" && !isSafeHttpUrl(address);
 }
 
 export function formProblem(form: OtherLodgeFormState): string | null {
-  // The name is editable for a lodge that can be renamed (#64) and read-only,
+  // The name is editable for a lodge that can be renamed (triyder/AlpineClubBookingsNZ#64) and read-only,
   // so always the stored one, otherwise; either way it must be there and fit.
   const name = form.name.trim();
   if (name === "") return "The lodge needs a name.";
@@ -269,7 +269,7 @@ export function formProblem(form: OtherLodgeFormState): string | null {
       return `${WHOLE_NUMBER_FIELDS[field]} looks too large. Enter a realistic number.`;
     }
   }
-  // From the Fees page (#77), the rates and dates are not this form's to check.
+  // From the Fees page (triyder/AlpineClubBookingsNZ#77), the rates and dates are not this form's to check.
   for (const field of form.ratesFromFees ? [] : RATE_FIELD_NAMES) {
     const value = form.rates[field].trim();
     if (value === "") continue;
@@ -281,13 +281,13 @@ export function formProblem(form: OtherLodgeFormState): string | null {
       return `${rateFieldLabel(field)} can be at most $${formatCentsPlain(OTHER_LODGE_BOUNDS.rateCentsMax)}.`;
     }
   }
-  // The season rules the save and the central server apply (#75).
+  // The season rules the save and the central server apply (triyder/AlpineClubBookingsNZ#75).
   const seasonProblem = form.ratesFromFees ? null : seasonDatesProblem(
     recordOf(DATE_FIELD_NAMES, (field) => form.dates[field].trim() || null),
   );
   if (seasonProblem) return seasonProblem;
   const siteUrl = form.text.siteUrl.trim();
-  // The central server's stricter rule (#55): an address it would refuse is
+  // The central server's stricter rule (triyder/AlpineClubBookingsNZ#55): an address it would refuse is
   // refused here, at the form, rather than failing the next upload.
   if (siteUrlBroken(siteUrl)) return SAFE_HTTP_URL_MESSAGE;
   const amenities = amenitiesInputSchema.safeParse(formPayload(form).amenities);

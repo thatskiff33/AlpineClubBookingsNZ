@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
-import { z } from "zod";
+import { availabilityQuerySchema } from "@/lib/availability-query-schema";
 import { getLodgeCapacity, getMonthAvailability } from "@/lib/capacity";
 import { isMemberEligibleToBookLodge } from "@/lib/lodge-access";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
@@ -13,12 +13,8 @@ import {
   parseDateOnly,
 } from "@/lib/date-only";
 import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
-
-const availabilityQuerySchema = z.object({
-  year: z.coerce.number().int().min(2000).max(2100),
-  month: z.coerce.number().int().min(0).max(11),
-  lodgeId: z.string().min(1).optional(),
-});
+import { AVAILABILITY_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 function getMonthStartDateOnly(year: number, month: number): Date {
   return parseDateOnly(`${year}-${String(month + 1).padStart(2, "0")}-01`);
@@ -135,5 +131,5 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ availability, seasons, lodgeCapacity });
+  return connectionJson(request, { availability, seasons, lodgeCapacity }, AVAILABILITY_CONNECTION_SHAPE);
 }

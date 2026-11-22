@@ -9,7 +9,6 @@ import { FocusedActionError } from "@/components/focused-action-error"
 import { bookingOwner } from "@/lib/booking-owner"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { buildXeroContactUrl } from "@/lib/xero-links"
-import { formatAgeTierName } from "@/lib/use-age-tier-options"
 import { useClubTime } from "@/components/club-time-provider"
 import { requireInstant, formatStayDateOrNull } from "@/lib/club-time"
 import {
@@ -31,6 +30,7 @@ import {
   type ToggleSection,
 } from "./shared"
 import { xeroSectionId } from "./types"
+import { useAutoLoadOncePerOpening } from "./use-auto-load-once-per-opening"
 import type {
   ContactGroupMismatchResponse,
   ContactLinkMismatchResponse,
@@ -39,6 +39,8 @@ import type {
   XeroHealthSnapshot,
 } from "./types"
 import { adminHref } from "@/lib/admin-hubs";
+import { CONTACT_GROUP_MISMATCH_LIMIT, describeContactGroupMismatchTotal } from "@/lib/xero-contact-group-mismatch-summary";
+import { ContactGroupMismatchPanel } from "./contact-group-mismatch-panel"
 
 type Props = {
   connected: boolean
@@ -128,7 +130,7 @@ export function HealthAndDiagnosticsPanels({
     setLoadingGroupMismatches(true)
     setGroupError("")
     try {
-      setGroupMismatches(await fetchJson<ContactGroupMismatchResponse>("/api/admin/xero/contact-group-mismatches?limit=200", undefined, "Failed to fetch contact group mismatches"))
+      setGroupMismatches(await fetchJson<ContactGroupMismatchResponse>(`/api/admin/xero/contact-group-mismatches?limit=${CONTACT_GROUP_MISMATCH_LIMIT}`, undefined, "Failed to fetch contact group mismatches"))
     } catch (err) {
       setGroupError(err instanceof Error ? err.message : "Failed to load Xero contact group mismatches")
     } finally {
@@ -154,7 +156,7 @@ export function HealthAndDiagnosticsPanels({
     setResyncingGroupMismatches(true)
     setGroupError("")
     try {
-      setGroupMismatches(await postJson<ContactGroupMismatchResponse>("/api/admin/xero/contact-group-mismatches", { limit: 200 }, "Failed to re-sync the flagged contacts from Xero"))
+      setGroupMismatches(await postJson<ContactGroupMismatchResponse>("/api/admin/xero/contact-group-mismatches", { limit: CONTACT_GROUP_MISMATCH_LIMIT }, "Failed to re-sync the flagged contacts from Xero"))
     } catch (err) {
       setGroupError(err instanceof Error ? err.message : "Failed to re-sync the flagged contacts from Xero")
     } finally {
@@ -174,17 +176,11 @@ export function HealthAndDiagnosticsPanels({
     }
   }, [])
 
-  useEffect(() => {
-    if (connected && healthOpen && !health && !loadingHealth) void fetchHealth()
-  }, [connected, fetchHealth, health, healthOpen, loadingHealth])
-
-  useEffect(() => {
-    if (connected && contactGroupMismatchesOpen && !groupMismatches && !loadingGroupMismatches) void fetchGroupMismatches()
-  }, [connected, contactGroupMismatchesOpen, fetchGroupMismatches, groupMismatches, loadingGroupMismatches])
-
-  useEffect(() => {
-    if (connected && contactLinkMismatchesOpen && !linkMismatches && !loadingLinkMismatches) void fetchLinkMismatches()
-  }, [connected, contactLinkMismatchesOpen, fetchLinkMismatches, linkMismatches, loadingLinkMismatches])
+  // Each list auto-loads once per opening, so a failed read stays shown until
+  // the admin presses its refresh instead of re-firing as it settles (#5276).
+  useAutoLoadOncePerOpening({ active: connected && healthOpen, needed: !health, busy: loadingHealth, load: fetchHealth })
+  useAutoLoadOncePerOpening({ active: connected && contactGroupMismatchesOpen, needed: !groupMismatches, busy: loadingGroupMismatches || resyncingGroupMismatches, load: fetchGroupMismatches })
+  useAutoLoadOncePerOpening({ active: connected && contactLinkMismatchesOpen, needed: !linkMismatches, busy: loadingLinkMismatches || resyncingLinkMismatches, load: fetchLinkMismatches })
 
   useEffect(() => {
     if (!connected || refreshToken === 0) return
@@ -275,7 +271,7 @@ export function HealthAndDiagnosticsPanels({
             ),
             groupMismatches
               ? fetchJson<ContactGroupMismatchResponse>(
-                  "/api/admin/xero/contact-group-mismatches?limit=200",
+                  `/api/admin/xero/contact-group-mismatches?limit=${CONTACT_GROUP_MISMATCH_LIMIT}`,
                   undefined,
                   "Failed to refresh contact group mismatches",
                 )
@@ -349,7 +345,7 @@ export function HealthAndDiagnosticsPanels({
               <HealthStatCard
                 label="Group mismatches"
                 value={health.contactGroupMismatches.count}
-                subtitle={health.contactGroupMismatches.cacheReady ? "Linked members whose managed Xero group does not match their current age tier." : "Refresh Xero contact groups before mismatch checks can run."}
+                subtitle={!health.contactGroupMismatches.cacheReady ? "Refresh Xero contact groups before mismatch checks can run." : health.contactGroupMismatches.count > 0 ? `${describeContactGroupMismatchTotal(health.contactGroupMismatches)}. Linked members whose Xero contact groups disagree with the grouping rules.` : "Linked members whose Xero contact groups disagree with the grouping rules."}
                 badge={!health.contactGroupMismatches.cacheReady ? <ToneChip tone="neutral" icon={Circle}>Cache needed</ToneChip> : health.contactGroupMismatches.count > 0 ? <ToneChip tone="warning" icon={AlertTriangle}>Review</ToneChip> : <ToneChip tone="success" icon={CheckCircle2}>Clear</ToneChip>}
                 onClick={() => scrollToSection("contactGroupMismatches")}
               />
@@ -512,112 +508,6 @@ function MissingInvoicesList({
   )
 }
 
-function ContactGroupMismatchPanel({
-  open,
-  shortCode,
-  data,
-  loading,
-  resyncing,
-  currentXeroPath,
-  onToggle,
-  onRefresh,
-}: {
-  open: boolean
-  shortCode: string | null
-  data: ContactGroupMismatchResponse | null
-  loading: boolean
-  resyncing: boolean
-  currentXeroPath: string
-  onToggle: ToggleSection
-  onRefresh: () => Promise<void>
-}) {
-  // Cache-refresh and re-sync stamps are real INSTANTS (CT-4, #2870).
-  const clubTime = useClubTime()
-  return (
-    <SectionCard
-      id={xeroSectionId("contactGroupMismatches")}
-      title="Contact Group Mismatches"
-      description="Audit linked members against the active Xero member-grouping rules under the current mode."
-      open={open}
-      onToggle={(nextOpen) => onToggle("contactGroupMismatches", nextOpen)}
-      actions={<Button variant="outline" size="sm" onClick={() => void onRefresh()} disabled={loading || resyncing} title="Re-fetches the flagged contacts from Xero, then recomputes this audit.">{resyncing ? "Re-syncing from Xero..." : loading ? "Loading..." : "Refresh"}</Button>}
-    >
-      {loading && !data ? (
-        <p className="text-sm text-muted-foreground">Loading contact group mismatches...</p>
-      ) : data ? (
-        <div className="space-y-4">
-          <div className="flex flex-col gap-3 rounded-lg border p-4 md:flex-row md:items-start md:justify-between">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold">Grouping status</h3>
-                <Badge variant="outline">{formatGroupingMode(data.mode)}</Badge>
-                {!data.cacheReady ? (
-                  <ToneChip tone="neutral" icon={Circle}>Cache needed</ToneChip>
-                ) : data.mismatchCount > 0 ? (
-                  <ToneChip tone="warning" icon={AlertTriangle}>{data.mismatchCount} mismatch{data.mismatchCount === 1 ? "" : "es"}</ToneChip>
-                ) : (
-                  <ToneChip tone="success" icon={CheckCircle2}>{data.mismatchCount} mismatch{data.mismatchCount === 1 ? "" : "es"}</ToneChip>
-                )}
-              </div>
-              <p className="text-sm text-muted-foreground">
-                {data.mode === "NONE"
-                  ? "Grouping mode is None — the sync leaves existing Xero groups untouched."
-                  : `${data.activeRuleCount} active rule${data.activeRuleCount === 1 ? "" : "s"}. ${data.addCount} add${data.addCount === 1 ? "" : "s"} / ${data.removeCount} remove${data.removeCount === 1 ? "" : "s"} across ${data.membersConsidered} linked member${data.membersConsidered === 1 ? "" : "s"} (≈ ${data.estimatedXeroCalls} Xero call${data.estimatedXeroCalls === 1 ? "" : "s"} for a full re-sync).`}
-              </p>
-              {data.skippedNoContact.length > 0 ? (
-                <p className="text-xs text-muted-foreground">{data.skippedNoContact.length} member{data.skippedNoContact.length === 1 ? "" : "s"} without a Xero contact skipped.</p>
-              ) : null}
-              {data.informationalCount > 0 ? (
-                <p className="text-xs text-muted-foreground">{data.informationalCount} member{data.informationalCount === 1 ? "" : "s"} match no rule but sit in managed group{data.informationalCount === 1 ? "" : "s"} — information only, never re-synced automatically.</p>
-              ) : null}
-              <p className="text-xs text-muted-foreground">
-                {data.cacheReady && data.lastRefreshedAt ? `Cache last refreshed ${clubTime.instantDateTime(requireInstant(data.lastRefreshedAt))}.` : "The shared Xero contact-group cache has not been refreshed yet."}
-              </p>
-              {data.resync ? (
-                <p className="text-xs text-success">
-                  {data.resync.requestedContacts === 0
-                    ? `Nothing was flagged to re-sync; audit recomputed at ${clubTime.instantTime(requireInstant(data.resync.resyncedAt))}.`
-                    : `Re-synced ${data.resync.resyncedContacts} of ${data.resync.requestedContacts} flagged contact${data.resync.requestedContacts === 1 ? "" : "s"} from Xero at ${clubTime.instantTime(requireInstant(data.resync.resyncedAt))}${data.resync.removedContacts > 0 ? ` (${data.resync.removedContacts} no longer exist in Xero; their stale cache entries were removed)` : ""}.`}
-                </p>
-              ) : null}
-            </div>
-            <Link href={adminHref("xero-member-grouping")} className="text-sm text-primary hover:underline">Open Xero member grouping</Link>
-          </div>
-          {!data.cacheReady ? (
-            <p className="text-sm text-muted-foreground">Refresh Xero contact groups before relying on this audit.</p>
-          ) : data.mismatches.length === 0 ? (
-            <p className="text-sm text-success">No linked members are currently mismatched against the active grouping rules.</p>
-          ) : (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">Showing {data.mismatches.length} of {data.mismatchCount} mismatches.</p>
-              {data.mismatches.map((mismatch) => (
-                <div key={mismatch.memberId} className="rounded-md border p-3">
-                  <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-                    <div className="space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <a href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: mismatch.memberId })}`, currentXeroPath)} className="text-sm font-medium text-primary hover:underline">{mismatch.memberName}</a>
-                        <Badge variant="outline">{formatAgeTierName(mismatch.ageTier)}</Badge>
-                        {mismatch.addGroupId ? <ToneChip tone="warning" icon={AlertTriangle}>Add {mismatch.managedGroup?.name ?? mismatch.addGroupId}</ToneChip> : null}
-                        {mismatch.removeGroupIds.length > 0 ? <ToneChip tone="warning" icon={AlertTriangle}>{mismatch.removeGroupIds.length} to remove</ToneChip> : null}
-                      </div>
-                      <p className="text-sm text-muted-foreground">{mismatch.memberEmail}</p>
-                      <p className="text-xs text-muted-foreground">Would add: {mismatch.addGroupId ? (mismatch.managedGroup?.name ?? mismatch.addGroupId) : "nothing"}</p>
-                      <p className="text-xs text-muted-foreground">Would remove: {mismatch.removeGroupIds.length > 0 ? mismatch.removeGroupIds.join(", ") : "nothing"}</p>
-                    </div>
-                    <a href={buildXeroContactUrl(mismatch.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline">Open in Xero</a>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : (
-        <p className="text-sm text-muted-foreground">No mismatch audit has been loaded yet.</p>
-      )}
-    </SectionCard>
-  )
-}
-
 function ContactLinkMismatchPanel({
   open,
   shortCode,
@@ -723,15 +613,4 @@ function ContactLinkMismatchPanel({
       )}
     </SectionCard>
   )
-}
-
-function formatGroupingMode(mode: ContactGroupMismatchResponse["mode"]) {
-  switch (mode) {
-    case "NONE":
-      return "Mode: None"
-    case "MEMBERSHIP_TYPE":
-      return "Mode: Membership Type"
-    case "MEMBERSHIP_TYPE_AND_AGE":
-      return "Mode: Membership Type + Age"
-  }
 }

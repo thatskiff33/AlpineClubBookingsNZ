@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { getAuditRequestContext } from "@/lib/audit";
 import { requireAdmin } from "@/lib/session-guards";
 import {
@@ -47,12 +48,9 @@ const importSchema = z.object({
 export async function POST(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = importSchema.safeParse(body);
   if (!parsed.success) {

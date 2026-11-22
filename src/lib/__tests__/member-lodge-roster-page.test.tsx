@@ -39,7 +39,6 @@ vi.mock("@/lib/club-format-server", () => ({
 }));
 
 vi.mock("@/lib/member-lodge-roster", () => ({
-  ROSTER_WINDOW_DAYS: 30,
   buildMemberLodgeRoster: mocks.buildMemberLodgeRoster,
 }));
 

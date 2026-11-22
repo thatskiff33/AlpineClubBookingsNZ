@@ -59,6 +59,7 @@ import {
 } from "@/lib/stuck-state-payment-signals";
 
 import { adminHref, adminAnchorHref } from "@/lib/admin-hubs";
+import { describeContactGroupMismatchStuckState } from "@/lib/xero-contact-group-mismatch-summary";
 const BED_ALLOCATION_LOOKAHEAD_DAYS = 7;
 
 export type StuckStateSeverity = "critical" | "warning" | "info";
@@ -473,7 +474,7 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
     severity: "warning",
     owner: "Finance",
     count: snapshot.contactLinkMismatches.count,
-    href: adminHref("xero"),
+    href: `${adminHref("xero")}?section=contactLinkMismatches`,
     summary: `${snapshot.contactLinkMismatches.count} member/Xero contact ${plural(
       snapshot.contactLinkMismatches.count,
       "link",
@@ -486,11 +487,8 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
     severity: "warning",
     owner: "Finance",
     count: snapshot.contactGroupMismatches.count,
-    href: adminHref("xero"),
-    summary: `${snapshot.contactGroupMismatches.count} active member ${plural(
-      snapshot.contactGroupMismatches.count,
-      "contact group",
-    )} need Xero age-tier group repair.`,
+    href: `${adminHref("xero")}?section=contactGroupMismatches`,
+    summary: describeContactGroupMismatchStuckState(snapshot.contactGroupMismatches),
   });
 
   if (

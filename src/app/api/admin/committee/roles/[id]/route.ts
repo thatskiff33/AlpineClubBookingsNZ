@@ -5,6 +5,7 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
+import { shallowChangedFields } from "@/lib/audit-changed-fields";
 import {
   committeeRoleSelect,
   normalizeCommitteeEmail,
@@ -14,17 +15,11 @@ import {
 import { committeeRolePatchSchema } from "@/lib/forms/committee-role-schema";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const paramsSchema = z.object({
   id: z.string().min(1),
 });
-
-function changedFields(
-  before: Record<string, unknown>,
-  after: Record<string, unknown>,
-) {
-  return Object.keys(after).filter((key) => before[key] !== after[key]);
-}
 
 function auditActionForUpdate(
   before: { isActive: boolean },
@@ -66,12 +61,11 @@ export async function PATCH(
     );
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = committeeRolePatchSchema.safeParse(body);
   if (!parsed.success) {
@@ -133,7 +127,7 @@ export async function PATCH(
         outcome: "success",
         summary: auditAction.summary,
         metadata: {
-          changedFields: changedFields(existing, data as Record<string, unknown>),
+          changedFields: shallowChangedFields(existing, data as Record<string, unknown>),
           previousCommitteeRole: serializeCommitteeRole(existing),
           newCommitteeRole: serializeCommitteeRole(role),
         },

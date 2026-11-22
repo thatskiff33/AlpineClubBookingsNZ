@@ -1,6 +1,7 @@
 import { adminLateCaptureHeldTemplate } from "@/lib/email-templates/admin-finance";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { sendToAdmins, sendUnmuteableAdminAlert } from "./admin-alerts-shared";
+import type { AdminAlertSendResult } from "./admin-alert-send-result";
 import { adminLateCaptureRefundedOutsideAppTemplate } from "@/lib/email-templates/admin-late-capture-outside-app";
 import { LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE } from "@/lib/late-capture-outside-app-note";
 import { renderEmailHtml } from "@/lib/email-theme";
@@ -24,7 +25,7 @@ export async function sendAdminLateCaptureHeldAlert(data: {
   bookingId: string;
 },
   format: ClubFormat,
-) {
+): Promise<AdminAlertSendResult> {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}${adminHref("payments")}`;
 

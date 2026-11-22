@@ -22,6 +22,28 @@ export interface AdminAlertSendResult {
 }
 
 /**
+ * What `sendToAdmins` reports (#5407): its result, and how many of the
+ * `notDelivered` recipients have no EmailLog row to show for it: the send
+ * threw before the row existed, or an environment fault withheld a copy
+ * whose row write had failed. Nothing replays such a copy, so sending the
+ * alert again reaches that recipient for the first time; every other
+ * undelivered copy was refused or withheld on purpose.
+ */
+export interface AdminAlertRecipientsResult extends AdminAlertSendResult {
+  failedBeforeLogged: number;
+}
+
+/**
+ * True only when nobody received the alert, nothing will replay it, and at
+ * least one recipient failed before its attempt was logged (#5407): sending
+ * it again is then the only way it reaches anyone. A policy skip, an empty
+ * audience, or copies refused or withheld on purpose are final.
+ */
+export function adminAlertNeedsResend(result: AdminAlertRecipientsResult): boolean {
+  return adminAlertSendOutcome(result) === "undelivered" && result.failedBeforeLogged > 0;
+}
+
+/**
  * Whether anyone has the alert or will get it from the retry cron, so a
  * once-only claim is spent (#3672). False only when nobody could receive it.
  */

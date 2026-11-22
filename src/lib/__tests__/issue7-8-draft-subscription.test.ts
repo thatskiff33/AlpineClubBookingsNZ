@@ -277,6 +277,13 @@ vi.mock("@/lib/stripe", () => ({
   getPaymentIntent: vi.fn(),
 }));
 
+// The real summary reader, wrapped so one test can hand the route a summary
+// carrying fields its shape does not name.
+vi.mock("@/lib/member-draft-summary", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/member-draft-summary");
+  return { ...actual, getMemberDraftSummary: vi.fn(actual.getMemberDraftSummary) };
+});
+
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -286,6 +293,7 @@ vi.mock("@/lib/logger", () => ({
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { POST as createBooking } from "@/app/api/bookings/route";
+import { getMemberDraftSummary } from "@/lib/member-draft-summary";
 import { GET as getDrafts } from "@/app/api/bookings/drafts/route";
 import { POST as createPaymentIntent } from "@/app/api/payments/create-payment-intent/route";
 
@@ -439,6 +447,75 @@ describe("Issue 7: Draft Booking Creation", () => {
         data: expect.objectContaining({ status: "DRAFT" }),
       })
     );
+  });
+
+  it("answers an AI app connection's draft with the narrow summary, not the stored rows (ALP-653)", async () => {
+    mockAuth.mockResolvedValue(memberSession());
+    mockTx.booking.create.mockResolvedValue({
+      id: "draft-1",
+      status: "DRAFT",
+      finalPriceCents: 10000,
+      nonMemberHoldUntil: null,
+      draftExpiresAt: new Date("2026-07-04T00:00:00.000Z"),
+      guests: [{ id: "g1", dietaryRequirements: "Peanut allergy" }],
+    });
+    mockPrisma.booking.findFirst.mockResolvedValue({
+      id: "draft-1",
+      status: "DRAFT",
+      checkIn: new Date("2026-12-01T00:00:00.000Z"),
+      checkOut: new Date("2026-12-03T00:00:00.000Z"),
+      draftExpiresAt: new Date("2026-07-04T00:00:00.000Z"),
+      notes: null,
+      lodge: { id: "lodge-1", name: "Main lodge" },
+      guests: [{ firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true, dietaryRequirements: "Peanut allergy" }],
+    });
+    const request = makeBookingBody({ draft: true });
+    request.headers.set("x-mcp-principal", "signed-principal");
+
+    const res = await createBooking(request);
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    expect(data).toEqual({
+      id: "draft-1",
+      status: "DRAFT",
+      checkIn: "2026-12-01",
+      checkOut: "2026-12-03",
+      draftExpiresAt: "2026-07-04T00:00:00.000Z",
+      lodge: { id: "lodge-1", name: "Main lodge" },
+      notes: null,
+      guests: [{ firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true }],
+    });
+    expect(JSON.stringify(data)).not.toContain("Peanut");
+    expect(mockPrisma.booking.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: "draft-1", memberId: "member-1", status: "DRAFT" }),
+    }));
+  });
+
+  it("projects the draft summary onto create_draft_booking's shape, so an extra field never reaches the app (ALP-718)", async () => {
+    mockAuth.mockResolvedValue(memberSession());
+    mockTx.booking.create.mockResolvedValue({ id: "draft-1", status: "DRAFT", guests: [] });
+    const summary = {
+      id: "draft-1",
+      status: "DRAFT",
+      checkIn: "2026-12-01",
+      checkOut: "2026-12-03",
+      draftExpiresAt: "2026-07-04T00:00:00.000Z",
+      lodge: { id: "lodge-1", name: "Main lodge" },
+      notes: null,
+      guests: [{ firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true }],
+    };
+    vi.mocked(getMemberDraftSummary).mockResolvedValueOnce({
+      ...summary,
+      internalNote: "not for an AI provider",
+      lodge: { ...summary.lodge, doorCode: "1234" },
+      guests: [{ ...summary.guests[0], dietaryRequirements: "Peanut allergy" }],
+    } as never);
+    const request = makeBookingBody({ draft: true });
+    request.headers.set("x-mcp-principal", "signed-principal");
+
+    const res = await createBooking(request);
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual(summary);
   });
 
   it("rejects an absurd credit election as a field error, not a money-path failure", async () => {

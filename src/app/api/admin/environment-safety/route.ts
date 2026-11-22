@@ -1,16 +1,15 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { resolveEnvironmentRole } from "@/lib/environment-role";
 import {
   stateFromResolution,
   stateFromWrittenRow,
 } from "@/lib/environment-safety-admin-state";
-import {
-  isTransactionContentionError,
-  writeEnvironmentSafetyOverride,
-} from "@/lib/environment-safety-override-write";
+import { writeEnvironmentSafetyOverride } from "@/lib/environment-safety-override-write";
 import logger from "@/lib/logger";
+import { isSingletonUpsertContention } from "@/lib/prisma-errors";
 import { requireAdmin } from "@/lib/session-guards";
 
 /**
@@ -76,12 +75,11 @@ export async function PATCH(request: Request) {
   if (!guard.ok) return guard.response;
   const actingMemberId = guard.session.user.id;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = changeSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
@@ -114,7 +112,9 @@ export async function PATCH(request: Request) {
       cannot tell what a broken database means, and dressing that up as a
       friendly "try again shortly" would hide it from whoever has to fix it.
     */
-    if (!isTransactionContentionError(error)) throw error;
+    // P2002 counts as contention for this writer; the reason is the
+    // "Retryable failures" comment in environment-safety-override-write.ts.
+    if (!isSingletonUpsertContention(error)) throw error;
     logger.warn(
       { err: error },
       "Environment safety override save hit write contention",

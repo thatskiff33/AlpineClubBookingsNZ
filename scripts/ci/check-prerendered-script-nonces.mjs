@@ -13,7 +13,7 @@ import { isMainModule } from "../lib/is-main-module.mjs";
  * rendered once with no request, so it ships unnonced inline scripts that the
  * browser then blocks — the page never hydrates. Nothing else in the repo
  * notices: the build succeeds, the HTML looks right, and the failure is visible
- * only in a browser console. `/display` (fork #54) and the global 404 (#2356)
+ * only in a browser console. `/display` (fork hoppers99/AlpineClubBookingsNZ#54) and the global 404 (#2356)
  * have both hit this already.
  *
  * This runs against the real build output, after `pnpm run build`, because that

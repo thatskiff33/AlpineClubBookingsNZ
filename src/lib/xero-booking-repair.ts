@@ -3,24 +3,11 @@
 // and its test, not on any live route/cron/webhook path). #1208 item 2 split
 // its ~2,700 lines of private helpers into cohesive xero-booking-repair-*
 // sub-modules; this module keeps the orchestrator + human-summary formatter and
-// re-exports the exact public surface so external importers still resolve.
+// re-exports the types its consumers name.
 // Import xero source modules directly, never the @/lib/xero facade (#1208).
-export {
-  XERO_BOOKING_REPAIR_ACTION_TYPES,
-  XERO_BOOKING_REPAIR_FINDING_CODES,
-} from "./xero-booking-repair-types";
 export type {
-  BookingXeroRepairAction,
-  BookingXeroRepairBookingSummary,
-  BookingXeroRepairFinding,
-  BookingXeroRepairPassReport,
   BookingXeroRepairRunReport,
-  BookingXeroRepairRunSummary,
   BookingXeroRepairScope,
-  XeroBookingRepairActionStatus,
-  XeroBookingRepairActionType,
-  XeroBookingRepairFindingCode,
-  XeroBookingRepairSeverity,
 } from "./xero-booking-repair-types";
 
 import type {

@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { OTHER_LODGE_BOUNDS, type AdminOtherLodge, type OtherLodgeReferences } from "@/lib/other-lodges";
 
 /**
- * The lodge's name in the Other lodges editor (#64). Editable once the lodge
+ * The lodge's name in the Other lodges editor (triyder/AlpineClubBookingsNZ#64). Editable once the lodge
  * is keyed by the central server's id: the upload then sends that id, and the
  * server renames its lodge rather than creating a second one. Before that it
  * is read-only, and the route refuses a change too.
@@ -47,10 +47,10 @@ const plural = (count: number, one: string, many: string) =>
   `${count} ${count === 1 ? one : many}`;
 
 /**
- * The note under a lodge the central server does not list (#64): usually a
- * duplicate left by a rename before #64, or a lodge deleted there before it
+ * The note under a lodge the central server does not list (triyder/AlpineClubBookingsNZ#64): usually a
+ * duplicate left by a rename before triyder/AlpineClubBookingsNZ#64, or a lodge deleted there before it
  * told clubs about deletions. Says what still cites it, so an administrator can
- * assess it and Hide it (#58); hiding keeps it for those bookings and requests.
+ * assess it and Hide it (triyder/AlpineClubBookingsNZ#58); hiding keeps it for those bookings and requests.
  */
 export function NotOnCentralServerNote({ references }: { references: OtherLodgeReferences }) {
   const cited = isUnreferenced(references)
@@ -69,7 +69,7 @@ export function NotOnCentralServerNote({ references }: { references: OtherLodgeR
 
 /**
  * The Name cell of the Other lodges list: the name, the "not found" note when
- * the central server does not list the lodge (#64), and the amenity count.
+ * the central server does not list the lodge (triyder/AlpineClubBookingsNZ#64), and the amenity count.
  */
 export function OtherLodgeNameCell({ lodge }: { lodge: AdminOtherLodge }) {
   return (
