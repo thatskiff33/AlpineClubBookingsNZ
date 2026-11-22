@@ -13,11 +13,17 @@
  * Every lodge here has capacity 0 unless a case sets it, so a sweep a writer
  * triggers after commit offers nothing the case did not ask for.
  *
- * EVERY CASE HAS ITS OWN BOOKING IDS AND ITS OWN NIGHTS. `cancelBooking` starts
- * a waitlist pass after commit and does not await it, so a pass can still be
- * running when the next case starts. A pass only reads rows overlapping its own
- * freed nights and only writes rows it read, so with disjoint nights and ids it
- * cannot see or offer another case's entries, whatever capacity that case sets.
+ * EVERY CASE HAS ITS OWN BOOKING IDS AND ITS OWN NIGHTS. The writers this suite
+ * calls leave work running after they return: the audit rows (`logAudit` is not
+ * awaited) and, had a cancelled booking been offered, a waitlist pass. Cancelling
+ * a WAITLISTED booking starts no pass, and `expireStaleOffers` and the cron await
+ * theirs, but keeping every case on its own ids and nights means nothing left
+ * running from one case can read or write another case's rows, whatever capacity
+ * that case sets, and a later writer added to a case cannot break that.
+ *
+ * THE ADMIN API HAS NO LODGE OR ID FILTER, only a date window, so
+ * `shownByAdminApi` pages through the whole window (`total` rows) and keeps this
+ * suite's ids; it does not depend on how many other rows share the window.
  *
  * DATABASE-WIDE WORKERS. `expireStaleOffers` and the waitlist cron act on every
  * row in the database, so their own counts are never asserted; each case
@@ -171,14 +177,21 @@ async function shown(ids: string[]): Promise<Record<string, number | null>> {
 
 /** The same, through the admin waitlist API handler. Absent = not listed. */
 async function shownByAdminApi(from: string, to: string): Promise<Record<string, number | null>> {
-  const response = await adminWaitlistGet(
-    new NextRequest(`http://localhost/api/admin/waitlist?from=${from}&to=${to}&pageSize=100`),
-  );
-  expect(response.status).toBe(200);
-  const body = (await response.json()) as { entries: Array<{ id: string; waitlistPosition: number | null }> };
-  return Object.fromEntries(
-    body.entries.filter((entry) => entry.id.startsWith(PREFIX)).map((entry) => [entry.id, entry.waitlistPosition]),
-  );
+  const ours: Record<string, number | null> = {};
+  for (let page = 1; ; page += 1) {
+    const response = await adminWaitlistGet(
+      new NextRequest(`http://localhost/api/admin/waitlist?from=${from}&to=${to}&pageSize=100&page=${page}`),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      entries: Array<{ id: string; waitlistPosition: number | null }>;
+      total: number;
+    };
+    for (const entry of body.entries) {
+      if (entry.id.startsWith(PREFIX)) ours[entry.id] = entry.waitlistPosition;
+    }
+    if (body.entries.length === 0 || page * 100 >= body.total) return ours;
+  }
 }
 
 async function status(id: string) {

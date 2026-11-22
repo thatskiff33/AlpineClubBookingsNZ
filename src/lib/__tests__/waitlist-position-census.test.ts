@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { stripComments } from "./support/strip-comments";
@@ -17,6 +17,17 @@ const sources = productionSourceFiles()
     file,
     code: stripComments(readFileSync(path.join(process.cwd(), file), "utf8")),
   }));
+
+/** Non-test source under `scripts/`, repo-relative. */
+function productionScriptFiles(dir = "scripts"): string[] {
+  return readdirSync(path.join(process.cwd(), dir), { withFileTypes: true }).flatMap((entry) => {
+    const rel = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) {
+      return entry.name === "node_modules" || entry.name === "__tests__" ? [] : productionScriptFiles(rel);
+    }
+    return /\.(ts|mts|js|mjs)$/.test(entry.name) && !/\.(test|spec)\.|\.d\.m?ts$/.test(entry.name) ? [rel] : [];
+  });
+}
 
 /**
  * The receivers a `.waitlistPosition` read may name, per file: each is an API
@@ -109,13 +120,35 @@ describe("waitlist position census (#5402, INV-CAP-041)", () => {
   });
 
   it("reads a position field only off a named payload the reader filled in", () => {
+    // EVERY `.waitlistPosition`, whatever comes before the dot. Its receiver
+    // counts only when it is a bare word (`entry.`, `data?.`): an index, a call,
+    // a non-null assertion or a property chain (`rows[0].`, `(await …).`,
+    // `booking!.`, `a.booking.`) is reported as itself and fails.
     const reads = sources.flatMap(({ file, code }) =>
-      [...code.matchAll(/(\w+)\??\s*\.\s*waitlistPosition\b/g)].map((match) => `${file} :: ${match[1]}`),
+      [...code.matchAll(/\.\s*waitlistPosition\b/g)].map((match) => {
+        const before = code.slice(Math.max(0, match.index - 80), match.index);
+        const receiver = /(?<![\w$.\])!?])([A-Za-z_$][\w$]*)\??\s*$/.exec(before)?.[1];
+        return `${file} :: ${receiver ?? `<expression> ${before.trim().slice(-30)}`}`;
+      }),
     );
     const allowed = Object.entries(POSITION_PAYLOAD_RECEIVERS).flatMap(([file, receivers]) =>
       receivers.map((receiver) => `${file} :: ${receiver}`),
     );
     expect([...new Set(reads)].sort()).toEqual(allowed.sort());
+  });
+
+  it("never names the stored column as a string outside prisma/", () => {
+    // `booking["waitlistPosition"]`, a raw-SQL `b."waitlistPosition"`, a grant
+    // list entry: each is the retired column by name. The schema and migrations
+    // under prisma/ are expected to name it and are not scanned.
+    const scriptSources = productionScriptFiles().map((file) => ({
+      file,
+      code: stripComments(readFileSync(path.join(process.cwd(), file), "utf8")),
+    }));
+    const offenders = [...sources, ...scriptSources]
+      .filter(({ code }) => /(["'`])waitlistPosition\1/.test(code))
+      .map(({ file }) => file);
+    expect(offenders).toEqual([]);
   });
 
   it("keeps waitlist-queue.ts a leaf, so booking-create can import it without a cycle", () => {
