@@ -62,6 +62,9 @@ function refusalResponse(refusal: XeroTaxCategoryWriteRefusal) {
       return NextResponse.json({ error: "That category is already mapped to that rate." }, { status: 400 });
     case "not-found":
       return NextResponse.json({ error: "That category is not mapped." }, { status: 404 });
+    case "in-use":
+      // #4988: Exempt while the Opening Credits account is mapped.
+      return NextResponse.json({ error: refusal.message }, { status: 409 });
   }
 }
 

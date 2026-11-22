@@ -212,7 +212,12 @@ Credit a member had already paid for — a cancellation or reprice refund sittin
 on their account — is not goodwill and still posts to the hut-fee-refund
 account. Leaving the new mapping unset is safe: goodwill keeps going to the
 hut-fee-refund account, the screen says so, and nothing already in Xero is
-reclassified when you do set it. The same screen offers a **Bank Transfer
+reclassified when you do set it. An optional **Opening Credits** account
+(#4988) falls back the same way for credit brought across with an
+opening-credit import. Once set, its line is sent with the Xero tax rate mapped
+to the Exempt tax category, which a GST-registered club maps first: see
+[Moving in](guides/moving-in.md#6-credit-post-the-opening-credits) for when to
+set it. The same screen offers a **Bank Transfer
 Refunds Account** (#3529): a refund the club sends back by internet banking —
 an edit review settled by hand, or the hand-back of an internet-banking payment
 that reached Xero for a booking already cancelled — is recorded in Xero as a
