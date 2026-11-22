@@ -14,9 +14,7 @@ import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 export const MEMBER_WORK_PARTY_LIST_LIMIT = 50;
 
 /** The `[id]` of `GET /api/work-parties/[id]`. */
-export const workPartyIdParamsSchema = z.object({
-  id: z.string().min(1),
-});
+export { routeIdParamsSchema as workPartyIdParamsSchema } from "@/lib/route-id-params";
 
 /** The query of `GET /api/work-parties/active`: the stay being booked. */
 export const workPartiesForStayQuerySchema = z.object({
