@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -53,12 +54,11 @@ export async function PUT(request: Request) {
     return inactiveResponse;
   }
 
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const schema = arrivesAsMcpConnection(request)
     ? memberNotificationPreferencesConnectionUpdateSchema

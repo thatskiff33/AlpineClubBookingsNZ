@@ -9,7 +9,8 @@ import { NextResponse } from "next/server";
 type InvalidJsonWording =
   | "Invalid JSON"
   | "Invalid JSON payload"
-  | "Invalid JSON.";
+  | "Invalid JSON."
+  | "That post could not be read.";
 
 export type InvalidJsonBodyOptions = { error: InvalidJsonWording };
 
@@ -17,8 +18,10 @@ export type InvalidJsonBodyOptions = { error: InvalidJsonWording };
  * The 400 answer for a request body that is not valid JSON: the default body
  * with its `details`, or, when a route passes its own wording from the closed
  * list, exactly `{ error }`, byte-identical to the inline copy it replaced.
- * Routes that read the body their own way (for example accepting an empty
- * body) still answer through here.
+ * Three routes that read `text()` to accept an empty body and parse it
+ * themselves (members joining-fee preview, members xero-push and
+ * admin/mountain-conditions POST) answer an unparseable body through here, so
+ * the answer is still defined once.
  */
 export function invalidJsonBodyResponse(
   options?: InvalidJsonBodyOptions,
