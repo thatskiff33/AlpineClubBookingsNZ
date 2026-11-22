@@ -20,6 +20,7 @@ import { modifyBookingDatesWithLinkedMoveSupport } from "@/lib/booking-linked-da
 import { ApiError } from "@/lib/api-error";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
 import { auth } from "@/lib/auth";
+import { getClientIp } from "@/lib/rate-limit-http";
 import { clubTime } from "@/lib/club-time/server";
 import { adminShiftBookingDates } from "@/lib/booking-date-modification-service";
 import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
@@ -130,8 +131,7 @@ export async function PUT(
     );
   }
 
-  const ipAddress =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const ipAddress = getClientIp(request);
 
   // Issue #1668: admin-only date override gating. The booking-management role
   // (Booking Officer / Full Admin → ADMIN) applies ONLY when the override is

@@ -1,21 +1,28 @@
 import type { RateLimitResult } from "./rate-limit";
 
 /**
- * Get the client IP from a request, considering common proxy headers.
+ * The caller's address by the one rule (#5399): the LAST address in
+ * `X-Forwarded-For`, else `X-Real-IP`, else null. Caddy (our reverse proxy)
+ * appends the real client IP, so the first value is attacker-controllable but
+ * the last one is trustworthy. This is the only module that reads either
+ * header; a lint arm refuses the read anywhere else. It takes bare headers so a
+ * layout holding only `ReadonlyHeaders` applies the same rule.
+ */
+export function clientIpFromHeaders(headers: Pick<Headers, "get">): string | null {
+  const forwarded = headers.get("x-forwarded-for");
+  if (forwarded) {
+    const parts = forwarded.split(",").map((s) => s.trim()).filter(Boolean);
+    return parts[parts.length - 1] || null;
+  }
+  return headers.get("x-real-ip") || null;
+}
+
+/**
+ * The caller's address for a rate-limit key or an audit row, `"unknown"` when
+ * neither header names one.
  */
 export function getClientIp(request: Request): string {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) {
-    // Use the LAST IP in the chain — Caddy (our reverse proxy) appends the real client IP,
-    // so the first value is attacker-controllable but the last one is trustworthy.
-    const parts = forwarded.split(",").map((s) => s.trim()).filter(Boolean);
-    return parts[parts.length - 1] || "unknown";
-  }
-  const realIp = request.headers.get("x-real-ip");
-  if (realIp) {
-    return realIp;
-  }
-  return "unknown";
+  return clientIpFromHeaders(request.headers) ?? "unknown";
 }
 
 /**

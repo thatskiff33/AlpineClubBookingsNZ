@@ -5,6 +5,7 @@ import { z } from "zod";
 import { AdminReviewStatus, BookingStatus, type Prisma } from "@prisma/client";
 
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import {
@@ -163,8 +164,7 @@ export async function PATCH(
     );
   }
   const reviewedAt = new Date();
-  const ipAddress =
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const ipAddress = getClientIp(req);
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
