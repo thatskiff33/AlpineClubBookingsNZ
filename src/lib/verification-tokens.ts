@@ -1,7 +1,8 @@
 import { prisma } from "./prisma";
 import { issueActionToken } from "./action-tokens";
 
-export const EMAIL_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
+// Module-private (#5407): the token's stored expiry is handed back, never recomputed.
+const EMAIL_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
 export const EMAIL_CHANGE_TTL_MS = 2 * 60 * 60 * 1000;
 
 /**
