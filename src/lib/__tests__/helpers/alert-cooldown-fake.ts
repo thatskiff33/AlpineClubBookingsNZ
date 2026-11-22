@@ -3,7 +3,8 @@
  * the once-ever claim, its give-back, its confirm and the sweep send, so a
  * suite can drive the real `alert-cooldown.ts` and see which rows a sequence
  * leaves behind. Not a general Prisma fake: it knows equality, `null`, `in`,
- * `lt`/`lte`/`gt`/`gte`, `not` and an `exactPrefix` `startsWith`.
+ * `lt`/`lte`/`gt`/`gte` (on dates and strings), `not`, a top-level `OR`, an
+ * `exactPrefix` `startsWith`, and `orderBy` as one field or a list of them.
  *
  * `intercept(op, fn)` queues a one-shot wrapper for the next call of `op`:
  * `fn(run)` decides whether the write lands (`await run()`) and what the
@@ -55,7 +56,18 @@ function matchesValue(actual: unknown, condition: unknown): boolean {
 }
 
 function matches(row: Row, where: Where = {}): boolean {
-  return Object.entries(where).every(([field, condition]) => matchesValue(row[field as keyof Row], condition));
+  return Object.entries(where).every(([field, condition]) =>
+    field === "OR"
+      ? (condition as Where[]).some((branch) => matches(row, branch))
+      : matchesValue(row[field as keyof Row], condition),
+  );
+}
+
+function compareField(a: unknown, b: unknown): number {
+  const x = asTime(a) ?? a;
+  const y = asTime(b) ?? b;
+  if (x === y) return 0;
+  return (x as number) < (y as number) ? -1 : 1;
 }
 
 function pick(row: Row, select?: Record<string, boolean>) {
@@ -111,15 +123,21 @@ export function createAlertCooldownFake() {
     }: {
       where?: Where;
       select?: Record<string, boolean>;
-      orderBy?: Record<string, "asc" | "desc">;
+      orderBy?: Record<string, "asc" | "desc"> | Record<string, "asc" | "desc">[];
       take?: number;
     }) {
       return call("findMany", async () => {
         let found = [...rows.values()].filter((row) => matches(row, where));
-        const [field, direction] = Object.entries(orderBy ?? {})[0] ?? [];
-        if (field) {
-          const sign = direction === "desc" ? -1 : 1;
-          found = found.sort((a, b) => sign * ((asTime(a[field as keyof Row]) ?? 0) - (asTime(b[field as keyof Row]) ?? 0)));
+        const order = (Array.isArray(orderBy) ? orderBy : orderBy ? [orderBy] : []).flatMap((entry) => Object.entries(entry));
+        if (order.length > 0) {
+          found = found.sort((a, b) => {
+            for (const [field, direction] of order) {
+              const sign = direction === "desc" ? -1 : 1;
+              const diff = compareField(a[field as keyof Row], b[field as keyof Row]);
+              if (diff !== 0) return sign * diff;
+            }
+            return 0;
+          });
         }
         return found.slice(0, take ?? found.length).map((row) => pick(row, select));
       });

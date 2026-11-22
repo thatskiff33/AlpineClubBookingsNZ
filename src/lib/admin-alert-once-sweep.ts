@@ -84,49 +84,90 @@ async function releaseStaleUnsentClaims(now: Date, result: OnceEverAlertSweepRes
   }
 }
 
+/** Owed rows read per page, and the most a run acts on (sends, settles, drops or fails on). */
+const OWED_PAGE_SIZE = 50;
+/** The most owed rows one run reads, skipped ones included, so a run stays bounded. */
+const OWED_SCAN_LIMIT = 1000;
+
+type OwedRow = { key: string; lastAlertedAt: Date; replayAlert: Prisma.JsonValue };
+
+/**
+ * Oldest first, paging past rows it skips (a claim in flight or deferred for
+ * the day), so skipped rows never hold newer ones back: only rows it acts on
+ * count against the per-run budget. Pages by `(lastAlertedAt, key)` rather
+ * than a cursor row, because a settled row is deleted mid-run.
+ */
 async function drainOwedAlerts(now: Date, result: OnceEverAlertSweepResult): Promise<void> {
-  let owed: { key: string; lastAlertedAt: Date; replayAlert: Prisma.JsonValue }[];
-  try {
-    owed = await prisma.alertCooldown.findMany({
-      where: { key: exactPrefix(ONCE_EVER_OWED_PREFIX) },
-      select: { key: true, lastAlertedAt: true, replayAlert: true },
-      orderBy: { lastAlertedAt: "asc" },
-      take: 50,
-    });
-  } catch (err) {
-    result.failed += 1;
-    logger.error({ err }, "Failed to list owed once-ever alerts");
-    return;
-  }
-  for (const row of owed) {
-    const key = row.key.slice(ONCE_EVER_OWED_PREFIX.length);
-    const context = { key, owedSince: row.lastAlertedAt };
+  let after: OwedRow | null = null;
+  let acted = 0;
+  let scanned = 0;
+  while (acted < OWED_PAGE_SIZE && scanned < OWED_SCAN_LIMIT) {
+    let page: OwedRow[];
     try {
-      const state = await readOnceEverClaimState(key, now);
-      if (state === "kept") {
-        await settleOwedAlert({ key: row.key });
-        result.settled += 1;
-        continue;
-      }
-      const stored = parseStoredReplayableAlert(row.replayAlert);
-      const givenUp = now.getTime() - row.lastAlertedAt.getTime() >= ONCE_EVER_OWED_GIVE_UP_MS;
-      if (!stored || givenUp) {
-        logger.error(
-          { ...context, state, label: stored?.label },
-          stored
-            ? "Gave up re-sending a once-ever admin alert nobody received in 7 days; the error log is its only record (#5255)"
-            : "Dropped an owed once-ever admin alert this release cannot read; the error log is its only record (#5255)",
-        );
-        await settleOwedAlert({ key: row.key });
-        result.dropped += 1;
-        continue;
-      }
-      if (state !== "none") continue;
-      const send = await replayableAlertSend(stored.alert);
-      if (await sendStoredAlertOnceEver({ key, context, label: stored.label, send })) result.resent += 1;
+      page = await prisma.alertCooldown.findMany({
+        where: {
+          key: exactPrefix(ONCE_EVER_OWED_PREFIX),
+          ...(after
+            ? {
+                OR: [
+                  { lastAlertedAt: { gt: after.lastAlertedAt } },
+                  { lastAlertedAt: after.lastAlertedAt, key: { gt: after.key } },
+                ],
+              }
+            : {}),
+        },
+        select: { key: true, lastAlertedAt: true, replayAlert: true },
+        orderBy: [{ lastAlertedAt: "asc" }, { key: "asc" }],
+        take: OWED_PAGE_SIZE,
+      });
     } catch (err) {
       result.failed += 1;
-      logger.error({ ...context, err }, "Failed to sweep an owed once-ever admin alert");
+      logger.error({ err }, "Failed to list owed once-ever alerts");
+      return;
     }
+    for (const row of page) {
+      after = row;
+      scanned += 1;
+      if ((await sweepOwedRow(row, now, result)) === "acted") acted += 1;
+      if (acted >= OWED_PAGE_SIZE || scanned >= OWED_SCAN_LIMIT) break;
+    }
+    if (page.length < OWED_PAGE_SIZE) return;
+  }
+  if (scanned >= OWED_SCAN_LIMIT) {
+    logger.warn({ scanned }, "The once-ever alert sweep reached its scan limit; the rest wait for the next run");
+  }
+}
+
+async function sweepOwedRow(row: OwedRow, now: Date, result: OnceEverAlertSweepResult): Promise<"acted" | "skipped"> {
+  const key = row.key.slice(ONCE_EVER_OWED_PREFIX.length);
+  const context = { key, owedSince: row.lastAlertedAt };
+  try {
+    const state = await readOnceEverClaimState(key, now);
+    if (state === "kept") {
+      await settleOwedAlert({ key: row.key });
+      result.settled += 1;
+      return "acted";
+    }
+    const stored = parseStoredReplayableAlert(row.replayAlert);
+    const givenUp = now.getTime() - row.lastAlertedAt.getTime() >= ONCE_EVER_OWED_GIVE_UP_MS;
+    if (!stored || givenUp) {
+      logger.error(
+        { ...context, state, label: stored?.label },
+        stored
+          ? "Gave up re-sending a once-ever admin alert nobody received in 7 days; the error log is its only record (#5255)"
+          : "Dropped an owed once-ever admin alert this release cannot read; the error log is its only record (#5255)",
+      );
+      await settleOwedAlert({ key: row.key });
+      result.dropped += 1;
+      return "acted";
+    }
+    if (state !== "none") return "skipped";
+    const send = await replayableAlertSend(stored.alert);
+    if (await sendStoredAlertOnceEver({ key, context, label: stored.label, send })) result.resent += 1;
+    return "acted";
+  } catch (err) {
+    result.failed += 1;
+    logger.error({ ...context, err }, "Failed to sweep an owed once-ever admin alert");
+    return "acted";
   }
 }

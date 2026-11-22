@@ -191,6 +191,34 @@ describe("the sweep re-sends a raised-once alert's stored copy", () => {
   });
 });
 
+describe("the sweep pages past owed rows it skips", () => {
+  const deferredOwed = async (key: string) => {
+    await owe(key);
+    await claim(key, T0);
+    await deferAlertCooldown({ key, claimedAt: T0, windowMs: ALERT_ONCE_EVER_WINDOW_MS, retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS });
+  };
+
+  it("re-sends a newer alert behind more than a page of older deferred ones, across a page break on the same timestamp", async () => {
+    // 60 older rows deferred for the day, all owed at T0; the due one shares
+    // T0 and sorts after them by key, so only paging by (time, key) reaches it.
+    for (let i = 0; i < 60; i += 1) await deferredOwed(`once:skip-${String(i).padStart(2, "0")}`);
+    await owe(KEY);
+
+    await expect(sweepOnceEverAlerts(at(MINUTE))).resolves.toMatchObject({ resent: 1, failed: 0 });
+    expect(senders.xero).toHaveBeenCalledTimes(1);
+    expect(db.fake.rows.has(onceEverOwedKey(KEY))).toBe(false);
+    expect([...db.fake.rows.keys()].filter((key) => key.startsWith("once-ever-owed:"))).toHaveLength(60);
+  });
+
+  it("still acts on at most 50 rows a run, leaving the rest for the next", async () => {
+    for (let i = 0; i < 60; i += 1) await owe(`once:due-${String(i).padStart(2, "0")}`);
+
+    await expect(sweepOnceEverAlerts(at(MINUTE))).resolves.toMatchObject({ resent: 50 });
+    await expect(sweepOnceEverAlerts(at(2 * MINUTE))).resolves.toMatchObject({ resent: 10 });
+    expect(senders.xero).toHaveBeenCalledTimes(60);
+  });
+});
+
 describe("readOnceEverClaimState", () => {
   it("tells no claim, one awaiting its email, one deferred and one kept apart", async () => {
     await expect(readOnceEverClaimState(KEY, T0)).resolves.toBe("none");
