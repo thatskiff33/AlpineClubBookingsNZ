@@ -110,9 +110,21 @@ describe("list_committee", () => {
     expect(connection).toEqual({
       members: [{ name: "Rangi Smith", role: "President", description: "Runs the lodge." }],
     });
-    expect(browser).toMatchObject({
+    // The public committee page's answer is unchanged, phone and photo included.
+    expect(browser).toEqual({
+      members: [
+        {
+          id: "assignment-1",
+          role: "President",
+          roleKey: "president",
+          name: "Rangi Smith",
+          phone: "64 21 5550100",
+          contactKey: "assignment-1",
+          description: "Runs the lodge.",
+          photo: { memberId: "member-9", version: "2026-05-01T00:00:00.000Z" },
+        },
+      ],
       photoDisplay: "AVATAR",
-      members: [{ contactKey: "assignment-1", photo: { memberId: "member-9" } }],
     });
   });
 });

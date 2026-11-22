@@ -13,7 +13,15 @@
  *
  * Tests sign the caller in with `officerMemberSession()`, a member who is
  * also a Full Admin, so a route that lent a connection officer reach would
- * answer with more than the member's own records and fail the test.
+ * answer with more than the member's own records and fail the test. That
+ * check means something only where the route has an officer branch (an
+ * on-behalf target, an officer-only field, another member's record, such as
+ * the booking, cancel and profile routes); a route that reads the signed-in
+ * member's own id and nothing else answers the same either way, and its test
+ * pins the member id the loader was called with instead.
+ *
+ * Every nested shape must be exercised: a null or an empty list where the
+ * shape names fields fails, so a fixture cannot hide a leaked field.
  */
 import { NextRequest } from "next/server";
 import { expect } from "vitest";
@@ -67,8 +75,12 @@ function expectField(value: unknown, field: ConnectionField, path: string): void
     expect(plain(value) || (Array.isArray(value) && value.every(plain)), `${path} is a plain value`).toBe(true);
     return;
   }
-  if (value === null) return;
+  // A nested shape is checked only where the fixture fills it: a null or an
+  // empty list would let any field through unseen, so the fixture must carry
+  // at least one full entry.
+  expect(value, `${path} carries a value the shape can be checked against`).not.toBeNull();
   if (Array.isArray(value)) {
+    expect(value.length, `${path} carries at least one entry the shape can be checked against`).toBeGreaterThan(0);
     value.forEach((item, index) => expectField(item, field, `${path}[${index}]`));
     return;
   }

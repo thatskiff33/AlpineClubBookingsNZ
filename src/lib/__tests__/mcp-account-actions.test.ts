@@ -73,6 +73,7 @@ import { GET as getPrefs, PUT as putPrefs } from "@/app/api/notifications/prefer
 import { PUT as putProfile } from "@/app/api/profile/route";
 import { expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
 import { lodgeSession } from "@/lib/__tests__/helpers/sessions";
+import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
 import { findMcpAction, mcpActionInputSchema } from "@/lib/mcp/catalogue";
 import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
 
@@ -129,12 +130,24 @@ describe("get_my_notification_preferences and update_my_notification_preferences
   it("changes only the preferences sent, for the member themselves", async () => {
     h.prisma.notificationPreference.findUnique.mockResolvedValue(PREFS_ROW);
     h.prisma.notificationPreference.upsert.mockResolvedValue({ ...PREFS_ROW, clubNotices: false });
-    const { connection } = await expectActionContract({
+    const { connection, browser } = await expectActionContract({
       actionId: "update_my_notification_preferences",
       handler: putPrefs,
       args: { clubNotices: false, marketingEmails: false },
     });
-    expect(connection).toMatchObject({ clubNotices: false, bookingReminder: false });
+    const saved = {
+      bookingConfirmation: true,
+      bookingReminder: false,
+      bookingBumped: true,
+      bookingCancelled: true,
+      bookingAddedByFamily: true,
+      choreRoster: false,
+      clubNotices: false,
+      marketingEmails: false,
+    };
+    expect(connection).toEqual(saved);
+    // The website is sent the same eight preferences, never the row's ids or dates.
+    expect(browser).toEqual(saved);
     const upsert = h.prisma.notificationPreference.upsert.mock.calls[0][0];
     expect(upsert.where).toEqual({ memberId: "officer-1" });
     expect(upsert.update).toEqual({ clubNotices: false, marketingEmails: false });
@@ -230,7 +243,7 @@ describe("update_my_profile", () => {
       expect(allKeys(connection).has(withheld), withheld).toBe(false);
     }
     // The website's answer is the saved row, as before.
-    expect(browser).toMatchObject({ role: "ADMIN", xeroContactId: "xero-contact-1" });
+    expect(browser).toEqual(JSON.parse(JSON.stringify({ ...stored, phoneNumber: "5550199" })));
     for (const call of h.prisma.member.update.mock.calls) {
       expect(call[0].where).toEqual({ id: "officer-1" });
     }
@@ -420,7 +433,37 @@ describe("list_my_account_activity", () => {
     for (const withheld of ["metadata", "ipAddress", "userAgent", "requestId", "actor", "drilldowns", "entityId"]) {
       expect(allKeys(connection).has(withheld), withheld).toBe(false);
     }
-    expect(browser).toHaveProperty("categories");
+    // The website's timeline answer is unchanged: actor, subject, drilldowns and the category list.
+    expect(browser).toEqual({
+      data: [
+        {
+          id: "log-1",
+          action: "member.profile.updated",
+          category: "account",
+          severity: "important",
+          outcome: "success",
+          summary: "Member profile updated",
+          description: null,
+          details: null,
+          createdAt: "2026-06-30T00:00:00.000Z",
+          actor: { id: "officer-1", firstName: "Olive", lastName: "Officer" },
+          actorDisplayName: "You",
+          subject: { id: "officer-1", firstName: "Olive", lastName: "Officer" },
+          subjectDisplayName: "You",
+          subjectMemberId: "officer-1",
+          entityType: "Member",
+          entityId: "officer-1",
+          drilldowns: [],
+          metadata: null,
+        },
+      ],
+      total: 1,
+      page: 1,
+      pageSize: 10,
+      totalPages: 1,
+      category: "all",
+      categories: MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS,
+    });
     // The member's own rows only: the where clause is built from their id.
     expect(JSON.stringify(h.prisma.auditLog.findMany.mock.calls[0][0].where)).toContain("officer-1");
   });
