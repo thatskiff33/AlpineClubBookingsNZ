@@ -79,6 +79,7 @@ import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { findPaymentTransactionByIntentId, sumRecordedRefundsForCapture } from "@/lib/payment-transactions";
 import { CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import { heldStripeCapturesWhere, readSupersededOwnership } from "@/lib/superseded-capture-ownership";
+import { PROMOTED_KEPT_REASONS, promotedCaptureAlertOwedKey, type PromotedKeptReason } from "@/lib/unsettled-capture-marker";
 import {
   listDuplicateRefundIntentIdsOwningCaptures,
   listLiveSupersededIntentIds,
@@ -370,9 +371,10 @@ export function newCaptureAlertOwedKey(bookingId: string, paymentIntentId: strin
  */
 export async function recordNewCaptureAlertOwed(
   tx: Pick<Prisma.TransactionClient, "alertCooldown">,
-  { bookingId, paymentIntentId, now = new Date() }: { bookingId: string; paymentIntentId: string; now?: Date },
+  { bookingId, paymentIntentId, now = new Date(), reason }: { bookingId: string; paymentIntentId: string; now?: Date; reason?: PromotedKeptReason },
 ): Promise<void> {
-  const key = newCaptureAlertOwedKey(bookingId, paymentIntentId);
+  // #5240 review: a promoted flag keeps its reason in its own marker's key.
+  const key = reason ? promotedCaptureAlertOwedKey(reason, bookingId, paymentIntentId) : newCaptureAlertOwedKey(bookingId, paymentIntentId);
   await tx.alertCooldown.upsert({ where: { key }, create: { key, lastAlertedAt: now }, update: {} });
 }
 
@@ -447,7 +449,8 @@ export async function alertCaptureKeptWithoutRecordedSettler({
   }
   // #4285 review: ANY delivered alert for this capture answers an owed one, so
   // the drain never later sends "no other payment holds money" once untrue.
-  await settleOwedAlert({ key: newCaptureAlertOwedKey(booking.id, paymentIntentId) }).catch((err) =>
+  const owedKeys = [newCaptureAlertOwedKey(booking.id, paymentIntentId), ...PROMOTED_KEPT_REASONS.map((owed) => promotedCaptureAlertOwedKey(owed, booking.id, paymentIntentId))];
+  await Promise.all(owedKeys.map((owedKey) => settleOwedAlert({ key: owedKey }))).catch((err) =>
     logger.error({ err, ...context }, "Failed to clear a delivered kept-capture alert's owed marker; it may be sent again (#4285)"),
   );
   return "sent";

@@ -20,6 +20,7 @@
  * the intent and `lastAlertedAt` is when the capture was written.
  */
 import type { Prisma } from "@prisma/client";
+import type { DuplicateCaptureKeptReason } from "@/lib/duplicate-capture-kept-note";
 
 export const UNSETTLED_CAPTURE_PREFIX = "saved-card-capture-unsettled:";
 
@@ -47,4 +48,29 @@ export async function recordCaptureAwaitingSettle(tx: FlagStore, paymentIntentId
 export async function consumeCaptureAwaitingSettle(tx: FlagStore, paymentIntentId: string): Promise<boolean> {
   const { count } = await tx.alertCooldown.deleteMany({ where: { key: unsettledCaptureKey(paymentIntentId) } });
   return count > 0;
+}
+
+/**
+ * #5240 review: the owed kept-capture alert the payments cron records when it
+ * promotes a flag for any reason but `new-capture` - the guard's own reason, or
+ * `unsettled-saved-card` at the seven-day hand-over - kept in the marker's key
+ * so the drain words the alert as the guard judged it, not as `new-capture`.
+ * A `new-capture` promotion uses the arrival's own owed marker
+ * (`newCaptureAlertOwedKey`). Any delivered alert for the capture clears both.
+ */
+export const PROMOTED_CAPTURE_ALERT_OWED_PREFIX = "duplicate-capture-promoted-owed:";
+
+export const PROMOTED_KEPT_REASONS = ["not-recorded", "settler-released", "unsettled-saved-card"] as const satisfies readonly DuplicateCaptureKeptReason[];
+export type PromotedKeptReason = (typeof PROMOTED_KEPT_REASONS)[number];
+
+export function promotedCaptureAlertOwedKey(reason: PromotedKeptReason, bookingId: string, paymentIntentId: string): string {
+  return `${PROMOTED_CAPTURE_ALERT_OWED_PREFIX}${reason}:${bookingId}:${paymentIntentId}`;
+}
+
+/** A promoted marker's parts, or null for a key this module never wrote. */
+export function parsePromotedCaptureAlertOwedKey(key: string): { reason: PromotedKeptReason; bookingId: string; paymentIntentId: string } | null {
+  const [reason, bookingId, paymentIntentId, ...rest] = key.slice(PROMOTED_CAPTURE_ALERT_OWED_PREFIX.length).split(":");
+  if (!key.startsWith(PROMOTED_CAPTURE_ALERT_OWED_PREFIX) || rest.length > 0 || !bookingId || !paymentIntentId) return null;
+  const known = PROMOTED_KEPT_REASONS.find((candidate) => candidate === reason);
+  return known ? { reason: known, bookingId, paymentIntentId } : null;
 }

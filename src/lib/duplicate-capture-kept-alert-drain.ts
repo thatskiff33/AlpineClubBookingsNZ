@@ -73,7 +73,14 @@ import { CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST, isCapturedTransact
 import { sumRecordedRefundsForCapture } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
 import { withReadOnlySnapshot } from "@/lib/read-only-snapshot";
-import { consumeCaptureAwaitingSettle, UNSETTLED_CAPTURE_HAND_OVER_MS, UNSETTLED_CAPTURE_PREFIX } from "@/lib/unsettled-capture-marker";
+import {
+  consumeCaptureAwaitingSettle,
+  parsePromotedCaptureAlertOwedKey,
+  PROMOTED_CAPTURE_ALERT_OWED_PREFIX,
+  type PromotedKeptReason,
+  UNSETTLED_CAPTURE_HAND_OVER_MS,
+  UNSETTLED_CAPTURE_PREFIX,
+} from "@/lib/unsettled-capture-marker";
 import { formatCents } from "@/lib/utils";
 
 /** How long a marker waits before the drain tries it: the post-commit alert goes first. */
@@ -187,7 +194,7 @@ type Judged =
   | { action: "send"; alert: Omit<Parameters<typeof alertCaptureKeptWithoutRecordedSettler>[0], "format"> };
 
 /** What to do with one owed marker, read in one snapshot. Read-only. */
-async function judgeOwedAlert(bookingId: string, paymentIntentId: string, format: ClubFormat): Promise<Judged> {
+async function judgeOwedAlert(bookingId: string, paymentIntentId: string, format: ClubFormat, promotedReason?: PromotedKeptReason): Promise<Judged> {
   return withReadOnlySnapshot(prisma, async (tx) => {
     const booking = await tx.booking.findUnique({
       where: { id: bookingId },
@@ -230,7 +237,8 @@ async function judgeOwedAlert(bookingId: string, paymentIntentId: string, format
         amountCents: heldCents,
         otherPaymentIntentId: other?.stripePaymentIntentId ?? null,
         otherHoldsMoney: !!other,
-        reason: closed ? "new-capture-closed" : other ? "new-capture-later-payment" : "new-capture",
+        // #5240 review: a promoted flag's alert says what its guard judged.
+        reason: closed ? "new-capture-closed" : (promotedReason ?? (other ? "new-capture-later-payment" : "new-capture")),
         ...(closed ? { cancellationRefund: await readCancellationRefund(tx, booking, format) } : {}),
       },
     };
@@ -250,14 +258,23 @@ async function judgeOwedAlert(bookingId: string, paymentIntentId: string, format
  * - The booking paid or completed, and the guard (`judgeCaptureOnPaidBooking`)
  *   judging it as its arrival would:
  *   - kept and the admins told, for any reason: the flag becomes that owed
- *     alert, due at once, so the drain below sends it in this same run;
- *   - kept silently (the superseded or duplicate-capture machinery owns it):
- *     nothing hangs on the flag, so it is cleared;
- *   - refunded (another card is the settlement): it waits for the arrival, as an
- *     alert now would say "kept" about money the arrival then refunds - until
- *     `UNSETTLED_CAPTURE_HAND_OVER_MS`, when Stripe's retries are long over and
- *     nothing will refund it: then it becomes the owed alert too, as does a
- *     capture the arrival would not judge (no longer `SUCCEEDED`).
+ *     alert, due at once, so the drain below sends it in this same run, worded
+ *     with the guard's own reason (a `not-recorded` or `settler-released` one
+ *     is kept in its marker's key, `promotedCaptureAlertOwedKey`);
+ *   - kept silently (the superseded or duplicate-capture machinery owns it, or a
+ *     cancel in flight holds it): it waits and is judged again each run, as such a
+ *     keep may pass (the cancel dies); at `UNSETTLED_CAPTURE_HAND_OVER_MS` it is
+ *     cleared;
+ *   - refunded (another payment is the settlement: a card, cash or a bank
+ *     receipt, or the capture's own duplicate-capture refund is re-sent): it
+ *     waits for the arrival, as an alert now would say "kept" about money the
+ *     arrival then refunds - until `UNSETTLED_CAPTURE_HAND_OVER_MS`, when Stripe's
+ *     retries are long over: then it becomes an owed `unsettled-saved-card`
+ *     alert, as does a capture the arrival would not judge (no longer
+ *     `SUCCEEDED`). That alert is due an hour later, not at once, so an arrival
+ *     that lost the flag to this run has committed its refund before the drain
+ *     judges it and finds the refund. A later arrival (a manual redelivery, an
+ *     intent recovery) can still refund a capture already alerted as kept.
  * - Any other booking waits for its webhook. Waiting flags are never re-stamped,
  *   so their age stays the capture's; at the hand-over the case is logged for a
  *   person BEFORE the flag is cleared, so a crash between the two repeats the log
@@ -329,11 +346,21 @@ async function judgeUnsettledCapture(tx: Prisma.TransactionClient, paymentIntent
           arrivingAlreadyCaptured: false,
         })
       : null;
-  if (verdict?.verdict === "keep") return consumed("cleared");
-  if (verdict?.verdict !== "keep_unrecorded_settler" && !due) return "waiting";
+  // #5240 review: a keep may be passing (a cancel in flight holds the money), so it is judged again each run until the hand-over.
+  if (verdict?.verdict === "keep") return due ? consumed("cleared") : "waiting";
+  const keptAndTold = verdict?.verdict === "keep_unrecorded_settler";
+  if (!keptAndTold && !due) return "waiting";
   if ((await consumed("promoted")) === "taken") return "taken";
-  // Back-dated by the drain's wait, so the owed-alert drain below sends it in this same run.
-  await recordNewCaptureAlertOwed(tx, { bookingId: payment.bookingId, paymentIntentId, now: new Date(now.getTime() - NEW_CAPTURE_ALERT_DRAIN_AFTER_MS) });
+  const reason = keptAndTold ? verdict.reason : "unsettled-saved-card";
+  await recordNewCaptureAlertOwed(tx, {
+    bookingId: payment.bookingId,
+    paymentIntentId,
+    ...(reason === "new-capture" || reason === "new-capture-closed" || reason === "new-capture-later-payment" ? {} : { reason }),
+    // Kept and told: back-dated by the drain's wait, so the drain below sends it in this
+    // same run. The hand-over: due in an hour, so an arrival that lost the flag to this
+    // run and refunds the capture has committed that refund before the drain judges it.
+    now: keptAndTold ? new Date(now.getTime() - NEW_CAPTURE_ALERT_DRAIN_AFTER_MS) : now,
+  });
   return "promoted";
 }
 
@@ -353,14 +380,22 @@ export async function drainOwedNewCaptureAlerts(now: Date = new Date()): Promise
     flags.promotionFailed = true;
     logger.error({ err }, "Failed to check saved-card captures left unsettled; the owed kept-capture alerts are still drained (#5240)");
   }
-  const keys = await listOwedAlertKeys({ prefix: NEW_CAPTURE_ALERT_OWED_PREFIX, now, retryAfterMs: NEW_CAPTURE_ALERT_DRAIN_AFTER_MS });
+  const owed = (prefix: string) => listOwedAlertKeys({ prefix, now, retryAfterMs: NEW_CAPTURE_ALERT_DRAIN_AFTER_MS });
+  const keys = [...(await owed(NEW_CAPTURE_ALERT_OWED_PREFIX)), ...(await owed(PROMOTED_CAPTURE_ALERT_OWED_PREFIX))];
   if (keys.length === 0) return { checked: 0, sent: 0, ...flags };
   const format = await clubFormatValues();
   let sent = 0;
   for (const key of keys) {
-    const [bookingId, paymentIntentId] = key.slice(NEW_CAPTURE_ALERT_OWED_PREFIX.length).split(":") as [string, string];
+    const promoted = parsePromotedCaptureAlertOwedKey(key);
+    const [bookingId, paymentIntentId] = promoted
+      ? [promoted.bookingId, promoted.paymentIntentId]
+      : (key.slice(NEW_CAPTURE_ALERT_OWED_PREFIX.length).split(":") as [string, string]);
     try {
-      const judged = await judgeOwedAlert(bookingId, paymentIntentId, format);
+      if (!promoted && key.startsWith(PROMOTED_CAPTURE_ALERT_OWED_PREFIX)) {
+        await settleOwedAlert({ key });
+        continue;
+      }
+      const judged = await judgeOwedAlert(bookingId, paymentIntentId, format, promoted?.reason);
       if (judged.action === "clear") {
         await settleOwedAlert({ key });
         continue;
