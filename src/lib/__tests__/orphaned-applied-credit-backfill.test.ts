@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The heal path's collaborators are mocked; the DETECTION predicate uses the
 // REAL paymentHasCaptureEvidence (imported transitively from
-// cancel-flattened-payment-backfill) so capture evidence is exercised for real.
+// payment-capture-evidence) so capture evidence is exercised for real.
 const mocks = vi.hoisted(() => ({
   restoreCreditFromBooking: vi.fn(),
   lockMemberCreditLedger: vi.fn(),

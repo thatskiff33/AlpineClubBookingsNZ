@@ -17,6 +17,7 @@ import {
 } from "@/lib/adult-member-hosting-same-owner";
 import { ApiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
+import { getClientIp } from "@/lib/rate-limit-http";
 import {
   OwnDependantIdentityRefusedError,
 } from "@/lib/booking-dependant-identity";
@@ -109,8 +110,7 @@ export async function PUT(
     );
   }
 
-  const ipAddress =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const ipAddress = getClientIp(request);
 
   // Issue #1313 (option A2): a Booking Officer (bookings:edit) resolves to ADMIN
   // so they receive the SAME admin-on-behalf modify authority as a Full Admin.
