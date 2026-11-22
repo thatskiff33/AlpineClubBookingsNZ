@@ -3,6 +3,7 @@ import path from "node:path";
 import * as Sentry from "@sentry/nextjs";
 import { describe, expect, it, vi } from "vitest";
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+import { SENTRY_INIT_FILES } from "@/lib/__tests__/helpers/sentry-init-files";
 import {
   BREACHED_PASSWORD_RANGE_URL,
   isBreachedPasswordRangeUrl,
@@ -16,11 +17,6 @@ import {
 } from "@/lib/sentry-privacy-options";
 
 const ROOT = path.resolve(__dirname, "../../..");
-const INIT_FILES = [
-  "sentry.server.config.ts",
-  "sentry.edge.config.ts",
-  "src/instrumentation-client.ts",
-];
 
 it("ships both automatic Replay rates at zero without a recording integration", () => {
   const source = readFileSync(path.join(ROOT, "src/instrumentation-client.ts"), "utf8");
@@ -49,7 +45,7 @@ describe("Sentry 11 collects no more than v10 did (#3892, INV-INT-005, INV-PRIV-
     expect(attachStacktrace).toBe(false);
   });
 
-  it.each(INIT_FILES)("%s spreads the options as the first thing its Sentry.init sets", (file) => {
+  it.each(SENTRY_INIT_FILES)("%s spreads the options as the first thing its Sentry.init sets", (file) => {
     const source = readFileSync(path.join(ROOT, file), "utf8");
     expect(source).toMatch(
       /import \{[^}]*\bSENTRY_PRIVACY_INIT_OPTIONS,?[^}]*\} from "@\/lib\/sentry-privacy-options";/,
@@ -282,7 +278,7 @@ describe("Sentry never carries the breached-password range prefix (#4610)", () =
     expect(Sentry.nativeNodeFetchIntegration().name).toBe("NodeFetch");
   });
 
-  it.each(INIT_FILES)("%s runs the breadcrumb and event filters", (file) => {
+  it.each(SENTRY_INIT_FILES)("%s runs the breadcrumb and event filters", (file) => {
     const source = readFileSync(path.join(ROOT, file), "utf8");
     expect(source).toMatch(/beforeBreadcrumb\(breadcrumb\) \{\n(?:\s*\/\/[^\n]*\n)*\s*const kept = dropBreachedPasswordRangeBreadcrumb\(breadcrumb\);/);
     expect(source).toMatch(/return scrubBreachedPasswordRangeDeep\(event\);\n\s*\},/);
