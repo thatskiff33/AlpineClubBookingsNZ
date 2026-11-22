@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  loadBrowserSentryInit,
   SENTRY_INIT_FILES,
   type SentryInitFile,
 } from "@/lib/__tests__/helpers/sentry-init-files";
@@ -23,18 +24,7 @@ const ROOT = path.resolve(__dirname, "../../..");
 const LOADERS: Record<SentryInitFile, () => Promise<unknown>> = {
   "sentry.server.config.ts": () => import("../../../sentry.server.config"),
   "sentry.edge.config.ts": () => import("../../../sentry.edge.config"),
-  "src/instrumentation-client.ts": async () => {
-    // The browser initialises only after its runtime DSN arrives (#4982).
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ dsn: "https://public@example.ingest.sentry.io/1" })),
-      ),
-    );
-    await import("@/instrumentation-client");
-    const { browserSentryReady } = await import("@/lib/observability/browser-sentry-client");
-    await browserSentryReady;
-  },
+  "src/instrumentation-client.ts": loadBrowserSentryInit,
 };
 
 async function loadInitOptions(file: SentryInitFile): Promise<{ release?: string }> {
