@@ -4,7 +4,9 @@ import { BookingRequestType } from "@prisma/client";
 import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
 import { approveBookingRequest, BookingRequestError } from "@/lib/booking-request";
 import { approveMemberWholeLodgeRequest, approveSchoolBookingRequest } from "@/lib/school-booking-request";
+import type { z } from "zod";
 import {
+  adminBookingRequestApproveBodySchema,
   bookingRequestOwnerContactIdSchema,
   memberWholeLodgeApprovalSchema,
   schoolChildCountsSchema,
@@ -29,6 +31,9 @@ import { clubFormatValues } from "@/lib/club-format-server";
 
 /** Each branch reads its fields with the schemas `adminBookingRequestApproveBodySchema` composes;
  * also the AI app action `approve_booking_request` (ALP-719). */
+/** The body as sent: each branch parses its own fields. */
+type ApproveBody = Partial<Record<keyof z.input<typeof adminBookingRequestApproveBodySchema>, unknown>>;
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -55,13 +60,7 @@ export async function POST(
   // plus the optional map-to-existing-contact decision (issue #1255). The body
   // is empty for general requests and for school approvals that keep the
   // submitted numbers, so parse defensively.
-  const body = (await req.json().catch(() => ({}))) as {
-    childCounts?: unknown;
-    ownerContactMemberId?: unknown;
-    pricedHeadcount?: unknown;
-    priceOverrideCents?: unknown;
-    priceAsWholeLodge?: unknown;
-  };
+  const body = ((await req.json().catch(() => null)) ?? {}) as ApproveBody;
 
   // The map target is an existing non-login Organisation/School contact id. The
   // authoritative guard (canLogin:false, role, not archived) runs inside the
@@ -82,18 +81,9 @@ export async function POST(
     // payment-link path — minting a duplicate non-login member for someone who
     // already has an account and emailing them a tokenised payment page.
     if (requestRow.requestedByMemberId && requestRow.exclusivityRequested) {
-      const parsedOverride = memberWholeLodgeApprovalSchema.safeParse({
-        ...(body.pricedHeadcount !== undefined
-          ? { pricedHeadcount: body.pricedHeadcount }
-          : {}),
-        ...(body.priceOverrideCents !== undefined
-          ? { priceOverrideCents: body.priceOverrideCents }
-          : {}),
-        // #2338: the officer's per-approval "price as whole lodge" toggle.
-        ...(body.priceAsWholeLodge !== undefined
-          ? { priceAsWholeLodge: body.priceAsWholeLodge }
-          : {}),
-      });
+      // The schema names its own fields (#2338's "price as whole lodge" toggle
+      // among them) and drops the other branches' keys.
+      const parsedOverride = memberWholeLodgeApprovalSchema.safeParse(body);
       if (!parsedOverride.success) {
         return NextResponse.json({ error: "Invalid headcount or price override" }, { status: 422 });
       }

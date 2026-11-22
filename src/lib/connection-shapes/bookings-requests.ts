@@ -14,7 +14,10 @@
  * them): the ids of the officers who priced or reviewed a request (the queue
  * names them), internal quote, other-lodge and school-record ids no action
  * takes, the guest-row ids and the requester-relative flags of a member-night
- * clash, and the address an attendee-confirmation email went to.
+ * clash in `check_booking_request_member_links`, and the address an
+ * attendee-confirmation email went to. A refusal is never projected
+ * (`INV-MCP-006`): the 409 a hold, quote or approval answers on a member-night
+ * clash carries the clash as the admin screen gets it, guest-row ids included.
  */
 import type {
   BookingRequestPricingMode,

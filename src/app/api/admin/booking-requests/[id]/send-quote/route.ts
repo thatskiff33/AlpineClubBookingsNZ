@@ -10,7 +10,9 @@ import {
   BookingMemberNightConflictError,
   getBookingMemberNightConflictResponse,
 } from "@/lib/booking-member-night-conflicts";
+import type { z } from "zod";
 import {
+  adminBookingRequestSendQuoteBodySchema,
   bookingRequestOwnerContactIdSchema,
   schoolChildCountsSchema,
   type SchoolChildCounts,
@@ -46,10 +48,9 @@ export async function POST(
   // Optional map-to-existing-contact decision (issue #1255). Sending a quote
   // auto-holds capacity, which materialises the owner, so the decision rides in
   // the send body. The authoritative guard runs inside the hold transaction.
-  const body = (await req.json().catch(() => ({}))) as {
-    ownerContactMemberId?: unknown;
-    childCounts?: unknown;
-  };
+  const body = (await req.json().catch(() => ({}))) as Partial<
+    Record<keyof z.input<typeof adminBookingRequestSendQuoteBodySchema>, unknown>
+  >;
   let ownerContactMemberId: string | undefined;
   if (body.ownerContactMemberId !== undefined && body.ownerContactMemberId !== null) {
     const parsedContact = bookingRequestOwnerContactIdSchema.safeParse(body.ownerContactMemberId);
