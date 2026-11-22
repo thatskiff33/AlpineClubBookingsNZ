@@ -20,6 +20,8 @@ import { adminRefundRequestsQuerySchema } from "@/lib/admin-refund-requests-quer
 import { adminReportQuerySchema } from "@/lib/admin-reports-query";
 import { adminSubscriptionsQuerySchema } from "@/lib/admin-subscriptions-query";
 import { bankRefundVoidAnsweredBodySchema } from "@/lib/bank-refund-void-answered-body";
+import { financeBackfillMonthlyFactsBodyFields } from "@/lib/finance-backfill-request";
+import { financeBookingMetricsQueryFields } from "@/lib/finance-booking-metrics-query";
 import {
   ADMIN_PAYMENTS_CONNECTION_SHAPE,
   ADMIN_REPORTS_CONNECTION_SHAPE,
@@ -28,6 +30,10 @@ import {
   CREDIT_ADJUSTMENT_REQUESTED_CONNECTION_SHAPE,
   CREDIT_ADJUSTMENT_REVIEWED_CONNECTION_SHAPE,
   CREDIT_APPROVALS_CONNECTION_SHAPE,
+  FINANCE_BACKFILL_MONTHLY_FACTS_CONNECTION_SHAPE,
+  FINANCE_BOOKING_METRICS_CONNECTION_SHAPE,
+  FINANCE_SYNC_RUN_CONNECTION_SHAPE,
+  FINANCE_SYNC_STATUS_CONNECTION_SHAPE,
   MANUAL_BOOKING_PAYMENT_CONNECTION_SHAPE,
   MANUAL_REFUND_TASKS_CONNECTION_SHAPE,
   MANUAL_SUBSCRIPTION_PAYMENT_CONNECTION_SHAPE,
@@ -319,6 +325,56 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     fixedBody: { action: "UNMARK_FAMILY_INVOICED" },
     kind: "write",
     returns: SUBSCRIPTION_BILLING_FAMILY_MARKER_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "get_finance_booking_metrics",
+    title: "Get finance booking metrics",
+    summary:
+      "The finance workspace's booking figures. A realised window (`realizedFrom`/`realizedTo`, and optionally `realizedCutoff`, the last day counted) covers stays that have happened: bookings, nights, occupancy and booked revenue by status and by day. A forward window (`forwardFrom`/`forwardTo`, and optionally `forwardAsOf`) covers bookings ahead, split into committed (paid) and at risk (not yet paid). Send one window or both; each pair goes together and spans at most 366 days. Dates are `YYYY-MM-DD`. Also answers with payment totals (collected, refunded, owed) and how many bookings' money reconciles. Amounts are integer cents.",
+    method: "GET",
+    path: "/api/finance/bookings/metrics",
+    query: z.object(financeBookingMetricsQueryFields),
+    kind: "read",
+    requires: { area: "finance", level: "view" },
+    returns: FINANCE_BOOKING_METRICS_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "get_finance_sync_status",
+    title: "Get the finance sync status",
+    summary:
+      "How the finance workspace's sync of reports from Xero is going: the latest run (when, how long, which reports succeeded or failed and why), the nightly schedule and its latest run, and recent failures.",
+    method: "GET",
+    path: "/api/finance/sync/status",
+    kind: "read",
+    requires: { area: "finance", level: "edit" },
+    returns: FINANCE_SYNC_STATUS_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "run_finance_sync",
+    title: "Run the finance sync now",
+    summary:
+      "Pulls the finance workspace's reports from Xero now instead of waiting for the nightly run, and answers when it finishes: `completed`, or `partial` when some reports failed (see `datasetResults`). Refused with `already-running` if a sync is already under way. It only refreshes the workspace's copy of Xero's figures; repeating it is harmless.",
+    method: "POST",
+    path: "/api/finance/sync/run",
+    kind: "write",
+    requires: { area: "finance", level: "edit" },
+    returns: FINANCE_SYNC_RUN_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "backfill_finance_monthly_facts",
+    title: "Backfill the finance monthly figures",
+    summary:
+      "Rebuilds the finance workspace's month-by-month figures from Xero's history, twelve months at a time, back to `fromMonth` (`YYYY-MM`, optional; otherwise until Xero has no earlier figures). `maxChunks` (optional, default 30) caps how many twelve-month steps it takes. It replaces the workspace's stored monthly figures with Xero's and changes nothing in Xero; repeating it is harmless. Refused while another finance sync is running.",
+    method: "POST",
+    path: "/api/finance/sync/backfill-monthly-facts",
+    body: z.object(financeBackfillMonthlyFactsBodyFields),
+    kind: "write",
+    requires: { area: "finance", level: "edit" },
+    returns: FINANCE_BACKFILL_MONTHLY_FACTS_CONNECTION_SHAPE,
     core: false,
   },
 ];

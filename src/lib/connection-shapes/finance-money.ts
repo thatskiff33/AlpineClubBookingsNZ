@@ -11,6 +11,9 @@
  * database.
  */
 import { connectionShapeFor, eachEntry } from "@/lib/connection-projection";
+import type { FinanceBookingMetricsResult } from "@/lib/finance-booking-metrics";
+import type { FinanceSyncDiagnosticsStatus } from "@/lib/finance-sync-diagnostics";
+import type { FinanceSyncExecutionResult } from "@/lib/finance-sync-service";
 
 /** `GET /api/admin/payments`: one page of payments and the filtered totals. */
 export const ADMIN_PAYMENTS_CONNECTION_SHAPE = connectionShapeFor<{
@@ -965,4 +968,178 @@ export const SUBSCRIPTION_BILLING_FAMILY_MARKER_CONNECTION_SHAPE = connectionSha
 }>({
   success: true,
   message: true,
+});
+
+const FINANCE_METRICS_WINDOW_SHAPE = { from: true, to: true, effectiveFrom: true, effectiveTo: true, dayCount: true } as const;
+const FINANCE_METRICS_STATUS_SHAPE = { bookingCount: true, bookingNights: true, guestNights: true, bookedRevenueCents: true } as const;
+const FINANCE_METRICS_BUCKET_SHAPE = {
+  ...FINANCE_METRICS_STATUS_SHAPE,
+  occupancy: { occupiedBedNights: true, capacityBedNights: true, occupancyRate: true },
+} as const;
+const FINANCE_METRICS_DAY_SHAPE = {
+  date: true,
+  bookingCount: true,
+  guestNights: true,
+  occupiedBeds: true,
+  availableBeds: true,
+  occupancyRate: true,
+  bookedRevenueCents: true,
+} as const;
+
+/**
+ * `GET /api/finance/bookings/metrics`: the finance workspace's booking
+ * figures for a realised (past stays) window, a forward (bookings ahead)
+ * window, or both, with the payment and money-reconciliation summaries.
+ * Aggregates only, in integer cents.
+ */
+export const FINANCE_BOOKING_METRICS_CONNECTION_SHAPE = connectionShapeFor<FinanceBookingMetricsResult>({
+  generatedAt: true,
+  bookingCount: true,
+  moneyReconciliation: {
+    totalBookings: true,
+    byState: { RECONCILED: true, UNRECONCILED: true },
+    byReason: eachEntry(true),
+  },
+  paymentSummary: {
+    bookingCount: true,
+    bookingsWithPayment: true,
+    bookingsWithoutPayment: true,
+    paymentStatusBreakdown: eachEntry(true),
+    additionalPaymentStatusBreakdown: eachEntry(true),
+    capturedGrossCents: true,
+    capturedAdditionalCents: true,
+    outstandingAdditionalCents: true,
+    outstandingAdditionalBookings: true,
+    additionalLedgerGapCents: true,
+    additionalLedgerGapBookings: true,
+    refundedCents: true,
+    handBackOwedCents: true,
+    cardRefundOwedCents: true,
+    lateCaptureOwedCents: true,
+    lateCashCreditedCents: true,
+    keptCreditCents: true,
+    netCollectedCents: true,
+    refundsOwedCents: true,
+    creditsOwedCents: true,
+    creditAppliedCents: true,
+    changeFeeCents: true,
+  },
+  realized: {
+    window: { ...FINANCE_METRICS_WINDOW_SHAPE, cutoffDate: true },
+    totals: { ...FINANCE_METRICS_BUCKET_SHAPE, averageNightlyRevenueCents: true },
+    statusBreakdown: eachEntry(FINANCE_METRICS_STATUS_SHAPE),
+    byDate: FINANCE_METRICS_DAY_SHAPE,
+  },
+  forward: {
+    window: { ...FINANCE_METRICS_WINDOW_SHAPE, asOfDate: true },
+    totals: {
+      committed: { ...FINANCE_METRICS_BUCKET_SHAPE, statusBreakdown: eachEntry(FINANCE_METRICS_STATUS_SHAPE) },
+      atRisk: { ...FINANCE_METRICS_BUCKET_SHAPE, statusBreakdown: eachEntry(FINANCE_METRICS_STATUS_SHAPE) },
+      totalPipeline: FINANCE_METRICS_BUCKET_SHAPE,
+    },
+    byDate: {
+      date: true,
+      committed: FINANCE_METRICS_DAY_SHAPE,
+      atRisk: FINANCE_METRICS_DAY_SHAPE,
+      totalPipeline: FINANCE_METRICS_DAY_SHAPE,
+    },
+  },
+});
+
+const FINANCE_SYNC_RUN_SUMMARY_SHAPE = {
+  id: true,
+  workflow: true,
+  trigger: true,
+  status: true,
+  startedAt: true,
+  completedAt: true,
+  durationMs: true,
+  snapshotCount: true,
+  totalRowCount: true,
+  datasetCount: true,
+  successfulDatasetCount: true,
+  failedDatasetCount: true,
+  datasets: { datasetKey: true, snapshotCount: true, totalRowCount: true, snapshotTypes: true, errorMessage: true },
+  errorSummary: true,
+  failureDetails: { stage: true, datasetKey: true, message: true },
+} as const;
+
+const FINANCE_SYNC_CRON_RUN_SHAPE = {
+  id: true,
+  jobName: true,
+  status: true,
+  startedAt: true,
+  completedAt: true,
+  durationMs: true,
+  financeSyncRunId: true,
+  financeSyncStatus: true,
+  snapshotCount: true,
+  totalRowCount: true,
+  datasetCount: true,
+  failedDatasetCount: true,
+  error: true,
+  reason: true,
+} as const;
+
+/**
+ * `GET /api/finance/sync/status`: the latest finance sync from Xero, its
+ * nightly schedule and recent failures. The Xero organisation id and the
+ * requesting member's id stay behind.
+ */
+export const FINANCE_SYNC_STATUS_CONNECTION_SHAPE = connectionShapeFor<FinanceSyncDiagnosticsStatus>({
+  workflow: true,
+  latestRun: FINANCE_SYNC_RUN_SUMMARY_SHAPE,
+  cron: { jobName: true, schedule: true, timezone: true, latestRun: FINANCE_SYNC_CRON_RUN_SHAPE },
+  recentFailures: { syncRuns: FINANCE_SYNC_RUN_SUMMARY_SHAPE, cronRuns: FINANCE_SYNC_CRON_RUN_SHAPE },
+});
+
+type FinanceSyncDatasetResult = FinanceSyncExecutionResult["datasetResults"][number];
+
+const FINANCE_SYNC_DATASET_RESULT_SHAPE = {
+  datasetKey: true,
+  snapshotCount: true,
+  totalRowCount: true,
+  snapshotTypes: true,
+  factRowCount: true,
+  unresolvedFactRowCount: true,
+  errorMessage: true,
+} as const;
+
+/**
+ * `POST /api/finance/sync/run`, as a connection is answered (the browser is
+ * redirected): `completed` or `partial` with the run's figures.
+ */
+export const FINANCE_SYNC_RUN_CONNECTION_SHAPE = connectionShapeFor<{
+  outcome: "completed" | "partial";
+  runId: string;
+  status: string;
+  startedAt: string;
+  completedAt: string;
+  snapshotCount: number;
+  totalRowCount: number;
+  datasetResults: FinanceSyncDatasetResult[];
+}>({
+  outcome: true,
+  runId: true,
+  status: true,
+  startedAt: true,
+  completedAt: true,
+  snapshotCount: true,
+  totalRowCount: true,
+  datasetResults: FINANCE_SYNC_DATASET_RESULT_SHAPE,
+});
+
+/** `POST /api/finance/sync/backfill-monthly-facts`: the backfill run and what each report gave. */
+export const FINANCE_BACKFILL_MONTHLY_FACTS_CONNECTION_SHAPE = connectionShapeFor<{
+  runId: string;
+  status: string;
+  snapshotCount: number;
+  totalRowCount: number;
+  datasetResults: FinanceSyncDatasetResult[];
+}>({
+  runId: true,
+  status: true,
+  snapshotCount: true,
+  totalRowCount: true,
+  datasetResults: FINANCE_SYNC_DATASET_RESULT_SHAPE,
 });

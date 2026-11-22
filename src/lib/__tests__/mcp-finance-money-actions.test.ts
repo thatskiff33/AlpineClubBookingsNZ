@@ -13,7 +13,7 @@
  * each route is the route map's and the guard's job, tested with them, and
  * who is shown each action is `mcp-finance-action-visibility.test.ts`.
  */
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
@@ -44,6 +44,13 @@ const h = vi.hoisted(() => ({
   enqueueMembershipSubscriptionChargeOperation: vi.fn(),
   closeAlreadyPaidSubscriptionCharge: vi.fn(),
   createAuditLog: vi.fn(),
+  requireFinanceViewerApiAccess: vi.fn(),
+  requireFinanceManagerApiAccess: vi.fn(),
+  getFinanceBookingMetrics: vi.fn(),
+  getFinanceSyncDiagnosticsStatus: vi.fn(),
+  runManualFinanceSync: vi.fn(),
+  backfillFinanceMonthlyFacts: vi.fn(),
+  getLatestFinanceSyncRun: vi.fn(),
   prisma: {
     membershipSubscriptionCharge: { findMany: vi.fn(), count: vi.fn() },
     membershipBillingException: { findMany: vi.fn() },
@@ -93,7 +100,18 @@ vi.mock("@/lib/club-format-server", () => ({
   clubFormat: async () => ({ cents: (cents: number) => `$${(cents / 100).toFixed(2)}` }),
 }));
 vi.mock("@/lib/lodges", () => ({ resolveOptionalActiveLodgeId: async (_db: unknown, id: string) => id }));
-vi.mock("@/lib/finance-booking-metrics", () => ({ resolveMetricsCapacityAndScope: h.resolveMetricsCapacityAndScope }));
+vi.mock("@/lib/finance-booking-metrics", () => ({
+  resolveMetricsCapacityAndScope: h.resolveMetricsCapacityAndScope,
+  getFinanceBookingMetrics: h.getFinanceBookingMetrics,
+}));
+vi.mock("@/lib/finance-api-auth", () => ({
+  requireFinanceViewerApiAccess: h.requireFinanceViewerApiAccess,
+  requireFinanceManagerApiAccess: h.requireFinanceManagerApiAccess,
+}));
+vi.mock("@/lib/finance-sync-diagnostics", () => ({ getFinanceSyncDiagnosticsStatus: h.getFinanceSyncDiagnosticsStatus }));
+vi.mock("@/lib/finance-sync-manual", () => ({ runManualFinanceSync: h.runManualFinanceSync }));
+vi.mock("@/lib/finance-monthly-fact-backfill", () => ({ backfillFinanceMonthlyFacts: h.backfillFinanceMonthlyFacts }));
+vi.mock("@/lib/finance-sync-storage", () => ({ getLatestFinanceSyncRun: h.getLatestFinanceSyncRun }));
 vi.mock("@/lib/refunds-and-credits-owed", () => ({
   readRefundsAndCreditsOwed: async () => ({ refundsOwedCents: 7_000, creditsOwedCents: 3_000 }),
 }));
@@ -166,6 +184,10 @@ import { GET as listSubscriptions } from "@/app/api/admin/subscriptions/route";
 import { POST as recordSubscriptionPayment } from "@/app/api/admin/subscriptions/[id]/manual-payment/route";
 import { POST as recordBookingPayment } from "@/app/api/admin/bookings/[id]/mark-paid/route";
 import { GET as getSubscriptionBilling, POST as runSubscriptionBilling } from "@/app/api/admin/subscription-billing/route";
+import { GET as getFinanceBookingMetrics } from "@/app/api/finance/bookings/metrics/route";
+import { POST as backfillFinanceMonthlyFacts } from "@/app/api/finance/sync/backfill-monthly-facts/route";
+import { POST as runFinanceSync } from "@/app/api/finance/sync/run/route";
+import { GET as getFinanceSyncStatus } from "@/app/api/finance/sync/status/route";
 import { GET as listPayments } from "@/app/api/admin/payments/route";
 import { expectActionContract } from "@/lib/__tests__/helpers/mcp-action-contract";
 import { adminSession } from "@/lib/__tests__/helpers/sessions";
@@ -177,6 +199,8 @@ const financeOfficer = adminSession({ id: "treasurer-1", accessRoles: ["USER", "
 beforeEach(() => {
   vi.clearAllMocks();
   h.requireAdmin.mockResolvedValue({ ok: true, session: financeOfficer });
+  h.requireFinanceViewerApiAccess.mockResolvedValue({ ok: true, member: { id: "treasurer-1" } });
+  h.requireFinanceManagerApiAccess.mockResolvedValue({ ok: true, member: { id: "treasurer-1" } });
 });
 
 describe("list_payments", () => {
@@ -1099,5 +1123,263 @@ describe("subscription billing actions", () => {
       (action) => action.path === "/api/admin/subscription-billing" && action.fixedBody?.action === "UPDATE_SETTINGS",
     );
     expect(settingsActions).toEqual([]);
+  });
+});
+
+describe("finance workspace actions", () => {
+  const DAY = {
+    date: "2026-07-01",
+    bookingCount: 2,
+    guestNights: 6,
+    occupiedBeds: 6,
+    availableBeds: 14,
+    occupancyRate: 30,
+    bookedRevenueCents: 36_000,
+  };
+  const STATUS = { bookingCount: 2, bookingNights: 3, guestNights: 6, bookedRevenueCents: 36_000 };
+  const BUCKET = { ...STATUS, occupancy: { occupiedBedNights: 6, capacityBedNights: 20, occupancyRate: 30 } };
+  const WINDOW = { from: "2026-07-01", to: "2026-07-07", effectiveFrom: "2026-07-01", effectiveTo: "2026-07-07", dayCount: 7 };
+  const METRICS = {
+    generatedAt: "2026-07-01T00:00:00.000Z",
+    bookingCount: 2,
+    moneyReconciliation: { totalBookings: 2, byState: { RECONCILED: 2, UNRECONCILED: 0 }, byReason: { PRICE_MISMATCH: 0 } },
+    paymentSummary: {
+      bookingCount: 2,
+      bookingsWithPayment: 2,
+      bookingsWithoutPayment: 0,
+      paymentStatusBreakdown: { SUCCEEDED: 2 },
+      additionalPaymentStatusBreakdown: { NONE: 2 },
+      capturedGrossCents: 36_000,
+      capturedAdditionalCents: 0,
+      outstandingAdditionalCents: 0,
+      outstandingAdditionalBookings: 0,
+      additionalLedgerGapCents: 0,
+      additionalLedgerGapBookings: 0,
+      refundedCents: 0,
+      handBackOwedCents: 0,
+      cardRefundOwedCents: 0,
+      lateCaptureOwedCents: 0,
+      lateCashCreditedCents: 0,
+      keptCreditCents: 0,
+      netCollectedCents: 36_000,
+      refundsOwedCents: 7_000,
+      creditsOwedCents: 3_000,
+      creditAppliedCents: 0,
+      changeFeeCents: 0,
+    },
+    realized: {
+      window: { ...WINDOW, cutoffDate: "2026-07-07" },
+      totals: { ...BUCKET, averageNightlyRevenueCents: 12_000 },
+      statusBreakdown: { PAID: STATUS },
+      byDate: [DAY],
+    },
+    forward: {
+      window: { ...WINDOW, asOfDate: "2026-07-01" },
+      totals: {
+        committed: { ...BUCKET, statusBreakdown: { PAID: STATUS } },
+        atRisk: { ...BUCKET, statusBreakdown: { PENDING: STATUS } },
+        totalPipeline: BUCKET,
+      },
+      byDate: [{ date: "2026-07-01", committed: DAY, atRisk: DAY, totalPipeline: DAY }],
+    },
+  };
+
+  it("get_finance_booking_metrics answers with both windows for the days the app named", async () => {
+    h.getFinanceBookingMetrics.mockResolvedValue(METRICS);
+    const { connection, browser } = await expectActionContract({
+      actionId: "get_finance_booking_metrics",
+      handler: getFinanceBookingMetrics,
+      args: { realizedFrom: "2026-07-01", realizedTo: "2026-07-07", forwardFrom: "2026-07-01", forwardTo: "2026-07-07" },
+    });
+    expect(browser).toEqual(METRICS);
+    expect(connection).toEqual(METRICS);
+    expect(h.getFinanceBookingMetrics).toHaveBeenCalledWith(
+      expect.objectContaining({
+        realized: { from: "2026-07-01", to: "2026-07-07", cutoffDate: undefined },
+        forward: { from: "2026-07-01", to: "2026-07-07", asOfDate: undefined },
+      }),
+    );
+  });
+
+  const SYNC_RUN = {
+    id: "run-1",
+    workflow: "finance-daily",
+    trigger: "MANUAL",
+    status: "PARTIAL",
+    startedAt: "2026-07-01T00:00:00.000Z",
+    completedAt: "2026-07-01T00:01:00.000Z",
+    durationMs: 60_000,
+    xeroTenantId: "xero-tenant-uuid",
+    requestedByMemberId: "treasurer-1",
+    snapshotCount: 3,
+    totalRowCount: 120,
+    datasetCount: 2,
+    successfulDatasetCount: 1,
+    failedDatasetCount: 1,
+    datasets: [{ datasetKey: "pnl", snapshotCount: 3, totalRowCount: 120, snapshotTypes: ["PROFIT_AND_LOSS"], errorMessage: null }],
+    errorSummary: "Balance sheet failed",
+    failureDetails: [{ stage: "fetch", datasetKey: "balance-sheet", message: "Xero timed out" }],
+  };
+  const CRON_RUN = {
+    id: "cron-1",
+    jobName: "finance-sync",
+    status: "SUCCEEDED",
+    startedAt: "2026-07-01T00:00:00.000Z",
+    completedAt: "2026-07-01T00:01:00.000Z",
+    durationMs: 60_000,
+    financeSyncRunId: "run-1",
+    financeSyncStatus: "PARTIAL",
+    snapshotCount: 3,
+    totalRowCount: 120,
+    datasetCount: 2,
+    failedDatasetCount: 1,
+    error: null,
+    reason: "nightly",
+  };
+
+  it("get_finance_sync_status answers with the runs and schedule, never the Xero organisation id", async () => {
+    const STATUS_BODY = {
+      workflow: "finance-daily",
+      latestRun: SYNC_RUN,
+      cron: { jobName: "finance-sync", schedule: "0 3 * * *", timezone: "Pacific/Auckland", latestRun: CRON_RUN },
+      recentFailures: { syncRuns: [SYNC_RUN], cronRuns: [CRON_RUN] },
+    };
+    h.getFinanceSyncDiagnosticsStatus.mockResolvedValue(STATUS_BODY);
+    const { connection, browser } = await expectActionContract({
+      actionId: "get_finance_sync_status",
+      handler: getFinanceSyncStatus,
+    });
+    expect(JSON.stringify(connection)).not.toMatch(/xero-tenant-uuid|requestedByMemberId/);
+    expect(browser).toEqual(STATUS_BODY);
+  });
+
+  const EXECUTION = {
+    runId: "run-2",
+    workflow: "finance-daily",
+    trigger: "MANUAL",
+    status: "PARTIAL",
+    xeroTenantId: "xero-tenant-uuid",
+    startedAt: new Date("2026-07-01T00:00:00.000Z"),
+    completedAt: new Date("2026-07-01T00:01:00.000Z"),
+    snapshotCount: 3,
+    totalRowCount: 120,
+    datasetResults: [
+      {
+        datasetKey: "pnl",
+        snapshotCount: 3,
+        totalRowCount: 120,
+        snapshotTypes: ["PROFIT_AND_LOSS"],
+        factRowCount: 40,
+        unresolvedFactRowCount: 2,
+        errorMessage: "Two rows had no GL code",
+      },
+    ],
+  };
+
+  function syncRequest(viaConnection: boolean) {
+    return new NextRequest("https://club.example.test/api/finance/sync/run", {
+      method: "POST",
+      headers: viaConnection ? { [MCP_PRINCIPAL_HEADER]: "contract-test-principal" } : {},
+    });
+  }
+
+  it("run_finance_sync answers a connection with the outcome as JSON and keeps the browser's redirect", async () => {
+    h.runManualFinanceSync.mockResolvedValue({ outcome: "finished", execution: EXECUTION });
+    // The redirect is the browser's answer, so the contract helper (which wants a 2xx both ways) cannot run it.
+    const viaApp = await runFinanceSync(syncRequest(true));
+    expect(viaApp.status).toBe(200);
+    const body = await viaApp.json();
+    expect(Object.keys(body).sort()).toEqual(Object.keys(findMcpAction("run_finance_sync")!.returns).sort());
+    expect(body).toEqual({
+      outcome: "partial",
+      runId: "run-2",
+      status: "PARTIAL",
+      startedAt: "2026-07-01T00:00:00.000Z",
+      completedAt: "2026-07-01T00:01:00.000Z",
+      snapshotCount: 3,
+      totalRowCount: 120,
+      datasetResults: EXECUTION.datasetResults,
+    });
+    expect(JSON.stringify(body)).not.toMatch(/xero-tenant-uuid/);
+    expect(h.runManualFinanceSync).toHaveBeenCalledWith({ requestedByMemberId: "treasurer-1" });
+
+    const viaBrowser = await runFinanceSync(syncRequest(false));
+    expect(viaBrowser.status).toBe(303);
+    expect(viaBrowser.headers.get("location")).toMatch(/\/finance\?sync=partial$/);
+  });
+
+  it("run_finance_sync answers a connection's refusals as JSON: already running, failed, and the guard's own", async () => {
+    h.runManualFinanceSync.mockResolvedValueOnce({ outcome: "already-running", runId: "run-1", startedAt: new Date("2026-07-01T00:00:00.000Z") });
+    const running = await runFinanceSync(syncRequest(true));
+    expect(running.status).toBe(409);
+    expect(await running.json()).toMatchObject({ outcome: "already-running", runId: "run-1" });
+
+    h.runManualFinanceSync.mockRejectedValueOnce(new Error("Xero down"));
+    const failed = await runFinanceSync(syncRequest(true));
+    expect(failed.status).toBe(500);
+    expect(await failed.json()).toEqual({ error: "Manual finance sync failed", outcome: "failed" });
+
+    h.requireFinanceManagerApiAccess.mockResolvedValueOnce({
+      ok: false,
+      response: NextResponse.json({ error: "Finance manager access required" }, { status: 403 }),
+    });
+    const refused = await runFinanceSync(syncRequest(true));
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: "Finance manager access required" });
+
+    // The browser still lands back on the finance page.
+    h.requireFinanceManagerApiAccess.mockResolvedValueOnce({
+      ok: false,
+      response: NextResponse.json({ error: "Finance manager access required" }, { status: 403 }),
+    });
+    const browserRefused = await runFinanceSync(syncRequest(false));
+    expect(browserRefused.status).toBe(303);
+    expect(browserRefused.headers.get("location")).toMatch(/\/finance$/);
+  });
+
+  it("backfill_finance_monthly_facts runs from the month the app named and answers with the run", async () => {
+    h.getLatestFinanceSyncRun.mockResolvedValue({ status: "SUCCEEDED" });
+    h.backfillFinanceMonthlyFacts.mockResolvedValue({ ...EXECUTION, status: "SUCCEEDED" });
+    const { connection, browser } = await expectActionContract({
+      actionId: "backfill_finance_monthly_facts",
+      handler: backfillFinanceMonthlyFacts,
+      args: { fromMonth: "2024-04", maxChunks: 3 },
+    });
+    const expected = {
+      runId: "run-2",
+      status: "SUCCEEDED",
+      snapshotCount: 3,
+      totalRowCount: 120,
+      datasetResults: EXECUTION.datasetResults,
+    };
+    expect(connection).toEqual(expected);
+    expect(browser).toEqual(expected);
+    expect(h.backfillFinanceMonthlyFacts).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedByMemberId: "treasurer-1", fromMonth: "2024-04", maxChunks: 3 }),
+    );
+  });
+
+  it("backfill_finance_monthly_facts keeps the route's lenient reading and its refusals word for word", async () => {
+    h.getLatestFinanceSyncRun.mockResolvedValue(null);
+    h.backfillFinanceMonthlyFacts.mockResolvedValue({ ...EXECUTION, status: "SUCCEEDED" });
+    const post = (body: unknown) =>
+      backfillFinanceMonthlyFacts(
+        new NextRequest("https://club.example.test/api/finance/sync/backfill-monthly-facts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+    // A blank or non-string month means none; a numeric string chunk count is read as a number.
+    expect((await post({ fromMonth: "  ", maxChunks: "12" })).status).toBe(200);
+    expect(h.backfillFinanceMonthlyFacts).toHaveBeenLastCalledWith(expect.objectContaining({ fromMonth: null, maxChunks: 12 }));
+    expect((await post(null)).status).toBe(200);
+    expect(h.backfillFinanceMonthlyFacts).toHaveBeenLastCalledWith(expect.objectContaining({ fromMonth: null, maxChunks: 30 }));
+    const badMonth = await post({ fromMonth: "2024-13", maxChunks: 0 });
+    expect(badMonth.status).toBe(400);
+    expect(await badMonth.json()).toEqual({ error: "fromMonth must be a YYYY-MM month key" });
+    const badChunks = await post({ maxChunks: 2.5 });
+    expect(badChunks.status).toBe(400);
+    expect(await badChunks.json()).toEqual({ error: "maxChunks must be a positive integer" });
   });
 });

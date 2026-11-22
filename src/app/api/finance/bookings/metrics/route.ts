@@ -1,105 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import { FINANCE_BOOKING_METRICS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
 import { requireFinanceViewerApiAccess } from "@/lib/finance-api-auth";
-import {
-  getFinanceBookingMetrics,
-  getFinanceBookingMetricsWindowDayCount,
-  MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS,
-} from "@/lib/finance-booking-metrics";
+import { getFinanceBookingMetrics } from "@/lib/finance-booking-metrics";
+import { financeBookingMetricsQuerySchema } from "@/lib/finance-booking-metrics-query";
 import logger from "@/lib/logger";
-
-function validateWindowSpan(
-  input: {
-    from?: string;
-    to?: string;
-  },
-  path: "realized" | "forward",
-  context: z.RefinementCtx
-) {
-  if (!input.from || !input.to) {
-    return;
-  }
-
-  // A non-day is already refused on its own field by `dateOnlyStringSchema`;
-  // measuring the span too would add a second, vaguer error for one mistake.
-  if (
-    !dateOnlyStringSchema.safeParse(input.from).success ||
-    !dateOnlyStringSchema.safeParse(input.to).success
-  ) {
-    return;
-  }
-
-  try {
-    const dayCount = getFinanceBookingMetricsWindowDayCount(
-      input.from,
-      input.to
-    );
-    if (dayCount > MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: [path],
-        message: `${path} window cannot exceed ${MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS} days`,
-      });
-    }
-  } catch (error) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: [path],
-      message: error instanceof Error ? error.message : "Invalid date window",
-    });
-  }
-}
-
-// Every date is a real calendar day, not just its shape: a bare regex let
-// `realizedCutoff=2026-02-30` through to the metrics loader, which threw on it
-// and answered 500 (#5075).
-const financeBookingMetricsQuerySchema = z
-  .object({
-    realizedFrom: dateOnlyStringSchema.optional(),
-    realizedTo: dateOnlyStringSchema.optional(),
-    realizedCutoff: dateOnlyStringSchema.optional(),
-    forwardFrom: dateOnlyStringSchema.optional(),
-    forwardTo: dateOnlyStringSchema.optional(),
-    forwardAsOf: dateOnlyStringSchema.optional(),
-  })
-  .superRefine((value, context) => {
-    if (Boolean(value.realizedFrom) !== Boolean(value.realizedTo)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["realized"],
-        message: "realizedFrom and realizedTo must be provided together",
-      });
-    }
-
-    if (Boolean(value.forwardFrom) !== Boolean(value.forwardTo)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["forward"],
-        message: "forwardFrom and forwardTo must be provided together",
-      });
-    }
-
-    if (!value.realizedFrom && !value.forwardFrom) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["query"],
-        message:
-          "Provide realizedFrom/realizedTo, forwardFrom/forwardTo, or both",
-      });
-    }
-
-    validateWindowSpan(
-      { from: value.realizedFrom, to: value.realizedTo },
-      "realized",
-      context
-    );
-    validateWindowSpan(
-      { from: value.forwardFrom, to: value.forwardTo },
-      "forward",
-      context
-    );
-  });
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 export async function GET(request: NextRequest) {
   const authResult = await requireFinanceViewerApiAccess();
@@ -153,7 +58,7 @@ export async function GET(request: NextRequest) {
         : {}),
     });
 
-    return NextResponse.json(metrics);
+    return connectionJson(request, metrics, FINANCE_BOOKING_METRICS_CONNECTION_SHAPE);
   } catch (error) {
     logger.error({ err: error }, "Failed to load finance booking metrics");
     return NextResponse.json(
