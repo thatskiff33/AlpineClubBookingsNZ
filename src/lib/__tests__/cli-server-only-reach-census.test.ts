@@ -592,7 +592,7 @@ describe("CLI entrypoints and the `server-only` boundary", () => {
         "caller that has a request (CT-5, #2869).\n\n" +
         violations.join("\n\n"),
     ).toEqual([]);
-  }, 30_000);
+  }, CENSUS_TIMEOUT_MS);
 
   it("publishes every `server-only`-reaching command with the condition", () => {
     const violations: string[] = [];
