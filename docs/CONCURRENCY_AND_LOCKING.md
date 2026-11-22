@@ -6175,10 +6175,11 @@ transaction, under the `lock(1)` and lodge lock it already holds. They add no
 advisory key, no change of order, no read, and no provider call or settings
 query (`INV-INT-003`); a plain upsert, never a caught unique-key error, so the
 transaction is never aborted by one. Everything after the commit runs on the
-base client with no advisory key: each notice's claim is a status-and-stamp
-guarded `updateMany` on its marker (`claimOwedAlert`), so of the post-commit
-delivery and any run's sweep exactly one sends, and a lost claim sends
-nothing; the clear deletes only a marker still stamped with its own claim.
+base client with no advisory key: each notice's claim is an `updateMany` on
+its marker guarded by the marker's stamp (`claimOwedAlert`). Of the post-commit
+delivery and the sweeps of overlapping runs, only one caller holds a marker at a
+time, and a lost claim sends nothing; the clear deletes only a marker still
+stamped with its own claim.
 
 Officer approval of a held generic request pre-reads only the held booking's immutable concrete
 `lodgeId`, then takes global -> that lodge -> the held booking's row (#4857,

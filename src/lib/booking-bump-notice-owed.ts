@@ -18,8 +18,8 @@
  * sends, or clears without sending when the booking is gone or no longer
  * cancelled, or when the marker is past its maximum age.
  *
- * Every send is behind a claim: a status-and-stamp guarded `updateMany` on the
- * marker (`claimOwedAlert`). Of two runs reaching one marker exactly one wins
+ * Every send is behind a claim: an `updateMany` on the marker guarded by its
+ * stamp (`claimOwedAlert`). Of two runs reaching one marker exactly one wins
  * and the other sends nothing, so overlapping runs never both send.
  *
  * What it guarantees:
