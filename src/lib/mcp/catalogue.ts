@@ -554,7 +554,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     id: "get_my_partner_link",
     title: "Read my partner link",
     summary:
-      "The signed-in member's confirmed partner, the partner requests they sent and received, the family members without a login they may declare as their partner in one step, and any emailed partner invitation nobody has claimed (its id and expiry). A request addressed to the member is confirmed on the website.",
+      "The signed-in member's confirmed partner, the partner requests they sent and received, the family members without a login they may declare as their partner in one step (on the website, not through `request_partner_link`), and any emailed partner invitation nobody has claimed (its id and expiry). A request addressed to the member is confirmed on the website.",
     method: "GET",
     path: "/api/members/partner-link",
     kind: "read",

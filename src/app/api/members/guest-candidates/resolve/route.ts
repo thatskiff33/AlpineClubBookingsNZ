@@ -45,7 +45,6 @@ import { MEMBER_GUEST_CANDIDATES_CONNECTION_SHAPE } from "@/lib/connection-shape
  * with the member's browser, the address backstop counts per connection, and
  * a connection is sent the candidate fields only.
  */
-
 export async function POST(request: NextRequest) {
   const startedAt = startMemberGuestRefusalClock();
 
