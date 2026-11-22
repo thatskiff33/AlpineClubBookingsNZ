@@ -91,10 +91,10 @@ export function xeroCategoryLineTax(
  * code, so a club that maps Exempt to another code changes nothing here. The
  * literal is read only when the treatment names no tax type (the club is not
  * registered), and the document must then be `NoTax` as well. Under that
- * treatment no mapping is read at all: `xeroCategoryLineTax` gives a `NoTax`
- * rendering's line no tax type, and `resolveXeroCategoryLineTax` returns
- * before it loads the mappings, so no document the app renders for such a
- * club carries a mapped code on any line. A line of such a document is taken
+ * treatment no mapping is read to render a line: `xeroCategoryLineTax` gives
+ * a `NoTax` rendering's line no tax type, and `resolveXeroCategoryLineTax`
+ * returns before it loads the mappings, so no document the app renders for
+ * such a club carries a mapped code on any line. A line of such a document is taken
  * as untaxed when it names no tax type or names "NONE". A registered club's
  * document is matched line by line on the treatment's own code instead.
  */

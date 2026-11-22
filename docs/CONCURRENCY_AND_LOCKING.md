@@ -2708,6 +2708,9 @@ mispricing a booking.
   upgrade commits first, the other writer replaces the upgraded hash as it
   would have replaced the old one. Proved on PostgreSQL by
   `password-rehash.realdb.test.ts` (a forced interleaving behind a held row).
+  The same suite queues two upgrades of one older hash behind a held row
+  (#5342): exactly one writes, and the stored hash is at the current cost and
+  still verifies.
 
 #### Member photo writer (epic #171)
 

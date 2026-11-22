@@ -1853,15 +1853,19 @@ way to acknowledge a finding.
 
 **A capped late-capture refund note and the journal's export manifest**
 (#4383, #5343). A refund note capped at what the receipt recorded is for less
-than the refund's debt in the member-money journal. Where the note names that
-debt (a card refund's own note, `cardRefundId`), its `REFUND_NOTE` export
-manifest is recorded as a `CENTS` conflict (`coverRefundExportComponent` in
+than the refund's debt in the member-money journal. Where the note names its
+card refund (a card refund's own note, `cardRefundId`) and that refund's
+journal entry pays one live refund debt, its `REFUND_NOTE` export manifest is
+recorded as a `CENTS` conflict (`coverRefundExportComponent` in
 `refund-note-plan.ts`), and the app logs "A refund document does not match the
 journal; its manifest records a conflict and the document still sent". The
 note is still sent, and the conflict is accurate: Xero holds less than the
-debt. Nothing needs doing for it. Expect it until M13 (#4525). A capped note
-that names no one debt records `COMPONENT_UNUSABLE` instead, as every note
-sized on the payment's refunded watermark does, capped or not
+debt. Nothing needs doing for it. Expect it until M13 (#4525). Where the
+refund's entry pays no debt (none is posted, or it is posted and not yet
+answered to one), pays more than one, or pays one since reversed, the conflict
+is `COMPONENT_UNUSABLE` instead (`resolveRefundNoteObligation`). So is that of
+a capped note that names no card refund or other door, as for every note sized
+on the payment's refunded watermark, capped or not
 ([`member-money-ledger.md`](design/member-money-ledger.md), section 7).
 
 **Credit-paid card bookings invoiced before #3836.** A card booking paid
