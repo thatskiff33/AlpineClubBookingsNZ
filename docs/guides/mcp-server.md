@@ -194,7 +194,7 @@ member's own record only.
 | --- | --- | --- | --- |
 | `get_my_notification_preferences` | Which club emails the member receives | read | `GET /api/notifications/preferences` |
 | `update_my_notification_preferences` | Turns club emails on or off; only the ones sent change. Marketing email can only be turned off: the member opts in on the website (`INV-PRIV-026`) | write | `PUT /api/notifications/preferences` |
-| `update_my_profile` | Saves the member's name, phone, date of birth, addresses and occupation. Name and phone are always saved; any other field not sent is kept. Answers with the `get_my_profile` fields | write | `PUT /api/profile` |
+| `update_my_profile` | Saves the member's name, phone, date of birth, addresses and occupation. Name and phone are always saved; any other field not sent is kept. Dietary needs and the lobby-screen phone opt-in are website-only and refused. Answers with the `get_my_profile` fields | write | `PUT /api/profile` |
 | `get_notice` | One notice the member can see, its body as plain text. Does not mark it read | read | `GET /api/notices/[id]` (new) |
 | `mark_notice_read` | Records that the member read a notice. Never acknowledges one | write | `POST /api/notices/[id]/read` |
 | `list_my_account_activity` | The member's own account history: when, what kind, what happened | read | `GET /api/member/audit-log` |
