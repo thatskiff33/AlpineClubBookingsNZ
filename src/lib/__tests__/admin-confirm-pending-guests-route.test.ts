@@ -7,7 +7,6 @@ import {
   TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
 } from "@/lib/transaction-contended-response";
 import { SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE } from "@/lib/saved-card-charge-claim";
-import { describeUnsettledPaymentIntent } from "@/lib/saved-card-charge-settle";
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
@@ -970,9 +969,12 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     const body = await res.json();
 
     expect(res.status).toBe(409);
+    // The officer's sentence, as text (#5346): comparing against the function
+    // that words it would pass whatever it said.
     expect(body).toMatchObject({
       paymentStatus: "requires_action",
-      error: describeUnsettledPaymentIntent("requires_action"),
+      error:
+        "The saved card needs the cardholder to complete authentication (3D Secure), which cannot be done automatically; the booking stays pending until they do, or until the member saves a different card.",
     });
     expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
       where: { id: "b1", status: "CONFIRMED" },
