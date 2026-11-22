@@ -164,58 +164,58 @@ export async function PUT(request: Request) {
   let record;
   try {
     record =
-    changes.length > 0
-      ? (
-          await prisma.$transaction([
-            write,
-            prisma.auditLog.create(
-              buildStructuredAuditLogCreateArgs({
-                action: "CLUB_MODULE_SETTINGS_UPDATED",
-                actor: { memberId: session.user.id },
-                entity: {
-                  type: "ClubModuleSettings",
-                  id: CLUB_MODULE_SETTINGS_ID,
-                },
-                category: "admin",
-                severity: "important",
-                outcome: "success",
-                summary: "Club module settings updated",
-                metadata: {
-                  changedModuleKeys: changes.map((change) => change.key),
-                  changes,
-                  previousSettings: before,
-                  newSettings: after,
-                },
-                request: getAuditRequestContext(request),
-              }),
-            ),
-            ...(aiDiagnostics.enables
-              ? [
-                  prisma.auditLog.create(
-                    buildStructuredAuditLogCreateArgs({
-                      action: "AI_DIAGNOSTICS_DISCLOSURE_ACKNOWLEDGED",
-                      actor: { memberId: session.user.id },
-                      entity: {
-                        type: "ClubModuleSettings",
-                        id: CLUB_MODULE_SETTINGS_ID,
-                      },
-                      category: "admin",
-                      severity: "important",
-                      outcome: "success",
-                      summary:
-                        "AI Diagnostics provider disclosure acknowledged when switching it on",
-                      metadata: {
-                        disclosureVersion: AI_DIAGNOSTICS_DISCLOSURE_VERSION,
-                        recipient: "anthropic",
-                      },
-                      request: getAuditRequestContext(request),
-                    }),
-                  ),
-                ]
-              : []),
-          ])
-        )[0]
-      : await write;
+      changes.length > 0
+        ? (
+            await prisma.$transaction([
+              write,
+              prisma.auditLog.create(
+                buildStructuredAuditLogCreateArgs({
+                  action: "CLUB_MODULE_SETTINGS_UPDATED",
+                  actor: { memberId: session.user.id },
+                  entity: {
+                    type: "ClubModuleSettings",
+                    id: CLUB_MODULE_SETTINGS_ID,
+                  },
+                  category: "admin",
+                  severity: "important",
+                  outcome: "success",
+                  summary: "Club module settings updated",
+                  metadata: {
+                    changedModuleKeys: changes.map((change) => change.key),
+                    changes,
+                    previousSettings: before,
+                    newSettings: after,
+                  },
+                  request: getAuditRequestContext(request),
+                }),
+              ),
+              ...(aiDiagnostics.enables
+                ? [
+                    prisma.auditLog.create(
+                      buildStructuredAuditLogCreateArgs({
+                        action: "AI_DIAGNOSTICS_DISCLOSURE_ACKNOWLEDGED",
+                        actor: { memberId: session.user.id },
+                        entity: {
+                          type: "ClubModuleSettings",
+                          id: CLUB_MODULE_SETTINGS_ID,
+                        },
+                        category: "admin",
+                        severity: "important",
+                        outcome: "success",
+                        summary:
+                          "AI Diagnostics provider disclosure acknowledged when switching it on",
+                        metadata: {
+                          disclosureVersion: AI_DIAGNOSTICS_DISCLOSURE_VERSION,
+                          recipient: "anthropic",
+                        },
+                        request: getAuditRequestContext(request),
+                      }),
+                    ),
+                  ]
+                : []),
+            ])
+          )[0]
+        : await write;
   } catch (error) {
     if (!isPrismaRecordNotFoundError(error)) throw error;
     return NextResponse.json(
