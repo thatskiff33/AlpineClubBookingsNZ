@@ -121,7 +121,8 @@ describe("an information-only contact-group entry (#5234)", () => {
   // no split counts and only group ids. The page must still render and count.
   it("still counts and names the entry when an older server answers", async () => {
     const olderHealth = { ...health, contactGroupMismatches: { count: 1, cacheReady: true } }
-    const { unexpectedManagedGroups: _named, ...olderEntry } = groupMismatches.informational[0]
+    const olderEntry: Record<string, unknown> = { ...groupMismatches.informational[0] }
+    delete olderEntry.unexpectedManagedGroups
     const olderGroups = { ...groupMismatches, informational: [olderEntry] }
     renderPanel(olderHealth, olderGroups)
 
