@@ -572,9 +572,10 @@ export const PROMO_CHECK_CONNECTION_SHAPE: ConnectionShape = {
 
 /**
  * What an edit to a booking would cost or give back, and whether it can be
- * saved: the figures, the reasons it cannot, and the line items. Not the
- * settlement options or the organiser refusals, which the website's save step
- * works through with the member.
+ * saved: the figures, every reason the save would refuse it (a full night, a
+ * refused promo code, an organiser-billing refusal), and the line items. Not
+ * the settlement options, which the website's save step works through with the
+ * member.
  */
 export const BOOKING_CHANGE_QUOTE_CONNECTION_SHAPE: ConnectionShape = {
   newTotalPriceCents: true,
@@ -589,9 +590,14 @@ export const BOOKING_CHANGE_QUOTE_CONNECTION_SHAPE: ConnectionShape = {
   appliedCreditGiveBackCents: true,
   availableCreditCents: true,
   capacityAvailable: true,
+  capacityFullNights: true,
   minimumStayValid: true,
   minimumStayViolations: { reasonCode: true, message: true, affectedNights: true },
+  chargeRefusal: true,
+  priceChangeRefusal: true,
   promoStillValid: true,
+  promoValidation: { valid: true, error: true, code: true, discountCents: true, promoAdjustmentCents: true },
+  promoCoverage: { promoCode: true, excludedNames: true, message: true },
   subscriptionMemberRateNotice: true,
   groupDiscountEditNotice: true,
   itemizedChanges: { label: true, amountCents: true },
