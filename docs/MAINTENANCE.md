@@ -1174,8 +1174,15 @@ The rules, all in `scripts/lib/budget-upstream-ref.ts`:
   not wherever upstream has got to since. An upstream tip the fork has not
   merged adds no trust. First parent only, so a commit from the middle of a
   merged upstream pull request's branch is never trusted: upstream's `main`
-  never carried it, and its gate never judged it on its own. If `HEAD`
-  contains no first-parent commit of `<ref>` at all, the run fails.
+  never carried it, and its gate never judged it on its own. That rests on
+  one assumption: first-parent history is what upstream's `main` carried only
+  while upstream lands every pull request with a merge commit, as `AGENTS.md`
+  -> "Completion and Merge" requires (step 4, merge with a merge commit). A
+  pull request that upstream fast-forwards or rebase-merges puts its
+  intermediate commits on `main`'s first-parent history, and a fork that
+  merged one of them would have it trusted. The module does not detect that,
+  so the rule is only as good as upstream's keeping to merge commits. If
+  `HEAD` contains no first-parent commit of `<ref>` at all, the run fails.
 - **Only the paths the sync brings in are trusted**: those upstream changed
   between the fork's last meeting point with it and the trusted commit. Every
   other path is judged against the fork's base as before.

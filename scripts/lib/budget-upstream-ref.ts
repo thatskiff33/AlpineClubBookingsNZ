@@ -21,6 +21,13 @@
  *     middle of a merged upstream pull request's branch — a fork that merged
  *     that side commit would otherwise trust code upstream's `main` never
  *     carried and upstream's gate never judged as a whole.
+ *     ASSUMPTION: the first-parent chain is what upstream's `main` carried
+ *     only while upstream lands every pull request with a merge commit
+ *     (AGENTS.md, "Completion and Merge", step 4: merge with a merge commit).
+ *     A pull request that upstream fast-forwards or rebase-merges puts its
+ *     intermediate commits ON that chain, and a fork that merged one of them
+ *     would have it trusted. Nothing below detects that: the rule is only as
+ *     good as upstream's keeping to merge commits.
  *   - Only paths upstream changed between M (the merge base of U and the
  *     fork's base) and U are trusted: the files this sync brings in. A path
  *     upstream did not touch in that range gets no upstream baseline, so it
