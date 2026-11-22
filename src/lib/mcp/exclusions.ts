@@ -39,6 +39,8 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
   "website-flow": "Serves the website's own screens and steps, not something a member asks for.",
   "access-secrets": "Shows lodge door codes or other access details, which stay on the website.",
   "site-helper": "The website's own help assistant; the member's AI app answers them itself.",
+  "privacy-posture":
+    "Decides who may browse members' names, which an officer chooses on the website, never an AI app.",
 } as const;
 
 export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_REASONS;
@@ -169,6 +171,9 @@ const PERMANENT_ROUTES: ReadonlyArray<{
   // Door codes and emergency access: never sent to an AI provider.
   { reason: "access-secrets", routes: ["GET /api/lodge-instructions"] },
   { reason: "site-helper", routes: ["POST /api/help/chat"] },
+  // Open member search widens the club's privacy (owner decision D-18): text
+  // an app read must never be able to talk it into that.
+  { reason: "privacy-posture", routes: ["PUT /api/admin/member-guest-settings"] },
   { reason: "public-visitor", routes: ["POST /api/contact", "POST /api/applications"] },
   // The nominee confirms through a link emailed to them.
   { reason: "needs-browser", routes: ["POST /api/applications/nominate"] },

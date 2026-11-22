@@ -51,8 +51,9 @@ const BOUNDS = {
 
 // The body schema (`memberGuestSettingsBodySchema`: all four fields required,
 // `.strict()`, one plain-English sentence for every hold-expiry fault) lives in
-// admin-bookings-schemas/setup.ts so the AI app action
-// `update_member_guest_settings` offers the same fields (ALP-719).
+// admin-bookings-schemas/setup.ts beside the settings' other schemas. The PUT
+// is never an AI app action (`privacy-posture` in src/lib/mcp/exclusions.ts):
+// widening who can browse member names stays an officer's choice on the website.
 
 /**
  * The capability signal the settings card renders its three states from.
@@ -221,9 +222,5 @@ export async function PUT(request: Request) {
 
   // Same shape as the GET so the card can parse one response type. `access` is
   // "manage" by construction: the guard above required bookings:edit.
-  return connectionJson(
-    request,
-    buildPayload(record, "manage"),
-    ADMIN_MEMBER_GUEST_SETTINGS_CONNECTION_SHAPE,
-  );
+  return NextResponse.json(buildPayload(record, "manage"));
 }

@@ -17,6 +17,7 @@ vi.mock("@/lib/mcp/dispatch", () => ({
 
 import { getAdminRouteRequirement, type AdminPermissionMatrix } from "@/lib/admin-permissions";
 import { MCP_ACTIONS, mcpActionAdminRequirement } from "@/lib/mcp/catalogue";
+import { classifyMcpRoute } from "@/lib/mcp/exclusions";
 import { callMcpTool, listMcpTools, type McpServerContext } from "@/lib/mcp/server";
 
 // Every action on a Bookings & Beds route, and those of them the area alone
@@ -103,6 +104,16 @@ describe("Bookings & Beds officer actions: who is offered them", () => {
     const viewOnly = new Set(await foundIds(context({ bookings: "view" })));
     expect(viewOnly.has("get_member_family_for_booking")).toBe(false);
     expect(viewOnly.has("search_non_member_contacts")).toBe(false);
+  });
+
+  it("keeps the open member search switch website-only, even for a Bookings & Beds editor", async () => {
+    // Owner decision D-18: nothing automated widens who can browse member names.
+    expect(classifyMcpRoute("src/app/api/admin/member-guest-settings/route.ts", "PUT")).toEqual({
+      kind: "excluded", reason: "privacy-posture",
+    });
+    const found = await foundIds(context({ bookings: "edit" }));
+    expect(found).toContain("get_member_guest_settings");
+    expect(found.filter((id) => id.startsWith("update_member_guest"))).toEqual([]);
   });
 
   it("offers an officer with Bookings & Beds edit every action, and runs one by name", async () => {

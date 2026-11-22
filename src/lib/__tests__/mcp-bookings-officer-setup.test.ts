@@ -125,10 +125,7 @@ import {
   GET as getRequestSettings,
   PUT as putRequestSettings,
 } from "@/app/api/admin/booking-requests/settings/route";
-import {
-  GET as getMemberGuest,
-  PUT as putMemberGuest,
-} from "@/app/api/admin/member-guest-settings/route";
+import { GET as getMemberGuest } from "@/app/api/admin/member-guest-settings/route";
 import { GET as listSeasons, POST as createSeason } from "@/app/api/admin/seasons/route";
 import {
   DELETE as deleteSeason,
@@ -960,26 +957,5 @@ describe("get_member_guest_settings", () => {
     });
     expect(connection).not.toHaveProperty("updatedByMemberId");
     expect(browser).toMatchObject({ updatedByMemberId: "admin-9", access: "manage" });
-  });
-});
-
-describe("update_member_guest_settings", () => {
-  it("saves the settings as the officer, audits it and answers them", async () => {
-    h.prisma.memberGuestSettings.findUnique.mockResolvedValue(memberGuestRow());
-    h.prisma.memberGuestSettings.upsert.mockResolvedValue({ ...memberGuestRow(), updatedByMemberId: "officer-1" });
-
-    const { connection, browser } = await expectActionContract({
-      actionId: "update_member_guest_settings",
-      handler: putMemberGuest,
-      args: MEMBER_GUEST_VALUES,
-    });
-
-    expect(h.prisma.memberGuestSettings.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({ update: { ...MEMBER_GUEST_VALUES, updatedByMemberId: "officer-1" } }),
-    );
-    expect(h.prisma.auditLog.create).toHaveBeenCalled();
-    expect(connection).toMatchObject({ settings: MEMBER_GUEST_VALUES, access: "manage" });
-    expect(connection).not.toHaveProperty("updatedByMemberId");
-    expect(browser).toMatchObject({ updatedByMemberId: "officer-1" });
   });
 });
