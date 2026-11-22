@@ -880,9 +880,9 @@ installation.
 
 ## INV-OPS-021
 
-A newer push to `main` may replace `main`'s queued run of `ci.yml`, `e2e.yml`,
+A newer push to `main` may replace its queued run of `ci.yml`, `e2e.yml`,
 `money-coverage.yml` and `docs-link-check.yml`, never one that has started.
-Every push to `main` shares one concurrency group per workflow with
+Pushes to `main` share one concurrency group per workflow with
 `cancel-in-progress: false`: GitHub keeps one running and one pending run and
 drops the older pending one, so the newest `main` commit gets its full set
 unless a manual re-run of an older commit replaces its pending run. Pushes to
@@ -898,10 +898,9 @@ It fails closed when no such run exists or GitHub cannot say.
 A release tags only a commit whose `ci.yml` push run on `main` had a
 successful `Publish GHCR images` job. `release:cut publish` asks GitHub for
 that job's result on the commit it would tag (on a resume, the tagged commit)
-and refuses before any tag or release unless GitHub's answer says that job
-succeeded. A dropped intermediate commit has no images; the default,
-`origin/main`, normally has a successful run; `release:cut publish` refuses
-otherwise.
+and refuses before any tag or release unless GitHub says that job succeeded.
+A dropped intermediate commit has no images; the default, `origin/main`,
+normally has a successful run; `release:cut publish` refuses otherwise.
 
 - Why: queuing a full CI run (about 48 minutes) per merge held every open
   pull request behind `main` (#5356, owner decision 22 Nov 2026, replacing
