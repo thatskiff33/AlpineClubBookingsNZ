@@ -200,7 +200,7 @@ function countAcrossSrc(needle: string): number {
   );
 }
 
-describe("FieldHint wiring contract", () => {
+describe("FieldHint wiring contract", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("matches every useFieldHint() with one fieldProps and one hintProps spread", () => {
     const hooks = countAcrossSrc("useFieldHint(");
     const fieldProps = countAcrossSrc(".fieldProps");

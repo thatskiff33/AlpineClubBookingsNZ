@@ -2547,7 +2547,7 @@ describe("the registry is inert", () => {
     );
     // Both directions: an unreviewed importer fails, and so does a stale entry.
     expect(importers.sort()).toEqual(Object.keys(IMPORTERS).sort());
-  }, 30_000);
+  }, CENSUS_TIMEOUT_MS);
 
   it("uses only relative imports inside the registry, so next.config.ts can load it", () => {
     const aliased = sourceFiles(REGISTRY_DIR.slice(0, -1)).filter((file) =>

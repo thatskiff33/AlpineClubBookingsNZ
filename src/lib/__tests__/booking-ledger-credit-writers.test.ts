@@ -205,7 +205,7 @@ function scan() {
   return cached;
 }
 
-describe("every booking credit row reaches the ledger, and none is rewritten (#3599, INV-MONEY-035)", () => {
+describe("every booking credit row reaches the ledger, and none is rewritten (#3599, INV-MONEY-035)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("follows every credit-row write with the ledger sync, and rewrites no row's money", () => {
     expect(scan().findings).toEqual([]);
   }, CENSUS_TIMEOUT_MS);
