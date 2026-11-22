@@ -250,7 +250,6 @@ describe("ci.yml's wiring of the resolver", () => {
       }
     });
 
-
     it(`${jobKey} resolves the base before each gate it names, and every reader follows it`, () => {
       const job = workflow.jobs[jobKey];
       if (!job) throw new Error(`ci.yml has no ${jobKey} job`);
