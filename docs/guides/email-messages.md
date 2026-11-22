@@ -367,17 +367,25 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > again. The pending-booking job sends it, once per booking, when it releases a
 > pending booking at its hold deadline because there is no longer room for its
 > party. Its subject names the member, the stay dates and the booking reference
-> (`{{bookingReference}}`), so the Daily digest counts each bump separately. Its
-> built-in wording gives the reason (`{{reason}}`), which also says when the
-> member had asked for the whole booking to be cancelled if their guests could
-> not come. In a club with more than one active lodge it names the lodge too, as
-> the capacity warning does; `{{lodgeName}}` is empty in a one-lodge club, so
-> keep it out of a line with a label of its own. It no longer offers
-> `{{triggeringMemberName}}`, because the job has no triggering booking to name.
-> If a saved copy still uses that token, a warning at the top of this page names
-> the template and the token, and the template itself says your saved copy uses
-> a token it no longer supplies: swap it for the chips now shown and save, or
-> restore the default.
+> (`{{bookingReference}}`), so the Daily digest counts each bump separately. A
+> subject your club saved on an earlier version has no booking reference, and
+> the digest then counts two bumps for the same member as one: restore the
+> default subject, or add `{{bookingReference}}` to yours. The built-in wording
+> gives the reason (`{{reason}}`), which also says when the member had asked
+> for the whole booking to be cancelled if their guests could not come.
+>
+> The built-in email also adds a Lodge line when the club has more than one
+> active lodge, or when the booking's lodge has been archived, as the capacity
+> warning does. That line is not part of the editable wording the editor shows,
+> so a saved copy of your own does not include it: a club with more than one
+> lodge should add `{{lodgeName}}` on a line of its own. It is empty in a
+> one-lodge club, which is why it should not sit after a label.
+>
+> The alert no longer offers `{{triggeringMemberName}}`, because the job has no
+> triggering booking to name. If a saved copy still uses that token, a warning
+> at the top of this page names the template and the token, and the template
+> itself says your saved copy uses a token it no longer supplies: swap it for
+> the chips now shown and save, or restore the default.
 
 ## Settings reference
 
