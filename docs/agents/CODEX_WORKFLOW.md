@@ -233,8 +233,8 @@ Before push: Prisma generation, lint, typecheck (with
 touched/adjacent tests, a mutation check per new guard, `quality:budget --base
 origin/main`, `ci:fast-censuses`, docs linkcheck for doc changes and knip for file/export changes. Then push a draft PR. GitHub Actions owns the full `pnpm test`, build,
 migration-drift, E2E, static/secret/dependency, and container gates. Run a full
-suite locally only to diagnose a CI failure or when CI is unavailable, and
-record the reason and result in the PR.
+suite locally only to diagnose CI or when CI is unavailable, recording why
+and the result in the PR.
 
 Known false greens: a stale Prisma client type-checks clean, so generate first;
 `pnpm test` does not typecheck; a guard must fail under mutation, and the
@@ -245,7 +245,7 @@ the wrong one. Environmental failures:
 
 For concurrency-sensitive work, the orchestrator also reviews the open PRs and
 last 10 merged PRs affecting the subsystem, reconciles their lock/state/provider
-contracts, and records the relevant PR numbers in the PR lock-impact section.
+contracts, and records their numbers in the PR lock-impact section.
 
 ## Sekreton sandbox checks
 
