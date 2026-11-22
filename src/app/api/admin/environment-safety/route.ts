@@ -112,6 +112,8 @@ export async function PATCH(request: Request) {
       cannot tell what a broken database means, and dressing that up as a
       friendly "try again shortly" would hide it from whoever has to fix it.
     */
+    // P2002 counts as contention for this writer; the reason is the
+    // "Retryable failures" comment in environment-safety-override-write.ts.
     if (!isSingletonUpsertContention(error)) throw error;
     logger.warn(
       { err: error },

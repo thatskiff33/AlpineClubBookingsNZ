@@ -205,6 +205,8 @@ export async function PUT(request: Request) {
       cannot tell what a broken database means, and dressing that up as a
       friendly "try again shortly" would hide it from whoever has to fix it.
     */
+    // P2002 counts as contention for this writer; the reason is the
+    // "Retryable failures" comment near the top of this file.
     if (!isSingletonUpsertContention(error)) throw error;
     logger.warn({ err: error }, "Club time zone save hit write contention");
     return NextResponse.json(

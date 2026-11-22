@@ -200,6 +200,8 @@ export async function PUT(request: Request) {
         { status: 409 },
       );
     }
+    // P2002 counts as contention for this writer; the reason is the
+    // "Retryable failures" comment near the top of this file.
     if (isSingletonUpsertContention(error)) {
       logger.warn({ err: error }, "AI spend rate save hit write contention");
       return NextResponse.json(

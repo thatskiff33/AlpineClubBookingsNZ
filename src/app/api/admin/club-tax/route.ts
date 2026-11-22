@@ -126,6 +126,8 @@ async function answerWrite(run: () => Promise<Awaited<ReturnType<typeof schedule
     if ("refused" in outcome) return refusalResponse(outcome);
     return NextResponse.json({ changed: true, state: await readClubTaxAdminState() });
   } catch (error) {
+    // P2002 counts as contention for this writer; the reason is the
+    // "Retryable failures" comment near the top of this file.
     if (!isSingletonUpsertContention(error)) throw error;
     logger.warn({ err: error }, "Club tax treatment save hit write contention");
     return NextResponse.json({ error: "Another update is in progress — try again shortly." }, { status: 503 });

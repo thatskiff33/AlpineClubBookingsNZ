@@ -188,6 +188,8 @@ export async function PUT(request: Request) {
       nothing, so retrying is safe. Anything else rethrows: this route cannot tell what
       a broken database means, and a friendly "try again shortly" would hide it.
     */
+    // P2002 counts as contention for this writer; the reason is the
+    // "Retryable failures" comment near the top of this file.
     if (!isSingletonUpsertContention(error)) throw error;
     logger.warn({ err: error }, "Club format save hit write contention");
     return NextResponse.json(

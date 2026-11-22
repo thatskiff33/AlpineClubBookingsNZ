@@ -60,7 +60,8 @@ import { prisma } from "@/lib/prisma";
  * retrying cannot fix.
  *
  * The set and the predicate are `isSingletonUpsertContention`
- * (`@/lib/prisma-errors`); this comment is why `P2002` is safe for this writer.
+ * (`@/lib/prisma-errors`), called in `environment-safety/route.ts`, which points
+ * back here; this comment is why `P2002` is safe for this writer.
  */
 
 export interface EnvironmentSafetyOverrideWriteOutcome {
