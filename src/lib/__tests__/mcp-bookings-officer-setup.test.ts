@@ -69,18 +69,18 @@ const h = vi.hoisted(() => {
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: h.requireAdmin }));
 vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
 vi.mock("@/lib/audit", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/audit")>()),
+  ...((await importOriginal()) as typeof import("@/lib/audit")),
   logAudit: h.logAudit,
 }));
 vi.mock("@/lib/public-content-revalidation", () => ({ revalidatePublicPageContent: h.revalidate }));
 vi.mock("@/lib/other-lodge-fees-sync", () => ({ syncOwnOtherLodgesFromFees: h.syncOtherLodges }));
 vi.mock("@/lib/season-rate-editor", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/season-rate-editor")>()),
+  ...((await importOriginal()) as typeof import("@/lib/season-rate-editor")),
   validateMembershipTypeSeasonRates: h.validateRates,
   replaceMembershipTypeSeasonRates: h.replaceRates,
 }));
 vi.mock("@/lib/lodge-capacity", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/lodge-capacity")>()),
+  ...((await importOriginal()) as typeof import("@/lib/lodge-capacity")),
   getDefaultLodgeCapacity: h.lodgeCapacity,
 }));
 vi.mock("@/lib/adult-member-hosting-policy-reconciliation", () => ({

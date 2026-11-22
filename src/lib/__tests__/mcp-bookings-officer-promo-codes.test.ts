@@ -23,12 +23,12 @@ const h = vi.hoisted(() => {
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: h.requireAdmin }));
 vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
 vi.mock("@/lib/audit", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/audit")>()),
+  ...((await importOriginal()) as typeof import("@/lib/audit")),
   logAudit: h.logAudit,
   createAuditLog: h.createAuditLog,
 }));
 vi.mock("@/lib/club-time/server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/club-time/server")>()),
+  ...((await importOriginal()) as typeof import("@/lib/club-time/server")),
   clubTimeZone: async () => "Pacific/Auckland",
 }));
 

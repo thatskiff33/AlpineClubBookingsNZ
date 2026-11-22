@@ -33,22 +33,22 @@ const h = vi.hoisted(() => ({
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: h.requireAdmin }));
 vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
 vi.mock("@/lib/club-time/server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/club-time/server")>()),
+  ...((await importOriginal()) as typeof import("@/lib/club-time/server")),
   clubTodayDateOnlyInstant: async () => new Date("2026-07-01T00:00:00.000Z"),
 }));
 vi.mock("@/lib/booking-exception-request-service", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/booking-exception-request-service")>()),
+  ...((await importOriginal()) as typeof import("@/lib/booking-exception-request-service")),
   readUnifiedExceptionQueue: h.readExceptionQueue,
 }));
 vi.mock("@/lib/booking-guests", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/booking-guests")>()),
+  ...((await importOriginal()) as typeof import("@/lib/booking-guests")),
   computeMemberGuestBoundary: h.memberGuestBoundary,
 }));
 vi.mock("@/lib/waitlist-offer-email-visibility", () => ({
   getWaitlistOfferEmailDeliveries: h.offerEmailDeliveries,
 }));
 vi.mock("@/lib/waitlist-queue", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/waitlist-queue")>()),
+  ...((await importOriginal()) as typeof import("@/lib/waitlist-queue")),
   getDisplayedWaitlistPositions: h.waitlistPositions,
 }));
 
