@@ -148,9 +148,7 @@ describe("the allocation write with a note the payment also links as its refund 
     });
 
   it("MUTATION: a bank note linked as the payment's refund note and allocated to its invoice is written once, $30 not $60", async () => {
-    const { decideLinkedRefundedTotalCents } = await vi.importActual<typeof import("@/lib/xero-inbound/linked-refunded-total")>(
-      "@/lib/xero-inbound/linked-refunded-total",
-    );
+    const { decideLinkedRefundedTotalCents } = (await vi.importActual("@/lib/xero-inbound/linked-refunded-total")) as typeof import("@/lib/xero-inbound/linked-refunded-total");
     mocks.decideLinked.mockImplementation(decideLinkedRefundedTotalCents);
     arrange({ refundedAmountCents: 0, status: "SUCCEEDED", detailCents: 0 });
     const updateMany = vi.fn().mockResolvedValue({ count: 1 });
