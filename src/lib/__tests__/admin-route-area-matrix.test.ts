@@ -277,6 +277,10 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/notices/[id]": "membership",
   "/api/admin/notices/[id]/reads": "membership",
   "/api/admin/credit-approvals": "finance",
+  "/api/admin/opening-credits": "finance",
+  "/api/admin/opening-credits/[id]/reverse": "finance",
+  "/api/admin/opening-credits/confirm": "finance",
+  "/api/admin/opening-credits/preview": "finance",
   "/api/admin/deletion-requests": "membership",
   "/api/admin/deletion-requests/[id]": "membership",
   "/api/admin/display/built-ins/restore": "lodge",
@@ -401,7 +405,6 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/members/[id]/dependent-email-source": "membership",
   "/api/admin/members/[id]/dependents/[dependentId]": "membership",
   "/api/admin/members/[id]/dependents/link": "membership",
-  "/api/admin/members/[id]/family": "membership",
   // #2253: read-only derived family tree; intentionally membership like the
   // member detail page it renders inside.
   "/api/admin/members/[id]/family-tree": "membership",

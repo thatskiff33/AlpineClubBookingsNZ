@@ -222,8 +222,8 @@ calendar-date string, which has no locale form to get wrong.
 outside `src/lib/club-time/**` for that reason.** `Date` in and `Date` out keeps
 the working value a `Date`, where the kernel's own answer is that a stored day
 becomes a `CalendarDate` at the boundary and stays one. It exists because six
-modules' comparisons are still written in `Date`s; CT-6 (#2991) is where those
-become calendar-date comparisons and the bridge goes away.
+modules' comparisons are still written in `Date`s. #2991 closed with the adapter
+kept as a reviewed one, and no open issue tracks its retirement.
 
 ## The stay window
 
@@ -268,8 +268,8 @@ read out of a zone.
 
 There is **one** left. `src/lib/date-only.ts` keeps every signature and delegates
 to the kernel. **No call site has changed and none is wrong** — it is an adapter,
-not deprecated code, and CT-6 (#2991) retires it once CT-3 to CT-5 have moved its
-callers.
+not deprecated code. #2991 closed with it kept as a reviewed adapter whose zone
+parameters are all required, and no open issue tracks its retirement.
 
 ### The rendering adapter is gone (#3123)
 
@@ -440,7 +440,8 @@ rather than reaching for a module kept alive for that purpose.
   silently, so both transcribed sites carry a back-pointer naming the oracle.
 
   So "is this application running on the persisted zone?" still has a different
-  answer per surface until CT-6 (#2991) retires the adapters, and until then no
+  answer per surface (#2991 closed with `date-only.ts` kept as a reviewed
+  adapter, and no open issue tracks its retirement), and no
   green suite settles it: on a deployment where the environment and the persisted
   value agree — which is every deployment today, and which
   `club-time-zone-env-agreement.test.ts` pins — **no test can detect the
