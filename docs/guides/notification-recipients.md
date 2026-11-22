@@ -80,7 +80,7 @@ offered to them at all:
 | Bookings bumped | Bookings | The pending-booking job releases a pending booking at its hold deadline because there is no longer room for its party, including a booking cancelled because its guests could not be confirmed (once per booking; counted in the Daily digest) |
 | Xero sync errors | Finance | Xero contact or invoice sync fails, or a refund the app does not yet note in Xero needs crediting by hand (#3949, until #4292), or a Xero call succeeds after its operation was resolved by hand, including a refund credit note the app did not record (#4374, #4426), or an organiser adjustment's credit note the app did not record after its job was reset (#4655), or one the app stopped allocating or paying against after its job was reset and resolved by hand (#4680), or a Xero object a stalled job made after it was reset and queued again, withdrawn or ended by another attempt, which only partly succeeded and was not recorded (#4686) |
 | Capacity warnings | Bookings | Occupancy is nearing full capacity |
-| Daily digest | Admin Overview | A daily summary of the previous 24 hours of admin alerts |
+| Daily digest | Admin Overview | A daily summary of the previous 24 hours of admin alerts. Each alert counts once however many officers receive it, and two alerts with the same subject count as two (#5407) |
 | Waitlist offers | Bookings | A waitlist spot is offered to a member |
 | Member requests | Membership | A member submits a family-group / linking request |
 | Booking change requests | Bookings | A member requests a change to a locked booking, or asks for a booking-policy exception |

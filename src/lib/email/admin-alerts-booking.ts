@@ -208,8 +208,9 @@ export async function sendAdminPendingDeadlineAlert(
 // filled up. The cron has no "triggering" booking to name (the beds went to
 // whoever was confirmed first), so the alert names the reason instead, which
 // also says when it was the guests-cancelled variant. The subject carries the
-// stay and the booking reference: the Daily digest counts one event per
-// distinct subject, so two bumps for one owner must not share one.
+// stay and the booking reference so an officer can tell two bumps for one
+// owner apart. The Daily digest no longer depends on it: since #5407 it counts
+// each officer's copies, not distinct subjects.
 export async function sendAdminBookingBumpedAlert(data: {
   bumpedMemberName: string;
   bookingReference: string;

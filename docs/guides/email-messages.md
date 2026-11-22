@@ -367,10 +367,12 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > again. The pending-booking job sends it, once per booking, when it releases a
 > pending booking at its hold deadline because there is no longer room for its
 > party. Its subject names the member, the stay dates and the booking reference
-> (`{{bookingReference}}`), so the Daily digest counts each bump separately. A
-> subject your club saved on an earlier version has no booking reference, and
-> the digest then counts two bumps for the same member as one: restore the
-> default subject, or add `{{bookingReference}}` to yours. The built-in wording
+> (`{{bookingReference}}`), so officers can tell two bumps for the same member
+> apart. A subject your club saved on an earlier version has no booking
+> reference: restore the default subject, or add `{{bookingReference}}` to
+> yours. Since #5407 the Daily digest counts each alert once however many
+> officers receive it, and no longer folds alerts that share a subject, so a
+> saved subject does not change any digest count. The built-in wording
 > gives the reason (`{{reason}}`), which also says when the member had asked
 > for the whole booking to be cancelled if their guests could not come.
 >
