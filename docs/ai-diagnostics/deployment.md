@@ -11,9 +11,9 @@ SELECT-only database role (AID-5, #2374), the live question-and-answer product
 end-to-end [architecture](architecture.md) and the [security verification matrix](e2e-matrix.md)
 are AID-8's (#2379) reference documents.
 
-Two ADR-006 postures — **provider/data-residency disclosure** and an optional
-**zero-retention** provider posture — are **not implemented in this release**;
-see [deferred below](#deferred-provider-disclosure-and-zero-retention).
+Switching Diagnostics on shows the administrator where it sends data and asks
+them to acknowledge it; there is no retention setting. See
+[provider disclosure and retention](#provider-disclosure-and-retention).
 
 Extends [`DEPLOYMENT.md`](../../DEPLOYMENT.md) and
 [`CONFIGURATION.md`](../../CONFIGURATION.md).
@@ -601,24 +601,62 @@ whose name lacks the dedicated marker. **Never point it at a live database**: it
 provisions and drops a cluster role and temporarily revokes
 `TEMPORARY … FROM PUBLIC`.
 
-## Deferred: provider disclosure and zero-retention
+## Provider disclosure and retention
 
 [ADR-006](decisions/ADR-006-deployment-provider-disclosure-private-overlay-config-non-travel.md)
-names deployment postures beyond those this release ships. Two remain **not
-implemented in this release**. They are documented here honestly rather than
-described as if they shipped, because an operator making a data-governance decision
-must not be told a control exists when it does not. (The ADR-006 §4 **private
-knowledge overlay** shipped this release — see [above](#the-private-knowledge-overlay-adr-006-4).)
-Until the two below ship:
+§2 asks the product to say where Diagnostics sends data at the moment an
+administrator decides to switch it on. It does (#5243):
 
-| ADR-006 posture | State in this release | What that means for an operator |
-| --- | --- | --- |
-| §2 Provider / data-residency **disclosure** | **Not built.** There is no shipped disclosure surface on the admin configuration page, and no operator-facing statement that enabling Diagnostics sends bounded excerpts to Anthropic for processing outside New Zealand. | Enabling Diagnostics still has that data-governance consequence — it is described in this guide and the [architecture](architecture.md), but not surfaced in the product. Treat enabling it as an informed decision you make from these docs. |
-| §3 Optional **zero-retention** provider posture | **Not built.** The provider client (`src/lib/diagnostics/answer/provider.ts`) sends no no-retention / no-training header, and nothing reads a zero-retention setting. A comment in `src/lib/ai-diagnostics-config.ts` references the posture aspirationally; it is not enforced. | A deployment cannot yet require zero-retention through configuration. A club with that requirement should arrange it at the Anthropic workspace/account level for the dedicated diagnostics key, out of band, until this ships. |
+- **Admin → Modules.** The AI Diagnostics card states that each question sends
+  excerpts to Anthropic, which may process them outside New Zealand, and what
+  those excerpts are: the question and the screen it was asked from, including
+  its filters and search; earlier questions and answers in the same
+  conversation; excerpts of the application's code, its built-in guides and any
+  private notes this deployment adds; records looked up to answer it; and
+  personal details held in member records only when the administrator ticks the
+  personal-details box for that question (a search for people only when the
+  search box is ticked). Once an answer includes personal details, they stay in
+  the conversation and are sent again with later questions in it, ticked or
+  not. Anything typed into the question or a screen's search,
+  including a name, is sent as typed, whatever is ticked. The card's statement
+  (`src/lib/ai-diagnostics-disclosure.ts`) is the full list. A save that switches
+  Diagnostics on needs the administrator to tick that statement first.
+- **The server checks it.** `PUT /api/admin/modules` refuses (409) any save that
+  would switch Diagnostics on without the current statement's version, whichever
+  screen sent it, and writes nothing. A save that switches it on records an
+  `AI_DIAGNOSTICS_DISCLOSURE_ACKNOWLEDGED` audit entry (category `admin`, with the
+  statement's version) in the same transaction as the change. The write only
+  lands if the Diagnostics flag is still what the route read; otherwise it is
+  refused (409) and nothing, audit entries included, is written.
+- **Admin → AI Diagnostics.** The same statement shows, read-only, under "Where
+  your data goes", for every administrator who can open the page.
 
-Neither weakens any shipped control: Diagnostics is fully functional on the
-public bundle alone, and every read still runs through the SELECT-only role and the
-fail-closed gates described above.
+The statement lives in `src/lib/ai-diagnostics-disclosure.ts` and takes the
+provider's name and privacy link from the [privacy recipient register](../PRIVACY_RECIPIENTS.md),
+so the product and the privacy policy name the same recipient. Changing what it
+says in substance raises its version, so a page loaded before the change cannot
+switch Diagnostics on. Clubs that switched Diagnostics on before the statement
+existed are not asked again and have no back-dated audit entry (owner decision on
+#5243); they see the statement on the AI Diagnostics page.
+
+**Retention is not a setting.** ADR-006 §3 imagined an optional zero-retention
+setting. It was not built, because Anthropic offers no per-request control the
+application could rely on (owner decision on #5243). The application sends
+Anthropic no retention instruction. Retention, including zero retention, is
+whatever the club arranges with Anthropic on its own account — the one behind the
+dedicated Diagnostics key. A club that needs zero retention arranges it there.
+
+### Every way Diagnostics can be switched on
+
+| Path | What stops it switching on unacknowledged |
+| --- | --- |
+| Admin → Modules | The tick, and the route check above. |
+| Other admin screens that save the module set (magic-link and Google sign-in cards, public booking requests, lodge display setup) | The same route check: they never change the Diagnostics flag, and a save that would switch it on is refused. The write is conditional on the Diagnostics flag the route read, so a save built from a stale read cannot switch it back on after someone switched it off; it gets a 409 and writes nothing. |
+| Admin configuration import, and the boot auto-import (`CONFIG_BUNDLE_IMPORT_PATH`) | `aiDiagnostics` never travels in a bundle, even one edited by hand ([below](#configuration-is-deployment-local)). |
+| Fresh install, migrations | The column and the application default are off, and no migration turns it on. |
+| Seeds, scripts, E2E setup | A census test pins the code that writes the module settings row, and the E2E setup never names the flag. |
+| Restoring a database backup | Outside the application. A restore brings back the club's earlier decision, with its audit entry. |
+| Editing the database directly | Outside the application, so it skips the acknowledgement. Unsupported. |
 
 ## Related
 
