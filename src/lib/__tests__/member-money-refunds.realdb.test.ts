@@ -530,6 +530,22 @@ async function cancelledPaidBooking() {
       expect(await residues(id)).toBe(2);
     });
 
+    it("a debt posted on the merged-away member after the merge's snapshot moves with its reversal, so neither stays behind", async () => {
+      const [a, b] = await mergeMembers(2) as [string, string];
+      const { id } = await cancelledFor(a);
+      const before = await receivable(id, a);
+      // The snapshot, then the debt from a stale owner read (a reservation reads it unlocked), then the owner move.
+      await db.$transaction((tx) => postMemberMergeTransfer(tx, context, { fromMemberId: a, toMemberId: b, actorMemberId: names.officerId }));
+      await checkPart(id);
+      await db.booking.update({ where: { id }, data: { memberId: b } });
+      expect(await receivable(id, a)).toBe(700);
+      expect(await dismiss(id)).toBe(true);
+      await followed(id, [a], b, before);
+      expect(await residues(id)).toBe(2);
+      expect(await dismiss(id)).toBe(false);
+      expect(await residues(id)).toBe(2);
+    });
+
     it("without a merge, a dismissal moves nothing", async () => {
       const [owner] = await mergeMembers(1) as [string];
       const { id } = await cancelledFor(owner);
