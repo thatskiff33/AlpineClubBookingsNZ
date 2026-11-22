@@ -11,10 +11,7 @@ import {
   buildUnpaidFinishedStaysWhere,
   buildUnsettledAdditionalFinishedStaysWhere,
 } from "@/lib/unpaid-finished-stays";
-import {
-  buildUnpaidFinishedStaysHref,
-  buildUnsettledAdditionalFinishedStaysHref,
-} from "@/lib/unpaid-finished-stays-hrefs";
+import { buildUnpaidFinishedStaysHref } from "@/lib/unpaid-finished-stays-hrefs";
 
 /**
  * The day these helpers are ASKED about. Every one of them is a pure function
@@ -116,13 +113,5 @@ describe("unsettled finished-stay additions helpers", () => {
 
     expect(additionsStatuses).not.toContain("PAYMENT_PENDING");
     expect(primaryStatuses).toContain("PAYMENT_PENDING");
-  });
-
-  it("builds the bookings-list deep link both surfaces share", () => {
-    const dayKey = formatDateOnly(GIVEN_DAY);
-
-    expect(buildUnsettledAdditionalFinishedStaysHref(dayKey)).toBe(
-      `/admin/bookings?additionalOwed=owed&checkOutTo=${dayKey}`,
-    );
   });
 });

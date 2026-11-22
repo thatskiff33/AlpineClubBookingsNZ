@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  financeAccessBadgeClass,
-  financeAccessLongLabels,
   financeAccessShortLabels,
   getLifecycleStatusConfig,
   getLoginBadge,
@@ -10,17 +8,9 @@ import {
 } from "@/lib/admin-member-badges";
 
 describe("admin-member-badges", () => {
-  it("exposes a badge class for every finance access level", () => {
-    expect(financeAccessBadgeClass.NONE).toContain("muted");
-    expect(financeAccessBadgeClass.VIEWER).toContain("warning");
-    expect(financeAccessBadgeClass.MANAGER).toContain("success");
-  });
-
-  it("exposes both short and long finance access labels", () => {
+  it("exposes the short finance access labels", () => {
     expect(financeAccessShortLabels.MANAGER).toBe("Manager");
-    expect(financeAccessLongLabels.MANAGER).toBe("Finance Manager");
     expect(financeAccessShortLabels.NONE).toBe("None");
-    expect(financeAccessLongLabels.NONE).toBe("No Finance Access");
   });
 
   describe("getLifecycleStatusConfig", () => {

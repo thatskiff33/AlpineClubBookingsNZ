@@ -607,32 +607,6 @@ export async function deleteIntegrationCredentialInTransaction(
   return true;
 }
 
-// ---------------------------------------------------------------------------
-// Canonical per-provider state model (shared — consumed by C2..C6)
-// ---------------------------------------------------------------------------
-
-/**
- * Canonical states a provider's setup can be in. Every guided-setup lane renders
- * from this one enum so the Integrations hub, readiness, and each wizard agree.
- *
- *   not_configured   → no credentials stored yet
- *   saved_unverified → credentials stored, not yet proven to work
- *   verified         → credentials stored AND verified/connected
- *   webhooks_amber   → connected, but the webhook subscription is unverified
- *   needs_reentry    → a stored credential fails GCM (the auth secret changed)
- *
- * VERIFY-RESET (epic decision 6): any credential write drops the provider out
- * of `verified`/`webhooks_amber` back to `saved_unverified` and re-arms
- * verification. The verified-state store lives with each provider; this enum is
- * the shared vocabulary.
- */
-export type ProviderCredentialState =
-  | "not_configured"
-  | "saved_unverified"
-  | "verified"
-  | "webhooks_amber"
-  | "needs_reentry";
-
 /**
  * Does a provider have any stored credential that fails to decrypt? Drives the
  * unified "N integrations need credentials re-entered (encryption key changed)"

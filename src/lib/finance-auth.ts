@@ -5,10 +5,7 @@ import {
   hasLodgeAccess,
   type AccessRoleAssignmentInput,
 } from "@/lib/access-roles";
-import {
-  hasFinanceManagerAccess,
-  hasFinanceViewerAccess,
-} from "@/lib/admin-permissions";
+import { hasFinanceViewerAccess } from "@/lib/admin-permissions";
 import { MEMBER_PRIVILEGE_CHECK_SELECT } from "@/lib/access-role-definitions";
 import { buildLoginPath } from "@/lib/auth-redirect";
 import { prisma } from "@/lib/prisma";
@@ -88,19 +85,6 @@ export async function requireFinanceViewer(
       redirect("/lodge/kiosk");
     }
     redirect("/dashboard");
-  }
-
-  return member;
-}
-
-// test seam
-export async function requireFinanceManager(
-  callbackPath: string = "/finance"
-): Promise<FinanceAccessMember> {
-  const member = await requireFinanceViewer(callbackPath);
-
-  if (!hasFinanceManagerAccess(member)) {
-    redirect("/finance");
   }
 
   return member;

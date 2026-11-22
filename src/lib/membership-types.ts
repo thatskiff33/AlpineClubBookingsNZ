@@ -5,7 +5,7 @@ import type {
   Prisma,
   Role,
 } from "@prisma/client";
-import { buildUniqueCatalogueKey, normalizeCatalogueKey, normalizeCatalogueText } from "@/lib/catalogue-key";
+import { buildUniqueCatalogueKey, normalizeCatalogueText } from "@/lib/catalogue-key";
 import { isKeyResolvedRateHolder } from "@/lib/membership-type-rate-coverage";
 
 export const MEMBERSHIP_TYPE_BOOKING_BEHAVIORS = [
@@ -157,14 +157,6 @@ const BUILT_IN_MEMBERSHIP_TYPE_KEYS = BUILT_IN_MEMBERSHIP_TYPES.map(
 
 export type BuiltInMembershipTypeKey =
   (typeof BUILT_IN_MEMBERSHIP_TYPES)[number]["key"];
-
-const LEGACY_MEMBERSHIP_TYPE_KEY_ALIASES = {
-  RESERVE: "ASSOCIATE",
-} as const satisfies Record<string, BuiltInMembershipTypeKey>;
-const LEGACY_MEMBERSHIP_TYPE_KEY_ALIAS_MAP: Record<
-  string,
-  BuiltInMembershipTypeKey
-> = LEGACY_MEMBERSHIP_TYPE_KEY_ALIASES;
 
 const BUILT_IN_MEMBERSHIP_TYPE_ALLOWED_AGE_TIERS = {
   FULL: ["INFANT", "CHILD", "YOUTH", "ADULT"],
@@ -398,11 +390,6 @@ export function normalizeMembershipTypeText(
   return normalizeCatalogueText(value);
 }
 
-// test seam
-export function normalizeMembershipTypeKey(name: string): string {
-  return normalizeCatalogueKey(name);
-}
-
 export async function buildUniqueMembershipTypeKey(
   db: {
     membershipType: {
@@ -421,12 +408,6 @@ export async function buildUniqueMembershipTypeKey(
 export function defaultMembershipTypeKeyForRole(
   role: Role | string,
 ): BuiltInMembershipTypeKey {
-  if (role === "ASSOCIATE" || role === "RESERVE") {
-    return "ASSOCIATE";
-  }
-  if (role === "LIFE") {
-    return "LIFE";
-  }
   if (role === "SCHOOL") {
     return "SCHOOL";
   }
@@ -543,14 +524,6 @@ export function isSubscriptionNotRequiredForMembershipType(params: {
   return (
     params.ageTier != null && params.notRequiredAgeTiers.has(params.ageTier)
   );
-}
-
-// test seam
-export function canonicalMembershipTypeKey(
-  key: string | null | undefined,
-): string | null {
-  if (!key) return null;
-  return LEGACY_MEMBERSHIP_TYPE_KEY_ALIAS_MAP[key] ?? key;
 }
 
 // test seam

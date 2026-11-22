@@ -2,7 +2,6 @@ import { AgeTier } from "@prisma/client";
 import { describe, it, expect } from "vitest";
 import {
   isGroupDiscountApplicable,
-  isGroupDiscountAppliedToStay,
   calculateBookingPrice,
   type SeasonRateData,
   type GroupDiscountConfig,
@@ -128,32 +127,6 @@ describe("P5.1: Group booking discount", () => {
       const summerNight = new Date("2026-12-15");
       expect(
         isGroupDiscountApplicable(5, summerNight, allSeasons, undefined)
-      ).toBe(false);
-    });
-  });
-
-  describe("isGroupDiscountAppliedToStay", () => {
-    it("returns true when at least one stay night qualifies", () => {
-      expect(
-        isGroupDiscountAppliedToStay(
-          new Date("2026-12-10"),
-          new Date("2026-12-12"),
-          5,
-          allSeasons,
-          defaultGroupDiscount
-        )
-      ).toBe(true);
-    });
-
-    it("returns false when no stay nights qualify", () => {
-      expect(
-        isGroupDiscountAppliedToStay(
-          new Date("2026-07-10"),
-          new Date("2026-07-12"),
-          5,
-          allSeasons,
-          defaultGroupDiscount
-        )
       ).toBe(false);
     });
   });
