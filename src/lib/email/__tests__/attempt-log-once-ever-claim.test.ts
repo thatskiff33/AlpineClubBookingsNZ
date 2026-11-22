@@ -134,6 +134,8 @@ describe("only the alert's own emails carry the claim (#5255)", () => {
       templateName: "admin-payment-failure",
       templateData: undefined,
       attachments: undefined,
+      // #5407: every admin alert copy reports when its row is written.
+      onAttemptLogged: expect.any(Function),
     });
   });
 
@@ -157,11 +159,15 @@ describe("a refused claim is not a delivery failure (#5255)", () => {
     sendEmail.mockReset();
 
     expect(escalate).not.toHaveBeenCalled();
-    expect(result).toEqual({ deliveryAllowed: true, recipients: 2, sent: 0, queuedForRetry: 0, notDelivered: 2 });
+    expect(result).toEqual({ deliveryAllowed: true, recipients: 2, sent: 0, queuedForRetry: 0, notDelivered: 2, failedBeforeLogged: 0 });
   });
 
   it("escalates only the genuine failure when one recipient was refused and another's send failed", async () => {
-    sendEmail.mockRejectedValueOnce(refused()).mockRejectedValueOnce(new Error("SES down"));
+    // The failed copy's row was written first, so the retry cron replays it (#5407).
+    sendEmail.mockRejectedValueOnce(refused()).mockImplementationOnce(async ({ onAttemptLogged }) => {
+      (onAttemptLogged as (id: string) => void)("log-2");
+      throw new Error("SES down");
+    });
     const result = await sendAdminAlertTo({ ...alert, emails: ["a@example.org", "b@example.org"] });
 
     expect(escalate).toHaveBeenCalledTimes(1);
