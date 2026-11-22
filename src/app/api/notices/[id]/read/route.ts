@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { getNoticeForMember } from "@/lib/notices";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSession } from "@/lib/session-guards";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { NOTICE_READ_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { noticeIdParamsSchema } from "@/lib/notices-shared";
 
 /**
  * Record that the acting member has opened a notice. memberId comes FROM THE
@@ -11,10 +14,11 @@ import { requireActiveSession } from "@/lib/session-guards";
  * the first-open timestamp.
  *
  * Fired by the client <MarkNoticeRead> component on detail-page mount — never a
- * server-render side effect, so a Link prefetch can never forge a read.
+ * server-render side effect, so a Link prefetch can never forge a read. Also
+ * the AI app action `mark_notice_read` (ALP-718).
  */
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const guard = await requireActiveSession();
@@ -22,7 +26,11 @@ export async function POST(
     return guard.response;
   }
   const memberId = guard.session.user.id;
-  const { id } = await params;
+  const parsedParams = noticeIdParamsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  const { id } = parsedParams.data;
 
   const notice = await getNoticeForMember(memberId, id);
   if (!notice) {
@@ -41,5 +49,5 @@ export async function POST(
     update: {},
   });
 
-  return NextResponse.json({ ok: true });
+  return connectionJson(request, { ok: true }, NOTICE_READ_CONNECTION_SHAPE);
 }
