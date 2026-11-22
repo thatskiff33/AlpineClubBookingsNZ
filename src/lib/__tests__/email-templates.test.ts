@@ -788,8 +788,9 @@ describe("email-templates", () => {
       expect(html).toContain("Your Waitlist Place Is Back");
       expect(html).toContain("Mike");
 
-      // Same facts, same rows, same order as waitlistOfferExpiredTemplate — the
-      // member still needs to know which nights and where they now sit.
+      // Same facts, same rows, same order as waitlistOfferExpiredTemplate (whose
+      // position label reads "Your Position" since #5410) — the member still
+      // needs to know which nights and where they now sit.
       expect(html).toContain("Check-in");
       expect(html).toContain("Check-out");
       expect(html).toContain("New Position");

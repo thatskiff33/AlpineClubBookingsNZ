@@ -2054,6 +2054,20 @@ describe("waitlist email templates", () => {
     expect(html).toContain("Expired");
     expect(html).toContain("Mike");
     expect(html).toContain("#3");
+    // #5410: the place goes on down the queue, and the member keeps theirs.
+    expect(html).toContain("Your Position");
+    expect(html).not.toContain("New Position");
+    expect(html).toContain("offered to the next person on the waitlist");
+    expect(html).toContain("You keep your place in the queue");
+  });
+
+  it("ships the same #5410 expiry wording as the editable default", async () => {
+    const { getEmailTemplateDefinition } = await import("@/lib/email-message-registry");
+    const body = getEmailTemplateDefinition("waitlist-offer-expired")!.defaultBody;
+    expect(body).toContain("Your Position: #{{position}}");
+    expect(body).toContain(
+      "A place that is not taken up is offered to the next person on the waitlist, so this one may go to someone behind you. You keep your place in the queue, and we'll email you again if a place opens up for you.",
+    );
   });
 
   it("adminWaitlistOfferTemplate renders correctly", async () => {
