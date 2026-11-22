@@ -19,7 +19,7 @@ import { createAlertCooldownStore } from "./support/alert-cooldown-store";
 
 const mocks = vi.hoisted(() => ({
   sendEmail: vi.fn(),
-  recordEscalation: vi.fn(async () => {}),
+  recordEscalation: vi.fn(async (..._args: unknown[]) => {}),
   memberFindMany: vi.fn(),
   bookingFindUnique: vi.fn(),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },

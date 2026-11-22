@@ -32,6 +32,7 @@ import {
   buildPublicBookingRequestsHref,
 } from "@/lib/admin-booking-requests-path";
 import { sendToAdmins } from "./admin-alerts-shared";
+import type { AdminAlertRecipientsResult } from "./admin-alert-send-result";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
@@ -221,7 +222,7 @@ export async function sendAdminBookingBumpedAlert(data: {
   checkOut: Date;
   guestCount: number;
   reason: string;
-}) {
+}): Promise<AdminAlertRecipientsResult> {
   const checkIn = emailCalendarDay(data.checkIn);
   const checkOut = emailCalendarDay(data.checkOut);
   return sendToAdmins({

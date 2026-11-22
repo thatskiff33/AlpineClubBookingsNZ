@@ -33,7 +33,7 @@ import {
 } from "../email-message-notes";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
-import { adminAlertSendOutcome, type AdminAlertSendOutcome } from "./admin-alert-send-result";
+import { adminAlertSendOutcome, type AdminAlertSendOutcome, type AdminAlertSendResult } from "./admin-alert-send-result";
 import { applyXeroOrgShortCode } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { stampXeroOrganisation } from "./admin-alert-xero-links";
@@ -65,7 +65,7 @@ export async function sendAdminPaymentFailureAlert(data: {
   paymentIntentId: string;
 },
   format: ClubFormat,
-) {
+): Promise<AdminAlertSendResult> {
   // Returned so a once-only caller can hold its claim on it (#3635 C5).
   return sendToAdmins({
     subject: `Payment Failed — ${CLUB_BOOKINGS_NAME}`,
@@ -263,7 +263,7 @@ export async function sendAdminSupersededPaymentRefundAlert(data: {
   bookingId: string;
 },
   format: ClubFormat,
-) {
+): Promise<AdminAlertSendResult> {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const bookingUrl = `${baseUrl}/bookings/${data.bookingId}`;
 
@@ -461,7 +461,7 @@ export async function sendAdminXeroSyncErrorAlert(data: {
   operation: string;
   errorMessage: string;
   timestamp: Date;
-}) {
+}): Promise<AdminAlertSendResult> {
   return sendToAdmins({
     subject: `Xero Sync Error — ${CLUB_BOOKINGS_NAME}`,
     html: await renderEmailHtml(() => adminXeroSyncErrorTemplate(data)),
