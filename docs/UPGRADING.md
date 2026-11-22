@@ -3648,7 +3648,10 @@ fully justified in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`:
   into `XeroContactGroupRule` at E8, `20260716140000_xero_member_grouping`).
   This one is legal **only** because `v0.12.2` narrowed the reads and Release A
   (#2130 STEP 1.5) narrowed the writes on both models, so the draining colour
-  names none of these columns in a `SELECT` or an implicit `RETURNING`.
+  names none of these columns in a `SELECT` or an implicit `RETURNING`. The
+  narrowing alone does not make a drop safe (`INV-OPS-005`): it sufficed here
+  because all three columns are nullable with no default, so no `INSERT` named
+  them.
 
 **Before deploying Release B**
 

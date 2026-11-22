@@ -12,6 +12,7 @@ import {
 import { getLodgeCapacity, FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { getOperationalRosterGuestsForDate } from "@/lib/roster-eligibility";
 import logger from "@/lib/logger";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const bodySchema = z.object({
   choreTemplateIds: z.array(z.string().min(1)).min(1),
@@ -42,12 +43,9 @@ export async function POST(
 
   const date = parseDateOnly(dateStr);
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {

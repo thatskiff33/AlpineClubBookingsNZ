@@ -12,7 +12,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  *
  *  - the shared-post doorbell (`/api/webhooks/servernz-posts`) signs the raw
  *    request BODY, which is JSON and so always begins with `{`;
- *  - the availability question (`/api/webhooks/servernz-availability`, #62)
+ *  - the availability question (`/api/webhooks/servernz-availability`, triyder/AlpineClubBookingsNZ#62)
  *    signs `availability` + the lodge id and dates, one per line — a value
  *    built from the parsed query rather than the URL, so a proxy re-encoding
  *    the address cannot break it.
@@ -33,7 +33,7 @@ export const SERVERNZ_TIMESTAMP_HEADER = "x-acs-timestamp";
 export const SERVERNZ_SIGNATURE_HEADER = "x-acs-signature";
 
 /**
- * What the central server signs when it asks about availability (#62): built
+ * What the central server signs when it asks about availability (triyder/AlpineClubBookingsNZ#62): built
  * from the parsed query, one value per line after the `availability` domain
  * prefix. The central server builds exactly this string.
  */

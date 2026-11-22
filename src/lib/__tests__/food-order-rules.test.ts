@@ -14,7 +14,7 @@ import {
 } from "@/lib/food-order-rules";
 
 /**
- * Fork #121 (owner change, 13 Nov 2026): the "Type" list, singular versus
+ * Fork triyder/AlpineClubBookingsNZ#121 (owner change, 13 Nov 2026): the "Type" list, singular versus
  * plural, and the decimal quantity parser — the one module the form, the
  * routes, the history, the checklist, the email and the audit rows all use.
  */

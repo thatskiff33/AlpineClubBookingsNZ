@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
-import { postBookingReceipts, postHandBackObligation, withdrawRefundObligation } from "@/lib/member-money/doors";
-import { memberMoneyEventKeys, postMemberMoneyEvent } from "@/lib/member-money";
+import { postBookingReceipts, postHandBackObligation, postMemberMergeTransfer, withdrawRefundObligation } from "@/lib/member-money/doors";
+import { memberMoneyEventKeys, postMemberMoneyEvent, readBookingReceiptCensus } from "@/lib/member-money";
 import { readMemberMoneyApplicationState } from "@/lib/member-money/internal/application-read";
 import { memberMoneyApplicationTotals, memberMoneyConservationProblems } from "@/lib/member-money/internal/application-state";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
@@ -99,6 +99,7 @@ const resolve = (taskId: string, outcome: "completed" | "dismissed") => outcome 
 const state = (id: string) => db.$transaction((tx) => readMemberMoneyApplicationState(tx, id));
 const family = async (id: string, key: string) => memberMoneyApplicationTotals(await state(id)).families.get(key) ?? { funded: 0, paid: 0, reserved: 0 };
 const ADMIN = `${PREFIX}admin`;
+const MERGE_MEMBERS = `${PREFIX}x-`;
 /** Signed balance (debit positive) of one account on the booking's journal lines. */
 const balance = async (bookingId: string, account: string) => (await db.memberMoneyLine.findMany({ where: { bookingId, account: account as never }, select: { side: true, amountCents: true } }))
   .reduce((sum, l) => sum + (l.side === "DEBIT" ? 1 : -1) * l.amountCents, 0);
@@ -110,16 +111,16 @@ const r14Lines = async (taskId: string) => (await eventOf(memberMoneyEventKeys.h
 const r14Applied = async (taskId: string) => (await eventOf(memberMoneyEventKeys.handBackPaid(taskId)))?.journal?.applications.reduce((sum, a) => sum + a.amountCents, 0);
 
 /** A booking whose R01 is in the journal and whose charges are collected: one row per [source, cents]. */
-async function chargedBooking(charges: ReadonlyArray<["STRIPE" | "INTERNET_BANKING", number]>, cancelled = true) {
+async function chargedBooking(charges: ReadonlyArray<["STRIPE" | "INTERNET_BANKING", number]>, cancelled = true, memberId = names.memberId) {
   const id = `${PREFIX}${++sequence}`;
   const total = charges.reduce((sum, [, cents]) => sum + cents, 0);
   const where = { bookingId: id, lodgeId: names.lodgeId };
-  await createHistoryBooking(db, names, id, { payment: { amountCents: total, source: charges[0]![0] } });
+  await createHistoryBooking(db, { ...names, memberId }, id, { payment: { amountCents: total, source: charges[0]![0] } });
   await db.$transaction((tx) => postMemberMoneyEvent(tx, context, {
     kind: "CHARGE", eventKey: memberMoneyEventKeys.bookingCharge(id), origin: "APP", source: { kind: "BOOKING", id, version: "1" }, reason: "Synthetic R01",
-    obligations: [{ key: memberMoneyEventKeys.bookingCharge(id), kind: "CHARGE", debtor: { kind: "MEMBER", memberId: names.memberId }, faceCents: total, evidence: {} }],
+    obligations: [{ key: memberMoneyEventKeys.bookingCharge(id), kind: "CHARGE", debtor: { kind: "MEMBER", memberId }, faceCents: total, evidence: {} }],
     legs: [
-      { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: total, booking: where, debtor: { kind: "MEMBER", memberId: names.memberId }, obligationKey: memberMoneyEventKeys.bookingCharge(id), evidence: {} },
+      { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: total, booking: where, debtor: { kind: "MEMBER", memberId }, obligationKey: memberMoneyEventKeys.bookingCharge(id), evidence: {} },
       { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: total, booking: where, chargeIdentity: `booking:${id}:test`, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
     ] }));
   const rows: { id: string }[] = [];
@@ -144,6 +145,7 @@ async function cleanup() {
   await db.auditLog.deleteMany({ where: { OR: [{ actorMemberId: ADMIN }, { memberId: ADMIN }] } });
   await db.memberAccessRole.deleteMany({ where: { memberId: ADMIN } });
   await db.member.deleteMany({ where: { id: ADMIN } });
+  await db.member.deleteMany({ where: { id: { startsWith: MERGE_MEMBERS } } });
 }
 
 (RUN ? describe : describe.skip)("M4d bank and cash hand-backs on PostgreSQL: dismissal refused for now (#4516)", { timeout: 60_000 }, () => {
@@ -260,6 +262,38 @@ async function cleanup() {
     expect(await db.manualRefundTask.findUniqueOrThrow({ where: { id: bank.taskId } })).toMatchObject({ status: "OPEN", completedAt: null });
     expect((await eventOf(bankR05))?.journal?.reversedBy).toBeNull();
     expect(await db.auditLog.count({ where: { targetId: id, action: "booking-payment.manual-refund-task.dismiss" } })).toBe(1);
+    expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
+  });
+
+  it("#5191: a part to check dismissed after its owner merged away: its reversal's receivable follows the merge to the survivor", async () => {
+    const [from, to] = [`${MERGE_MEMBERS}${++sequence}`, `${MERGE_MEMBERS}${++sequence}`];
+    for (const memberId of [from, to]) {
+      await db.member.create({ data: { id: memberId, email: `${memberId}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Merge", lastName: "Proof", ageTier: "ADULT" } });
+    }
+    const id = await chargedBooking([["STRIPE", 14_000], ["INTERNET_BANKING", 6_000]], true, from);
+    const { raiseCancelCardShortfallHandBack } = await import("@/lib/cancel-card-refund-shortfall");
+    const shortfall = await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      return raiseCancelCardShortfallHandBack(tx, { bookingId: id, paymentId: `${id}-payment`, refundAmountCents: 20_000, plannedCardRefundCents: 0, format: CLUB_FORMAT_TEST, journal: context, actorMemberId: names.officerId });
+    });
+    const check = shortfall!.check!;
+    const receivable = async (memberId: string) => (await db.memberMoneyLine.findMany({ where: { bookingId: id, account: "MEMBER_RECEIVABLE", debtorKind: "MEMBER", memberId }, select: { side: true, amountCents: true } }))
+      .reduce((sum, l) => sum + (l.side === "DEBIT" ? 1 : -1) * l.amountCents, 0);
+    const before = await receivable(from);
+    // Member merge's order: the owner move, then the D4 transfer of the merged-away member's balances.
+    await db.$transaction(async (tx) => {
+      await tx.booking.update({ where: { id }, data: { memberId: to } });
+      await postMemberMergeTransfer(tx, context, { fromMemberId: from, toMemberId: to, actorMemberId: names.officerId });
+    });
+
+    await resolve(check.taskId, "dismissed");
+
+    expect((await eventOf(memberMoneyEventKeys.refundObligation("hand-back", check.taskId)))?.journal?.reversedBy).not.toBeNull();
+    // MUTATION: deleting the residue move in `reverseRefundObligation` leaves -14000 on the merged-away member here.
+    expect(await receivable(from)).toBe(0);
+    expect(await receivable(to)).toBe(before - 14_000);
+    expect(await db.memberMoneyEvent.count({ where: { eventKey: { startsWith: "merge-residue:" }, sourceIdentity: id } })).toBe(1);
+    expect((await db.$transaction((tx) => readBookingReceiptCensus(tx, `${id}-payment`))).filter((f) => f.kind === "MERGED_DEBTOR_BALANCE")).toEqual([]);
     expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
   });
 
