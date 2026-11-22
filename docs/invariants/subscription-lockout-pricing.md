@@ -382,7 +382,8 @@ decides for both sides and the row exempts nobody. The admin members list, its
 export and the subscriptions list are not access gates: they follow billing
 until the club chooses (owner decision Q2 on #5190), so while `NOT_CHOSEN` they
 can show as owing a member this gate lets book; a saved `NOT_REQUIRED` row
-billing still invoices carries a note there (`hasNotRequiredRowBillingNote`). A member owing one is settled
+billing ignores carries a note there (`hasNotRequiredRowBillingNote`). A member
+owing one is settled
 by a `PAID` row or by an active coverage claim on a `NO_INVOICE` charge, whatever
 the row says, because such a fee sends no invoice to pay. Every gate reads the
 club's rule with the request's lockout mode or through its own transaction, never

@@ -509,17 +509,16 @@ home for that explanation and is not repeated here.
   differ. Once chosen, both read the club's pair and a saved
   row exempts nobody (age wins).
 - **The admin lists follow billing** (Q2): the members list, its export, the
-  subscriptions list and their SQL filter read `ADMIN_LIST_LIABILITY_SIDE`; a
-  saved `NOT_REQUIRED` row billing still invoices carries a note
+  subscriptions list and their SQL filter read `ADMIN_LIST_LIABILITY_SIDE`; an
+  active member's saved `NOT_REQUIRED` row that billing ignores carries a note
   (`hasNotRequiredRowBillingNote`).
 - **The pair is chosen whole and never returns to `NOT_CHOSEN`.** The settings
-  `PUT` and config import refuse a half pair, a move back and `CURRENT_AGE`
-  (age today waits for part-season invoices); an omitted pair is never written.
+  `PUT` refuses a half pair, a move back and `CURRENT_AGE` (age today waits for
+  part-season invoices); config import ignores a half or `NOT_CHOSEN` pair and
+  fails the dry run on `CURRENT_AGE`. An omitted pair is never written.
   A save or import leaving the club chosen runs `clearStaleNotRequiredRows`
-  under the billing season key and audits who moved; read the impact list
+  under the billing season key, then the liability-rule key, and audits who
+  moved; read the impact list
   (`GET /api/admin/membership-lockout-settings/liability-impact`) first.
-- **A no-invoice fee settles its member for booking** (all clubs, not gated by
-  the choice): an active coverage claim on a `NO_INVOICE` charge counts as paid
+- **A no-invoice fee settles its member for booking** (every club): an active coverage claim on a `NO_INVOICE` charge counts as paid
   whatever the row status (no invoice is sent).
-- **It travels with config transfer**; a bundle's `NOT_CHOSEN` never
-  overwrites a chosen target.

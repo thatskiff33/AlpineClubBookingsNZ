@@ -292,15 +292,17 @@ invoice) is now treated as paid for booking, whatever their record says. They
 were never sent an invoice, so they could never have paid one.
 
 The admin members list, its export and the subscriptions list show billing's
-answer until the club chooses. A member with a saved "Not required" record whom
-the billing run will still invoice keeps the "Not required" badge with the note
-"Marked not required, but the billing run will invoice this member" (the export
-puts it in the **Subscription Note** column). If that member should not pay,
-move them to a membership type whose subscription is not required; if they
-should, leave them and the next billing run invoices them. The note goes once
-the club chooses, because the member then either stops owing or their record is
-updated to "Not invoiced". A record a no-invoice fee covers, or one already
-invoiced, paid or marked paid, never gets the note.
+answer until the club chooses. An active member with a saved "Not required"
+record whom billing treats as owing keeps the "Not required" badge with the note
+"Marked not required, but billing treats this member as owing" (the export puts
+it in the **Subscription Note** column). If that member should not pay, move
+them to a membership type whose subscription is not required; if they should,
+leave them and the next billing run bills them as their fee says. For the
+current season the note goes once the club chooses, because the member then
+either stops owing or their record is updated to "Not invoiced"; the choice's
+clear-up reaches only the current season, so a record for another season keeps
+its note. A record a no-invoice fee covers, or one already invoiced, paid or
+marked paid, never gets the note.
 
 ## Settings reference
 

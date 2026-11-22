@@ -892,9 +892,9 @@ check the others.
   all resolve paid-up through that rule and the settlement loader, never a copy.
   The admin members list and export and the subscriptions list call the same
   rule on its billing side, so while `NOT_CHOSEN` the two pre-#5190 access facts
-  above do not exempt anyone there (#5190 Q2). An untouched saved
-  `NOT_REQUIRED` row whose member billing still invoices keeps its badge with a
-  note, from the same rule (`hasNotRequiredRowBillingNote`).
+  above do not exempt anyone there (#5190 Q2). An active member's untouched
+  saved `NOT_REQUIRED` row that billing ignores keeps its badge with a note,
+  from the same rule (`hasNotRequiredRowBillingNote`).
   Nomination deliberately honours ONLY the membership-type `NOT_REQUIRED` rule,
   NOT the junior age-tier exemption (`requiresPaidSubscriptionForAgeTier`):
   nominating is an adult-member act and widening it to un-subscribed junior

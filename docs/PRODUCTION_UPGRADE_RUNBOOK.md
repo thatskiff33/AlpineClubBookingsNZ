@@ -56,12 +56,14 @@ member covered by a no-invoice fee may now book, since they were never sent an
 invoice to pay. The admin members list, its export and the subscriptions list
 now follow billing until a rule is chosen: a member on an always-required type
 with an exempt age tier counts as owing there, though booking still lets them
-book. A member with a saved "Not required" record whom billing will still
-invoice keeps the "Not required" badge with the note "Marked not required, but
-the billing run will invoice this member" (export column **Subscription
-Note**); after the upgrade an officer checks those rows and moves anyone who
-should be exempt to a membership type whose subscription is not required
-([UPGRADING.md](UPGRADING.md#check-members-marked-not-required-that-billing-will-still-invoice-5190)).
+book. An active member with a saved "Not required" record whom billing treats
+as owing keeps the "Not required" badge with the note "Marked not required, but
+billing treats this member as owing" (export column **Subscription Note**);
+after the upgrade an officer checks those rows and moves anyone who should be
+exempt to a membership type whose subscription is not required
+([UPGRADING.md](UPGRADING.md#check-members-marked-not-required-that-billing-treats-as-owing-5190)).
+Choosing a rule later clears the notes for the current season only; a record
+for another season keeps its note.
 Before choosing a rule afterwards, read the impact list
 (`GET /api/admin/membership-lockout-settings/liability-impact`) so you know who
 the choice will start or stop charging.
