@@ -9,7 +9,7 @@ one line that applies the filter, the one field the list row carries, and the
 wiring that opens the dialog.
 
 file: src/app/(admin)/admin/membership/members/page.tsx
-lines: 625
+lines: 626
 reason: the page owns every bulk dialog's open state, its mount and its
   completion toast; the new dialog's state, mount and options hook have to
   sit beside the membership-type dialog's, and the two completion handlers
@@ -28,7 +28,7 @@ reason: the list query applies the shared category filter beside the
   returns it on each row; splitting the list query is a refactor of its own.
 
 function: src/app/(admin)/admin/membership/members/page.tsx#MembersPage
-lines: 560
+lines: 561
 reason: the new bulk dialog's open state, options hook and mount sit beside the
   membership-type dialog's in this page component; splitting the page is its
   own refactor.
