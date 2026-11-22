@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   requireActiveSessionUser: vi.fn(),
   clubModuleSettingsFindUnique: vi.fn(),
   clubModuleSettingsUpsert: vi.fn(),
+  clubModuleSettingsUpdate: vi.fn(),
   // #2573: analytics readiness is a DATABASE read now, not an env-var check.
   analyticsSettingsFindUnique: vi.fn<
     () => Promise<Record<string, unknown> | null>
@@ -66,6 +67,7 @@ vi.mock("@/lib/prisma", () => ({
     clubModuleSettings: {
       findUnique: mocks.clubModuleSettingsFindUnique,
       upsert: mocks.clubModuleSettingsUpsert,
+      update: mocks.clubModuleSettingsUpdate,
     },
     analyticsSettings: {
       findUnique: mocks.analyticsSettingsFindUnique,
@@ -212,7 +214,8 @@ describe("Admin modules schema contract", () => {
 */
 describe("Modules page setup affordance", () => {
   it("deep-links the analytics module at the Integrations hub", () => {
-    const page = readRepoFile("src/app/(admin)/admin/modules/page.tsx");
+    // The card, and its setup-link map, moved out of the page in #5243.
+    const page = readRepoFile("src/app/(admin)/admin/modules/_components/module-card.tsx");
     const map = sliceFrom(page, "const MODULE_SETUP_HREFS", "};");
 
     expect(map).toContain('analytics: "/admin/integrations"');
@@ -231,6 +234,7 @@ describe("Admin modules API", () => {
     mocks.requireActiveSessionUser.mockReset();
     mocks.clubModuleSettingsFindUnique.mockReset();
     mocks.clubModuleSettingsUpsert.mockReset();
+    mocks.clubModuleSettingsUpdate.mockReset();
     mocks.auditLogCreate.mockReset();
     mocks.transaction.mockReset();
     mocks.buildStructuredAuditLogCreateArgs.mockClear();
@@ -243,6 +247,11 @@ describe("Admin modules API", () => {
       id: "default",
       ...create,
       ...update,
+      updatedAt: new Date("2026-05-18T11:00:00.000Z"),
+    }));
+    mocks.clubModuleSettingsUpdate.mockImplementation(async ({ data }) => ({
+      id: "default",
+      ...data,
       updatedAt: new Date("2026-05-18T11:00:00.000Z"),
     }));
     mocks.auditLogCreate.mockResolvedValue({ id: "audit-1" });
@@ -395,6 +404,7 @@ describe("Admin modules API", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.clubModuleSettingsUpsert).not.toHaveBeenCalled();
+    expect(mocks.clubModuleSettingsUpdate).not.toHaveBeenCalled();
     expect(mocks.auditLogCreate).not.toHaveBeenCalled();
   });
 
@@ -405,6 +415,7 @@ describe("Admin modules API", () => {
 
     expect(response.status).toBe(403);
     expect(mocks.clubModuleSettingsUpsert).not.toHaveBeenCalled();
+    expect(mocks.clubModuleSettingsUpdate).not.toHaveBeenCalled();
   });
 
   it("saves settings and audits previous and new values when modules change", async () => {
@@ -430,23 +441,22 @@ describe("Admin modules API", () => {
     // #2352 F3: the capacity tag is cleared by revalidatePublicSite() itself, so
     // the route passes only the tag that is specific to this write.
     expect(mocks.revalidatePublicSite).toHaveBeenCalledWith("public-layout:modules");
-    expect(mocks.clubModuleSettingsUpsert).toHaveBeenCalledWith({
-      where: { id: "default" },
-      create: {
-        id: "default",
-        ...nextSettings,
-        updatedByMemberId: "admin-1",
-      },
-      update: {
+    // The row exists, so the write is conditional on the aiDiagnostics value
+    // the disclosure gate judged (#5243); a first save upserts instead.
+    expect(mocks.clubModuleSettingsUpdate).toHaveBeenCalledWith({
+      where: { id: "default", aiDiagnostics: allEnabled.aiDiagnostics },
+      data: {
         ...nextSettings,
         updatedByMemberId: "admin-1",
       },
       select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
     });
+    expect(mocks.clubModuleSettingsUpsert).not.toHaveBeenCalled();
     // The PUT handler's pre-write read must use the explicit column select
-    // (hoppers99/AlpineClubBookingsNZ#153), as hoppers99/AlpineClubBookingsNZ#150 established for the other reads, and the upsert's
-    // implicit RETURNING needs the same select (hoppers99/AlpineClubBookingsNZ#175). Neither reaches the
-    // upsert's INSERT column list, so neither makes a DROP safe (INV-OPS-005).
+    // (hoppers99/AlpineClubBookingsNZ#153), as hoppers99/AlpineClubBookingsNZ#150 established for the other reads, and the write's
+    // implicit RETURNING (update or upsert) needs the same select (hoppers99/AlpineClubBookingsNZ#175).
+    // Neither reaches the upsert's INSERT column list, so neither makes a
+    // DROP safe (INV-OPS-005).
     expect(mocks.clubModuleSettingsFindUnique).toHaveBeenCalledWith({
       where: { id: "default" },
       select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
