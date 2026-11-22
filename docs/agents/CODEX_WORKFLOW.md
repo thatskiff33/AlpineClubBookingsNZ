@@ -3,13 +3,13 @@
 **Audience: agent.**
 
 The operational rules for Codex (and any agent) working in a worktree of this
-repository. Root `AGENTS.md` is authoritative if this workflow ever drifts again.
+repository. Root `AGENTS.md` wins if this workflow drifts.
 
 ## Flow
 
 The per-issue flow is `AGENTS.md` → "Per-issue pipeline" and "Completion and
-Merge"; docs and residual-risk reporting also follow `AGENTS.md`. This file adds
-only worktree runtime, worktree removal, checking `main`, and Docker teardown.
+Merge"; docs and residual-risk reporting follow `AGENTS.md` too. This file adds
+only worktree runtime and removal, checking `main`, and Docker teardown.
 Workflow and label examples under `docs/agents/examples/` are fixtures: never
 copy them into `.github/` without human review.
 
@@ -231,7 +231,9 @@ work.
 Before push: Prisma generation, lint, typecheck (with
 `NODE_OPTIONS=--max-old-space-size=12288`, as CI sets it), focused
 touched/adjacent tests, a mutation check per new guard, `quality:budget --base
-origin/main`, `ci:fast-censuses`, docs linkcheck for doc changes and knip for file/export changes. Then push a draft PR. GitHub Actions owns the full `pnpm test`, build,
+origin/main`, `ci:fast-censuses`, docs linkcheck for doc changes and knip for
+file/export changes. Then push a draft PR. GitHub Actions owns the full
+`pnpm test`, build,
 migration-drift, E2E, static/secret/dependency, and container gates. Run a full
 suite locally only to diagnose a CI failure or when CI is unavailable, and
 record the reason and result in the PR.
@@ -323,7 +325,7 @@ pnpm run test:e2e:down                                  # the E2E stack this rep
 Use `down -v` only for a disposable lane project (it removes its volumes).
 
 **Run it on every ending** — a merged and closed issue, a lane abandoned or
-replaced, and a failed experiment nobody is investigating any more. Never remove
+replaced, and a failed experiment nobody still investigates. Never remove
 shared services you did not create, or another open lane's containers.
 
 **See what is already there:**
