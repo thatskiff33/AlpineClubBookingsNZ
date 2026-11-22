@@ -39,8 +39,6 @@ import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
 import { MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS } from "@/lib/finance-booking-metrics-query";
 import { type CollectedCashSummary } from "@/lib/payment-net-collected";
 
-// The window limit lives with the query schema, which the route and its AI app action share (ALP-721).
-export { MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS };
 export { getFinanceBookingMetricsWindowDayCount };
 
 export const FINANCE_REALIZED_BOOKING_STATUSES = [

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateAdminPaymentInvoice } from "@/lib/admin-payment-invoice-service";
-import { PAYMENT_INVOICE_GENERATED_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import {
+  PAYMENT_INVOICE_GENERATED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-payments";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { recordIdParamsSchema } from "@/lib/route-id-params";
 import { requireAdmin } from "@/lib/session-guards";

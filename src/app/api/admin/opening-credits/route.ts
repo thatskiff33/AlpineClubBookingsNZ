@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { OPENING_CREDIT_BATCHES_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import { OPENING_CREDIT_BATCHES_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-payments";
 import logger from "@/lib/logger";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { listOpeningCreditBatches } from "@/lib/opening-credit-batch";

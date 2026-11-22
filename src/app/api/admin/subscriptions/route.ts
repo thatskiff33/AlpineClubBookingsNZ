@@ -24,7 +24,9 @@ import {
   adminSubscriptionSortBySchema,
   adminSubscriptionsQuerySchema,
 } from "@/lib/admin-subscriptions-query";
-import { ADMIN_SUBSCRIPTIONS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import {
+  ADMIN_SUBSCRIPTIONS_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-subscriptions";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import type { z } from "zod";
 

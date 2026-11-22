@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
-import { MANUAL_REFUND_TASKS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import { MANUAL_REFUND_TASKS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-payments";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";

@@ -5,7 +5,7 @@ import { BOOKING_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import logger from "@/lib/logger";
-import { MANUAL_BOOKING_PAYMENT_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import { MANUAL_BOOKING_PAYMENT_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-payments";
 import { manualBookingPaymentBodySchema } from "@/lib/manual-payment-request-schemas";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";

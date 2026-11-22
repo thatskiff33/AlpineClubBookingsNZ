@@ -41,7 +41,7 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
   "site-helper": "The website's own help assistant; the member's AI app answers them itself.",
   // Officer reasons (ALP-721 onwards).
   "club-setup":
-    "Sets up the club's fees, tax, bank details, accounting mappings or connections to outside services, which an officer configures and checks on the website.",
+    "Sets up how the club runs: fees, tax, bank details, accounting mappings, membership types and rules, member fields, or connections to outside services, which an officer configures and checks on the website.",
   "service-export": "An export another system collects with its own shared key, not something a person asks for.",
 } as const;
 

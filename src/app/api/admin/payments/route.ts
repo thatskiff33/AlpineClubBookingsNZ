@@ -3,7 +3,7 @@ import {
   adminPaymentsQuerySchema,
   listAdminPayments,
 } from "@/lib/admin-payments-service";
-import { ADMIN_PAYMENTS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import { ADMIN_PAYMENTS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-payments";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 

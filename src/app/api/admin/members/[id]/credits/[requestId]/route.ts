@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { adminCreditAdjustmentReviewSchema } from "@/lib/admin-credit-adjustment-schemas";
-import { CREDIT_ADJUSTMENT_REVIEWED_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import {
+  CREDIT_ADJUSTMENT_REVIEWED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-payments";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   getMemberCreditBalance,

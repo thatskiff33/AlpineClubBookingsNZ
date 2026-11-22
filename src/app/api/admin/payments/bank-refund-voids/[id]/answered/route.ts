@@ -2,7 +2,9 @@ import { revalidateAdminPage } from "@/lib/admin-page-revalidation";
 import { NextRequest, NextResponse } from "next/server";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { bankRefundVoidAnsweredBodySchema } from "@/lib/bank-refund-void-answered-body";
-import { BANK_REFUND_VOID_ANSWERED_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import {
+  BANK_REFUND_VOID_ANSWERED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-payments";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";

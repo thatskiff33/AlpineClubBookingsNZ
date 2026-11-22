@@ -1,6 +1,6 @@
 import { revalidatePath } from "next/cache";
 import { NextRequest, NextResponse } from "next/server";
-import { FINANCE_SYNC_RUN_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import { FINANCE_SYNC_RUN_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-reports";
 import { requireFinanceManagerApiAccess } from "@/lib/finance-api-auth";
 import { runManualFinanceSync } from "@/lib/finance-sync-manual";
 import logger from "@/lib/logger";

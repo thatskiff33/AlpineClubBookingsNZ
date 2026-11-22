@@ -1,7 +1,9 @@
 import { FinanceSyncRunStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
-import { FINANCE_BACKFILL_MONTHLY_FACTS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import {
+  FINANCE_BACKFILL_MONTHLY_FACTS_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-reports";
 import { requireFinanceManagerApiAccess } from "@/lib/finance-api-auth";
 import { financeBackfillMonthlyFactsBodySchema } from "@/lib/finance-backfill-request";
 import { backfillFinanceMonthlyFacts } from "@/lib/finance-monthly-fact-backfill";

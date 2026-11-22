@@ -3,7 +3,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { adminListPage, adminQueueCreatedOrder } from "@/lib/admin-list-page";
 import { adminRefundRequestsQuerySchema } from "@/lib/admin-refund-requests-query";
-import { REFUND_REQUESTS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import { REFUND_REQUESTS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-payments";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { OPEN_HAND_BACKS_FOR_REFUND_APPEAL_SELECT, refundAppealCeilingParts } from "@/lib/manual-refund-task-settlement-rules";
 import { netCollectedCardRefundSelect } from "@/lib/additional-ledger-gap";

@@ -1,5 +1,5 @@
 /**
- * ALP-721 (`INV-MCP-006`): an officer without the Finance admin area is never
+ * ALP-721 (`INV-MCP-009`): an officer without the Finance admin area is never
  * shown a Finance action, and one holding it only at view is never shown an
  * action whose route needs edit. Not in the tool list, not from
  * `find_actions` or `describe_action`, and `run_action` answers as if the

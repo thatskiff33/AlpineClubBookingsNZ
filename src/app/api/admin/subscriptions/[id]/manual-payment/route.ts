@@ -2,7 +2,9 @@ import { revalidateAdminPage } from "@/lib/admin-page-revalidation";
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { parseJsonRequestBody } from "@/lib/api-json";
-import { MANUAL_SUBSCRIPTION_PAYMENT_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import {
+  MANUAL_SUBSCRIPTION_PAYMENT_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-subscriptions";
 import { manualSubscriptionPaymentBodySchema } from "@/lib/manual-payment-request-schemas";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import logger from "@/lib/logger";

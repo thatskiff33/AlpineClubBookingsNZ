@@ -1,4 +1,5 @@
-import { after, NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { scheduleAfterResponse } from "@/lib/schedule-after-response";
 import { createAuditLog } from "@/lib/audit";
 import {
   XERO_MISSING_INVOICES_CONNECTION_SHAPE,
@@ -12,16 +13,6 @@ import {
   enqueueXeroBookingInvoiceOperation,
   processQueuedXeroOutboxOperations,
 } from "@/lib/xero-operation-outbox";
-
-function scheduleAfterResponse(task: () => Promise<void>) {
-  try {
-    after(task);
-  } catch {
-    queueMicrotask(() => {
-      void task();
-    });
-  }
-}
 
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin();

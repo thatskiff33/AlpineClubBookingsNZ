@@ -1,4 +1,5 @@
-import { after, NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { scheduleAfterResponse } from "@/lib/schedule-after-response";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { invalidJsonBodyResponse } from "@/lib/api-json";
@@ -43,14 +44,25 @@ import {
   XeroMemberUnavailableError,
 } from "@/lib/xero-contact-create-recovery";
 
-function scheduleAfterResponse(task: () => Promise<void>) {
-  try {
-    after(task);
-  } catch {
-    queueMicrotask(() => {
-      void task();
-    });
-  }
+/**
+ * The 409 naming the Xero contacts that may already be this member. A refusal
+ * reaches an AI app verbatim (`connectionJson` projects only successes), so a
+ * connection gets each suggestion without its email address or deep link
+ * (ALP-721).
+ */
+function matchingContactsRefusal(
+  req: NextRequest,
+  suggestedContacts: Awaited<ReturnType<typeof findPotentialXeroContactsForMember>>,
+) {
+  const refusal = {
+    error:
+      "Potential matching Xero contacts already exist. Link one of those contacts or confirm that you want to create a new contact anyway.",
+    suggestedContacts,
+  };
+  const body = arrivesAsMcpConnection(req)
+    ? projectForConnection(refusal, XERO_MEMBER_PUSH_SUGGESTIONS_CONNECTION_SHAPE)
+    : refusal;
+  return NextResponse.json(body, { status: 409 });
 }
 
 /**
@@ -135,21 +147,7 @@ export async function POST(
 
     if (!parsed.data.forceCreate) {
       const suggestedContacts = await findPotentialXeroContactsForMember(id);
-      if (suggestedContacts.length > 0) {
-        const refusal = {
-          error:
-            "Potential matching Xero contacts already exist. Link one of those contacts or confirm that you want to create a new contact anyway.",
-          suggestedContacts,
-        };
-        // A refusal reaches an AI app verbatim, so a connection is sent each
-        // suggestion without its email address or deep link (ALP-721).
-        return NextResponse.json(
-          arrivesAsMcpConnection(req)
-            ? projectForConnection(refusal, XERO_MEMBER_PUSH_SUGGESTIONS_CONNECTION_SHAPE)
-            : refusal,
-          { status: 409 }
-        );
-      }
+      if (suggestedContacts.length > 0) return matchingContactsRefusal(req, suggestedContacts);
     }
 
     const xeroContactId = await createXeroContactForMember(id, {

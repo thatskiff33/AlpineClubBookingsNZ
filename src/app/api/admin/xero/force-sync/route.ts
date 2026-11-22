@@ -1,4 +1,5 @@
-import { after, NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { scheduleAfterResponse } from "@/lib/schedule-after-response";
 import { xeroForceSyncBodySchema } from "@/lib/admin-xero-sync-schemas";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -37,15 +38,7 @@ class ForceSyncLookupError extends Error {
   }
 }
 
-function scheduleAfterResponse(task: () => Promise<void>) {
-  try {
-    after(task);
-  } catch {
-    queueMicrotask(() => {
-      void task();
-    });
-  }
-}
+const FORCE_SYNC_MEMBER_SELECT = { id: true, firstName: true, lastName: true, email: true } as const;
 
 async function resolveMember(query: string) {
   if (query.includes("@")) {
@@ -56,12 +49,7 @@ async function resolveMember(query: string) {
           mode: "insensitive",
         },
       },
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        email: true,
-      },
+      select: FORCE_SYNC_MEMBER_SELECT,
       take: 3,
     });
 
@@ -83,12 +71,7 @@ async function resolveMember(query: string) {
       // #4146: an id typed with `_` or `%` is text, not a pattern that could resolve another record.
       id: exactPrefix(query),
     },
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      email: true,
-    },
+    select: FORCE_SYNC_MEMBER_SELECT,
     take: 3,
   });
 

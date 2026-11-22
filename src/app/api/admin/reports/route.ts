@@ -31,7 +31,7 @@ import { addDaysDateOnly, eachDateOnlyInRange, formatDateOnly } from "@/lib/date
 import { reportRangeLimitError } from "@/lib/date-range-presets";
 import { summarizeBookingMoneyReconciliations } from "@/lib/booking-money-reconciliation";
 import { adminReportQuerySchema } from "@/lib/admin-reports-query";
-import { ADMIN_REPORTS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import { ADMIN_REPORTS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-reports";
 import { connectionJson } from "@/lib/mcp-connection-request";
 
 const MAX_LOGGED_LEDGER_GAP_BOOKINGS = 20;

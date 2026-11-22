@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { FINANCE_SYNC_STATUS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import { FINANCE_SYNC_STATUS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-reports";
 import { requireFinanceManagerApiAccess } from "@/lib/finance-api-auth";
 import { getFinanceSyncDiagnosticsStatus } from "@/lib/finance-sync-diagnostics";
 import { connectionJson } from "@/lib/mcp-connection-request";

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   CREDIT_ADJUSTMENT_REQUESTED_CONNECTION_SHAPE,
   MEMBER_CREDITS_CONNECTION_SHAPE,
-} from "@/lib/connection-shapes/finance-money";
+} from "@/lib/connection-shapes/finance-payments";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { adminCreditAdjustmentRequestSchema } from "@/lib/admin-credit-adjustment-schemas";

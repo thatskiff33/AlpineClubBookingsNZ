@@ -227,7 +227,8 @@ stays in the browser.
 
 How an officer action works:
 
-- **It is offered only to someone holding the area at the route's level.**
+- **It is offered only to someone holding the area at the route's level**
+  (`INV-MCP-009`).
   `mcpActionAdminRequirement` reads the requirement from the admin route map
   (`getAdminRouteRequirement`), or, for the `/api/finance` workspace, from the
   entry's `requires`, which the census holds to the guard the route calls.

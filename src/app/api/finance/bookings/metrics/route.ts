@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { FINANCE_BOOKING_METRICS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import { FINANCE_BOOKING_METRICS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-reports";
 import { requireFinanceViewerApiAccess } from "@/lib/finance-api-auth";
 import { getFinanceBookingMetrics } from "@/lib/finance-booking-metrics";
 import { financeBookingMetricsQuerySchema } from "@/lib/finance-booking-metrics-query";

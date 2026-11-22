@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminCreditApprovalsQuerySchema } from "@/lib/admin-credit-adjustment-schemas";
-import { CREDIT_APPROVALS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import { CREDIT_APPROVALS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-payments";
 import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { getAdminAdjustmentRequests } from "@/lib/member-credit";

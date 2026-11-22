@@ -10,7 +10,7 @@ import {
   SUBSCRIPTION_BILLING_CONNECTION_SHAPE,
   SUBSCRIPTION_BILLING_FAMILY_MARKER_CONNECTION_SHAPE,
   SUBSCRIPTION_BILLING_REFRESHED_CONNECTION_SHAPE,
-} from "@/lib/connection-shapes/finance-money";
+} from "@/lib/connection-shapes/finance-subscriptions";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   subscriptionBillingMutationSchema,
