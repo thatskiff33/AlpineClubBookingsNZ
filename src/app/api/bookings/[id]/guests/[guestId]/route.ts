@@ -17,6 +17,7 @@ import { EditFinancialReviewPendingError } from "@/lib/edit-financial-review";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import {
   sendAdminMinorsOnlyReviewAlert,
   sendBookingModifiedEmail,
@@ -80,8 +81,7 @@ export async function DELETE(
   }
 
   const { id: bookingId, guestId } = await params;
-  const ipAddress =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const ipAddress = getClientIp(request);
 
   const body = await request.json().catch(() => null);
   const rawSettlementMethod = (body as { settlementMethod?: unknown } | null)

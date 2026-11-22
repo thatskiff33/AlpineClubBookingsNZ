@@ -10,9 +10,10 @@
 //
 //   1. A persisted ClubModuleSettings row still physically carrying the retired
 //      `multiLodge` flag (the pre-#128 state). The live schema keeps the column
-//      vestigial (see ADR-005 "Schema safety" and #139), and every read goes
-//      through CLUB_MODULE_SETTINGS_COLUMN_SELECT, which deliberately does NOT
-//      name it — so this row's stale column must never surface or throw.
+//      vestigial and `@ignore`d (see ADR-005 "Schema safety",
+//      hoppers99/AlpineClubBookingsNZ#139 and #5396), and every read goes
+//      through CLUB_MODULE_SETTINGS_COLUMN_SELECT, which does NOT name it — so
+//      this row's stale column must never surface or throw.
 //   2. A single-row Lodge table (the club's default lodge) with a lodge-scoped
 //      child row (LodgeSettings) keyed to it.
 //

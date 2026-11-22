@@ -478,7 +478,9 @@ system sending that member *anything* about it.
      do accept — so follow it up yourself.
    - **the booking is still waitlisted** (no offer made yet). While emails are
      off it is skipped when beds are handed out, so no offer is made at all.
-     It keeps its place in the queue and holds nobody else up. Nothing about
+     It shows no waitlist position and is not counted in anyone else's, so
+     the members behind it move up; turning the switch off puts it back in its
+     original place. Nothing about
      this appears in the withheld list later, because there is no offer to
      withhold — this dialog is the only place you are told.
 4. Click **Yes — I will tell the member myself**. Nothing is saved until you

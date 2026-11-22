@@ -8,9 +8,17 @@ import { getDefaultLodgeId } from "@/lib/lodges";
 import { isMemberEligibleToBookLodge } from "@/lib/lodge-access";
 import {
   confirmCrossLodgeWaitlistOffer,
-  getWaitlistCrossLodgeOrder,
   quoteWaitlistEntryAtLodge,
 } from "@/lib/waitlist-cross-lodge";
+import {
+  WAITLIST_QUEUE_ORDER_BY,
+  getWaitlistCrossLodgeOrder,
+  getWaitlistPositionOf,
+  getWaitlistPositions,
+  orderWaitlistOpportunities,
+  splitWaitlistOpportunities,
+  waitlistCandidateWhere,
+} from "@/lib/waitlist-queue";
 import { getNonMemberHoldPolicy } from "./cancellation";
 import {
   sendWaitlistOfferEmail,
@@ -64,64 +72,6 @@ import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 export const WAITLIST_OFFER_HOURS =
   Number(process.env.WAITLIST_OFFER_HOURS) || 48;
-
-// test seam
-/**
- * Get the FIFO position for a waitlisted booking.
- * Counts WAITLISTED bookings with overlapping dates created before this one.
- */
-export async function getWaitlistPosition(bookingId: string): Promise<number> {
-  const booking = await prisma.booking.findUnique({
-    where: { id: bookingId },
-    select: { checkIn: true, checkOut: true, createdAt: true, status: true, lodgeId: true },
-  });
-
-  if (!booking || (booking.status !== BookingStatus.WAITLISTED && booking.status !== BookingStatus.WAITLIST_OFFERED)) {
-    return 0;
-  }
-
-  const ahead = await prisma.booking.count({
-    where: {
-      status: BookingStatus.WAITLISTED,
-      // Positions are per-lodge: each lodge runs its own FIFO queue, so only
-      // count entries waiting for the same lodge (multi-lodge).
-      lodgeId: booking.lodgeId,
-      checkIn: { lt: booking.checkOut },
-      checkOut: { gt: booking.checkIn },
-      createdAt: { lt: booking.createdAt },
-    },
-  });
-
-  return ahead + 1;
-}
-
-// test seam
-/**
- * Get all WAITLISTED bookings for one lodge overlapping a date range, ordered
- * FIFO. Scoped to a single lodge because each lodge runs its own queue
- * (multi-lodge).
- */
-export async function getWaitlistForDates(
-  checkIn: Date,
-  checkOut: Date,
-  lodgeId: string
-) {
-  return prisma.booking.findMany({
-    where: {
-      status: BookingStatus.WAITLISTED,
-      lodgeId,
-      checkIn: { lt: checkOut },
-      checkOut: { gt: checkIn },
-    },
-    include: {
-      guests: true,
-      member: { select: { id: true, email: true, firstName: true, lastName: true } },
-      // #3369: the owner may be an Organisation; bookingOwner() reads both.
-      organisation: { select: { name: true, email: true } },
-    },
-    orderBy: { createdAt: "asc" },
-  });
-}
 
 type WaitlistCandidateForReprice = Prisma.BookingGetPayload<{
   include: {
@@ -483,22 +433,11 @@ export async function processWaitlistForDates(freedDates: {
       }
 
       const candidates = await tx.booking.findMany({
-        where: {
-          status: BookingStatus.WAITLISTED,
-          checkIn: { lt: freedDates.checkOut },
-          checkOut: { gt: freedDates.checkIn },
-          // #2258: a waitlist entry with the "No emails" switch on is NOT a
-          // candidate. Making an offer stamps waitlistOfferExpiresAt inside this
-          // transaction and starts the offer clock; the offer email goes out
-          // un-awaited after commit. If that email were withheld, the entry
-          // would hold a bed for the whole offer window with the member never
-          // told, then lapse via expireStaleOffers() — and the admin board would
-          // render it as a missing/undeliverable offer email, indistinguishable
-          // from a bounce. Excluding the entry means the clock never starts: the
-          // place goes to the next candidate and the suppressed entry keeps its
-          // WAITLISTED position for when the switch is cleared.
-          noEmails: false,
-        },
+        // The queue's candidate filter and join order live in
+        // `waitlist-queue.ts` (#5402), so the position members are shown is
+        // read from the same queue this pass walks. #2258: the filter leaves
+        // out entries with the "No emails" switch on; see its note.
+        where: waitlistCandidateWhere(freedDates),
         include: {
           guests: { include: { nights: true } }, // per-night sets (issue #713)
           member: { select: { id: true, email: true, firstName: true, lastName: true } },
@@ -516,53 +455,20 @@ export async function processWaitlistForDates(freedDates: {
             },
           },
         },
-        orderBy: { createdAt: "asc" },
+        orderBy: WAITLIST_QUEUE_ORDER_BY,
       });
 
-      // One "opportunity" is a candidate considered at one lodge. Every
-      // candidate gets an own-lodge opportunity (pre-ADR-004 behaviour);
-      // candidates from other lodges who opted into the freed lodge also
-      // get a cross-lodge opportunity there.
-      type Opportunity = {
-        candidate: (typeof candidates)[number];
-        offerLodgeId: string;
-        cross: boolean;
-      };
-      const ownOpportunities: Opportunity[] = candidates.map((candidate) => ({
-        candidate,
-        offerLodgeId: candidate.lodgeId ?? defaultLodgeId,
-        cross: false,
-      }));
-      const crossOpportunities: Opportunity[] = candidates
-        .filter(
-          (candidate) =>
-            (candidate.lodgeId ?? defaultLodgeId) !== freedLodgeId &&
-            candidate.waitlistAlternateLodges.some(
-              (alternate) => alternate.lodgeId === freedLodgeId,
-            ),
-        )
-        .map((candidate) => ({
-          candidate,
-          offerLodgeId: freedLodgeId,
-          cross: true,
-        }));
-
-      let opportunities: Opportunity[];
-      if (crossOpportunities.length === 0) {
-        opportunities = ownOpportunities;
-      } else {
-        const order = await getWaitlistCrossLodgeOrder(tx);
-        opportunities =
-          order === "MERGED"
-            ? [...ownOpportunities, ...crossOpportunities].sort(
-                (a, b) =>
-                  a.candidate.createdAt.getTime() -
-                    b.candidate.createdAt.getTime() ||
-                  // Same entry considered at two lodges: its own lodge first.
-                  Number(a.cross) - Number(b.cross),
-              )
-            : [...ownOpportunities, ...crossOpportunities];
-      }
+      // One "opportunity" is a candidate considered at one lodge; the order
+      // they are walked in is `waitlist-queue.ts`'s (#5402). The club's
+      // cross-lodge order is read only when a cross-lodge opportunity exists.
+      const split = splitWaitlistOpportunities(candidates, {
+        freedLodgeId,
+        defaultLodgeId,
+      });
+      const opportunities = orderWaitlistOpportunities(
+        split,
+        split.cross.length === 0 ? null : await getWaitlistCrossLodgeOrder(tx),
+      );
 
       for (const { candidate, offerLodgeId, cross } of opportunities) {
         // Check if ALL nights in the candidate's range have capacity
@@ -630,6 +536,17 @@ export async function processWaitlistForDates(freedDates: {
 
         const expiresAt = new Date(Date.now() + WAITLIST_OFFER_HOURS * 60 * 60 * 1000);
 
+        // The place the officer's alert and the audit row quote: the entry's
+        // own lodge's queue, read before it leaves it, under this pass's locks
+        // (#5402, `INV-CAP-041`).
+        const position = await getWaitlistPositionOf(tx, {
+          id: candidate.id,
+          lodgeId: candidate.lodgeId ?? defaultLodgeId,
+          checkIn: candidate.checkIn,
+          checkOut: candidate.checkOut,
+          createdAt: candidate.createdAt,
+        });
+
         await tx.booking.update({
           where: { id: candidate.id },
           data: {
@@ -649,20 +566,7 @@ export async function processWaitlistForDates(freedDates: {
           },
         });
 
-                offeredBookingId = candidate.id;
-
-        // Count position (how many were ahead in queue). Per-lodge: the
-        // position shown to the member counts only entries waiting for their
-        // own lodge, matching the per-lodge FIFO queue (multi-lodge).
-        const position = await tx.booking.count({
-          where: {
-            status: BookingStatus.WAITLISTED,
-            lodgeId: candidate.lodgeId ?? defaultLodgeId,
-            checkIn: { lt: candidate.checkOut },
-            checkOut: { gt: candidate.checkIn },
-            createdAt: { lt: candidate.createdAt },
-          },
-        });
+        offeredBookingId = candidate.id;
 
         offerDetails = {
           email: bookingOwner(candidate).member.email,
@@ -674,7 +578,7 @@ export async function processWaitlistForDates(freedDates: {
           bookingId: candidate.id,
           memberId: bookingOwner(candidate).memberId ?? "",
           memberName: `${bookingOwner(candidate).member.firstName} ${bookingOwner(candidate).member.lastName}`,
-          position: position + 1,
+          position,
           lodgeId: candidate.lodgeId,
           finalPriceCents: offerPriceCents,
           offeredLodgeId,
@@ -1371,19 +1275,25 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
       offers.push(candidate);
     }
 
+    // The place each expiry email quotes, read after every revert, so it
+    // counts the entries already waiting ahead as well as the other lapsed
+    // offers (#5402, `INV-CAP-041`). The revert keeps `createdAt`, so each
+    // entry takes its original place back.
+    const newPositions = await getWaitlistPositions(
+      tx,
+      offers.map((offer) => ({
+        id: offer.id,
+        lodgeId: offer.lodgeId ?? defaultLodgeId,
+        checkIn: offer.checkIn,
+        checkOut: offer.checkOut,
+        createdAt: offer.createdAt,
+      })),
+    );
+
     return {
       staleOffers: offers.map((offer) => ({
         ...offer,
-        newPosition:
-          offers.filter(
-            (entry) =>
-              // Per-lodge queue: only same-lodge expiring offers count toward
-              // the position quoted in the expiry email (same scoping as M6).
-              entry.lodgeId === offer.lodgeId &&
-              entry.checkIn < offer.checkOut &&
-              entry.checkOut > offer.checkIn &&
-              entry.createdAt < offer.createdAt
-          ).length + 1,
+        newPosition: newPositions.get(offer.id)!,
       })),
       affectedRanges: Array.from(
         new Map(
@@ -1449,38 +1359,4 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
   }
 
   return { expiredCount: staleOffers.length, reofferedCount };
-}
-
-// test seam
-/**
- * Recalculate and update waitlistPosition for all WAITLISTED bookings
- * overlapping the given date range. Positions are numbered per-lodge: each
- * lodge runs its own FIFO queue, so a booking's position counts only entries
- * waiting for the same lodge (multi-lodge).
- */
-export async function updateWaitlistPositions(
-  checkIn: Date,
-  checkOut: Date
-): Promise<void> {
-  const waitlisted = await prisma.booking.findMany({
-    where: {
-      status: BookingStatus.WAITLISTED,
-      checkIn: { lt: checkOut },
-      checkOut: { gt: checkIn },
-    },
-    orderBy: { createdAt: "asc" },
-    select: { id: true, lodgeId: true },
-  });
-
-  // Number each lodge's queue independently, preserving the FIFO createdAt
-  // order the query already applied.
-  const positionByLodge = new Map<string, number>();
-  for (const booking of waitlisted) {
-    const nextPosition = (positionByLodge.get(booking.lodgeId) ?? 0) + 1;
-    positionByLodge.set(booking.lodgeId, nextPosition);
-    await prisma.booking.update({
-      where: { id: booking.id },
-      data: { waitlistPosition: nextPosition },
-    });
-  }
 }

@@ -56,24 +56,6 @@ export interface ManualSettlementReversalEventSnapshot {
 }
 
 /**
- * Narrow an arbitrary event snapshot to a manual-reversal snapshot, or null
- * when it is not one.
- */
-export function asManualSettlementReversalSnapshot(
-  value: unknown
-): ManualSettlementReversalEventSnapshot | null {
-  if (
-    value &&
-    typeof value === "object" &&
-    (value as { kind?: unknown }).kind ===
-      MANUAL_SETTLEMENT_REVERSAL_EVENT_KIND
-  ) {
-    return value as ManualSettlementReversalEventSnapshot;
-  }
-  return null;
-}
-
-/**
  * Snapshot discriminator marking a CANCELLED event as the #2262 reciprocal
  * fence firing: an inbound Xero PAID landed on a manually settled booking and
  * the pipeline deliberately wrote nothing. Same reasoning as the reversal — a
@@ -90,19 +72,6 @@ export interface ManualSettlementConflictEventSnapshot {
   invoiceId: string | null;
   invoiceNumber: string | null;
   bookingStatus: string;
-}
-
-export function asManualSettlementConflictSnapshot(
-  value: unknown
-): ManualSettlementConflictEventSnapshot | null {
-  if (
-    value &&
-    typeof value === "object" &&
-    (value as { kind?: unknown }).kind === MANUAL_SETTLEMENT_CONFLICT_EVENT_KIND
-  ) {
-    return value as ManualSettlementConflictEventSnapshot;
-  }
-  return null;
 }
 
 /**

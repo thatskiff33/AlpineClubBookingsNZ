@@ -4466,5 +4466,7 @@ global); the G5 observability gap is partially closed by design.
   changes.
 - **D2 — `getClientIp` trusting `x-real-ip`: ratified.** Removing it breaks
   non-Caddy deploys; the "Caddy always fronts" deployment invariant stands. The
-  rate-limiter degraded mode (issue #1142) is documented above.
+  rate-limiter degraded mode (issue #1142) is documented above. Since #5399 it
+  is the only reader of `X-Forwarded-For` and `X-Real-IP`: audit rows record the
+  same address as the rate-limit key, and a lint arm refuses any other read.
 

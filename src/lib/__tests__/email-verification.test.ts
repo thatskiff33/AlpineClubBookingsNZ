@@ -36,20 +36,7 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), debug: vi.fn(), warn: vi.fn() },
 }));
 
-import { generateToken, createEmailVerificationToken, createEmailChangeToken } from "../verification-tokens";
-
-describe("generateToken", () => {
-  it("returns a 64-character hex string", () => {
-    const token = generateToken();
-    expect(token).toHaveLength(64);
-    expect(token).toMatch(/^[a-f0-9]{64}$/);
-  });
-
-  it("generates unique tokens", () => {
-    const tokens = new Set(Array.from({ length: 100 }, () => generateToken()));
-    expect(tokens.size).toBe(100);
-  });
-});
+import { createEmailVerificationToken } from "../verification-tokens";
 
 describe("createEmailVerificationToken", () => {
   beforeEach(() => {
@@ -85,40 +72,6 @@ describe("createEmailVerificationToken", () => {
 
     const expectedMin = before + 48 * 60 * 60 * 1000;
     const expectedMax = after + 48 * 60 * 60 * 1000;
-    expect(expiresAt).toBeGreaterThanOrEqual(expectedMin);
-    expect(expiresAt).toBeLessThanOrEqual(expectedMax);
-  });
-});
-
-describe("createEmailChangeToken", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockPrisma.emailChangeToken.deleteMany.mockResolvedValue({ count: 0 });
-    mockPrisma.emailChangeToken.create.mockResolvedValue({ id: "t2", token: "def" });
-  });
-
-  it("deletes existing tokens and creates one with 2h expiry", async () => {
-    const before = Date.now();
-    const token = await createEmailChangeToken("member-1", "new@example.com");
-    const after = Date.now();
-
-    expect(mockPrisma.emailChangeToken.deleteMany).toHaveBeenCalledWith({
-      where: { memberId: "member-1" },
-    });
-    expect(mockPrisma.emailChangeToken.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        memberId: "member-1",
-        newEmail: "new@example.com",
-        tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
-        expiresAt: expect.any(Date),
-      }),
-    });
-    expect(token).toHaveLength(64);
-
-    const createCall = mockPrisma.emailChangeToken.create.mock.calls[0][0];
-    const expiresAt = createCall.data.expiresAt.getTime();
-    const expectedMin = before + 2 * 60 * 60 * 1000;
-    const expectedMax = after + 2 * 60 * 60 * 1000;
     expect(expiresAt).toBeGreaterThanOrEqual(expectedMin);
     expect(expiresAt).toBeLessThanOrEqual(expectedMax);
   });

@@ -451,6 +451,16 @@ describe("POST /api/payments/charge-saved-method", () => {
     expect(releaseCall()).toBeUndefined();
   });
 
+  it("#5399: records the address the proxy saw, not the caller's first claim", async () => {
+    mockChargePaymentMethod.mockResolvedValue({ id: "pi_success_1", status: "succeeded", amount: 12500 });
+
+    const response = await POST(makeRequest({ "x-forwarded-for": "203.0.113.250, 198.51.100.42" }));
+
+    expect(response.status).toBe(200);
+    expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({ ipAddress: "198.51.100.42" }));
+    expect(mockLogAudit).not.toHaveBeenCalledWith(expect.objectContaining({ ipAddress: "203.0.113.250" }));
+  });
+
   it("#4357: charges the booking's worth - its price plus a change fee recorded on its payment - as the cron does", async () => {
     primeBooking(makeBooking({ payment: { ...makeBooking().payment, changeFeeCents: 2500 } }));
     mockChargePaymentMethod.mockResolvedValue({ id: "pi_worth_1", status: "succeeded", amount: 15000 });

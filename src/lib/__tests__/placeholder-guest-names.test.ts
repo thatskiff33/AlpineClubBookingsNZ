@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   countPlaceholderGuestNames,
-  hasPlaceholderGuestNames,
   isPlaceholderGuestName,
   MEMBER_WHOLE_LODGE_GUEST_NAME_PREFIX,
   PLACEHOLDER_GUEST_NAME_PREFIXES,
@@ -97,11 +96,8 @@ describe("placeholder guest name detector (#2550)", () => {
       { firstName: "Guest", lastName: "3" },
     ];
 
-    expect(hasPlaceholderGuestNames(party)).toBe(true);
     expect(countPlaceholderGuestNames(party)).toBe(2);
-    expect(
-      hasPlaceholderGuestNames([{ firstName: "Ana", lastName: "Rangi" }]),
-    ).toBe(false);
+    expect(countPlaceholderGuestNames([{ firstName: "Ana", lastName: "Rangi" }])).toBe(0);
     expect(countPlaceholderGuestNames([])).toBe(0);
   });
 

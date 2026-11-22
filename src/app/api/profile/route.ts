@@ -15,7 +15,7 @@ import {
 } from "@/lib/xero-contact-sync";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
-import { copyStreetAddressToPostal } from "@/lib/member-address";
+import { copyStreetAddressToPostal, MEMBER_PHONE_FIELDS } from "@/lib/member-address";
 import { parseDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
@@ -24,6 +24,10 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
+import {
+  hasAnyField,
+  normalizedChangedFields,
+} from "@/lib/audit-changed-fields";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import {
   hasAccessRole,
@@ -48,11 +52,6 @@ import {
 import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 import { MEMBER_PROFILE_UPDATE_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
-const PHONE_FIELDS = [
-  "phoneCountryCode",
-  "phoneAreaCode",
-  "phoneNumber",
-] as const;
 const STREET_FIELDS = [
   "streetAddressLine1",
   "streetAddressLine2",
@@ -72,7 +71,7 @@ const POSTAL_FIELDS = [
 const PROFILE_AUDIT_FIELDS = [
   "firstName",
   "lastName",
-  ...PHONE_FIELDS,
+  ...MEMBER_PHONE_FIELDS,
   "dateOfBirth",
   "ageTier",
   ...STREET_FIELDS,
@@ -131,39 +130,6 @@ const PROFILE_XERO_SYNC_SELECT = {
   profileCompletedAt: true,
 } as const;
 
-function normalizeAuditValue(value: unknown): unknown {
-  if (value instanceof Date) {
-    return value.getTime();
-  }
-  if (value === undefined || value === "") {
-    return null;
-  }
-  return value;
-}
-
-function getChangedFields(
-  before: Record<string, unknown>,
-  updateData: Record<string, unknown>,
-  fields: readonly string[],
-): string[] {
-  return fields.filter((field) => {
-    if (!Object.prototype.hasOwnProperty.call(updateData, field)) {
-      return false;
-    }
-    return (
-      normalizeAuditValue(before[field]) !==
-      normalizeAuditValue(updateData[field])
-    );
-  });
-}
-
-function hasAnyField(
-  changedFields: readonly string[],
-  fields: readonly string[],
-): boolean {
-  return fields.some((field) => changedFields.includes(field));
-}
-
 export async function PUT(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -205,7 +171,7 @@ export async function PUT(req: NextRequest) {
   };
 
   // Phone fields
-  for (const f of PHONE_FIELDS) {
+  for (const f of MEMBER_PHONE_FIELDS) {
     updateData[f] = data[f]?.trim() || null;
   }
 
@@ -375,7 +341,7 @@ export async function PUT(req: NextRequest) {
   }
 
   try {
-    const changedFields = getChangedFields(
+    const changedFields = normalizedChangedFields(
       existing as unknown as Record<string, unknown>,
       updateData,
       PROFILE_AUDIT_FIELDS,
@@ -423,7 +389,7 @@ export async function PUT(req: NextRequest) {
             changedFieldCount: changedFields.length,
             fieldGroups: {
               name: hasAnyField(changedFields, ["firstName", "lastName"]),
-              phone: hasAnyField(changedFields, PHONE_FIELDS),
+              phone: hasAnyField(changedFields, MEMBER_PHONE_FIELDS),
               address: hasAnyField(changedFields, [
                 ...STREET_FIELDS,
                 ...POSTAL_FIELDS,

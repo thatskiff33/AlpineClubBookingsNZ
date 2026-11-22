@@ -1,5 +1,5 @@
 import {
-  getMemberProfileCompleteness,
+  evaluateMemberProfileCompleteness,
   type MemberProfileCompletenessInput,
 } from "@/lib/member-profile-completeness";
 import { buildMemberFacingParentLinks } from "@/lib/member-parent-links";
@@ -158,7 +158,7 @@ export function serializeMemberProfile(member: MemberOnboardingProfile) {
 }
 
 export function getMemberOnboardingStatus(member: MemberOnboardingProfile) {
-  const profileStatus = getMemberProfileCompleteness(member);
+  const profileStatus = evaluateMemberProfileCompleteness(member);
   const hasCompletedOnboarding = Boolean(member.onboardingConfirmedAt);
   const needsOnboardingConfirmation =
     profileStatus.confirmationMode === "self" && !hasCompletedOnboarding;
