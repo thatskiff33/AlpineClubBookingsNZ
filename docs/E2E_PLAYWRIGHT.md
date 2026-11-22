@@ -352,7 +352,9 @@ Both E2E jobs get their browser from the composite action
 `.github/actions/playwright-browsers`, and the order it works in is the point:
 
 1. **Restore `~/.cache/ms-playwright`**, keyed on the resolved `@playwright/test`
-   version, so a version bump misses the cache and nothing else does.
+   version and the runner's Ubuntu release, so a version bump or a runner-image
+   move misses the cache and nothing else does. Playwright downloads a build per
+   Ubuntu release, so a cache from another release would hand over the wrong one.
 2. **`pnpm exec playwright install chromium`** — run even on a cache hit, where it is a
    ~2s no-op that verifies the restored tree and re-downloads anything partial.
 3. **Launch the browser and render a page** (`launch-check.mjs`). A browser that
@@ -364,8 +366,8 @@ CI used to run `npx playwright install --with-deps chromium` on every run
 instead. It was measured at 9m15s on one run (job 32304150140, 19 Aug 2026)
 against a ~25s norm, and the split is why the order above changed: the browser
 downloads took **ten seconds**, and the rest was `apt-get update` plus seven and
-a half minutes of unpacking X fonts and libraries that the `ubuntu-latest`
-runner image already ships. That apt step is also the one that fails outright
+a half minutes of unpacking X fonts and libraries that the runner image
+already ships. That apt step is also the one that fails outright
 when the runners' preinstalled third-party apt sources serve invalid clearsigned
 metadata (#1634), so the retry loop that was there to survive it was retrying a
 nine-minute step. Now apt is the recovery path, not the default one, and a
@@ -476,7 +478,7 @@ A run used to take ~29 minutes: each of the two E2E jobs built the app image
 | --- | --- |
 | `E2E app image` | builds the image once and uploads it (`docker save`, zstd) as a run artifact. Turbopack's build cache (`.next/cache`, a BuildKit cache mount in the `Dockerfile`) is restored from the last push to `main` before the build and, on a push, saved after it (`scripts/ci/next-build-cache.sh`). The Docker layer cache is exported only after the upload, so the shards do not wait for it |
 | `E2E seeded database` | in parallel: migrates, runs the single-lodge seeds and dumps the result with its club day (`scripts/e2e-stack.sh snapshot`). It holds **no secrets**: the dump is downloadable from a public repository, so Stripe test credentials are seeded on each runner after the restore |
-| `Playwright E2E` | **required check.** Runs shard 1 itself (`E2E_SHARD=1/3`, with `pre-setup`), then requires `E2E shard (2/3)` and `(3/3)` to pass (`scripts/ci/require-test-shards.mjs --from 2`, the gate `verify` uses for the unit shards) |
+| `Playwright E2E` | **required check.** Runs shard 1 itself (`E2E_SHARD=1/3`, with `pre-setup`), then requires `E2E shard (2/3)` and `(3/3)` to pass (`scripts/ci/require-test-shards.mjs --from 2`, the gate `verify` uses for the unit shards; its wait: [CONTRIBUTING.md](../CONTRIBUTING.md#branch-protection)) |
 | `E2E shard (2/3)`, `(3/3)` | the other two thirds of the `chromium` spec files, each on its own stack |
 | `E2E multi-lodge` | **required check.** Runs the `multi-lodge` project itself, on the restored database plus the second-lodge seed |
 

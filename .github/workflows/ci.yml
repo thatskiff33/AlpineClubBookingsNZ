@@ -51,12 +51,13 @@ jobs:
     if: github.event_name == 'pull_request'
     # Every job names its runner image, never `ubuntu-latest` (#5192). GitHub
     # moves that label to a new Ubuntu release over several weeks, so the same
-    # commit ran on 24.04 or 26.04 by chance. On 26.04 the runner's pg_dump is
-    # PostgreSQL 17 and writes `SET transaction_timeout`, which the PostgreSQL
-    # 16 service refuses, failing `Migration drift check` for every pull
-    # request. Moving to a newer image is a deliberate change: update every
-    # workflow together; `require-test-shards.test.mjs` keeps them equal.
-    runs-on: ubuntu-24.04
+    # commit ran on 24.04 or 26.04 by chance, and the 26.04 runner's newer
+    # pg_dump broke the roles proof against the PostgreSQL 16 service. The
+    # real-PostgreSQL jobs now take their client tools from the service's own
+    # image (#5193), so the runner's client version no longer matters. Moving
+    # to a newer image is a deliberate change: update every workflow together;
+    # `require-test-shards.test.mjs` keeps them equal.
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -135,7 +136,7 @@ jobs:
   # advisory. This one is required and also runs on pushes to `main`.
   dependency-audit:
     name: Dependency audit
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -186,7 +187,7 @@ jobs:
 
   static-analysis:
     name: Static analysis gate
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -365,7 +366,7 @@ jobs:
   # pass or a real failure.
   secret-scan:
     name: Secret scan (gitleaks)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -505,7 +506,7 @@ jobs:
   # GitHub treats a skipped required job as satisfying branch protection.
   test-shard:
     name: Test shard (${{ matrix.shard }}/4)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -564,7 +565,7 @@ jobs:
   # environment as `verify` (`require-test-shards.test.mjs` pins all of it).
   typecheck:
     name: Typecheck
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       AUTH_SECRET: ci-auth-secret
@@ -613,7 +614,7 @@ jobs:
 
   lint:
     name: Lint
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       AUTH_SECRET: ci-auth-secret
@@ -654,7 +655,7 @@ jobs:
 
   build:
     name: Production build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       AUTH_SECRET: ci-auth-secret
@@ -767,21 +768,22 @@ jobs:
           fi
 
   verify:
-    runs-on: ubuntu-24.04
-    # A BACKSTOP AGAINST A HUNG JOB, NOT A TARGET (#3425). 75 does not mean a
-    # 75-minute run is acceptable; it means a genuinely wedged job is still
-    # killed rather than burning an hour of budget indefinitely.
+    runs-on: ubuntu-26.04
+    # A BACKSTOP AGAINST A HUNG JOB, NOT A TARGET (#3425). 130 does not mean a
+    # 130-minute run is acceptable; it means a genuinely wedged job is still
+    # killed rather than burning budget indefinitely.
     #
     # Raised from 30 when `verify` ran the suite itself: a healthy run could be
     # cancelled mid-`Test` and skip every later build proof. #3431 moved the
     # full suite to independent shard jobs, and #4425 moved typecheck, lint and
     # the build with its proofs to jobs of their own; `verify` fails closed on
-    # all of their results, so this timeout must outlast its gate's wait.
+    # all of their results, so this timeout must outlast its gate's wait (110
+    # minutes, set on the gate step below) plus the steps before it (#5222).
     #
     # Historical baseline (13-14 Sep 2026): fourteen consecutive unsharded
     # runs measured 14.8 to 23.4 minutes. On #3431's first green hosted run,
     # four shards took 4m33s to 5m17s and this required job took 7m31s.
-    timeout-minutes: 75
+    timeout-minutes: 130
     permissions:
       contents: read
       actions: read # poll this run attempt's shard, typecheck, lint, build and real-PostgreSQL jobs
@@ -1068,12 +1070,20 @@ jobs:
       # jobs, fails at once on the first failure, and times out rather than
       # making `verify` vacuously green. `realdb-all` is the slowest of them
       # (18-25 minutes, median 23, over the 14 successful `main` push runs of
-      # 12-14 Nov 2026, measured for #4907); its 35-minute limit ends a hung
-      # run inside this poll's 45-minute wait, and both sit inside this job's 75.
+      # 12-14 Nov 2026, measured for #4907).
+      #
+      # The wait (#5222) is the runner queue an awaited job may sit in, then
+      # the longest `timeout-minutes` among them (the test shards' 45), then
+      # 5 minutes' grace: 60 + 45 + 5 = 110. On 17 Nov 2026 `realdb-all`
+      # queued for 37 minutes and ran 24, past the old flat 45-minute wait,
+      # and `verify` went red over a green run. GitHub ends each job at its
+      # own limit and the gate fails at once on that result, so the wait only
+      # fires for a job that never gets a runner. `require-test-shards.test.mjs`
+      # pins the run allowance to the jobs' limits and this job's timeout.
       - name: Require the unit-test shards, typecheck, lint, build and real-PostgreSQL suites to pass
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/ci/require-test-shards.mjs --job Typecheck --job Lint --job "Production build" --job "Real-PostgreSQL suites (all)"
+        run: node scripts/ci/require-test-shards.mjs --max-queue-minutes 60 --max-run-minutes 45 --job Typecheck --job Lint --job "Production build" --job "Real-PostgreSQL suites (all)"
 
       # #3432: deliberately LAST. Keep the detailed base-selection contract
       # above beside the full-history checkout it depends on; placing this
@@ -1097,7 +1107,7 @@ jobs:
 
   migration-drift:
     name: Migration drift check
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # #2672 raised this from 15: this job also hosts every opt-in real-Postgres
     # lock harness, and the member-merge shared-double suite added below drives
     # ten real merge/writer interleavings whose own describe budget is 120s each.
@@ -1205,6 +1215,12 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # #5193: every later `pg_dump` and `psql` runs from the service's own
+      # image, never the runner's client, whose major version follows the
+      # Ubuntu release. Both services here run the same image.
+      - name: Use the PostgreSQL client tools of the service's image
+        run: bash scripts/ci/postgres-client-from-service.sh "${{ job.services.concurrency-race-postgres.id }}"
 
       - name: Create shadow database
         if: steps.scope.outputs.needed != 'false'
@@ -1403,10 +1419,10 @@ jobs:
       # so only a real server can establish them. The suite provisions the roles
       # with the SHIPPED statements and CLI in scratch databases of its own (roles
       # are cluster-global, so each run carries a random prefix and drops them),
-      # and needs pg_dump and psql from the runner. A required step, like the
-      # diagnostics proof above, so a broken grant blocks the merge; the
-      # realdb-all job runs the same file too. It describe.skip's itself without
-      # the env vars, so this step MUST stay wired —
+      # and needs pg_dump and psql, taken from the service's image (#5193). A
+      # required step, like the diagnostics proof above, so a broken grant
+      # blocks the merge; the realdb-all job runs the same file too. It
+      # describe.skip's itself without the env vars, so this step MUST stay wired —
       # `review-findings-contracts.test.ts` fails if it goes missing.
       - name: Prove the least-privilege database roles against dedicated PostgreSQL
         env:
@@ -1558,7 +1574,7 @@ jobs:
   # fails inside this job when the URL is absent, rather than skipping quietly.
   data-migration-verification:
     name: Data migration verification
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -1673,7 +1689,7 @@ jobs:
   # `scripts/booking-ledger-seed-gate.sh`) is in the quarantine file.
   realdb-all:
     name: Real-PostgreSQL suites (all)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # PR CI measured this job at 9m02s (#4476). By 8 Nov 2026 it took 16-18
     # minutes on `main` and was cancelled at the old 20-minute limit in 4 of 7
     # runs, so a cancelled run proved nothing (#4793). 35 is about twice the
@@ -1746,6 +1762,12 @@ jobs:
           DATABASE_URL: ${{ env.CONCURRENCY_RACE_DATABASE_URL }}
         run: pnpm exec prisma migrate deploy
 
+      # #5193: the roles proof's `pg_dump` and `psql` run from the service's
+      # own image, never the runner's client, whose major version follows the
+      # Ubuntu release.
+      - name: Use the PostgreSQL client tools of the service's image
+        run: bash scripts/ci/postgres-client-from-service.sh "${{ job.services.concurrency-race-postgres.id }}"
+
       # One `vitest run` over every file, so the log shows each one executed.
       # The list is a script, not a shell glob: a glob would not reach a file in
       # a new directory, and the census could not measure it. The script's
@@ -1787,7 +1809,7 @@ jobs:
   # instead of weakening anything.
   docker-image-security:
     name: Image security gate (Trivy CRITICAL)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -1924,7 +1946,7 @@ jobs:
   publish-ghcr-images:
     name: Publish GHCR images
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     needs:
       - verify

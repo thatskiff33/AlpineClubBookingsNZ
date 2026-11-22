@@ -121,6 +121,10 @@ import { GET as kioskGET } from "@/app/api/lodge/instructions/route";
 import { getSanitizedLodgeInstructions } from "@/lib/lodge-instructions";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { hutLeaderAssignmentTemplate } from "@/lib/email-templates/chores";
+import {
+  expectStoredHeadingOneDemoted,
+  storedInstructionWithH1,
+} from "./support/stored-heading-one";
 
 /*
  * The zone the assignment fixtures below are built in (#3123). The route derives
@@ -484,6 +488,86 @@ describe("sanitiser round-trip", () => {
     // Missing rows still produce empty documents for the other keys.
     expect(documents[1].contentHtml).toBe("");
     expect(documents[2].contentHtml).toBe("");
+  });
+
+  it("renders an author's h1 as an h2 for readers but keeps it for the editor (#5218)", async () => {
+    mocks.auth.mockResolvedValue(adminSession);
+    const stored = "<h1>Opening</h1><p>Shutters</p>";
+    mocks.lodgeInstructionFindMany.mockResolvedValue([
+      { key: "OPEN", contentHtml: stored, updatedAt: new Date("2026-06-10T00:00:00Z") },
+    ]);
+
+    const documents = await getSanitizedLodgeInstructions();
+    expect(documents[0].contentHtml).toBe("<h2>Opening</h2><p>Shutters</p>");
+
+    const response = await adminGET(
+      new NextRequest("http://localhost/api/admin/lodge-instructions"),
+    );
+    const body = (await response.json()) as {
+      documents: { key: string; contentHtml: string }[];
+    };
+    expect(body.documents.find((doc) => doc.key === "OPEN")?.contentHtml).toBe(stored);
+  });
+
+  // #5345: the case above proves the reader. These two prove that each route
+  // still answers through it, so neither can start serving the stored HTML.
+  it("the member reader route returns an author's h1 demoted (#5345)", async () => {
+    mocks.auth.mockResolvedValue(adminSession);
+    mocks.lodgeInstructionFindMany.mockResolvedValue([storedInstructionWithH1()]);
+
+    const response = await readerGET(readerRequest());
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { documents: { key: string; contentHtml: string }[] };
+    expectStoredHeadingOneDemoted(
+      body.documents.find((doc) => doc.key === "OPEN")?.contentHtml ?? "",
+    );
+  });
+
+  it("the kiosk route returns an author's h1 demoted (#5345)", async () => {
+    mocks.checkLodgeAuth.mockResolvedValue({
+      session: adminSession,
+      tier: "admin",
+      error: null,
+      status: null,
+    });
+    mocks.lodgeInstructionFindMany.mockResolvedValue([storedInstructionWithH1()]);
+
+    const response = await kioskGET(
+      new NextRequest("http://localhost/api/lodge/instructions?date=2026-06-11"),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { documents: { key: string; contentHtml: string }[] };
+    expectStoredHeadingOneDemoted(
+      body.documents.find((doc) => doc.key === "OPEN")?.contentHtml ?? "",
+    );
+  });
+
+  it("stores an author's h1 as written", async () => {
+    mocks.auth.mockResolvedValue(adminSession);
+    mocks.lodgeInstructionFindFirst.mockResolvedValue(null);
+    mocks.lodgeInstructionCreate.mockImplementation(
+      async ({ data }: { data: { key: string; contentHtml: string } }) => ({
+        id: "lodge-instruction-open",
+        key: data.key,
+        contentHtml: data.contentHtml,
+        updatedAt: new Date("2026-06-11T00:00:00Z"),
+        lodgeId: null,
+      }),
+    );
+
+    const response = await adminPUT(
+      new NextRequest("http://localhost/api/admin/lodge-instructions", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ key: "OPEN", contentHtml: "<h1>Opening</h1>" }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.lodgeInstructionCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ contentHtml: "<h1>Opening</h1>" }),
+      }),
+    );
   });
 
   it("round-trips save and render without altering safe content", async () => {

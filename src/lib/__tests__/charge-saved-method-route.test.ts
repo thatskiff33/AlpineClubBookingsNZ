@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { Prisma } from "@prisma/client";
 import { stripeSdkError } from "./support/stripe-sdk-error";
+import { SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE } from "@/lib/saved-card-charge-claim";
 
 const {
   mockAuth,
@@ -1310,7 +1311,15 @@ describe("POST /api/payments/charge-saved-method", () => {
 
       expect(response.status).toBe(409);
       expect(response.headers.get("Retry-After")).toBeNull();
-      expect(await response.json()).toMatchObject({ success: false, paymentIntentId: "pi_3ds_contended" });
+      // The retry landed, so the booking IS pending and today's wording stands
+      // (#5279). Pinned as text (#5346): comparing against the function that
+      // words it would pass whatever it said.
+      expect(await response.json()).toMatchObject({
+        success: false,
+        paymentIntentId: "pi_3ds_contended",
+        error:
+          "The saved card needs the cardholder to complete authentication (3D Secure), which cannot be done automatically; the booking stays pending until they do, or until the member saves a different card.",
+      });
       const releases = mockPrismaTransaction.mock.calls.slice(1);
       expect(releases).toHaveLength(2);
       for (const [, options] of releases) expect(options).toEqual({ maxWait: 5_000, timeout: 10_000 });
@@ -1334,7 +1343,13 @@ describe("POST /api/payments/charge-saved-method", () => {
 
       expect(response.status).toBe(409);
       expect(response.headers.get("Retry-After")).toBeNull();
-      expect(JSON.stringify(await response.json())).not.toContain(TRANSACTION_CONTENDED_CODE);
+      const body = await response.json();
+      expect(JSON.stringify(body)).not.toContain(TRANSACTION_CONTENDED_CODE);
+      // #5279: the booking is still CONFIRMED, so it is not called pending; the
+      // answer says the job's recovery returns it automatically.
+      expect(body.error).not.toMatch(/stays pending/);
+      expect(body.error).toContain(SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE);
+      expect(SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE).toMatch(/returns it to pending automatically/);
       expect(mockPrismaTransaction).toHaveBeenCalledTimes(3);
       expect(releaseCall()).toBeUndefined();
       expect(mockCreateAuditLog).toHaveBeenCalledWith(

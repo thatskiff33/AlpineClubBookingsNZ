@@ -781,7 +781,7 @@ describe("deployment image contracts", () => {
         "run: node scripts/ci/run-budget-gate.mjs",
         "run: pnpm run db:generate",
         "run: pnpm exec knip",
-        'run: node scripts/ci/require-test-shards.mjs --job Typecheck --job Lint --job "Production build" --job "Real-PostgreSQL suites (all)"',
+        'run: node scripts/ci/require-test-shards.mjs --max-queue-minutes 60 --max-run-minutes 45 --job Typecheck --job Lint --job "Production build" --job "Real-PostgreSQL suites (all)"',
       ]) {
         expect(verify, `verify no longer runs \`${step}\``).toContain(step);
       }

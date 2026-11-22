@@ -54,6 +54,7 @@ import type { FeatureFlags } from "@/config/schema";
 // "incomplete" and the module gate disables every optional module, and either
 // short-circuit would answer these requests before the header block runs.
 vi.mock("@/lib/club-theme", () => ({
+  readSetupCompletion: async () => ({ readFailed: false, isComplete: true }),
   getWebsiteThemeRenderState: async () => ({ isComplete: true, css: "" }),
 }));
 

@@ -276,6 +276,26 @@ export function readQueueType(value: unknown): string | null {
   return readString(payload.queueType);
 }
 
+/**
+ * THE REQUEST A PENDING OUTBOX ROW MUST HOLD (#5228, `INV-INT-025`): a queued
+ * request the outbox can read, naming the row's own `queueType` column. The
+ * column never changes after enqueue, so the outbox builds its claim from it;
+ * this says whether the stored request can then be sent under that claim.
+ * Null for anything else - a handler's execution request (`invoices`,
+ * `creditNotes`, no `queueType`), a request for another queue type, one too
+ * incomplete to read, or a row with no outbox queue type. Every writer that
+ * puts an outbound row with a queue type back on PENDING checks the request it
+ * leaves there with this one reading (`docs/xero/ARCHITECTURE.md`).
+ */
+export function readQueuedOutboxRequestFor(
+  queueType: string | null,
+  requestPayload: unknown,
+): QueuedOutboxPayload | null {
+  if (!queueType || !(XERO_OUTBOX_QUEUE_TYPES as readonly string[]).includes(queueType)) return null;
+  const payload = readQueuedOutboxPayload(requestPayload);
+  return payload?.queueType === queueType ? payload : null;
+}
+
 export function readQueuedOutboxPayload(
   value: unknown
 ): QueuedOutboxPayload | null {

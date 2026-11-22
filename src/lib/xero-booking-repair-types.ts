@@ -260,6 +260,9 @@ export const bookingRepairSelect = Prisma.validator<Prisma.BookingSelect>()({
       email: true,
     },
   },
+  // #5005: an imported free stay is settled outside the app with no manual
+  // provenance; `bookingHasExternalSettlement` reads this.
+  importRow: { select: { amountCents: true } },
   payment: {
     select: {
       id: true,
@@ -679,11 +682,14 @@ export interface MutableFinding {
 /**
  * #3924 rounds 12-14: one late capture's card refunds no note will answer
  * (`cents`), and apart those a card note sent to Xero without a reply may
- * already answer (`mayBeInXeroCents`), each in the club's format.
+ * already answer (`mayBeInXeroCents`), each in the club's format. #4383:
+ * and those above what a capped receipt recorded (`aboveRecordedCents`).
  */
 export interface LateCaptureCardRefundsByHandEntry {
   cents: number;
   amountLabel: string;
   mayBeInXeroCents: number;
   mayBeInXeroLabel: string;
+  aboveRecordedCents: number;
+  aboveRecordedLabel: string;
 }

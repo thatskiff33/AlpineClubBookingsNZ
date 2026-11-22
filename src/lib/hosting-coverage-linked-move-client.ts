@@ -77,6 +77,8 @@ export interface HostingCoverageLinkedMovePromptData {
   linkedBookings: HostingCoverageLinkedMoveBooking[];
   combinedAmountDueCents: number;
   combinedRefundCents: number;
+  /** fork #132: the freed applied credit inside `combinedRefundCents`, for the wording only. */
+  combinedFreedCreditCents: number;
   combinedChangeFeeCents: number;
   combinedPolicyRetainedCents: number;
   combinedOrganiserRefundCents: number;
@@ -99,7 +101,15 @@ export interface HostingCoverageLinkedMovePromptData {
  */
 export interface LinkedMoveMoneyFacts {
   combinedAmountDueCents: number;
+  /** Every cent coming back to the member, freed applied credit included (`combineLinkedMoveQuote`, fork #132). */
   combinedRefundCents: number;
+  /**
+   * The part of `combinedRefundCents` that is an unpaid booking's applied credit
+   * freed by a lower price (fork #132). It always returns to account credit, so it is
+   * never part of the card-or-credit choice; the sentences below say so. Copy only:
+   * the one total the member consents to stays `combinedRefundCents`.
+   */
+  combinedFreedCreditCents: number;
   combinedChangeFeeCents: number;
   /**
    * What the club's cancellation policy KEEPS of the reductions, in cents.
@@ -206,18 +216,25 @@ export function formatLinkedMoveMoneySentence(
 ): string {
   const all = linkedMoveAllBookingsPhrase(facts.linkedCount);
   const parts: string[] = [];
+  // fork #132: the settlement's share (`editMoneyBackCents`) is what the card-or-credit
+  // choice covers; freed applied credit goes back to account credit regardless.
+  const settlementShareCents = facts.combinedRefundCents - facts.combinedFreedCreditCents;
+  const freed =
+    facts.combinedFreedCreditCents > 0
+      ? `, of which ${formatCents(facts.combinedFreedCreditCents, format)} is returned to your account credit`
+      : "";
   if (facts.combinedRefundCents > 0 && facts.combinedAmountDueCents > 0) {
     parts.push(
       `${formatCents(facts.combinedAmountDueCents, format)} would be payable and ` +
-        `${formatCents(facts.combinedRefundCents, format)} would come back to you, ` +
+        `${formatCents(facts.combinedRefundCents, format)} would come back to you${freed}, ` +
         `across ${all}. Those two do not cancel each other out: each booking ` +
         `settles on its own, so the amount payable is paid on its own booking ` +
-        `page and the refund comes back separately.`,
+        `page and what comes back is returned separately.`,
     );
   } else if (facts.combinedRefundCents > 0) {
     parts.push(
       `${formatCents(facts.combinedRefundCents, format)} would come back to you across ` +
-        `${all}.`,
+        `${all}${freed}.`,
     );
   } else if (facts.combinedAmountDueCents > 0) {
     // "ACROSS", AND THEN WHERE. The combined figure is not one payment: each
@@ -270,10 +287,13 @@ export function formatLinkedMoveMoneySentence(
   if (facts.settlementMethodRequired && !facts.settlementMethodChosen) {
     // Neutral about WHERE the control is, because this same sentence is read on
     // the panel (where the Return-method radios sit above the offer) and in the
-    // bare 409 message a surface without them falls back to.
+    // bare 409 message a surface without them falls back to. After a total
+    // that includes freed credit, which never goes to a card, the choice is
+    // over "the rest" (#5149 N2).
+    const settledShare = facts.combinedFreedCreditCents > 0 ? "the rest" : "that";
     parts.push(
-      facts.combinedRefundCents > 0
-        ? `You will be asked once whether that comes back to your card or as ` +
+      settlementShareCents > 0
+        ? `You will be asked once whether ${settledShare} comes back to your card or as ` +
             `account credit; the one choice covers ` +
             // #3949: never a booking the group organiser paid for, whose refund is the organiser's.
             `${facts.combinedOrganiserRefundCents > 0 ? "every booking you paid for" : all}.`
@@ -391,6 +411,7 @@ export function readHostingCoverageLinkedMovePrompt(
     typeof record.bothChangeFeesCharged !== "boolean" ||
     !isCents(record.combinedAmountDueCents) ||
     !isCents(record.combinedRefundCents) ||
+    !isCents(record.combinedFreedCreditCents ?? 0) ||
     !isCents(record.combinedChangeFeeCents) ||
     !isCents(record.combinedPolicyRetainedCents) ||
     !isCents(record.combinedOrganiserRefundCents ?? 0) ||
@@ -417,6 +438,7 @@ export function readHostingCoverageLinkedMovePrompt(
     linkedBookings,
     combinedAmountDueCents: record.combinedAmountDueCents,
     combinedRefundCents: record.combinedRefundCents,
+    combinedFreedCreditCents: (record.combinedFreedCreditCents as number | undefined) ?? 0,
     combinedChangeFeeCents: record.combinedChangeFeeCents,
     combinedPolicyRetainedCents: record.combinedPolicyRetainedCents,
     combinedOrganiserRefundCents: (record.combinedOrganiserRefundCents as number | undefined) ?? 0,

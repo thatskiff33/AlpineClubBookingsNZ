@@ -3,7 +3,8 @@ import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MemberMoneyReservationRefused, memberMoneyEventKeys as keys, postMemberMoneyEvent, reverseMemberMoneyJournal, reserveMemberMoneyRefund, releaseMemberMoneyRefundReservation, verifyMemberMoneyJournal, type MemberMoneyPlan } from "@/lib/member-money";
 import { readMemberMoneyApplicationState } from "@/lib/member-money/internal/application-read";
-import { bookingChargePlan, createMemberMoneyScratchDatabase, memberMoneyTestContext, type MemberMoneyScratchDatabase } from "./support/member-money-fixtures";
+import { bookingChargePlan, createMemberMoneyScratchDatabase, MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS, memberMoneyTestContext, type MemberMoneyScratchDatabase } from "./support/member-money-fixtures";
+import { runEveryTeardownStep } from "./support/teardown-steps";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const context = memberMoneyTestContext();
@@ -51,8 +52,12 @@ const reserve = (attemptKey = "attempt:one", amountCents = 60) => prisma.$transa
     ] });
     receiptJournal = receipt.journalId;
     receiptLine = (await prisma.memberMoneyLine.findFirstOrThrow({ where: { journalId: receipt.journalId, account: "MEMBER_RECEIVABLE" }, select: { id: true } })).id;
-  });
-  afterAll(async () => { await prisma?.$disconnect(); await app?.end(); await scratch?.drop(); });
+  }, MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS);
+  afterAll(() => runEveryTeardownStep("member-money-applications.realdb", [
+    { what: "disconnect the application Prisma client", run: () => prisma?.$disconnect() },
+    { what: "end the application connection", run: () => app?.end() },
+    { what: "drop the scratch database", run: () => scratch?.drop() },
+  ]), MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS);
 
   it("serializes two distinct application events on Payment before checking C1", async () => {
     await app.query("BEGIN");

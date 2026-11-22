@@ -66,6 +66,8 @@ export { isCodeExplicitlyConfigured } from "@/lib/xero-account-mapping-keys";
 export async function getResolvedAccountMapping(
   key: string,
   store: Prisma.TransactionClient | typeof prisma = prisma,
+  /** #4988: a caller for whom "unset" and "could not be read" must not look alike asks for the throw. */
+  options: { throwOnReadError?: boolean } = {},
 ): Promise<ResolvedAccountMapping> {
   try {
     const mapping = await store.xeroAccountMapping.findUnique({
@@ -80,7 +82,8 @@ export async function getResolvedAccountMapping(
       itemCode: mapping?.itemCode ?? null,
       codeExplicitlyConfigured: isCodeExplicitlyConfigured(mapping),
     };
-  } catch {
+  } catch (error) {
+    if (options.throwOnReadError) throw error;
     return {
       code: ACCOUNT_MAPPING_DEFAULTS[key] ?? null,
       itemCode: null,
@@ -118,8 +121,10 @@ export type ResolvedAccountMappingWithFallback = ResolvedAccountMapping & {
 export async function getResolvedAccountMappingWithFallback(
   key: AccountMappingKey,
   store: Prisma.TransactionClient | typeof prisma = prisma,
+  /** Applies to the REQUESTED key's read only; its fallback's read is unchanged. */
+  options: { throwOnReadError?: boolean } = {},
 ): Promise<ResolvedAccountMappingWithFallback> {
-  const requested = await getResolvedAccountMapping(key, store);
+  const requested = await getResolvedAccountMapping(key, store, options);
   const { sourceKey, usingFallback } = resolveAccountMappingSource(
     key,
     requested.codeExplicitlyConfigured,

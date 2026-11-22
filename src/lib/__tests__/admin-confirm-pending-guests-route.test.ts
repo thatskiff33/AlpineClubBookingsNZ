@@ -6,6 +6,7 @@ import {
   TRANSACTION_CONTENDED_MESSAGE,
   TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
 } from "@/lib/transaction-contended-response";
+import { SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE } from "@/lib/saved-card-charge-claim";
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
@@ -816,7 +817,9 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     const body = await res.json();
 
     expect(res.status).toBe(502);
-    expect(body.error).toContain("charge failed");
+    expect(body.error).toBe(
+      "The card charge failed; the booking was returned to pending and admins have been alerted."
+    );
     // Claim released: CONFIRMED -> PENDING with the original hold restored.
     expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
       where: { id: "b1", status: "CONFIRMED" },
@@ -865,8 +868,15 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     );
 
     const res = await POST(makeRequest(), { params });
+    const body = await res.json();
 
     expect(res.status).toBe(502);
+    // #5279: the booking is still CONFIRMED, so the officer is not told it was
+    // returned to pending — only that the job's recovery will return it.
+    expect(body.error).toMatch(/^The card charge failed/);
+    expect(body.error).not.toMatch(/was returned to pending/);
+    expect(body.error).toContain(SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE);
+    expect(SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE).toMatch(/returns it to pending automatically/);
     const releaseBudgets = mocks.transaction.mock.calls.filter(
       ([, options]) => (options as { maxWait?: number } | undefined)?.maxWait === 5_000,
     );
@@ -959,7 +969,13 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     const body = await res.json();
 
     expect(res.status).toBe(409);
-    expect(body).toMatchObject({ paymentStatus: "requires_action" });
+    // The officer's sentence, as text (#5346): comparing against the function
+    // that words it would pass whatever it said.
+    expect(body).toMatchObject({
+      paymentStatus: "requires_action",
+      error:
+        "The saved card needs the cardholder to complete authentication (3D Secure), which cannot be done automatically; the booking stays pending until they do, or until the member saves a different card.",
+    });
     expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
       where: { id: "b1", status: "CONFIRMED" },
       data: {
@@ -987,6 +1003,27 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     expect(mocks.reconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: "pay1", store: txClient });
     expect(mocks.markBookingPaymentSucceeded).not.toHaveBeenCalled();
     expect(mocks.sendPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
+  it("an uncaptured answer whose release loses both attempts does not say the booking stays pending (#5279)", async () => {
+    primeBooking(makeBooking());
+    mocks.chargePaymentMethod.mockResolvedValue({ id: "pi_1", status: "requires_action", amount: 10000, payment_method: "pm_1" });
+    const contention = Object.assign(new Error("Transaction API error"), { code: "P2034" });
+    mocks.transaction.mockImplementation(
+      async (fn: (tx: unknown) => unknown, options?: { maxWait?: number }) => {
+        if (options?.maxWait === 5_000) throw contention;
+        return fn(txClient);
+      },
+    );
+
+    const res = await POST(makeRequest(), { params });
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(releaseCall()).toBeUndefined();
+    expect(body.paymentStatus).toBe("requires_action");
+    expect(body.error).not.toMatch(/stays pending/);
+    expect(body.error).toContain(SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE);
   });
 
   it("does NOT release a claim the webhook has already settled: the retrieve said processing, the booking reads PAID under the release's locks — the stale answer is refused by the row's own guard and the booking is left alone (#3267)", async () => {

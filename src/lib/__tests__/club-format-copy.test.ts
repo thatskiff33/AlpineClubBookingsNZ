@@ -48,10 +48,12 @@ describe("Club Currency & Locale copy has one home (#3566)", () => {
     }
   });
 
-  it("says what is true: dates and emails follow, chart labels do not", () => {
+  it("says what is true: dates, chart labels and emails follow", () => {
     expect(CLUB_FORMAT_REACH).toMatch(/every date and time/);
     expect(CLUB_FORMAT_REACH).toMatch(/Emails follow/);
-    expect(CLUB_FORMAT_REACH).toMatch(/report charts/);
+    // #5258: the report charts' date labels follow the setting now, so the
+    // copy must not list them among the English-only labels.
+    expect(CLUB_FORMAT_REACH).not.toMatch(/report charts|Apr 16/);
     // #3567 D1: the server's CURRENCY no longer decides card payments either.
     expect(CLUB_FORMAT_SERVER_SETTINGS).toMatch(/not what cards are charged in/);
     expect(CLUB_FORMAT_SERVER_SETTINGS).not.toMatch(/still taken from the server/);
@@ -86,12 +88,16 @@ describe("Club Currency & Locale copy has one home (#3566)", () => {
     const start = guide.indexOf("**What does not follow it.**");
     expect(start).toBeGreaterThan(-1);
     const section = guide.slice(start, guide.indexOf("\n\n**", start + 1));
+    // #5258: the report charts' date labels follow the setting now, so no
+    // item on the list names them.
+    const items = section.split("\n- ").slice(1).join("\n- ").split("\n\n")[0];
+    expect(items).not.toMatch(/report charts|Apr 16/);
     for (const item of [
-      /report charts/,
       /chore schedule/,
       /minimum-stay setup/,
       /subscription lockout/i,
       /public booking-policy page/i,
+      /"Week of" and "to"/,
       /relative times/,
     ]) {
       expect(section, String(item)).toMatch(item);

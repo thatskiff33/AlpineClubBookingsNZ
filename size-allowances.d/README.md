@@ -36,7 +36,14 @@ knowingly, not to get past a red check.
 ## Writing one
 
 1. Create `size-allowances.d/<pr-number>-<short-slug>.md`, for example
-   `size-allowances.d/2980-membership-type-policy.md`. The name must not be
+   `size-allowances.d/2980-membership-type-policy.md`. The pull-request number
+   is the convention, not a rule the gate enforces: a lane that writes its
+   fragment before the pull request exists may lead with its ticket id instead,
+   as the Sekreton lane's `alp-<n>-<slug>.md` fragments do, and a plain slug is
+   accepted too. Whatever the name, it must be one no other change will use.
+   Leave a fragment `main` has already landed under the name it landed with:
+   it is inert there, and renaming it would bring it back into a diff as a
+   live allowance (see "They cannot rot" below). The name must not be
    `README.md`, and the file must end in `.md`. Use a portable direct-child name
    (interior spaces and Unicode are fine, including existing leading `-` or
    `_` names). Path separators, control and invisible format characters, and

@@ -288,7 +288,7 @@ knip, the production build and its proofs without a `needs:` edge or job-level
 condition, then `scripts/ci/require-test-shards.mjs` checks that all four shard
 jobs from the **same Actions run attempt** completed successfully. Missing,
 duplicate, skipped, cancelled, failed or timed-out shards, API errors and a
-bounded wait all fail `verify`; a job that never reported cannot silently pass.
+bounded wait ([how long](../CONTRIBUTING.md#branch-protection)) all fail `verify`; a job that never reported cannot silently pass.
 Re-run the whole workflow rather than only a failed job if a partial re-run
 leaves successful shards absent from the new attempt. This does not add a
 branch-protection context. The required shards do not collect coverage: the
@@ -1027,6 +1027,21 @@ generalised.
    `member-guest-probe-guard.test.ts` measures its privacy timing floor with
    `process.hrtime.bigint()` for exactly that reason: the guard itself reads
    `performance.now()`, so the test deliberately measures with a different API.
+
+   A stopwatch is for "it did not wait", never for "real work was fast
+   enough": runner speed varies, so that bound fails busy CI (#5213). To prove
+   a real-PostgreSQL transaction body fits its budget, run that body on the
+   production budget constant (`LOCK1_HOLDER_TRANSACTION_BUDGET`) and assert
+   it commits: Prisma rolls back a body that outruns `timeout`. The proof
+   covers only the work the test puts in the transaction. The 40-child group
+   settle case in `booking-ledger-journal.realdb.test.ts` proves the 40 R01
+   postings fit, not the whole settle, which also upserts payments, flips each
+   child to PAID and reconciles beds in the same budget (#5350). Its failure
+   message reports the time to start, the wait for lock(1) and the body, and
+   names any other backend holding lock(1) as it began to wait (through
+   `onTestFailed` when Vitest's own timeout ends the test first: in a local
+   probe on Prisma 7.10.1, `timeout` did not interrupt a blocked lock wait);
+   keep those diagnostics out of the verdict.
 6. **Remember the environment's zone follows `process.env.TZ`.** The seed
    reader (`club-time-zone-env.ts`) answers `TZ || NEXT_PUBLIC_TZ ||
    "Pacific/Auckland"` whenever no zone is stored — which is every unit test
