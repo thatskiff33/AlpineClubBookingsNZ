@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { z } from "zod";
 
@@ -118,20 +119,10 @@ export async function PUT(
 
   const { id: bookingId } = await params;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json(
-      {
-        error: "Invalid JSON",
-        details: { body: ["Request body must be valid JSON"] },
-      },
-      { status: 400 },
-    );
-  }
+  const json = await parseJsonRequestBody(request);
+  if (!json.ok) return json.response;
 
-  const parsed = modifyDatesSchema.safeParse(body);
+  const parsed = modifyDatesSchema.safeParse(json.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
