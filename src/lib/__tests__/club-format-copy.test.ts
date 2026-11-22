@@ -97,6 +97,7 @@ describe("Club Currency & Locale copy has one home (#3566)", () => {
       /minimum-stay setup/,
       /subscription lockout/i,
       /public booking-policy page/i,
+      /"Week of" and "to"/,
       /relative times/,
     ]) {
       expect(section, String(item)).toMatch(item);
