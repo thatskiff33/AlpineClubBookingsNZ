@@ -40,8 +40,9 @@ only "add lodge"; the maintainer went further and approved making multi-lodge
   the feature-route gating (`src/config/feature-routes.ts` — lodge routes always
   available), and all code reads of `modules.multiLodge` (done in #128). The
   `ClubModuleSettings.multiLodge` **column is left vestigial** (`@default(false)`,
-  no longer read or written) rather than dropped in this release — see the schema
-  decision below.
+  no longer read or set by code, though every INSERT still named it until #5396;
+  see the correction under the schema decision) rather than dropped in this
+  release — see the schema decision below.
 - **Start with one, Add Lodge as needed.** Every install has ≥1 lodge; the "Add
   Lodge" action is always available. The UI assumes N lodges regardless of count.
 - **Lodge hub is the single home for lodge config** (ADR-003): all lodge-scoped
@@ -94,7 +95,7 @@ explicit test focus (Jordan's caveat).
   Correction (#5396): "upserts rely on the default" does not keep the column
   out of the SQL. Prisma sends a static `@default` in every INSERT's column
   list, so the drop is old-colour-compatible only after a release that marks
-  the field `@ignore` has shipped. #5396 adds that `@ignore`.
+  the field `@ignore` has shipped (`INV-OPS-005`). #5396 adds that `@ignore`.
 - **Backward-compat is the risk.** A single-lodge install must not regress;
   cover it explicitly in tests before any upstream PR.
 

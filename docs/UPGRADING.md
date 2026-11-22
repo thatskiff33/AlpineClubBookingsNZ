@@ -273,7 +273,8 @@ before the one that drops them, as the tag-to-tag rule above already requires.
 
 **Do not drop any of these columns yourself.** Earlier code comments said that
 dropping `multiLodge` was blue-green safe because every query selects named
-columns. That holds for reads, not INSERTs, and the comments are corrected. A
+columns. That holds for reads, not INSERTs (`INV-OPS-005`), and the comments
+are corrected. A
 fork that tracks the drop (`multiLodge` is hoppers99/AlpineClubBookingsNZ#139)
 should take the upstream contract migration rather than write its own.
 
