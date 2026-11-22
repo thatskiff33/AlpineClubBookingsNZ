@@ -15,6 +15,13 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { adminListPageQueryFields } from "@/lib/admin-list-page";
+import {
+  deletionRequestListQuerySchema,
+  memberApplicationListQuerySchema,
+  memberLifecycleRequestListQuerySchema,
+  membershipCancellationRequestListQuerySchema,
+} from "@/lib/admin-membership-api/requests";
 import { escapeRegExp } from "@/lib/escape-regexp";
 
 import { stripComments } from "./support/strip-comments";
@@ -39,6 +46,31 @@ const CAPPED_QUEUE_ROUTES: Record<string, readonly string[]> = {
   "/api/admin/deletion-requests": ["src/app/api/admin/deletion-requests/route.ts"],
   "/api/admin/maintenance-reports": ["src/app/api/admin/maintenance-reports/route.ts"],
   "/api/admin/communications/history": ["src/app/api/admin/communications/history/route.ts"],
+};
+
+/**
+ * Capped routes whose query schema lives in a shared module, so the AI app
+ * action that calls the route is described by the same schema (ALP-720,
+ * `INV-SSOT`). The route must use the named schema, and the schema must carry
+ * the shared paging fields themselves, checked by identity.
+ */
+const SHARED_QUERY_SCHEMAS: Record<string, { name: string; shape: Record<string, unknown> }> = {
+  "/api/admin/member-applications": {
+    name: "memberApplicationListQuerySchema",
+    shape: memberApplicationListQuerySchema.shape,
+  },
+  "/api/admin/member-lifecycle-action-requests": {
+    name: "memberLifecycleRequestListQuerySchema",
+    shape: memberLifecycleRequestListQuerySchema.shape,
+  },
+  "/api/admin/membership-cancellation-requests": {
+    name: "membershipCancellationRequestListQuerySchema",
+    shape: membershipCancellationRequestListQuerySchema.shape,
+  },
+  "/api/admin/deletion-requests": {
+    name: "deletionRequestListQuerySchema",
+    shape: deletionRequestListQuerySchema.shape,
+  },
 };
 
 /** Client files that read a capped queue route without listing its rows. */
@@ -189,7 +221,16 @@ describe("row-capped officer queues page through every row (INV-OPS-020)", () =>
   it("every capped route's schema spreads adminListPageQueryFields", () => {
     const failures = Object.keys(CAPPED_QUEUE_ROUTES).filter((route) => {
       const file = path.join(ROOT, "src/app", `${route}/route.ts`);
-      return !/\.\.\.adminListPageQueryFields\b/.test(stripComments(readFileSync(file, "utf8")));
+      const code = stripComments(readFileSync(file, "utf8"));
+      const shared = SHARED_QUERY_SCHEMAS[route];
+      if (shared) {
+        return !(
+          new RegExp(`\\b${shared.name}\\.safeParse\\(`).test(code) &&
+          shared.shape.page === adminListPageQueryFields.page &&
+          shared.shape.pageSize === adminListPageQueryFields.pageSize
+        );
+      }
+      return !/\.\.\.adminListPageQueryFields\b/.test(code);
     });
     expect(failures).toEqual([]);
   });

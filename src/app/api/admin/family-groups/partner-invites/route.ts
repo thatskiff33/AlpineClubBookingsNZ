@@ -4,6 +4,12 @@ import {
   listOutstandingPartnerInviteTokens,
   revokePartnerInviteToken,
 } from "@/lib/partner-invite-token";
+import { revokePartnerInviteQuerySchema } from "@/lib/admin-membership-api/family-groups";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  FAMILY_GROUP_SUCCESS_CONNECTION_SHAPE,
+  PARTNER_INVITE_LIST_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-family-groups";
 
 function unauthorizedResponse() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -17,12 +23,12 @@ const adminGuardOptions = {
  * GET /api/admin/family-groups/partner-invites
  * List outstanding (unconfirmed, unexpired) partner invitations (#1682).
  */
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin(adminGuardOptions);
   if (!guard.ok) return guard.response;
 
   const invites = await listOutstandingPartnerInviteTokens();
-  return NextResponse.json({ invites });
+  return connectionJson(request, { invites }, PARTNER_INVITE_LIST_CONNECTION_SHAPE);
 }
 
 /**
@@ -33,10 +39,13 @@ export async function DELETE(req: NextRequest) {
   const guard = await requireAdmin(adminGuardOptions);
   if (!guard.ok) return guard.response;
 
-  const tokenId = req.nextUrl.searchParams.get("id")?.trim();
-  if (!tokenId) {
+  const query = revokePartnerInviteQuerySchema.safeParse({
+    id: req.nextUrl.searchParams.get("id") ?? undefined,
+  });
+  if (!query.success) {
     return NextResponse.json({ error: "Invitation id required" }, { status: 400 });
   }
+  const tokenId = query.data.id;
 
   const revoked = await revokePartnerInviteToken({
     tokenId,
@@ -50,5 +59,5 @@ export async function DELETE(req: NextRequest) {
     );
   }
 
-  return NextResponse.json({ success: true });
+  return connectionJson(req, { success: true }, FAMILY_GROUP_SUCCESS_CONNECTION_SHAPE);
 }

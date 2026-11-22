@@ -5,24 +5,17 @@ import {
 } from "@/lib/member-application-fields";
 import { NOMINATION_AUTOMATIC_REMINDER_LIMIT } from "@/lib/nomination-token-policy";
 import { formatDateOnly } from "@/lib/date-only";
-import {
-  adminListPage,
-  adminQueueCreatedOrder,
-  adminListPageQueryFields,
-} from "@/lib/admin-list-page";
+import { adminListPage, adminQueueCreatedOrder } from "@/lib/admin-list-page";
+import { memberApplicationListQuerySchema } from "@/lib/admin-membership-api/requests";
+import { MEMBER_APPLICATION_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-requests";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-import { z } from "zod";
-
-const querySchema = z.object({
-  status: z.enum(["PENDING_NOMINATORS", "PENDING_ADMIN", "APPROVED", "REJECTED"]).optional(),
-  ...adminListPageQueryFields,
-});
 
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
-  const parsed = querySchema.safeParse(Object.fromEntries(req.nextUrl.searchParams));
+  const parsed = memberApplicationListQuerySchema.safeParse(Object.fromEntries(req.nextUrl.searchParams));
 
   if (!parsed.success) {
     return NextResponse.json(
@@ -193,10 +186,14 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  return NextResponse.json({
-    data,
-    applications: data,
-    pendingCount,
-    ...adminListPage({ page, pageSize, total }),
-  });
+  return connectionJson(
+    req,
+    {
+      data,
+      applications: data,
+      pendingCount,
+      ...adminListPage({ page, pageSize, total }),
+    },
+    MEMBER_APPLICATION_LIST_CONNECTION_SHAPE
+  );
 }

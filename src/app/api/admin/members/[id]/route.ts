@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import {
   getAdminMemberDetail,
   updateAdminMember,
@@ -13,10 +12,11 @@ import {
   isDietaryFieldEnabled,
 } from "@/lib/member-dietary";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { recordIdParamsSchema } from "@/lib/route-id-params";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { MEMBER_DETAIL_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-members";
 
-const paramsSchema = z.object({
-  id: z.string().min(1),
-});
+const paramsSchema = recordIdParamsSchema;
 
 function unauthorizedResponse() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -29,9 +29,12 @@ const adminGuardOptions = {
 /**
  * GET /api/admin/members/[id]
  * Get full member detail including subscriptions, bookings, audit logs, and stats.
+ * An AI app connection is sent the contact, membership, subscription and
+ * family-link facts only (ALP-720): never date of birth, addresses, dietary
+ * data, Xero ids, audit entries or sign-in internals.
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
@@ -57,7 +60,7 @@ export async function GET(
       ? await grantMembershipAdminDietaryAccess(guard, "view")
       : null,
   });
-  return NextResponse.json(result.body, result.init);
+  return connectionJson(req, result.body, MEMBER_DETAIL_CONNECTION_SHAPE, result.init);
 }
 
 /**

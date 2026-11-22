@@ -8,23 +8,16 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { OPEN_DELETION_REQUEST_STATUSES } from "@/lib/deletion-request-decision";
-import {
-  adminListPage,
-  adminListPageQueryFields,
-  adminQueueCreatedOrder,
-} from "@/lib/admin-list-page";
-import { z } from "zod";
-
-const querySchema = z.object({
-  status: z.enum(["PENDING", "APPROVED", "REJECTED", "ALL"]).optional().default("PENDING"),
-  ...adminListPageQueryFields,
-});
+import { adminListPage, adminQueueCreatedOrder } from "@/lib/admin-list-page";
+import { deletionRequestListQuerySchema } from "@/lib/admin-membership-api/requests";
+import { DELETION_REQUEST_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-requests";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const { searchParams } = new URL(request.url);
-  const parsed = querySchema.safeParse(Object.fromEntries(searchParams));
+  const parsed = deletionRequestListQuerySchema.safeParse(Object.fromEntries(searchParams));
 
   if (!parsed.success) {
     return NextResponse.json(
@@ -84,11 +77,15 @@ export async function GET(request: NextRequest) {
       member: r.member,
     }));
 
-    return NextResponse.json({
-      data,
-      requests: data,
-      ...adminListPage({ page, pageSize, total }),
-    });
+    return connectionJson(
+      request,
+      {
+        data,
+        requests: data,
+        ...adminListPage({ page, pageSize, total }),
+      },
+      DELETION_REQUEST_LIST_CONNECTION_SHAPE,
+    );
   } catch (err) {
     logger.error({ err }, "Failed to list deletion requests");
     return NextResponse.json({ error: "Failed to load deletion requests" }, { status: 500 });

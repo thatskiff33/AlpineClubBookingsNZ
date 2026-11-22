@@ -4,6 +4,9 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { resolveInheritedEmailSourceId } from "@/lib/member-parent-links";
 import logger from "@/lib/logger";
+import { dependentRouteParamsSchema } from "@/lib/admin-membership-api/members";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { DEPENDENT_UNLINKED_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-members";
 
 class UnlinkDependentError extends Error {
   constructor(
@@ -15,7 +18,7 @@ class UnlinkDependentError extends Error {
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string; dependentId: string }> }
 ) {
   const guard = await requireAdmin({
@@ -23,7 +26,14 @@ export async function DELETE(
   });
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  const { id: parentId, dependentId } = await params;
+  const parsedParams = dependentRouteParamsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return NextResponse.json(
+      { error: "Invalid route parameters", details: parsedParams.error.flatten() },
+      { status: 400 }
+    );
+  }
+  const { id: parentId, dependentId } = parsedParams.data;
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -207,11 +217,15 @@ export async function DELETE(
       };
     });
 
-    return NextResponse.json({
-      member: result.updated,
-      clearedEmailInheritance: result.clearedEmailInheritance,
-      promotedSecondaryParent: result.promotedSecondaryParent,
-    });
+    return connectionJson(
+      req,
+      {
+        member: result.updated,
+        clearedEmailInheritance: result.clearedEmailInheritance,
+        promotedSecondaryParent: result.promotedSecondaryParent,
+      },
+      DEPENDENT_UNLINKED_CONNECTION_SHAPE,
+    );
   } catch (error) {
     if (error instanceof UnlinkDependentError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

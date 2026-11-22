@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+import type { z } from "zod";
+import { adminMembershipCancellationRequestSchema } from "@/lib/admin-membership-api/requests";
+import { MEMBERSHIP_CANCELLATION_REQUEST_RESULT_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-requests";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import logger from "@/lib/logger";
 import {
   createAdminMembershipCancellationRequest,
@@ -8,10 +11,6 @@ import {
 import { getClientIp } from "@/lib/rate-limit";
 import { requireAdmin } from "@/lib/session-guards";
 
-const bodySchema = z.object({
-  reason: z.string().trim().min(1).max(1000),
-});
-
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -19,9 +18,9 @@ export async function POST(
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  let body: z.infer<typeof bodySchema>;
+  let body: z.infer<typeof adminMembershipCancellationRequestSchema>;
   try {
-    body = bodySchema.parse(await request.json());
+    body = adminMembershipCancellationRequestSchema.parse(await request.json());
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
@@ -36,7 +35,9 @@ export async function POST(
       ipAddress: getClientIp(request),
     });
 
-    return NextResponse.json(result, { status: 201 });
+    return connectionJson(request, result, MEMBERSHIP_CANCELLATION_REQUEST_RESULT_CONNECTION_SHAPE, {
+      status: 201,
+    });
   } catch (err) {
     if (err instanceof MembershipCancellationRequestError) {
       return NextResponse.json(

@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
@@ -8,6 +7,17 @@ import {
   adminAssignPartnerLink,
   adminRemovePartnerLink,
 } from "@/lib/member-partner-link";
+import {
+  assignPartnerLinkSchema,
+  removePartnerLinkBodySchema,
+  removePartnerLinkQuerySchema,
+} from "@/lib/admin-membership-api/members";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import {
+  MEMBER_PARTNER_LINK_CONNECTION_SHAPE,
+  PARTNER_LINK_ASSIGNED_CONNECTION_SHAPE,
+  PARTNER_LINK_REMOVED_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/membership-members";
 
 /**
  * GET /api/admin/members/[id]/partner-link (#1742)
@@ -16,7 +26,7 @@ import {
  * the /api/admin/members path).
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
@@ -26,14 +36,8 @@ export async function GET(
 
   const { id: memberId } = await params;
   const state = await getPartnerLinkState(memberId);
-  return NextResponse.json(state);
+  return connectionJson(req, state, MEMBER_PARTNER_LINK_CONNECTION_SHAPE);
 }
-
-const assignSchema = z.object({
-  partnerMemberId: z.string().min(1, "Partner member is required"),
-  // #1769a: absent/undefined = notify (default), false = suppress the emails.
-  notifyMember: z.boolean().optional(),
-});
 
 /**
  * POST /api/admin/members/[id]/partner-link (#1742)
@@ -54,7 +58,7 @@ export async function POST(
   if (!jsonBody.ok) return jsonBody.response;
   const body = jsonBody.body;
 
-  const parsed = assignSchema.safeParse(body);
+  const parsed = assignPartnerLinkSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
@@ -74,8 +78,10 @@ export async function POST(
     return NextResponse.json({ error: result.error }, { status: result.status });
   }
 
-  return NextResponse.json(
+  return connectionJson(
+    req,
     { message: result.message, linkId: result.linkId },
+    PARTNER_LINK_ASSIGNED_CONNECTION_SHAPE,
     { status: 201 }
   );
 }
@@ -83,7 +89,8 @@ export async function POST(
 /**
  * DELETE /api/admin/members/[id]/partner-link?id=LINK_ID (#1742)
  * Remove a partner link (pending or confirmed) involving member [id].
- * Permission: membership edit.
+ * Permission: membership edit. `?linkId=` is read too (ALP-720): an AI app
+ * action cannot send `?id=`, which would collide with the member's `id`.
  */
 export async function DELETE(
   req: NextRequest,
@@ -94,22 +101,25 @@ export async function DELETE(
   });
   if (!guard.ok) return guard.response;
 
-  const linkId = req.nextUrl.searchParams.get("id")?.trim();
-  if (!linkId) {
+  const searchParams = req.nextUrl.searchParams;
+  const query = removePartnerLinkQuerySchema.safeParse({
+    linkId: searchParams.get("linkId") ?? searchParams.get("id") ?? undefined,
+  });
+  if (!query.success) {
     return NextResponse.json({ error: "Partner link id required" }, { status: 400 });
   }
+  const { linkId } = query.data;
 
   // #1769a: an optional JSON body carries the admin's notify choice for a
   // CONFIRMED removal. A bodyless DELETE (pending removal) must still succeed,
   // so a missing/invalid-JSON body is treated as an empty object.
-  const deleteSchema = z.object({ notifyMember: z.boolean().optional() });
   let rawBody: unknown = {};
   try {
     rawBody = await req.json();
   } catch {
     rawBody = {};
   }
-  const parsedBody = deleteSchema.safeParse(rawBody);
+  const parsedBody = removePartnerLinkBodySchema.safeParse(rawBody);
   if (!parsedBody.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsedBody.error.flatten().fieldErrors },
@@ -144,5 +154,5 @@ export async function DELETE(
     return NextResponse.json({ error: result.error }, { status: result.status });
   }
 
-  return NextResponse.json({ message: result.message });
+  return connectionJson(req, { message: result.message }, PARTNER_LINK_REMOVED_CONNECTION_SHAPE);
 }

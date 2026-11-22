@@ -24,6 +24,8 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { MEMBERSHIP_TYPE_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-members";
 
 const membershipTypeSelect = {
   id: true,
@@ -76,7 +78,12 @@ async function loadMembershipTypes() {
   };
 }
 
-export async function GET() {
+/**
+ * GET /api/admin/membership-types
+ * An AI app connection is sent each type's id, key, name and whether it is
+ * active, never its booking, subscription or age-tier rules (ALP-720).
+ */
+export async function GET(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "membership", level: "view" },
   });
@@ -84,7 +91,7 @@ export async function GET() {
     return guard.response;
   }
 
-  return NextResponse.json(await loadMembershipTypes());
+  return connectionJson(request, await loadMembershipTypes(), MEMBERSHIP_TYPE_LIST_CONNECTION_SHAPE);
 }
 
 export async function POST(request: Request) {
