@@ -698,12 +698,12 @@ async function main() {
   await prisma.bookingEvent.create({ data: { bookingId: bCompleted.id, type: "MEMBER_PAID", actorMemberId: heidi.id, amountCents: bCompleted.finalPriceCents } });
 
   // 9. WAITLISTED — future window (shared with the WAITLIST_OFFERED booking)
-  const bWaitlisted = await makeBooking(ivan, "WAITLISTED", W.waitlist.checkIn, W.waitlist.checkOut, { waitlistPosition: 2 });
+  const bWaitlisted = await makeBooking(ivan, "WAITLISTED", W.waitlist.checkIn, W.waitlist.checkOut);
   await addGuest(bWaitlisted.id, { firstName: "Ivan", lastName: "Ivanov", ageTier: "ADULT", isMember: true, memberId: ivan.id }, W.waitlist.checkIn, W.waitlist.checkOut, NIGHTLY);
 
   // 10. WAITLIST_OFFERED — future stay whose offer has already LAPSED (offer
   //     timestamps stay in the recent past so the offer is expired on any run).
-  const bWaitlistOffered = await makeBooking(judy, "WAITLIST_OFFERED", W.waitlist.checkIn, W.waitlist.checkOut, { waitlistPosition: 1, waitlistOfferedAt: d(relDateOnly(-5)), waitlistOfferExpiresAt: d(relDateOnly(-2)) });
+  const bWaitlistOffered = await makeBooking(judy, "WAITLIST_OFFERED", W.waitlist.checkIn, W.waitlist.checkOut, { waitlistOfferedAt: d(relDateOnly(-5)), waitlistOfferExpiresAt: d(relDateOnly(-2)) });
   await addGuest(bWaitlistOffered.id, { firstName: "Judy", lastName: "Jones", ageTier: "ADULT", isMember: true, memberId: judy.id }, W.waitlist.checkIn, W.waitlist.checkOut, NIGHTLY);
 
   // 11. AWAITING_REVIEW (admin review required) — FUTURE. Read + approved by
@@ -1134,7 +1134,6 @@ async function main() {
       id: WAITLIST_OFFER_BOOKING_ID,
       memberId: wanda.id,
       status: "WAITLIST_OFFERED",
-      waitlistPosition: 1,
       waitlistOfferedAt: new Date(),
       waitlistOfferExpiresAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
       totalPriceCents: NIGHTLY * offerNights,

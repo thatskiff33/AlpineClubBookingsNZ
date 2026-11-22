@@ -2234,29 +2234,14 @@ describe("AID-6B booking/membership pack: null is not zero (#2376)", () => {
     ).toBe(-3);
   });
 
-  it("keeps `waitlistPosition` ABSENT rather than reporting position 0", () => {
-    // `Booking."waitlistPosition"` is `Int?` and the platform's positions are
-    // ONE-BASED: `booking-create.ts` assigns `count(...) + 1` and `waitlist.ts`
-    // renumbers each lodge's queue from 1, while force-confirm, return-to-
-    // waitlist, cancellation, the cross-lodge mover and the waitlist cron all
-    // write `null`. So 0 is a value this platform never stores — and `countOf`
-    // printed it on every ordinary booking in a search result. The damaging
-    // direction is the genuinely waitlisted booking whose position has not been
-    // recomputed: through `countOf` it read as position 0, the FRONT of the
-    // queue, on a booking that holds no place in it at all.
+  it("does not report a waitlist position at all (#5402)", () => {
+    // A booking's place in the waitlist queue is derived on read from the live
+    // queue (`waitlist-queue.ts`, `INV-CAP-041`) and nothing stores it. The
+    // stored `Booking."waitlistPosition"` column is null on every new entry and
+    // was wrong once anyone ahead left, so the search row no longer carries it;
+    // deriving it here in SQL would be a second copy of the queue order.
     const project = entry(DIAGNOSTICS_BOOKING_SEARCH_TOOL_ID).project;
-    expect(project({ waitlist_position: null }).waitlistPosition).toBeNull();
-    expect(
-      project({ waitlist_position: undefined }).waitlistPosition,
-    ).toBeNull();
-    expect(project({ waitlist_position: "" }).waitlistPosition).toBeNull();
-    expect(project({ waitlist_position: 1 }).waitlistPosition).toBe(1);
-    expect(project({ waitlist_position: 12 }).waitlistPosition).toBe(12);
-    // A negative or fractional position did not come from this platform, so it is
-    // refused rather than clamped into a plausible one.
-    expect(project({ waitlist_position: -2 }).waitlistPosition).toBeNull();
-    expect(project({ waitlist_position: 1.5 }).waitlistPosition).toBeNull();
-    expect(countOf(null), "countOf would have said position 0").toBe(0);
+    expect(project({ waitlist_position: 3 })).not.toHaveProperty("waitlistPosition");
   });
 
   it("can represent BOTH occupants of one double bed on one night", () => {

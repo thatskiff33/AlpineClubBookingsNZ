@@ -57,6 +57,7 @@ import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { lockPromoCodeRowsForUpdate, redeemPromoCode } from "@/lib/promo";
 import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
+import { getWaitlistPositionOf } from "@/lib/waitlist-queue";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
   sendAdminNewBookingAlert,
@@ -1983,22 +1984,11 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       });
     }
 
-    const waitlistPosition =
-      (await tx.booking.count({
-        where: {
-          status: BookingStatus.WAITLISTED,
-          lodgeId: waitlistLodgeId,
-          checkIn: { lt: createdBooking.checkOut },
-          checkOut: { gt: createdBooking.checkIn },
-          createdAt: { lt: createdBooking.createdAt },
-        },
-      })) + 1;
-
-    const updatedBooking = await tx.booking.update({
-      where: { id: createdBooking.id },
-      data: { waitlistPosition },
-      include: { guests: true },
-    });
+    // The place quoted in the confirmation email and the audit row, read from
+    // the live queue under this transaction's lodge key (#5402). Nothing
+    // stores it: every screen reads it again when it shows it
+    // (`INV-CAP-041`).
+    const position = await getWaitlistPositionOf(tx, createdBooking);
 
     // #2364. A waitlisted booking holds no capacity, but it is still a party
     // the club will have to admit if the offer is taken, so the hazard is
@@ -2006,12 +1996,12 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     // path re-reconciles, so a policy or membership change during the wait is
     // still picked up.
     await recordAdultMemberHostingReviewForNewBooking(
-      updatedBooking.id,
+      createdBooking.id,
       tx,
       adultMemberHostingDecision,
     );
 
-    return { newBooking: updatedBooking, position: waitlistPosition };
+    return { newBooking: createdBooking, position };
   });
 
   const member = await prisma.member.findUnique({ where: { id: effectiveMemberId } });
