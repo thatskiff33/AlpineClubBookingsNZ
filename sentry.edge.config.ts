@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { getAppVersion } from "@/lib/app-version";
 import {
   redactSensitiveJson,
   redactSensitiveQueryParams,
@@ -15,6 +16,7 @@ Sentry.init({
   ...SENTRY_PRIVACY_INIT_OPTIONS,
   dsn: process.env.SENTRY_DSN || "",
   environment: process.env.NODE_ENV || "development",
+  release: getAppVersion(),
   tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
 
   // Scrub sensitive data from Sentry payloads
