@@ -214,20 +214,21 @@ export function orderWaitlistOffers<T extends WaitlistQueueEntry>(
  * #5410 (`INV-CAP-042`): the walk for a pass that re-offers a lapsed place.
  * It starts just after the lapsed opportunity, runs to the end, wraps to the
  * front and reaches the lapsed opportunity last, so everyone else who fits is
- * considered first and a queue of one is still re-offered. Any other offer that
- * lapsed in the same run is moved to just before it: those members have just
- * had their turn too, so two lapsing together cannot pass the places between
- * them while the queue behind waits.
+ * considered first and a queue of one is still re-offered. Any opportunity of
+ * another booking whose offer lapsed in the same run, at any lodge, is moved to
+ * just before it: those members have just had their turn too, so two lapsing
+ * together cannot pass the places between them while the queue behind waits.
  *
- * An opportunity is matched by booking and offered lodge, so a cross-lodge
- * lapse moves only the opportunity at the offered lodge. Under
- * `OWN_LODGE_FIRST` each part (own-lodge, then cross-lodge) is rotated on its
- * own, but the lapsed opportunities go after BOTH parts: a member who just
- * lapsed is behind everyone who has not had the offer, opt-ins from other
- * lodges included (owner decision, 23 Nov 2026, #5410). Under `MERGED` the list
- * is one part. A key that matches nothing leaves the order as it is. Never
- * applied by the position reader: positions (`INV-CAP-041`) do not change when
- * an offer lapses.
+ * The lapsed opportunity itself is matched by booking and offered lodge, so a
+ * cross-lodge lapse moves only the opportunity at the offered lodge in its own
+ * pass. Under `OWN_LODGE_FIRST` each part (own-lodge, then cross-lodge) is
+ * rotated on its own, but the lapsed opportunities go after BOTH parts: a
+ * member who just lapsed is behind everyone who has not had the offer, opt-ins
+ * from other lodges included (owner decision, 23 Nov 2026, #5410). Under
+ * `MERGED` the list is one part. A key that matches nothing rotates nothing,
+ * but the run's other lapses still move to the end; with none, the order is
+ * unchanged. Never applied by the position reader: positions (`INV-CAP-041`) do
+ * not change when an offer lapses.
  */
 function rotateWaitlistOpportunitiesAfterLapse<T extends WaitlistQueueEntry>(
   ordered: readonly WaitlistOpportunity<T>[],
@@ -238,8 +239,12 @@ function rotateWaitlistOpportunitiesAfterLapse<T extends WaitlistQueueEntry>(
   const matches = (opportunity: WaitlistOpportunity<T>, key: WaitlistLapseKey) =>
     opportunity.candidate.id === key.id && opportunity.offerLodgeId === key.offeredLodgeId;
   const isPivot = (opportunity: WaitlistOpportunity<T>) => matches(opportunity, lapse.key);
+  // By booking alone (owner decision, 23 Nov 2026): a member whose offer lapsed
+  // in this run is last for every place the run re-offers, at any lodge. The
+  // pivot's own booking is left out, so its other opportunity stays in place.
   const isOtherLapse = (opportunity: WaitlistOpportunity<T>) =>
-    !isPivot(opportunity) && lapse.run.some((key) => matches(opportunity, key));
+    opportunity.candidate.id !== lapse.key.id &&
+    lapse.run.some((key) => key.id === opportunity.candidate.id);
   const parts =
     crossLodgeOrder === "MERGED"
       ? [ordered]

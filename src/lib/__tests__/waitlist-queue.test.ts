@@ -670,16 +670,42 @@ describe("the walk after a lapsed offer (#5410, INV-CAP-042)", () => {
       expect(walk([rows[0]!], null, lapseOf(run[1]!, run))).toEqual(["c1"]);
     });
 
-    it("moves another lapse only at the lodge it was offered", () => {
-      // c2's offer that lapsed was a cross-lodge one at lodge B, so its
-      // opportunity at its own lodge A is not moved.
+    it("moves another lapse's opportunity at any lodge, not only the lodge it was offered", () => {
+      // c2's offer that lapsed was a cross-lodge one at lodge B; its opportunity
+      // at its own lodge A still goes behind c3 in c1's pass (owner decision,
+      // 23 Nov 2026: last for every place the run re-offers).
       const rows = [
         row({ id: "c1", minute: 1 }),
         row({ id: "c2", minute: 2, alternates: ["lodge-b"] }),
         row({ id: "c3", minute: 3 }),
       ];
       const run = [keyOf(rows[0]!), keyOf(rows[1]!, "lodge-b")];
-      expect(walk(rows, null, lapseOf(run[0]!, run))).toEqual(["c2", "c3", "c1"]);
+      expect(walk(rows, null, lapseOf(run[0]!, run))).toEqual(["c3", "c2", "c1"]);
+    });
+
+    it("puts a member whose cross-lodge offer lapsed behind the queue in another lapse's pass at their own lodge", () => {
+      // b1 held an offer at B; x (at B, opted into A) held one at A; b2 waits
+      // at B. Both offers lapse in one run. In b1's pass at B, x's own-lodge
+      // opportunity goes behind b2.
+      const rows = [
+        row({ id: "b1", minute: 1, lodgeId: "lodge-b" }),
+        row({ id: "x", minute: 2, lodgeId: "lodge-b", alternates: ["lodge-a"] }),
+        row({ id: "b2", minute: 3, lodgeId: "lodge-b" }),
+      ];
+      const run = [keyOf(rows[0]!), keyOf(rows[1]!, "lodge-a")];
+      expect(walk(rows, "OWN_LODGE_FIRST", lapseOf(run[0]!, run), "lodge-b")).toEqual(["b2", "x", "b1"]);
+      // x's own pass at A: only its opportunity at A is the lapse, so its
+      // own-lodge opportunity at B stays where the plain walk puts it; b1, who
+      // also lapsed, goes behind the rest.
+      expect(walk(rows, "OWN_LODGE_FIRST", lapseOf(run[1]!, run), "lodge-a")).toEqual([
+        "x", "b2", "b1", "x:cross",
+      ]);
+    });
+
+    it("moves the run's other lapses even when this pass's own key matches nothing", () => {
+      const rows = four();
+      const gone = keyOf(row({ id: "gone", minute: 2 }));
+      expect(walk(rows, null, lapseOf(gone, [gone, keyOf(rows[1]!)]))).toEqual(["c1", "c3", "c4", "c2"]);
     });
   });
 
