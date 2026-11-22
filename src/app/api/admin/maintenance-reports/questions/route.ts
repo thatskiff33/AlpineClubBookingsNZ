@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import logger from "@/lib/logger";
 import {
   MAX_MAINTENANCE_QUESTION_CHOICE_LENGTH,
@@ -12,6 +13,7 @@ import {
 } from "@/lib/maintenance-reports";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 /**
  * The BOUNDED question-set editor (#2780, owner decision 2 — "a bounded editor,
@@ -102,12 +104,11 @@ export async function PUT(request: NextRequest) {
   });
   if (!admin.ok) return admin.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = putSchema.safeParse(body);
   if (!parsed.success) {
@@ -201,8 +202,7 @@ export async function PUT(request: NextRequest) {
         questionCount: parsed.data.questions.length,
         deactivated: [...existingIds].filter((id) => !keptIds.has(id)).length,
       }),
-      ipAddress:
-        request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown",
+      ipAddress: getClientIp(request),
       outcome: "success",
     });
 

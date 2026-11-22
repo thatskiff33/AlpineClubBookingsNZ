@@ -25,8 +25,8 @@ vi.mock("next-auth/react", () => ({
 
 import AdminDisplayLayoutsPage from "./page";
 
-// Fork issue #156: editing a built-in Layout (`everyday-board` etc.) in place is
-// overwritten on the next re-seed/upgrade (#111 refresh-from-code contract). The
+// Fork issue hoppers99/AlpineClubBookingsNZ#156: editing a built-in Layout (`everyday-board` etc.) in place is
+// overwritten on the next re-seed/upgrade (hoppers99/AlpineClubBookingsNZ#111 refresh-from-code contract). The
 // editor must (1) show a persistent notice with a one-click Duplicate action and
 // (2) require an explicit confirmation before saving an in-place built-in edit.
 

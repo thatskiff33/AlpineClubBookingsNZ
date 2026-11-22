@@ -54,6 +54,7 @@ import { ApiError as SharedApiError } from "@/lib/api-error";
 import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { refuseOrganiserBankChildPriceChangeInGroupCancel } from "@/lib/group-cancel-in-progress";
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import {
@@ -221,8 +222,7 @@ export async function POST(
   // transaction below, under the lodge's capacity lock.
   const { guests: newGuests } = parsed.data;
 
-  const ipAddress =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const ipAddress = getClientIp(request);
 
   // "+ Add Member Guest" (epic #2305, MG2 #2307). Read the module flag and the
   // policy singleton HERE, OUTSIDE the transaction below.

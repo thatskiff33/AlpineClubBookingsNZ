@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -18,9 +19,8 @@ import logger from "@/lib/logger";
 import { PUBLIC_LAYOUT_CACHE_TAGS } from "@/lib/public-layout-cache";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
 import {
-  // The upsert below keeps its own `select`: it is a WRITE, and the shared read
-  // helper cannot serve it — but its RETURNING must still name only the live
-  // columns (#175), so it spreads the canonical constant rather than a literal.
+  // The write below keeps its own `select`: the shared read helper cannot serve
+  // a write, but its RETURNING must name only live columns (#175).
   CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   MODULE_KEYS,
   readClubModuleSettingsRecord,
@@ -29,6 +29,9 @@ import {
 } from "@/config/modules";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { AI_DIAGNOSTICS_DISCLOSURE_VERSION } from "@/lib/ai-diagnostics-disclosure";
+import { judgeAiDiagnosticsEnable } from "@/lib/ai-diagnostics-enable-gate";
+import { isPrismaRecordNotFoundError } from "@/lib/prisma-errors";
 
 const moduleSettingsSchema = z
   .object(
@@ -42,6 +45,9 @@ const moduleSettingsSchema = z
 const updateSchema = z
   .object({
     settings: moduleSettingsSchema,
+    // The disclosure version the administrator ticked on the Modules page (#5243).
+    // Required only when this save switches AI Diagnostics on.
+    aiDiagnosticsDisclosureAcknowledgedVersion: z.number().int().optional(),
   })
   .strict();
 
@@ -78,14 +84,13 @@ export async function PUT(request: Request) {
   }
   const session = guard.session;
 
-  let body: unknown;
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) {
@@ -127,49 +132,99 @@ export async function PUT(request: Request) {
     }
   }
 
-  const write = prisma.clubModuleSettings.upsert({
-    where: { id: CLUB_MODULE_SETTINGS_ID },
-    create: {
-      id: CLUB_MODULE_SETTINGS_ID,
-      ...after,
-      updatedByMemberId: session.user.id,
-    },
-    update: {
-      ...after,
-      updatedByMemberId: session.user.id,
-    },
-    select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
-  });
+  // The disclosure gate (#5243). An existing row is written with `update` (not
+  // `updateMany`) only if it still holds the aiDiagnostics value judged here, so
+  // a lost race throws P2025 and the array transaction rolls back with its audit
+  // rows. With no row yet the upsert is unguarded: a racing first save can switch
+  // Diagnostics on only with its own acknowledgement.
+  const aiDiagnostics = judgeAiDiagnosticsEnable(
+    before,
+    after,
+    parsed.data.aiDiagnosticsDisclosureAcknowledgedVersion,
+  );
+  if (aiDiagnostics.refusal) {
+    return NextResponse.json({ error: aiDiagnostics.refusal }, { status: 409 });
+  }
 
-  const record =
-    changes.length > 0
-      ? (
-          await prisma.$transaction([
-            write,
-            prisma.auditLog.create(
-              buildStructuredAuditLogCreateArgs({
-                action: "CLUB_MODULE_SETTINGS_UPDATED",
-                actor: { memberId: session.user.id },
-                entity: {
-                  type: "ClubModuleSettings",
-                  id: CLUB_MODULE_SETTINGS_ID,
-                },
-                category: "admin",
-                severity: "important",
-                outcome: "success",
-                summary: "Club module settings updated",
-                metadata: {
-                  changedModuleKeys: changes.map((change) => change.key),
-                  changes,
-                  previousSettings: before,
-                  newSettings: after,
-                },
-                request: getAuditRequestContext(request),
-              }),
-            ),
-          ])
-        )[0]
-      : await write;
+  const data = { ...after, updatedByMemberId: session.user.id };
+  const write = existing
+    ? prisma.clubModuleSettings.update({
+        where: { id: CLUB_MODULE_SETTINGS_ID, aiDiagnostics: before.aiDiagnostics },
+        data,
+        select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
+      })
+    : prisma.clubModuleSettings.upsert({
+        where: { id: CLUB_MODULE_SETTINGS_ID },
+        create: { id: CLUB_MODULE_SETTINGS_ID, ...data },
+        update: data,
+        select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
+      });
+
+  let record;
+  try {
+    record =
+      changes.length > 0
+        ? (
+            await prisma.$transaction([
+              write,
+              prisma.auditLog.create(
+                buildStructuredAuditLogCreateArgs({
+                  action: "CLUB_MODULE_SETTINGS_UPDATED",
+                  actor: { memberId: session.user.id },
+                  entity: {
+                    type: "ClubModuleSettings",
+                    id: CLUB_MODULE_SETTINGS_ID,
+                  },
+                  category: "admin",
+                  severity: "important",
+                  outcome: "success",
+                  summary: "Club module settings updated",
+                  metadata: {
+                    changedModuleKeys: changes.map((change) => change.key),
+                    changes,
+                    previousSettings: before,
+                    newSettings: after,
+                  },
+                  request: getAuditRequestContext(request),
+                }),
+              ),
+              ...(aiDiagnostics.enables
+                ? [
+                    prisma.auditLog.create(
+                      buildStructuredAuditLogCreateArgs({
+                        action: "AI_DIAGNOSTICS_DISCLOSURE_ACKNOWLEDGED",
+                        actor: { memberId: session.user.id },
+                        entity: {
+                          type: "ClubModuleSettings",
+                          id: CLUB_MODULE_SETTINGS_ID,
+                        },
+                        category: "admin",
+                        severity: "important",
+                        outcome: "success",
+                        summary:
+                          "AI Diagnostics provider disclosure acknowledged when switching it on",
+                        metadata: {
+                          disclosureVersion: AI_DIAGNOSTICS_DISCLOSURE_VERSION,
+                          recipient: "anthropic",
+                        },
+                        request: getAuditRequestContext(request),
+                      }),
+                    ),
+                  ]
+                : []),
+            ])
+          )[0]
+        : await write;
+  } catch (error) {
+    if (!isPrismaRecordNotFoundError(error)) throw error;
+    return NextResponse.json(
+      {
+        error:
+          "Someone else changed the module settings while you were saving. Reload the page and try again.",
+      },
+      { status: 409 },
+    );
+  }
 
   // Full-route clear as well as the tag clear (#2352 F3): the module flags are
   // rendered INTO the public layout (the analytics banner, the nav), so under

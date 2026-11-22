@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { revalidatePublicSite } from "@/lib/public-content-revalidation";
 import fs from "fs/promises";
@@ -72,12 +73,11 @@ export async function POST(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const bodyResult = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!bodyResult.ok) return bodyResult.response;
+  const body = bodyResult.body;
 
   const name = readStringField(body, "name", { trim: true });
   const parent = readStringField(body, "parent");
@@ -157,12 +157,11 @@ export async function PATCH(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const parsedJson = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!parsedJson.ok) return parsedJson.response;
+  const body = parsedJson.body;
 
   const rel = readStringField(body, "path");
   const newName = readStringField(body, "newName", { trim: true });
@@ -216,12 +215,11 @@ export async function DELETE(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const rel = readStringField(body, "path");
 

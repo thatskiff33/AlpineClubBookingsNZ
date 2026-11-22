@@ -14,6 +14,8 @@ export interface XeroTaxRateOption {
   active: boolean;
   /** Whether Xero lets the rate sit on a revenue line. */
   revenue: boolean;
+  /** Whether Xero lets the rate sit on an expense line: the Sales tax on expenses category's test (#5209). */
+  expenses: boolean;
 }
 
 /** The rates a registered period may name at a rate: active, usable on revenue, and at that rate. */

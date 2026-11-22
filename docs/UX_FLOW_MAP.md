@@ -76,7 +76,7 @@ Journey: Choose lodge and nights, add guests, review the price and rules, then c
 
 Screen: `/bookings`, `/bookings/[id]`.
 
-Journey: Find a stay and open its detail. Review lodge, status, guests and amounts before paying, requesting a change or cancelling. Stay Details always names the lodge; list rows do once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). Pending consent appears on the booking for an eligible invited member. With Xero on, **Download invoice** beside Edit Booking gives the booker and officers Xero's PDF of the booking's invoice, and an **Invoice and credits** card under Payment lists each Xero credit note raised against the booking (each downloadable) with a summary from the app's own records and a plain-words line when the invoice in Xero does not show the latest change; a booking that may have more than one invoice asks the booker to contact the club for copies (an officer or admin on someone else's booking is told to check the club's accounts), and a guest on someone else's booking sees none of these.
+Journey: Find a stay and open its detail. Review lodge, status, guests and amounts before paying, requesting a change or cancelling. Stay Details always names the lodge; list rows do once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). Pending consent appears on the booking for an eligible invited member. **Download invoice** beside Edit Booking gives the booker and officers the invoice PDF ([Xero's or the app's](user-guide/paying-for-your-stay.md)), and an **Invoice and credits** card under Payment lists each Xero credit note raised against the booking with a summary from the app's own records and a plain-words line when the invoice in Xero does not show the latest change; a booking that may have more than one invoice asks the booker to contact the club for copies (an officer or admin on someone else's booking is told to check the club's accounts), and a guest on someone else's booking sees none of these.
 
 [Guide](user-guide/changing-or-cancelling-a-booking.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -118,6 +118,12 @@ Screen: `/profile`.
 Journey: Use the section rail to open personal details, sign-in security, notification preferences or privacy controls. Stage and save the relevant section. Privacy & Data downloads the member's own subject access file. Sign-in security lists saved passkeys and can add or remove one without changing the authenticator-app or email enrolment. A deletion request awaiting review, or an email change awaiting its link, stays shown in its section after a reload until it resolves.
 
 [Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Connect an AI app
+
+Screen: `/connect/authorize`; `/profile`.
+
+[Guide](guides/mcp-server.md)
 
 ### Family and household
 
@@ -165,7 +171,7 @@ Journey: When enabled, open Order food from the dashboard, choose the lodge (onl
 
 Screen: `/admin/ai-diagnostics`.
 
-Shows: Diagnostic access, provisioning and deployment information.
+Shows: Access, provisioning, deployment and "Where your data goes".
 
 Journey: Inspect diagnostic access and follow the deployment guide to provision it.
 
@@ -733,7 +739,7 @@ Journey: Open the linked calendar event and join or manage its video meeting.
 
 Screen: `/admin/xero`.
 
-Shows: Connection setup, the health snapshot (including credit used in Xero outside the app), the GST/tax treatment schedule, accounting operations and failure details.
+Shows: Connection setup, the health snapshot (including credit used in Xero outside the app), the GST/tax treatment schedule and tax category mapping, accounting operations and failure details.
 
 Journey: Inspect connection and operations status; open a failed item to follow its documented recovery.
 
@@ -842,6 +848,12 @@ Shows: Assistant configuration, usage and spending controls.
 Journey: Read usage and the spend cap before changing the assistant settings.
 
 [Guide](guides/ai-help.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### AI app connections — ai-connections
+
+Screen: `/admin/ai-connections`.
+
+[Guide](guides/mcp-server.md)
 
 ### Audit Log — audit-log
 

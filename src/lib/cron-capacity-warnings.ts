@@ -9,6 +9,7 @@ import { addDaysDateOnly, eachDateOnlyInRange } from "./date-only";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import logger from "@/lib/logger";
+import { bookingListLodgeLabel } from "@/lib/lodges";
 
 const WARN_THRESHOLD_BEDS = 5; // Alert when <= 5 beds remaining
 
@@ -44,7 +45,6 @@ export async function checkCapacityWarnings(): Promise<{ alertedDays: number }> 
     select: { id: true, name: true },
     orderBy: { createdAt: "asc" },
   });
-  const showLodgeName = activeLodges.length > 1;
 
   let alertedDays = 0;
 
@@ -110,7 +110,7 @@ export async function checkCapacityWarnings(): Promise<{ alertedDays: number }> 
       await sendAdminCapacityWarningAlert(
         highOccupancyDays,
         lodgeCapacity,
-        showLodgeName ? lodge.name : null,
+        bookingListLodgeLabel(activeLodges.length, { name: lodge.name, active: true }),
       );
       alertedDays += highOccupancyDays.length;
     } catch (err) {

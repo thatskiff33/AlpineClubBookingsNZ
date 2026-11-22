@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
+import { bashGateArgs } from "./helpers/bash-fixture-path";
 import { MIGRATION_GATE_TIMEOUT_MS } from "./helpers/migration-gate-timeouts";
 
 const MIGRATION_NAME = "20260806010000_fence_hosting_coverage_delivery_claims";
@@ -24,32 +25,45 @@ const LEDGER_PATH = path.resolve(
   LEDGER_RELATIVE_PATH,
 );
 
+/**
+ * One real run of the migration-safety gate. Built with the shared
+ * `bashGateArgs` helper, like every other suite that shells out to a gate, so
+ * it is a plain `bash -c` and never a login shell. This file used to write its
+ * own `bash -lc`. On the ubuntu-26.04 runner, under the libfaketime preload,
+ * that login shell did not return before the job's limit: the cancelled jobs'
+ * leftover processes were `bash` and `locale`, and why was not established.
+ * Because `spawnSync` blocks the worker, Vitest's own test timeout could not
+ * fire, and all three Clock rollover canary jobs sat on this file until their
+ * 30-minute limit (#5374, #5377).
+ *
+ * The `timeout` is the backstop for the same reason: a child that hangs must
+ * fail this test, not the whole job.
+ */
+const GATE_RUN_TIMEOUT_MS = Math.floor(MIGRATION_GATE_TIMEOUT_MS / 4);
+
 function validate(env: Record<string, string> = {}) {
-  const validatorEnv = {
-    MIGRATION_SAFETY_LEDGER: LEDGER_RELATIVE_PATH,
-    ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS: "0",
-    BLUE_GREEN_MIGRATION_OVERRIDE_REASON: "",
-    BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED: "0",
-    ...env,
-  };
-  const assignments = Object.entries(validatorEnv)
-    .map(
-      ([key, value]) =>
-        `${key}='${value.replace(/'/g, `'"'"'`)}'`,
-    )
-    .join(" ");
-  return spawnSync(
+  const result = spawnSync(
     "bash",
-    [
-      "-lc",
-      `${assignments} ./scripts/validate-blue-green-migrations.sh ${MIGRATION_RELATIVE_PATH}`,
-    ],
+    bashGateArgs("scripts/validate-blue-green-migrations.sh", [MIGRATION_RELATIVE_PATH], {
+      MIGRATION_SAFETY_LEDGER: LEDGER_RELATIVE_PATH,
+      ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS: "0",
+      BLUE_GREEN_MIGRATION_OVERRIDE_REASON: "",
+      BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED: "0",
+      ...env,
+    }),
     {
       cwd: process.cwd(),
       env: process.env,
       encoding: "utf8",
+      timeout: GATE_RUN_TIMEOUT_MS,
     },
   );
+  // A run killed by the timeout, or by a signal, has a null status, which
+  // `not.toBe(0)` would read as the refusal two of the three cases expect.
+  // Say what happened instead.
+  expect(result.error, `the gate did not finish: ${result.error?.message}`).toBeUndefined();
+  expect(result.signal, `the gate was killed by ${result.signal}`).toBeNull();
+  return result;
 }
 
 describe("hosting delivery fencing migration (#2596)", () => {

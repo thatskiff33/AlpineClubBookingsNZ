@@ -96,7 +96,7 @@ const SLUG_REGEX = /^[a-z0-9][a-z0-9-]{0,63}$/;
 // exactly what the renderer splits on.
 const AREA_PLACEHOLDER_REGEX = /\{\{area:([^{}]*?)\}\}/g;
 
-// Marker attributes (LTV-041, issue #96). After sanitisation, the server swaps
+// Marker attributes (LTV-041, issue hoppers99/AlpineClubBookingsNZ#96). After sanitisation, the server swaps
 // each `{{area:key}}` / `{{module:name}}` token for an inert `<div>` carrying one
 // of these attributes; the client locates the divs and portals its Area/module
 // component into them. Declared here (client-safe) so both the server assembler
@@ -157,7 +157,7 @@ const MODULE_EMBED_STRICT_REGEX = /\{\{module:([a-z0-9][a-z0-9-]{0,63})\}\}/g;
 // as literal text.
 const MODULE_EMBED_DETECT_REGEX = /\{\{\s*module\s*:[^{}]*\}\}/gi;
 
-// NOTE (LTV-041, issue #96): there is no `{{module:…}}` splitter here any more.
+// NOTE (LTV-041, issue hoppers99/AlpineClubBookingsNZ#96): there is no `{{module:…}}` splitter here any more.
 // Both area and module tokens are swapped for inert marker elements server-side
 // (layout-render.ts) after sanitisation, and the client portals its Area/module
 // components into those markers — so a token nested inside an authored container

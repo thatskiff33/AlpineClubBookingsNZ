@@ -120,9 +120,9 @@ export function waitlistOfferExpiredTemplate(
     ${infoTable([
       { label: "Check-in", value: emailCalendarDay(checkIn) },
       { label: "Check-out", value: emailCalendarDay(checkOut) },
-      { label: "New Position", value: "#" + String(position) },
+      { label: "Your Position", value: "#" + String(position) },
     ])}
-    ${paragraph("You've been returned to the waitlist. We'll notify you again if another spot opens up.")}
+    ${paragraph("A place that is not taken up is offered to the next person on the waitlist, so this one may go to someone behind you. You keep your place in the queue, and we'll email you again if a place opens up for you.")}
     ${button("View Booking", BASE_URL + "/bookings")}
   `);
 }
@@ -151,7 +151,7 @@ export function waitlistPlaceRestoredTemplate(
     ${infoTable([
       { label: "Check-in", value: emailCalendarDay(checkIn) },
       { label: "Check-out", value: emailCalendarDay(checkOut) },
-      { label: "New Position", value: "#" + String(position) },
+      { label: "Your Position", value: "#" + String(position) },
     ])}
     ${paragraph("You do not need to do anything. We will email you again as soon as a spot opens up for these nights.")}
     ${button("View Booking", BASE_URL + "/bookings")}

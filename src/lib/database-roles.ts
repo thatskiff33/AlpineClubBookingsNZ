@@ -93,7 +93,7 @@ export const MIGRATION_HISTORY_RELATION = "_prisma_migrations";
  * The migration that creates the newest append-only relations. A database whose
  * history lacks it runs an older release, and provisioning asks for this release's migrations first.
  */
-export const APPEND_ONLY_SCHEMA_MIGRATION = "20270102010100_member_money_export_coverage_release";
+export const APPEND_ONLY_SCHEMA_MIGRATION = "20270104100100_member_money_export_coverage_release";
 
 /**
  * The audit relation the retention role maintains. It may UPDATE only

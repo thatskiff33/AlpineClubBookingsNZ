@@ -88,6 +88,7 @@ import {
   buildStructuredAuditLogCreateArgs,
   type StructuredAuditEvent,
 } from "@/lib/audit";
+import { saveImportMembershipTypeAssignment } from "@/lib/import-membership-type-assignment";
 import {
   getAuthenticatedXeroClient,
   XeroDailyLimitError,
@@ -110,6 +111,7 @@ import {
 } from "@/lib/xero-contact-home";
 import { buildXeroContactUrl } from "./xero-links";
 import { isXeroSandboxContactEmail } from "@/lib/xero-sandbox-contact-email";
+import { pickMemberAddressValues, pickMemberPhoneValues } from "@/lib/member-address";
 import { upsertXeroObjectLink } from "./xero-sync";
 import {
   DEFAULT_XERO_SYNC_SCOPE,
@@ -819,21 +821,8 @@ export async function importMembersFromXeroGroups(
               ageTier: dependentAgeTier,
               dateOfBirth: depDob,
               xeroContactId: contact.contactId,
-              phoneCountryCode: contact.phoneCountryCode,
-              phoneAreaCode: contact.phoneAreaCode,
-              phoneNumber: contact.phoneNumber,
-              streetAddressLine1: contact.streetAddressLine1,
-              streetAddressLine2: contact.streetAddressLine2,
-              streetCity: contact.streetCity,
-              streetRegion: contact.streetRegion,
-              streetPostalCode: contact.streetPostalCode,
-              streetCountry: contact.streetCountry,
-              postalAddressLine1: contact.postalAddressLine1,
-              postalAddressLine2: contact.postalAddressLine2,
-              postalCity: contact.postalCity,
-              postalRegion: contact.postalRegion,
-              postalPostalCode: contact.postalPostalCode,
-              postalCountry: contact.postalCountry,
+              ...pickMemberPhoneValues(contact),
+              ...pickMemberAddressValues(contact),
               active: true,
               emailVerified: true,
               canLogin: false,
@@ -967,21 +956,8 @@ export async function importMembersFromXeroGroups(
             ageTier: importedAgeTier,
             dateOfBirth,
             xeroContactId: contact.contactId,
-            phoneCountryCode: contact.phoneCountryCode,
-            phoneAreaCode: contact.phoneAreaCode,
-            phoneNumber: contact.phoneNumber,
-            streetAddressLine1: contact.streetAddressLine1,
-            streetAddressLine2: contact.streetAddressLine2,
-            streetCity: contact.streetCity,
-            streetRegion: contact.streetRegion,
-            streetPostalCode: contact.streetPostalCode,
-            streetCountry: contact.streetCountry,
-            postalAddressLine1: contact.postalAddressLine1,
-            postalAddressLine2: contact.postalAddressLine2,
-            postalCity: contact.postalCity,
-            postalRegion: contact.postalRegion,
-            postalPostalCode: contact.postalPostalCode,
-            postalCountry: contact.postalCountry,
+            ...pickMemberPhoneValues(contact),
+            ...pickMemberAddressValues(contact),
             active: true,
             emailVerified: true,
           },
@@ -1098,11 +1074,6 @@ export async function importMembersFromXeroGroups(
       ]),
     );
 
-    // Lazily loaded to keep the seasonal module (and its Xero/email graph) out
-    // of the tier-only import path and off the module import cycle.
-    const { getSeasonalMembershipChangePreview, saveSeasonalMembershipAssignment } =
-      await import("@/lib/seasonal-membership-assignments");
-
     for (const [memberId, context] of matchedTypeCandidates) {
       const membershipTypeId = context.membershipTypeId;
       if (!membershipTypeId) continue;
@@ -1126,49 +1097,21 @@ export async function importMembersFromXeroGroups(
       }
 
       try {
-        const previewResult = await getSeasonalMembershipChangePreview({
-          memberId,
-          seasonYear,
-          membershipTypeId,
-          now: clubTodayDateOnly,
-          clubCurrentSeasonYear: seasonYear,
-        });
-        if (previewResult.init?.status && previewResult.init.status >= 400) {
-          errors++;
-          errorDetails.push({
-            member: context.name,
-            error:
-              (previewResult.body as { error?: string } | undefined)?.error ??
-              "Failed to preview membership type assignment",
-          });
-          continue;
-        }
-        const previewToken = (
-          previewResult.body as { preview: { previewToken: string } }
-        ).preview.previewToken;
-
         // Per-member Xero contact-group sync is suppressed here (#2107's flag);
         // ONE batched reconcile of all affected members runs after this loop,
         // before the summary audit, replacing the per-member fan-out.
-        const saveResult = await saveSeasonalMembershipAssignment({
+        const saved = await saveImportMembershipTypeAssignment({
           memberId,
-          seasonYear,
           membershipTypeId,
+          seasonYear,
+          clubTodayDateOnly,
           adminMemberId,
           reason: `Xero import: group ${context.group}`,
-          previewToken,
-          source: "IMPORT",
-          skipXeroContactGroupSync: true,
           request: options.request,
         });
-        if (saveResult.init?.status && saveResult.init.status >= 400) {
+        if (!saved.ok) {
           errors++;
-          errorDetails.push({
-            member: context.name,
-            error:
-              (saveResult.body as { error?: string } | undefined)?.error ??
-              "Failed to save membership type assignment",
-          });
+          errorDetails.push({ member: context.name, error: saved.error });
           continue;
         }
         assignmentsCreated++;

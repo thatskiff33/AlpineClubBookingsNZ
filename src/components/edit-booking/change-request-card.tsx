@@ -132,7 +132,7 @@ export function ChangeRequestCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Admin Request</CardTitle>
+        <CardTitle headingLevel={2}>Admin Request</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {inProgress ? (

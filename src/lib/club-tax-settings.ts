@@ -76,6 +76,17 @@ export const CLUB_TAX_SETTINGS_DEFAULTS: Readonly<ClubTaxPeriod> = Object.freeze
 export const DEFAULT_CLUB_TAX_SCHEDULE: ClubTaxSchedule = Object.freeze([CLUB_TAX_SETTINGS_DEFAULTS]);
 
 /**
+ * Whether a period of a loaded schedule is one the club recorded (a stored
+ * row), not the code baseline an absent `"default"` row stands for. The reader
+ * places that baseline by identity, so this is the one test of it. Tax
+ * rendering never asks: the baseline renders as it always did. The app's own
+ * generated booking invoice does (#5066, owner decision of 20 Nov 2026).
+ */
+export function clubTaxPeriodIsRecorded(period: ClubTaxPeriod): boolean {
+  return period !== CLUB_TAX_SETTINGS_DEFAULTS;
+}
+
+/**
  * What a posting or a Xero document needs to know: whether to split tax out of
  * a gross amount, at what rate, the journal's frozen leg code, and Xero's code.
  */

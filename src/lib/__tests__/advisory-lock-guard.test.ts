@@ -277,7 +277,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "PUT /api/admin/refund-requests/[id]#2",
     tier: "GLOBAL",
     reason:
-      "#3827 (INV-PAY-118): releasing an approval whose Stripe refund AND recovery enqueue both failed puts the request back to PENDING and deletes the OPEN bank-transfer task the approval raised, in one transaction under the key every reader of the open-task sum and every approval holds, so no approval can size its cap between the two writes. Takes the global key alone; no provider call.",
+      "#3827 (INV-PAY-118): releasing an approval whose Stripe refund AND recovery enqueue both failed puts the request back to PENDING and deletes the OPEN bank-transfer task the approval raised, in one transaction under the key every reader of the open-task sum and every approval holds, so no approval can size its cap between the two writes. #5191: then the booking row (lockBookingRowForOwnerRead), before the request's claim, as the approval orders them (#4516 review F1), so the withdrawn refund debts read the owner their merged-debtor residue moves to under it. No other advisory key; no provider call.",
     invariant: "INV-LOCK-001",
   },
 
@@ -505,7 +505,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "correctWorkParty#1",
     tier: "GLOBAL",
     reason:
-      "Fork #119: an officer adds an existing booking to a work party (fork #130: or removes it from one; both directions are this one writer, `addBookingToWorkParty` and `removeBookingFromWorkParty` its two entry points) — the canonical batch modification on the same transaction, which moves settlement money (account credit, a refund, or an amount owed) and must exclude a concurrent cancel, capture or refund of the same booking, composed with a capacity re-check on a booking that does not yet hold its beds. Global first, then the booking's immutable lodge key, then (#4845) the booking row before the officer's re-authorisation; the tx-aware service re-enters all three and takes the member keys after. No claim row: two concurrent applies serialise here and the second re-reads a booking that already carries (or no longer carries) the work party and is refused.",
+      "Fork triyder/AlpineClubBookingsNZ#119: an officer adds an existing booking to a work party (fork triyder/AlpineClubBookingsNZ#130: or removes it from one; both directions are this one writer, `addBookingToWorkParty` and `removeBookingFromWorkParty` its two entry points) — the canonical batch modification on the same transaction, which moves settlement money (account credit, a refund, or an amount owed) and must exclude a concurrent cancel, capture or refund of the same booking, composed with a capacity re-check on a booking that does not yet hold its beds. Global first, then the booking's immutable lodge key, then (#4845) the booking row before the officer's re-authorisation; the tx-aware service re-enters all three and takes the member keys after. No claim row: two concurrent applies serialise here and the second re-reads a booking that already carries (or no longer carries) the work party and is refused.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -938,7 +938,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "expireStaleOffers#1",
     tier: "GLOBAL",
     reason:
-      "Expiry releases offered beds and re-offers them to the next candidates, so it takes the global tier before the affected lodge keys and a concurrent confirm cannot be expired mid-claim.",
+      "Expiry reverts stale offers to WAITLISTED and reconciles their bed allocations, so it takes the global tier before each offer's own lodge key and a concurrent confirm cannot be expired mid-claim. The re-offers run after commit, each in its own processWaitlistForDates transaction (#5410).",
     invariant: "INV-LOCK-002",
   },
 
@@ -1167,7 +1167,7 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   "src/lib/member-lifecycle-actions.ts": 2,
   // #2593: one canonical helper mints member-lifecycle:{memberId}; it
   // de-duplicates and sorts ids before acquisition. Deletion, bulk update,
-  // member-detail and seasonal-assignment writers all call this helper instead
+  // member-detail, seasonal-assignment and MCP approval writers call this helper instead
   // of reconstructing the scoped key at their individual call sites.
   "src/lib/member-lifecycle-lock.ts": 1,
   // #2363: every minimum-stay policy writer takes the one global policy-set
@@ -1557,7 +1557,7 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // advisory lock; disjoint from booking/money writers. See
   // docs/CONCURRENCY_AND_LOCKING.md → "Member photo writer".
   "src/app/api/members/[id]/photo/route.ts": 2,
-  // Central lodge link writer (#62, #4262 review): `saveCentralLodgeLinks`,
+  // Central lodge link writer (triyder/AlpineClubBookingsNZ#62, #4262 review): `saveCentralLodgeLinks`,
   // shared by the lodge's Central lodge card PUT and the setup page's link
   // step, takes the settings row (`lockServerNzSettings`, counted under
   // servernz-settings.ts) and re-checks the owned list under it, then locks
@@ -1576,7 +1576,7 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // touching credentials (settings -> credential -> audit). No advisory key;
   // disjoint from booking/money writers. See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Alpine Central Server connection and version recorder".
-  // Other lodges download writes (triyder/AlpineClubBookingsNZ#64, #69; #4262
+  // Other lodges download writes (triyder/AlpineClubBookingsNZ#64, triyder/AlpineClubBookingsNZ#69; #4262
   // review): the same one statement, reached through the same fence
   // (`withCurrentServerNzConnection` / `serverNzAnswerWriter`), takes the
   // settings row before EVERY write the download makes from an answer (hides
@@ -1752,6 +1752,10 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // of its invoice (`writeCurrentCreditNoteAllocation`, no lock(1), lodge or
   // member key), before its allocation row, so the Internet Banking settle
   // (lock(1) -> lodge -> member -> this row) and the write serialise here.
+  // #4279: and by a refund-note repair's completion that adopts its note as the
+  // payment's pointer (`completeAdoptingCanonicalRefundNote`, a retry claim's own
+  // transaction, no lock(1)), FIRST, before the operation row's guarded claim,
+  // the pointer and the links - the create's record order. No new key.
   "src/lib/payment-transactions.ts": 1,
   // #4161 / #4192: the nightly link cleanup's refund-note heal takes two
   // lock-only statements: the one `XeroObjectLink` row it is about to re-write
@@ -2030,6 +2034,35 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
     ).toEqual(ROW_LOCK_SITE_INVENTORY);
   });
 
+  // #4279 (INV-LOCK-002, INV-LOCK-003): a completion that adopts a refund note
+  // as the payment's pointer takes the Payment row before the operation row's
+  // claim, adopts only after the claim wins, and writes its links after that.
+  // Only that completion shape takes the row; every other keeps its transaction.
+  it("keeps a refund-note repair's adopting completion on Payment row -> guarded claim -> pointer -> links", () => {
+    const text = (rel: string) => stripComments(sources.find((source) => source.rel === rel)?.text ?? "");
+    const inOrder = (body: string, markers: string[]) => {
+      const at = markers.map((marker) => body.indexOf(marker));
+      markers.forEach((marker, i) => expect(at[i], `${marker} is missing`).toBeGreaterThanOrEqual(0));
+      for (let i = 1; i < at.length; i += 1) {
+        expect(at[i], `${markers[i]} must follow ${markers[i - 1]}`).toBeGreaterThan(at[i - 1]);
+      }
+    };
+    const adoptionModule = text("src/lib/xero-refund-note-adoption.ts");
+    const adopting = adoptionModule.slice(adoptionModule.indexOf("export async function completeAdoptingCanonicalRefundNote<"));
+    inOrder(adopting, ["options?.store || !options?.retryClaim", "db.$transaction(", "lockPaymentForRefundedTotal(tx, adoption.paymentId)", "complete(tx)", "}, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS);"]);
+    expect(adopting).not.toMatch(/pg_advisory|acquireLodgeCapacityLock|lockMemberCreditLedger/);
+    const sync = text("src/lib/xero-sync.ts");
+    const complete = sync.slice(sync.indexOf("export async function completeXeroSyncOperation("));
+    inOrder(complete, [
+      "tx.xeroSyncOperation.updateMany({ where: { id: operationId, ...guard }, data })",
+      "if (claimed.count === 0)",
+      "adoptCanonicalRefundNote(completion.canonicalRefundNote, tx)",
+      "for (const link of completion.extraLinks ?? []) {",
+      "completeAdoptingCanonicalRefundNote(prisma, completion.canonicalRefundNote, options, completeWithClient)",
+      ": await prisma.$transaction(completeWithClient)",
+    ]);
+  });
+
   // #4449 (INV-LOCK-002, INV-LOCK-003): the credit-note allocation write is a
   // refunded-total writer with no advisory key. It must take the Payment row
   // before the allocation row (#4200's "Payment first"), re-read the payment
@@ -2111,7 +2144,8 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
     const approvalEnd =
       school?.indexOf("export type MemberWholeLodgeApprovalOverride") ?? -1;
     const approval = school?.slice(approvalStart, approvalEnd) ?? "";
-    const locator = approval.indexOf("const heldLodgeLocator = expectedHeldBookingId");
+    // #5398: the pre-transaction held-lodge read is the shared helper's call.
+    const locator = approval.indexOf("const heldApproval = await findHeldApprovalLodge(request)");
     const transaction = approval.indexOf("conversion = await prisma.$transaction");
     const globalLock = approval.indexOf("pg_advisory_xact_lock(1)");
     const heldKey = approval.indexOf("expectedHeldLodgeId!", globalLock);
@@ -2153,6 +2187,39 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
     expect(approval).toContain("lodgeId: conversion.lodgeId");
   });
 
+  // #5398: both approvals' held-lodge read lives once, in booking-request-approval-shared.ts.
+  // It reads only the lock key, on the root client: the census above places its
+  // call before each `$transaction`, so it never runs under either lock.
+  it("keeps the shared held-lodge read a single root-client lodge lookup", () => {
+    const shared = sources.find(
+      ({ rel }) => rel === "src/lib/booking-request-approval-shared.ts",
+    )?.text ?? "";
+    const start = shared.indexOf("export async function findHeldApprovalLodge(");
+    expect(start).toBeGreaterThanOrEqual(0);
+    const body = shared.slice(start, shared.indexOf("\n}\n", start));
+    expect(body).toContain("await prisma.booking.findUnique({");
+    expect(body).toContain("select: { lodgeId: true },");
+    expect(body).not.toMatch(/\btx\b|\$transaction|pg_advisory/);
+
+    // Closed world: the only callers are the two approvals whose order the
+    // tests beside this one check. A third caller, perhaps inside a locked
+    // transaction, fails here until its placement is reviewed.
+    const callers = sources.flatMap(({ rel, text }) => {
+      const code = stripComments(text);
+      return [...code.matchAll(/\bfindHeldApprovalLodge\(/g)]
+        .filter((match) => !code.slice(Math.max(0, (match.index ?? 0) - 30), match.index).includes("function "))
+        .map((match) => {
+          const before = code.slice(0, match.index);
+          const owner = [...before.matchAll(/export async function (\w+)/g)].at(-1)?.[1];
+          return `${rel}::${owner}`;
+        });
+    });
+    expect(callers.sort()).toEqual([
+      "src/lib/booking-request.ts::approveBookingRequest",
+      "src/lib/school-booking-request.ts::approveSchoolBookingRequest",
+    ]);
+  });
+
   it("binds generic held conversion to the immutable held-booking lodge", () => {
     const generic = sources.find(
       ({ rel }) => rel === "src/lib/booking-request.ts",
@@ -2163,7 +2230,8 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
       generic?.slice(
         generic.indexOf("export async function approveBookingRequest"),
       ) ?? "";
-    const locator = approval.indexOf("const heldLodgeLocator = expectedHeldBookingId");
+    // #5398: the pre-transaction held-lodge read is the shared helper's call.
+    const locator = approval.indexOf("const heldApproval = await findHeldApprovalLodge(request)");
     const transaction = approval.indexOf("conversion = await prisma.$transaction");
     const globalLock = approval.indexOf("pg_advisory_xact_lock(1)", transaction);
     const heldKey = approval.indexOf("expectedHeldLodgeId!", globalLock);

@@ -317,7 +317,7 @@ describe("getLodgeVisibleGuestsForDate: the lobby wall's two named models", () =
     // #2622 and #2628 both REFUSED this, and were right to at the time: the
     // wall's sole-occupancy night count was derived from this list, so one extra
     // morning became a phantom night and could drop a blockout and publish guest
-    // names on an unauthenticated screen (INV-DATE-006, issue #58). #2735
+    // names on an unauthenticated screen (INV-DATE-006, issue hoppers99/AlpineClubBookingsNZ#58). #2735
     // decoupled that count FIRST — see `lodge-display-state.test.ts`, which
     // fails if a departure morning is ever counted as a night — and only then
     // widened this. If the count is ever coupled back, this has to narrow again.

@@ -154,7 +154,7 @@ export const explicitPublicApiRoutes = {
   "src/app/api/display/state/route.ts": {
     boundary: "public",
     reason:
-      "Display-token-authenticated lobby display data feed (#28): sessionless hashed-token credential resolves to one device's lodge; the payload is privacy-reduced in the serialiser (names at configured granularity, minors never individually named, no money/contact/member ids). A full-admin session may alternatively preview via ?previewDevice / ?preview[&templateId&previewLodge] / ?preview (#52, LTV-036) — GET-only, same reduced payload, never stamps lastSeenAt, and may pass ?previewDate=YYYY-MM-DD to simulate the window's start date (#60, preview-only; device fetches ignore it). Additionally a ?previewGrant=<token> — an HMAC-signed, 5-minute, single-purpose blob minted by the admin-only preview-grant endpoint (LTV-036, ADR-003 §5) — authorises exactly one template/lodge preview so an authoring page can embed it inside a sandboxed (opaque-origin) iframe without the admin session; the grant is not a display token, stamps no lastSeenAt, authorises no other route, and its cross-origin (opaque) response carries a permissive CORS header (no credentials sent). Rate limited; module-flag gated at the proxy.",
+      "Display-token-authenticated lobby display data feed (hoppers99/AlpineClubBookingsNZ#28): sessionless hashed-token credential resolves to one device's lodge; the payload is privacy-reduced in the serialiser (names at configured granularity, minors never individually named, no money/contact/member ids). A full-admin session may alternatively preview via ?previewDevice / ?preview[&templateId&previewLodge] / ?preview (#52, LTV-036) — GET-only, same reduced payload, never stamps lastSeenAt, and may pass ?previewDate=YYYY-MM-DD to simulate the window's start date (#60, preview-only; device fetches ignore it). Additionally a ?previewGrant=<token> — an HMAC-signed, 5-minute, single-purpose blob minted by the admin-only preview-grant endpoint (LTV-036, ADR-003 §5) — authorises exactly one template/lodge preview so an authoring page can embed it inside a sandboxed (opaque-origin) iframe without the admin session; the grant is not a display token, stamps no lastSeenAt, authorises no other route, and its cross-origin (opaque) response carries a permissive CORS header (no credentials sent). Rate limited; module-flag gated at the proxy.",
   },
   "src/app/api/display/pair/route.ts": {
     boundary: "public",
@@ -198,6 +198,26 @@ export const explicitPublicApiRoutes = {
     boundary: "public",
     reason:
       "Serves Image Manager uploads from the shared images volume at runtime.",
+  },
+  "src/app/api/mcp/route.ts": {
+    boundary: "public",
+    reason:
+      "AI app endpoint (ALP-653). No cookie session: the caller presents an access token issued by a member's approval, checked against a connection that is still ACTIVE and still allowed on every request. Each tool call then runs the target route's own guards over a loopback request (INV-MCP-005); nothing here reads member data itself.",
+  },
+  "src/app/api/mcp/oauth/register/route.ts": {
+    boundary: "public",
+    reason:
+      "AI app self-registration (ALP-653, RFC 7591). Anonymous by necessity: an app registers before any member signs in. Grants nothing; redirect addresses are limited to the club's approved-app list or loopback; rate limited.",
+  },
+  "src/app/api/mcp/oauth/revoke/route.ts": {
+    boundary: "public",
+    reason:
+      "AI app token revocation (ALP-653, RFC 7009). The presented 256-bit token is the credential; the answer is the same for a known and an unknown token; rate limited.",
+  },
+  "src/app/api/mcp/oauth/token/route.ts": {
+    boundary: "public",
+    reason:
+      "AI app token exchange and renewal (ALP-653). The PKCE verifier or the single-use refresh token is the credential, checked against a connection that is still ACTIVE and still allowed; rate limited.",
   },
   "src/app/api/lodge-maintenance/[token]/route.ts": {
     boundary: "public",
@@ -262,7 +282,7 @@ export const explicitPublicApiRoutes = {
   "src/app/api/webhooks/servernz-availability/route.ts": {
     boundary: "webhook",
     reason:
-      "Alpine Central Server signed availability question (#62): verifyServerNzSignature (HMAC with the registration-issued push secret, constant-time compare, 5-minute window) over `availability` + the parsed lodge id and dates. Read-only; answers free-bed counts only, per night (up to 30) and their minimum (#79), for one owned, linked, active lodge and stay, and an identical 404 for every other lodge.",
+      "Alpine Central Server signed availability question (triyder/AlpineClubBookingsNZ#62): verifyServerNzSignature (HMAC with the registration-issued push secret, constant-time compare, 5-minute window) over `availability` + the parsed lodge id and dates. Read-only; answers free-bed counts only, per night (up to 30) and their minimum (#79), for one owned, linked, active lodge and stay, and an identical 404 for every other lodge.",
   },
   "src/app/api/webhooks/servernz-posts/route.ts": {
     boundary: "webhook",

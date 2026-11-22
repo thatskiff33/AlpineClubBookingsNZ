@@ -38,6 +38,7 @@ description, so you can find the right file without opening more than one.
 | [`product-configuration.md`](invariants/product-configuration.md) | `INV-CONFIG` | adding a value or feature a club could answer differently, a new setting existing deployments will not have, or a default an upgrade must fall back to |
 | [`single-source-of-truth.md`](invariants/single-source-of-truth.md) | `INV-SSOT` | adding a constant, helper, formatter, type, validation rule or config value a second place will need; comparing two values; putting a default on a parameter that resolves an environment or configuration authority; or writing a guard, census or ratchet that claims to cross-check another one |
 | [`authentication.md`](invariants/authentication.md) | `INV-AUTH` | password sign-in, the per-account password throttle, what a refused or throttled sign-in answers, the breach-list check on a chosen password, the maximum session age |
+| [`mcp-connections.md`](invariants/mcp-connections.md) | `INV-MCP` | AI app (MCP) connections: who may connect, the OAuth flow, the connection lifecycle, the action catalogue and its route census, the loopback dispatcher, their audit rows |
 
 Three supporting files sit beside them: the full id scheme in
 [`SCHEME.md`](invariants/SCHEME.md); the word-budget register of approved
@@ -198,6 +199,8 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-CAP-037` | At most one live payment link per booking; never both settle |
 | `INV-CAP-038` | A whole-lodge hold excludes custodian-held bed-nights; the reverse asks, then amends atomically |
 | `INV-CAP-040` | An import claims beds under the lodge lock, never overbooks |
+| `INV-CAP-041` | A waitlist position is read from the live queue, never stored |
+| `INV-CAP-042` | A lapsed offer's place goes on down the queue |
 | `INV-CAP-011` | Waitlisted and offered bookings hold no capacity until confirmed |
 | `INV-CAP-012` | A waitlist offer reprices at current rates and states what is payable |
 | `INV-CAP-013` | A member is present on only one live booking per lodge night |
@@ -380,6 +383,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-159` | Cash cover is read from cash records by one reader |
 | `INV-PAY-160` | An edit refunds a card only where Stripe holds a record |
 | `INV-PAY-161` | An imported paid booking is settled manually in its creating transaction |
+| `INV-PAY-162` | An opening-credit file posts once, from one approval; reversal needs it unspent |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -654,7 +658,7 @@ Prefix `INV-LOCKOUT`.
 | `INV-LOCKOUT-057` | Every withhold writes a `SKIPPED_NO_EMAILS` `EmailLog` row with no retained body |
 | `INV-LOCKOUT-058` | The retry cron re-reads the switch and booking authority before every replay |
 | `INV-LOCKOUT-059` | Waitlist candidacy excludes a silenced booking; two residual cases surfaced, not denied |
-| `INV-LOCKOUT-060` | A silenced waitlist entry keeps its place and quoted position |
+| `INV-LOCKOUT-060` | A silenced waitlist entry shows no position and is not counted |
 | `INV-LOCKOUT-061` | Xero-sent invoice emails are gated too, superseding the #1705 always-send carve-out |
 | `INV-LOCKOUT-062` | Enabling the switch requires an acknowledgement; both set and clear are audited |
 | `INV-LOCKOUT-063` | The acknowledgement is a two-button dialog, never a checkbox; `bookings:edit` |
@@ -972,6 +976,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-038` | An abandoned inbound reconcile row is taken over, never shared |
 | `INV-INT-039` | A dead webhook attempt is taken over past the lease |
 | `INV-INT-040` | No subscription or joining-fee invoice work while Xero is off |
+| `INV-INT-041` | A PENDING outbox row always holds a request the outbox can claim |
 
 ## Operations
 
@@ -1010,7 +1015,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-017` | Third-party deployment and workflow container images require digest pins |
 | `INV-OPS-018` | First Bootstrap provisions restricted roles and a separate data key |
 | `INV-OPS-019` | Production deploys only a published annotated release tag, or a recorded override |
-| `INV-OPS-021` | Every main push run completes; releases tag only published commits |
+| `INV-OPS-021` | Newer merges replace main's queued runs; releases tag published commits |
 | `INV-OPS-022` | The documented Docker first install, seed included, is what CI runs |
 
 ## Product Configuration
@@ -1032,6 +1037,7 @@ headings the index keeps verbatim.
 | `INV-CONFIG-005` | Every application-managed Xero contact write consumes the canonical role; copies contained |
 | `INV-CONFIG-006` | One persisted currency and locale; the environment seeds them once |
 | `INV-CONFIG-007` | One GST schedule, dated periods; Xero and the journal resolve it |
+| `INV-CONFIG-008` | Tax categories map to the club's own Xero rates; none hard-coded |
 
 ## Single Source Of Truth
 
@@ -1081,4 +1087,24 @@ headings the index keeps verbatim.
 | `INV-AUTH-010` | Listed admin routes require a fresh proof first |
 | `INV-AUTH-011` | Address sign-in limits exempt signout/session; refusals show a network wait |
 | `INV-AUTH-012` | Officers use an app or passkey after grace |
-| `INV-AUTH-013` | Password work leaves the event loop; placeholders use one unusable hash |
+| `INV-AUTH-013` | Password work off the event loop; unusable placeholders; proof-time upgrade; refusal top-up |
+
+## AI App Connections
+
+How a member connects an AI app to their own account over the Model Context
+Protocol: who may hold a connection, how the app obtains and keeps it, how it
+ends, and how each action reaches the site as that member.
+File: [`invariants/mcp-connections.md`](invariants/mcp-connections.md).
+Prefix `INV-MCP`. Added by ALP-653; it is not one of the ten pre-split domain
+headings the index keeps verbatim.
+
+| ID | Covers |
+| --- | --- |
+| `INV-MCP-001` | The `mcpServer` module is the only switch; off answers 404 |
+| `INV-MCP-002` | Club policy decides who connects, checked at approval and every use |
+| `INV-MCP-003` | PKCE S256, approved redirect hosts, single-use codes, rotating hashed tokens |
+| `INV-MCP-004` | ACTIVE ends once as REVOKED or EXPIRED by a guarded claim |
+| `INV-MCP-005` | A connection signs in through `auth()` as the member, never freshly |
+| `INV-MCP-006` | Every API route method is an action or has a stated exclusion |
+| `INV-MCP-007` | Actions reach routes over loopback; scope enforced before dispatch |
+| `INV-MCP-008` | Which connection events and action calls write an audit row |

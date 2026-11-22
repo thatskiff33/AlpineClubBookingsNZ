@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { formatCents } from "@/lib/utils";
 
 /**
- * The food-order totals panel (fork #121).
+ * The food-order totals panel (fork triyder/AlpineClubBookingsNZ#121).
  *
  * The headline is the whole filter: the order count, the total of recorded
  * prices, and how many are priced when not all are. Below it, the same figures

@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * `GET|PUT /api/admin/lodges/[id]/central-lodge` (#62).
+ * `GET|PUT /api/admin/lodges/[id]/central-lodge` (triyder/AlpineClubBookingsNZ#62).
  *
  * Pinned: the permission on each verb; only an OWNED central lodge can be
  * linked; one central lodge links to one local lodge (the unique index, as a
@@ -16,7 +16,7 @@ const { mockPrisma, mockRequireAdmin, mockCreateAuditLog, mockSettings, mockSecr
   mockPrisma: (() => {
     const client = {
       lodge: { findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn() },
-      // The owned lodges' local copies, for the options' labels (#69).
+      // The owned lodges' local copies, for the options' labels (triyder/AlpineClubBookingsNZ#69).
       otherLodge: { findMany: vi.fn() },
       // The PUT's row lock (`SELECT 1 FROM "Lodge" ... FOR UPDATE`).
       $executeRaw: vi.fn(),
@@ -84,7 +84,7 @@ beforeEach(() => {
 });
 
 describe("GET /api/admin/lodges/[id]/central-lodge", () => {
-  it("labels two owned lodges of the same name with their locations (#69)", async () => {
+  it("labels two owned lodges of the same name with their locations (triyder/AlpineClubBookingsNZ#69)", async () => {
     const twin = { id: "ol_c", name: A.name };
     mockSettings.mockResolvedValue({ otherLodgesEnabled: true, otherLodgesOwnedLodges: [A, twin, B] });
     mockPrisma.otherLodge.findMany.mockResolvedValue([

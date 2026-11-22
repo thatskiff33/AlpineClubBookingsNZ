@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { auth } from "@/lib/auth";
 import { normalizeInternalAppUrl } from "@/lib/app-url";
 import { MEMBER_PRIVILEGE_CHECK_SELECT } from "@/lib/access-role-definitions";
@@ -7,6 +8,7 @@ import { deriveIssueReportScreenshotOrigin } from "@/lib/issue-report-screenshot
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import { sendAdminIssueReportAlert } from "@/lib/email";
 import { getIssueReportSensitiveDataExpiresAt } from "@/lib/issue-report-retention";
 import logger from "@/lib/logger";
@@ -133,12 +135,11 @@ export async function POST(request: NextRequest) {
     return inactiveResponse;
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = issueReportSchema.safeParse(body);
   if (!parsed.success) {
@@ -244,8 +245,7 @@ export async function POST(request: NextRequest) {
         pageTitle,
         hasScreenshot: Boolean(screenshot),
       }),
-      ipAddress:
-        request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown",
+      ipAddress: getClientIp(request),
     });
 
     sendAdminIssueReportAlert({

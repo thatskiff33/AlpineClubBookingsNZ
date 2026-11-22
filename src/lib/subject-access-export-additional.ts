@@ -19,8 +19,9 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     MemberLifecycleActionRequest, PromoRedemption, PromoRedemptionAllocation, PromoCodeAssignment,
     HostingCoverageReevaluation, FinanceSyncRun, AiAssistantUsageEvent, NoticeAudience, NoticeReadReceipt,
     BookingModification, NewBookingPolicyExceptionRequest, MemberLodgeAccess, FamilyGroupJoinRequest,
-    DeletionRequest, AdminCreditAdjustmentRequest, CommitteeAssignment, OrganisationContact,
+    DeletionRequest, AdminCreditAdjustmentRequest, OpeningCreditBatch, CommitteeAssignment, OrganisationContact,
     SchoolMemberClassification, MemberMoneyObligation, MemberInductionAssignedSigner, MemberInductionSignOff,
+    McpGrant,
     FoodOrder, FoodOrderItem, XeroCashCredit,
   ] = await Promise.all([
     prisma.membershipSubscriptionChargeCoverage.findMany({ where: own, select: { chargeId: true, releasedAt: true, createdAt: true } }),
@@ -53,6 +54,15 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     }),
     prisma.deletionRequest.findMany({ where: own, select: { status: true, reason: true, reviewedAt: true, createdAt: true } }),
     prisma.adminCreditAdjustmentRequest.findMany({ where: own, select: { amountCents: true, reviewedAt: true, createdAt: true } }),
+    // The officer's own acts on an opening-credit batch (#4988). The batch total
+    // is other members' money and the reversal reason is officer text, so both
+    // stay out, as officer notes do above.
+    prisma.openingCreditBatch.findMany({
+      where: { OR: [{ postedById: memberId }, { reversedById: memberId }] },
+      select: { postedById: true, postedAt: true, reversedById: true, reversedAt: true },
+    }).then((rows) => rows.map(({ postedById, reversedById, ...row }) => ({
+      ...row, postedByYou: postedById === memberId, reversedByYou: reversedById === memberId,
+    }))),
     prisma.committeeAssignment.findMany({
       where: own,
       select: { blurb: true, published: true, showPhone: true, isActive: true, createdAt: true, committeeRole: { select: { name: true } } },
@@ -66,6 +76,10 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     prisma.memberInductionSignOff.findMany({
       where: { signerMemberId: memberId },
       select: { signerName: true, signerRole: true, signedAt: true, declarationAccepted: true },
+    }),
+    prisma.mcpGrant.findMany({
+      where: own,
+      select: { scope: true, status: true, createdAt: true, lastUsedAt: true, endedAt: true, client: { select: { name: true } } },
     }),
     // The member's own food orders. Who received or priced one is an officer's
     // snapshot id and is left out, like a maintenance report's resolver.
@@ -97,8 +111,9 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     MemberLifecycleActionRequest, PromoRedemption, PromoRedemptionAllocation, PromoCodeAssignment,
     HostingCoverageReevaluation, FinanceSyncRun, AiAssistantUsageEvent, NoticeAudience, NoticeReadReceipt,
     BookingModification, NewBookingPolicyExceptionRequest, MemberLodgeAccess, FamilyGroupJoinRequest,
-    DeletionRequest, AdminCreditAdjustmentRequest, CommitteeAssignment, OrganisationContact,
+    DeletionRequest, AdminCreditAdjustmentRequest, OpeningCreditBatch, CommitteeAssignment, OrganisationContact,
     SchoolMemberClassification, MemberMoneyObligation, MemberInductionAssignedSigner, MemberInductionSignOff,
+    McpGrant,
     FoodOrder, FoodOrderItem, XeroCashCredit,
   } satisfies Record<AdditionalRecordModel, unknown>;
 }

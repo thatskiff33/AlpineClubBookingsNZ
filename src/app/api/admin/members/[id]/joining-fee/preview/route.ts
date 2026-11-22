@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { AgeTier } from "@prisma/client";
+import { invalidJsonBodyResponse } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import {
@@ -53,7 +54,7 @@ export async function POST(
     const text = await request.text();
     if (text.trim().length > 0) body = JSON.parse(text);
   } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    return invalidJsonBodyResponse({ error: "Invalid JSON" });
   }
 
   const parsedBody = previewSchema.safeParse(body);

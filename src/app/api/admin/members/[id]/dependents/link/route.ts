@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import { isFullAdmin, memberHoldsPrivilegedRole } from "@/lib/access-roles";
 import {
@@ -107,12 +108,9 @@ export async function POST(
   const session = guard.session;
   const { id: parentId } = await params;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = linkDependentSchema.safeParse(body);
   if (!parsed.success) {

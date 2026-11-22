@@ -142,12 +142,6 @@ export function officerPanelParts(cause: AdditionalAskCause): { lead: string; tr
   return { lead: "A change to this booking increased the total by ", trail: ", and that amount has not been collected." };
 }
 
-/** The officer panel sentence as plain text; `amount` is already formatted. */
-export function officerPanelSentence(cause: AdditionalAskCause, amount: string): string {
-  const { lead, trail } = officerPanelParts(cause);
-  return `${lead}${amount}${trail}`;
-}
-
 /**
  * The member's payment card when its form could not load, in the two pieces either side of the
  * amount (the card puts the figure between them in bold).
@@ -157,12 +151,6 @@ export function memberCardFallbackParts(cause: AdditionalAskCause): { lead: stri
   if (cause === "credit-release") return { lead: "Account credit applied to your booking was used elsewhere in the club's accounts, so ", trail };
   if (cause === "mixed") return { lead: "A recent booking change, and account credit applied to your booking that was used elsewhere in the club's accounts, mean ", trail };
   return { lead: "A recent booking modification means ", trail };
-}
-
-/** The member card fallback as plain text; `amount` is already formatted. */
-export function memberCardFallbackSentence(cause: AdditionalAskCause, amount: string): string {
-  const { lead, trail } = memberCardFallbackParts(cause);
-  return `${lead}${amount}${trail}`;
 }
 
 /**

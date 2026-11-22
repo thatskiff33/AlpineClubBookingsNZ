@@ -14,9 +14,9 @@ import { SinglesBoard } from "./singles-board";
 import { StatusBoard } from "./status-board";
 import { WelcomePanel } from "./welcome-panel";
 
-// Module name -> renderer map for the lobby display (fork issue #30). Every
+// Module name -> renderer map for the lobby display (fork issue hoppers99/AlpineClubBookingsNZ#30). Every
 // component is a pure function of the privacy-reduced DisplayState payload —
-// none of them query anything (issue #30 AC7). Names come from the closed
+// none of them query anything (issue hoppers99/AlpineClubBookingsNZ#30 AC7). Names come from the closed
 // registry in template-registry.ts; entries land as their issues deliver
 // (LTV-006: chores/rules/text; LTV-007: header/footer; LTV-011: notice), and
 // the display page renders a neutral placeholder for names without a
