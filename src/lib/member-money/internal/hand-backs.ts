@@ -5,7 +5,7 @@ import { memberMoneyApplicationTotals } from "./application-state";
 import { keptCaptureIdentity } from "./booking-charges";
 import { eventPosted, readBookingLiveChargeCents, readBookingTaxAnchorDate } from "./booking-journal-read";
 import { CAPTURE_KINDS } from "../../booking-ledger-capture-kinds";
-import { bookingReceiptEventKey, bookingReceiptRow, chargeObligation, lineDebtor, ownedBy } from "./booking-receipts";
+import { bookingReceiptEventKey, bookingReceiptRow, chargeObligation, lineDebtor, moveMergedDebtorResidue, ownedBy } from "./booking-receipts";
 import { isBookingJournalInactive, type BookingJournalContext } from "./journal-activity";
 import { memberMoneyApplicationKeys, memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
 import { MemberMoneyPlanError, type MemberMoneyApplicationPlan } from "./plan";
@@ -95,8 +95,13 @@ export async function restoreHandBackObligation(tx: Db, context: BookingJournalC
   const rest = await memberMoneyChainTip(tx, memberMoneyEventKeys.handBackRestWithdrawn(input.taskId));
   const withdrawal = await tx.memberMoneyEvent.findUnique({ where: { eventKey: rest }, select: { journal: { select: { id: true } } } });
   if (!withdrawal?.journal) return null;
+  const reversal = memberMoneyEventKeys.reversal(withdrawal.journal.id);
   await reverseMemberMoneyJournal(tx, context, { reversesJournalId: withdrawal.journal.id, origin: input.origin, actorMemberId: input.actorMemberId,
-    source: { kind: "BOOKING", id: input.bookingId, version: memberMoneyEventKeys.reversal(withdrawal.journal.id) }, reason: input.reason });
+    source: { kind: "BOOKING", id: input.bookingId, version: reversal }, reason: input.reason });
+  // The mirror lands on the debtor the withdrawal named; one merged away since is carried to the owner, read under
+  // the booking row the reopen holds, as a reversed refund debt's is (D4, #5191).
+  const { lodgeId } = await tx.booking.findUniqueOrThrow({ where: { id: input.bookingId }, select: { lodgeId: true } });
+  await moveMergedDebtorResidue(tx, context, { bookingId: input.bookingId, lodgeId }, await refundDebtor(tx, input.bookingId, "booking-row"), reversal);
   return "rest-restored";
 }
 
