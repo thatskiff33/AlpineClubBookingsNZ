@@ -3345,8 +3345,19 @@ flip in between leaves a live offer with a withheld send. An entry in
 `suppressed_live_offer` with `needsOperatorAction: true` (a held bed the member
 was never told about); one whose offer has already lapsed reports the benign
 `suppressed`. A silenced entry still in `WAITLISTED` has no EmailLog row at all
-and is marked on the board from the flag; it keeps its queue place and still
-counts toward other members' positions.
+and is marked on the board from the flag. It shows no position and is not
+counted in anyone else's while silenced; it keeps its `createdAt`, so clearing
+the switch puts it back in its original place (`INV-LOCKOUT-060`).
+
+A waitlist position is never stored on a transition (#5402, `INV-CAP-041`). It
+is read from the live queue whenever it is shown, so every transition out of
+`WAITLISTED` (cancel, offer, force-confirm, the past-date cron) moves the entries
+behind it up without writing anything to them. An offered entry is already out
+of the count, so its accept (same-lodge, or the cross-lodge
+`WAITLIST_OFFERED -> CANCELLED` replacement) changes no one's number, and a
+revert to `WAITLISTED` (an expired offer, a capacity-lost or failed confirm,
+return-to-waitlist) puts the entry back at its original join time. Exits still
+write `waitlistPosition: null` until that column is dropped.
 
 ## Bed Allocation Lifecycle
 

@@ -125,9 +125,14 @@ Two behaviours were pinned down during implementation:
   other lodges' queues. This is consistent with the per-lodge queue model
   above and does not conflict with the club-wide *queue-order enum* under
   Configuration (that setting governs cross-lodge ordering policy, not how
-  a single lodge's positions are numbered). Applies to the offer-time
-  count, the initial `createWaitlistedBooking` count,
-  `getWaitlistPosition`, `updateWaitlistPositions`, and `getWaitlistForDates`.
+  a single lodge's positions are numbered). Amended by #5402: positions are
+  no longer counted at each site or stored; one reader in
+  `src/lib/waitlist-queue.ts` places an entry in its own lodge's queue by the
+  same order the offer pass walks, so under `MERGED` an older opt-in from
+  another lodge that named this lodge now counts ahead (as it is offered
+  ahead), and a silenced entry is not counted. The three uncalled helpers this
+  note once listed (`getWaitlistPosition`, `updateWaitlistPositions`,
+  `getWaitlistForDates`) were deleted (`INV-CAP-041`).
 - **Confirm rejects a duplicate stay at the offered lodge.** If Phase 3
   (cancel the waitlist entry) failed on an earlier confirm, the entry is
   stranded in `WAITLIST_OFFERED` with a booking already created at the

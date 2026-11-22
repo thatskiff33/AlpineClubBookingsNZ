@@ -343,103 +343,6 @@ beforeEach(() => {
 
 // ─── Core Logic Tests ───
 
-describe("getWaitlistPosition", () => {
-  it("returns correct FIFO position", async () => {
-    const { getWaitlistPosition } = await import("@/lib/waitlist");
-
-    mockBookingFindUnique.mockResolvedValue({
-      checkIn: new Date("2026-07-01"),
-      checkOut: new Date("2026-07-03"),
-      createdAt: new Date("2026-04-08T12:00:00Z"),
-      status: "WAITLISTED",
-    });
-    mockBookingCount.mockResolvedValue(2); // 2 ahead
-
-    const position = await getWaitlistPosition("booking1");
-    expect(position).toBe(3); // 2 ahead + 1
-  });
-
-  it("returns 0 for non-waitlisted booking", async () => {
-    const { getWaitlistPosition } = await import("@/lib/waitlist");
-
-    mockBookingFindUnique.mockResolvedValue({
-      checkIn: new Date("2026-07-01"),
-      checkOut: new Date("2026-07-03"),
-      createdAt: new Date(),
-      status: "CONFIRMED",
-    });
-
-    const position = await getWaitlistPosition("booking1");
-    expect(position).toBe(0);
-  });
-
-  it("returns 0 for non-existent booking", async () => {
-    const { getWaitlistPosition } = await import("@/lib/waitlist");
-
-    mockBookingFindUnique.mockResolvedValue(null);
-
-    const position = await getWaitlistPosition("nonexistent");
-    expect(position).toBe(0);
-  });
-
-  it("counts only the entry's own lodge (M6): first in line at lodge B, not behind older lodge A entries", async () => {
-    const { getWaitlistPosition } = await import("@/lib/waitlist");
-
-    // The entry waits at lodge B. Older overlapping WAITLISTED entries exist at
-    // lodge A; club-wide counting would put this entry at position 4, but the
-    // per-lodge queue makes it position 1.
-    mockBookingFindUnique.mockResolvedValue({
-      checkIn: new Date("2026-07-01"),
-      checkOut: new Date("2026-07-03"),
-      createdAt: new Date("2026-04-08T12:00:00Z"),
-      status: "WAITLISTED",
-      lodgeId: "lodge-b",
-    });
-    // The three ahead-of-you entries all sit at lodge A; only lodge-B entries
-    // are counted.
-    const aheadByLodge: Record<string, number> = { "lodge-a": 3, "lodge-b": 0 };
-    mockBookingCount.mockImplementation(async (args: { where: { lodgeId?: string } }) =>
-      args.where.lodgeId ? aheadByLodge[args.where.lodgeId] ?? 0 : 3
-    );
-
-    const position = await getWaitlistPosition("booking1");
-
-    expect(position).toBe(1);
-    expect(mockBookingCount).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ status: "WAITLISTED", lodgeId: "lodge-b" }),
-      })
-    );
-  });
-});
-
-describe("getWaitlistForDates", () => {
-  it("returns waitlisted bookings ordered by createdAt ASC", async () => {
-    const { getWaitlistForDates } = await import("@/lib/waitlist");
-
-    const mockEntries = [
-      { id: "b1", createdAt: new Date("2026-04-01") },
-      { id: "b2", createdAt: new Date("2026-04-02") },
-    ];
-    mockBookingFindMany.mockResolvedValue(mockEntries);
-
-    const result = await getWaitlistForDates(
-      new Date("2026-07-01"),
-      new Date("2026-07-05"),
-      "lodge-b"
-    );
-
-    expect(result).toEqual(mockEntries);
-    // Per-lodge queue (M6): the query is scoped to the supplied lodge.
-    expect(mockBookingFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ status: "WAITLISTED", lodgeId: "lodge-b" }),
-        orderBy: { createdAt: "asc" },
-      })
-    );
-  });
-});
-
 describe("processWaitlistForDates", () => {
   it("offers to top candidate when capacity available", async () => {
     const { processWaitlistForDates } = await import("@/lib/waitlist");
@@ -1699,6 +1602,69 @@ describe("expireStaleOffers", () => {
     );
   });
 
+  it("quotes the expired offer's place counting the entries already waiting ahead, not only other lapsed offers (#5402)", async () => {
+    const { expireStaleOffers } = await import("@/lib/waitlist");
+    const { sendWaitlistOfferExpiredEmail } = await import("@/lib/email");
+    const { logAudit } = await import("@/lib/audit");
+
+    const nights = { checkIn: new Date("2026-07-01"), checkOut: new Date("2026-07-03") };
+    const offer = {
+      id: "offer-1",
+      lodgeId: "lodge-1",
+      waitlistOfferedLodgeId: null,
+      ...nights,
+      createdAt: new Date("2026-04-03"),
+      member: { email: "test@test.com", firstName: "John" },
+    };
+    const waiting = (id: string, createdAt: string, lodgeId = "lodge-1") => ({
+      id,
+      lodgeId,
+      ...nights,
+      createdAt: new Date(createdAt),
+      waitlistAlternateLodges: [],
+    });
+    mockTxBookingFindMany
+      .mockResolvedValueOnce([offer]) // the lapsed offers
+      // The queue read after the revert: two entries joined earlier at the same
+      // lodge, one at another lodge, and the reverted offer itself.
+      .mockResolvedValueOnce([
+        waiting("w-1", "2026-04-01"),
+        waiting("w-other-lodge", "2026-04-01T06:00:00Z", "lodge-2"),
+        waiting("w-2", "2026-04-02"),
+        waiting("offer-1", "2026-04-03"),
+      ])
+      .mockResolvedValue([]);
+
+    await expireStaleOffers(CLUB_FORMAT_TEST);
+
+    // The pre-#5402 count saw only the other lapsed offers and quoted #1.
+    expect(sendWaitlistOfferExpiredEmail).toHaveBeenCalledWith(
+      { bookingId: "offer-1", recipientMemberId: undefined },
+      "test@test.com",
+      "John",
+      nights.checkIn,
+      nights.checkOut,
+      3,
+      "lodge-1",
+    );
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "waitlist.offer_expired",
+        metadata: expect.objectContaining({ newPosition: 3 }),
+      }),
+    );
+    // Read in the same transaction as the revert, after it.
+    const queueRead = mockTxBookingFindMany.mock.calls[1]![0] as {
+      where: { status: string; noEmails: boolean };
+    };
+    expect(queueRead.where).toEqual(
+      expect.objectContaining({ status: "WAITLISTED", noEmails: false }),
+    );
+    expect(mockTx.booking.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      mockTxBookingFindMany.mock.invocationCallOrder[1]!,
+    );
+  });
+
   it("skips the revert when a concurrent confirm moved the offer out of WAITLIST_OFFERED under the lock (#1881)", async () => {
     const { expireStaleOffers } = await import("@/lib/waitlist");
 
@@ -1831,7 +1797,9 @@ describe("expireStaleOffers", () => {
 
     mockTxBookingFindMany
       .mockResolvedValueOnce([offerA, offerB]) // the offers query
+      .mockResolvedValueOnce([]) // #5402: the expiry emails' queue read
       .mockResolvedValueOnce([nextInLine("cand-a", "lodge-a", "2026-06-01")]) // pass 1: lodge A
+      .mockResolvedValueOnce([]) // #5402: pass 1's offer-time queue read
       .mockResolvedValueOnce([nextInLine("cand-b", "lodge-b", "2026-06-02")]) // pass 2: lodge B
       .mockResolvedValue([]);
     mockTx.lodge.findMany.mockResolvedValue([{ id: "lodge-a" }, { id: "lodge-b" }]);
@@ -2162,37 +2130,5 @@ describe("booking creation waitlist response", () => {
     expect((err as unknown as { code: string }).code).toBe("CAPACITY_EXCEEDED");
     expect((err as unknown as { canWaitlist: boolean }).canWaitlist).toBe(true);
     expect((err as unknown as { fullNights: string[] }).fullNights).toHaveLength(2);
-  });
-});
-
-describe("updateWaitlistPositions", () => {
-  it("recalculates positions correctly", async () => {
-    const { updateWaitlistPositions } = await import("@/lib/waitlist");
-
-    mockBookingFindMany.mockResolvedValue([
-      { id: "b1" },
-      { id: "b2" },
-      { id: "b3" },
-    ]);
-    mockBookingUpdate.mockResolvedValue({});
-
-    await updateWaitlistPositions(
-      new Date("2026-07-01"),
-      new Date("2026-07-05")
-    );
-
-    expect(mockBookingUpdate).toHaveBeenCalledTimes(3);
-    expect(mockBookingUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: "b1" },
-        data: { waitlistPosition: 1 },
-      })
-    );
-    expect(mockBookingUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: "b3" },
-        data: { waitlistPosition: 3 },
-      })
-    );
   });
 });

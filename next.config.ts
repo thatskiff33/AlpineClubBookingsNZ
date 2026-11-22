@@ -67,8 +67,9 @@ const nextConfig: NextConfig = {
   // there and every release reported "0.1.0". Read it only through
   // `getAppVersion()`.
   // Next defines every `env` key for the client compiler too, so a value reaches
-  // a client bundle wherever client code reads it. The version is public. The
-  // nonce seed must not be: keep its readers out of client code.
+  // a client bundle wherever client code reads it. The version is public:
+  // browser Sentry reads it for its release tag (#5262). The nonce seed must
+  // not be: keep its readers out of client code.
   env: {
     [PUBLIC_WEBSITE_NONCE_SEED_ENV_VAR]: resolvePublicWebsiteNonceSeed(),
     [APP_VERSION_ENV_VAR]: version,

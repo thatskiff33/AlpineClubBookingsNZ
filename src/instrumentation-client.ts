@@ -1,5 +1,6 @@
 import { initializeBrowserSentry } from "@/lib/observability/browser-sentry-client";
 import * as Sentry from "@sentry/nextjs";
+import { getAppVersion } from "@/lib/app-version";
 import {
   redactSensitiveJson,
   redactSensitiveQueryParams,
@@ -11,6 +12,9 @@ import {
   SENTRY_PRIVACY_INIT_OPTIONS,
 } from "@/lib/sentry-privacy-options";
 
+/** Sentry's name for its per-page-load session tracking (@sentry/browser). */
+const BROWSER_SESSION_INTEGRATION = "BrowserSession";
+
 void initializeBrowserSentry(dsn => {
   Sentry.init({
     // Sentry 11's dataCollection defaults collect IPs, cookies and bodies; keep v10's.
@@ -18,6 +22,8 @@ void initializeBrowserSentry(dsn => {
     dsn,
 
     environment: process.env.NODE_ENV || "development",
+    // Stamped at build time like the server's (#5262); public, never a secret.
+    release: getAppVersion(),
 
     // Performance tracing
     tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
@@ -27,7 +33,15 @@ void initializeBrowserSentry(dsn => {
     replaysSessionSampleRate: 0,
     replaysOnErrorSampleRate: 0,
 
-    integrations: [
+    // Tagging only (#5262): with a release set, the default BrowserSession
+    // integration would send a session ping on every page load, so it is
+    // dropped. Our breadcrumbs integration replaces the default one by name.
+    integrations: defaults => [
+      ...defaults.filter(
+        integration =>
+          integration.name !== BROWSER_SESSION_INTEGRATION &&
+          integration.name !== "Breadcrumbs"
+      ),
       // Console breadcrumbs come from Sentry's default consoleIntegration since
       // v11, which removed this option (MIGRATION.md, @sentry/browser).
       Sentry.breadcrumbsIntegration({
