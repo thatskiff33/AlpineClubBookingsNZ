@@ -12,6 +12,9 @@ import {
   parsedDateOnlySchema,
 } from "@/lib/date-only-schema";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #4931: a date-only request field is validated by ONE schema. Only the
  * predicate used to be shared, so the zod wrapper around it was copied into 27
@@ -93,7 +96,7 @@ const sites = (pattern: RegExp) =>
     return Array.from(code.matchAll(pattern), () => file);
   });
 
-describe("census: no file declares its own date-only refine (#4931)", () => {
+describe("census: no file declares its own date-only refine (#4931)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   /**
    * The files allowed to refine with `isDateOnlyString` themselves, each with
    * its reason. Shrinks only; a new entry needs a reason a reviewer accepts.
@@ -126,7 +129,7 @@ describe("census: no file declares its own date-only refine (#4931)", () => {
   });
 });
 
-describe("census: no date field checks the YYYY-MM-DD shape only (ALP-574)", () => {
+describe("census: no date field checks the YYYY-MM-DD shape only (ALP-574)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   /**
    * The files allowed a bare `z.string().regex(/^\d{4}-\d{2}-\d{2}$/)`, each
    * with its reason. The shape alone lets through a day that does not exist,

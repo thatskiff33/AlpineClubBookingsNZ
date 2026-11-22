@@ -29,6 +29,9 @@ import {
   UNPAID_INVOICE_CLEARING_WORDING,
 } from "@/lib/xero-refund-method";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 describe("the owner's three wordings (INV-PAY-101)", () => {
   it("are exactly these, and there are exactly three", () => {
     expect(REFUND_METHODS).toEqual(["card", "internet-banking", "account-credit"]);
@@ -238,7 +241,13 @@ function walk(dir: string, out: string[] = []): string[] {
 describe("nobody else spells the wording (INV-SSOT)", () => {
   it("finds each wording in exactly one module under src/lib", () => {
     const root = join(process.cwd(), "src", "lib");
-    const files = walk(root);
+    // #3536: comments stripped structurally first, so a sentence QUOTING a
+    // wording in a docblock is neither a false copy nor hides a real one. Read
+    // and stripped once, not once per wording (#5439).
+    const files = walk(root).map((file) => ({
+      rel: relative(root, file),
+      text: stripComments(readFileSync(file, "utf8")),
+    }));
     // The three refund methods, and the unpaid-invoice clearing note's (#3535).
     for (const wording of [
       ...Object.values(REFUND_METHOD_WORDING),
@@ -252,14 +261,10 @@ describe("nobody else spells the wording (INV-SSOT)", () => {
       // Any quoting counts: no lint rule pins double quotes, so a copy in
       // single quotes or a template literal is still a copy.
       const spelled = new RegExp(`['"\`]${wording}['"\`]`);
-      // #3536: comments stripped structurally first, so a sentence QUOTING a
-      // wording in a docblock is neither a false copy nor hides a real one.
-      const homes = files
-        .filter((file) => spelled.test(stripComments(readFileSync(file, "utf8"))))
-        .map((file) => relative(root, file));
+      const homes = files.filter((file) => spelled.test(file.text)).map((file) => file.rel);
       expect(homes, `"${wording}" is spelled outside its home`).toEqual([
         "xero-refund-method.ts",
       ]);
     }
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

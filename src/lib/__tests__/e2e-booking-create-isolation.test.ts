@@ -22,6 +22,9 @@ import {
   rateLimiters,
 } from "../rate-limit";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const E2E_ROOT = path.join(process.cwd(), "e2e");
 
 function listE2eTypeScriptFiles(directory: string): string[] {
@@ -2048,7 +2051,7 @@ describe("E2E booking-create retry isolation (#2599)", () => {
       "e2e/helpers/booking-create-client-ip.ts:postBookingCreate",
     ]);
     expect(unresolvedPostRoutes).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("pins browser booking-create triggers inside the exact-action wrapper", () => {
     const unwrappedCandidates: string[] = [];

@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 
 import { stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * Census: there is ONE night-occupancy calculation, and it counts every term
  * (#2681).
@@ -422,7 +425,7 @@ describe("#2681 night-occupancy census: one calculation, every term", () => {
       offenders,
       "A new file is summing an occupancy term itself. Call computeNightOccupancy (src/lib/capacity.ts) instead, or — if it genuinely is not a per-night bed count — declare it in NON_OCCUPANCY_READERS in this file with the reason.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("enumerates every reader of the capacity-holding booking population", () => {
     const declared = new Set<string>([

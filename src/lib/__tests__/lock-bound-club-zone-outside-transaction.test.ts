@@ -5,6 +5,9 @@ import path from "node:path";
 import { blankLiterals } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * The club's day reaches a lock-bound writer as a VALUE, never as a read taken
  * under its locks (#3123; `INV-LOCK-004`).
@@ -795,7 +798,7 @@ const CALLER_TRANSACTION_POPULATION = [
   ]),
 ];
 
-describe("the club's day is resolved outside the locks and threaded in (#3123)", () => {
+describe("the club's day is resolved outside the locks and threaded in (#3123)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("reads the club's zone outside every transaction, in every resolver", () => {
     const offenders: string[] = [];
 

@@ -11,6 +11,9 @@ import { describe, expect, it } from "vitest";
 // wording, in either direction.
 import { stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * Census: the club's edit-time group-discount switch has exactly ONE gate, and
  * every edit path goes through it (#2770, INV-MOD-026).
@@ -264,7 +267,7 @@ const creationPathSites = MAPPER_CALL_SITES.filter(
   (site) => site.kind === "creation",
 );
 
-describe("group-discount edit-time switch census (#2770, INV-MOD-026)", () => {
+describe("group-discount edit-time switch census (#2770, INV-MOD-026)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("declares every production caller of the creation mapper", () => {
     const found = allSourceFiles(SRC_ROOT)
       .filter(

@@ -34,6 +34,9 @@ import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 
 /** Each file's count of PENDING writes, with why the request each leaves stays claimable. */
@@ -301,7 +304,7 @@ const rawSqlWrites = (text: string) => [...text.matchAll(RAW_SQL_WRITE)].length;
 
 const counts = (table: Readonly<Record<string, { writes: number }>>) => Object.fromEntries(Object.entries(table).map(([file, { writes }]) => [file, writes]));
 
-describe("Xero operation PENDING writers (#5228)", () => {
+describe("Xero operation PENDING writers (#5228)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("every PENDING write onto a Xero operation row is counted per file and named, with why its request stays claimable", () => {
     const writers = Object.fromEntries(
       [...sourceFiles("src"), ...sourceFiles("scripts")].flatMap((file) => {

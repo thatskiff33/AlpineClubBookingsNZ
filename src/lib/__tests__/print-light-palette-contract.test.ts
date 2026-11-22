@@ -6,6 +6,9 @@ import { describe, expect, it } from "vitest";
 
 import { stripCssComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 // #2146 — printing a finance/admin report while the app is in dark mode used to
 // produce a blank-looking PDF.
 //
@@ -831,7 +834,7 @@ describe("#2146 no literal-palette dark: utility on a printable surface", () => 
     expect(stale, `Remove these stale entries:\n${stale.join("\n")}`).toEqual(
       [],
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 // COVERAGE LIMIT, stated plainly because the Download PDF button is the one

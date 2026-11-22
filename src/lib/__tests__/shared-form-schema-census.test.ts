@@ -3,6 +3,9 @@ import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #4467 item 3: a shared form schema is shared, or it is not doing its job.
  *
@@ -129,7 +132,7 @@ function importersOf(schemaFile: string): string[] {
   );
 }
 
-describe("shared form schemas (#4467)", () => {
+describe("shared form schemas (#4467)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("finds the schema modules it polices", () => {
     // A census that matched nothing would pass every rule below.
     expect(schemaModules.length).toBeGreaterThan(0);

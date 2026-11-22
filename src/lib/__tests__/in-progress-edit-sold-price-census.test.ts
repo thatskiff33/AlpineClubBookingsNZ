@@ -6,6 +6,9 @@ import { toSeasonRateData } from "@/lib/policies/booking-route-decisions";
 import { blankLiterals, stripComments } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * Census: every loader that feeds an in-progress edit must select the column
  * that says what a night was SOLD for (#2744), and every builder of the plan must
@@ -190,7 +193,7 @@ const SHARED_LOADER_INCLUDES = [
   { file: "src/lib/booking-modify-validation.ts", nightsSelects: 1 },
 ] as const;
 
-describe("in-progress edit sold-price census (#2744)", () => {
+describe("in-progress edit sold-price census (#2744)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("declares every production caller of the in-progress plan", () => {
     const found = allSourceFiles(SRC_ROOT)
       .filter(
@@ -342,7 +345,7 @@ const DECLARED_NON_MAPPINGS = [
   "src/lib/membership-type-rate-coverage.ts",
 ];
 
-describe("season rate data census (#2756)", () => {
+describe("season rate data census (#2756)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("carries the season type through the one mapper", () => {
     const [mapped] = toSeasonRateData([
       {
@@ -472,7 +475,7 @@ const UNATTACHED_MONEY_SITES = [
 ] as const;
 const UNATTACHED_MONEY_CALL = /(?<!function\s)\bwithUnattachedStrandMoney\s*\(/g;
 
-describe("valued locked-night reader census (#4317, INV-MOD-028)", () => {
+describe("valued locked-night reader census (#4317, INV-MOD-028)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("declares every production caller of the valued reader", () => {
     const found = strippedSources()
       .filter((file) => [...file.code.matchAll(VALUED_LOCK_CALL)].length > 0)
@@ -547,7 +550,7 @@ describe("valued locked-night reader census (#4317, INV-MOD-028)", () => {
   });
 });
 
-describe("no edit door parks its money (#4317, INV-MOD-028)", () => {
+describe("no edit door parks its money (#4317, INV-MOD-028)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("raises no EDIT_FINANCIAL_REVIEW task from any production path", () => {
     // The state module still DEFINES the raise — tests build the open tasks
     // waves B and C settle with it — but nothing in production calls it.

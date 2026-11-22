@@ -64,6 +64,9 @@ import {
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { BANK_REFUND_VOIDS_ANCHOR } from "@/components/admin/bank-refund-voids-to-answer-panel";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 // ---------------------------------------------------------------------------
 // The admin hub registry (epic #4468, C1 #4798).
 //
@@ -1554,7 +1557,7 @@ describe("retired pages", () => {
         retiredPattern.test(stripComments(fs.readFileSync(path.join(process.cwd(), file), "utf8"))),
     );
     expect(linking).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 // ---------------------------------------------------------------------------

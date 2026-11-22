@@ -57,6 +57,9 @@ import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { buildClubModuleSettingsPayload } from "@/lib/module-settings";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 // Test helper: reads a fixed repo file under process.cwd(); the path is
 // test-controlled, not user input.
 function readRepoFile(relativePath: string): string {
@@ -597,7 +600,7 @@ describe("call-site survey", () => {
         site.skipAuthorizationModes.some((mode) => mode === true),
       ),
     ).toHaveLength(CALL_SITES_THAT_CAN_SKIP);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("declares each call site's real authorization modes", () => {
     // Read the modes back off the source, so the table cannot claim a route is

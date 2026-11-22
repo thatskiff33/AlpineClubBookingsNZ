@@ -8,6 +8,9 @@ import { describe, expect, it } from "vitest";
 // whose stripper under-reports goes FALSELY GREEN.
 import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #3580 (programme #3527): THE LEDGER IS APPEND-ONLY, AND THIS IS WHAT HOLDS IT.
  *
@@ -110,7 +113,7 @@ function scanWriteSites(): Hit[] {
   return hits;
 }
 
-describe("the booking ledger is append-only (#3580, INV-MONEY-032)", () => {
+describe("the booking ledger is append-only (#3580, INV-MONEY-032)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("has exactly one module that writes the table", () => {
     const writers = [...new Set(writeSites().map((hit) => hit.file))].sort();
     expect(writers).toEqual([THE_ONE_DOOR]);

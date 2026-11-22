@@ -9,6 +9,9 @@ import { describe, expect, it } from "vitest";
 // the ones a raw-text scanner would misfire on.
 import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #3260 (`INV-SSOT-001`): a booking's final price is its total plus its signed
  * promotional adjustment, and that sentence has ONE home -
@@ -106,7 +109,7 @@ describe("INV-SSOT-001: one home for a booking's final-price relation", () => {
         ...offenders,
       ].join("\n"),
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("every edit door computes its new final price through the helper, with no parked branch left (#4317)", () => {
     // These four doors used to compose two halves: one branch called

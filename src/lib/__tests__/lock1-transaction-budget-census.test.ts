@@ -5,6 +5,9 @@ import { lockCensusSources } from "./support/advisory-lock-source";
 import { scanLock1Transactions, type TransactionOpener } from "./support/lock1-transaction-scan";
 import { stripComments } from "./support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * `INV-LOCK-006`: every interactive transaction that waits for
  * `pg_advisory_xact_lock(1)` runs on `LOCK1_HOLDER_TRANSACTION_BUDGET`
@@ -112,7 +115,7 @@ function classifyOptions(options: string | null, aliases: ReadonlySet<string>): 
 const describeOpener = (opener: TransactionOpener) =>
   `${opener.rel}:${opener.line} ${opener.opener} via ${opener.via.join(" <- ")}`;
 
-describe("INV-LOCK-006: every lock(1) waiter runs on the shared transaction budget", () => {
+describe("INV-LOCK-006: every lock(1) waiter runs on the shared transaction budget", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const aliases = budgetAliases();
 
   it("finds the lock(1) transactions it is meant to police", () => {

@@ -75,6 +75,9 @@ import {
   reconcileAdultMemberHostingReviewWithSiblings,
 } from "@/lib/adult-member-hosting-review";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const LODGE = "lodge-a";
 const TRIP = "group-trip-1";
 const OTHER_TRIP = "group-trip-2";
@@ -1071,7 +1074,7 @@ describe("what the actor is told, and what the owner queue resolves (#3039)", ()
       "INV-HOST-046: a booking-write seam that passed a group source ceiling would make the " +
         "evidence refusal reachable from a member's change",
     ).not.toContain("groupTripSourceCeiling");
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 describe("the container's own status governs joining, not cover (#3039, INV-HOST-043)", () => {

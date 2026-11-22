@@ -20,6 +20,9 @@ import {
 } from "@/lib/additional-payment-ask";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /*
   #3340 scope item 6 — THE CENSUS GUARD.
 
@@ -752,8 +755,8 @@ describe("a mint cannot forget what it absorbed (INV-PAY-098)", () => {
     // so does the block above this test.
     //
     // The cheap `includes` runs FIRST and is not decoration: blanking every file
-    // under `src` takes this suite past its five-second budget, while the type
-    // name appears in a couple of dozen of them. The blanking then decides those.
+    // under `src` costs seconds, while the type name appears in a couple of
+    // dozen of them. The blanking then decides those.
     const offenders = sourceFiles("src")
       .filter((file) => file !== ASK_HOME)
       .map((file) => ({ file, source: read(file) }))
@@ -772,7 +775,7 @@ describe("a mint cannot forget what it absorbed (INV-PAY-098)", () => {
         "ask can record a positive amount and a zero carried balance, which is " +
         "the money leak #3340 and #3371 both closed.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps the minter taking the value rather than a number", () => {
     const minter = read("src/lib/booking-modification-settlement.ts");

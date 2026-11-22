@@ -5,6 +5,9 @@ import { describe, expect, it } from "vitest";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { bookingAmountOwedCents, bookingWorthCents, savedCardChargeCents } from "@/lib/booking-payment-state";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #3750 (owner decision, 7 Oct 2026, "Add fee to amount owed"): what an unpaid
  * booking owes is its price PLUS the change fee recorded on its payment, less
@@ -368,7 +371,7 @@ describe("the amount an unpaid booking owes has one home (#3750)", () => {
     }
     const bareDue = sourceFiles(path.join(REPO, "src")).filter((file) => BARE_PRICE_DUE.test(read(file)));
     expect(bareDue, "INV-PAY-119: the narrative's dueCents comes from bookingAmountOwedCents").toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("no source file subtracts credit from the bare price any more", () => {
     const offenders = sourceFiles(path.join(REPO, "src")).flatMap((file) => {

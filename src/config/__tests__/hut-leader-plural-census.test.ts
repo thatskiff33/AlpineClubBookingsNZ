@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /*
   #3976 — every plural of the club's hut-leader label goes through
   `pluralHutLeaderLabel` (src/config/hut-leader-label.ts). Appending "s" by hand
@@ -115,5 +118,5 @@ describe("hut-leader plural census (#3976)", () => {
         "(src/config/hut-leader-label.ts), never by appending \"s\" — a club that " +
         'saved "Hut Leaders" otherwise reads "Hut Leaderss".',
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

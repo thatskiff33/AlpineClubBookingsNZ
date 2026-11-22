@@ -5,6 +5,9 @@ import { describe, expect, it } from "vitest";
 import { XERO_CRON_JOB_NAMES } from "@/lib/xero-cron-jobs";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 // ---------------------------------------------------------------------------
 // No code under `src/` outside `__tests__` spells one of the ten Xero cron
 // runner job names as a string literal (#4922 review, INV-SSOT). That is the
@@ -85,7 +88,7 @@ describe("The ten Xero cron runner job names have one spelling (INV-SSOT)", () =
       .filter((file) => file !== HOME)
       .flatMap((file) => findJobNameLiterals(file, fs.readFileSync(path.join(ROOT, file), "utf8")));
     expect(elsewhere).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps xero-cron-jobs.ts free of imports, so booting the scheduler pulls in nothing else", () => {
     const code = stripComments(fs.readFileSync(path.join(ROOT, HOME), "utf8"));

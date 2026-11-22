@@ -14,6 +14,9 @@ import { resolveAdminReviewFields } from "@/lib/booking-create-guests";
 import { guestConsentStatus } from "@/lib/member-guest-consent";
 import type { BookingGuestInput } from "@/lib/booking-create-types";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 describe("booking review helper", () => {
   it("flags bookings with only minors", () => {
     expect(
@@ -271,5 +274,5 @@ describe("adult-supervision callers: the declared set, and the shape each passes
     for (const [file, marker] of Object.entries(CALLERS)) {
       if (marker) expect(stripComments(readFileSync(file, "utf8")), file).toContain(marker);
     }
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

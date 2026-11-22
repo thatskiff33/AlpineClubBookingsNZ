@@ -63,6 +63,9 @@ import { PRISMA_CLIENT_GLOBAL_OMIT } from "@/lib/prisma-global-omit";
 import { blankLiterals, stripComments } from "@/lib/__tests__/support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 const INVARIANT_ID = "INV-PRIV-022";
 const LIFECYCLE_INVARIANT_ID = "INV-MOD-059";
 const REPO_ROOT = path.resolve(__dirname, "../../..");
@@ -728,7 +731,7 @@ function report(findings: Finding[]): string {
   return findings.map((f) => `  ${f.rule}: ${f.file} — ${f.detail}`).join("\n");
 }
 
-describe(`member dietary access census (${INVARIANT_ID})`, () => {
+describe(`member dietary access census (${INVARIANT_ID})`, { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("walks every scanned root", () => {
     // A walk that found nothing would pass every rule below vacuously.
     const { files } = census();

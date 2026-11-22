@@ -13,6 +13,9 @@ import {
   type AppPaymentIntentMetadata,
 } from "@/lib/stripe-app-intent-metadata";
 
+/** Reads the whole source tree synchronously: a budget for that scan, not vitest's 5 s default (#5439). */
+const CENSUS_TIMEOUT_MS = 90_000;
+
 /**
  * #4532 (`INV-INT-032`): which succeeded PaymentIntents are the app's own. The
  * webhook records and alerts every other one, so a false "not ours" would
@@ -118,7 +121,7 @@ describe("Stripe money-object creation census (#4532)", () => {
       }
     }
     expect(found.sort()).toEqual(["src/lib/stripe.ts: paymentIntents", "src/lib/stripe.ts: paymentIntents"]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("types the metadata of both stripe.ts creations as the app's", () => {
     const source = readFileSync("src/lib/stripe.ts", "utf8");
