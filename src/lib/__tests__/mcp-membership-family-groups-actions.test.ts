@@ -45,18 +45,18 @@ vi.mock("@/lib/club-time/server", () => ({
   clubTime: vi.fn(async () => ({ today: () => ({ year: 2026, month: 7, day: 1 }) })),
 }));
 vi.mock("@/lib/member-age", async (importActual) => ({
-  ...(await importActual<typeof import("@/lib/member-age")>()),
+  ...((await importActual()) as typeof import("@/lib/member-age")),
   formatMemberIdentityAge: vi.fn(() => "9 years"),
 }));
 vi.mock("@/lib/password-reset", () => ({ hasMemberCompletedAccountSetup: vi.fn(() => true) }));
 // The services keep their real request schemas: the routes and the catalogue
 // both parse with them.
 vi.mock("@/lib/admin-family-group-member-search", async (importActual) => ({
-  ...(await importActual<typeof import("@/lib/admin-family-group-member-search")>()),
+  ...((await importActual()) as typeof import("@/lib/admin-family-group-member-search")),
   searchFamilyGroupCandidateMembers: h.searchFamilyGroupCandidateMembers,
 }));
 vi.mock("@/lib/admin-family-group-requests-service", async (importActual) => ({
-  ...(await importActual<typeof import("@/lib/admin-family-group-requests-service")>()),
+  ...((await importActual()) as typeof import("@/lib/admin-family-group-requests-service")),
   listAdminFamilyGroupRequests: h.listAdminFamilyGroupRequests,
   reviewAdminFamilyGroupRequest: h.reviewAdminFamilyGroupRequest,
 }));

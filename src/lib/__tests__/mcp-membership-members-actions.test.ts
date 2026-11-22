@@ -44,7 +44,7 @@ vi.mock("@/lib/audit", () => ({
   getAuditRequestContext: vi.fn(() => ({})),
 }));
 vi.mock("@/lib/admin-members-service", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/admin-members-service")>()),
+  ...((await importOriginal()) as typeof import("@/lib/admin-members-service")),
   listAdminMembers: h.listAdminMembers,
 }));
 vi.mock("@/lib/admin-member-detail-service", () => ({
@@ -53,12 +53,12 @@ vi.mock("@/lib/admin-member-detail-service", () => ({
   updateMemberSchema: { safeParse: vi.fn() },
 }));
 vi.mock("@/lib/member-dietary", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/member-dietary")>()),
+  ...((await importOriginal()) as typeof import("@/lib/member-dietary")),
   isDietaryFieldEnabled: vi.fn(async () => false),
   grantMembershipAdminDietaryAccess: vi.fn(),
 }));
 vi.mock("@/lib/audit-query", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/audit-query")>()),
+  ...((await importOriginal()) as typeof import("@/lib/audit-query")),
   getAuditTimelinePage: h.getAuditTimelinePage,
 }));
 vi.mock("@/lib/club-format-server", () => ({ clubFormatValues: vi.fn(async () => ({})) }));
@@ -71,16 +71,16 @@ vi.mock("@/lib/member-partner-link", () => ({
 vi.mock("@/lib/member-lifecycle-lock", () => ({ acquireMemberLifecycleLocks: vi.fn() }));
 vi.mock("@/lib/member-partner-lock", () => ({ acquireMemberPartnerLinkLocks: vi.fn() }));
 vi.mock("@/lib/member-parent-partner-exclusivity", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/member-parent-partner-exclusivity")>()),
+  ...((await importOriginal()) as typeof import("@/lib/member-parent-partner-exclusivity")),
   acquireMemberParentPartnerPairLocks: vi.fn(),
 }));
 vi.mock("@/lib/member-family-link-depth", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/member-family-link-depth")>()),
+  ...((await importOriginal()) as typeof import("@/lib/member-family-link-depth")),
   describeParentSideDepth: vi.fn(async () => ({ ancestorIds: [], ancestorGenerations: 0, truncated: false })),
   describeChildSideDepth: vi.fn(async () => ({ descendantIds: [], descendantGenerations: 0, truncated: false })),
 }));
 vi.mock("@/lib/dependent-link-eligibility", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/dependent-link-eligibility")>()),
+  ...((await importOriginal()) as typeof import("@/lib/dependent-link-eligibility")),
   dependentLinkBlockers: vi.fn(() => []),
   dependentParentStateBlocker: vi.fn(() => null),
 }));
@@ -89,7 +89,7 @@ vi.mock("@/lib/member-email-inheritance", () => ({
   validateInheritEmailSource: vi.fn(async () => ({ ok: true })),
 }));
 vi.mock("@/lib/member-parent-links", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/member-parent-links")>()),
+  ...((await importOriginal()) as typeof import("@/lib/member-parent-links")),
   resolveInheritedEmailSourceId: h.resolveInheritedEmailSourceId,
 }));
 
