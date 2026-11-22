@@ -1063,10 +1063,10 @@ async function performBookingCancellation(
     // #1473: a payment that CAPTURED money can land in this branch too
     // (fully REFUNDED, or a flattened legacy mirror), and its aggregate
     // status is money truth that must survive the cancel — only
-    // never-captured payments flip to FAILED. See paymentHasCaptureEvidence
+    // never-captured payments flip to FAILED. See queryPaymentCaptureEvidence
     // for why the ledger decides, never the aggregate mirror alone.
     const paymentCaptured = booking.payment
-      ? await paymentHasCaptureEvidence({ ...booking, payment: booking.payment })
+      ? await queryPaymentCaptureEvidence({ ...booking, payment: booking.payment })
       : false;
 
     if (booking.payment) {
@@ -1163,7 +1163,7 @@ async function performBookingCancellation(
       }
 
       const freshPaymentCaptured = lockedPayment
-        ? await paymentHasCaptureEvidence({ ...fresh, payment: lockedPayment }, tx)
+        ? await queryPaymentCaptureEvidence({ ...fresh, payment: lockedPayment }, tx)
         : false;
 
       // Status-guarded release (#1881): claim only while still in the
@@ -2761,8 +2761,10 @@ export async function paymentEligibleForPaidCancelPath(
 // mirror lies in both directions (the invoice-side fold on never-captured IB
 // payments, and the pre-#1473 cancel flow flattening captured statuses to
 // FAILED); then the pre-ledger STRIPE mirror. The combination's one home is
-// `paymentShowsCaptureEvidence`.
-export async function paymentHasCaptureEvidence(
+// `paymentShowsCaptureEvidence`. This one QUERIES the ledger (on `db`, so a
+// caller holding a transaction passes it); `paymentHasCaptureEvidence` in
+// `payment-capture-evidence.ts` answers synchronously from rows already loaded.
+export async function queryPaymentCaptureEvidence(
   booking: {
     organiserSettled: boolean;
     parentBookingId: string | null;

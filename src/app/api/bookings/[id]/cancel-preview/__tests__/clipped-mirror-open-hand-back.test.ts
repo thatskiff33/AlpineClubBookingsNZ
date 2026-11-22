@@ -68,7 +68,7 @@ vi.mock("@/lib/cancellation", async (importOriginal) => ({
 }));
 vi.mock("@/lib/booking-cancel", () => ({
   paymentEligibleForPaidCancelPath: async () => true,
-  paymentHasCaptureEvidence: async () => true,
+  queryPaymentCaptureEvidence: async () => true,
 }));
 vi.mock("@/lib/internet-banking-part-payment-at-cancel", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/internet-banking-part-payment-at-cancel")),

@@ -8,7 +8,7 @@ import { effectiveOrganiserPaidChangeFeeCents, readOrganiserExtraState } from "@
 import { loadCancellationPolicy } from "@/lib/cancellation";
 import { calculateCancellationPreview } from "@/lib/policies/booking-route-decisions";
 import { clubTime } from "@/lib/club-time/server";
-import { paymentEligibleForPaidCancelPath, paymentHasCaptureEvidence } from "@/lib/booking-cancel";
+import { paymentEligibleForPaidCancelPath, queryPaymentCaptureEvidence } from "@/lib/booking-cancel";
 import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
 import { cancelTieredAppliedCreditCents } from "@/lib/booking-payment-state";
 import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
@@ -144,7 +144,7 @@ export async function GET(
       // tiered as the cancel tiers it - the same helper, so the two agree.
       const todayAtClub = (await clubTime()).today();
       const tiered =
-        booking.payment && bookingOwner(booking).memberId && (await paymentHasCaptureEvidence({ ...booking, payment: booking.payment }))
+        booking.payment && bookingOwner(booking).memberId && (await queryPaymentCaptureEvidence({ ...booking, payment: booking.payment }))
           ? await refundedPaymentCreditRestore(prisma, { bookingId: booking.id, booking: { ...booking, payment: booking.payment },
               openNonCancellationHandBackCents: sumOpenNonCancellationHandBackCents(booking.payment.manualRefundTasks), todayAtClub })
           : null;
