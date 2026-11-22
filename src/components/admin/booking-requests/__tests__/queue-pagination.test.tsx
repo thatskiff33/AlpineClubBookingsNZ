@@ -302,7 +302,14 @@ describe("BookingApprovalsPanel paging", () => {
         pageOf(url) === "3" ? envelope([], 3, 40) : envelope([booking], Number(pageOf(url)), 40),
     });
     render(<BookingApprovalsPanel />);
+    // The total line is drawn from the stepped-back page number in the same
+    // render that receives the empty page 3, before the effect that asks for
+    // page 2 runs. So the second read is awaited, never counted straight after
+    // the line appears (#5361: the same order failed once on main in a sibling).
+    await waitFor(() => expect(fetches.reads(route).map(pageOf)).toEqual(["3", "2"]));
     expect(await screen.findByText("Showing 26–40 of 40")).toBeInTheDocument();
+    // Page 2's row is back, so the step-back read was answered and shown.
+    expect(await screen.findByText(/Riley Chen/)).toBeInTheDocument();
     expect(fetches.reads(route).map(pageOf)).toEqual(["3", "2"]);
   });
 

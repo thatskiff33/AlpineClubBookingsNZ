@@ -394,7 +394,7 @@ the owner's checklist for rebuilding it.
 | `Playwright E2E` | applied | `e2e.yml` → `playwright` | the browser suite: runs shard 1 and fails closed unless `E2E shard (2/3)`/`(3/3)` pass (#4397) |
 | `E2E multi-lodge` | applied | `e2e.yml` → `multi-lodge` | the multi-lodge browser suite (#4397: waits for the run's image and database in a step, never `needs:`) |
 | `Secret scan (gitleaks)` | applied | `ci.yml` → `secret-scan` | the PR's own commits, `main`'s history including merge commits, and the checked-out tree (#2686) |
-| `Image security gate (Trivy CRITICAL)` | applied | `ci.yml` → `docker-image-security` | CRITICAL image vulnerabilities. HIGH stays advisory (#2686). On a pull request it builds and scans only when dependencies, `patches/`, the Dockerfile, a compose file, `.dockerignore`, `.trivyignore` or the workflow changed; every push scans (#4425, owner decision) |
+| `Image security gate (Trivy CRITICAL)` | applied | `ci.yml` → `docker-image-security` | CRITICAL image vulnerabilities. HIGH stays advisory (#2686). On a pull request it builds and scans only when dependencies, `patches/`, the Dockerfile, a compose file, `.dockerignore`, `.trivyignore` or the workflow changed; every push scans (#4425, owner decision). The same job checks that the browser bundle carries the version and not the nonce seed, so a change to `next.config.ts`, `src/instrumentation-client.ts`, `src/lib/app-version.ts` or the release-nonce modules also builds it on a pull request (#5262). The full list is `CHANGE_SCOPES.image` in `scripts/ci/change-scope.mjs` |
 | `Dependency audit` | applied | `ci.yml` → `dependency-audit` | `pnpm audit --audit-level=high`. Split out of `verify` (#2946), where a failing audit skipped lint, the ratchet, `prisma generate`, typecheck, knip, `pnpm test` and the build on every branch (#2945) |
 
 **Two workflows report on the money modules and are not required** (#4459):
@@ -430,10 +430,17 @@ gets a runner.
 | `Playwright E2E`, shards 2-3 | 25 | 45 (`E2E shard`) | 75 | 165 |
 
 The numbers are set in the workflows. `scripts/ci/require-test-shards.test.mjs`
-fails if a run allowance stops matching its jobs' `timeout-minutes` or a gate
-job's limit is too short for its wait. Before this, `verify` waited a flat 45
-minutes. `Real-PostgreSQL suites (all)` once queued 37 minutes for a runner
-and then passed, but `verify` had already gone red.
+fails if a run allowance stops matching its jobs' `timeout-minutes`, a gate
+job's limit is too short for its wait, or this table stops matching the gate
+steps' flags and the gate jobs' `timeout-minutes` (#5362). Before #5222,
+`verify` waited a flat 45 minutes. `Real-PostgreSQL suites (all)` once queued
+37 minutes for a runner and then passed, but `verify` had already gone red.
+
+The long wait has a cost: a gate job holds its hosted runner for the whole
+of it, up to its total wait in the table above, so on a backlog day the
+waiting gates take runner slots the jobs they wait for could use, and can
+lengthen the queue. That cost arises only in a run that would once have timed out; a run
+whose jobs start promptly releases the gate as soon as they finish.
 
 **The PR-body gates read the description from a file, never an environment
 variable** (#4053). `verify` writes `.pull_request.body` from

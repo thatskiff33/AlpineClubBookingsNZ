@@ -99,18 +99,6 @@ function sameRequest(left: RefundAllocationSlice, right: RefundAllocationSlice):
   );
 }
 
-/** The plan with each slice Stripe refused moved to its next key generation, the rest untouched. */
-export function planAfterRefusals(
-  plan: ReadonlyArray<RefundAllocationSlice>,
-  refused: ReadonlyArray<RefundAllocationSlice>,
-): RefundAllocationSlice[] {
-  return plan.map((slice) =>
-    refused.some((each) => sameRequest(each, slice))
-      ? { ...slice, stripeKeySuffix: nextRefusedRefundKeySuffix(slice.stripeKeySuffix) }
-      : slice,
-  );
-}
-
 /**
  * The plan after an attempt Stripe answered (#4083 review): each slice it
  * refused moves to its next key; each it made is marked with its refund

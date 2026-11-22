@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit-http";
 import logger from "@/lib/logger";
 import {
   MAX_MAINTENANCE_QUESTION_CHOICE_LENGTH,
@@ -201,8 +202,7 @@ export async function PUT(request: NextRequest) {
         questionCount: parsed.data.questions.length,
         deactivated: [...existingIds].filter((id) => !keptIds.has(id)).length,
       }),
-      ipAddress:
-        request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown",
+      ipAddress: getClientIp(request),
       outcome: "success",
     });
 

@@ -7,6 +7,7 @@ import type { PrismaClient } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
+import { runEveryTeardownStep } from "./support/teardown-steps";
 
 import { splitSqlStatements } from "../../../prisma/migration-verification/split-statements";
 import { jobBlock } from "./helpers/ci-workflow";
@@ -125,13 +126,16 @@ it("runs the pending-adult database proof in CI", () => {
       lodgeId: "pending-lodge", checkIn, checkOut, adultCount: 2 });
   });
 
-  afterAll(async () => {
-    await prisma?.$disconnect();
-    await sql?.end();
-    if (admin && scratchDatabase) await admin.query(`DROP DATABASE "${scratchDatabase}" WITH (FORCE)`);
-    await admin?.end();
-    vi.unstubAllEnvs();
-  }, SCRATCH_HOOK_TIMEOUT_MS);
+  afterAll(() => runEveryTeardownStep("school-pending-adult-resolution.realdb", [
+    { what: "disconnect the Prisma client", run: () => prisma?.$disconnect() },
+    { what: "end the scratch connection", run: () => sql?.end() },
+    {
+      what: `drop database "${scratchDatabase}"`,
+      run: () => (admin && scratchDatabase ? admin.query(`DROP DATABASE "${scratchDatabase}" WITH (FORCE)`) : undefined),
+    },
+    { what: "end the admin connection", run: () => admin?.end() },
+    { what: "restore the stubbed environment", run: () => vi.unstubAllEnvs() },
+  ]), SCRATCH_HOOK_TIMEOUT_MS);
 
   const nameAdult = (expectedVersion = 4, firstName = "Beth") => resolve({
     requestId: "pending-request", adminMemberId: "officer", expectedVersion,

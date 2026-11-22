@@ -88,6 +88,10 @@ import {
   type OwnerSubstitution,
 } from "@/lib/booking-request-shared";
 import {
+  findHeldApprovalLodge,
+  notifyMemberGuestsAfterApproval,
+} from "@/lib/booking-request-approval-shared";
+import {
   loadMemberGuestAddPolicy,
   matchMemberGuestNotificationRows,
   type MemberGuestAddNotificationRow,
@@ -791,22 +795,13 @@ export async function approveSchoolBookingRequest(input: {
     );
   }
 
-  // A held booking has already materialised the request's null/default lodge
-  // semantics into an immutable concrete Booking.lodgeId. Read only that lock
-  // key before the transaction; the full request and booking are re-read after
-  // global -> lodge locks below. Fresh-create approvals need no extra lookup.
-  const expectedHeldBookingId = request.heldBookingId ?? null;
-  const heldLodgeLocator = expectedHeldBookingId
-    ? await prisma.booking.findUnique({
-        where: { id: expectedHeldBookingId },
-        select: { lodgeId: true },
-      })
-    : null;
-  if (expectedHeldBookingId && !heldLodgeLocator) {
+  // The held booking's immutable lodge, read before the transaction; the full
+  // request and booking are re-read after global -> lodge locks below.
+  const heldApproval = await findHeldApprovalLodge(request);
+  if (!heldApproval) {
     throw new BookingRequestError("Held booking was not found", 409);
   }
-  const expectedHeldLodgeId = heldLodgeLocator?.lodgeId ?? null;
-  const approvalLodgeId = expectedHeldLodgeId ?? request.lodgeId ?? null;
+  const { expectedHeldBookingId, expectedHeldLodgeId, approvalLodgeId } = heldApproval;
 
   // #3819: the booking's lodge decides whether its teachers become hut leaders
   // ("Who can be hut leader for school bookings" ticks teachers). It replaces
@@ -1822,40 +1817,14 @@ export async function approveSchoolBookingRequest(input: {
   // when a hold was set at approval. Informational only (decision 1).
   let exclusiveHoldConflicts: HoldConflictBooking[] = [];
   if (!conversion.alreadyConverted) {
-    // MG4-D-b (#2309), AFTER the commit and outside both advisory locks. Two
-    // directions, because an approval can do both at once: a swap adds one
-    // member guest and drops another, and telling only the newcomer would leave
-    // the person who was dropped believing they still have a bed.
-    if (
-      conversion.memberGuestNotificationRows.length > 0 ||
-      conversion.displacedMemberGuestIds.length > 0
-    ) {
-      const {
-        sendMemberGuestAddNotifications,
-        sendMemberGuestWithdrawnNotifications,
-      } = await import("@/lib/member-guest-consent-notifications");
-      try {
-        if (conversion.memberGuestNotificationRows.length > 0) {
-          await sendMemberGuestAddNotifications({
-            bookingId: conversion.bookingId,
-            rows: conversion.memberGuestNotificationRows,
-            actor: memberGuestActor,
-          });
-        }
-        if (conversion.displacedMemberGuestIds.length > 0) {
-          await sendMemberGuestWithdrawnNotifications({
-            bookingId: conversion.bookingId,
-            targetMemberIds: conversion.displacedMemberGuestIds,
-            context: "BOOKING_REQUEST_REPLACED",
-          });
-        }
-      } catch (err) {
-        logger.error(
-          { err, bookingId: conversion.bookingId, bookingRequestId: request.id },
-          "Failed to dispatch member-guest notifications after a school booking-request approval",
-        );
-      }
-    }
+    // MG4-D-b (#2309), AFTER the commit and outside both advisory locks.
+    await notifyMemberGuestsAfterApproval({
+      conversion,
+      actor: memberGuestActor,
+      bookingRequestId: request.id,
+      failureLogMessage:
+        "Failed to dispatch member-guest notifications after a school booking-request approval",
+    });
 
     // Teacher PIN emails (after commit; failures are logged, not fatal).
     for (const assignment of conversion.teacherAssignments) {

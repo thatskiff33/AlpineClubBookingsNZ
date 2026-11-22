@@ -171,65 +171,30 @@ describe("N-08: shouldSendEmail", () => {
     vi.resetModules();
   });
 
-  it("returns true when no preference record exists (defaults)", async () => {
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue(null);
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "bookingConfirmation")).toBe(true);
-  });
+  // Only the check-in reminder and the chore roster ask (the bulk categories'
+  // defaults are bulk-audience.ts's, INV-PRIV-026). Both default on.
+  it.each(["bookingReminder", "choreRoster"] as const)(
+    "returns true for %s when no preference record exists (defaults)",
+    async (category) => {
+      mockPrisma.notificationPreference.findUnique.mockResolvedValue(null);
+      const { shouldSendEmail } = await import("../email");
+      expect(await shouldSendEmail("member-1", category)).toBe(true);
+    },
+  );
 
-  it("returns false for marketingEmails when no preference record exists", async () => {
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue(null);
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "marketingEmails")).toBe(false);
-  });
-
-  // #4987: club notices are opt-out, so a member with no saved preferences
-  // receives them; newsletters (marketingEmails, above) stay opt-in.
-  it("returns true for clubNotices when no preference record exists", async () => {
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue(null);
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "clubNotices")).toBe(true);
-  });
-
-  it("honours a stored clubNotices opt-out", async () => {
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue({
-      clubNotices: false,
-      marketingEmails: true,
-    });
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "clubNotices")).toBe(false);
-  });
-
-  it("respects stored preference (false)", async () => {
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue({
-      bookingConfirmation: false,
-      bookingReminder: true,
-      bookingBumped: true,
-      bookingCancelled: true,
-      choreRoster: true,
-      marketingEmails: false,
-    });
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "bookingConfirmation")).toBe(false);
-  });
-
-  it("respects stored preference (true)", async () => {
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue({
-      bookingConfirmation: true,
-      bookingReminder: true,
-      bookingBumped: true,
-      bookingCancelled: true,
-      choreRoster: true,
-      marketingEmails: true,
-    });
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "marketingEmails")).toBe(true);
-  });
-
-  it("returns true for unknown categories", async () => {
-    const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "unknownCategory")).toBe(true);
-  });
+  it.each(["bookingReminder", "choreRoster"] as const)(
+    "honours a stored %s opt-out and leaves the other category alone",
+    async (category) => {
+      mockPrisma.notificationPreference.findUnique.mockResolvedValue({
+        bookingReminder: category !== "bookingReminder",
+        choreRoster: category !== "choreRoster",
+      });
+      const { shouldSendEmail } = await import("../email");
+      expect(await shouldSendEmail("member-1", category)).toBe(false);
+      const other = category === "bookingReminder" ? "choreRoster" : "bookingReminder";
+      expect(await shouldSendEmail("member-1", other)).toBe(true);
+    },
+  );
 });
 
 describe("sendEmail logging safeguards", () => {
@@ -730,6 +695,45 @@ describe("N-13: sendAdminDigest", () => {
         templateName: "admin-daily-digest",
       }),
     });
+  });
+
+  // #5403: the confirm-pending cron sends the bumped alert again, so its line
+  // in the digest counts real events instead of always reading zero. The rows
+  // are the ones the real sender writes, and the read applies the digest's own
+  // `distinct`, so two bumps for one owner must stay two.
+  it("counts two bumps for the same owner as two", async () => {
+    const { sendAdminBookingBumpedAlert } = await import("../email");
+    const bump = {
+      bumpedMemberName: "Jane Doe",
+      lodgeName: null,
+      guestCount: 2,
+      reason: "These dates filled up before the provisional guests were confirmed.",
+    };
+    await sendAdminBookingBumpedAlert({ ...bump, bookingReference: "CKAAAA11", checkIn: new Date("2026-08-01"), checkOut: new Date("2026-08-03") });
+    await sendAdminBookingBumpedAlert({ ...bump, bookingReference: "CKBBBB22", checkIn: new Date("2026-08-10"), checkOut: new Date("2026-08-12") });
+    await flushAsyncEmailSends();
+    const written = mockPrisma.emailLog.create.mock.calls.map(
+      (call) => call[0].data as { templateName: string; subject: string },
+    );
+    expect(written.filter((row) => row.templateName === "admin-booking-bumped")).toHaveLength(2);
+    mockPrisma.emailLog.findMany.mockImplementation(
+      async ({ distinct }: { distinct: Array<"templateName" | "subject"> }) => {
+        const seen = new Map<string, { templateName: string; subject: string }>();
+        for (const row of written) seen.set(distinct.map((key) => row[key]).join("|"), row);
+        return [...seen.values()];
+      },
+    );
+
+    const { sendAdminDigest } = await import("../cron-admin-digest");
+    const result = await sendAdminDigest();
+    await flushAsyncEmailSends();
+
+    expect(result.totalAlerts).toBe(2);
+    const digestHtml = mockTransporter.sendMail.mock.calls
+      .map((call) => call[0] as { html: string })
+      .find((mail) => mail.html.includes("Admin Daily Digest"))?.html;
+    // The row's own Count cell, the one straight after its label.
+    expect(digestHtml).toMatch(/Bookings Bumped<\/td>\s*<td[^>]*>2<\/td>/);
   });
 
   it("does not send digest when no alerts occurred by default", async () => {
