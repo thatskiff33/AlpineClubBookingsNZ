@@ -714,6 +714,65 @@ describe("Stripe webhook Xero alerting", () => {
     );
   });
 
+  // #772, #5398: the webhook is one of the two racing halves of the paid
+  // confirmation. A fresh "paid" settle sends it, once, with the booking's own
+  // figures; the "already_paid" and superseded cases below send nothing.
+  it("sends the paid confirmation exactly once on a fresh paid settle (#772)", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_paid_confirmation",
+      type: "payment_intent.succeeded",
+      data: {
+        object: {
+          id: "pi_primary",
+          amount: 5000,
+          metadata: { bookingId: "booking-1" },
+          payment_method: "pm_123",
+        },
+      },
+    } as any);
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({
+      id: "txn-1",
+      paymentId: "payment-1",
+      bookingId: "booking-1",
+      kind: "PRIMARY",
+      amountCents: 5000,
+      status: "PENDING",
+    });
+    const checkIn = new Date("2026-07-01");
+    const checkOut = new Date("2026-07-03");
+    mockBookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      lodgeId: "lodge-1",
+      status: "CONFIRMED",
+      checkIn,
+      checkOut,
+      finalPriceCents: 5000,
+      discountCents: 0,
+      guests: [{ id: "g1" }, { id: "g2" }],
+      member: { id: "member-1", firstName: "Alice", lastName: "Example", email: "alice@example.com" },
+      organisation: null,
+      promoRedemptions: [],
+      payment: { changeFeeCents: null },
+    });
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockSendBookingConfirmedEmail).toHaveBeenCalledTimes(1);
+    expect(mockSendBookingConfirmedEmail).toHaveBeenCalledWith(
+      { bookingId: "booking-1", recipientMemberId: "member-1" },
+      "alice@example.com",
+      "Alice",
+      checkIn,
+      checkOut,
+      2,
+      5000,
+      CLUB_FORMAT_TEST,
+      expect.objectContaining({ lodgeId: "lodge-1" }),
+    );
+  });
+
   it("alerts and refuses a capture whose amount no longer matches the booking total (#1161)", async () => {
     mockConstructWebhookEvent.mockReturnValue({
       id: "evt_stale_capture",

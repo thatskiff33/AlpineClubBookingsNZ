@@ -5,7 +5,6 @@ import { isCardRefundReservationRefusal } from "@/lib/member-money";
 import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
-import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { prisma } from "@/lib/prisma";
 import { listRefundsForCharge, listRefundsForPaymentIntent, processRefund } from "@/lib/stripe";
 import { markBookingPaymentSucceeded, markBookingSetupIntentSucceeded } from "@/lib/payment-reconciliation";
@@ -17,11 +16,10 @@ import { queueRecordedCardRefundNotes, RecordedCardRefundNoteEnqueueError } from
 import { isLateCaptureRefundedBookingStatus } from "@/lib/additional-payment-chase";
 import { reportWebhookError } from "@/lib/observability-bridge";
 import {
-  sendBookingConfirmedEmail,
   sendAdminPaymentFailureAlert,
   sendSetupIntentFailedEmail,
 } from "@/lib/email";
-import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
+import { sendPaidBookingConfirmedEmail } from "@/lib/paid-booking-confirmation-email";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import { recordRefusedCardRefund } from "@/lib/card-refund-status-sync";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
@@ -524,50 +522,7 @@ async function handlePaymentIntentSucceeded(
   // prior delivery) already reconciled this payment and sent the email, so we
   // skip here to keep the send exactly-once across both paths (issue #772).
   if (reconciliation.outcome === "paid") {
-    try {
-      const booking = await prisma.booking.findUnique({
-        where: { id: bookingId },
-        // #3369: the owner may be an Organisation; bookingOwner() reads both.
-        include: {
-          member: true,
-          organisation: { select: { name: true, email: true } },
-          guests: true,
-          promoRedemptions: { include: { promoCode: true } },
-          // #3750: a change fee recorded on the payment was paid too.
-          payment: { select: { changeFeeCents: true } },
-        },
-      });
-      if (booking) {
-        // Split-booking parent (#738): describe the provisional non-member
-        // child so the confirmation explains the separate later charge.
-        const provisionalGuests = await getProvisionalNonMemberChildSummary({
-          id: booking.id,
-          memberId: bookingOwner(booking).memberId,
-        });
-        await sendBookingConfirmedEmail(
-          { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
-          bookingOwner(booking).member.email,
-          bookingOwner(booking).member.firstName,
-          booking.checkIn,
-          booking.checkOut,
-          booking.guests.length,
-          // #3955 review F8: what the member paid for — the booking's worth,
-          // its price plus a recorded change fee (the email nets credit).
-          bookingWorthCents({
-            finalPriceCents: booking.finalPriceCents,
-            changeFeeCents: booking.payment?.changeFeeCents ?? null,
-          }),
-          format,
-          {
-            lodgeId: booking.lodgeId,
-            ...(provisionalGuests ? { provisionalGuests } : {}),
-            ...bookingPromoEmailFields(booking),
-          }
-        );
-      }
-    } catch (emailErr) {
-      logger.error({ err: emailErr, bookingId }, "Failed to send confirmation email");
-    }
+    await sendPaidBookingConfirmedEmail(bookingId, format);
   }
 
   await queueXeroInvoiceForPaidBooking({ bookingId });
