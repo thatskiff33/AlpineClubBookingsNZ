@@ -1,11 +1,13 @@
 // Repeated Xero failure alerting: notifies admins when the same correlation key
-// fails repeatedly inside the rolling window, deduplicated against recent
-// alerts. Extracted verbatim from xero-hardening.ts (#1208 item 5). Import xero
+// fails repeatedly inside the rolling window, at most once per key per window.
+// Extracted verbatim from xero-hardening.ts (#1208 item 5). Import xero
 // source modules directly, never the @/lib/xero facade (#1208).
 import type { XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { sendAdminXeroRepeatedFailureAlert } from "@/lib/email";
+import { claimAlertCooldown, releaseAlertCooldown } from "@/lib/alert-cooldown";
+import type { AdminAlertSendResult } from "@/lib/email/admin-alert-send-result";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { buildLocalAdminUrl } from "@/lib/xero-record-links";
 import {
@@ -32,6 +34,11 @@ type FailureAlertOperation = Pick<
 
 function getRepeatedFailureAlertSubject(correlationKey: string) {
   return `Repeated Xero Failure: ${correlationKey}`;
+}
+
+/** The `AlertCooldown` key holding one correlation key's alert window (#5407 item 29). */
+export function repeatedFailureAlertCooldownKey(correlationKey: string) {
+  return `xero-repeated-failure:${correlationKey}`;
 }
 
 export async function maybeNotifyXeroRepeatedFailure(
@@ -74,52 +81,52 @@ export async function maybeNotifyXeroRepeatedFailure(
 
   const subject = getRepeatedFailureAlertSubject(operation.correlationKey);
   /*
-    THE DEDUP ASKS "HAS THIS ALERT ALREADY BEEN RAISED", not "did it arrive"
-    (#3035 review).
+    ONE ALERT PER CORRELATION KEY PER WINDOW, held by an `AlertCooldown` claim
+    keyed on the correlation key (#5407 item 29).
 
-    It used to look for `QUEUED`/`SENT` only, which was every outcome that
-    existed when it was written. Since #3035 the environment-safety boundary
-    lands this alert as `SKIPPED_NON_PRODUCTION` on a copy and as `FAILED` on an
-    installation nobody has declared — so on those installations the dedup
-    matched nothing, every qualifying operation re-attempted the alert, and each
-    attempt wrote another counted withheld row. Bounded by the per-correlation-key
-    threshold rather than a storm, but it inflates the very count that tells a
-    live club wrongly declared a copy from an idle one.
+    It used to look for an earlier `EmailLog` row by this built-in subject. The
+    log stores the subject actually sent, and a club that saves its own subject
+    on this template replaces the built-in one, so the earlier alert was never
+    found and the alert went out on every qualifying failure. The key here is
+    built from the correlation key alone, which no club setting can change.
 
-    `FAILED` is included and that is not a lost alert: this template is NOT in
-    `NON_RETRYABLE_EMAIL_LOG_TEMPLATES`, so its body is retained and the email
-    retry cron replays the row. Re-raising a second alert alongside a replay would
-    just double it. `BOUNCED` is included for the plainer reason — the alert was
-    raised and the admin mailbox is the problem, which re-raising cannot fix.
-    Listing the statuses that mean "already raised" rather than "arrived" is what
-    makes this stable against the next status somebody adds.
+    The claim asks "has this alert already been RAISED", not "did it arrive"
+    (#3035 review), the same question the old lookup answered by listing every
+    status a raised alert's row can have. It is kept whenever the send reached
+    a recipient's mail log at all: sent, queued, FAILED (this template keeps its
+    body, so the email retry cron replays the row), BOUNCED or withheld on a
+    copy (`SKIPPED_NON_PRODUCTION`). It is given back, so the next qualifying
+    failure tries again, exactly where the old lookup found no row: the
+    delivery policy skipped the alert, no admin is opted in, or the send threw.
+
+    Claim first and send after, outside any transaction (`alert-cooldown.ts`),
+    so two instances failing the same key at once raise one alert.
   */
-  const recentAlert = await prisma.emailLog.findFirst({
-    where: {
-      templateName: "admin-xero-repeated-failure",
-      subject,
-      createdAt: {
-        gte: windowStart,
-      },
-      status: {
-        in: [
-          "QUEUED",
-          "SENT",
-          "FAILED",
-          "BOUNCED",
-          "SKIPPED_NON_PRODUCTION",
-          "SKIPPED_NO_EMAILS",
-        ],
-      },
-    },
-  });
-
-  if (recentAlert) {
+  const key = repeatedFailureAlertCooldownKey(operation.correlationKey);
+  const windowMs = now.getTime() - windowStart.getTime();
+  let claimed: boolean;
+  try {
+    claimed = await claimAlertCooldown({ key, windowMs, now });
+  } catch (error) {
+    // The write may have committed before the throw: give back this call's
+    // own stamp so the next failure can alert, then fail as the read did.
+    await releaseAlertCooldown({ key, claimedAt: now }).catch(() => undefined);
+    throw error;
+  }
+  if (!claimed) {
     return { triggered: false, failureCount };
   }
 
+  const releaseClaim = () =>
+    releaseAlertCooldown({ key, claimedAt: now }).catch((err) =>
+      logger.error(
+        { err, correlationKey: operation.correlationKey },
+        "Failed to release the repeated Xero failure alert claim"
+      )
+    );
+  let result: AdminAlertSendResult;
   try {
-    await sendAdminXeroRepeatedFailureAlert({
+    result = await sendAdminXeroRepeatedFailureAlert({
       subject,
       correlationKey: operation.correlationKey,
       failureCount,
@@ -137,8 +144,8 @@ export async function maybeNotifyXeroRepeatedFailure(
       latestErrorMessage: operation.lastErrorMessage ?? null,
       timestamp: now,
     });
-    return { triggered: true, failureCount };
   } catch (error) {
+    await releaseClaim();
     logger.error(
       {
         err: error,
@@ -149,4 +156,9 @@ export async function maybeNotifyXeroRepeatedFailure(
     );
     return { triggered: false, failureCount };
   }
+  if (!result.deliveryAllowed || result.recipients === 0) {
+    // No mail log row was written, so nothing records the alert as raised.
+    await releaseClaim();
+  }
+  return { triggered: true, failureCount };
 }

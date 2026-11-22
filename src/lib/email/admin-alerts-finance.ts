@@ -493,7 +493,9 @@ export async function sendAdminXeroRepeatedFailureAlert(data: {
   const xeroObjectUrl = await stampXeroOrganisation(data.xeroObjectUrl);
   const stamped = { ...data, xeroObjectUrl };
 
-  await sendToAdmins({
+  // Returns `sendToAdmins`' result so the caller can give back its window
+  // claim when no mail log row was written (#5407 item 29).
+  return sendToAdmins({
     subject: data.subject,
     html: await renderEmailHtml(() => adminXeroRepeatedFailureTemplate(stamped)),
     templateName: "admin-xero-repeated-failure",

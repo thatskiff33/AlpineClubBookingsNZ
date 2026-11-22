@@ -2530,6 +2530,9 @@ Scheduled hardening (cron tasks, all idempotent):
   events, link problems).
 - Repeated-failure alerting (`maybeNotifyXeroRepeatedFailure`) and the
   once-per-hour error alert (`notifyXeroSyncError`) keep failure noise bounded.
+  The repeated-failure alert goes out once per correlation key per 24-hour
+  window, held by an `AlertCooldown` claim on that key (#5407), so a subject
+  the club saves for the alert cannot switch the limit off.
 
 ### Repairing Stripe refund-note links (#2901)
 
@@ -3984,9 +3987,8 @@ settled by owner decision on 1 and 2 August 2026, is three sentences long:
    the read and returns null unless it succeeded, so an email names the
    organisation only when it was confirmed at send time and otherwise degrades
    to the generic link. It is affordable because the senders bound it, not
-   traffic: the repeated-failure alert is deduplicated against `EmailLog` for
-   the window, the settlement conflict is throttled by a cross-instance
-   `AlertCooldown` claim, and the nightly report takes one read for the whole
+   traffic: the repeated-failure alert and the settlement conflict are each
+   throttled by a cross-instance `AlertCooldown` claim, and the nightly report takes one read for the whole
    email.
 
 The producers behind the six server-fed render sites, all covered:
