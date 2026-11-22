@@ -8,6 +8,8 @@
 //   - NotificationPreference.bookingWaitlist (never offered, never read)
 //   - BookingRequestSettings.assignSchoolTeachersAsHutLeaders (retired by #3819
 //     in favour of the per-lodge school hut-leader kinds)
+//   - ServerNzSettings.otherLodgesOwnedNames (unread since #69, central server
+//     API 2.5; unwritten since #5407)
 //
 // Remove each entry in the release that drops its column, and the file with
 // the last: once a field is gone from schema.prisma there is nothing to pin.
@@ -29,6 +31,7 @@ const RETIRED = [
     field: "assignSchoolTeachersAsHutLeaders",
     control: "quoteResponseTtlDays",
   },
+  { model: "ServerNzSettings", field: "otherLodgesOwnedNames", control: "otherLodgesOwnedNamesAt" },
 ] as const;
 
 /**
