@@ -6,9 +6,18 @@ import { approveBookingRequest, BookingRequestError } from "@/lib/booking-reques
 import {
   approveMemberWholeLodgeRequest,
   approveSchoolBookingRequest,
+} from "@/lib/school-booking-request";
+import {
+  bookingRequestOwnerContactIdSchema,
   memberWholeLodgeApprovalSchema,
   schoolChildCountsSchema,
-} from "@/lib/school-booking-request";
+  type SchoolChildCounts,
+} from "@/lib/admin-bookings-schemas/requests";
+import {
+  ADMIN_BOOKING_REQUEST_APPROVAL_CONNECTION_SHAPE,
+  type AdminBookingRequestApprovalAnswer,
+} from "@/lib/connection-shapes/bookings-requests";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
@@ -22,6 +31,12 @@ import {
 } from "@/lib/booking-member-night-conflicts";
 import { clubFormatValues } from "@/lib/club-format-server";
 
+/**
+ * POST /api/admin/booking-requests/[id]/approve — convert a request into a
+ * booking, on the branch its kind selects. The body's fields are read on
+ * their own branch with the schemas `adminBookingRequestApproveBodySchema`
+ * composes. Also the AI app action `approve_booking_request` (ALP-719).
+ */
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -61,17 +76,14 @@ export async function POST(
   // approval transaction; here we only normalise the shape.
   let ownerContactMemberId: string | undefined;
   if (body.ownerContactMemberId !== undefined && body.ownerContactMemberId !== null) {
-    if (
-      typeof body.ownerContactMemberId !== "string" ||
-      body.ownerContactMemberId.trim().length === 0 ||
-      body.ownerContactMemberId.length > 64
-    ) {
+    const parsedContact = bookingRequestOwnerContactIdSchema.safeParse(body.ownerContactMemberId);
+    if (!parsedContact.success) {
       return NextResponse.json(
         { error: "Invalid contact selection" },
         { status: 422 }
       );
     }
-    ownerContactMemberId = body.ownerContactMemberId;
+    ownerContactMemberId = parsedContact.data;
   }
 
   try {
@@ -117,7 +129,7 @@ export async function POST(
         );
       }
 
-      return NextResponse.json({
+      const answer: AdminBookingRequestApprovalAnswer = {
         success: true,
         type: "MEMBER_WHOLE_LODGE",
         bookingId: result.bookingId,
@@ -132,11 +144,12 @@ export async function POST(
         // the officer must resolve by hand. This reaches the admin caller and
         // nothing else — no member surface reads this response.
         exclusiveHoldConflicts: result.exclusiveHoldConflicts,
-      });
+      };
+      return connectionJson(req, answer, ADMIN_BOOKING_REQUEST_APPROVAL_CONNECTION_SHAPE);
     }
 
     if (requestRow.type === BookingRequestType.SCHOOL) {
-      let guestOverride: { childCounts: ReturnType<typeof schoolChildCountsSchema.parse> } | undefined;
+      let guestOverride: { childCounts: SchoolChildCounts } | undefined;
       if (body.childCounts !== undefined) {
         const parsedCounts = schoolChildCountsSchema.safeParse(body.childCounts);
         if (!parsedCounts.success) {
@@ -165,7 +178,7 @@ export async function POST(
         );
       }
 
-      return NextResponse.json({
+      const answer: AdminBookingRequestApprovalAnswer = {
         success: true,
         type: "SCHOOL",
         bookingId: result.bookingId,
@@ -180,7 +193,8 @@ export async function POST(
         // hold was set at approval (issue #119); the officer resolves them
         // manually (decision 1). Empty when no hold was set or nights are clear.
         exclusiveHoldConflicts: result.exclusiveHoldConflicts,
-      });
+      };
+      return connectionJson(req, answer, ADMIN_BOOKING_REQUEST_APPROVAL_CONNECTION_SHAPE);
     }
 
     const result = await approveBookingRequest({
@@ -199,14 +213,15 @@ export async function POST(
       );
     }
 
-    return NextResponse.json({
+    const answer: AdminBookingRequestApprovalAnswer = {
       success: true,
       type: "GENERAL",
       bookingId: result.bookingId,
       memberId: result.memberId,
       priceCents: result.priceCents,
       paymentLinkExpiresAt: result.paymentLinkExpiresAt.toISOString(),
-    });
+    };
+    return connectionJson(req, answer, ADMIN_BOOKING_REQUEST_APPROVAL_CONNECTION_SHAPE);
   } catch (err) {
     // `INV-LOCK-006`: the approval's one transaction rolled back.
     const contended = transactionContendedResponse(err, "Booking request approval contended for the lock(1) budget", {

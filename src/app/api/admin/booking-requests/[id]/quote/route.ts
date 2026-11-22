@@ -1,14 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingRequestQuoteInputSchema } from "@/lib/admin-bookings-schemas/requests";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
-  bookingRequestQuoteInputSchema,
   BookingRequestQuoteError,
   createBookingRequestQuote,
   parseBookingRequestQuoteOptions,
 } from "@/lib/booking-request-quotes";
 import { BookingRequestError } from "@/lib/booking-request";
+import {
+  ADMIN_BOOKING_REQUEST_QUOTE_SAVED_CONNECTION_SHAPE,
+  type AdminBookingRequestQuoteSavedAnswer,
+} from "@/lib/connection-shapes/bookings-requests";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 
+/**
+ * POST /api/admin/booking-requests/[id]/quote — Save quote: price the request
+ * as a draft quote, superseding any earlier one. Also the AI app action
+ * `save_booking_request_quote` (ALP-719).
+ */
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -39,13 +49,14 @@ export async function POST(
       quote: parsed.data,
     });
 
-    return NextResponse.json({
+    const answer: AdminBookingRequestQuoteSavedAnswer = {
       id: quote.id,
       version: quote.version,
       status: quote.status,
       pricingMode: quote.pricingMode,
       options: parseBookingRequestQuoteOptions(quote.options),
-    });
+    };
+    return connectionJson(req, answer, ADMIN_BOOKING_REQUEST_QUOTE_SAVED_CONNECTION_SHAPE);
   } catch (err) {
     if (err instanceof BookingRequestError || err instanceof BookingRequestQuoteError) {
       return NextResponse.json({ error: err.message }, { status: err.status });

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
-import { z } from "zod";
+import { adminBookingRequestHoldBodySchema } from "@/lib/admin-bookings-schemas/requests";
 import {
   BookingRequestQuoteError,
   holdBookingRequestSlots,
@@ -17,14 +17,17 @@ import {
   transactionContendedResponse,
 } from "@/lib/transaction-contended-response";
 import { clubFormatValues } from "@/lib/club-format-server";
+import {
+  ADMIN_BOOKING_REQUEST_HOLD_CONNECTION_SHAPE,
+  type AdminBookingRequestHoldAnswer,
+} from "@/lib/connection-shapes/bookings-requests";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
-const holdSchema = z.object({
-  optionId: z.string().min(1).max(40).optional().nullable(),
-  // Optional map-to-existing-contact decision (issue #1255). The authoritative
-  // guard runs inside the hold transaction.
-  ownerContactMemberId: z.string().min(1).max(64).optional().nullable(),
-});
-
+/**
+ * POST /api/admin/booking-requests/[id]/hold — hold the request's beds as an
+ * awaiting-review booking. Also the AI app action `hold_booking_request_beds`
+ * (ALP-719).
+ */
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -49,7 +52,7 @@ export async function POST(
     body = {};
   }
 
-  const parsed = holdSchema.safeParse(body);
+  const parsed = adminBookingRequestHoldBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten().fieldErrors },
@@ -75,11 +78,12 @@ export async function POST(
       );
     }
 
-    return NextResponse.json({
+    const answer: AdminBookingRequestHoldAnswer = {
       success: true,
       bookingId: result.bookingId,
       reused: result.reused,
-    });
+    };
+    return connectionJson(req, answer, ADMIN_BOOKING_REQUEST_HOLD_CONNECTION_SHAPE);
   } catch (err) {
     // `INV-LOCK-006`: the hold rolled back, but a stale hold pointer may
     // already have been detached, so the officer checks rather than assumes.

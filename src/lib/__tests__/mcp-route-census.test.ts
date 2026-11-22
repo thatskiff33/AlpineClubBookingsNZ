@@ -35,7 +35,13 @@ const HTTP_METHODS: ReadonlySet<string> = new Set(STEP_UP_HTTP_METHODS);
  * nothing, which a reviewer checked against the route. A view-only connection
  * runs them and no audit row is written, so adding one here is a decision.
  */
-const PREVIEW_ROUTE_KEYS: readonly string[] = [];
+const PREVIEW_ROUTE_KEYS: readonly string[] = [
+  // ALP-719: bed allocation's move and removal previews, and the member-link
+  // check a booking request's quote runs before it is saved.
+  "POST src/app/api/admin/bed-allocation/allocations/move/route.ts",
+  "POST src/app/api/admin/bed-allocation/allocations/removal/route.ts",
+  "POST src/app/api/admin/booking-requests/[id]/link-conflicts/route.ts",
+];
 
 /** The HTTP methods a route file exports, however it spells the export. */
 function exportedMethods(file: string): string[] {
