@@ -5,6 +5,7 @@ import { sendVerificationEmail } from "@/lib/email";
 import { createEmailVerificationToken } from "@/lib/verification-tokens";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const resendSchema = z.object({
   email: z.string().email(),
@@ -14,12 +15,11 @@ export async function POST(request: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.resendVerification, request);
   if (rateLimited) return rateLimited;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   try {
     const parsed = resendSchema.safeParse(body);

@@ -24,10 +24,10 @@ import {
 } from "@/lib/club-time";
 import { useClubFormat } from "@/components/club-format-provider";
 
-// The whole-lodge blockout view (fork issues #30/#58; visual references:
+// The whole-lodge blockout view (fork issues hoppers99/AlpineClubBookingsNZ#30/#58; visual references:
 // docs/lobby-display/mockups/approved/whole-lodge.html options A/C and
 // whole-lodge-rotating.html). When a group has the lodge to itself the
-// serialiser has already withheld individual names (issue #28 AC3) — this
+// serialiser has already withheld individual names (issue hoppers99/AlpineClubBookingsNZ#28 AC3) — this
 // module renders the group label only:
 //
 // - rooms configured → the BOARD variant: day headers and dimmed room labels

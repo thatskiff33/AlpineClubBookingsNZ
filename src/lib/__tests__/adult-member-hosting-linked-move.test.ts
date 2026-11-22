@@ -67,6 +67,7 @@ function quote(overrides: Partial<LinkedMoveQuote> = {}): LinkedMoveQuote {
     combinedOrganiserRefundCents: 0,
     combinedOrganiserBankTransferRefundCents: 0,
     settlementMethodRequired: false,
+    refundRoute: "CARD",
     settlementMethodChosen: false,
     bothChangeFeesCharged: true,
     feasibility: "AVAILABLE",

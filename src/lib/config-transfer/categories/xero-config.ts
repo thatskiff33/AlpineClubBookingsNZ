@@ -28,6 +28,7 @@ import { bundleCarriesJoiningFeeSchedule } from "./membership-fees";
 import { addDaysDateOnly } from "@/lib/date-only";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { openingCreditsImportFindings } from "@/lib/xero-opening-credits-exempt-guards";
 
 // xero-config category: the accounting mappings — GL account/item-code mappings
 // and per-category item codes. Contact-group rules/accepted-groups are excluded
@@ -652,6 +653,8 @@ async function planXeroConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
   const errors: string[] = [];
   const fingerprintParts: string[] = [];
   const batch = await loadXeroBatch(ctx.db);
+  // #4988: every account code as it would read once this bundle is applied.
+  const codesAfterImport = new Map([...batch.accounts.values()].map(({ key, code }) => [key, code]));
 
   readCsvRows(ctx.files, ACCOUNT_FILE).forEach((raw, i) => {
     const v = new RowValidator(ACCOUNT_FILE, i, errors);
@@ -664,7 +667,16 @@ async function planXeroConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
     const write = updateDataForMode(ctx.mode, raw, { code: nz(raw.code), itemCode: nz(raw.itemCode) });
     const changed = changedFields(write, current);
     items.push({ entity: "xero-account-mapping", key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
+    // As `applyRow` writes it: a new row takes the bundle's code, an existing one only if this mode writes the field.
+    if (!current) codesAfterImport.set(key, nz(raw.code));
+    else if ("code" in write) codesAfterImport.set(key, write.code ?? null);
   });
+
+  // #4988: the account mapping screen's rules for Opening Credits, applied to
+  // the import, which writes the same rows. The error blocks the apply.
+  const openingCredits = await openingCreditsImportFindings(ctx.db, batch.accounts.values(), codesAfterImport);
+  if (openingCredits.error) errors.push(`${ACCOUNT_FILE}: ${openingCredits.error}`);
+  if (openingCredits.warning) warnings.push(openingCredits.warning);
 
   const parsedItemRows: ParsedItemRow[] = [];
   readCsvRows(ctx.files, ITEM_FILE).forEach((raw, i) => {

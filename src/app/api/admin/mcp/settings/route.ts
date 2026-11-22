@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { getAuditRequestContext } from "@/lib/audit";
 import { recordMcpAudit } from "@/lib/mcp/audit";
 import { mcpConnectionMayNotManage, mcpModuleOffResponse } from "@/lib/mcp/http";
@@ -47,12 +48,11 @@ export async function PUT(request: Request) {
   if (!recent.ok) return recent.response;
   const actorMemberId = guard.session.user.id;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = mcpSettingsUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

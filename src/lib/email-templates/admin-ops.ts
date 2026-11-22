@@ -208,7 +208,7 @@ export function adminMaintenanceReportTemplate(data: {
 }
 
 /**
- * `food-order-placed` (fork #121): a member ordered food for a lodge, delivered
+ * `food-order-placed` (fork triyder/AlpineClubBookingsNZ#121): a member ordered food for a lodge, delivered
  * to the address in the Food Orders settings (the club's food officer).
  *
  * Every member-typed value — the item descriptions and the note — is escaped,

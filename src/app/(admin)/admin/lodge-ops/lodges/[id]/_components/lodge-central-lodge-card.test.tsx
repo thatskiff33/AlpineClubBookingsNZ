@@ -27,7 +27,7 @@ vi.mock("next-auth/react", () => ({
 import { LodgeCentralLodgeCard } from "./lodge-central-lodge-card";
 
 /**
- * The "Central lodge" card (#62): what it says in each state, that nothing is
+ * The "Central lodge" card (triyder/AlpineClubBookingsNZ#62): what it says in each state, that nothing is
  * saved until Save, that the save carries THIS lodge's id and only the link,
  * and that a lodge:view administrator cannot edit.
  */

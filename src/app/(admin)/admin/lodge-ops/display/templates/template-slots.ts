@@ -1,5 +1,5 @@
-// Pure slot-editor helpers for the Template authoring page (fork issue #79,
-// #111). Extracted from page.tsx so the seeding/reseeding logic is unit-testable
+// Pure slot-editor helpers for the Template authoring page (fork issue hoppers99/AlpineClubBookingsNZ#79,
+// hoppers99/AlpineClubBookingsNZ#111). Extracted from page.tsx so the seeding/reseeding logic is unit-testable
 // without rendering the client component. No React, no fetch — pure data.
 
 export interface AreaChild {
@@ -13,7 +13,7 @@ export interface AreaDefinition {
   kind: "static" | "conditional" | "rotator";
   children?: AreaChild[];
   /** static/conditional only: the layout's per-area default content that seeds a
-   * new template's slot (issue #111). Rotator children carry none yet. */
+   * new template's slot (issue hoppers99/AlpineClubBookingsNZ#111). Rotator children carry none yet. */
   defaultContent?: { html?: string } | { module?: string; options?: Record<string, unknown> };
 }
 
@@ -108,7 +108,7 @@ export function buildSlots(
 
 /**
  * Re-seed one slot's editor fields from its layout-provided default content
- * (issue #111). Shares the seeding logic with buildSlots via seedSlot. When the
+ * (issue hoppers99/AlpineClubBookingsNZ#111). Shares the seeding logic with buildSlots via seedSlot. When the
  * slot's area declares no default, the fields reset to an empty HTML box — but
  * the UI only exposes this control for slots that HAVE a default.
  */

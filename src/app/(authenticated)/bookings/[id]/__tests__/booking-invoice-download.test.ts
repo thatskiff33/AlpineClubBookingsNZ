@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * #5066 slice 1: the booking page's Download invoice and credit-note downloads —
+ * #5066: the booking page's Download invoice and credit-note downloads —
  * who is offered them, for which bookings, and what a download does. The real
  * `resolveBookingDetailViewer` runs, so the audience is the page's own
  * `canSeeOwnerCredit` answer rather than a mocked one.
@@ -13,27 +13,42 @@ vi.mock("@/lib/booking-supplementary-invoice-identities", () => ({
   bookingHasAnySupplementaryInvoiceEvidence: vi.fn(),
 }));
 vi.mock("../_lib/load-booking-detail", () => ({ loadBookingDetail: vi.fn() }));
-vi.mock("@/lib/module-settings", () => ({ loadEffectiveModuleFlags: vi.fn() }));
+vi.mock("@/lib/module-settings", () => ({ loadEffectiveModuleFlagsStrict: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
 vi.mock("@/lib/booking-credit-notes", () => ({ readBookingCreditNotes: vi.fn() }));
 vi.mock("@/lib/club-identity-settings", () => ({ getClubIdentity: vi.fn() }));
 
 import {
+  BookingInvoiceSettingsUnavailableError,
   bookingInvoiceFileName,
   prepareBookingInvoiceDownload,
   resolveBookingInvoiceOffer,
 } from "../_lib/booking-invoice-download";
 import { resolveBookingDetailViewer } from "../_lib/booking-detail-viewer";
+import { BookingInvoiceNotAvailableError } from "@/lib/booking-invoice";
 import { createAuditLog } from "@/lib/audit";
 import { readBookingCreditNotes } from "@/lib/booking-credit-notes";
 import { getClubIdentity } from "@/lib/club-identity-settings";
 import { bookingHasAnySupplementaryInvoiceEvidence } from "@/lib/booking-supplementary-invoice-identities";
-import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { loadEffectiveModuleFlagsStrict } from "@/lib/module-settings";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { loadBookingDetail } from "../_lib/load-booking-detail";
 
 const OWNER_ID = "owner-1";
+const GUEST = {
+  memberId: "guest-1",
+  consentStatus: "ACCEPTED",
+  firstName: "Tama",
+  lastName: "Guest",
+  ageTier: "ADULT",
+  isMember: true,
+  priceCents: 20_000,
+  nights: [
+    { stayDate: new Date("2026-08-03T00:00:00.000Z"), priceCents: 10_000 },
+    { stayDate: new Date("2026-08-04T00:00:00.000Z"), priceCents: 10_000 },
+  ],
+};
 
 function booking(overrides: Record<string, unknown> = {}, payment: Record<string, unknown> = {}) {
   return {
@@ -46,7 +61,15 @@ function booking(overrides: Record<string, unknown> = {}, payment: Record<string
     status: "CONFIRMED",
     organiserSettled: false,
     parentBookingId: null,
-    guests: [{ memberId: "guest-1", consentStatus: "ACCEPTED" }],
+    // The stored figures the generated document (Xero off) prints: one guest, two nights.
+    checkIn: new Date("2026-08-03T00:00:00.000Z"),
+    checkOut: new Date("2026-08-05T00:00:00.000Z"),
+    finalPriceCents: 20_000,
+    promoAdjustmentCents: 0,
+    promoRedemptions: [],
+    groupBookingAsOrganiser: null,
+    lodge: { name: "Summit Lodge" },
+    guests: [GUEST],
     modifications: [{ id: "mod-1" }],
     payment: {
       id: "payment-1",
@@ -67,14 +90,30 @@ const viewerFor = (b: never, id: string, role: string) =>
   resolveBookingDetailViewer({ session: session(id, role), booking: b });
 
 const CREDIT_NOTE = { creditNoteId: "xero-cn-1", creditNoteNumber: "CN-0007", kind: "CHANGE" as const };
+/** The tax period at the booking's anchor: a club that never recorded a status (the code baseline). */
+const NO_RECORDED_STATUS = { recorded: false, registered: true };
+const RECORDED_REGISTERED = { recorded: true, registered: true };
+const RECORDED_NOT_REGISTERED = { recorded: true, registered: false };
+const taxIs = (period: typeof NO_RECORDED_STATUS) => vi.fn(async () => period);
 const noSupplementary = {
   hasAnySupplementaryInvoice: vi.fn(async () => false),
   creditNotes: vi.fn(async () => [CREDIT_NOTE]),
+  generatedInvoiceTax: taxIs(NO_RECORDED_STATUS),
 };
 const XERO_ON = { xeroIntegration: true };
+const XERO_OFF = { xeroIntegration: false };
 const ON_OFFER = { kind: "XERO_INVOICE", invoiceNumber: "INV-0042", creditNotes: [CREDIT_NOTE] };
 
-function offer(b: never, id = OWNER_ID, role = "USER", modules = XERO_ON, deps = noSupplementary) {
+/** A Xero-off club's booking: no Xero invoice id, no Xero documents. */
+const offBooking = (overrides: Record<string, unknown> = {}, payment: Record<string, unknown> = {}) =>
+  booking(overrides, { xeroInvoiceId: null, xeroInvoiceNumber: null, ...payment });
+const noXeroDocuments = {
+  hasAnySupplementaryInvoice: vi.fn(async () => false),
+  creditNotes: vi.fn(async () => []),
+  generatedInvoiceTax: taxIs(NO_RECORDED_STATUS),
+};
+
+function offer(b: never, id = OWNER_ID, role = "USER", modules = XERO_ON, deps: typeof noSupplementary = noSupplementary) {
   return resolveBookingInvoiceOffer({ booking: b, viewer: viewerFor(b, id, role), modules }, deps);
 }
 
@@ -116,8 +155,86 @@ describe("resolveBookingInvoiceOffer: the one rule for the button and the route"
     expect(await offer(booking())).toMatchObject({ kind: "XERO_INVOICE", creditNotes: [CREDIT_NOTE] });
   });
 
-  it("offers nothing while the club's Xero module is off", async () => {
-    expect(await offer(booking(), OWNER_ID, "USER", { xeroIntegration: false })).toEqual({ kind: "NONE" });
+  it("offers the app's generated document while the club's Xero module is off, never Xero's invoice (slice 2)", async () => {
+    expect(await offer(offBooking(), OWNER_ID, "USER", XERO_OFF, noXeroDocuments)).toEqual({ kind: "GENERATED", notYetApproved: false });
+    // It looks for Xero documents left from when the module was on.
+    expect(noXeroDocuments.hasAnySupplementaryInvoice).toHaveBeenCalledWith("ckbooking1234567");
+  });
+
+  it("with Xero off, keeps the same audience and refusals", async () => {
+    const off = (b: never, id = OWNER_ID, role = "USER") => offer(b, id, role, XERO_OFF, noXeroDocuments);
+    expect(await off(offBooking(), "guest-1")).toEqual({ kind: "NONE" });
+    expect(await off(offBooking(), "content-1", "ADMIN_CONTENT")).toEqual({ kind: "NONE" });
+    expect(await off(offBooking(), "officer-1", "ADMIN_BOOKINGS")).toEqual({ kind: "GENERATED", notYetApproved: false });
+    expect(await off(offBooking({ status: "CANCELLED" }))).toEqual({ kind: "NONE" });
+    expect(await off(offBooking({ status: "AWAITING_REVIEW" }))).toEqual({ kind: "GENERATED", notYetApproved: true });
+    const organiserPaid = offBooking({ organiserSettled: true, parentBookingId: "organiser-booking" }, { source: "STRIPE" });
+    expect(await off(organiserPaid)).toEqual({ kind: "NONE" });
+  });
+
+  it("with Xero off, offers the organiser's own booking in an organiser-pays group", async () => {
+    const organiser = offBooking({ groupBookingAsOrganiser: { paymentMode: "ORGANISER_PAYS" } });
+    expect(await offer(organiser, OWNER_ID, "USER", XERO_OFF, noXeroDocuments)).toEqual({ kind: "GENERATED", notYetApproved: false });
+  });
+
+  it("with Xero off, points a booking that already has Xero documents at the club, never a second Invoice", async () => {
+    const ask = { kind: "ASK_CLUB", staffViewer: false, reason: "XERO_DOCUMENTS" };
+    // A primary Xero invoice from when the module was on: no read needed.
+    expect(await offer(booking(), OWNER_ID, "USER", XERO_OFF, noXeroDocuments)).toEqual(ask);
+    // A supplementary invoice, or a credit note, found by the existing readers.
+    const supplementary = { ...noXeroDocuments, hasAnySupplementaryInvoice: vi.fn(async () => true) };
+    expect(await offer(offBooking(), OWNER_ID, "USER", XERO_OFF, supplementary)).toEqual(ask);
+    const creditNote = { ...noXeroDocuments, creditNotes: vi.fn(async () => [CREDIT_NOTE]) };
+    expect(await offer(offBooking(), OWNER_ID, "USER", XERO_OFF, creditNote)).toEqual(ask);
+    expect(await offer(booking(), "officer-1", "ADMIN_BOOKINGS", XERO_OFF, noXeroDocuments)).toEqual({ ...ask, staffViewer: true });
+  });
+
+  describe("with Xero off, the tax period at the booking's anchor (owner decision, 20 Nov 2026)", () => {
+    const withTax = (generatedInvoiceTax: ReturnType<typeof taxIs>) => ({ ...noXeroDocuments, generatedInvoiceTax });
+
+    it("offers the generated Invoice to a club that never recorded a status", async () => {
+      const tax = withTax(taxIs(NO_RECORDED_STATUS));
+      expect(await offer(offBooking(), OWNER_ID, "USER", XERO_OFF, tax)).toEqual({ kind: "GENERATED", notYetApproved: false });
+      expect(tax.generatedInvoiceTax).toHaveBeenCalledWith("ckbooking1234567");
+    });
+
+    it("offers the generated Invoice in a period the club recorded as not registered", async () => {
+      expect(await offer(offBooking(), OWNER_ID, "USER", XERO_OFF, withTax(taxIs(RECORDED_NOT_REGISTERED)))).toEqual({
+        kind: "GENERATED",
+        notYetApproved: false,
+      });
+    });
+
+    it("points a booking in a recorded GST-registered period at the club, in the reader's voice", async () => {
+      const tax = withTax(taxIs(RECORDED_REGISTERED));
+      const ask = { kind: "ASK_CLUB", staffViewer: false, reason: "REGISTERED_TAX_PERIOD" };
+      expect(await offer(offBooking(), OWNER_ID, "USER", XERO_OFF, tax)).toEqual(ask);
+      expect(await offer(offBooking({ status: "AWAITING_REVIEW" }), OWNER_ID, "USER", XERO_OFF, tax)).toEqual(ask);
+      expect(await offer(offBooking(), "officer-1", "ADMIN_BOOKINGS", XERO_OFF, tax)).toEqual({ ...ask, staffViewer: true });
+    });
+
+    it("refuses when the schedule cannot be read, never counting it as no recorded status", async () => {
+      const failing = withTax(vi.fn(async () => { throw new Error("schedule unreadable"); }));
+      await expect(offer(offBooking(), OWNER_ID, "USER", XERO_OFF, failing)).rejects.toBeInstanceOf(BookingInvoiceSettingsUnavailableError);
+    });
+
+    it("reads the schedule only when the answer would otherwise be the generated document", async () => {
+      const tax = withTax(taxIs(RECORDED_REGISTERED));
+      await offer(booking(), OWNER_ID, "USER", XERO_ON, tax);
+      await offer(offBooking(), "guest-1", "USER", XERO_OFF, tax);
+      await offer(offBooking({}, { transactions: [{}] }), OWNER_ID, "USER", XERO_OFF, tax);
+      await offer(booking(), OWNER_ID, "USER", XERO_OFF, tax);
+      await offer(offBooking(), OWNER_ID, "USER", XERO_OFF, { ...tax, hasAnySupplementaryInvoice: vi.fn(async () => true) });
+      expect(tax.generatedInvoiceTax).not.toHaveBeenCalled();
+    });
+  });
+
+  it("with Xero off, explains an extra charge asked instead of offering nothing", async () => {
+    expect(await offer(offBooking({}, { transactions: [{}] }), OWNER_ID, "USER", XERO_OFF, noXeroDocuments)).toEqual({
+      kind: "ASK_CLUB",
+      staffViewer: false,
+      reason: "EXTRA_CHARGE",
+    });
   });
 
   it("offers nothing on a cancelled or bumped booking", async () => {
@@ -154,7 +271,7 @@ describe("resolveBookingInvoiceOffer: the one rule for the button and the route"
   });
 
   it("asks the member to contact the club when any supplementary invoice exists — a card receipt with no ADDITIONAL row included", async () => {
-    const receiptOnly = { hasAnySupplementaryInvoice: vi.fn(async () => true), creditNotes: vi.fn(async () => []) };
+    const receiptOnly = { ...noXeroDocuments, hasAnySupplementaryInvoice: vi.fn(async () => true) };
     expect(await offer(booking(), OWNER_ID, "USER", XERO_ON, receiptOnly)).toEqual({ kind: "ASK_CLUB", staffViewer: false });
     expect(receiptOnly.hasAnySupplementaryInvoice).toHaveBeenCalledWith("ckbooking1234567");
   });
@@ -174,6 +291,12 @@ describe("bookingInvoiceFileName", () => {
   });
 });
 
+const GENERATED_RENDER = {
+  body: Buffer.from("%PDF-1.3 generated"),
+  data: { documentDate: "1 July 2026", totalCents: 20_000 },
+  balanceCents: 5_000,
+};
+
 describe("prepareBookingInvoiceDownload", () => {
   const pdf = Buffer.from("%PDF-1.4");
   function deps(overrides: Record<string, unknown> = {}) {
@@ -185,6 +308,7 @@ describe("prepareBookingInvoiceDownload", () => {
       clubShortName: vi.fn(async () => "TAC"),
       fetchXeroInvoicePdf: vi.fn(async () => pdf),
       fetchXeroCreditNotePdf: vi.fn(async () => pdf),
+      renderGenerated: vi.fn(async () => GENERATED_RENDER),
       ...overrides,
     } as never as NonNullable<Parameters<typeof prepareBookingInvoiceDownload>[4]>;
   }
@@ -230,7 +354,7 @@ describe("prepareBookingInvoiceDownload", () => {
   it.each([
     ["a linked guest", booking(), "guest-1", XERO_ON],
     ["a stranger", booking(), "stranger-1", XERO_ON],
-    ["Xero off", booking(), OWNER_ID, { xeroIntegration: false }],
+    ["a draft booking with Xero off", booking({ status: "DRAFT" }), OWNER_ID, XERO_OFF],
     ["a cancelled booking", booking({ status: "CANCELLED" }), OWNER_ID, XERO_ON],
     ["a booking with a further invoice", booking({}, { transactions: [{}] }), OWNER_ID, XERO_ON],
   ])("refuses %s as not found, with no Xero read and no audit row", async (_label, b, id, modules) => {
@@ -314,6 +438,123 @@ describe("prepareBookingInvoiceDownload", () => {
     expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).toEqual({ kind: "AUDIT_FAILED" });
   });
 
+  describe("with the Xero module off: the app's generated document (slice 2)", () => {
+    const off = (overrides: Record<string, unknown> = {}) =>
+      deps({
+        modules: vi.fn(async () => XERO_OFF),
+        loadBooking: vi.fn(async () => offBooking()),
+        offer: (input: Parameters<typeof resolveBookingInvoiceOffer>[0]) => resolveBookingInvoiceOffer(input, noXeroDocuments),
+        ...overrides,
+      });
+
+    it("renders the generated document, never reads Xero, and audits it as generated with its figures", async () => {
+      const d = off();
+      const result = await prepareBookingInvoiceDownload("ckbooking1234567", session("officer-1", "ADMIN_BOOKINGS"), INVOICE, request, d);
+      expect(result).toEqual({ kind: "PDF", body: GENERATED_RENDER.body, fileName: "tac-invoice-CKBOOKIN.pdf" });
+      expect(d.renderGenerated).toHaveBeenCalledWith(expect.objectContaining({ id: "ckbooking1234567" }), { kind: "GENERATED", notYetApproved: false });
+      expect(d.xeroConnected).not.toHaveBeenCalled();
+      expect(d.fetchXeroInvoicePdf).not.toHaveBeenCalled();
+      expect(chargeBookingLimit).toHaveBeenCalledTimes(1);
+      expect(createAuditLog).toHaveBeenCalledTimes(1);
+      expect(createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+        action: "booking.invoice.downloaded",
+        category: "booking",
+        actorMemberId: "officer-1",
+        subjectMemberId: OWNER_ID,
+        summary: "Booking invoice generated and downloaded",
+        metadata: {
+          bookingId: "ckbooking1234567",
+          source: "GENERATED",
+          notYetApproved: false,
+          documentDate: "1 July 2026",
+          totalCents: 20_000,
+          balanceCents: 5_000,
+          onBehalf: true,
+        },
+      }));
+      const renderOrder = (d.renderGenerated as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+      const auditOrder = vi.mocked(createAuditLog).mock.invocationCallOrder[0];
+      expect(renderOrder).toBeLessThan(auditOrder);
+    });
+
+    it("marks a booking awaiting review as not yet approved, in the document and the audit row", async () => {
+      const d = off({ loadBooking: vi.fn(async () => offBooking({ status: "AWAITING_REVIEW" })) });
+      await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d);
+      expect(d.renderGenerated).toHaveBeenCalledWith(expect.anything(), { kind: "GENERATED", notYetApproved: true });
+      expect(createAuditLog).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ notYetApproved: true }) }));
+    });
+
+    it.each([
+      ["a cancelled booking", offBooking({ status: "CANCELLED" })],
+      ["a waitlisted booking", offBooking({ status: "WAITLISTED" })],
+      ["a place the organiser pays for", offBooking({ organiserSettled: true, parentBookingId: "organiser-booking" })],
+      ["a booking with a night awaiting a price (#3170)", offBooking({ guests: [{ ...GUEST, nights: [{ stayDate: new Date("2026-08-03T00:00:00.000Z"), priceCents: null }] }] })],
+      ["a booking with an extra charge asked", offBooking({}, { transactions: [{}] })],
+      ["a booking with a Xero invoice from when Xero was on", booking()],
+    ])("refuses %s as not found, before any limit, render or audit", async (_label, b) => {
+      const d = off({ loadBooking: vi.fn(async () => b) });
+      expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).toEqual({ kind: "NOT_FOUND" });
+      expect(d.renderGenerated).not.toHaveBeenCalled();
+      expect(chargeBookingLimit).not.toHaveBeenCalled();
+      expect(createAuditLog).not.toHaveBeenCalled();
+    });
+
+    it("refuses when the module settings cannot be read, rather than treating Xero as off (#5066 review)", async () => {
+      const d = deps({ modules: vi.fn(async () => { throw new Error("database is down"); }) });
+      expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).toEqual({ kind: "SETTINGS_UNAVAILABLE" });
+      expect(d.renderGenerated).not.toHaveBeenCalled();
+      expect(d.fetchXeroInvoicePdf).not.toHaveBeenCalled();
+      expect(chargeBookingLimit).not.toHaveBeenCalled();
+      expect(createAuditLog).not.toHaveBeenCalled();
+    });
+
+    it("refuses a booking in a recorded GST-registered period as not found, before any limit, render or audit", async () => {
+      const d = off({
+        offer: (input: Parameters<typeof resolveBookingInvoiceOffer>[0]) =>
+          resolveBookingInvoiceOffer(input, { ...noXeroDocuments, generatedInvoiceTax: taxIs(RECORDED_REGISTERED) }),
+      });
+      expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).toEqual({ kind: "NOT_FOUND" });
+      expect(d.renderGenerated).not.toHaveBeenCalled();
+      expect(chargeBookingLimit).not.toHaveBeenCalled();
+      expect(createAuditLog).not.toHaveBeenCalled();
+    });
+
+    it("refuses when the tax schedule cannot be read, rather than generating (#5066, 20 Nov 2026)", async () => {
+      const d = off({
+        offer: (input: Parameters<typeof resolveBookingInvoiceOffer>[0]) =>
+          resolveBookingInvoiceOffer(input, { ...noXeroDocuments, generatedInvoiceTax: vi.fn(async () => { throw new Error("schedule unreadable"); }) }),
+      });
+      expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).toEqual({ kind: "SETTINGS_UNAVAILABLE" });
+      expect(d.renderGenerated).not.toHaveBeenCalled();
+      expect(chargeBookingLimit).not.toHaveBeenCalled();
+      expect(createAuditLog).not.toHaveBeenCalled();
+    });
+
+    it("lets any other failure of the offer propagate", async () => {
+      const d = off({ offer: vi.fn(async () => { throw new Error("supplementary read failed"); }) });
+      await expect(prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).rejects.toThrow("supplementary read failed");
+    });
+
+    it("serves no credit note while Xero is off", async () => {
+      const d = off();
+      expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), creditNote("xero-cn-1"), request, d)).toEqual({ kind: "NOT_FOUND" });
+      expect(d.fetchXeroCreditNotePdf).not.toHaveBeenCalled();
+      expect(d.renderGenerated).not.toHaveBeenCalled();
+    });
+
+    it("answers a booking that changed under the offer as no longer available, writing no audit row", async () => {
+      const d = off({ renderGenerated: vi.fn(async () => { throw new BookingInvoiceNotAvailableError("LINES_DO_NOT_ADD_UP"); }) });
+      expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).toEqual({ kind: "NOT_FOUND" });
+      expect(createAuditLog).not.toHaveBeenCalled();
+    });
+
+    it("withholds the generated PDF when its audit row cannot be written", async () => {
+      vi.mocked(createAuditLog).mockRejectedValueOnce(new Error("db down"));
+      const d = off();
+      expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).toEqual({ kind: "AUDIT_FAILED" });
+    });
+  });
+
   it("records no subject member on an organisation-owned booking (INV-PRIV-019)", async () => {
     const school = booking({ memberId: null, member: null, organisationId: "org-1", organisation: { name: "School", email: null } });
     const d = deps({ loadBooking: vi.fn(async () => school) });
@@ -329,7 +570,7 @@ describe("prepareBookingInvoiceDownload with its real dependencies", () => {
   it("reads Xero's PDF once through the metered client: no retries, no breaker arming", async () => {
     const getInvoiceAsPdf = vi.fn(async () => ({ body: Buffer.from("%PDF-1.4") }));
     vi.mocked(loadBookingDetail).mockResolvedValue(booking());
-    vi.mocked(loadEffectiveModuleFlags).mockResolvedValue({ xeroIntegration: true } as never);
+    vi.mocked(loadEffectiveModuleFlagsStrict).mockResolvedValue({ xeroIntegration: true } as never);
     vi.mocked(bookingHasAnySupplementaryInvoiceEvidence).mockResolvedValue(false);
     vi.mocked(isXeroConnected).mockResolvedValue(true);
     vi.mocked(getAuthenticatedXeroClient).mockResolvedValue({ xero: { accountingApi: { getInvoiceAsPdf } }, tenantId: "tenant-1" } as never);
@@ -357,7 +598,7 @@ describe("prepareBookingInvoiceDownload with its real dependencies", () => {
   it("reads a credit note's PDF through the CreditNotes endpoint, the same metered way", async () => {
     const getCreditNoteAsPdf = vi.fn(async () => ({ body: Buffer.from("%PDF-1.4") }));
     vi.mocked(loadBookingDetail).mockResolvedValue(booking());
-    vi.mocked(loadEffectiveModuleFlags).mockResolvedValue({ xeroIntegration: true } as never);
+    vi.mocked(loadEffectiveModuleFlagsStrict).mockResolvedValue({ xeroIntegration: true } as never);
     vi.mocked(bookingHasAnySupplementaryInvoiceEvidence).mockResolvedValue(false);
     vi.mocked(readBookingCreditNotes).mockResolvedValue([CREDIT_NOTE]);
     vi.mocked(isXeroConnected).mockResolvedValue(true);

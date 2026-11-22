@@ -35,6 +35,7 @@ import { CLUB_MODULE_SETTINGS_COLUMN_SELECT } from "@/config/modules";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { schemaDefaultToken } from "./support/prisma-schema-default";
 
 // Delegate names touched by the club-settings category.
 const SINGLETON_DELEGATES = [
@@ -121,7 +122,7 @@ describe("config-transfer club-settings", () => {
       strFromU8(files.get("club-settings/email-message-setting.json")!),
     );
     expect(email.clubName).toBe("Grads");
-    // doorCode was dropped from EmailMessageSetting (fork #15); it must never be
+    // doorCode was dropped from EmailMessageSetting (triyder/AlpineClubBookingsNZ#15); it must never be
     // emitted here — the lodge door code travels in lodge.json instead.
     expect("doorCode" in email).toBe(false);
   });
@@ -400,10 +401,11 @@ describe("aiDiagnostics is non-travelling (AID-2, #2371)", () => {
   });
 });
 
-// Guard against the #153 regression: every ClubModuleSettings read in this
+// Guard against the hoppers99/AlpineClubBookingsNZ#153 regression: every ClubModuleSettings read in this
 // category (export, plan, apply) must use the shared column select so a
-// retired-but-not-yet-dropped column never appears in the generated SQL (see
-// CLUB_MODULE_SETTINGS_COLUMN_SELECT in src/config/modules.ts and #150/#139).
+// retired-but-not-yet-ignored column never appears in a SELECT or RETURNING (see
+// CLUB_MODULE_SETTINGS_COLUMN_SELECT in src/config/modules.ts, hoppers99/AlpineClubBookingsNZ#150 and
+// hoppers99/AlpineClubBookingsNZ#139).
 describe("club-module-settings singleton reads use the explicit column select", () => {
   it("declares the shared select on the SINGLETONS spec", () => {
     const spec = SINGLETONS.find((s) => s.entity === "club-module-settings");
@@ -520,7 +522,7 @@ describe("club-module-settings singleton reads use the explicit column select", 
 // Guard against the class of bug where an upstream schema change drops/renames a
 // column that a singleton allowlist still names — the club-settings apply uses an
 // untyped delegate, so typecheck can't catch it and it only fails at write time
-// on the server (as EmailMessageSetting.doorCode did after fork #15). This
+// on the server (as EmailMessageSetting.doorCode did after triyder/AlpineClubBookingsNZ#15). This
 // validates every singleton field against the real Prisma model columns.
 describe("club-settings allowlists match the Prisma schema", () => {
   it("every singleton field is a real column on its model", () => {
@@ -772,6 +774,8 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
       shortName: null,
       hutLeaderLabel: null,
       facebookUrl: null,
+      legalName: null,
+      postalAddress: null,
     });
     expect(readJson(files, "email-message-setting")).toEqual({
       clubName: null,
@@ -1057,29 +1061,6 @@ describe("membership-lockout useFeeScheduleItemCodes round-trips (#2178)", () =>
 // the club-settings category, and their effective defaults stay bound to the
 // Prisma schema so the exporter cannot drift from what an unsaved club reads.
 // ---------------------------------------------------------------------------
-
-/** Extract the raw token inside `@default(...)` for a field, from the schema. */
-function schemaDefaultToken(
-  schema: string,
-  modelName: string,
-  fieldName: string,
-): string | null {
-  const lines = schema.split(/\r?\n/);
-  let inModel = false;
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (line.match(new RegExp(`^model\\s+${modelName}\\s*\\{`))) {
-      inModel = true;
-      continue;
-    }
-    if (inModel && line.startsWith("}")) break;
-    if (inModel && line.match(new RegExp(`^${fieldName}\\s`))) {
-      const m = line.match(/@default\(([^)]*)\)/);
-      return m ? m[1].replace(/^"|"$/g, "") : null;
-    }
-  }
-  return null;
-}
 
 describe("#2200 portable singletons export/import and stay schema-bound", () => {
   const SCHEMA = readFileSync(
@@ -1408,6 +1389,66 @@ describe("D-18: the two open-search privacy toggles never travel", () => {
   });
 });
 
+// Way 3 of switching AI Diagnostics on (#5243): an admin config import. The
+// Modules route asks for the provider-disclosure acknowledgement, so a bundle
+// must not be a way round it — even one hand-edited to carry the flag.
+describe("a config import never switches AI Diagnostics on (#5243)", () => {
+  const handEditedModules = () =>
+    new Map<string, Uint8Array>([
+      [
+        "club-settings/club-module-settings.json",
+        strToU8(JSON.stringify({ ...MODULES, aiDiagnostics: true })),
+      ],
+    ]);
+
+  it.each([
+    ["merge", "an existing row"],
+    ["overwrite", "an existing row"],
+    ["merge", "no row"],
+    ["overwrite", "no row"],
+  ] as const)("leaves the flag out of the write in %s mode against %s", async (mode, target) => {
+    const { tx, delegates } = stubTx({
+      clubModuleSettings:
+        target === "no row" ? null : { ...MODULES, aiDiagnostics: false, bedAllocation: false },
+    });
+    await clubSettingsImporter.apply(applyCtx(tx, handEditedModules(), mode));
+
+    // The rest of the row still moves, so the write is real and inspected.
+    expect(delegates.clubModuleSettings.upsert).toHaveBeenCalledTimes(1);
+    const args = delegates.clubModuleSettings.upsert.mock.calls[0][0];
+    expect(args.create).not.toHaveProperty("aiDiagnostics");
+    expect(args.update).not.toHaveProperty("aiDiagnostics");
+  });
+
+  it.each(["merge", "overwrite"] as const)("reports no change to the flag in the %s dry-run", async (mode) => {
+    const zip = buildBundle({
+      entries: [
+        {
+          path: "club-settings/club-module-settings.json",
+          category: "club-settings",
+          rowCount: 1,
+          bytes: strToU8(JSON.stringify({ ...MODULES, aiDiagnostics: true })),
+        },
+      ],
+      appVersion: "0.14.0",
+      prismaMigration: null,
+      includedCategories: ["club-settings"],
+      doorCodesIncluded: false,
+      generatedAt: "2026-07-30T00:00:00.000Z",
+    });
+    const plan = await buildImportPlan(
+      stubDb({ clubModuleSettings: { ...MODULES, aiDiagnostics: false } }),
+      zip,
+      { format: CLUB_FORMAT_TEST, mode },
+    );
+    const item = plan.categories
+      .flatMap((category) => category.items)
+      .find((entry) => entry.entity === "club-module-settings");
+    expect(item?.action).toBe("unchanged");
+    expect(item?.changedFields ?? []).not.toContain("aiDiagnostics");
+  });
+});
+
 describe("every singleton spec declares defaults for every field it exports", () => {
   it("covers each exported field, and only the two override-only singletons opt out", () => {
     // Assert the MEMBERSHIP of the exemption set, not just its effect: without
@@ -1588,6 +1629,24 @@ describe("#2200 singleton dry-run validation (bounds, required, enum)", () => {
     expect(plan.errors.join(" ")).toMatch(
       /nonMemberHoldDays — .*out of range.*1–365/,
     );
+  });
+
+  // #5066: the invoice supplier fields carry the admin save's rules.
+  it("refuses a multi-line or over-long legal name and an over-long postal address, and accepts good ones", async () => {
+    const identity = (values: Record<string, unknown>) =>
+      singletonBundle("club-identity-settings", { name: null, shortName: null, hutLeaderLabel: null, facebookUrl: null, ...values });
+    for (const bad of [{ legalName: "Alpine Club\nIncorporated" }, { legalName: "x".repeat(201) }, { postalAddress: "x".repeat(501) }]) {
+      const plan = await buildImportPlan(stubDb({}), identity(bad), { format: CLUB_FORMAT_TEST, mode: "merge" });
+      expect(plan.errors.join(" ")).toMatch(new RegExp(`${Object.keys(bad)[0]} - Legal name: one line, at most 200 characters`));
+    }
+    const plan = await buildImportPlan(
+      stubDb({}),
+      identity({ legalName: "Alpine Club Incorporated", postalAddress: "PO Box 7\nOhakune" }),
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
+    );
+    expect(plan.errors).toEqual([]);
+    const cleared = await buildImportPlan(stubDb({}), identity({ legalName: null, postalAddress: null }), { format: CLUB_FORMAT_TEST, mode: "merge" });
+    expect(cleared.errors).toEqual([]);
   });
 
   // #4932: the three booking timings carry the admin form's 1–30 bound.

@@ -1,8 +1,4 @@
 export type {
-  ProcessStoredXeroInboundEventsResult,
-  IncrementalMembershipReconciliationResult,
-  IncrementalContactReconciliationResult,
-  IncrementalInvoiceReconciliationResult,
   RunXeroInboundReconciliationCycleResult,
 } from "./xero-inbound/types";
 export { XeroInboundReplayError } from "./xero-inbound/types";

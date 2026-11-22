@@ -11,6 +11,7 @@ import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity"
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const quoteSchema = z.object({
   checkIn: parsedDateOnlySchema,
@@ -34,12 +35,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ showPricing: false, indicativePriceCents: null });
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = quoteSchema.safeParse(body);
   if (!parsed.success) {

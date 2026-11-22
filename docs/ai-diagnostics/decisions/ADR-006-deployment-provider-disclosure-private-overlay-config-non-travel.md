@@ -45,6 +45,12 @@ no obligation and no cost.
 
 ### 2. Provider and data-residency disclosure
 
+> **Built — 21 November 2026 (#5243).** The Modules page shows the statement on
+> the AI Diagnostics card and needs a tick before a save switches it on; the
+> modules route refuses an unacknowledged switch-on and records an
+> `AI_DIAGNOSTICS_DISCLOSURE_ACKNOWLEDGED` audit entry; the AI Diagnostics page
+> repeats the statement. See the operator guide.
+
 The operator documentation and the admin configuration surface must **disclose**
 that enabling Diagnostics sends bounded operational excerpts (ADR-003) to a
 third-party model provider (Anthropic), where they are processed outside New
@@ -53,6 +59,13 @@ Zealand, and that personal data may be included when an operator opts a record i
 able to make an informed data-governance decision before enabling it.
 
 ### 3. Optional zero-retention / no-training posture
+
+> **Not built — owner decision, 20 November 2026 (#5243).** Anthropic offers no
+> per-request retention control the application could enforce, so there is no
+> setting. The application sends no retention instruction; retention, including
+> zero retention, is arranged between the club and Anthropic on the account
+> behind the Diagnostics key, and the product and operator guide say so. The
+> paragraph below is the original proposal, kept for the record.
 
 The deployment can require a **zero-retention** provider posture (the provider's
 no-retention / no-training option) as a configuration choice. When set, it is
@@ -115,7 +128,8 @@ Page help).
 - A fork can adopt the public code without inheriting Tokoroa's private knowledge
   or any obligation to configure a paid provider.
 - Enabling Diagnostics is an informed, per-deployment governance decision with
-  disclosed data residency and an optional zero-retention posture.
+  disclosed data residency; retention is arranged with the provider on the
+  club's own account.
 - Config cannot silently follow a bundle onto an instance whose owner never chose
   to enable a third-party AI provider.
 

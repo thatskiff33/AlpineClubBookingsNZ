@@ -70,6 +70,22 @@ may still carry hidden details. To clean one, upload it again:
 - **A member photo**: the member, or an admin, uploads it again from the
   member's profile.
 
+**A photo that shows sideways needs its original file.** JPG, PNG and WebP
+photos were already cleaned before #5244, and that earlier cleaning also
+removed a photo's rotation setting, so a portrait taken on a phone could be
+stored sideways. The stored copy no longer has that setting, so downloading it
+and uploading it again leaves it sideways. Upload the original file from the
+phone or camera instead: the app now keeps the rotation setting, and the photo
+shows upright.
+
+**Uploading again does not reach copies made earlier.** An image from the
+picker is not replaced: the older one stays stored, and served at its old link,
+until you delete it. A browser that has already shown the older image can keep
+its own copy, and a database backup taken before the upload still holds an
+older picker image, logo or member photo.
+[Hidden details in uploaded images](../PRIVACY_RETENTION.md#hidden-details-in-uploaded-images)
+says more about both.
+
 ### Website-sized copies
 
 When you upload a JPG, PNG or WebP photo, the app also saves smaller copies of

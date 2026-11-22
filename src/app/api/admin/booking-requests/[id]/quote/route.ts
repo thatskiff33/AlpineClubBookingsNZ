@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   bookingRequestQuoteInputSchema,
   BookingRequestQuoteError,
@@ -17,12 +18,11 @@ export async function POST(
   const session = guard.session;
 
   const { id } = await params;
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, {
+    error: "Invalid JSON payload",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = bookingRequestQuoteInputSchema.safeParse(body);
   if (!parsed.success) {

@@ -21,7 +21,7 @@
  * `@/lib/prisma` into its bundle. It depends only on the `@prisma/client` enum,
  * which the narrative already imports.
  */
-import { BookingEventType } from "@prisma/client";
+import { BookingEventType, type Prisma } from "@prisma/client";
 
 /** Snapshot discriminator marking a CANCELLED event as a #2262 manual reversal. */
 export const MANUAL_SETTLEMENT_REVERSAL_EVENT_KIND =
@@ -56,24 +56,6 @@ export interface ManualSettlementReversalEventSnapshot {
 }
 
 /**
- * Narrow an arbitrary event snapshot to a manual-reversal snapshot, or null
- * when it is not one.
- */
-export function asManualSettlementReversalSnapshot(
-  value: unknown
-): ManualSettlementReversalEventSnapshot | null {
-  if (
-    value &&
-    typeof value === "object" &&
-    (value as { kind?: unknown }).kind ===
-      MANUAL_SETTLEMENT_REVERSAL_EVENT_KIND
-  ) {
-    return value as ManualSettlementReversalEventSnapshot;
-  }
-  return null;
-}
-
-/**
  * Snapshot discriminator marking a CANCELLED event as the #2262 reciprocal
  * fence firing: an inbound Xero PAID landed on a manually settled booking and
  * the pipeline deliberately wrote nothing. Same reasoning as the reversal — a
@@ -90,19 +72,6 @@ export interface ManualSettlementConflictEventSnapshot {
   invoiceId: string | null;
   invoiceNumber: string | null;
   bookingStatus: string;
-}
-
-export function asManualSettlementConflictSnapshot(
-  value: unknown
-): ManualSettlementConflictEventSnapshot | null {
-  if (
-    value &&
-    typeof value === "object" &&
-    (value as { kind?: unknown }).kind === MANUAL_SETTLEMENT_CONFLICT_EVENT_KIND
-  ) {
-    return value as ManualSettlementConflictEventSnapshot;
-  }
-  return null;
 }
 
 /**
@@ -300,6 +269,18 @@ export type SettlementMarker = (typeof SETTLEMENT_MARKERS)[number];
 /** Every marker's constant `reason`, for DB relation filters. */
 export const SETTLEMENT_MARKER_EVENT_REASONS: readonly string[] =
   SETTLEMENT_MARKERS.map((marker) => marker.reason);
+
+/**
+ * The DB-level twin of `isManualSettlementMarkerEvent`: a `BookingEvent`
+ * where-clause that leaves out every settlement marker by its constant
+ * `reason`, for a filter that cannot read the snapshot. The OR keeps a
+ * NULL-reason event counted; a bare `notIn` would drop NULL rows under SQL
+ * three-valued logic. Shared by the stuck-state crash detector and the
+ * bump-notice sweep (#5407).
+ */
+export const NOT_A_SETTLEMENT_MARKER_WHERE = {
+  OR: [{ reason: null }, { reason: { notIn: [...SETTLEMENT_MARKER_EVENT_REASONS] } }],
+} satisfies Prisma.BookingEventWhereInput;
 
 const SETTLEMENT_MARKERS_BY_KIND = new Map<string, SettlementMarker>(
   SETTLEMENT_MARKERS.map((marker) => [marker.kind, marker]),

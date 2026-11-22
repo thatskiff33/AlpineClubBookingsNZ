@@ -3,6 +3,7 @@ import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-host
 import type { AgeTier } from "@prisma/client";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { reconcileEmailInheritanceForMemberChange } from "@/lib/member-email-inheritance";
 import { requireAdmin } from "@/lib/session-guards";
@@ -72,14 +73,11 @@ export async function POST(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  let body: unknown;
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = bulkUpdateSchema.safeParse(body);
   if (!parsed.success) {

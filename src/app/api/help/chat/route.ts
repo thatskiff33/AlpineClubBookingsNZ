@@ -3,6 +3,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireActiveSession } from "@/lib/session-guards";
 import {
   applyRateLimit,
@@ -139,12 +140,11 @@ export async function POST(request: Request) {
   if (!memberLimit.success) return rateLimitedResponse(memberLimit);
 
   // 4. Parse + validate the body (strict).
-  let json: unknown;
-  try {
-    json = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const json = jsonBody.body;
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {
     return NextResponse.json(

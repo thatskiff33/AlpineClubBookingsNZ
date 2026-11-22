@@ -7,7 +7,7 @@ import { useConfirm } from "@/components/confirm-dialog";
 export type HideMessage = { kind: "ok" | "err"; text: string };
 
 /**
- * Hiding an Other lodges row the central server does not list (#58). The panel
+ * Hiding an Other lodges row the central server does not list (triyder/AlpineClubBookingsNZ#58). The panel
  * renders the button itself — its view-only reason is the panel's to vouch for
  * — and this hook does the rest: ask first, post to the route (which checks the
  * rule again), then reload the list whatever the answer (a refusal means the

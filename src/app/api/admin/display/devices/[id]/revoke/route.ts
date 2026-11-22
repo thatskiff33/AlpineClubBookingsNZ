@@ -3,7 +3,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 
-// Revoke a lobby display device (fork issue #33, ADR-001): sets revokedAt —
+// Revoke a lobby display device (fork issue hoppers99/AlpineClubBookingsNZ#33, ADR-001): sets revokedAt —
 // checkDisplayAuth rejects the device's token on its very next request and
 // the display returns to the pairing screen within one poll. Idempotent.
 

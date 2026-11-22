@@ -43,7 +43,7 @@ export function isAppliedPaymentStatus(
  * `YYYY-MM-DD`. Both end in the same predicate (`isDateOnlyString` is
  * `isCalendarDate`), so `2026-02-30` is neither applied nor published as
  * applied (ALP-574). The kernel module is taken rather than `date-only.ts`, the
- * adapter CT-6 retires, and it is client-safe: no zod, no Prisma.
+ * compatibility adapter, and it is client-safe: no zod, no Prisma.
  */
 export function isAppliedPaymentsDate(value: string): boolean {
   return isCalendarDate(value);

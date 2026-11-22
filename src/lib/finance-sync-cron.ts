@@ -28,14 +28,6 @@ export {
 type CronRunStatus = "SUCCESS" | "FAILURE" | "SKIPPED";
 type FinanceSyncLogger = Pick<typeof logger, "error" | "info" | "warn">;
 
-export interface FinanceSyncCronScheduler {
-  schedule: (
-    expression: string,
-    task: () => Promise<void> | void,
-    options?: { timezone?: string }
-  ) => unknown;
-}
-
 interface RecordCronRunInput {
   jobName: string;
   startedAt: Date;
@@ -328,37 +320,4 @@ export async function runDailyFinanceSyncCron(
   } finally {
     isFinanceSyncCronRunning = false;
   }
-}
-
-/**
- * test seam
- *
- * The club's civil-time zone is an ARGUMENT rather than a module constant
- * (CT-5, #2869): a cron expression is a club-local scheduled time, and the zone
- * that resolves it is the persisted one the boot hook reads, never the
- * container's `TZ` (`INV-CONFIG-002`).
- */
-export function registerDailyFinanceSyncCron(
-  scheduler: FinanceSyncCronScheduler,
-  clubTimeZone: string,
-  dependencies: FinanceSyncCronRunnerDependencies = {}
-) {
-  const log = dependencies.logger ?? logger;
-
-  scheduler.schedule(
-    FINANCE_SYNC_CRON_SCHEDULE,
-    async () => {
-      await runDailyFinanceSyncCron(dependencies);
-    },
-    { timezone: clubTimeZone }
-  );
-
-  log.info(
-    {
-      job: FINANCE_SYNC_CRON_JOB_NAME,
-      schedule: FINANCE_SYNC_CRON_SCHEDULE,
-      timezone: clubTimeZone,
-    },
-    "Scheduled daily finance sync"
-  );
 }

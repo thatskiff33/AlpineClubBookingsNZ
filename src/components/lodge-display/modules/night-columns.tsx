@@ -17,7 +17,7 @@ import {
 import type { ClubDateFormat } from "@/lib/club-time";
 import { useClubFormat } from "@/components/club-format-provider";
 
-// Next-N-nights look-ahead (issue #115; visual references: origin five-panel
+// Next-N-nights look-ahead (issue hoppers99/AlpineClubBookingsNZ#115; visual references: origin five-panel
 // mock O3 "The next three nights" without rooms, and
 // docs/lobby-display/mockups/guest-rows.html variant "A" / C1a WITH rooms).
 // One module, optional room dimension: columns are the next N nights, each

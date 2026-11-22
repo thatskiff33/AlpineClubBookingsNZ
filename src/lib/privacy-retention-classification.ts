@@ -196,6 +196,8 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MemberCredit: "personal",
   MemberCreditNoteAllocation: "personal",
   AdminCreditAdjustmentRequest: "personal",
+  // #4988: names the officer who posted and reversed the batch, and a free-text reversal reason.
+  OpeningCreditBatch: "personal",
   // #5204: a contact's unallocated Xero money, and the backed-credit slices and returns.
   XeroCashCredit: "personal",
   MemberCreditCashAllocation: "personal",
@@ -224,7 +226,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MaintenanceReport: "personal",
   MaintenanceReportAnswer: "personal",
   LodgeMaintenanceReportToken: "personal",
-  // Fork #121: an order names its member and the officers who closed and priced
+  // Fork triyder/AlpineClubBookingsNZ#121: an order names its member and the officers who closed and priced
   // it; its items are that member's order; the settings hold the officer's
   // address and who last saved them.
   FoodOrderSettings: "personal",

@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   seasonFindMany: vi.fn(),
   bookingCreate: vi.fn(),
-  bookingCount: vi.fn(),
+  bookingFindMany: vi.fn(),
   bookingUpdate: vi.fn(),
   memberFindUnique: vi.fn(),
   acquireLodgeCapacityLock: vi.fn(),
@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
 const tx = {
   booking: {
     create: (...args: unknown[]) => mocks.bookingCreate(...args),
-    count: (...args: unknown[]) => mocks.bookingCount(...args),
+    findMany: (...args: unknown[]) => mocks.bookingFindMany(...args),
     update: (...args: unknown[]) => mocks.bookingUpdate(...args),
     findUnique: vi.fn(),
   },
@@ -164,21 +164,22 @@ describe("createWaitlistedBooking per-lodge position", () => {
       guests: [{ id: "guest-b" }],
     }
     mocks.bookingCreate.mockResolvedValue(created)
-    mocks.bookingUpdate.mockImplementation(
-      async ({ data }: { data: { waitlistPosition: number } }) => ({
-        ...created,
-        waitlistPosition: data.waitlistPosition,
-      }),
-    )
-    // Model one older overlapping Lodge A entry and no Lodge B entries. If the
-    // production count omits lodgeId, this deliberately returns 1 and the
-    // service/email report position 2.
-    mocks.bookingCount.mockImplementation(
-      async ({ where }: { where: { lodgeId?: string } }) => {
-        mocks.order.push("count")
-        return where.lodgeId === "lodge-b" ? 0 : 1
-      },
-    )
+    // #5402: the live queue read. One older overlapping Lodge A entry that
+    // named no alternate, and no Lodge B entries. A reader that counted every
+    // lodge would report position 2.
+    mocks.bookingFindMany.mockImplementation(async () => {
+      mocks.order.push("queue")
+      return [
+        {
+          id: "booking-a",
+          lodgeId: "lodge-a",
+          checkIn: new Date("2026-08-10"),
+          checkOut: new Date("2026-08-12"),
+          createdAt: new Date("2026-07-01"),
+          waitlistAlternateLodges: [],
+        },
+      ]
+    })
     mocks.sendWaitlistConfirmationEmail.mockResolvedValue(undefined)
     mocks.sendAdminNewBookingAlert.mockResolvedValue(undefined)
   })
@@ -204,10 +205,20 @@ describe("createWaitlistedBooking per-lodge position", () => {
     } as WaitlistedBookingInput)
 
     expect(result.position).toBe(1)
-    expect(mocks.bookingCount).toHaveBeenCalledWith({
-      where: expect.objectContaining({ lodgeId: "lodge-b" }),
-    })
-    expect(mocks.order).toEqual(["lock:lodge-b", "count"])
+    expect(mocks.bookingFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: expect.arrayContaining([{ lodgeId: { in: ["lodge-b"] } }]),
+        }),
+      }),
+    )
+    // Read under the lodge key, and never stored (#5402): no path writes a
+    // position another path then has to keep in step.
+    expect(mocks.order).toEqual(["lock:lodge-b", "queue"])
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled()
+    expect(mocks.bookingCreate.mock.calls[0]![0].data).not.toHaveProperty(
+      "waitlistPosition",
+    )
     expect(mocks.sendWaitlistConfirmationEmail).toHaveBeenCalledWith(
       { bookingId: "booking-b", recipientMemberId: "member-b" },
       "member-b@example.test",

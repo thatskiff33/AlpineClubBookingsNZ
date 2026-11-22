@@ -24,9 +24,13 @@ on:
 permissions:
   contents: read
 
+# Pull-request runs cancel superseded runs. Pushes to main share the group
+# without cancelling a run in progress, so a newer merge replaces only main's
+# queued run (#5356, INV-OPS-021 in docs/invariants/operations.md).
+# Pinned by scripts/ci/main-push-superseded-runs.test.ts.
 concurrency:
   group: docs-link-check-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   link-check:
