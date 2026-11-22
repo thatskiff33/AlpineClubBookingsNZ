@@ -2745,7 +2745,7 @@ _Legacy: settles tasks raised before #4317._
     cash less open tasks, `INV-PAY-118`'s too
     (`refundableCashNetOfOpenHandBacks`); a reopen is refused past that cash. Completing one, or approving an appeal,
     takes `lock(1)`. Once the booking is cancelled it is only paid: the
-    cancel counted it, unless dismissed after (a lost dispute, #5197).
+    cancel counted it, unless dismissed after it (#5197).
   - **The member is told the club WILL refund by bank transfer**, never that a
     refund "has been processed" (`bookingModifiedRefundSentence`).
   - **Owed, not kept** (#3372, 7 Oct 2026): Net Collected subtracts an open one
