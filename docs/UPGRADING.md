@@ -255,6 +255,34 @@ date back; re-check `/privacy` after any import.
 
 ---
 
+### Check members marked "Not required" that billing will still invoice (#5190)
+
+**Who needs it.** Every club. The migration adds the club's subscription
+liability rule as **Not chosen**, which keeps who is billed and who may book as
+they were. The admin members list, its export and the subscriptions list now
+show billing's answer, so some members who have a saved "Not required" record
+for the season, but whom the billing run will still invoice, now carry the
+note "Marked not required, but the billing run will invoice this member". The
+members export puts the same note in a new **Subscription Note** column. Two
+kinds of member usually get it: a child on an always-required membership
+type, and a member on an age-based type whose age tier now owes.
+
+**What to do, once, after the upgrade.** Open the admin members list (or
+export the list and filter the **Subscription Note** column) and look at each
+noted row. If the member should not pay a subscription, move them to a
+membership type whose subscription is not required. If they should pay, leave
+them; the next billing run invoices them. Nothing is billed or blocked by the
+upgrade itself.
+
+**How to check it worked.** Reload the list: a member you moved shows "Not
+required" with no note. Any note left is a member you decided should pay. The
+notes go for good once the club chooses its liability rule
+(`INV-CONFIG-009`), because the member then either stops owing or their record
+is updated to "Not invoiced".
+
+**Rollback.** Nothing to undo: the note is display only, and moving a member's
+membership type is an ordinary edit.
+
 ## v0.13.2 → v0.14.0
 
 ### Upgrade checklist for this release

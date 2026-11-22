@@ -55,9 +55,14 @@ keeps billing and booking access on their old answers. The one change is that a
 member covered by a no-invoice fee may now book, since they were never sent an
 invoice to pay. The admin members list, its export and the subscriptions list
 now follow billing until a rule is chosen: a member on an always-required type
-with an exempt age tier, or on an age-based type with a saved "Not required"
-record but a liable tier, shows as owing there, though booking still lets them
-book. Before choosing a rule afterwards, read the impact list
+with an exempt age tier counts as owing there, though booking still lets them
+book. A member with a saved "Not required" record whom billing will still
+invoice keeps the "Not required" badge with the note "Marked not required, but
+the billing run will invoice this member" (export column **Subscription
+Note**); after the upgrade an officer checks those rows and moves anyone who
+should be exempt to a membership type whose subscription is not required
+([UPGRADING.md](UPGRADING.md#check-members-marked-not-required-that-billing-will-still-invoice-5190)).
+Before choosing a rule afterwards, read the impact list
 (`GET /api/admin/membership-lockout-settings/liability-impact`) so you know who
 the choice will start or stop charging.
 

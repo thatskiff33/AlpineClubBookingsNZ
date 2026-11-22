@@ -509,8 +509,9 @@ home for that explanation and is not repeated here.
   differ. Once chosen, both read the club's pair and a saved
   row exempts nobody (age wins).
 - **The admin lists follow billing** (Q2): the members list, its export, the
-  subscriptions list and their SQL filter read `ADMIN_LIST_LIABILITY_SIDE`, so
-  while `NOT_CHOSEN` an organisation account on a `REQUIRED` type shows owing.
+  subscriptions list and their SQL filter read `ADMIN_LIST_LIABILITY_SIDE`; a
+  saved `NOT_REQUIRED` row billing still invoices carries a note
+  (`hasNotRequiredRowBillingNote`).
 - **The pair is chosen whole and never returns to `NOT_CHOSEN`.** The settings
   `PUT` and config import refuse a half pair, a move back and `CURRENT_AGE`
   (age today waits for part-season invoices); an omitted pair is never written.

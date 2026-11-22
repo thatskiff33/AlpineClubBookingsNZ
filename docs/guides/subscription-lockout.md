@@ -291,6 +291,17 @@ A member covered by a no-invoice fee (for example a Life fee set up with no
 invoice) is now treated as paid for booking, whatever their record says. They
 were never sent an invoice, so they could never have paid one.
 
+The admin members list, its export and the subscriptions list show billing's
+answer until the club chooses. A member with a saved "Not required" record whom
+the billing run will still invoice keeps the "Not required" badge with the note
+"Marked not required, but the billing run will invoice this member" (the export
+puts it in the **Subscription Note** column). If that member should not pay,
+move them to a membership type whose subscription is not required; if they
+should, leave them and the next billing run invoices them. The note goes once
+the club chooses, because the member then either stops owing or their record is
+updated to "Not invoiced". A record a no-invoice fee covers, or one already
+invoiced, paid or marked paid, never gets the note.
+
 ## Settings reference
 
 | Setting | Area | What it controls | Default | Notes / constraints |
