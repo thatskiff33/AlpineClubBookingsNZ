@@ -2991,10 +2991,13 @@ model BookingRequestSettings {
   quoteReminderLeadDays            Int      @default(3)
   // RETIRED by #3819: no runtime code reads or writes it. #3416's club-wide
   // switch, replaced by the per-lodge LodgeSettings.schoolHutLeader* kinds; the
-  // expand migration 20261114020000 copied its value into every lodge. Kept
-  // only so the draining colour can still read it; a later contract release
-  // drops it.
-  assignSchoolTeachersAsHutLeaders Boolean  @default(false)
+  // expand migration 20261114020000 copied its value into every lodge.
+  // `@ignore` (#5396) removes it from the generated client so no query, INSERT
+  // included, names the column (see ClubModuleSettings.multiLodge for why a
+  // select is not enough). No migration: the column stays, with its default,
+  // for the draining colour, and a later contract release drops it together
+  // with this field.
+  assignSchoolTeachersAsHutLeaders Boolean  @default(false) @ignore
   // Soft link for the phase-7 singleton-to-per-lodge conversion
   // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
   lodgeId                          String?

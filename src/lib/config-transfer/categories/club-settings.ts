@@ -495,11 +495,11 @@ export const SINGLETONS: SingletonSpec[] = [
       lodgeId:
         "soft-link FK for the phase-7 per-lodge conversion, unused by runtime " +
         "reads today; a source lodge id is not portable across installs",
-      assignSchoolTeachersAsHutLeaders:
-        "retired by #3819: #3416's club-wide switch, replaced by the per-lodge " +
-        "school hut-leader ticks that travel in each lodge.json; a later contract " +
-        "release drops the column. An older bundle's value is not written here: " +
-        "the lodge-config importer maps it onto every imported lodge's teacher tick",
+      // The retired assignSchoolTeachersAsHutLeaders column (#3819) needs no
+      // entry: it is `@ignore`d (#5396), so the generated client, and with it
+      // this category, cannot see it. An older bundle's value is still never
+      // written here: the lodge-config importer maps it onto every imported
+      // lodge's teacher tick.
     },
     defaults: () => DEFAULT_BOOKING_REQUEST_SETTINGS,
   },

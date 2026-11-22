@@ -1,8 +1,10 @@
-// #5396: two retired columns are `@ignore`d one release before they are dropped.
+// #5396: three retired columns are `@ignore`d one release before they are dropped.
 //
 //   - ClubModuleSettings.multiLodge (ADR-005; drop tracked downstream as
 //     hoppers99/AlpineClubBookingsNZ#139)
 //   - NotificationPreference.bookingWaitlist (never offered, never read)
+//   - BookingRequestSettings.assignSchoolTeachersAsHutLeaders (retired by #3819
+//     in favour of the per-lodge school hut-leader kinds)
 //
 // Why `@ignore` and not only "nothing names the field": Prisma sends every
 // column with a static `@default` in an INSERT's column list, even for a call
@@ -13,8 +15,9 @@
 // client, which keeps it out of every INSERT, SELECT and RETURNING.
 //
 // These tests pin the contract migration's precondition against the generated
-// client, not the source. DELETE THIS FILE in the release that drops the two
-// columns: once the fields are gone from schema.prisma there is nothing to pin.
+// client, not the source. Remove each entry in the release that drops its
+// column, and the file with the last: once a field is gone from schema.prisma
+// there is nothing to pin.
 import fs from "node:fs";
 import path from "node:path";
 
@@ -36,6 +39,12 @@ const RETIRED = [
     field: "bookingWaitlist",
     scalars: Object.keys(Prisma.NotificationPreferenceScalarFieldEnum),
     control: "bookingReminder",
+  },
+  {
+    model: "BookingRequestSettings",
+    field: "assignSchoolTeachersAsHutLeaders",
+    scalars: Object.keys(Prisma.BookingRequestSettingsScalarFieldEnum),
+    control: "quoteResponseTtlDays",
   },
 ] as const;
 
