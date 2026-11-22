@@ -26,6 +26,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { apiErrorMessageFromBody, readApiErrorBody } from "@/lib/api-error-message";
+import { readValidationDetails } from "@/lib/format-validation-errors";
 
 export type SchoolContactDetails = {
   id: string;
@@ -46,15 +48,11 @@ type LoadState =
   | { kind: "failed"; message: string }
   | { kind: "ready"; school: SchoolContactDetails };
 
+/** A refusal's first validation message, else its sentence, through the shared readers. */
 async function readError(response: Response, fallback: string): Promise<string> {
-  const body = (await response.json().catch(() => null)) as {
-    error?: string;
-    details?: Record<string, string[] | undefined>;
-  } | null;
-  const detail = body?.details
-    ? Object.values(body.details).flat().filter(Boolean)[0]
-    : undefined;
-  return detail ?? body?.error ?? fallback;
+  const body = await readApiErrorBody(response);
+  const refusal = readValidationDetails(body);
+  return refusal?.formErrors[0] ?? refusal?.fieldErrors[0]?.[1][0] ?? apiErrorMessageFromBody(body, fallback);
 }
 
 /** What Xero has of this school, in words an officer can act on. */

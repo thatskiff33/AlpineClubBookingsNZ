@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 
 import { requireAdmin } from "@/lib/session-guards";
@@ -56,13 +57,9 @@ export async function PATCH(
   if (!recent.ok) return recent.response;
   const { id } = await params;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
-  }
-  const parsed = patchSchema.safeParse(body);
+  const read = await parseJsonRequestBody(req);
+  if (!read.ok) return read.response;
+  const parsed = patchSchema.safeParse(read.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten().fieldErrors },
