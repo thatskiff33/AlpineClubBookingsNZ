@@ -19,6 +19,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
 }));
 
 import { ManualRefundTaskQueue } from "@/components/admin/manual-refund-task-queue";
+import { waitForManualRefundQueueLoaded } from "@/lib/__tests__/support/manual-refund-task-queue-loaded";
 
 /**
  * #3498 (owner decision D2) — a way back from a wrong click: a money task an
@@ -65,9 +66,7 @@ function stubLoad(body: unknown) {
 async function renderQueue(body: unknown) {
   const fetchMock = stubLoad(body);
   render(<ManualRefundTaskQueue />);
-  await waitFor(() =>
-    expect(screen.getByTestId("manual-refund-task-queue")).toBeInTheDocument(),
-  );
+  await waitForManualRefundQueueLoaded();
   return fetchMock;
 }
 
