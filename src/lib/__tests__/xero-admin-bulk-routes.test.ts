@@ -248,7 +248,7 @@ describe("Xero admin bulk routes", () => {
         message: "Invoice sync already queued.",
       });
 
-    const response = await triggerMissingInvoices();
+    const response = await triggerMissingInvoices(new NextRequest("http://localhost/api/admin/xero/missing-invoices", { method: "POST" }));
 
     expect(response.status).toBe(202);
     expect(mocks.getMissingXeroInvoiceBookings).toHaveBeenCalledWith({ limit: 200 });
