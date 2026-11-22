@@ -254,8 +254,6 @@ export default async function BookingDetailPage({
   // #3956 (`INV-PAY-123`): an appeal on a booking the organiser paid for by card
   // is capped at what the organiser's combined payment can still return.
   const organiserCardAppeal = await loadOrganiserCardAppealCeiling(booking);
-  // #5402: read from the live queue on this request; null unless WAITLISTED.
-  const waitlistPosition = await loadBookingDetailWaitlistPosition(booking);
   const payment =
     organiserCardAppeal === null
       ? resolvedPayment
@@ -400,7 +398,7 @@ export default async function BookingDetailPage({
 
       <BookingPaymentCards
         booking={booking}
-        waitlistPosition={waitlistPosition}
+        waitlistPosition={await loadBookingDetailWaitlistPosition(booking)}
         club={club}
         money={money}
         viewer={viewer}

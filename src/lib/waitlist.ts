@@ -13,6 +13,7 @@ import {
 import {
   WAITLIST_QUEUE_ORDER_BY,
   getWaitlistCrossLodgeOrder,
+  getWaitlistPositionOf,
   getWaitlistPositions,
   orderWaitlistOpportunities,
   splitWaitlistOpportunities,
@@ -538,17 +539,13 @@ export async function processWaitlistForDates(freedDates: {
         // The place the officer's alert and the audit row quote: the entry's
         // own lodge's queue, read before it leaves it, under this pass's locks
         // (#5402, `INV-CAP-041`).
-        const position = (
-          await getWaitlistPositions(tx, [
-            {
-              id: candidate.id,
-              lodgeId: candidate.lodgeId ?? defaultLodgeId,
-              checkIn: candidate.checkIn,
-              checkOut: candidate.checkOut,
-              createdAt: candidate.createdAt,
-            },
-          ])
-        ).get(candidate.id)!;
+        const position = await getWaitlistPositionOf(tx, {
+          id: candidate.id,
+          lodgeId: candidate.lodgeId ?? defaultLodgeId,
+          checkIn: candidate.checkIn,
+          checkOut: candidate.checkOut,
+          createdAt: candidate.createdAt,
+        });
 
         await tx.booking.update({
           where: { id: candidate.id },

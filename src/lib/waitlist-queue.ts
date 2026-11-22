@@ -293,6 +293,14 @@ export async function getWaitlistPositions(
   return positions;
 }
 
+/** One booking's place, for a writer quoting it in an email or audit row. */
+export async function getWaitlistPositionOf(
+  db: WaitlistPositionDb,
+  key: WaitlistPositionKey,
+): Promise<number> {
+  return (await getWaitlistPositions(db, [key])).get(key.id)!;
+}
+
 /**
  * Whether a screen shows a booking a waitlist position: only a `WAITLISTED`
  * entry the offer pass would consider. An offered entry shows its offer

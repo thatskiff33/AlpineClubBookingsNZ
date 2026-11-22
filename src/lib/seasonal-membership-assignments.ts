@@ -335,10 +335,7 @@ export function serializeSeasonalMembershipAssignment(
   };
 }
 
-function serializeBookingSummary(
-  booking: BookingPreviewRecord,
-  waitlistPosition: number | null,
-) {
+function serializeBookingSummary(booking: BookingPreviewRecord, waitlistPosition: number | null) {
   return {
     id: booking.id,
     checkIn: formatDateOnly(booking.checkIn),
@@ -346,26 +343,18 @@ function serializeBookingSummary(
     status: booking.status,
     finalPriceCents: booking.finalPriceCents,
     guestCount: booking._count.guests,
-    // #5402: read from the live queue by the caller; never stored.
-    waitlistPosition,
+    waitlistPosition, // #5402: read from the live queue by the caller
     waitlistOfferedAt: booking.waitlistOfferedAt?.toISOString() ?? null,
     waitlistOfferExpiresAt:
       booking.waitlistOfferExpiresAt?.toISOString() ?? null,
   };
 }
 
-function summarizeBookings(
-  bookings: BookingPreviewRecord[],
-  waitlistPositions: ReadonlyMap<string, number | null> = new Map(),
-) {
+function summarizeBookings(bookings: BookingPreviewRecord[], positions: ReadonlyMap<string, number | null> = new Map()) {
   return {
     count: bookings.length,
     truncatedCount: Math.max(0, bookings.length - BOOKING_SUMMARY_LIMIT),
-    list: bookings
-      .slice(0, BOOKING_SUMMARY_LIMIT)
-      .map((booking) =>
-        serializeBookingSummary(booking, waitlistPositions.get(booking.id) ?? null),
-      ),
+    list: bookings.slice(0, BOOKING_SUMMARY_LIMIT).map((b) => serializeBookingSummary(b, positions.get(b.id) ?? null)),
   };
 }
 
@@ -743,11 +732,7 @@ export async function getSeasonalMembershipChangePreview(params: {
     finalPriceCents: true,
     waitlistOfferedAt: true,
     waitlistOfferExpiresAt: true,
-    // #5402: what the position reader places the booking by, and whether a
-    // number is shown at all.
-    lodgeId: true,
-    createdAt: true,
-    noEmails: true,
+    lodgeId: true, createdAt: true, noEmails: true, // #5402: the position reader's key
     _count: { select: { guests: true } },
   } satisfies Prisma.BookingSelect;
 
@@ -833,13 +818,8 @@ export async function getSeasonalMembershipChangePreview(params: {
     }),
   ]);
 
-  // #5402: each waitlist record's true place in its lodge's queue, in one batch
-  // on this function's own client (it can run inside a caller's transaction).
-  const waitlistPositions = await getDisplayedWaitlistPositions(
-    db,
-    waitlistRecords,
-  );
-
+  // #5402: live queue positions, one batch on this function's own (maybe transaction) client.
+  const waitlistPositions = await getDisplayedWaitlistPositions(db, waitlistRecords);
   const currentSubscription = subscriptions.find(
     (subscription) => subscription.seasonYear === params.seasonYear,
   );
@@ -898,10 +878,7 @@ export async function getSeasonalMembershipChangePreview(params: {
       futureConfirmedBookings as BookingPreviewRecord[],
     ),
     draftBookings: summarizeBookings(draftBookings as BookingPreviewRecord[]),
-    waitlistRecords: summarizeBookings(
-      waitlistRecords as BookingPreviewRecord[],
-      waitlistPositions,
-    ),
+    waitlistRecords: summarizeBookings(waitlistRecords as BookingPreviewRecord[], waitlistPositions),
     currentSeasonSubscription: {
       seasonYear: params.seasonYear,
       status: currentSubscription?.status ?? "NO_RECORD",

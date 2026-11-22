@@ -21,6 +21,22 @@ import { savedCardChargeCents } from "@/lib/booking-payment-state";
 import type { BookingDetailPayment } from "../_lib/booking-detail-payment";
 import type { BookingDetailMessages } from "../_lib/booking-detail-messages";
 
+type BookingPaymentCardsProps = {
+  booking: BookingDetailRecord;
+  /**
+   * #5402: the booking's place in its lodge's queue, read on this request by
+   * the page (`loadBookingDetailWaitlistPosition`). Null when none is shown.
+   */
+  waitlistPosition: number | null;
+  club: BoundClubTime;
+  money: BoundClubFormat;
+  viewer: BookingDetailViewer;
+  access: BookingDetailEditAccess;
+  party: BookingDetailLinkedParty;
+  payment: BookingDetailPayment;
+  messages: BookingDetailMessages;
+};
+
 /**
  * THE PAY DOORS (#2958): the draft confirm and complete-booking cards, the
  * waitlist position and offer cards, the internet-banking instructions, the
@@ -42,21 +58,7 @@ export function BookingPaymentCards({
   party,
   payment,
   messages,
-}: {
-  booking: BookingDetailRecord;
-  /**
-   * #5402: the booking's place in its lodge's queue, read on this request by
-   * the page (`loadBookingDetailWaitlistPosition`). Null when none is shown.
-   */
-  waitlistPosition: number | null;
-  club: BoundClubTime;
-  money: BoundClubFormat;
-  viewer: BookingDetailViewer;
-  access: BookingDetailEditAccess;
-  party: BookingDetailLinkedParty;
-  payment: BookingDetailPayment;
-  messages: BookingDetailMessages;
-}) {
+}: BookingPaymentCardsProps) {
   const {
     canManageBooking,
     isBookingOwner,

@@ -57,7 +57,7 @@ import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { lockPromoCodeRowsForUpdate, redeemPromoCode } from "@/lib/promo";
 import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
-import { getWaitlistPositions } from "@/lib/waitlist-queue";
+import { getWaitlistPositionOf } from "@/lib/waitlist-queue";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
   sendAdminNewBookingAlert,
@@ -1988,9 +1988,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     // the live queue under this transaction's lodge key (#5402). Nothing
     // stores it: every screen reads it again when it shows it
     // (`INV-CAP-041`).
-    const position = (await getWaitlistPositions(tx, [createdBooking])).get(
-      createdBooking.id,
-    )!;
+    const position = await getWaitlistPositionOf(tx, createdBooking);
 
     // #2364. A waitlisted booking holds no capacity, but it is still a party
     // the club will have to admit if the offer is taken, so the hazard is

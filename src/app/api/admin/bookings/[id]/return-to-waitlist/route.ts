@@ -24,7 +24,7 @@ import {
 } from "@/lib/waitlist-return-contract";
 import { isTransactionContention } from "@/lib/prisma-errors";
 import { processWaitlistForDates } from "@/lib/waitlist";
-import { getWaitlistPositions, isWaitlistPositionShown } from "@/lib/waitlist-queue";
+import { getWaitlistPositionOf, isWaitlistPositionShown } from "@/lib/waitlist-queue";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
@@ -162,9 +162,7 @@ export async function POST(
             wholeLodgeHold: true,
             wholeLodgeHoldAt: true,
             wholeLodgeHoldByMemberId: true,
-            // #5402: whether the response shows a position (a silenced entry
-            // shows none).
-            noEmails: true,
+            noEmails: true, // #5402: a silenced entry shows no position
             member: { select: { email: true, firstName: true } },
             // #3369: the owner may be an Organisation; bookingOwner() reads both.
             organisation: { select: { name: true, email: true } },
@@ -239,21 +237,12 @@ export async function POST(
           previousRange: { checkIn: booking.checkIn, checkOut: booking.checkOut },
         });
 
-        // The place the member is told they hold, read from the live queue the
-        // offer pass walks (#5402, `INV-CAP-041`), under the locks, so it cannot
-        // be quoted from a queue that moved. The booking keeps its `createdAt`,
-        // so it takes its original place back.
-        const waitlistPosition = (
-          await getWaitlistPositions(tx, [
-            {
-              id: bookingId,
-              lodgeId: key.lodgeId,
-              checkIn: booking.checkIn,
-              checkOut: booking.checkOut,
-              createdAt: key.createdAt,
-            },
-          ])
-        ).get(bookingId)!;
+        // The place the member is told they hold, read from the live queue under
+        // the locks (#5402, `INV-CAP-041`). It keeps `createdAt`, so its old place.
+        const waitlistPosition = await getWaitlistPositionOf(tx, {
+          id: bookingId, lodgeId: key.lodgeId, createdAt: key.createdAt,
+          checkIn: booking.checkIn, checkOut: booking.checkOut,
+        });
 
         await createAuditLog(
           {
@@ -320,12 +309,7 @@ export async function POST(
           checkOut: booking.checkOut,
           waitlistPosition,
           // What the officer's screen shows: no number for a silenced entry.
-          displayedWaitlistPosition: isWaitlistPositionShown({
-            status: BookingStatus.WAITLISTED,
-            noEmails: booking.noEmails,
-          })
-            ? waitlistPosition
-            : null,
+          displayedWaitlistPosition: isWaitlistPositionShown({ status: BookingStatus.WAITLISTED, noEmails: booking.noEmails }) ? waitlistPosition : null,
         };
       },
       LOCK1_HOLDER_TRANSACTION_BUDGET,
