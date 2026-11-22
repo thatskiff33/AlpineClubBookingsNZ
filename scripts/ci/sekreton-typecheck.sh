@@ -41,7 +41,7 @@ fi
 # for everything else, unless the caller already chose a heap size.
 heap_mb=$(( mem_kb / 1024 - 1536 ))
 case " ${NODE_OPTIONS:-} " in
-  *" --max-old-space-size="*) ;;
+  *" --max-old-space-size="* | *" --max_old_space_size="*) ;;
   *) export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=$heap_mb" ;;
 esac
 

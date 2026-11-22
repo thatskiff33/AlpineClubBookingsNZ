@@ -10,5 +10,5 @@ file: src/lib/xero-member-grouping-resync.ts
 lines: 820
 reason: the group names come from the same membership-cache read that the
   snapshot's id lists are built from, so the map belongs beside it; moving the
-  snapshot out of this already-oversized module to absorb one line would invent
-  a seam for this change alone.
+  snapshot out of this already-oversized module to absorb these 8 lines would
+  invent a seam for this change alone.
