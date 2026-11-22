@@ -98,7 +98,7 @@ describe("get_availability", () => {
       seasons: { "2026-07-01": { name: "Winter", type: "PEAK" }, "2026-07-02": { name: "Winter", type: "PEAK" } },
       lodgeCapacity: 30,
     });
-    expect(browser).toEqual({ ...connection, availability: { "2026-07-03": 12, "2026-07-04": stray } });
+    expect(browser).toEqual({ ...(connection as object), availability: { "2026-07-03": 12, "2026-07-04": stray } });
     expect(JSON.stringify(connection)).not.toMatch(/season-1|Committee pricing note|A\. Member/);
     expect(h.isMemberEligibleToBookLodge).toHaveBeenCalledWith(h.prisma, "officer-1", "lodge-1");
   });
