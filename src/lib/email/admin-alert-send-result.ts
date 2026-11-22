@@ -23,10 +23,11 @@ export interface AdminAlertSendResult {
 
 /**
  * What `sendToAdmins` reports (#5407): its result, and how many of the
- * `notDelivered` recipients failed before their attempt was logged. Nothing
- * records or replays such a copy, so sending the alert again reaches that
- * recipient for the first time; every other undelivered copy was refused or
- * withheld on purpose.
+ * `notDelivered` recipients have no EmailLog row to show for it: the send
+ * threw before the row existed, or an environment fault withheld a copy
+ * whose row write had failed. Nothing replays such a copy, so sending the
+ * alert again reaches that recipient for the first time; every other
+ * undelivered copy was refused or withheld on purpose.
  */
 export interface AdminAlertRecipientsResult extends AdminAlertSendResult {
   failedBeforeLogged: number;

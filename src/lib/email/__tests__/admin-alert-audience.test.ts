@@ -340,7 +340,11 @@ describe("sendToAdmins reports each recipient's fate (#3672)", () => {
   it("counts an environment fault as queued and a confirmed non-production copy as not delivered", async () => {
     mocks.findMany.mockResolvedValue(treasurers.slice(0, 2));
     mocks.sendEmail
-      .mockResolvedValueOnce({ status: "withheld_for_environment", reason: "environment_unknown" })
+      // The fault's copy has its FAILED row (written before the gate ran).
+      .mockImplementationOnce(async ({ onAttemptLogged }: { onAttemptLogged?: (id: string) => void }) => {
+        onAttemptLogged?.("email-log-1");
+        return { status: "withheld_for_environment", reason: "environment_unknown" };
+      })
       .mockResolvedValueOnce({
         status: "withheld_for_environment",
         reason: "environment_non_production",
@@ -353,6 +357,21 @@ describe("sendToAdmins reports each recipient's fate (#3672)", () => {
       queuedForRetry: 1,
       notDelivered: 1,
       failedBeforeLogged: 0,
+    });
+  });
+
+  // #5407 review: a fault's copy whose row write failed has nothing to replay.
+  it("does not count an environment fault's copy as queued when its row was never written", async () => {
+    mocks.findMany.mockResolvedValue(treasurers.slice(0, 1));
+    mocks.sendEmail.mockResolvedValueOnce({ status: "withheld_for_environment", reason: "environment_unknown" });
+
+    await expect(send()).resolves.toEqual({
+      deliveryAllowed: true,
+      recipients: 1,
+      sent: 0,
+      queuedForRetry: 0,
+      notDelivered: 1,
+      failedBeforeLogged: 1,
     });
   });
 

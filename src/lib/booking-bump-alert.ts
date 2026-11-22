@@ -48,15 +48,20 @@ async function bumpedBookingLodgeName(lodgeId: string): Promise<string | null> {
  * So officers receive it at least once, and very rarely twice: a crash after
  * the send and before the marker is cleared repeats it on a later run.
  *
- * Never throws. `false` keeps the marker: the send threw, or nobody got the
- * alert and at least one officer's copy failed before its EmailLog row existed,
- * so nothing will replay it (`adminAlertNeedsResend`). `true` clears it: an
- * officer has it, a failed copy's FAILED row is the email retry cron's to
- * replay, or nobody is meant to get it (the alert switched off, nobody opted
- * in, every copy refused or withheld on purpose). Either way it can never
- * undo the bump, the member's email or the rest of the run.
+ * Never throws, and says what the marker should do:
+ * - `settled` clears it: an officer has it, a failed copy's FAILED row is the
+ *   email retry cron's to replay, or nobody is meant to get it (the alert
+ *   switched off, nobody opted in, every copy refused or withheld on purpose);
+ * - `unreached` keeps it for a day: nobody got the alert and at least one
+ *   officer's copy failed before its EmailLog row existed, so nothing will
+ *   replay it (`adminAlertNeedsResend`);
+ * - `threw` keeps it for the sweep's usual wait.
+ * None of them can undo the bump, the member's email or the rest of the run.
  */
-export async function alertOfficersOfBump(booking: BumpedBooking, flagged: boolean): Promise<boolean> {
+export async function alertOfficersOfBump(
+  booking: BumpedBooking,
+  flagged: boolean,
+): Promise<"settled" | "unreached" | "threw"> {
   try {
     const result = await sendAdminBookingBumpedAlert({
       bumpedMemberName: bookingOwnerName(booking),
@@ -67,14 +72,14 @@ export async function alertOfficersOfBump(booking: BumpedBooking, flagged: boole
       guestCount: booking.guests.length,
       reason: bookingBumpReason(flagged),
     });
-    if (!adminAlertNeedsResend(result)) return true;
+    if (!adminAlertNeedsResend(result)) return "settled";
     logger.warn(
       { bookingId: booking.id, failedBeforeLogged: result.failedBeforeLogged, job: "confirmPendingBookings" },
-      "No officer received the booking-bumped alert and nothing will replay it; it stays owed",
+      "No officer received the booking-bumped alert and nothing will replay it; it stays owed for a day",
     );
-    return false;
+    return "unreached";
   } catch (err) {
     logger.error({ err, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to send admin booking-bumped alert");
-    return false;
+    return "threw";
   }
 }

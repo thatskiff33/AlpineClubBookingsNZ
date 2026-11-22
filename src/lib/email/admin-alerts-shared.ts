@@ -188,7 +188,7 @@ export async function sendAdminAlertTo({
   const failedRowIsReplayed = shouldPersistEmailHtml(templateName);
   const outcomes = await Promise.all(
     emails.map(async (email): Promise<
-      AdminAlertRecipientDeliveryOutcome & { queuedForRetry: boolean; logged: boolean }
+      AdminAlertRecipientDeliveryOutcome & { queuedForRetry: boolean; logged: boolean; lostForWantOfARow: boolean }
     > => {
       // Whether this copy's EmailLog row was written (`onAttemptLogged`, as
       // `sendUnmuteableAdminAlert` tracks it): only a logged copy can be
@@ -215,14 +215,17 @@ export async function sendAdminAlertTo({
         // Admin alert recipients are real admin addresses, never walk-in
         // placeholders (#1935); fold the not-sent outcomes into "suppressed".
         // An environment FAULT (not a confirmed non-production copy) leaves a
-        // FAILED row the retry cron sends once the installation is corrected.
+        // FAILED row the retry cron sends once the installation is corrected,
+        // but only if the row was written (#5407): without one it is lost.
+        const replayableFault =
+          outcome.status === "withheld_for_environment" &&
+          outcome.reason !== "environment_non_production" &&
+          failedRowIsReplayed;
         return {
           status: outcome.status === "sent" ? "sent" : "suppressed",
-          queuedForRetry:
-            outcome.status === "withheld_for_environment" &&
-            outcome.reason !== "environment_non_production" &&
-            failedRowIsReplayed,
+          queuedForRetry: replayableFault && logged,
           logged,
+          lostForWantOfARow: replayableFault && !logged,
         };
       } catch (err) {
         logger.error(
@@ -230,10 +233,11 @@ export async function sendAdminAlertTo({
           "Failed to send admin alert",
         );
         // A transport failure marks this recipient's EmailLog row FAILED for
-        // the retry cron. A throw before that row exists (the message settings
-        // unreadable, or a log write that failed) leaves nothing to replay: it
-        // is not queued, and is counted in `failedBeforeLogged` (#5407).
-        return { status: "failed", queuedForRetry: failedRowIsReplayed && logged, logged };
+        // the retry cron. A throw before that row exists (a render that threw,
+        // for example on a stored override, or a log write that failed and was
+        // swallowed before a transport failure) leaves nothing to replay: it is
+        // not queued, and is counted in `failedBeforeLogged` (#5407).
+        return { status: "failed", queuedForRetry: failedRowIsReplayed && logged, logged, lostForWantOfARow: !logged };
       }
     }),
   );
@@ -263,7 +267,7 @@ export async function sendAdminAlertTo({
     sent,
     queuedForRetry,
     notDelivered: outcomes.length - sent - queuedForRetry,
-    failedBeforeLogged: outcomes.filter((outcome) => outcome.status === "failed" && !outcome.logged).length,
+    failedBeforeLogged: outcomes.filter((outcome) => outcome.lostForWantOfARow).length,
   };
 }
 

@@ -48,9 +48,16 @@
  *   officers may get their alert twice.
  * - A booking reinstated and then cancelled or confirmed again is caught by
  *   the booking event that records it (`CANCELLED`, `MEMBER_PAID` or
- *   `NON_MEMBER_CONFIRMED` after the bump). Those events are written best
- *   effort after their own commits, so one lost the same way still leaves the
- *   booking told it was bumped. This narrows the gap; it does not close it.
+ *   `NON_MEMBER_CONFIRMED` after the bump; a settlement marker, a `CANCELLED`
+ *   event that cancels nothing, does not count). Most of those events are
+ *   narrative, written best effort after their own commits
+ *   (`recordBookingEvent`); only a few decision records commit with what they
+ *   describe. A narrative event lost the same way still leaves the booking
+ *   told it was bumped. This narrows the gap; it does not close it.
+ * - An officers' alert that reached nobody because every copy failed before
+ *   its row waits `ALERT_NOBODY_ELIGIBLE_RETRY_MS` (a day) before the next
+ *   try, not an hour, so a persistent fault writes at most about seven
+ *   undeliverable-alert escalation rows before the marker expires.
  *
  * Locks (`INV-LOCK-001`): the markers are written under the global lock and
  * the lodge lock the bump transaction already holds, two primary-key upserts
@@ -59,11 +66,18 @@
  * advisory key.
  */
 import { BookingEventType, BookingStatus, Prisma } from "@prisma/client";
-import { claimOwedAlert, listOwedAlertKeys, settleOwedAlert } from "@/lib/alert-cooldown";
+import {
+  ALERT_NOBODY_ELIGIBLE_RETRY_MS,
+  claimOwedAlert,
+  deferAlertCooldown,
+  listOwedAlertKeys,
+  settleOwedAlert,
+} from "@/lib/alert-cooldown";
 import { alertOfficersOfBump } from "@/lib/booking-bump-alert";
 import { bookingOwner } from "@/lib/booking-owner";
 import { sendBookingBumpedEmail, sendBookingGuestsCancelledEmail } from "@/lib/email";
 import logger from "@/lib/logger";
+import { NOT_A_SETTLEMENT_MARKER_WHERE } from "@/lib/manual-settlement-reversal-event";
 import { prisma } from "@/lib/prisma";
 
 /** The namespaces of the owed markers, one per notice. */
@@ -73,7 +87,8 @@ export const BUMP_OFFICER_ALERT_OWED_PREFIX = "booking-bump-officers-owed:";
 /**
  * How long a marker waits after its last attempt before the sweep tries it:
  * the attempt right after the commit goes first, and a send that threw is not
- * retried every few minutes.
+ * retried every few minutes. An officers' alert that reached nobody waits
+ * `ALERT_NOBODY_ELIGIBLE_RETRY_MS` (a day) instead.
  */
 export const BUMP_NOTICE_SWEEP_AFTER_MS = 60 * 60 * 1000;
 
@@ -213,9 +228,11 @@ async function sendBumpedMemberNotice(booking: BumpNoticeBooking, owed: OwedBump
 
 /**
  * Under a won claim: send one notice, and clear its marker if it is settled.
- * A send that threw, or an officers' alert nobody received that nothing will
- * replay, leaves the marker under this claim's stamp, so the sweep offers it
- * again `BUMP_NOTICE_SWEEP_AFTER_MS` later.
+ * A send that threw leaves the marker under this claim's stamp, so the sweep
+ * offers it again `BUMP_NOTICE_SWEEP_AFTER_MS` later. An officers' alert that
+ * reached nobody, with nothing to replay it, is held a day instead
+ * (`ALERT_NOBODY_ELIGIBLE_RETRY_MS`, as the once-only alerts are), so a
+ * persistent fault does not escalate every hour.
  */
 async function sendAndSettle(
   kind: BumpNoticeKind,
@@ -224,11 +241,18 @@ async function sendAndSettle(
   booking: BumpNoticeBooking,
   owed: OwedBumpNotice,
 ): Promise<"delivered" | "kept"> {
-  const settled =
-    kind === "member" ? await sendBumpedMemberNotice(booking, owed) : await alertOfficersOfBump(booking, owed.flagged);
-  if (!settled) return "kept";
-  await settleOwedAlert({ key, claimedAt });
-  return "delivered";
+  const outcome =
+    kind === "member"
+      ? (await sendBumpedMemberNotice(booking, owed)) ? "settled" : "threw"
+      : await alertOfficersOfBump(booking, owed.flagged);
+  if (outcome === "settled") {
+    await settleOwedAlert({ key, claimedAt });
+    return "delivered";
+  }
+  if (outcome === "unreached") {
+    await deferAlertCooldown({ key, claimedAt, windowMs: BUMP_NOTICE_SWEEP_AFTER_MS, retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS });
+  }
+  return "kept";
 }
 
 /**
@@ -282,7 +306,9 @@ type SweepOutcome = "delivered" | "kept" | "cleared" | "expired" | "claim-lost";
 /**
  * Booking events that mean the booking moved on after this bump: reinstated
  * and then cancelled again, or confirmed again. The bump itself writes
- * `BUMPED` only, and no event type records a reinstatement on its own.
+ * `BUMPED` only, and no event type records a reinstatement on its own. A
+ * settlement marker is a `CANCELLED` event that cancels nothing, and can be
+ * written on a booking already cancelled, so it is left out.
  */
 const MOVED_ON_SINCE_BUMP: BookingEventType[] = [
   BookingEventType.CANCELLED,
@@ -295,7 +321,12 @@ async function bumpNoticeNoLongerTrue(booking: { status: BookingStatus } | null,
   if (!booking) return "gone";
   if (booking.status !== BookingStatus.CANCELLED) return "no longer cancelled";
   const later = await prisma.bookingEvent.findFirst({
-    where: { bookingId: owed.bookingId, type: { in: MOVED_ON_SINCE_BUMP }, occurredAt: { gt: owed.bumpedAt } },
+    where: {
+      bookingId: owed.bookingId,
+      type: { in: MOVED_ON_SINCE_BUMP },
+      occurredAt: { gt: owed.bumpedAt },
+      ...NOT_A_SETTLEMENT_MARKER_WHERE,
+    },
     select: { type: true },
   });
   return later ? `recorded ${later.type} since the bump` : null;

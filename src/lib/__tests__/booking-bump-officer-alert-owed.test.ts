@@ -3,16 +3,23 @@ import { createAlertCooldownStore } from "./support/alert-cooldown-store";
 
 /*
  * #5407 review: whether the officers' booking-bumped alert stays owed is
- * decided by what each officer's copy did, through the REAL alert sender,
- * `sendToAdmins` and its per-recipient isolation. Only the email core
- * (`sendEmail`) and the stores are doubles. A copy that fails before its
- * EmailLog row exists leaves nothing for the email retry cron, so the marker
- * stays and a later sweep sends the alert; a copy that fails after its FAILED
- * row was written is the retry cron's; nobody to tell is final.
+ * decided by what each officer's copy did. Real here: the owed-marker module,
+ * `alertOfficersOfBump`, `sendAdminBookingBumpedAlert` and its template,
+ * `sendToAdmins` with its per-recipient isolation and audience rule, and the
+ * claim and clear helpers. Doubled: the email core (`sendEmail`), the database
+ * (an in-memory `AlertCooldown` table and fixed reads), the club-wide delivery
+ * policy (always send), the undeliverable-alert escalation recorder,
+ * `renderEmailHtml` (no palette read) and the logger.
+ *
+ * A copy that fails before its EmailLog row exists leaves nothing for the
+ * email retry cron, so the marker stays, for a day, and a later sweep sends the
+ * alert; a copy that fails after its FAILED row was written is the retry
+ * cron's; nobody to tell is final.
  */
 
 const mocks = vi.hoisted(() => ({
   sendEmail: vi.fn(),
+  recordEscalation: vi.fn(async () => {}),
   memberFindMany: vi.fn(),
   bookingFindUnique: vi.fn(),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -38,7 +45,7 @@ vi.mock("@/lib/notification-delivery-policies", () => ({
   shouldSendAdminSystemEmail: vi.fn(async () => ({ send: true, mode: "always" })),
 }));
 vi.mock("@/lib/email-admin-alert-escalation", () => ({
-  recordAdminAlertDeliveryEscalation: vi.fn(async () => {}),
+  recordAdminAlertDeliveryEscalation: (...args: unknown[]) => mocks.recordEscalation(...args),
 }));
 vi.mock("@/lib/email-theme", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/email-theme")),
@@ -46,6 +53,7 @@ vi.mock("@/lib/email-theme", async (importOriginal) => ({
 }));
 vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 
+import { ALERT_NOBODY_ELIGIBLE_RETRY_MS } from "@/lib/alert-cooldown";
 import {
   BUMP_NOTICE_SWEEP_AFTER_MS,
   bumpNoticeOwedKey,
@@ -98,17 +106,26 @@ beforeEach(() => {
 });
 
 describe("the officers' bump alert stays owed only while nothing else will deliver it (#5407)", () => {
-  it("keeps the marker when every copy fails before its row exists, and a later sweep sends it", async () => {
+  it("keeps the marker a day when every copy fails before its row exists, and a later sweep sends it", async () => {
     mocks.sendEmail.mockImplementation(failsBeforeTheRow);
 
     await deliverBumpNotice("officers", booking as never, OWED);
 
     expect(mocks.sendEmail).toHaveBeenCalledTimes(2);
+    expect(mocks.recordEscalation).toHaveBeenCalledTimes(1);
     expect(cooldown.rows.has(OFFICER_KEY)).toBe(true);
+
+    // Still failing: the hourly sweeps leave it alone for a day, so the
+    // escalation is not written again every hour.
+    for (const hours of [2, 5, 23]) {
+      await drainOwedBumpNotices(new Date(BUMPED_AT.getTime() + hours * BUMP_NOTICE_SWEEP_AFTER_MS));
+    }
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(2);
+    expect(mocks.recordEscalation).toHaveBeenCalledTimes(1);
 
     mocks.sendEmail.mockReset();
     mocks.sendEmail.mockResolvedValue({ status: "sent", emailLogId: "log", messageId: "m" });
-    const later = await drainOwedBumpNotices(new Date(BUMPED_AT.getTime() + 2 * BUMP_NOTICE_SWEEP_AFTER_MS));
+    const later = await drainOwedBumpNotices(new Date(BUMPED_AT.getTime() + ALERT_NOBODY_ELIGIBLE_RETRY_MS + 1));
 
     expect(later.delivered).toBe(1);
     expect(mocks.sendEmail).toHaveBeenCalledTimes(2);
@@ -139,6 +156,27 @@ describe("the officers' bump alert stays owed only while nothing else will deliv
     mocks.sendEmail
       .mockImplementationOnce(failsBeforeTheRow)
       .mockResolvedValueOnce({ status: "sent", emailLogId: "log", messageId: "m" });
+
+    await deliverBumpNotice("officers", booking as never, OWED);
+
+    expect(cooldown.rows.size).toBe(0);
+  });
+
+  // #5407 review: an environment fault's copy is queued for the retry cron
+  // only if its row was written. A swallowed log write leaves no row to replay.
+  it("keeps the marker when an environment fault withheld copies whose rows were never written", async () => {
+    mocks.sendEmail.mockResolvedValue({ status: "withheld_for_environment", reason: "environment_unknown", emailLogId: null });
+
+    await deliverBumpNotice("officers", booking as never, OWED);
+
+    expect(cooldown.rows.has(OFFICER_KEY)).toBe(true);
+  });
+
+  it("clears the marker when an environment fault withheld copies whose FAILED rows were written", async () => {
+    mocks.sendEmail.mockImplementation(async ({ onAttemptLogged }: { onAttemptLogged?: (id: string) => void }) => {
+      onAttemptLogged?.("email-log-1");
+      return { status: "withheld_for_environment", reason: "environment_unknown", emailLogId: "email-log-1" };
+    });
 
     await deliverBumpNotice("officers", booking as never, OWED);
 

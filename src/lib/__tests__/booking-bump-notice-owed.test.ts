@@ -39,6 +39,11 @@ vi.mock("@/lib/booking-bump-alert", () => ({
 }));
 vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 
+import { ALERT_NOBODY_ELIGIBLE_RETRY_MS } from "@/lib/alert-cooldown";
+import {
+  NOT_A_SETTLEMENT_MARKER_WHERE,
+  SETTLEMENT_MARKER_EVENT_REASONS,
+} from "@/lib/manual-settlement-reversal-event";
 import {
   BUMP_NOTICE_MAX_AGE_MS,
   BUMP_NOTICE_SWEEP_AFTER_MS,
@@ -74,6 +79,21 @@ const owedAt = (bumpedAt: Date, flagged: boolean) => ({ bookingId: "b1", bumpedA
 const memberKey = (flagged = false) => bumpNoticeOwedKey("member", "b1", BUMPED_AT, flagged);
 const officerKey = (flagged = false) => bumpNoticeOwedKey("officers", "b1", BUMPED_AT, flagged);
 
+type StoredEvent = { type: string; reason: string | null; occurredAt: Date };
+type EventWhere = {
+  type: { in: string[] };
+  occurredAt: { gt: Date };
+  OR: Array<{ reason: null } | { reason: { notIn: string[] } }>;
+};
+
+/** The sweep's later-event where, read the way PostgreSQL reads it (NULL never matches `notIn`). */
+function matchesEventWhere(event: StoredEvent, where: EventWhere): boolean {
+  if (!where.type.in.includes(event.type) || !(event.occurredAt > where.occurredAt.gt)) return false;
+  return where.OR.some((branch) =>
+    branch.reason === null ? event.reason === null : event.reason !== null && !branch.reason.notIn.includes(event.reason),
+  );
+}
+
 /** Provider sends the email core made, one per event key it recorded. */
 let transportSends = 0;
 
@@ -90,7 +110,7 @@ beforeEach(() => {
   };
   mocks.sendBumped.mockImplementation(emailCore);
   mocks.sendGuestsCancelled.mockImplementation(emailCore);
-  mocks.alertOfficers.mockResolvedValue(true);
+  mocks.alertOfficers.mockResolvedValue("settled");
   mocks.bookingFindUnique.mockResolvedValue(cancelledBooking());
   mocks.bookingEventFindFirst.mockResolvedValue(null);
 });
@@ -160,7 +180,7 @@ describe("deliverBumpNotice, right after the commit", () => {
 
   it("leaves the marker, claimed, when the send throws", async () => {
     cooldown.rows.set(officerKey(), BUMPED_AT);
-    mocks.alertOfficers.mockResolvedValue(false);
+    mocks.alertOfficers.mockResolvedValue("threw");
 
     await deliverBumpNotice("officers", cancelledBooking() as never, owedAt(BUMPED_AT, false));
 
@@ -258,7 +278,7 @@ describe("drainOwedBumpNotices, the sweep", () => {
     expect(mocks.alertOfficers).not.toHaveBeenCalled();
 
     // A send that throws waits a full period again from that attempt.
-    mocks.alertOfficers.mockResolvedValue(false);
+    mocks.alertOfficers.mockResolvedValue("threw");
     await drainOwedBumpNotices(DUE);
     await drainOwedBumpNotices(at(2 * BUMP_NOTICE_SWEEP_AFTER_MS - 1));
     expect(mocks.alertOfficers).toHaveBeenCalledTimes(1);
@@ -326,6 +346,7 @@ describe("drainOwedBumpNotices, the sweep", () => {
           bookingId: "b1",
           type: { in: ["CANCELLED", "MEMBER_PAID", "NON_MEMBER_CONFIRMED"] },
           occurredAt: { gt: BUMPED_AT },
+          ...NOT_A_SETTLEMENT_MARKER_WHERE,
         },
         select: { type: true },
       });
@@ -346,14 +367,63 @@ describe("drainOwedBumpNotices, the sweep", () => {
     expect(mocks.alertOfficers).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the officers' marker when their alert reached nobody and nothing replays it", async () => {
+  // #5407 review: each attempt that reaches nobody writes an undeliverable-
+  // alert escalation, so the next one waits a day, as the once-only alerts do.
+  it("holds the officers' marker a day when their alert reached nobody and nothing replays it", async () => {
     cooldown.rows.set(officerKey(), BUMPED_AT);
-    mocks.alertOfficers.mockResolvedValue(false);
+    mocks.alertOfficers.mockResolvedValue("unreached");
 
     const result = await drainOwedBumpNotices(DUE);
 
     expect(result.delivered).toBe(0);
     expect(cooldown.rows.has(officerKey())).toBe(true);
+    // Not offered again an hour later, nor until a day after that attempt.
+    await drainOwedBumpNotices(at(2 * BUMP_NOTICE_SWEEP_AFTER_MS));
+    await drainOwedBumpNotices(new Date(DUE.getTime() + ALERT_NOBODY_ELIGIBLE_RETRY_MS - 1));
+    expect(mocks.alertOfficers).toHaveBeenCalledTimes(1);
+    mocks.alertOfficers.mockResolvedValue("settled");
+    await drainOwedBumpNotices(new Date(DUE.getTime() + ALERT_NOBODY_ELIGIBLE_RETRY_MS));
+    expect(mocks.alertOfficers).toHaveBeenCalledTimes(2);
+    expect(cooldown.rows.size).toBe(0);
+  });
+
+  it("does not hold the member's marker a day: a member send that threw waits the usual hour", async () => {
+    cooldown.rows.set(memberKey(), BUMPED_AT);
+    mocks.sendBumped.mockRejectedValueOnce(new Error("SMTP down"));
+
+    await drainOwedBumpNotices(DUE);
+    await drainOwedBumpNotices(at(2 * BUMP_NOTICE_SWEEP_AFTER_MS));
+
+    expect(mocks.sendBumped).toHaveBeenCalledTimes(2);
+    expect(cooldown.rows.size).toBe(0);
+  });
+
+  // #5407 review: a settlement marker is a CANCELLED event that cancels
+  // nothing; the sweep's read leaves it out by reason, so the notice is sent.
+  it("still sends when the only later CANCELLED event is a settlement marker", async () => {
+    cooldown.rows.set(memberKey(), BUMPED_AT);
+    // The stored events after the bump, read through the sweep's own where:
+    // a settlement marker, and a genuine cancel with no reason, before the bump.
+    const events = [
+      { type: "CANCELLED", reason: SETTLEMENT_MARKER_EVENT_REASONS[0]!, occurredAt: at(60_000) },
+      { type: "CANCELLED", reason: null, occurredAt: at(-60_000) },
+    ];
+    mocks.bookingEventFindFirst.mockImplementation(async ({ where }: { where: EventWhere }) => {
+      return events.find((event) => matchesEventWhere(event, where)) ?? null;
+    });
+
+    const result = await drainOwedBumpNotices(DUE);
+
+    expect(result.delivered).toBe(1);
+    expect(mocks.sendBumped).toHaveBeenCalledTimes(1);
+    // A genuine cancel after the bump, reason or none, still clears it.
+    for (const reason of [null, "Cancelled by the member"]) {
+      cooldown.rows.set(memberKey(), BUMPED_AT);
+      events.push({ type: "CANCELLED", reason, occurredAt: at(120_000) });
+      await expect(drainOwedBumpNotices(DUE)).resolves.toMatchObject({ cleared: 1 });
+      events.pop();
+    }
+    expect(mocks.sendBumped).toHaveBeenCalledTimes(1);
   });
 
   it("sends the officers' alert once when two runs sweep at the same moment", async () => {

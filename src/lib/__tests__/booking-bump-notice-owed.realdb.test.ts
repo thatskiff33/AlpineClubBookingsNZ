@@ -8,11 +8,14 @@
  * `AlertCooldown` table, the real email core and its `EmailLog` rows, and the
  * real officer audience:
  *
- * - right after the commit the email core cannot read the message settings,
- *   so the member's email throws and every officer's copy fails before its
- *   `EmailLog` row exists; both markers stay, the sweep sends each once, a
- *   second sweep adds nothing, and a member marker left standing after its
- *   send (a crash before the clear) finds the row recorded and sends nothing;
+ * - right after the commit the email core's render throws (as one on a stored
+ *   override can), so the member's email throws and every officer's copy
+ *   fails before its `EmailLog` row exists; both markers stay, the member's
+ *   is sent by the next sweep and the officers' a day later, a further sweep
+ *   adds nothing, and a member marker left standing after its send (a crash
+ *   before the clear) finds the row recorded and sends nothing;
+ * - a settlement marker (a `CANCELLED` event that cancels nothing) after the
+ *   bump does not stop the notice; a genuine cancel after it does;
  * - a bump whose transaction rolls back leaves no marker;
  * - two sweeps at the same moment send the officers' alert once.
  *
@@ -41,16 +44,16 @@ vi.mock("@/lib/session-guards", () => ({
   requireAdmin: vi.fn(async () => ({ ok: false })),
   requireSession: vi.fn(async () => ({ ok: false })),
 }));
-// The real message renderer, made to fail while `outage.down` is set: the email
-// core reads it before it writes a copy's EmailLog row, as a settings read that
-// throws would.
+// The real message renderer, made to throw while `outage.down` is set: the email
+// core renders before it writes a copy's EmailLog row, so this is a failure
+// before the row, as a render that throws on a stored override would be.
 const outage = vi.hoisted(() => ({ down: false }));
 vi.mock("@/lib/email-message-renderer", async (importOriginal) => {
   const real = (await importOriginal()) as typeof import("@/lib/email-message-renderer");
   return {
     ...real,
     prepareEmailMessage: async (...args: Parameters<typeof real.prepareEmailMessage>) => {
-      if (outage.down) throw new Error("message settings unreadable");
+      if (outage.down) throw new Error("render failed");
       return real.prepareEmailMessage(...args);
     },
   };
@@ -72,6 +75,7 @@ const ADMIN_ID = "race-5407-admin";
 const ADMIN_EMAIL = "race-5407-admin@example.test";
 const LODGE_ID = "race-5407-lodge";
 const WAIT_PAST = 2 * 60 * 60 * 1000;
+const DAY = 24 * 60 * 60 * 1000;
 
 /**
  * One case's own owner, booking and stay. The booking id starts with a tag of
@@ -95,12 +99,15 @@ const CASES = {
   threw: caseIds("thr", 2),
   rollback: caseIds("rbk", 10),
   race: caseIds("rce", 18),
+  marker: caseIds("stl", 26),
+  cancelled: caseIds("cxl", 6),
 };
 
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let owed: typeof import("@/lib/booking-bump-notice-owed");
 let email: typeof import("@/lib/email");
 let formatBookingReference: (typeof import("@/lib/booking-reference"))["formatBookingReference"];
+let SETTLEMENT_MARKER_EVENT_REASONS: (typeof import("@/lib/manual-settlement-reversal-event"))["SETTLEMENT_MARKER_EVENT_REASONS"];
 let harnessRole: { restore: () => void } | undefined;
 
 (RUN ? describe : describe.skip)(
@@ -112,6 +119,7 @@ let harnessRole: { restore: () => void } | undefined;
         where: { OR: [{ bookingId: ids.bookingId }, { to: ADMIN_EMAIL, subject: { contains: formatBookingReference(ids.bookingId) } }] },
       });
       await prisma.alertCooldown.deleteMany({ where: { key: { contains: ids.bookingId } } });
+      await prisma.bookingEvent.deleteMany({ where: { bookingId: ids.bookingId } });
       await prisma.bookingGuest.deleteMany({ where: { bookingId: ids.bookingId } });
       await prisma.booking.deleteMany({ where: { id: ids.bookingId } });
     }
@@ -192,6 +200,7 @@ let harnessRole: { restore: () => void } | undefined;
       owed = await import("@/lib/booking-bump-notice-owed");
       email = await import("@/lib/email");
       ({ formatBookingReference } = await import("@/lib/booking-reference"));
+      ({ SETTLEMENT_MARKER_EVENT_REASONS } = await import("@/lib/manual-settlement-reversal-event"));
 
       await deleteFixtures();
       await prisma.lodge.create({ data: { id: LODGE_ID, name: "Race 5407 Lodge", slug: "race-5407" } });
@@ -237,22 +246,26 @@ let harnessRole: { restore: () => void } | undefined;
       const bumpedAt = bumped.bumpedAt;
       expect((await recorded(ids)).markers).toBe(2);
 
-      // Right after the commit the email core cannot read the message settings:
-      // the member's email throws, and every officer's copy fails before its row.
+      // Right after the commit the email core's render throws: the member's
+      // email throws, and every officer's copy fails before its row.
       outage.down = true;
       await owed.deliverBumpNotices(await readBooking(ids), bumped);
       outage.down = false;
       expect(vi.mocked(email.sendAdminBookingBumpedAlert)).toHaveBeenCalledTimes(1);
       expect(await recorded(ids)).toEqual({ memberRows: [], officerRows: 0, markers: 2 });
 
-      // A later run's sweep sends each, once.
-      const firstSweep = await owed.drainOwedBumpNotices(new Date(bumpedAt.getTime() + WAIT_PAST));
-      expect(firstSweep.delivered).toBeGreaterThanOrEqual(2);
+      // The next sweep sends the member's email; the officers' alert, which
+      // reached nobody, is held a day.
+      await owed.drainOwedBumpNotices(new Date(bumpedAt.getTime() + WAIT_PAST));
       const memberLogId = `email:booking-bumped:${owed.bumpNoticeIdempotencyKey(ids.bookingId, bumpedAt)}`;
+      expect(await recorded(ids)).toEqual({ memberRows: [{ id: memberLogId }], officerRows: 0, markers: 1 });
+
+      // A day later the sweep sends the officers' alert, once.
+      await owed.drainOwedBumpNotices(new Date(bumpedAt.getTime() + DAY + WAIT_PAST));
       expect(await recorded(ids)).toEqual({ memberRows: [{ id: memberLogId }], officerRows: 1, markers: 0 });
 
-      // A second sweep finds nothing owed.
-      await owed.drainOwedBumpNotices(new Date(bumpedAt.getTime() + 2 * WAIT_PAST));
+      // A further sweep finds nothing owed.
+      await owed.drainOwedBumpNotices(new Date(bumpedAt.getTime() + 2 * DAY));
       expect(await recorded(ids)).toEqual({ memberRows: [{ id: memberLogId }], officerRows: 1, markers: 0 });
 
       // A member marker still standing after its send (a crash before the
@@ -260,7 +273,7 @@ let harnessRole: { restore: () => void } | undefined;
       const memberKey = owed.bumpNoticeOwedKey("member", ids.bookingId, bumpedAt, false);
       await prisma.alertCooldown.create({ data: { key: memberKey, lastAlertedAt: bumpedAt } });
       const sendsBefore = vi.mocked(email.sendBookingBumpedEmail).mock.calls.length;
-      await owed.drainOwedBumpNotices(new Date(bumpedAt.getTime() + 3 * WAIT_PAST));
+      await owed.drainOwedBumpNotices(new Date(bumpedAt.getTime() + 3 * DAY));
       expect(vi.mocked(email.sendBookingBumpedEmail).mock.calls.length).toBe(sendsBefore + 1);
       expect(await recorded(ids)).toEqual({ memberRows: [{ id: memberLogId }], officerRows: 1, markers: 0 });
     });
@@ -292,6 +305,37 @@ let harnessRole: { restore: () => void } | undefined;
         .mock.calls.filter(([alert]) => alert.bookingReference === formatBookingReference(ids.bookingId));
       expect(alertsForThisBooking).toHaveLength(1);
       expect(await recorded(ids)).toEqual({ memberRows: [], officerRows: 1, markers: 0 });
+    });
+
+    /** Commit a bump whose member email is owed alone, then record `reason` as a CANCELLED event after it. */
+    async function bumpThenCancelledEvent(ids: CaseIds, reason: string | null) {
+      await deleteCaseRows(ids);
+      await seedPendingBooking(ids);
+      const { bumpedAt } = await commitBump(ids);
+      await prisma.alertCooldown.delete({ where: { key: owed.bumpNoticeOwedKey("officers", ids.bookingId, bumpedAt, false) } });
+      await prisma.bookingEvent.create({
+        data: { bookingId: ids.bookingId, type: "CANCELLED", reason, occurredAt: new Date(bumpedAt.getTime() + 60_000) },
+      });
+      return bumpedAt;
+    }
+
+    it("still sends the member's email when the only later CANCELLED event is a settlement marker", async () => {
+      const ids = CASES.marker;
+      const bumpedAt = await bumpThenCancelledEvent(ids, SETTLEMENT_MARKER_EVENT_REASONS[0]!);
+
+      await owed.drainOwedBumpNotices(new Date(bumpedAt.getTime() + WAIT_PAST));
+
+      expect((await recorded(ids)).memberRows).toHaveLength(1);
+      expect((await recorded(ids)).markers).toBe(0);
+    });
+
+    it("clears the member's notice unsent when a genuine cancel with no reason was recorded after the bump", async () => {
+      const ids = CASES.cancelled;
+      const bumpedAt = await bumpThenCancelledEvent(ids, null);
+
+      await owed.drainOwedBumpNotices(new Date(bumpedAt.getTime() + WAIT_PAST));
+
+      expect(await recorded(ids)).toEqual({ memberRows: [], officerRows: 0, markers: 0 });
     });
   },
 );
