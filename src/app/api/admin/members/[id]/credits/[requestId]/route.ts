@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
-import { z } from "zod";
+import { adminCreditAdjustmentReviewSchema } from "@/lib/admin-credit-adjustment-schemas";
 import {
   getMemberCreditBalance,
   reviewAdminAdjustmentRequest,
@@ -8,10 +8,6 @@ import {
 import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { MemberCreditValidationError } from "@/lib/policies/member-credit";
-
-const reviewSchema = z.object({
-  decision: z.enum(["APPROVE", "REJECT"]),
-});
 
 /**
  * PATCH /api/admin/members/[id]/credits/[requestId]
@@ -33,7 +29,7 @@ export async function PATCH(
     const session = guard.session;
     const { id, requestId } = await params;
     const body = await request.json();
-    const parsed = reviewSchema.safeParse(body);
+    const parsed = adminCreditAdjustmentReviewSchema.safeParse(body);
 
     if (!parsed.success) {
       return NextResponse.json(

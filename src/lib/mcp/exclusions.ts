@@ -39,6 +39,10 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
   "website-flow": "Serves the website's own screens and steps, not something a member asks for.",
   "access-secrets": "Shows lodge door codes or other access details, which stay on the website.",
   "site-helper": "The website's own help assistant; the member's AI app answers them itself.",
+  // Officer reasons (ALP-721 onwards).
+  "club-setup":
+    "Sets up the club's fees, tax, bank details, accounting mappings or connections to outside services, which an officer configures and checks on the website.",
+  "service-export": "An export another system collects with its own shared key, not something a person asks for.",
 } as const;
 
 export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_REASONS;
@@ -46,7 +50,9 @@ export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_R
 /**
  * The task that will bring each remaining group of routes into the catalogue.
  * The member keys are the four follow-ons ALP-718 split its member routes
- * into; the rest are the officer areas.
+ * into; the rest are the officer areas. An area whose task has finished has
+ * no key: each of its routes is an action or has a permanent reason, and a
+ * new one fails the census until someone decides about it.
  */
 export const MCP_NOT_YET_TASKS = {
   memberBookings: "ALP-794",
@@ -55,12 +61,14 @@ export const MCP_NOT_YET_TASKS = {
   memberGroupsAndWholeLodge: "ALP-797",
   bookings: "ALP-719",
   membership: "ALP-720",
-  finance: "ALP-721",
   lodge: "ALP-722",
   content: "ALP-723",
   support: "ALP-724",
   overview: "ALP-724",
-} as const satisfies Record<AdminPermissionArea | MemberNotYetGroup, string>;
+} as const satisfies Partial<Record<AdminPermissionArea | MemberNotYetGroup, string>>;
+
+const NOT_YET_TASK_BY_GROUP: Partial<Record<AdminPermissionArea | MemberNotYetGroup, string>> =
+  MCP_NOT_YET_TASKS;
 
 type MemberNotYetGroup =
   | "memberBookings"
@@ -129,7 +137,7 @@ const PERMANENT_PREFIXES: ReadonlyArray<{
  * covered by its neighbour's reason and fails the census until decided.
  */
 const PERMANENT_ROUTES: ReadonlyArray<{
-  readonly reason: Exclude<McpPermanentExclusionReason, "fresh-proof">;
+  readonly reason: McpPermanentExclusionReason;
   readonly routes: readonly string[];
 }> = [
   {
@@ -156,6 +164,78 @@ const PERMANENT_ROUTES: ReadonlyArray<{
   { reason: "public-visitor", routes: ["POST /api/contact", "POST /api/applications"] },
   // The nominee confirms through a link emailed to them.
   { reason: "needs-browser", routes: ["POST /api/applications/nominate"] },
+
+  // --- Finance (ALP-721) ---------------------------------------------------
+  // Handlers that call `requireRecentAuth` without being on `STEP_UP_ROUTES`
+  // (which lists the destructive operations, #4619). A connection never holds
+  // a fresh proof (`INV-MCP-005`); the census finds every such handler.
+  {
+    reason: "fresh-proof",
+    routes: [
+      "POST /api/admin/opening-credits/preview",
+      "POST /api/admin/opening-credits/confirm",
+      "POST /api/admin/opening-credits/[id]/reverse",
+    ],
+  },
+  // The finance area also holds the club's setup screens: fees, tax, bank
+  // details, accounting mappings, and the connections to Xero, Stripe,
+  // Google, MiroTalk, analytics and the Alpine Central Server. Credentials,
+  // OAuth hand-offs and mappings that every later invoice follows stay where
+  // an officer sees the whole screen. `import-members` is the one-off import
+  // that seeds the member list from Xero during setup.
+  {
+    reason: "club-setup",
+    routes: [
+      "GET /api/admin/alpine-server/version",
+      "POST /api/admin/alpine-server/lodge-links",
+      "PUT /api/admin/alpine-server/lodge-links",
+      "POST /api/admin/alpine-server/other-lodges/download",
+      "POST /api/admin/alpine-server/other-lodges/upload",
+      "GET /api/admin/club-tax",
+      "PUT /api/admin/club-tax",
+      "DELETE /api/admin/club-tax",
+      "GET /api/admin/fee-configuration",
+      "POST /api/admin/fee-configuration",
+      "GET /api/admin/integrations/analytics",
+      "PUT /api/admin/integrations/analytics",
+      "POST /api/admin/integrations/analytics/reconsent",
+      "GET /api/admin/integrations/credentials",
+      "GET /api/admin/integrations/google/status",
+      "POST /api/admin/integrations/google/verify/start",
+      "GET /api/admin/integrations/mirotalk",
+      "GET /api/admin/integrations/stripe/status",
+      "GET /api/admin/integrations/wizard-progress",
+      "POST /api/admin/integrations/wizard-progress",
+      "GET /api/admin/internet-banking-settings",
+      "PUT /api/admin/internet-banking-settings",
+      "GET /api/admin/setup/finance-report-mappings",
+      "PUT /api/admin/setup/finance-report-mappings",
+      "POST /api/admin/setup/finance-report-mappings/backfill",
+      "GET /api/admin/xero/account-mappings",
+      "PUT /api/admin/xero/account-mappings",
+      "GET /api/admin/xero/item-code-mappings",
+      "PUT /api/admin/xero/item-code-mappings",
+      "GET /api/admin/xero/tax-categories",
+      "PUT /api/admin/xero/tax-categories",
+      "DELETE /api/admin/xero/tax-categories",
+      "GET /api/admin/xero/chart-of-accounts",
+      "GET /api/admin/xero/items",
+      "GET /api/admin/xero/contact-groups",
+      "GET /api/admin/xero/organisation",
+      "GET /api/admin/xero/member-grouping",
+      "POST /api/admin/xero/member-grouping",
+      "GET /api/admin/xero/connect",
+      "GET /api/admin/xero/callback",
+      "GET /api/admin/xero/webhook-health",
+      "PUT /api/admin/xero/webhook-health",
+      "GET /api/admin/xero/webhook/verify-status",
+      "POST /api/admin/xero/import-members",
+    ],
+  },
+  // Answers with a redirect into the old finance dashboard, not with data.
+  { reason: "website-flow", routes: ["GET /api/finance/legacy-dashboard/auth"] },
+  // Also needs the dashboard's shared bearer key, which no person holds.
+  { reason: "service-export", routes: ["GET /api/finance/legacy-dashboard/bookings"] },
 ];
 
 /**
@@ -193,9 +273,6 @@ const MEMBER_NOT_YET_PREFIXES: Readonly<Record<MemberNotYetGroup, readonly strin
   ],
 };
 
-/** Finance officer routes that sit outside `/api/admin`. */
-const FINANCE_NOT_YET_PREFIXES: readonly string[] = ["/api/finance"];
-
 function underPrefix(path: string, prefix: string): boolean {
   return path === prefix || path.startsWith(`${prefix}/`);
 }
@@ -207,7 +284,8 @@ const STEP_UP_ROUTE_KEYS: ReadonlySet<string> = new Set(
 /**
  * The reason this route method can never be an action, or null. Fresh-proof
  * routes come from `STEP_UP_ROUTES` itself, whatever the club's officer
- * sign-in setting says: the list is never copied here.
+ * sign-in setting says: the list is never copied here. `PERMANENT_ROUTES`
+ * names only the few handlers that ask for a fresh proof without being on it.
  */
 export function mcpPermanentExclusion(
   file: string,
@@ -234,6 +312,11 @@ export type McpRouteClassification =
   | { readonly kind: "excluded"; readonly reason: McpExclusionReason }
   | { readonly kind: "unclassified" };
 
+/** A finished area has no task left, so its undecided route is unclassified. */
+function notYet(task: string | undefined): McpRouteClassification {
+  return task ? { kind: "excluded", reason: `not-yet:${task}` } : { kind: "unclassified" };
+}
+
 /** Where one route method stands. `unclassified` fails the census. */
 export function classifyMcpRoute(file: string, method: string): McpRouteClassification {
   const permanent = mcpPermanentExclusion(file, method);
@@ -244,17 +327,12 @@ export function classifyMcpRoute(file: string, method: string): McpRouteClassifi
 
   const path = adminRouteApiPath(file);
   const adminArea = getAdminRouteRequirement(path, method)?.area;
-  if (adminArea) {
-    return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS[adminArea]}` };
-  }
-  if (FINANCE_NOT_YET_PREFIXES.some((prefix) => underPrefix(path, prefix))) {
-    return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS.finance}` };
-  }
+  if (adminArea) return notYet(NOT_YET_TASK_BY_GROUP[adminArea]);
   for (const [group, prefixes] of Object.entries(MEMBER_NOT_YET_PREFIXES) as Array<
     [MemberNotYetGroup, readonly string[]]
   >) {
     if (prefixes.some((prefix) => underPrefix(path, prefix))) {
-      return { kind: "excluded", reason: `not-yet:${MCP_NOT_YET_TASKS[group]}` };
+      return notYet(NOT_YET_TASK_BY_GROUP[group]);
     }
   }
   return { kind: "unclassified" };

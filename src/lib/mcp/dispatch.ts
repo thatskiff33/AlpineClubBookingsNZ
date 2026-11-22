@@ -124,10 +124,10 @@ async function recordCall(action: McpAction, caller: McpCaller, status: number |
     await recordMcpAudit({
       action: "MCP_ACTION_CALLED",
       actorMemberId: caller.memberId,
-      // Every stage 1 change action acts on the connected member's own
-      // records: a draft is theirs, and the cancel route refuses a
-      // connection any booking but its member's own (`INV-MCP-006`). An
-      // officer action (ALP-719) must name the record's member here instead.
+      // Whose connection it is. A member action acts on that member's own
+      // records. An officer action can change other people's records: this
+      // row names the action, and the route's own audit trail, where it keeps
+      // one, names the record, as it does for the officer's browser.
       subjectMemberId: caller.memberId,
       grantId: caller.grantId,
       severity: action.kind === "destructive" ? "important" : "info",
