@@ -1604,6 +1604,17 @@ export function EditBookingPanel({
   const linkedMoveSettlementRequired =
     Boolean(activeLinkedMoveState?.prompt.settlementMethodRequired) &&
     !settlementRequired;
+  /**
+   * #5303 review: the mirror case. This booking's own quote asks, so the linked
+   * control above stays hidden and the price summary's one radio answers for the
+   * linked bookings too; its label must cover their refund route as well.
+   */
+  const priceSummaryLinkedRefundRoute =
+    settlementRequired &&
+    activeLinkedMoveState?.prompt.settlementMethodRequired &&
+    linkedMoveChoice !== "LEAVE_UNCOVERED"
+      ? activeLinkedMoveState.prompt.refundRoute
+      : null;
 
   // Issue #1668: over-capacity under an admin override is a confirmable warning,
   // not a hard block. The signal can come from the quote (preview) or from a
@@ -1830,6 +1841,7 @@ export function EditBookingPanel({
           settlementMethod={settlementMethod}
           onConfirmOverCapacityChange={setConfirmOverCapacity}
           onSettlementMethodChange={setSettlementMethod}
+          linkedMoveRefundRoute={priceSummaryLinkedRefundRoute}
         />
       )}
 

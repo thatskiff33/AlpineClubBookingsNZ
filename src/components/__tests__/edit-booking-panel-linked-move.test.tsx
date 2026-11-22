@@ -90,11 +90,14 @@ function linkedMoveOffer(
 }
 
 let modifyResponse: () => Response;
+/** Overrides on the `/modify-quote` body; the default quote is an increase with no choice. */
+let quoteOverrides: Record<string, unknown>;
 /** Every body this panel PUT to `/modify`, in order. */
 let modifyBodies: Array<Record<string, unknown>>;
 
 function installFetch() {
   modifyBodies = [];
+  quoteOverrides = {};
   modifyResponse = () => jsonResponse(linkedMoveOffer(), 409);
   global.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
@@ -122,6 +125,7 @@ function installFetch() {
         promoCoverage: null,
         promoValidation: null,
         itemizedChanges: [],
+        ...quoteOverrides,
       });
     }
     if (url.endsWith(`/api/bookings/${BOOKING_ID}/modify`)) {
@@ -366,7 +370,7 @@ describe("EditBookingPanel — the linked-move offer (#3232)", () => {
 
   it("#5303: names both routes where the one choice covers a card and a bank transfer", async () => {
     const labels = await returnMethodLabels({ refundRoute: "CARD_AND_BANK_TRANSFER" });
-    expect(labels[0]).toBe("Refund to original card, or by bank transfer where there is no card");
+    expect(labels[0]).toBe("Refund to original card, or by bank transfer for a booking that can't be refunded to a card");
   });
 
   it("#5303 control: a refund Stripe can return still goes to the card", async () => {
@@ -375,6 +379,53 @@ describe("EditBookingPanel — the linked-move offer (#3232)", () => {
 
   it("#5303: an older server that omits the route reads as the card, as before", async () => {
     expect((await returnMethodLabels({}))[0]).toBe("Refund to original card");
+  });
+
+  it("#5303: this booking's own refund choice, covering the linked booking too, names both routes", async () => {
+    // This booking is card-paid with a Stripe record and its own quote asks, so
+    // the linked control stays hidden and the price summary's one radio answers
+    // for both bookings. The dependent is refunded by bank transfer (the offer's
+    // route covers every booking needing the choice), so the radio must say so.
+    quoteOverrides = {
+      priceDiffCents: -2_000,
+      netChargeCents: -1_000,
+      settlementOptions: {
+        basisAmountCents: 1_000,
+        cardRefundAmountCents: 1_000,
+        cardRefundPercentage: 100,
+        accountCreditAmountCents: 1_000,
+        accountCreditPercentage: 100,
+        daysUntilCheckIn: 30,
+        requiresSettlementMethod: true,
+        returnsToOrganiser: false,
+        organiserRefundByBankTransfer: false,
+        refundHeldForDispute: false,
+        refundByBankTransfer: false,
+      },
+    };
+    modifyResponse = () =>
+      jsonResponse(
+        linkedMoveOffer({ combinedRefundCents: 2_200, settlementMethodRequired: true, refundRoute: "CARD_AND_BANK_TRANSFER" }),
+        409,
+      );
+    render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText(/Check-in/i), { target: { value: "2026-09-05" } });
+    const refundChoice = () => screen.getByRole("radio", { name: /^Refund/ }).closest("label")?.textContent;
+    await waitFor(() => expect(refundChoice()).toBe("Refund to original card: $10.00 (100%)"), { timeout: 2500 });
+    fireEvent.click(screen.getByRole("radio", { name: /^Refund/ }));
+    const saveButton = screen.getByRole("button", { name: "Save Changes" });
+    await waitFor(() => expect(saveButton).not.toBeDisabled(), { timeout: 2500 });
+    fireEvent.click(saveButton);
+    await screen.findByText(/Another of your bookings needs an adult on the nights below/);
+
+    expect(screen.queryByTestId("linked-move-settlement-method")).toBeNull();
+    expect(refundChoice()).toBe(
+      "Refund to original card, or by bank transfer for a booking that can't be refunded to a card: $10.00 (100%)",
+    );
+
+    // Moving only this booking leaves the choice covering this booking alone.
+    fireEvent.click(screen.getByRole("radio", { name: /Move only this booking/ }));
+    expect(refundChoice()).toBe("Refund to original card: $10.00 (100%)");
   });
 
   it("does not ask where money goes on the arm where none moves", async () => {

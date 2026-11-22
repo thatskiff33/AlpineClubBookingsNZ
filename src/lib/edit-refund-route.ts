@@ -21,6 +21,20 @@ export function editRefundRouteOf(refundsByBankTransfer: readonly boolean[]): Ed
   return bank === refundsByBankTransfer.length ? "BANK_TRANSFER" : "CARD_AND_BANK_TRANSFER";
 }
 
+/**
+ * The route when one choice covers bookings whose routes are already known: the
+ * price summary's radio while a linked move needing the choice is active answers
+ * for this booking and the linked ones together (#5303 review).
+ */
+export function combineEditRefundRoutes(routes: readonly EditRefundRoute[]): EditRefundRoute {
+  return editRefundRouteOf(
+    routes.flatMap((route) => (route === "CARD_AND_BANK_TRANSFER" ? [false, true] : [route === "BANK_TRANSFER"])),
+  );
+}
+
+/** The other option's label, beside the refund's. */
+export const EDIT_REFUND_CREDIT_CHOICE_LABEL = "Hold as account credit";
+
 /** The refund option's label beside "account credit". */
 export function editRefundChoiceLabel(route: EditRefundRoute): string {
   switch (route) {
@@ -29,7 +43,7 @@ export function editRefundChoiceLabel(route: EditRefundRoute): string {
     case "BANK_TRANSFER":
       return "Refund by bank transfer";
     case "CARD_AND_BANK_TRANSFER":
-      return "Refund to original card, or by bank transfer where there is no card";
+      return "Refund to original card, or by bank transfer for a booking that can't be refunded to a card";
   }
 }
 
@@ -41,6 +55,6 @@ export function editRefundDestinationPhrase(route: EditRefundRoute): string {
     case "BANK_TRANSFER":
       return "by bank transfer";
     case "CARD_AND_BANK_TRANSFER":
-      return "to your card (by bank transfer where there is no card)";
+      return "to your card (or by bank transfer for a booking that can't be refunded to a card)";
   }
 }

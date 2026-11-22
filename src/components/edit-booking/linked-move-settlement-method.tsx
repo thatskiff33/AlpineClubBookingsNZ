@@ -2,7 +2,7 @@
 
 import { useId } from "react";
 import { Radio } from "@/components/ui/radio";
-import { editRefundChoiceLabel } from "@/lib/edit-refund-route";
+import { EDIT_REFUND_CREDIT_CHOICE_LABEL, editRefundChoiceLabel } from "@/lib/edit-refund-route";
 import type { HostingCoverageLinkedMovePromptData } from "@/lib/hosting-coverage-linked-move-client";
 
 /**
@@ -58,7 +58,7 @@ export function LinkedMoveSettlementMethod({
           disabled={disabled}
           onChange={() => onChange("credit")}
         />
-        <span>Hold as account credit</span>
+        <span>{EDIT_REFUND_CREDIT_CHOICE_LABEL}</span>
       </label>
     </div>
   );
