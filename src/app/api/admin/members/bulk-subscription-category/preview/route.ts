@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { previewBulkSubscriptionCategory } from "@/lib/bulk-subscription-category-assignments";
 import { requireAdmin } from "@/lib/session-guards";
 import { clubTimeZone } from "@/lib/club-time/server";
@@ -13,12 +14,11 @@ export async function POST(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const read = await parseJsonRequestBody(request);
+
+  if (!read.ok) return read.response;
+
+  const body = read.body;
 
   const parsed = bulkSubscriptionCategoryPreviewSchema.safeParse(body);
   if (!parsed.success) {
