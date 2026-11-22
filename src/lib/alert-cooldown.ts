@@ -55,8 +55,9 @@ export const ALERT_ONCE_EVER_WINDOW_MS = 36_500 * 86_400_000;
 
 /**
  * How long a claim whose alert nobody could receive (no admin opted in, the
- * template switched off, every recipient suppressed) is held before the next
- * run may try again (#3672): daily, not every run.
+ * template switched off, every recipient suppressed, or every copy failed
+ * before its EmailLog row existed, #5407) is held before the next run may try
+ * again (#3672): daily, not every run.
  */
 export const ALERT_NOBODY_ELIGIBLE_RETRY_MS = 86_400_000;
 

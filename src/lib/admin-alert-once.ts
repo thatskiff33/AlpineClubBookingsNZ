@@ -20,8 +20,9 @@ import { prisma } from "@/lib/prisma";
  * - an admin was sent it, or has a FAILED copy the email retry cron will
  *   re-send: the claim is kept for good, so an outage never multiplies it;
  * - nobody could receive it (the template switched off, nobody opted in,
- *   every recipient suppressed): the claim is held for a day, then the next
- *   run tries again;
+ *   every recipient suppressed), or every copy failed before its EmailLog row
+ *   existed so the retry cron has nothing to replay (#5407): the claim is held
+ *   for a day, then the next run tries again;
  * - the send threw before reaching anyone: the claim is given back, so the
  *   next run retries;
  * - the claim call threw: nothing is sent, and the stamp it tried to write is

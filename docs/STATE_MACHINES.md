@@ -4226,18 +4226,25 @@ member's email (`booking-bumped` or `booking-guests-cancelled`) and one for the
 officers' `admin-booking-bumped` alert, each stamped with the moment of the bump.
 After the commit each marker is claimed by a stamp-guarded update, its notice
 sent at once, and the marker cleared when the notice is settled. A send that
-throws, a job that stops first, or an officers' alert that reached nobody
-because every failed copy failed before its `EmailLog` row existed, leaves the
-marker. A copy that failed after its row was written is the retry cron's, and
-no officer to tell is final. A later run of the same cron claims each marker
-whose stamp, the bump or its last attempt, is at least an hour old, and sends
-it again (`booking-bump-notice-owed.ts`). It clears without sending when the
-booking is gone, is no longer cancelled, or has a `CANCELLED`, `MEMBER_PAID` or
-`NON_MEMBER_CONFIRMED` booking event after the bump (it was reinstated and
-moved on; the bump itself writes only `BUMPED`), or when the marker is more
-than seven days old, which it logs as an error. Booking events are written
-best effort after their own commits, so this narrows the reinstated case
-rather than closing it.
+throws, or a job that stops first, leaves the marker. An officers' alert that
+reached nobody because every failed copy has no `EmailLog` row (it failed
+before the row was written, or its row write failed) leaves it too, held a day
+rather than an hour, as the once-only alerts are, so a lasting fault writes one
+undeliverable-alert escalation a day, not one an hour. A copy that failed
+after its row was written is the retry cron's, and no officer to tell is
+final. A later run of the same cron claims each marker whose stamp, the bump
+or its last attempt, is at least an hour old (a day, after an attempt that
+reached nobody), and sends it again (`booking-bump-notice-owed.ts`). It clears
+without sending when the booking is gone, is no longer cancelled, or has a
+`CANCELLED`, `MEMBER_PAID` or `NON_MEMBER_CONFIRMED` booking event after the
+bump (it was reinstated and moved on; the bump itself writes only `BUMPED`),
+or when the marker is more than seven days old, which it logs as an error. A
+settlement marker, a `CANCELLED` event that cancels nothing, does not count
+(`NOT_A_SETTLEMENT_MARKER_WHERE`). Most cancel and confirmation events are
+narrative, written best effort after their own commits; a few decision
+records commit with what they describe. A lost narrative event still leaves
+the booking told it was bumped, so this narrows the reinstated case rather
+than closing it.
 
 The member's email carries an id derived from the template, booking and bump
 time, so however often it is sent it has one row, and a provider failure
@@ -4251,7 +4258,8 @@ replays.
 
 ```text
 bump commits + markers -> claim -> send settled -> marker cleared
-bump commits + markers -> claim -> send throws, or officers' copies all fail before their rows -> marker kept -> later run claims -> send -> cleared
+bump commits + markers -> claim -> send throws -> marker kept -> later run (an hour on) claims -> send -> cleared
+bump commits + markers -> claim -> officers' copies all lack a row -> marker held a day -> later run claims -> send -> cleared
 bump commits + markers -> job stops -> later run claims -> booking still CANCELLED, nothing since -> send -> cleared
 later run claims -> booking gone, reinstated, cancelled or confirmed since, or marker over 7 days old -> cleared, nothing sent
 ```

@@ -6,9 +6,16 @@
 
   Expect the Payment failures and Xero errors numbers in particular to go up:
   those alerts always have the same subject, so they were the most
-  undercounted. Nothing about when the alerts themselves are sent changed, and
-  a subject your club saved for an alert does not change any count while the
-  officers receiving that alert stay the same.
+  undercounted. A subject your club saved for an alert does not change any
+  count while the officers receiving that alert stay the same.
+
+  One thing about when alerts are sent did change. An officer alert that no
+  officer received, because every copy failed before the app could record it
+  (for example when writing the email log failed and then sending failed
+  too), used to be treated as waiting for the email retry job, which had
+  nothing to send. Alerts that are sent once only are now tried again a day
+  later, as they already were when nobody could receive them; a few that
+  retry on their own schedule try again on it, up to their usual limit.
 - **A bumped member and the officers are told even if the job is interrupted
   (#5407).** When the pending-booking job releases a booking because its dates
   filled up, it emails the member and alerts the officers. If the job was

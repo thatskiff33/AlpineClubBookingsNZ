@@ -396,9 +396,10 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > **Booking Update**, or **Booking Cancelled** when the booking was cancelled
 > because its guests could not come) and the officers' **Admin Booking Bumped**
 > alert are then sent by a later run of the same job, so a recovered notice arrives
-> a few hours late. The same happens when the officers' alert could not be
-> recorded for any of them, for example while the email settings cannot be
-> read. The member never receives it twice. Very rarely the officers may
+> a few hours late. When the officers' alert could not be recorded for any
+> of them (for example when writing the email log failed and sending then
+> failed too, or the message could not be built from a saved template), it is
+> tried again a day later. The member never receives it twice. Very rarely the officers may
 > receive their alert twice: when the interruption falls just after it was
 > sent, or when sending it takes longer than an hour. Nothing about the
 > wording changed.
