@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { CREDIT_ADJUSTMENT_REQUESTED_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import {
+  CREDIT_ADJUSTMENT_REQUESTED_CONNECTION_SHAPE,
+  MEMBER_CREDITS_CONNECTION_SHAPE,
+} from "@/lib/connection-shapes/finance-money";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 import { adminCreditAdjustmentRequestSchema } from "@/lib/admin-credit-adjustment-schemas";
@@ -23,7 +26,7 @@ import {
  * Returns credit balance and history for a member (admin only).
  */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -39,7 +42,11 @@ export async function GET(
       getPendingAdminAdjustmentRequests(id),
     ]);
 
-    return NextResponse.json({ balanceCents, history, pendingRequests });
+    return connectionJson(
+      request,
+      { balanceCents, history, pendingRequests },
+      MEMBER_CREDITS_CONNECTION_SHAPE,
+    );
   } catch (error) {
     logger.error({ err: error }, "Error fetching member credit history");
     return NextResponse.json(

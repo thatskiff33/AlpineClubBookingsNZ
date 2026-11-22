@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { adminCreditAdjustmentReviewSchema } from "@/lib/admin-credit-adjustment-schemas";
+import { CREDIT_ADJUSTMENT_REVIEWED_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-money";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   getMemberCreditBalance,
   reviewAdminAdjustmentRequest,
@@ -52,11 +54,11 @@ export async function PATCH(
         ? "Adjustment approved and applied"
         : "Adjustment rejected";
 
-    return NextResponse.json({
-      success: true,
-      balanceCents,
-      message,
-    });
+    return connectionJson(
+      request,
+      { success: true, balanceCents, message },
+      CREDIT_ADJUSTMENT_REVIEWED_CONNECTION_SHAPE,
+    );
   } catch (error) {
     logger.error({ err: error }, "Error reviewing credit adjustment");
 

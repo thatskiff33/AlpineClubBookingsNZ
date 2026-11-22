@@ -1,6 +1,7 @@
 /**
  * What an officer sends to request, and to decide, a manual account credit
- * adjustment (`POST` and `PATCH` under `/api/admin/members/[id]/credits`).
+ * adjustment (`POST` and `PATCH` under `/api/admin/members/[id]/credits`),
+ * and to list the requests waiting for review (`GET /api/admin/credit-approvals`).
  * The routes and their AI app actions read these (ALP-721, `INV-SSOT`).
  * Amounts are integer cents.
  */
@@ -38,4 +39,20 @@ export const adminCreditAdjustmentReviewSchema = z.object({
 export const adminCreditAdjustmentReviewParamsSchema = z.object({
   id: z.string().min(1),
   requestId: z.string().min(1),
+});
+
+/** The review queue's filter (`GET /api/admin/credit-approvals`). */
+export const ADMIN_CREDIT_APPROVAL_STATUSES = ["PENDING", "APPROVED", "REJECTED", "ALL"] as const;
+
+/**
+ * `status` is read case-insensitively and anything else, or nothing, lists the
+ * pending requests: the queue never refuses a filter it does not know.
+ */
+export const adminCreditApprovalsQuerySchema = z.object({
+  status: z
+    .preprocess(
+      (value) => (typeof value === "string" ? value.toUpperCase() : value),
+      z.enum(ADMIN_CREDIT_APPROVAL_STATUSES).catch("PENDING"),
+    )
+    .default("PENDING"),
 });

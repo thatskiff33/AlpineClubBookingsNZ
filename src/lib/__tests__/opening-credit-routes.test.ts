@@ -51,7 +51,7 @@ describe("opening-credit routes (#4988)", () => {
     await previewBatch(post("/api/admin/opening-credits/preview", { csvText: "x" }));
     await confirmBatch(post("/api/admin/opening-credits/confirm", { csvText: "x", batchKey: KEY, totalCents: 1 }));
     await reverseBatch(post("/api/admin/opening-credits/batch-1/reverse", { reason: "r" }), reverseParams);
-    await listBatches();
+    await listBatches(new NextRequest("http://localhost/api/admin/opening-credits"));
     expect(guards.requireAdmin.mock.calls.map(([options]) => options.permission)).toEqual([
       { area: "finance", level: "edit" },
       { area: "finance", level: "edit" },

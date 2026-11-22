@@ -101,3 +101,136 @@ export const CREDIT_ADJUSTMENT_REQUESTED_CONNECTION_SHAPE = connectionShapeFor<{
   replayed: true,
   message: true,
 });
+
+/** A member as an officer's credit screens name them: no contact details. */
+type CreditPerson = { id: string; firstName: string; lastName: string };
+
+/**
+ * `GET /api/admin/credit-approvals`: the credit adjustment requests in the
+ * review queue. A connection is answered `{ requests }`; the browser keeps
+ * the bare list.
+ */
+export const CREDIT_APPROVALS_CONNECTION_SHAPE = connectionShapeFor<{
+  requests: Array<{
+    id: string;
+    memberId: string;
+    amountCents: number;
+    description: string;
+    grantAccount: string | null;
+    status: string;
+    requestedById: string;
+    reviewedById: string | null;
+    reviewedAt: Date | null;
+    createdAt: Date;
+    member: CreditPerson;
+    requestedBy: CreditPerson;
+    reviewedBy: CreditPerson | null;
+    approvedCredit: { id: string; createdAt: Date } | null;
+  }>;
+}>({
+  requests: {
+    id: true,
+    memberId: true,
+    amountCents: true,
+    description: true,
+    grantAccount: true,
+    status: true,
+    requestedById: true,
+    reviewedById: true,
+    reviewedAt: true,
+    createdAt: true,
+    member: { id: true, firstName: true, lastName: true },
+    requestedBy: { id: true, firstName: true, lastName: true },
+    reviewedBy: { id: true, firstName: true, lastName: true },
+    approvedCredit: { id: true, createdAt: true },
+  },
+});
+
+type CreditBookingStay = { id: string; checkIn: Date; checkOut: Date };
+
+/** `GET /api/admin/members/[id]/credits`: one member's balance, ledger and pending requests. */
+export const MEMBER_CREDITS_CONNECTION_SHAPE = connectionShapeFor<{
+  balanceCents: number;
+  history: Array<{
+    id: string;
+    amountCents: number;
+    type: string;
+    description: string;
+    createdAt: Date;
+    sourceBooking: CreditBookingStay | null;
+    appliedToBooking: CreditBookingStay | null;
+    requestedBy: CreditPerson | null;
+    approvedBy: CreditPerson | null;
+    approvalRequest: { createdAt: Date; reviewedAt: Date | null } | null;
+  }>;
+  pendingRequests: Array<{
+    id: string;
+    amountCents: number;
+    description: string;
+    grantAccount: string | null;
+    status: string;
+    requestedById: string;
+    createdAt: Date;
+    requestedBy: CreditPerson;
+  }>;
+}>({
+  balanceCents: true,
+  history: {
+    id: true,
+    amountCents: true,
+    type: true,
+    description: true,
+    createdAt: true,
+    sourceBooking: { id: true, checkIn: true, checkOut: true },
+    appliedToBooking: { id: true, checkIn: true, checkOut: true },
+    requestedBy: { id: true, firstName: true, lastName: true },
+    approvedBy: { id: true, firstName: true, lastName: true },
+    approvalRequest: { createdAt: true, reviewedAt: true },
+  },
+  pendingRequests: {
+    id: true,
+    amountCents: true,
+    description: true,
+    grantAccount: true,
+    status: true,
+    requestedById: true,
+    createdAt: true,
+    requestedBy: { id: true, firstName: true, lastName: true },
+  },
+});
+
+/** `PATCH /api/admin/members/[id]/credits/[requestId]`: the decision and the member's balance after it. */
+export const CREDIT_ADJUSTMENT_REVIEWED_CONNECTION_SHAPE = connectionShapeFor<{
+  success: boolean;
+  balanceCents: number;
+  message: string;
+}>({
+  success: true,
+  balanceCents: true,
+  message: true,
+});
+
+/** `GET /api/admin/opening-credits`: the opening-credit batches posted so far, newest first. */
+export const OPENING_CREDIT_BATCHES_CONNECTION_SHAPE = connectionShapeFor<{
+  batches: Array<{
+    id: string;
+    totalCents: number;
+    rowCount: number;
+    postedAt: string;
+    reversedAt: string | null;
+    reversalReason: string | null;
+    postedBy: string | null;
+    reversedBy: string | null;
+  }>;
+}>({
+  batches: {
+    id: true,
+    totalCents: true,
+    rowCount: true,
+    postedAt: true,
+    reversedAt: true,
+    reversalReason: true,
+    postedBy: true,
+    reversedBy: true,
+  },
+});
