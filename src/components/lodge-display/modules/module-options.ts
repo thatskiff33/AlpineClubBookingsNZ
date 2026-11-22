@@ -1,8 +1,8 @@
 import type { DisplayPanelOptionValue } from "@/lib/lodge-display/template-registry";
 
-// Per-module option parsing for the lobby display (fork issue #30). Every
+// Per-module option parsing for the lobby display (fork issue hoppers99/AlpineClubBookingsNZ#30). Every
 // module renders sensibly with zero options; an invalid value falls back to
-// its documented default rather than throwing (issue #30 AC6) — a bad
+// its documented default rather than throwing (issue hoppers99/AlpineClubBookingsNZ#30 AC6) — a bad
 // template edit can make a screen plainer, never blank.
 
 export type DisplayPanelOptions = Record<string, DisplayPanelOptionValue>;
@@ -23,7 +23,7 @@ export function intOption(
 /**
  * A boolean option. Accepts a real boolean, the strings true/false/1/0/yes/no
  * (case-insensitive), or a number (0 is false). Anything else — including an
- * unset option — falls back to the documented default (issue #30 AC6: a bad
+ * unset option — falls back to the documented default (issue hoppers99/AlpineClubBookingsNZ#30 AC6: a bad
  * template edit never throws, it just uses the default).
  */
 export function boolOption(
@@ -45,7 +45,7 @@ export function boolOption(
 /**
  * A closed-set string option. Returns the matching allowed value (case-sensitive
  * against `allowed`), else the documented fallback — so a bad template edit never
- * throws (issue #30 AC6).
+ * throws (issue hoppers99/AlpineClubBookingsNZ#30 AC6).
  */
 export function enumOption<T extends string>(
   options: DisplayPanelOptions | undefined,

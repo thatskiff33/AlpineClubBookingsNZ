@@ -419,8 +419,9 @@ async function decideWaitingOperation(params: {
  * row as read; the alert itself goes through `sendAdminAlertOnceEver` (#3635
  * C4), the one rule every once-per-condition money alert shares: kept once an
  * admin has it or its copy is queued for the retry cron, held a day when
- * nobody could receive it (muted, nobody opted in, every address suppressed),
- * given back when the send throws. Never throws.
+ * nobody could receive it (muted, nobody opted in, every address suppressed,
+ * or every copy failed before its EmailLog row existed, #5407), given back
+ * when the send throws. Never throws.
  */
 async function alertProviderCaptureUnrecorded(capture: {
   id: string;

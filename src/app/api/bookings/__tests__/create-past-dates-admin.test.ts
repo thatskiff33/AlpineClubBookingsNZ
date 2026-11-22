@@ -96,7 +96,8 @@ vi.mock("@/lib/access-roles", () => ({
   hasAdminAccess: h.hasAdminAccess,
   hasAccessRole: h.hasAccessRole,
 }));
-vi.mock("@/lib/admin-permissions", () => ({
+vi.mock("@/lib/admin-permissions", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/admin-permissions")),
   bookingManagementAuthorizationRole: h.managementRole,
 }));
 vi.mock("@/lib/module-settings", () => ({
@@ -922,7 +923,9 @@ describe("POST /api/bookings through an AI app connection", () => {
 
   beforeEach(() => {
     // A dual-hat Booking Officer booking for themselves through the member flow.
-    h.managementRole.mockReturnValue("ADMIN");
+    // Stands in for the real helper: the member-only session a connection
+    // decides with (`memberOnlySessionUser`, role USER) has no officer reach.
+    h.managementRole.mockImplementation((user: { role?: string }) => (user.role === "USER" ? "USER" : "ADMIN"));
     h.hasAdminAccess.mockReturnValue(true);
     h.hasAccessRole.mockReturnValue(true);
     h.memberFindUnique.mockResolvedValue({
@@ -950,5 +953,40 @@ describe("POST /api/bookings through an AI app connection", () => {
 
   it("keeps the officer's role on the website", async () => {
     expect(new Set(await scanRole(false))).toEqual(new Set(["ADMIN"]));
+  });
+
+  it("refuses a connection from an admin-only account, which has no member to book as", async () => {
+    // Role checks read the session they are given, so the route's choice of
+    // session decides the answer.
+    const roles = (user: { accessRoles?: Array<{ role: string } | string> }) =>
+      (user.accessRoles ?? []).map((item) => (typeof item === "string" ? item : item.role));
+    h.hasAdminAccess.mockImplementation((user: never) => roles(user).includes("ADMIN"));
+    h.hasAccessRole.mockImplementation((user: never, role: string) => roles(user).includes(role));
+    h.auth.mockResolvedValue(ADMIN_SESSION);
+    const request = makeRequest(draftPayload());
+    request.headers.set("x-mcp-principal", "signed-principal");
+    const res = await POST(request);
+    expect(res.status).toBe(403);
+    // Said plainly, not as the website's "Admins must book on behalf" (a kiosk-only account gets it too).
+    expect(await res.json()).toEqual({
+      error: "This account is not a member, so an AI app cannot book for it.",
+      code: "MCP_DRAFT_ONLY",
+    });
+    expect(h.createDraftBooking).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a confirmed booking", { draft: undefined }],
+    ["a waitlist place", { draft: undefined, waitlist: true }],
+    ["a booking marked not a draft", { draft: false }],
+  ])("refuses %s from a member's connection: it only saves drafts", async (_label, change) => {
+    const request = makeRequest({ ...draftPayload(), ...change });
+    request.headers.set("x-mcp-principal", "signed-principal");
+    const res = await POST(request);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ code: "MCP_DRAFT_ONLY" });
+    expect(h.createDraftBooking).not.toHaveBeenCalled();
+    expect(h.createConfirmedBooking).not.toHaveBeenCalled();
+    expect(h.createWaitlistedBooking).not.toHaveBeenCalled();
   });
 });

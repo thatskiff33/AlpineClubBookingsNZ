@@ -6,7 +6,7 @@ import { dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-time";
 import { fakeDb, fakePrisma, resetFakeDb } from "./support/food-order-fake-db";
 
 /**
- * Fork #121: the food-order member routes end to end over an in-memory
+ * Fork triyder/AlpineClubBookingsNZ#121: the food-order member routes end to end over an in-memory
  * database — the access matrix for Received and price, creating an order, the
  * module gate, the Received claim under concurrent requests, price audit, and
  * the history's scope, filters, paging and totals.

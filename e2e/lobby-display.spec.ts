@@ -42,7 +42,7 @@ test("a display pairs through the real admin flow and a revoke sends it back to 
 
   // ── Flag on → create a device from the admin page ──
   // Devices management lives at /admin/display/devices; /admin/display is now
-  // the Lobby Display hub landing page (fork issue #109).
+  // the Lobby Display hub landing page (fork issue hoppers99/AlpineClubBookingsNZ#109).
   await overrideModules(page.request, { lobbyDisplay: true });
   await page.goto("/admin/display/devices");
   await page.locator("#device-name").fill(deviceName);

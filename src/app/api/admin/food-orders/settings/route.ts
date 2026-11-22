@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import {
   FOOD_ORDER_NOT_FOUND,
@@ -20,11 +21,11 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
 /**
- * The Food Orders settings card (fork #121): the food officer's email address
+ * The Food Orders settings card (fork triyder/AlpineClubBookingsNZ#121): the food officer's email address
  * and what the club calls them. Lodge Operations `view` to read, `edit` to save.
  * 404 while the `foodOrders` module is off, here as well as in the proxy.
  *
- * The address is checked ONLY as a valid email (fork #121 owner decision 10) — never
+ * The address is checked ONLY as a valid email (fork triyder/AlpineClubBookingsNZ#121 owner decision 10) — never
  * against members or committee roles. An empty address is allowed and means
  * ordering is not set up: the order page says so and the API refuses orders.
  */
@@ -58,12 +59,11 @@ export async function PUT(request: NextRequest) {
   });
   if (!admin.ok) return admin.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = putSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

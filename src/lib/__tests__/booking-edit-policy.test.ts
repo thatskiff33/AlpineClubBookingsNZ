@@ -522,7 +522,7 @@ describe("booking edit policy — finished-stay correction (#3750)", () => {
   });
 });
 
-describe("booking edit policy — work-party correction (fork #127/#130)", () => {
+describe("booking edit policy — work-party correction (fork triyder/AlpineClubBookingsNZ#127/triyder/AlpineClubBookingsNZ#130)", () => {
   const TODAY = new Date("2026-07-01T00:00:00.000Z");
   const started = {
     checkIn: new Date("2026-06-28T00:00:00.000Z"),

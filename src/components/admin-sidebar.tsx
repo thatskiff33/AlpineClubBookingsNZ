@@ -302,12 +302,12 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         icon: Wrench,
       },
       {
-        // Food orders (fork #121): hidden with the `foodOrders` module, like the entry above.
+        // Food orders (fork triyder/AlpineClubBookingsNZ#121): hidden with the `foodOrders` module, like the entry above.
         href: "/admin/food-orders",
         label: "Food Orders",
         icon: ShoppingBasket,
       },
-      // Lobby Display (fork issue #109): one Lodge Operations entry opens the
+      // Lobby Display (fork issue hoppers99/AlpineClubBookingsNZ#109): one Lodge Operations entry opens the
       // hub landing page (/admin/display), which lays out cards for Devices,
       // Layouts, Templates, and Reference rather than scattering its leaves
       // through the sidebar. Per-lodge display config remains on each lodge in

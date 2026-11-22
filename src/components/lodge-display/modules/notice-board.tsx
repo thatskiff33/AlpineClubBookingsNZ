@@ -3,7 +3,7 @@ import { resolveDisplayText } from "@/lib/lodge-display/display-text";
 import type { DisplayPanelOptions } from "./module-options";
 import { useClubFormat } from "@/components/club-format-provider";
 
-// The committee notice board (fork issue #36): the one deliberately AUTHORED
+// The committee notice board (fork issue hoppers99/AlpineClubBookingsNZ#36): the one deliberately AUTHORED
 // display surface — free text posted by permitted admins, rendered strictly
 // as React text nodes (never HTML), so a notice can never inject markup.
 // {{config:<key>}} / {{lodge-name}} / {{display-date}} placeholders resolve

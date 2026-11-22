@@ -55,8 +55,9 @@ export const ALERT_ONCE_EVER_WINDOW_MS = 36_500 * 86_400_000;
 
 /**
  * How long a claim whose alert nobody could receive (no admin opted in, the
- * template switched off, every recipient suppressed) is held before the next
- * run may try again (#3672): daily, not every run.
+ * template switched off, every recipient suppressed, or every copy failed
+ * before its EmailLog row existed, #5407) is held before the next run may try
+ * again (#3672): daily, not every run.
  */
 export const ALERT_NOBODY_ELIGIBLE_RETRY_MS = 86_400_000;
 
@@ -182,12 +183,50 @@ export async function noteOwedAlertAttempt({
   await store.alertCooldown.updateMany({ where: { key }, data: { lastAlertedAt: now } });
 }
 
-export async function settleOwedAlert({
+/**
+ * Claim an owed marker for one delivery attempt (#5407): its stamp moves to
+ * `now` only while it is no later than `stampedNoLaterThan`, so of two callers
+ * racing one marker exactly one wins, and the loser must send nothing. The
+ * claim stamp is kept strictly later than the bound (a frozen or coarse clock
+ * could otherwise hand two callers the same instant). Returns that stamp, for
+ * `settleOwedAlert`'s own-claim guard, or null when the claim was lost. A
+ * claimed marker its caller leaves (the send threw) is offered again by
+ * `listOwedAlertKeys` once `retryAfterMs` has passed since the claim.
+ */
+export async function claimOwedAlert({
   key,
+  stampedNoLaterThan,
+  now = new Date(),
   store = prisma,
 }: {
   key: string;
+  stampedNoLaterThan: Date;
+  now?: Date;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<Date | null> {
+  const claimedAt = new Date(Math.max(now.getTime(), stampedNoLaterThan.getTime() + 1));
+  const claimed = await store.alertCooldown.updateMany({
+    where: { key, lastAlertedAt: { lte: stampedNoLaterThan } },
+    data: { lastAlertedAt: claimedAt },
+  });
+  return claimed.count === 1 ? claimedAt : null;
+}
+
+/**
+ * Delete an owed marker once delivered. With `claimedAt` (#5407) only a marker
+ * still stamped with that caller's own claim is deleted, so a newer claim by
+ * another caller is never cleared from under it.
+ */
+export async function settleOwedAlert({
+  key,
+  claimedAt,
+  store = prisma,
+}: {
+  key: string;
+  claimedAt?: Date;
   store?: Pick<typeof prisma, "alertCooldown">;
 }): Promise<void> {
-  await store.alertCooldown.deleteMany({ where: { key } });
+  await store.alertCooldown.deleteMany({
+    where: { key, ...(claimedAt ? { lastAlertedAt: claimedAt } : {}) },
+  });
 }

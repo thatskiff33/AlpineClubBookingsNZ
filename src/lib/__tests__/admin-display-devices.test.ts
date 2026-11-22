@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Issue #33 (LTV-008): admin lobby-display device management — guards,
+// Issue hoppers99/AlpineClubBookingsNZ#33 (LTV-008): admin lobby-display device management — guards,
 // creation (default-lodge fallback for single-lodge clubs), registry-
 // validated template assignment, idempotent revocation, template list.
 
@@ -144,7 +144,7 @@ describe("PATCH /api/admin/display/devices/[id] (template assignment, AC7)", () 
     const { PATCH } = await import(
       "@/app/api/admin/display/devices/[id]/route"
     );
-    // The built-ins are seeded v2 rows and the templateKey column is gone (#86);
+    // The built-ins are seeded v2 rows and the templateKey column is gone (hoppers99/AlpineClubBookingsNZ#86);
     // a stale client sending templateKey must be refused (strict schema), never
     // silently no-op.
     const res = await PATCH(

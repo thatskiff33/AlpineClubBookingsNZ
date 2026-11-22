@@ -859,7 +859,7 @@ export async function prepareGuestPlan(
     linkedGuestIds: new Set(guestMemberLinks.map((link) => link.guestId)),
   });
   // Only when this edit CHANGES the lodge: the stored id was validated when it
-  // was set, and may since have been hidden (#58) — a booking keeps a hidden
+  // was set, and may since have been hidden (triyder/AlpineClubBookingsNZ#58) — a booking keeps a hidden
   // lodge, so re-checking it would refuse every unrelated modification.
   if (otherLodgeElection.otherLodgeIdChanged) {
     await assertOtherLodgeExists(tx, otherLodgeElection.otherLodgeId);
@@ -2087,7 +2087,7 @@ export async function applyPromoCodeChanges(
     bookingId: string;
     input: BatchModifyInput;
     inProgressPlan: BookingEditGuestRangePlan | null;
-    officerWorkPartyCorrection?: WorkPartyCodeCorrection | null; // Fork #119/#130: the one internal code an Add admits or a Remove drops
+    officerWorkPartyCorrection?: WorkPartyCodeCorrection | null; // Fork triyder/AlpineClubBookingsNZ#119/triyder/AlpineClubBookingsNZ#130: the one internal code an Add admits or a Remove drops
     newCheckIn: Date;
     newTotalPriceCents: number;
     guestNightRates: Array<{

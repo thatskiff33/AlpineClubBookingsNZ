@@ -12,7 +12,7 @@ import {
  * 20 Nov 2026, applied by `whereVisibleCalendarEvent`). The ONE rule all of
  * them use (INV-SSOT).
  *
- * MEMBERS ONLY (owner decision 7, fork #118). That is narrower than the Events
+ * MEMBERS ONLY (owner decision 7, fork triyder/AlpineClubBookingsNZ#118). That is narrower than the Events
  * calendar's `canViewCalendarEvents`, which only shuts out organisation
  * accounts, so this is its own helper rather than a reuse of that one.
  *

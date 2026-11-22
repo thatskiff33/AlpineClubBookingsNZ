@@ -26,7 +26,7 @@ import {
   DISPLAY_TERM_TEMPLATE,
 } from "@/lib/lodge-display/display-terminology";
 
-// Lobby Display hub (fork issue #109): one sidebar entry opens this landing
+// Lobby Display hub (fork issue hoppers99/AlpineClubBookingsNZ#109): one sidebar entry opens this landing
 // page of cards instead of the old four-item sidebar group. Mirrors the
 // "Site Appearance & Content" hub (/admin/appearance) — the Devices management
 // page now lives at /admin/display/devices; the other cards keep their routes.

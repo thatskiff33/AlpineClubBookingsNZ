@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { syncContactsFromXero } from "@/lib/xero-bulk-contact-sync";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
@@ -23,13 +24,14 @@ export async function POST(request?: Request) {
   const session = guard.session;
   let options: z.infer<typeof syncContactsSchema> = {};
   const contentType = request?.headers.get("content-type") ?? "";
-  if (contentType.includes("application/json")) {
-    let body: unknown;
-    try {
-      body = await request?.json();
-    } catch {
-      return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-    }
+  // `request` is optional only for callers that invoke POST() bare; with none the
+  // content type is empty and this branch never ran, so the `request &&` changes nothing.
+  if (request && contentType.includes("application/json")) {
+    const jsonBody = await parseJsonRequestBody(request, {
+      error: "Invalid JSON",
+    });
+    if (!jsonBody.ok) return jsonBody.response;
+    const body = jsonBody.body;
 
     const parsed = syncContactsSchema.safeParse(body);
     if (!parsed.success) {

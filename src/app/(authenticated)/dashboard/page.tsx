@@ -798,7 +798,7 @@ export default async function DashboardPage() {
           </Card>
         )}
 
-        {/* Fork #121: beside "Report an issue", while the module is on. */}
+        {/* Fork triyder/AlpineClubBookingsNZ#121: beside "Report an issue", while the module is on. */}
         {modules.foodOrders && canActorUseFoodOrders(session.user) && (
           <FoodOrderDashboardCard />
         )}

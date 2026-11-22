@@ -450,7 +450,8 @@ describe("POST /api/admin/bookings/[id]/return-to-waitlist (#2649)", () => {
     // is the lock this route takes, the rows the reconcile prunes, and therefore
     // the queue the freed beds belong to. `expireStaleOffers` reads
     // `waitlistOfferedLodgeId` because ITS entry is still WAITLIST_OFFERED and
-    // holds a bed at the offered lodge — copying that rule here would sweep a
+    // the place it was offered is at the offered lodge (an offer holds no
+    // capacity, INV-CAP-011) — copying that rule here would sweep a
     // lodge this repair freed nothing at and leave the freed beds unoffered.
     // Structural, not conditional: the mutable re-read no longer SELECTS the
     // offered lodge at all, so there is nothing to key off by mistake.
