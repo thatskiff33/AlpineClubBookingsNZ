@@ -441,19 +441,6 @@ export function isGroupDiscountApplicable(
   return season?.type === "SUMMER";
 }
 
-// test seam
-export function isGroupDiscountAppliedToStay(
-  checkIn: Date,
-  checkOut: Date,
-  guestCount: number,
-  seasons: SeasonRateData[],
-  groupDiscount?: GroupDiscountConfig
-): boolean {
-  return getStayNights(checkIn, checkOut).some((night) =>
-    isGroupDiscountApplicable(guestCount, night, seasons, groupDiscount)
-  );
-}
-
 /**
  * Calculate the total price for a booking.
  * Guests stay from checkIn night to checkOut-1 night.

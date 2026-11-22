@@ -62,6 +62,10 @@ import {
   getAuditRequestContext,
 } from "@/lib/audit";
 import {
+  hasAnyField,
+  normalizedChangedFields,
+} from "@/lib/audit-changed-fields";
+import {
   getMemberArchiveLifecycleRequests,
   getMemberDeleteEligibility,
   getMemberDeleteLifecycleRequests,
@@ -258,39 +262,6 @@ const ADMIN_MEMBER_ACCESS_FIELDS = [
   "canLogin",
   "forcePasswordChange",
 ] as const;
-
-function normalizeAuditValue(value: unknown): unknown {
-  if (value instanceof Date) {
-    return value.getTime();
-  }
-  if (value === undefined || value === "") {
-    return null;
-  }
-  return value;
-}
-
-function getChangedFields(
-  before: Record<string, unknown>,
-  updateData: Record<string, unknown>,
-  fields: readonly string[],
-): string[] {
-  return fields.filter((field) => {
-    if (!Object.prototype.hasOwnProperty.call(updateData, field)) {
-      return false;
-    }
-    return (
-      normalizeAuditValue(before[field]) !==
-      normalizeAuditValue(updateData[field])
-    );
-  });
-}
-
-function hasAnyField(
-  changedFields: readonly string[],
-  fields: readonly string[],
-): boolean {
-  return fields.some((field) => changedFields.includes(field));
-}
 
 function buildAccessChanges(
   before: Record<string, unknown>,
@@ -1403,7 +1374,7 @@ export async function updateAdminMember(params: {
       ...updateData,
       ...(nextAccessRoles ? { accessRoles: nextAccessRoles } : {}),
     };
-    const changedFields = getChangedFields(
+    const changedFields = normalizedChangedFields(
       existingAuditRecord,
       auditUpdateData,
       ADMIN_MEMBER_AUDIT_FIELDS,

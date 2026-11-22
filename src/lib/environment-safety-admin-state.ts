@@ -25,7 +25,7 @@ import "server-only";
  * importing them from here.
  *
  * WHAT IS DELIBERATELY NOT ON THE PAYLOAD: the changer's email (see
- * `MEMBER_NAME_SELECT`), the raw environment beyond the one refused value the
+ * `readChangedByName` (`setting-changed-by.ts`)), the raw environment beyond the one refused value the
  * operator has to see to fix their own typo, and anything about the database
  * connection. This screen answers "which installation is this?" and nothing on
  * it needs a credential to do so.
@@ -43,21 +43,11 @@ import {
   readWithheldApplicationEmail,
   type WithheldApplicationEmail,
 } from "@/lib/environment-safety-withheld";
-import { prisma } from "@/lib/prisma";
+import { readChangedByName } from "@/lib/setting-changed-by";
 import {
   readXeroContactContainment,
   type XeroContactContainment,
 } from "@/lib/xero-contact-containment-status";
-
-/**
- * Name fields ONLY. The panel says WHO last changed the override, so it needs a
- * display name and nothing else — selecting the email, or the whole row, would
- * put a contact address into a configuration payload with no use for one.
- */
-const MEMBER_NAME_SELECT = {
-  firstName: true,
-  lastName: true,
-} as const;
 
 /**
  * The flattened declaration. `raw` is non-null for exactly one state —
@@ -116,29 +106,6 @@ export type EnvironmentSafetyState = {
   /** The resolver's own operator-facing lines, rendered verbatim. */
   notes: string[];
 };
-
-/**
- * The display name of the member who last saved, or `null`. Defensive because
- * the column carries no foreign key (the house shape for a settings singleton),
- * so the member may since have been merged or deleted: a missing member, a blank
- * name and an unreachable database all mean "we cannot name them", never a
- * failed read of the setting.
- */
-async function readChangedByName(
-  memberId: string | null,
-): Promise<string | null> {
-  if (!memberId) return null;
-  try {
-    const member = await prisma.member.findUnique({
-      where: { id: memberId },
-      select: MEMBER_NAME_SELECT,
-    });
-    if (!member) return null;
-    return `${member.firstName} ${member.lastName}`.trim() || null;
-  } catch {
-    return null;
-  }
-}
 
 function declarationState(
   resolution: EnvironmentRoleResolution,

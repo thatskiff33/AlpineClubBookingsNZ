@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { invalidJsonBodyResponse } from "@/lib/api-json";
 import { auth } from "@/lib/auth";
 import { bookingIdParamsSchema } from "@/lib/booking-cancel-schema";
 import { deleteBooking } from "@/lib/booking-delete";
@@ -91,13 +92,7 @@ export async function DELETE(
 
     const body = await readDeleteBody(request);
     if (body === null) {
-      return NextResponse.json(
-        {
-          error: "Invalid JSON",
-          details: { body: ["Request body must be valid JSON"] },
-        },
-        { status: 400 }
-      );
+      return invalidJsonBodyResponse();
     }
 
     const parsedBody = deleteBookingBodySchema.safeParse(body);

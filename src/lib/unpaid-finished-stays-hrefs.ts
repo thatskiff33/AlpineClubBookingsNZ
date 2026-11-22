@@ -23,16 +23,6 @@ export function buildUnpaidFinishedStaysHref(todayKey: string): string {
 }
 
 /**
- * Deep link to the bookings list pre-filtered to the unsettled finished-stay
- * additions via the `additionalOwed` filter plus the Check Out range filter.
- */
-export function buildUnsettledAdditionalFinishedStaysHref(
-  todayKey: string,
-): string {
-  return `${adminHref("bookings")}?additionalOwed=owed&checkOutTo=${todayKey}`;
-}
-
-/**
  * Deep link covering BOTH halves of the unsettled-additions queue — every
  * booking with an uncollected addition, whenever it stays. Used by the sidebar
  * badge and the dashboard card, whose split label ("N upcoming, M finished")

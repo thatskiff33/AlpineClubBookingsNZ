@@ -178,7 +178,7 @@ stage: each changes what a person or a job may do.
 | `lib/booking-payment-flow.ts` — `canCreateImmediatePaymentIntent` | card payment allowed | own plan · G2 |
 | `lib/booking-payment-flow.ts` — `isSwitchableToInternetBanking` | bank switch allowed | own plan · G2 |
 | `lib/booking-status.ts` — `IMMEDIATE_PAYMENT_BOOKING_STATUSES` | card payment allowed | own plan · G2 |
-| `lib/booking-status.ts` — `OPERATIONAL_STAY_BOOKING_STATUSES`, `isOperationalStayBookingStatus` | who is treated as staying: `PAID` and `COMPLETED` only | own plan · G1 |
+| `lib/booking-status.ts` — `OPERATIONAL_STAY_BOOKING_STATUSES` | who is treated as staying: `PAID` and `COMPLETED` only | own plan · G1 |
 | `lib/cron-checkin-reminders.ts` — `sendCheckinReminders` | check-in reminders go to operational stays | own plan · G1 |
 | `lib/cron-confirm-pending.ts` — `parentSettledWithoutCard` | a guest portion is not card-chased when its parent is on Internet Banking or reads `CONFIRMED`, `PAID` or `COMPLETED` | own plan · G7 |
 | `lib/hut-leader-stayed-nights.ts` — `hutLeaderStayStatusWhere` | hut-leader duty counts operational stays | own plan · G1 |

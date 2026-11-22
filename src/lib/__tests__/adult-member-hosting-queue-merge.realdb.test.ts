@@ -286,7 +286,7 @@ let enqueueActiveHostingIncidentPolicyReconciliation: (typeof import("@/lib/adul
 let HOSTING_POLICY_RECONCILIATION_SELECT: (typeof import("@/lib/adult-member-hosting-policy-reconciliation"))["HOSTING_POLICY_RECONCILIATION_SELECT"];
 let reserveMemberContactCreateOperation: (typeof import("@/lib/xero-contacts"))["reserveMemberContactCreateOperation"];
 let reserveMemberContactUpdateOperation: (typeof import("@/lib/xero-contacts"))["reserveMemberContactUpdateOperation"];
-let completeMemberContactUpdateOperation: (typeof import("@/lib/xero-contacts"))["completeMemberContactUpdateOperation"];
+let completeMemberContactOperation: (typeof import("@/lib/xero-contact-create-recovery"))["completeMemberContactOperation"];
 let lockMemberForManualXeroContactLink: (typeof import("@/lib/xero-contact-create-recovery"))["lockMemberForManualXeroContactLink"];
 let lockMemberForAccountDeletionXeroFence: (typeof import("@/lib/xero-contact-create-recovery"))["lockMemberForAccountDeletionXeroFence"];
 let applyInboundMemberContactPatch: (typeof import("@/lib/xero-contact-create-recovery"))["applyInboundMemberContactPatch"];
@@ -733,8 +733,8 @@ let deletionApprovalWasReleased: (typeof import("@/lib/deletion-request-decision
         xeroContacts.reserveMemberContactCreateOperation;
       reserveMemberContactUpdateOperation =
         xeroContacts.reserveMemberContactUpdateOperation;
-      completeMemberContactUpdateOperation =
-        xeroContacts.completeMemberContactUpdateOperation;
+      completeMemberContactOperation =
+        xeroContactCreateRecovery.completeMemberContactOperation;
       lockMemberForManualXeroContactLink =
         xeroContactCreateRecovery.lockMemberForManualXeroContactLink;
       lockMemberForAccountDeletionXeroFence =
@@ -1738,7 +1738,7 @@ let deletionApprovalWasReleased: (typeof import("@/lib/deletion-request-decision
           db: mergeA,
         }),
       ).rejects.toMatchObject({ code: "merge_blocked", statusCode: 409 });
-      await completeMemberContactUpdateOperation(
+      await completeMemberContactOperation(
         IDS.loser,
         "contact-update-before-merge",
         reservation!.operation,
@@ -1879,7 +1879,7 @@ let deletionApprovalWasReleased: (typeof import("@/lib/deletion-request-decision
         },
       });
       const reserved = await reservation;
-      await completeMemberContactUpdateOperation(
+      await completeMemberContactOperation(
         IDS.master,
         "contact-master-authoritative",
         reserved!.operation,
@@ -1922,7 +1922,7 @@ let deletionApprovalWasReleased: (typeof import("@/lib/deletion-request-decision
         code: "XERO_CONTACT_CREATE_BLOCKS_DELETION",
         statusCode: 409,
       });
-      await completeMemberContactUpdateOperation(
+      await completeMemberContactOperation(
         IDS.target,
         "contact-update-before-deletion",
         reservation!.operation,

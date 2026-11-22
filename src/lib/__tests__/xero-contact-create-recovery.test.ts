@@ -34,12 +34,10 @@ import {
   applyInboundMemberContactPatch,
   ambiguousMemberContactCreateReservationWhere,
   assertNoMemberContactChangeBlockerForDeletion,
-  assertNoMemberContactCreateBlockerForDeletion,
   closeProviderCreatedContactRecoveryForLinkedContact,
   findMemberContactChangeMergeBlocker,
   getMemberContactCreateRecoveryPending,
   getMemberContactCreateRecoveryState,
-  hasMemberContactCreateMergeBlocker,
   hasMemberContactChangeMergeBlocker,
   hasUnresolvedMemberContactCreateRecovery,
   isProviderCreatedLocalLinkFailurePayload,
@@ -188,27 +186,46 @@ describe("unresolved member Xero contact-create recovery proof", () => {
         },
       },
     ],
-  ])("blocks deletion on the complete %s recovery proof", async (_label, operation) => {
-    const operationFindFirst = vi.fn().mockResolvedValue(operation);
+  ])("refuses deletion, naming the operation, when the blocker read returns a %s create", async (_label, operation) => {
+    const operationFindFirst = vi
+      .fn()
+      .mockResolvedValue({ ...operation, operationType: "CREATE", xeroObjectId: null });
 
     await expect(
-      assertNoMemberContactCreateBlockerForDeletion("member-1", {
+      assertNoMemberContactChangeBlockerForDeletion("member-1", {
         xeroSyncOperation: { findFirst: operationFindFirst } as never,
       }),
     ).rejects.toMatchObject({
       code: "XERO_CONTACT_CREATE_BLOCKS_DELETION",
       statusCode: 409,
+      operationId: operation.id,
     });
     expect(operationFindFirst).toHaveBeenCalledWith({
-      where: memberContactCreateMergeBlockerWhere("member-1"),
+      where: memberContactChangeMergeBlockerWhere("member-1"),
       select: {
         id: true,
+        operationType: true,
         status: true,
-        lastErrorCode: true,
+        xeroObjectId: true,
         responsePayload: true,
       },
     });
   },);
+
+  // The rows above block only because the query selects them, so what blocks is
+  // the where clause: the change blocker must read the same member CONTACT
+  // operations as the create blocker, and its CREATE branch must be exactly the
+  // create blocker's recovery states.
+  it("reads the create blocker's operations and states inside the change blocker", () => {
+    const withoutKeys = (where: object, keys: string[]) =>
+      Object.fromEntries(Object.entries(where).filter(([key]) => !keys.includes(key)));
+    const create = memberContactCreateMergeBlockerWhere("member-1");
+    const change = memberContactChangeMergeBlockerWhere("member-1");
+
+    expect(create.operationType).toBe("CREATE");
+    expect(withoutKeys(change, ["OR"])).toEqual(withoutKeys(create, ["OR", "operationType"]));
+    expect(change.OR).toContainEqual({ operationType: "CREATE", OR: create.OR });
+  });
 
   it("accepts actual provider creation and rejects matched-existing phases", () => {
     expect(
@@ -236,28 +253,38 @@ describe("unresolved member Xero contact-create recovery proof", () => {
     ).toBe(false);
   });
 
-  it("blocks merge on the exact RUNNING reservation without claiming provider recovery", async () => {
+  it("reports a merge blocker when the blocker read returns a RUNNING create, without claiming provider recovery", async () => {
     findFirst
-      .mockResolvedValueOnce({ id: "operation-running", status: "RUNNING" })
+      .mockResolvedValueOnce({
+        id: "operation-running",
+        operationType: "CREATE",
+        status: "RUNNING",
+        xeroObjectId: null,
+        responsePayload: null,
+      })
       .mockResolvedValueOnce({
         id: "operation-running",
         responsePayload: null,
       });
 
     await expect(
-      hasMemberContactCreateMergeBlocker("member-1")
+      hasMemberContactChangeMergeBlocker("member-1")
     ).resolves.toBe(true,);
     await expect(
       hasUnresolvedMemberContactCreateRecovery("member-1"),
     ).resolves.toBe(false);
     expect(findFirst).toHaveBeenNthCalledWith(1, {
-      where: memberContactCreateMergeBlockerWhere("member-1"),
+      where: memberContactChangeMergeBlockerWhere("member-1"),
       select: {
         id: true,
+        operationType: true,
         status: true,
-        lastErrorCode: true,
+        xeroObjectId: true,
         responsePayload: true,
       },
+    });
+    expect(memberContactCreateMergeBlockerWhere("member-1").OR).toContainEqual({
+      status: "RUNNING",
     });
   });
 
@@ -309,7 +336,7 @@ describe("unresolved member Xero contact-create recovery proof", () => {
       hasUnresolvedMemberContactCreateRecovery("member-1"),
     ).resolves.toBe(true);
     await expect(
-      hasMemberContactCreateMergeBlocker("member-1")
+      hasMemberContactChangeMergeBlocker("member-1")
     ).resolves.toBe(true,);
     expect(unresolvedMemberContactCreateRecoveryWhere("member-1")).toEqual(
       expect.objectContaining({
@@ -391,7 +418,7 @@ describe("unresolved member Xero contact-create recovery proof", () => {
       }),
     );
     await expect(
-      hasMemberContactCreateMergeBlocker("member-1")
+      hasMemberContactChangeMergeBlocker("member-1")
     ).resolves.toBe(true,);
   });
 
