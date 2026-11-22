@@ -358,8 +358,15 @@ describe("member-address utilities", () => {
       postalRegion: null, postalPostalCode: "4660", postalCountry: "New Zealand",
     };
     const phone = { phoneCountryCode: "64", phoneAreaCode: "27", phoneNumber: "123 4567" };
-    expect(pickMemberAddressValues({ ...address, postalSameAsPhysical: true })).toEqual(address);
-    expect(pickMemberPhoneValues({ ...phone, contactId: "c-1" })).toEqual(phone);
+    // Wider sources, as the writers hand them over (not fresh literals).
+    const application = { ...address, postalSameAsPhysical: true };
+    const contact = { ...phone, contactId: "c-1" };
+    expect(pickMemberAddressValues(application)).toEqual(address);
+    expect(pickMemberPhoneValues(contact)).toEqual(phone);
+    // An absent field reads back undefined, as `values.field` did.
+    const withoutLine2: Partial<typeof address> = { ...address };
+    delete withoutLine2.streetAddressLine2;
+    expect(pickMemberAddressValues(withoutLine2)).toEqual({ ...address, streetAddressLine2: undefined });
   });
 });
 

@@ -138,14 +138,16 @@ export function pickStreetAddressValues<T>(
 /**
  * All twelve address columns, picked from a wider object (#5398): the street
  * and postal lists above, so a source carrying extra keys (an application's
- * `postalSameAsPhysical`) never spreads them into a member write.
+ * `postalSameAsPhysical`) never spreads them into a member write. A field the
+ * source leaves out comes back `undefined`, exactly as `values.field` reads,
+ * so a write leaves that column alone just as a field-by-field copy did.
  */
 export function pickMemberAddressValues<T>(
-  values: Record<MemberAddressField, T>
-): Record<MemberAddressField, T> {
+  values: Partial<Record<MemberAddressField, T>>
+): Record<MemberAddressField, T | undefined> {
   return Object.fromEntries(
     MEMBER_ADDRESS_FIELDS.map((field) => [field, values[field]]),
-  ) as Record<MemberAddressField, T>;
+  ) as Record<MemberAddressField, T | undefined>;
 }
 
 /** The member's three phone columns, in column order: the one list (#5398). */
