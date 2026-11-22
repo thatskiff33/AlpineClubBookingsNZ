@@ -27,6 +27,7 @@ import {
   WHOLE_LODGE_MIN_GUESTS,
 } from "./display-name-granularity";
 import { getEligibleLodgeIdsForMember } from "./lodge-access";
+import { ROSTER_WINDOW_DAYS } from "./lodge-roster-window";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "./member-guest-consent";
 import { prisma } from "./prisma";
 
@@ -66,14 +67,6 @@ import { prisma } from "./prisma";
  */
 export const DEFAULT_ROSTER_NAME_GRANULARITY: DisplayNameGranularity =
   "FULL_NAME";
-
-/**
- * How many nights forward the roster looks, counted from the club's today.
- *
- * A bounded window is part of the privacy contract rather than a performance
- * choice: there is no history, and no parameter that lets a caller widen it.
- */
-export const ROSTER_WINDOW_DAYS = 30;
 
 /**
  * The booking columns the roster reads. `satisfies` rather than a bare object

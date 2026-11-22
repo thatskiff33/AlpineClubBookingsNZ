@@ -136,6 +136,10 @@ const NON_RENDERING_REFERENCES = [
   "src/lib/api-route-security.ts",
   // ALP-653: names the route prefix as "not yet an AI app action"; reads no body.
   "src/lib/mcp/exclusions.ts",
+  // ALP-718: the `get_booking_messages` entry only names the route. The AI app
+  // receives the raw templates plus `tokens` and does the substitution itself,
+  // as the action's summary says; the catalogue renders nothing.
+  "src/lib/mcp/catalogue.ts",
   // #2958: the page shell loads the map once and hands it to
   // `_lib/booking-detail-messages.ts` (registered above), which is the surface
   // that renders; the shell itself indexes nothing.
