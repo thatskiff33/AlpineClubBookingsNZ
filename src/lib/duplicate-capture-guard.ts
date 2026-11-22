@@ -237,7 +237,15 @@ export async function judgeCaptureOnPaidBooking(
   input: {
     bookingId: string;
     paymentId: string;
-    /** `Payment.settledByTransactionId`, read under the caller's lock(1). */
+    /**
+     * `Payment.settledByTransactionId`, read under the caller's lock(1) - or
+     * (#5240, the payments cron's flag step) in the transaction that then claims
+     * the saved-card capture's "not yet settled" flag, with no lock(1). There
+     * the flag's delete, not the lock, picks one actor: the only write that
+     * could make that capture the settler is its own settle, which consumes the
+     * flag first, and the owed alert the cron records is re-judged before it
+     * is sent.
+     */
     recordedSettlerId: string | null;
     paymentIntentId: string;
     amountCents: number;
@@ -356,7 +364,9 @@ export function newCaptureAlertOwedKey(bookingId: string, paymentIntentId: strin
  * leaves a trigger: the capture's next arrival re-alerts while the marker
  * stands (rule 3), and the payments cron drains what nothing re-delivers
  * (`drainOwedNewCaptureAlerts`). Cleared only once an alert is delivered.
- * Under the caller's lock(1), so a plain upsert cannot race.
+ * Under the caller's lock(1), or (#5240, the payments cron's promotion) after
+ * winning the flag's guarded delete in the same transaction, so a plain upsert
+ * cannot race.
  */
 export async function recordNewCaptureAlertOwed(
   tx: Pick<Prisma.TransactionClient, "alertCooldown">,

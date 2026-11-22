@@ -241,26 +241,30 @@ async function judgeOwedAlert(bookingId: string, paymentIntentId: string, format
  * #5240: the payments cron's look at each saved-card capture still flagged "not yet
  * settled" (`unsettled-capture-marker.ts`) an hour after it was written - one
  * whose caller stopped before the settle and whose webhook has not settled it
- * since. Only the flag's own delete decides who acts, so a settle consuming it
- * at the same moment wins or loses whole.
+ * since. Read and judged in the transaction that then claims the flag, and only
+ * the flag's own delete decides who acts, so a settle consuming it at the same
+ * moment wins or loses whole.
  *
  * - The capture gone, holding no money, or the booking's recorded settler:
  *   nothing to tell, the flag is cleared.
- * - The booking paid or completed by other means, and the guard
- *   (`judgeCaptureOnPaidBooking`, read in the promotion's own transaction
- *   before the delete) would keep this capture and tell the admins
- *   `new-capture`: the flag becomes that owed alert, due at once, so the drain
- *   below sends it in this same run - as the capture's arrival would have.
- * - Any other verdict (#5240 review: another card is the settlement, so the
- *   arrival refunds it; or the arrival keeps it silently) does not hang on the
- *   flag, so it waits for the arrival: an alert now would say "kept" about money
- *   the arrival then refunds.
- * - Waiting flags are never re-stamped, so their age stays the capture's; at
- *   `UNSETTLED_CAPTURE_HAND_OVER_MS` Stripe's retries are long over, and the
- *   hand-over is logged for a person BEFORE the flag is cleared, so a crash
- *   between the two repeats the log rather than losing it.
+ * - The booking paid or completed, and the guard (`judgeCaptureOnPaidBooking`)
+ *   judging it as its arrival would:
+ *   - kept and the admins told, for any reason: the flag becomes that owed
+ *     alert, due at once, so the drain below sends it in this same run;
+ *   - kept silently (the superseded or duplicate-capture machinery owns it):
+ *     nothing hangs on the flag, so it is cleared;
+ *   - refunded (another card is the settlement): it waits for the arrival, as an
+ *     alert now would say "kept" about money the arrival then refunds - until
+ *     `UNSETTLED_CAPTURE_HAND_OVER_MS`, when Stripe's retries are long over and
+ *     nothing will refund it: then it becomes the owed alert too, as does a
+ *     capture the arrival would not judge (no longer `SUCCEEDED`).
+ * - Any other booking waits for its webhook. Waiting flags are never re-stamped,
+ *   so their age stays the capture's; at the hand-over the case is logged for a
+ *   person BEFORE the flag is cleared, so a crash between the two repeats the log
+ *   rather than losing it.
  */
 type Promotion = "promoted" | "cleared" | "waiting" | "handed-over" | "taken";
+type Judgement = Promotion | { handOver: { bookingId: string; bookingStatus: string } };
 
 async function promoteUnsettledCaptures(now: Date): Promise<{ promoted: number; handedOver: number }> {
   // Every due flag, not the oldest 50: waiting flags are never re-stamped, so a
@@ -283,7 +287,21 @@ async function promoteUnsettledCaptures(now: Date): Promise<{ promoted: number; 
 async function promoteUnsettledCapture(key: string, paymentIntentId: string, now: Date): Promise<Promotion> {
   const flag = await prisma.alertCooldown.findUnique({ where: { key }, select: { lastAlertedAt: true } });
   if (!flag) return "taken";
-  const capture = await prisma.paymentTransaction.findUnique({
+  const ageMs = now.getTime() - flag.lastAlertedAt.getTime();
+  const due = ageMs >= UNSETTLED_CAPTURE_HAND_OVER_MS;
+  const judged = await prisma.$transaction((tx) => judgeUnsettledCapture(tx, paymentIntentId, now, due));
+  if (typeof judged === "string") return judged;
+  // #5240 review: the log first - only once it has returned is the flag consumed.
+  logger.error(
+    { ...judged.handOver, paymentIntentId, ageMs },
+    "A saved-card capture was never settled by its own arrival within seven days; check it by hand (#5240)",
+  );
+  return (await consumeCaptureAwaitingSettle(prisma, paymentIntentId)) ? "handed-over" : "taken";
+}
+
+/** One flag's verdict, in the transaction that claims it: the settler the guard is given is read here (#5240 review). */
+async function judgeUnsettledCapture(tx: Prisma.TransactionClient, paymentIntentId: string, now: Date, due: boolean): Promise<Judgement> {
+  const capture = await tx.paymentTransaction.findUnique({
     where: { stripePaymentIntentId: paymentIntentId },
     select: {
       id: true,
@@ -293,44 +311,36 @@ async function promoteUnsettledCapture(key: string, paymentIntentId: string, now
     },
   });
   const holdsMoney = capture !== null && (CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST as readonly PaymentStatus[]).includes(capture.status);
-  if (!capture?.payment || !holdsMoney || capture.payment.settledByTransactionId === capture.id) {
-    await settleOwedAlert({ key });
-    return "cleared";
+  const consumed = async (promotion: Promotion) => ((await consumeCaptureAwaitingSettle(tx, paymentIntentId)) ? promotion : "taken");
+  if (!capture?.payment || !holdsMoney || capture.payment.settledByTransactionId === capture.id) return consumed("cleared");
+  const { payment } = capture;
+  if (!isPaidLikeBookingStatus(payment.booking.status)) {
+    return due ? { handOver: { bookingId: payment.bookingId, bookingStatus: payment.booking.status } } : "waiting";
   }
-  const { bookingId } = capture.payment;
-  // Judged as the arrival would judge it (only a SUCCEEDED row reaches the guard there), then claimed.
-  if (isPaidLikeBookingStatus(capture.payment.booking.status) && capture.status === "SUCCEEDED") {
-    const payment = capture.payment;
-    const promoted = await prisma.$transaction(async (tx) => {
-      const verdict = await judgeCaptureOnPaidBooking(tx, {
-        bookingId,
-        paymentId: payment.id,
-        recordedSettlerId: payment.settledByTransactionId,
-        paymentIntentId,
-        amountCents: capture.amountCents,
-        arrivingAlreadyCaptured: false,
-      });
-      if (verdict.verdict !== "keep_unrecorded_settler" || verdict.reason !== "new-capture") return "waiting" as const;
-      if (!(await consumeCaptureAwaitingSettle(tx, paymentIntentId))) return "taken" as const;
-      await recordNewCaptureAlertOwed(tx, { bookingId, paymentIntentId, now: new Date(now.getTime() - NEW_CAPTURE_ALERT_DRAIN_AFTER_MS) });
-      return "promoted" as const;
-    });
-    if (promoted !== "waiting") return promoted;
-  }
-  const ageMs = now.getTime() - flag.lastAlertedAt.getTime();
-  if (ageMs < UNSETTLED_CAPTURE_HAND_OVER_MS) return "waiting";
-  // #5240 review: the log first - only once it has returned is the flag consumed.
-  logger.error(
-    { bookingId, paymentIntentId, ageMs, bookingStatus: capture.payment.booking.status },
-    "A saved-card capture was never settled by its own arrival within seven days; check it by hand (#5240)",
-  );
-  return (await consumeCaptureAwaitingSettle(prisma, paymentIntentId)) ? "handed-over" : "taken";
+  // Judged as the arrival would judge it: only a SUCCEEDED row reaches the guard there.
+  const verdict =
+    capture.status === "SUCCEEDED"
+      ? await judgeCaptureOnPaidBooking(tx, {
+          bookingId: payment.bookingId,
+          paymentId: payment.id,
+          recordedSettlerId: payment.settledByTransactionId,
+          paymentIntentId,
+          amountCents: capture.amountCents,
+          arrivingAlreadyCaptured: false,
+        })
+      : null;
+  if (verdict?.verdict === "keep") return consumed("cleared");
+  if (verdict?.verdict !== "keep_unrecorded_settler" && !due) return "waiting";
+  if ((await consumed("promoted")) === "taken") return "taken";
+  // Back-dated by the drain's wait, so the owed-alert drain below sends it in this same run.
+  await recordNewCaptureAlertOwed(tx, { bookingId: payment.bookingId, paymentIntentId, now: new Date(now.getTime() - NEW_CAPTURE_ALERT_DRAIN_AFTER_MS) });
+  return "promoted";
 }
 
 export async function drainOwedNewCaptureAlerts(now: Date = new Date()): Promise<{
   checked: number;
   sent: number;
-  /** #5240: saved-card flags turned into owed alerts, and handed over to the log, this run. */
+  /** #5240: saved-card flags turned into owed alerts, and (unpaid bookings) handed over to the log, this run. */
   promoted: number;
   handedOver: number;
   /** #5240 review: the flag step threw as a whole; the owed alerts below were still drained. */
