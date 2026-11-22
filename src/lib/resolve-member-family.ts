@@ -53,7 +53,6 @@ export type ResolvedMemberFamily = {
  * This is the single implementation shared by every on-behalf family picker
  * so they all return the SAME shape regardless of which permission gate the
  * calling route enforces (issue #1376):
- *   - GET /api/admin/members/[id]/family            (gated membership:view)
  *   - GET /api/admin/bookings/[id]/eligible-family  (gated bookings:edit)
  *   - GET /api/admin/bookings/eligible-family       (gated bookings:edit)
  *
