@@ -189,16 +189,20 @@ export function cardRefundDoorOf(metadata: Record<string, string> | null | undef
  * capture (one naming no refund, or a refund no longer counted). A
  * capture-wide note that already answers more than the older refunds (one an
  * older release raised for a newer refund) takes its excess off the own asks,
- * so no refund is noted twice.
+ * so no refund is noted twice. #4383: every ask together stays within
+ * `capCents` where given - the capture's ask capped at what its receipt
+ * recorded - the older refunds' note first, then the own asks oldest first.
  */
 export function planLateCaptureCardNotes(input: {
   own: ReadonlyArray<{ stripeRefundId: string; amountCents: number; ownNotedCents: number }>;
   legacyRefundedCents: number;
   legacyNotedCents: number;
+  capCents?: number;
 }): { own: Array<{ stripeRefundId: string; askCents: number }>; legacyAskCents: number } {
   const ownRefundedCents = input.own.reduce((sum, refund) => sum + Math.max(0, refund.amountCents), 0);
   const ownNotedCents = input.own.reduce((sum, refund) => sum + Math.max(0, refund.ownNotedCents), 0);
-  const askCents = input.legacyRefundedCents + ownRefundedCents - input.legacyNotedCents - ownNotedCents;
+  const uncappedAskCents = input.legacyRefundedCents + ownRefundedCents - input.legacyNotedCents - ownNotedCents;
+  const askCents = input.capCents === undefined ? uncappedAskCents : Math.min(uncappedAskCents, input.capCents);
   // Never more than the capture's whole ask, as before #4312 (a note of a refund that failed since counts there too).
   const legacyAskCents = Math.max(0, Math.min(askCents, input.legacyRefundedCents - input.legacyNotedCents));
   let ownCapCents = askCents - legacyAskCents;

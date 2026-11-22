@@ -1,0 +1,3 @@
+- **The password policy card now explains a refused save in plain words (ALP-749).** When saving the password policy on the Login & Security page was refused for lack of permission and the reply was a web page rather than the app's usual answer (for example from the server in front of the app), the card showed a generic "Failed to save" message. It now shows the same "you do not have permission" explanation the other settings cards show.
+
+  A refusal the server explains, such as "Two-factor verification required", now shows that reason instead of the general permission message. A successful save is unchanged.

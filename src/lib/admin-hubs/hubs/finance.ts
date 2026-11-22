@@ -63,6 +63,16 @@ export const FINANCE_HUB = defineHub({
       moved: true,
     },
     {
+      // #5204: unallocated overpayments and prepayments in Xero.
+      id: "xero-unallocated-payments",
+      label: "Xero Unallocated Payments",
+      oldPath: "/admin/xero/unallocated-payments",
+      area: "finance",
+      flags: ["xeroIntegration"],
+      keywords: ["overpayments", "prepayments", "unallocated", "credit"],
+      moved: true,
+    },
+    {
       id: "xero-record",
       label: "Xero Record",
       oldPath: "/admin/xero/records/[localModel]/[localId]",

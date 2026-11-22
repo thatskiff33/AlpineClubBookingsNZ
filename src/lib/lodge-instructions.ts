@@ -81,6 +81,11 @@ export async function canReadLodgeInstructions(
  * dangerouslySetInnerHTML, so sanitise again on read (defence in depth,
  * matching getSanitizedPageContentByPath).
  *
+ * Every caller renders the documents under a heading of its own — the reader
+ * page's, the kiosk's, a lobby-display card's — so an author's `<h1>` comes
+ * out as `<h2>` (`underPageHeading`, `INV-PUB-006`). The stored row keeps the
+ * `<h1>`, and the admin editor reads it through its own route, as written.
+ *
  * Lodge scoping (docs/multi-lodge/lodge-scoping-contract.md): rows with a
  * null lodgeId are the club-wide documents; a row for [lodgeId, key]
  * REPLACES the club-wide document of that key for that lodge (replace,
@@ -139,7 +144,7 @@ export async function getSanitizedLodgeInstructions(
     LODGE_INSTRUCTION_KEYS.map(async (key) => {
       const record = byKey.get(key);
       let contentHtml = record
-        ? sanitizePageContentHtml(record.contentHtml)
+        ? sanitizePageContentHtml(record.contentHtml, { underPageHeading: true })
         : "";
       if (format && contentHtml) {
         contentHtml = await resolveTextTokens(contentHtml, format);

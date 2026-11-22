@@ -176,7 +176,7 @@ export function PromoCodeCard({
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Promo Codes</CardTitle>
+          <CardTitle headingLevel={2}>Promo Codes</CardTitle>
         </CardHeader>
         <CardContent>
           <p role="status" className="text-sm text-muted-foreground">
@@ -193,7 +193,7 @@ export function PromoCodeCard({
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Promo Codes</CardTitle>
+          <CardTitle headingLevel={2}>Promo Codes</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {workPartyName && (
@@ -263,7 +263,7 @@ export function PromoCodeCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Promo Code</CardTitle>
+        <CardTitle headingLevel={2}>Promo Code</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {promo && promoAction.type === "keep" && (
@@ -395,7 +395,7 @@ export function SeveralPromoCodesCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Promo Codes</CardTitle>
+        <CardTitle headingLevel={2}>Promo Codes</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <ul className="space-y-1">

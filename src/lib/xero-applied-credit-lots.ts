@@ -35,9 +35,10 @@ export async function loadFreeCreditLots(
   if (memberIds.length === 0) return byMember;
   const positiveLots = await db.memberCredit.findMany({
     where: creditLotWhere({ in: [...memberIds] }),
-    // `type` is read for the mint's account mapping (#2717) — see
-    // `mintSliceMappingKey`. Blue/green runtime-prep: name only what is read.
-    select: { id: true, memberId: true, amountCents: true, type: true, xeroCreditNoteId: true },
+    // `type` and `openingCreditBatchId` are read for the mint's account mapping
+    // (#2717, #4988) — see `mintSliceMappingKey`. Blue/green runtime-prep: name
+    // only what is read.
+    select: { id: true, memberId: true, amountCents: true, type: true, xeroCreditNoteId: true, openingCreditBatchId: true },
     orderBy: [...CREDIT_LOT_USE_ORDER],
   });
 

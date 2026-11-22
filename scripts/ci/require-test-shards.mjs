@@ -13,7 +13,16 @@ import { isMainModule } from "../lib/is-main-module.mjs";
 export const EXPECTED_SHARD_COUNT = 4;
 export const DEFAULT_SHARD_LABEL = "Test shard";
 const POLL_INTERVAL_MS = 15_000;
-const MAX_WAIT_MS = 45 * 60_000;
+/**
+ * #5222: how long the gate waits is not a free number. An awaited job may sit
+ * in the runner queue (`--max-queue-minutes`, 37 minutes seen on 17 Nov 2026)
+ * and then run up to its own `timeout-minutes`; the caller passes the longest
+ * of those as `--max-run-minutes`, and the workflow tests pin it to the jobs.
+ * GitHub ends a job at its own limit and the gate fails at once on that
+ * result, so this wait only ever fires for a job that never got a runner or
+ * whose end GitHub never reported. The grace covers GitHub recording the end.
+ */
+export const RUN_END_GRACE_MINUTES = 5;
 
 const PENDING_STATUSES = ["queued", "in_progress", "waiting", "pending", "requested"];
 
@@ -24,10 +33,15 @@ const PENDING_STATUSES = ["queued", "in_progress", "waiting", "pending", "reques
  */
 export const UPSTREAM_JOB_NAME = /^[A-Za-z][\w ()-]*$/;
 
-/** `--max-wait-minutes`, shared by both waiting gates. */
-export function parseMaxWaitMinutes(value) {
-  if (!/^[1-9]\d{0,2}$/.test(value ?? "")) throw new Error(`Invalid --max-wait-minutes: ${value}`);
+/** A whole number of minutes from a `--max-*-minutes` flag, shared by both waiting gates. */
+export function parseMaxWaitMinutes(value, flag = "--max-wait-minutes") {
+  if (!/^[1-9]\d{0,2}$/.test(value ?? "")) throw new Error(`Invalid ${flag}: ${value}`);
   return Number(value) * 60_000;
+}
+
+/** #5222: the gate's whole wait, from its two allowances. */
+export function shardGateWaitMs({ maxQueueMinutes, maxRunMinutes }) {
+  return (maxQueueMinutes + maxRunMinutes + RUN_END_GRACE_MINUTES) * 60_000;
 }
 
 /**
@@ -161,24 +175,35 @@ export async function requireTestShards({
   required = [],
   now = () => performance.now(),
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  maxWaitMs = MAX_WAIT_MS,
+  maxQueueMinutes,
+  maxRunMinutes,
   intervalMs = POLL_INTERVAL_MS,
 }) {
+  const maxWaitMs = shardGateWaitMs({ maxQueueMinutes, maxRunMinutes });
+  if (!Number.isFinite(maxWaitMs)) throw new Error("The gate needs --max-queue-minutes and --max-run-minutes");
   const start = now();
   while (true) {
     const jobs = await loadJobs();
     const pending = [...classifyTestShardJobs(jobs, count, label, upstream, from), ...classifyRequiredJobs(jobs, required)];
     if (pending.length === 0) return;
     if (now() - start >= maxWaitMs) {
-      throw new Error(`Timed out waiting for ${label} jobs: ${pending.join(", ")}`);
+      throw new Error(
+        `Timed out after ${maxQueueMinutes} minutes' runner queue + ${maxRunMinutes} minutes' job limit + ${RUN_END_GRACE_MINUTES} minutes' grace`
+        + ` waiting for ${label} jobs: ${pending.join(", ")}`,
+      );
     }
     await sleep(intervalMs);
   }
 }
 
-/** `--label <job name prefix>`, `--count <n>`, `--from <n>`, `--max-wait-minutes <n>`, and repeatable `--upstream <job name>` and `--job <job name>`; bare, the unit-test defaults. */
+/**
+ * `--max-queue-minutes <n>` and `--max-run-minutes <n>` (required, #5222),
+ * `--label <job name prefix>`, `--count <n>`, `--from <n>`, and repeatable
+ * `--upstream <job name>` and `--job <job name>`; label and count default to
+ * the unit-test matrix.
+ */
 export function parseShardGateArgs(argv) {
-  const options = { label: DEFAULT_SHARD_LABEL, count: EXPECTED_SHARD_COUNT, maxWaitMs: MAX_WAIT_MS, upstream: [], from: 1, required: [] };
+  const options = { label: DEFAULT_SHARD_LABEL, count: EXPECTED_SHARD_COUNT, upstream: [], from: 1, required: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     const value = argv[i + 1];
@@ -200,13 +225,16 @@ export function parseShardGateArgs(argv) {
       if (!UPSTREAM_JOB_NAME.test(value)) throw new Error(`Invalid --job: ${value}`);
       if (options.required.includes(value)) throw new Error(`Duplicate --job: ${value}`);
       options.required.push(value);
-    } else if (flag === "--max-wait-minutes") {
-      options.maxWaitMs = parseMaxWaitMinutes(value);
+    } else if (flag === "--max-queue-minutes" || flag === "--max-run-minutes") {
+      options[flag === "--max-queue-minutes" ? "maxQueueMinutes" : "maxRunMinutes"] = parseMaxWaitMinutes(value, flag) / 60_000;
     } else {
       throw new Error(`Unknown argument: ${flag}`);
     }
   }
   if (options.from > options.count) throw new Error(`--from ${options.from} is past --count ${options.count}: nothing would be checked`);
+  for (const [key, flag] of [["maxQueueMinutes", "--max-queue-minutes"], ["maxRunMinutes", "--max-run-minutes"]]) {
+    if (options[key] === undefined) throw new Error(`${flag} is required`);
+  }
   return options;
 }
 

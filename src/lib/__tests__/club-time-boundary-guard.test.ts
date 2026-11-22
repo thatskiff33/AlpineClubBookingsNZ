@@ -432,10 +432,11 @@ describe("the environment-zone allowlist is a ratchet", () => {
   });
 
   it("excuses exactly the files it gives reasons for", () => {
-    // The hole the count above does NOT close. The reasons list and the config
-    // block's `files` are two different arrays, so adding a path to the block
-    // alone widens the exemption while every assertion above stays green — the
-    // cheapest possible way past both guards, and invisible in review.
+    // The hole the count above does NOT close. The shared block's `files` is
+    // now derived from the reasons list, so a path cannot be added to one
+    // alone. What remains is a file exempted by a block of its own: the config's
+    // exempt set sees it, the reasons list does not, and every assertion above
+    // stays green — invisible in review.
     //
     // `src/lib/date-only.ts` USED TO BE NAMED HERE TOO, as the one file excused
     // by a block of its own. #3123 deleted the six `= APP_TIME_ZONE` defaults and
@@ -601,7 +602,7 @@ describe("the date-fns guard closes the class no selector can see", () => {
       "src/lib/x.ts",
       HOST_CLOCK_PREFIX,
     );
-    // Two of the five remaining callers use only `formatDistanceToNow`, which
+    // Two of the four remaining callers use only `formatDistanceToNow`, which
     // is a duration and genuinely zone-free. A message that did not say so would
     // send them to rewrite correct code.
     expect(message).toContain("formatDistanceToNow");

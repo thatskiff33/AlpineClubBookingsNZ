@@ -7,6 +7,7 @@ import type { PrismaClient } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
+import { runEveryTeardownStep } from "./support/teardown-steps";
 
 import { splitSqlStatements } from "../../../prisma/migration-verification/split-statements";
 import { jobBlock } from "./helpers/ci-workflow";
@@ -31,6 +32,9 @@ vi.mock("@/lib/member-dietary-booking-writes", async (importOriginal) => {
 const databaseUrl = process.env.DATA_MIGRATION_VERIFICATION_DATABASE_URL;
 const migrationDirectory = path.join(process.cwd(), "prisma/migrations");
 const migrationName = "20261101020000_add_pending_school_adult_capacity";
+// Set-up creates and migrates a scratch database; teardown force-drops it, which a
+// loaded runner can stretch past vitest's 10-second hook default (#5283).
+const SCRATCH_HOOK_TIMEOUT_MS = 120_000;
 const checkIn = new Date("2026-08-01T00:00:00.000Z");
 const checkOut = new Date("2026-08-03T00:00:00.000Z");
 const teacher = { firstName: "Ann", lastName: "Teacher", ageTier: "ADULT" as const };
@@ -93,7 +97,7 @@ it("runs the pending-adult database proof in CI", () => {
     await prisma.lodgeSettings.create({ data: { id: "pending-lodge", lodgeId: "pending-lodge", capacity: 20 } });
     await prisma.organisation.create({ data: { id: "pending-school", name: "Test school" } });
     await prisma.member.create({ data: { id: "officer", firstName: "Test", lastName: "Officer", email: "officer@example.invalid", passwordHash: "test", role: "ADMIN" } });
-  }, 120_000);
+  }, SCRATCH_HOOK_TIMEOUT_MS);
 
   beforeEach(async () => {
     await prisma.member.deleteMany({ where: { id: { in: ["matching-adult", "matching-contact"] } } });
@@ -122,13 +126,16 @@ it("runs the pending-adult database proof in CI", () => {
       lodgeId: "pending-lodge", checkIn, checkOut, adultCount: 2 });
   });
 
-  afterAll(async () => {
-    await prisma?.$disconnect();
-    await sql?.end();
-    if (admin && scratchDatabase) await admin.query(`DROP DATABASE "${scratchDatabase}" WITH (FORCE)`);
-    await admin?.end();
-    vi.unstubAllEnvs();
-  });
+  afterAll(() => runEveryTeardownStep("school-pending-adult-resolution.realdb", [
+    { what: "disconnect the Prisma client", run: () => prisma?.$disconnect() },
+    { what: "end the scratch connection", run: () => sql?.end() },
+    {
+      what: `drop database "${scratchDatabase}"`,
+      run: () => (admin && scratchDatabase ? admin.query(`DROP DATABASE "${scratchDatabase}" WITH (FORCE)`) : undefined),
+    },
+    { what: "end the admin connection", run: () => admin?.end() },
+    { what: "restore the stubbed environment", run: () => vi.unstubAllEnvs() },
+  ]), SCRATCH_HOOK_TIMEOUT_MS);
 
   const nameAdult = (expectedVersion = 4, firstName = "Beth") => resolve({
     requestId: "pending-request", adminMemberId: "officer", expectedVersion,
