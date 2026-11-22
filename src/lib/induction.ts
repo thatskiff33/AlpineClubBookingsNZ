@@ -508,7 +508,9 @@ export interface SignerContext {
  * assignment, read from records rather than roles, is not consulted for it
  * (`INV-MCP-006`).
  */
-export async function inductionSignerContext<U extends Parameters<typeof memberOnlySessionUser>[1]>(
+export async function inductionSignerContext<
+  U extends Parameters<typeof memberOnlySessionUser>[1] & Parameters<typeof hasAdminAccess>[0],
+>(
   request: Request,
   sessionUser: U,
 ): Promise<SignerContext> {

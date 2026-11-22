@@ -379,7 +379,7 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     // route that is gone, or hide a typo that leaves the real one undecided.
     expect(MCP_EXACT_EXCLUDED_ROUTES).toContain("POST /api/calendar/events");
     const stale = MCP_EXACT_EXCLUDED_ROUTES.filter((route) => {
-      const [method, path] = route.split(" ");
+      const [method = "", path = ""] = route.split(" ");
       return !routeKeys.has(stepUpRouteKey(`src/app${path}/route.ts`, method));
     });
     expect(stale).toEqual([]);
