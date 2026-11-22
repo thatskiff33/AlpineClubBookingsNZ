@@ -5959,7 +5959,7 @@ model ServerNzSettings {
   // no longer sends the names; ownership is decided by `otherLodgesOwnedLodges`
   // below, by central id) nor written (#5407). `@ignore` keeps it out of every
   // query, the INSERT column lists included (INV-OPS-005), so the release that
-  // drops it may run while this one drains. Nullable with no default: a new row
+  // drops it (#5415) may run while this one drains. Nullable, no default: a new row
   // leaves it NULL. `otherLodgesOwnedNamesAt` stays live. As it was:
   // The lodge NAMES the central server says this club owns (#52), as it sends
   // them on every pull (`ownLodgeNames`): a JSON array of strings, keyed by name

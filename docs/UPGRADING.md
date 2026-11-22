@@ -333,11 +333,14 @@ it. The column is nullable with no default and stays in the database, so a new
 row simply leaves it empty, and v0.14.0 clearing it while it drains is
 harmless.
 
-**Why it matters for a later upgrade.** A later release drops these columns.
-That drop is safe during a blue-green deploy only when the release it replaces
-is this one or newer: an older release names the columns in its INSERTs, so its
-settings saves would fail between the migration and cutover. Deploy this release
-before the one that drops them, as the tag-to-tag rule above already requires.
+**Why it matters for a later upgrade.** A later release (#5415) drops these
+columns. That drop is safe during a blue-green deploy only when the release it
+replaces is this one or newer: an older release names the first three columns
+in its INSERTs, so its settings saves would fail between the migration and
+cutover, and v0.14.0's central-server settings writes (upserts with no
+`select`) name `otherLodgesOwnedNames` in the columns they return, so they
+would fail the same way. Deploy this release before the one that drops them,
+as the tag-to-tag rule above already requires.
 
 **Do not drop any of these columns yourself.** Earlier code comments said that
 dropping `multiLodge` was blue-green safe because every query selects named
