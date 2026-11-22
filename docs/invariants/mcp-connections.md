@@ -46,9 +46,9 @@ only the rules.
   profile card is not rendered.
 - **The member reads added for the actions are absent too.**
   `GET /api/bookings/mine`, `GET /api/bookings/[id]`, `GET /api/profile/summary`,
-  `GET /api/notices`, `GET /api/notices/[id]` and `GET /api/lodge-roster` sit
-  beside older routes, so no proxy prefix can cover them: each handler's own
-  `mcpModuleOffResponse` check is the gate.
+  `GET /api/notices`, `GET /api/notices/[id]`, `GET /api/lodge-roster` and
+  `GET /api/work-parties` sit beside older routes, so no proxy prefix can cover
+  them: each handler's own `mcpModuleOffResponse` check is the gate.
 - **Existing connections cannot be used while it is off**, because `/api/mcp`
   and the token endpoint answer 404 before reading a token. They are kept, not
   ended, and work again when the module is switched back on, subject to every

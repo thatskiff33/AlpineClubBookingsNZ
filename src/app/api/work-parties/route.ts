@@ -8,6 +8,7 @@ import { listUpcomingMemberWorkParties } from "@/lib/work-party-member";
 import { MEMBER_WORK_PARTY_LIST_LIMIT } from "@/lib/work-party-query-schema";
 import { MEMBER_WORK_PARTY_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 import { connectionJson } from "@/lib/mcp-connection-request";
+import { mcpModuleOffResponse } from "@/lib/mcp/http";
 
 /**
  * Upcoming open work parties, as the dashboard's Work Parties card lists them
@@ -16,9 +17,13 @@ import { connectionJson } from "@/lib/mcp-connection-request";
  * which work parties are open. Never the internal promo code.
  *
  * Members only (`canViewWorkParties`), and 404 with the Work Parties module
- * off, exactly as `GET /api/work-parties/[id]`.
+ * off, exactly as `GET /api/work-parties/[id]`. No website page calls it, so
+ * it is also 404 while the AI apps module (`mcpServer`) is off (INV-MCP-001).
  */
 export async function GET(req: NextRequest) {
+  const off = await mcpModuleOffResponse();
+  if (off) return off;
+
   const rateLimited = await applyRateLimit(rateLimiters.bookingQuery, req);
   if (rateLimited) return rateLimited;
 
