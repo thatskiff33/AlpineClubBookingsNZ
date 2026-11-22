@@ -219,6 +219,33 @@ describe("xero cron runner", () => {
     );
   });
 
+  it("MUTATION (#5228): warns, not green, when the outbox passed over rows it can never send", async () => {
+    const recordCronRun = vi.fn();
+
+    const result = await runXeroCronTaskList(["outbox"], {
+      taskLabel: "xero-queue",
+      recordCronRun,
+      isModuleEnabled: vi.fn(async () => true),
+      isConnected: vi.fn(async () => true),
+      tasks: {
+        processQueuedXeroOutboxOperations: vi.fn(async () => ({
+          found: 2,
+          processed: 0,
+          succeeded: 0,
+          failed: 0,
+          skipped: 2,
+          unclaimableRequest: 2,
+        })),
+      },
+    });
+
+    const warning = expect.stringContaining("2 queued operation(s) hold no request the outbox can send");
+    expect(result.queuedOutboxOperations).toMatchObject({ warning });
+    expect(recordCronRun).toHaveBeenCalledWith(
+      expect.objectContaining({ jobName: "xero-outbox", status: "SUCCESS", resultSummary: expect.objectContaining({ warning }) })
+    );
+  });
+
   it("warns when outbox or replay rows failed, and names both reasons together (#4375)", async () => {
     const recordCronRun = vi.fn();
 
@@ -407,6 +434,49 @@ describe("xero cron runner", () => {
     });
     await expect(run).rejects.toBeInstanceOf(XeroCronRunnerError);
     expect(recordCronRun).toHaveBeenCalledWith(expect.objectContaining({ jobName: "xero-bank-refund-void-follow-up", status: "FAILURE", error: expect.stringContaining("could not be followed up") }));
+  });
+
+  const creditSlot = (refreshXeroCashCredits: () => Promise<unknown>, connected = true) => {
+    const recordCronRun = vi.fn();
+    const run = runXeroCronTaskList(["credit-sync", "cash-credits"], {
+      taskLabel: "credit-sync",
+      recordCronRun,
+      isModuleEnabled: vi.fn(async () => true),
+      isConnected: vi.fn(async () => connected),
+      log: { error: vi.fn() },
+      tasks: {
+        reconcileXeroCreditSync: vi.fn(async () => ({ skipped: false, checked: 0 })) as never,
+        refreshXeroCashCredits: refreshXeroCashCredits as never,
+      },
+    });
+    return { recordCronRun, run };
+  };
+
+  it("#5204: the 02:45 slot refreshes overpayments and prepayments after the credit-sync check, under its own job", async () => {
+    const refresh = vi.fn(async () => ({ open: 2, written: 2, zeroed: 0, current: true }));
+    const { recordCronRun, run } = creditSlot(refresh);
+    const result = await run;
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(result.cashCreditRefresh).toEqual({ open: 2, written: 2, zeroed: 0, current: true });
+    expect(recordCronRun.mock.calls.map(([input]) => [input.jobName, input.status])).toEqual([
+      ["xero-credit-sync-check", "SUCCESS"],
+      ["xero-cash-credit-refresh", "SUCCESS"],
+    ]);
+  });
+
+  it("#5204: a failed refresh is recorded FAILURE and fails the run; the credit-sync check still records", async () => {
+    const { recordCronRun, run } = creditSlot(vi.fn(async () => { throw new Error("Xero page 2 failed"); }));
+    await expect(run).rejects.toBeInstanceOf(XeroCronRunnerError);
+    expect(recordCronRun).toHaveBeenCalledWith(expect.objectContaining({ jobName: "xero-credit-sync-check", status: "SUCCESS" }));
+    expect(recordCronRun).toHaveBeenCalledWith(expect.objectContaining({ jobName: "xero-cash-credit-refresh", status: "FAILURE", error: "Xero page 2 failed" }));
+  });
+
+  it("#5204: with Xero not connected the refresh reads nothing and is SKIPPED", async () => {
+    const refresh = vi.fn();
+    const { recordCronRun, run } = creditSlot(refresh, false);
+    await run;
+    expect(refresh).not.toHaveBeenCalled();
+    expect(recordCronRun).toHaveBeenCalledWith(expect.objectContaining({ jobName: "xero-cash-credit-refresh", status: "SKIPPED" }));
   });
 });
 

@@ -1107,17 +1107,18 @@ compliant indefinitely.
   change fees is a club setting that defaults to charging** (#3232 D2,
   `INV-CONFIG-001`).
 
-  **Atomic:** one transaction, so any failure rolls back both bookings. Each
+  **Atomic:** one transaction; any failure rolls back both bookings. Each
   booking's Stripe, email and Xero work is a `deferredPostCommit` thunk,
   contained per booking: one failing never skips the other's or reports the
   committed move failed.
 
   **One combined figure, accepted once:** both bookings' repricing and change
   fees, summed in integer cents from per-booking fields, shown before acceptance
-  with one refund-or-credit choice; due and refund never net off. The need for a
-  card-or-credit choice is the modification result's own
+  with one refund-or-credit choice; due and money back
+  (`editTotalMoneyBackCents`, freed credit included) never net off. The need for
+  a card-or-credit choice is the modification result's own
   `requiresSettlementMethod`, never re-derived from amounts (`INV-SSOT-001`); a
-  method the member already chose attaches by the ARM they chose, not that flag.
+  method already chosen attaches by its ARM, not that flag.
 
   **The setting** is `BookingDefaults.linkedMoveChargesBothChangeFees`; the
   member is told the club's answer. A waiver reaches pricing as

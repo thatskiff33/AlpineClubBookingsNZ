@@ -69,6 +69,7 @@ import { heldByAnotherClaim, ownRunningClaim } from "@/lib/xero-operation-outcom
 import { prisma } from "@/lib/prisma";
 import { isPostgresLockNotAvailable, isTransactionContention } from "@/lib/prisma-errors";
 import { traceUnrecordedLateNote, type LateNoteTrace } from "@/lib/xero-late-note-trace";
+import { adoptCanonicalRefundNote } from "@/lib/xero-refund-note-adoption";
 import { assertFreshRefundNoteFromCreate } from "@/lib/xero-refund-note-status";
 import { describeUnrecordedObject } from "@/lib/xero-success-after-resolution-alert";
 import { upsertXeroObjectLink } from "@/lib/xero-sync";
@@ -197,9 +198,8 @@ export async function recordCreatedRefundNote(note: CreatedRefundNote): Promise<
       // Under the Payment row every other record of this payment's notes takes first, so a
       // second record of the same note (or a resolve recording it) has committed or waits.
       await assertFreshRefundNoteFromCreate(note.paymentId, note.operationId, { creditNoteID: note.creditNoteId, status: note.xeroStatus }, tx);
-      if (note.writesPointer) {
-        await tx.payment.update({ where: { id: note.paymentId }, data: { xeroRefundCreditNoteId: note.creditNoteId } });
-      }
+      // #4279: the one adoption rule a repair's completion also writes through.
+      if (note.writesPointer) await adoptCanonicalRefundNote({ paymentId: note.paymentId, creditNoteId: note.creditNoteId }, tx);
       await upsertXeroObjectLink(
         {
           localModel: "Payment",

@@ -1827,7 +1827,26 @@ invoice resolved before the app sent it, and a close whose note row exists.
 Record those by hand in Xero, except a card note sent with no reply, which it
 names apart for you to check in Xero first (round 14), as the kept invoice's
 finding does. Each capture is named by one record-by-hand finding at most, and
-by none when the app raises its card note. Each record-by-hand finding keeps
+by none when the app raises its card note. One exception (#4383): where the
+app recorded only part of a late card payment in Xero (its invoice had less
+room than the payment, and the receipt's alert told you about the rest), its
+refund note stops at that part, and the same finding names the refund above it
+with its own sentence. Record that amount by hand only if you recorded the rest
+of the payment by hand; otherwise record nothing. A note raised before this
+change for the whole refund is left as it is: the finding does not name what it
+already credits, and the Xero reconciliation report may now list the payment as
+refund coverage above the refunded total. If you recorded the rest of the
+payment by hand, Xero is right and that line can be ignored; if not, reduce the
+note in Xero by the part above what the receipt recorded. One case is not
+right even when you recorded the rest by hand: the over-noted refund itself
+later failed in Stripe. A "Paid another way" close of it reverses only up to
+what the receipt recorded, so reverse the part above that by hand in Xero,
+unless a close made before this change already reversed the whole refund (its
+reversal invoice is for the whole amount). The app never reads
+that part as a card refund that failed later: closing a failed refund on the
+payment as "Paid another way" queues no Stripe reversal for it, and the inbound
+credit-note recount takes nothing off for it, so your correction in Xero is the
+only one. Each record-by-hand finding keeps
 appearing after the refund is recorded by hand, and that is expected: recording
 a refund by hand in Xero writes no row the app can read, and the tool has no
 way to acknowledge a finding.
@@ -2680,9 +2699,11 @@ that way offers refundable headroom that is not there, so a later cancel or
 refund could pay the same money out twice.
 `scripts/audit-refunded-total-shortfall.ts` lists each captured payment whose
 stored refunded total is below its counted card refunds plus its account-credit
-settlements plus (#4280, `INV-PAY-141`) the bank cash its "Paid another way"
-closes recorded, with the shortfall; each line shows that cash as `paid another
-way`. It is READ-ONLY and repairs nothing: whether and how to repair is the
+settlements plus (`INV-PAY-141`) the bank cash its card refunds' bank records
+hold - "Paid another way" closes (#4280) and completed card refund shortfalls, a
+cancel's or a capacity race's (#4488) - with the shortfall; each line shows that
+cash as `paid another way` and `card refund shortfall paid back`, and `--json`
+carries them as `paidAnotherWayCents` and `shortfallPaybackCents`. It is READ-ONLY and repairs nothing: whether and how to repair is the
 owner's decision, taken on this report.
 
 ```bash
@@ -2697,16 +2718,18 @@ the part the old arithmetic can explain (at most the smaller of a payment's card
 refunds and its credit, and only with a card refund), and a shortfall with
 another cause - typically a credit that was never folded into the total, such as
 internet-banking cash that became credit on an already-cancelled booking, or
-(#4280) a late card refund that failed after a "Paid another way" close and took
-the close's bank cash out of the total. Attribution to #3640 is measured against
-the floor without the closes' cash, so a payment whose shortfall only that cash
-explains shows 0 attributable to #3640. Only the first section is the #3640
+a late card refund that failed after a "Paid another way" close (#4280) or a
+paid-back card refund shortfall (#4488) and took that bank cash out of the total.
+Attribution to #3640 is measured against the floor without either kind of bank
+cash, so a payment whose shortfall only that cash explains shows 0 attributable
+to #3640. Only the first section is the #3640
 repair question. The arithmetic and its caveats are in
 `src/lib/refunded-total-shortfall-audit.ts`.
 
-Rolling the application back past #4280 restores the old subtraction: a late
-card refund failing after a close could again take the total below the close's
-cash. This audit still lists any such payment.
+Rolling the application back past #4280 or #4488 restores the old subtraction:
+a late card refund failing after a close, or after a shortfall was paid back,
+could again take the total below that cash. The same holds for a failure the old
+version handles during a deploy. This audit still lists any such payment.
 
 Do not run it while a migration runs. It reads every captured payment in ONE
 read-only `RepeatableRead` snapshot, held for up to 120 seconds, and on a very
@@ -2963,6 +2986,46 @@ The sync may answer **Already in step** even when it changed a link, because it
 compares money records, not links. Run the report again afterwards: a handled
 line no longer appears. **Sync everything from Xero now** does not revisit
 these notes.
+
+### Release Xero outbox rows stuck without a queued request (#5228)
+
+Before #5228, a Xero outbox row that a pre-HTTP cooldown (the "Xero is down"
+pause, the daily limit, the environment gate) refused after its handler had
+saved its execution request went back to PENDING without its queued request.
+The outbox then skipped it on every pass: the refund note, invoice or credit
+note never reached Xero, and nothing failed or alerted. Fixed builds never
+leave a row so. Any an older build left are kept out of the outbox's scan, so
+they never hold up other work, and counted (`unclaimableRequest` in the outbox
+run's result, shown as an amber warning on the Xero cron run).
+
+**When to run it:** once, on the live deployment, after upgrading to a build
+with #5228; and whenever the outbox's `unclaimableRequest` count is not zero.
+Running the report is safe at any time. **`--release` on a live site is the
+owner's to run.**
+
+```bash
+pnpm run xero:stuck-queued-report             # read-only: lists the rows, changes nothing
+pnpm run xero:stuck-queued-report --release   # fails exactly the rows it has just listed
+```
+
+1. **Inspect.** Run the report. Each line names the row, its queue type, the
+   record it belongs to (`Payment:<id>`, `GroupBookingSettlement:<id>`, ...),
+   and when it was queued; every row listed holds a request that names no
+   queue type. Look the records up before going on. The output
+   names members' payments, so never post it publicly.
+2. **Release.** Run it again with `--release`. It lists the rows again and
+   moves exactly those from PENDING to FAILED with
+   `QUEUED_REQUEST_RELEASED`, each only while it is still an unclaimed,
+   unresolved PENDING row with the same queue type and stored request; any
+   other is skipped and named. It keeps each row's request, response, Xero ids
+   and keys, makes no Xero call and rewrites nothing already posted.
+3. **Check the counts.** "Released N; skipped M." A second run lists nothing
+   and releases nothing.
+4. **Retry.** The rows are now in Xero Operations as Failed. For each, an
+   officer checks Xero for the document, then uses Retry (or resolves it by
+   hand if it is there). A refund note's Retry bills only what the payment
+   still shows uncovered, so cover added since the row was queued is not billed
+   twice.
 
 ### Audit bank-transfer receipts settled at a stale figure (#3979)
 

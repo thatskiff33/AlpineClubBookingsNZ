@@ -58,6 +58,9 @@
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
+    // TypeScript's `**` skips dot-directories, so the OAuth discovery routes
+    // (ALP-653) are named or no project would read them.
+    "src/app/.well-known/**/*.ts",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     "**/*.mts"

@@ -441,6 +441,48 @@ describe("Issue 7: Draft Booking Creation", () => {
     );
   });
 
+  it("answers an AI app connection's draft with the narrow summary, not the stored rows (ALP-653)", async () => {
+    mockAuth.mockResolvedValue(memberSession());
+    mockTx.booking.create.mockResolvedValue({
+      id: "draft-1",
+      status: "DRAFT",
+      finalPriceCents: 10000,
+      nonMemberHoldUntil: null,
+      draftExpiresAt: new Date("2026-07-04T00:00:00.000Z"),
+      guests: [{ id: "g1", dietaryRequirements: "Peanut allergy" }],
+    });
+    mockPrisma.booking.findFirst.mockResolvedValue({
+      id: "draft-1",
+      status: "DRAFT",
+      checkIn: new Date("2026-12-01T00:00:00.000Z"),
+      checkOut: new Date("2026-12-03T00:00:00.000Z"),
+      draftExpiresAt: new Date("2026-07-04T00:00:00.000Z"),
+      notes: null,
+      lodge: { id: "lodge-1", name: "Main lodge" },
+      guests: [{ firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true, dietaryRequirements: "Peanut allergy" }],
+    });
+    const request = makeBookingBody({ draft: true });
+    request.headers.set("x-mcp-principal", "signed-principal");
+
+    const res = await createBooking(request);
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    expect(data).toEqual({
+      id: "draft-1",
+      status: "DRAFT",
+      checkIn: "2026-12-01",
+      checkOut: "2026-12-03",
+      draftExpiresAt: "2026-07-04T00:00:00.000Z",
+      lodge: { id: "lodge-1", name: "Main lodge" },
+      notes: null,
+      guests: [{ firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true }],
+    });
+    expect(JSON.stringify(data)).not.toContain("Peanut");
+    expect(mockPrisma.booking.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: "draft-1", memberId: "member-1", status: "DRAFT" }),
+    }));
+  });
+
   it("rejects an absurd credit election as a field error, not a money-path failure", async () => {
     // #2265 — the real limits on applyCreditCents are the member's balance and
     // the booking price, enforced downstream. Without an upper bound at the

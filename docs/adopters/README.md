@@ -39,7 +39,11 @@ Then work through these in order:
 5. [`../UPGRADING.md`](../UPGRADING.md) — how to take a new upstream release
    into your deployment, release by release, including the manual steps a
    release needs.
-6. [Contribute a change upstream](upstream-contributions.md) — when your club
+6. [Moving in from your old system](../guides/moving-in.md) — the order to
+   load lodges, membership types, members, families, subscriptions, credit and
+   future bookings; how to carry prepaid stays over without billing twice; and
+   the totals to check against your old records.
+7. [Contribute a change upstream](upstream-contributions.md) — when your club
    builds something reusable, how to get it into the product instead of
    maintaining it forever in your own fork.
 
@@ -219,6 +223,9 @@ per-route index if you would rather start from a URL.
   analytics, backups; feature-gated).
 - [AI Help Assistant](../guides/ai-help.md) — the in-app help widget and the
   optional paid AI assistant (module, key, spend cap, and privacy).
+- [AI App Connections](../guides/mcp-server.md) — letting members connect an
+  AI app such as Claude or ChatGPT to their own account (module, who may
+  connect, approved apps, risks).
 - [AI Diagnostics deployment](../ai-diagnostics/deployment.md) — the operator
   setup order for the separate admin-only diagnostics assistant: provisioning
   and rotating its SELECT-only database role, and reading its readiness

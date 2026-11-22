@@ -3,8 +3,9 @@
  *
  * Safe to import from the client: labels, the wire values, and the mapping
  * key. It does not import the mint-account module, which pulls in the Xero
- * client. The two mapping strings are the same two `MintSliceMappingKey`
- * values; this file is the one place a screen or a request reads them.
+ * client. The two mapping strings are two of the `MintSliceMappingKey`
+ * values (the third, `openingCredits`, is never a grant's); this file is the
+ * one place a screen or a request reads them.
  */
 
 export const ADMIN_CREDIT_GRANT_ACCOUNTS = ["MEMBER_OWN_MONEY", "GOODWILL"] as const;

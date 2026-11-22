@@ -24,8 +24,9 @@
  *
  * Off by default. Runs only with `RUN_CONCURRENCY_RACE_TESTS=1` and the guarded
  * loopback `CONCURRENCY_RACE_DATABASE_URL` (`assertSafeRaceDbUrl`); it needs the
- * superuser that URL carries, `pg_dump` and `psql` on PATH, and the repository's
- * Prisma CLI. CI's `realdb-all` job runs it (`scripts/ci/realdb-files.mjs`).
+ * superuser that URL carries, `pg_dump` and `psql` of the server's own major
+ * version on PATH (#5193), and the repository's Prisma CLI. CI's `realdb-all`
+ * job runs it (`scripts/ci/realdb-files.mjs`).
  *
  *   RUN_CONCURRENCY_RACE_TESTS=1 \
  *   CONCURRENCY_RACE_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881 \
@@ -57,6 +58,10 @@ const INSUFFICIENT_PRIVILEGE = "42501";
 const RESTRICT_VIOLATION = "23001";
 const FOREIGN_KEY_VIOLATION = "23503";
 const CHECK_VIOLATION = "23514";
+// Set-up migrates and dumps whole databases; teardown force-drops them and their
+// roles one statement at a time, which a loaded runner can stretch past
+// vitest's 10-second hook default (#5283).
+const SCRATCH_HOOK_TIMEOUT_MS = 600_000;
 
 const PREFIX = `tac_test_4453_${randomBytes(3).toString("hex")}`;
 const ROLES = {
@@ -157,6 +162,29 @@ function runTool(command: string, args: string[], input?: string) {
     throw new Error(`${command} is not on PATH; this suite needs the PostgreSQL client tools.`);
   }
   return result;
+}
+
+/**
+ * #5193: a newer `pg_dump` than the server writes statements the server cannot
+ * load (pg_dump 17's `SET transaction_timeout` into PostgreSQL 16), so the
+ * restore proofs below would fail for a reason that has nothing to do with the
+ * roles. Fail first, naming the versions, instead of at random by runner image.
+ * CI runs both tools from the service's own image
+ * (`scripts/ci/postgres-client-from-service.sh`).
+ */
+function assertClientToolsMatchServer(serverVersionNum: string): void {
+  const serverMajor = Math.floor(Number(serverVersionNum) / 10_000);
+  for (const tool of ["pg_dump", "psql"]) {
+    const result = runTool(tool, ["--version"]);
+    const version = /\(PostgreSQL\)\s+(\S+)/.exec(result.stdout ?? "")?.[1] ?? "";
+    const major = Number(/^\d+/.exec(version)?.[0]);
+    if (major !== serverMajor) {
+      throw new Error(
+        `${tool} on PATH is PostgreSQL ${version || "(unknown)"} but the server is PostgreSQL ${serverMajor}: ` +
+          `run this suite with the server's own client tools.`,
+      );
+    }
+  }
 }
 
 /**
@@ -272,6 +300,8 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
       if (!superuser.rows[0]?.rolsuper) {
         throw new Error("This suite provisions roles and transfers ownership: CONCURRENCY_RACE_DATABASE_URL must be a superuser.");
       }
+      const serverVersion = await admin.query<{ server_version_num: string }>("SHOW server_version_num");
+      assertClientToolsMatchServer(serverVersion.rows[0]?.server_version_num ?? "");
 
       // FRESH: roles first, then every migration as the migration role.
       await admin.query(`CREATE DATABASE "${DATABASES.fresh}"`);
@@ -322,7 +352,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
       const { PrismaClient: Prisma } = await import("@prisma/client");
       const { createPrismaPgAdapter } = await import("@/lib/prisma-adapter");
       appPrisma = new Prisma({ adapter: createPrismaPgAdapter(urlFor(DATABASES.upgrade, "app")) });
-    }, 600_000);
+    }, SCRATCH_HOOK_TIMEOUT_MS);
 
     afterAll(async () => {
       await appPrisma?.$disconnect().catch(() => {});
@@ -337,7 +367,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
         });
       }
       await admin.end().catch(() => {});
-    });
+    }, SCRATCH_HOOK_TIMEOUT_MS);
 
     it("reports server role facts for the operator, application and superuser membership (INV-OPS-018)", async () => {
       const { PrismaClient: Prisma } = await import("@prisma/client");

@@ -224,6 +224,10 @@ description = "The idempotency key of the fixture organiser-child `PaymentRecove
 regexes = ['''^organiser_child_refund_cancel_settle_child-1$''']
 
 [[allowlists]]
+description = "The fabricated AUTH_SECRET stand-in that PR #5286's (ALP-653) commit 5210631d1 wrote into `src/lib/__tests__/mcp-principal.test.ts`, returned by a mocked `getAuthSecret` so the unit test can sign a fixture session. It is a readable label that signs nothing outside that mocked test and was never a credential for any deployment. `generic-api-key` fired on the `TEST_SECRET` identifier. The test now builds its secret at run time (`\"s\".repeat(40)`), so the tree no longer carries it; the literal is forgiven only because history keeps it, and this file's header rules out fingerprints. Only this exact literal is forgiven."
+regexes = ['''^test-secret-for-alp-653-principal$''']
+
+[[allowlists]]
 description = "The readable outbox label `race-4324-other-ask` that commit 2437ce376 in PR #5301's history (#5220) wrote as the `correlationKey` and `idempotencyKey` of a fabricated second supplementary-invoice row in `kept-change-capture-record.realdb.test.ts`, the another-invoice-queued refusal case. A test's own label for a throwaway row in the disposable race database: it authorises nothing and names no credential. `generic-api-key` fired on the `...Key` identifiers, not the value. The test now names it through the `OTHER_ASK_LABEL` constant, so the tree no longer carries the flagged lines; the literal is forgiven only because history keeps it, and this file's header rules out fingerprints. Only this exact literal is forgiven."
 regexes = ['''^race-4324-other-ask$''']
 

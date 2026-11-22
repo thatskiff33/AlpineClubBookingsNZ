@@ -11,6 +11,7 @@ import {
   type BookingManualPaymentState,
 } from "@/components/admin/booking-manual-payment-controls";
 import { AdminReturnToWaitlistControls } from "@/components/admin/admin-return-to-waitlist-controls";
+import { BookingWorkPartyControls } from "@/components/admin/booking-work-party-controls";
 import { ConfirmPendingGuestsButton } from "@/components/admin/confirm-pending-guests-button";
 import { CopyBookingButton } from "@/components/admin/copy-booking-button";
 import type {
@@ -82,6 +83,7 @@ export function AdminBookingToolsCard({
   manualPayment,
   showReturnToWaitlist = false,
   returnToWaitlistReleasesHold = false,
+  currentWorkParty = null,
 }: {
   bookingId: string;
   /**
@@ -119,6 +121,7 @@ export function AdminBookingToolsCard({
    */
   financialReviewWarnings?: BookingFinancialReviewWarning[];
   features: FeatureFlags;
+  currentWorkParty?: { id: string; name: string } | null; // the booking's work party, offered for removal (fork #130)
   /** Admin capacity hold state (#1764); omitted for deleted bookings. */
   capacityHold?: {
     hasAdminCapacityHold: boolean;
@@ -201,7 +204,7 @@ export function AdminBookingToolsCard({
     <>
       <Card className="border-border bg-card">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base text-foreground">Admin tools</CardTitle>
+          <CardTitle headingLevel={2} className="text-base text-foreground">Admin tools</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {providerMismatches.length > 0 && (
@@ -281,6 +284,9 @@ export function AdminBookingToolsCard({
               noEmails={noEmails?.noEmails ?? false}
             />
           )}
+          {!isDeleted && features.workParties && (
+            <BookingWorkPartyControls bookingId={bookingId} noEmails={noEmails?.noEmails ?? false} currentWorkParty={currentWorkParty} />
+          )}
           {/* #2649: the repair for a free waitlist confirm that got half-way.
               It sits with the other booking-state controls rather than on the
               waitlist queue, because a stranded booking is no longer waitlisted
@@ -299,7 +305,8 @@ export function AdminBookingToolsCard({
               minCheckIn={copyProps.minCheckIn}
             />
           )}
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+          {/* pt-1, gap-y-2: 24px clear of the controls and each other (WCAG 2.5.8). */}
+          <div className="flex flex-wrap gap-x-4 gap-y-2 pt-1 text-sm">
             {memberId ? (
               <Link
                 className="text-muted-foreground underline hover:text-accent-foreground"
