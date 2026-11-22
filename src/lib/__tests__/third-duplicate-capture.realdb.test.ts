@@ -397,9 +397,8 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       ]);
     });
 
-    it("#5240: a saved-card capture whose settle never ran, arriving after the booking was paid another way, is kept and the admins told - not read as a replay", async () => {
-      const asked = stripeMakesRefunds();
-      const savedCardIntent = "pi_race_4211_interrupted";
+    /** #5240: a saved-card capture committed with its flag, whose caller stopped before the settle, on a booking since paid another way. */
+    async function interruptedSavedCardCaptureOnPaidBooking(savedCardIntent: string): Promise<string> {
       const attempt = await prisma.paymentTransaction.create({
         data: { paymentId: PAYMENT_ID, kind: "PRIMARY", source: "STRIPE", amountCents: PRICE_CENTS, status: "PENDING", reason: "race_4211_saved_card_attempt" },
         select: { id: true },
@@ -417,6 +416,13 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       expect(await prisma.alertCooldown.findUnique({ where: { key: flagKey } }), "the pre-record committed its flag").not.toBeNull();
       // Paid another way (account credit, a $0 total, the organiser): PAID with no capture recorded as its settler.
       await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAID" } });
+      return flagKey;
+    }
+
+    it("#5240: a saved-card capture whose settle never ran, arriving after the booking was paid another way, is kept and the admins told - not read as a replay", async () => {
+      const asked = stripeMakesRefunds();
+      const savedCardIntent = "pi_race_4211_interrupted";
+      const flagKey = await interruptedSavedCardCaptureOnPaidBooking(savedCardIntent);
 
       expect((await arrive(savedCardIntent)).outcome).toBe("duplicate_capture_kept");
       expect(asked, "nothing is refunded automatically").toEqual([]);
@@ -425,6 +431,45 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       expect(
         await prisma.alertCooldown.findUnique({ where: { key: `duplicate-capture-unrecorded-settler:${BOOKING_ID}:${savedCardIntent}` } }),
       ).not.toBeNull();
+    });
+
+    it.each(["at the same moment as", "before"] as const)("#5240 review: the payments cron's flag step running %s the capture's arrival - the flag's delete picks one winner, and the admins are told exactly once", async (timing) => {
+      const asked = stripeMakesRefunds();
+      const savedCardIntent = "pi_race_4211_interrupted_race";
+      const flagKey = await interruptedSavedCardCaptureOnPaidBooking(savedCardIntent);
+      const { lastAlertedAt } = await prisma.alertCooldown.findUniqueOrThrow({ where: { key: flagKey } });
+      const { drainOwedNewCaptureAlerts, NEW_CAPTURE_ALERT_DRAIN_AFTER_MS } = await import("@/lib/duplicate-capture-kept-alert-drain");
+      // The cron run sees the flag an hour old and the booking paid, as the webhook lands.
+      const cronNow = new Date(lastAlertedAt.getTime() + 2 * NEW_CAPTURE_ALERT_DRAIN_AFTER_MS);
+
+      const keptAlert = { templateName: "admin-duplicate-capture-kept" };
+      const earlier = new Set((await prisma.emailLog.findMany({ where: keptAlert, select: { id: true } })).map((row) => row.id));
+
+      const [arrival, drained] =
+        timing === "before"
+          ? await drainOwedNewCaptureAlerts(cronNow).then(async (run) => [await arrive(savedCardIntent), run] as const)
+          : await Promise.all([arrive(savedCardIntent), drainOwedNewCaptureAlerts(cronNow)]);
+
+      // Each officer gets the "Kept card payment" email once, whichever path sent it (the arrival's own
+      // owed marker may be sent by the cron too; the day's claim lets only one through).
+      const sentTo = (await prisma.emailLog.findMany({ where: keptAlert, select: { id: true, to: true } }))
+        .filter((row) => !earlier.has(row.id))
+        .map((row) => row.to);
+      expect(sentTo.length, "the admins are told").toBeGreaterThan(0);
+      expect(new Set(sentTo).size, `told once each (arrival ${arrival.outcome}, cron ${JSON.stringify(drained)})`).toBe(sentTo.length);
+      if (timing === "before") {
+        // Run first, the cron takes the flag: the arrival then reads the capture as already known, and keeps nothing new.
+        expect(drained.sent).toBe(1);
+        expect(arrival.outcome).not.toBe("duplicate_capture_kept");
+      }
+      expect(asked, "nothing is refunded automatically").toEqual([]);
+      expect(await prisma.alertCooldown.findUnique({ where: { key: flagKey } }), "the flag is consumed").toBeNull();
+      expect(
+        await prisma.alertCooldown.findUnique({ where: { key: `duplicate-capture-unrecorded-settler:${BOOKING_ID}:${savedCardIntent}` } }),
+        "the day's alert window is claimed for this capture",
+      ).not.toBeNull();
+      // A second cron run, an hour later, finds nothing left to tell.
+      expect(await drainOwedNewCaptureAlerts(new Date(cronNow.getTime() + NEW_CAPTURE_ALERT_DRAIN_AFTER_MS))).toMatchObject({ sent: 0 });
     });
 
     /** A capture whose money is held without any duplicate-capture refund owning it. */
