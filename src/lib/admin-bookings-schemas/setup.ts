@@ -21,6 +21,7 @@ import {
   MEMBER_GUEST_PENDING_HOLD_EXPIRY_DAYS_MIN,
 } from "@/config/club-settings-defaults";
 import { ageTierEnum } from "@/lib/age-tier-schema";
+import { cancellationTierSchema, nonMemberHoldDaysSchema } from "@/lib/booking-policy-cancellation-schema";
 import { hasDuplicateCancellationThresholds } from "@/lib/cancellation-rules";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import { membershipTypeSeasonRateInputSchema } from "@/lib/season-rate-editor";
@@ -106,15 +107,6 @@ export const seasonUpdateBodySchema = z.object({
 // Booking periods
 // ---------------------------------------------------------------------------
 
-/** One cancellation tier of a booking period, as both period writes take it. */
-export const bookingPeriodCancellationRuleSchema = z.object({
-  daysBeforeStay: z.number().int().min(0),
-  refundPercentage: z.number().int().min(0).max(100),
-  creditRefundPercentage: z.number().int().min(0).max(100).optional(),
-  fixedFeeCents: z.number().int().min(0).optional(),
-  creditFixedFeeCents: z.number().int().min(0).optional(),
-});
-
 const BOOKING_PERIOD_RULES_DESCRIPTION =
   "Cancellation tiers: from `daysBeforeStay` days before arrival, the card refund `refundPercentage` and fee `fixedFeeCents` (cents), and the credit refund equivalents. Day thresholds must be unique.";
 
@@ -124,9 +116,9 @@ export const bookingPeriodCreateBodySchema = z
     startDate: dateOnlyStringSchema.describe("First night the period covers, `YYYY-MM-DD`."),
     endDate: dateOnlyStringSchema.describe("Period end, `YYYY-MM-DD`; after `startDate`."),
     nonMemberHoldEnabled: z.boolean().optional(),
-    nonMemberHoldDays: z.number().int().min(1).max(365),
+    nonMemberHoldDays: nonMemberHoldDaysSchema,
     cancellationRules: z
-      .array(bookingPeriodCancellationRuleSchema)
+      .array(cancellationTierSchema)
       .min(1)
       .describe(BOOKING_PERIOD_RULES_DESCRIPTION),
     active: z.boolean().optional(),
@@ -155,9 +147,9 @@ export const bookingPeriodUpdateBodySchema = z
     startDate: dateOnlyStringSchema.optional().describe("First night the period covers, `YYYY-MM-DD`."),
     endDate: dateOnlyStringSchema.optional().describe("Period end, `YYYY-MM-DD`; after `startDate`."),
     nonMemberHoldEnabled: z.boolean().optional(),
-    nonMemberHoldDays: z.number().int().min(1).max(365).optional(),
+    nonMemberHoldDays: nonMemberHoldDaysSchema.optional(),
     cancellationRules: z
-      .array(bookingPeriodCancellationRuleSchema)
+      .array(cancellationTierSchema)
       .min(1)
       .optional()
       .describe(`${BOOKING_PERIOD_RULES_DESCRIPTION} Replaces every tier; omit to keep them.`),
