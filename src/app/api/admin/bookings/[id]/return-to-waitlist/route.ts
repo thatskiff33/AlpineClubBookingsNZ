@@ -356,8 +356,8 @@ export async function POST(
     //
     // The lodge is the BOOKING's own, never `waitlistOfferedLodgeId`. This is
     // where `expireStaleOffers` deliberately differs and must: there the entry
-    // is still WAITLIST_OFFERED, holding a bed at the OFFERED lodge, so that is
-    // what its revert frees. Here the booking is PAYMENT_PENDING, whose
+    // is still WAITLIST_OFFERED, and the place it was offered is at the OFFERED
+    // lodge, so its re-offer goes there. Here the booking is PAYMENT_PENDING, whose
     // allocations, the lodge key held above, and the reconcile that just pruned
     // them are all keyed on `lodgeId`. Sweeping any other lodge would process a
     // queue whose beds this repair did not free and leave the ones it did free

@@ -212,7 +212,7 @@ describe("config-transfer lodge-config (per-lodge folders)", () => {
   });
 });
 
-describe("config-transfer lobby display (issue #50)", () => {
+describe("config-transfer lobby display (issue hoppers99/AlpineClubBookingsNZ#50)", () => {
   it("exports display settings in lodge.json (templates dropped in LTV-024)", async () => {
     const { zip } = await exportLodges(false);
     const { files } = readBundle(zip);
@@ -221,7 +221,7 @@ describe("config-transfer lobby display (issue #50)", () => {
     expect(lodge.displayConfig).toEqual({ "wifi-code": "alpine1234" });
     expect(lodge.displayNameGranularity).toBe("FULL_NAME");
     expect(lodge.displayNotice).toBe("Working bee Sunday");
-    // Phone-display toggle travels with the descriptor (#137 / #37).
+    // Phone-display toggle travels with the descriptor (hoppers99/AlpineClubBookingsNZ#137 / hoppers99/AlpineClubBookingsNZ#37).
     expect(lodge.showGuestPhonesOnScreens).toBe(true);
 
     // The retired club-wide template file is no longer emitted (LTV-024).

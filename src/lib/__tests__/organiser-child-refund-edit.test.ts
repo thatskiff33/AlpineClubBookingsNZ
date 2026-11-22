@@ -81,6 +81,7 @@ const ORGANISER_OPTIONS: BookingModificationSettlementOptions = {
   requiresSettlementMethod: false,
   returnsToOrganiser: true,
   organiserRefundByBankTransfer: false,
+  refundByBankTransfer: false,
   refundHeldForDispute: false,
 };
 
@@ -262,7 +263,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     expect(ib).toMatchObject({ returnsToOrganiser: true, organiserRefundByBankTransfer: true, requiresSettlementMethod: false, accountCreditAmountCents: 0, accountCreditPercentage: 0 });
     expect(ib?.cardRefundAmountCents).toBe(card?.cardRefundAmountCents);
     // The untiered options (a guest's acceptance) answer the same way.
-    const full = calculateFullReductionSettlementOptions({ booking: ibChild(), netChargeCents: -1500, refundableCashCents: 4500, todayAtClub, refundHeldForDispute: false });
+    const full = calculateFullReductionSettlementOptions({ booking: ibChild(), netChargeCents: -1500, refundableCashCents: 4500, todayAtClub, refundHeldForDispute: false, hasCardToReturnTo: false });
     expect(full).toMatchObject({ returnsToOrganiser: true, organiserRefundByBankTransfer: true, requiresSettlementMethod: false, accountCreditAmountCents: 0, cardRefundAmountCents: 1500 });
   });
 

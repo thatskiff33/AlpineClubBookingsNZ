@@ -25,7 +25,7 @@
     "scripts/e2e-fixture-today.ts",
     // Invoked by hand (node scripts/branding/generate-calendar-icons.mjs) to
     // regenerate the committed add-to-calendar email icons under
-    // public/branding/calendar/ (fork #41); never imported.
+    // public/branding/calendar/ (triyder/AlpineClubBookingsNZ#41); never imported.
     "scripts/branding/generate-calendar-icons.mjs",
     // Invoked from scripts/codex/run-next-issue.sh + docs, never imported.
     "scripts/codex/create-review-issues.mjs",

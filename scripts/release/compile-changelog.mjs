@@ -17,7 +17,9 @@
  *
  * What it does, in order:
  *   1. Reads every `changelog.d/*.md` fragment except the reserved
- *      `README.md` / `.gitkeep`, in a deterministic filename order.
+ *      `README.md` / `.gitkeep`, in a deterministic filename order, and
+ *      rewrites each relative link so it resolves from the repository root
+ *      rather than from `changelog.d/` (`rebaseFragmentLinks`, #5214).
  *   2. Folds any entries still written directly under a legacy `## Unreleased`
  *      heading into the same new release section (transition support — several
  *      PRs opened before the fragment convention still carry direct entries).
@@ -42,11 +44,12 @@ import process from "node:process";
 import { execFileSync } from "node:child_process";
 import { ALLOWANCE_DIR, isReservedAllowanceName, isSafeAllowanceName } from "../lib/allowance-dir.mjs";
 import { isMainModule } from "../lib/is-main-module.mjs";
+import { FRAGMENTS_DIRNAME, rebaseFragmentLinks } from "./fragment-links.mjs";
 
 const REPO_ROOT = path.resolve(path.join(import.meta.dirname, "..", ".."));
 
-/** Directory holding one Markdown fragment per merged PR. */
-export const FRAGMENTS_DIRNAME = "changelog.d";
+// Re-exported for `cut-release.mjs`; it is defined beside the link rebasing.
+export { FRAGMENTS_DIRNAME };
 
 /**
  * Files in `changelog.d/` that are part of the convention rather than entries.
@@ -413,7 +416,7 @@ export function composeChangelog({ changelog, version, date, fragments, append =
 
   const entryLines = [...legacy];
   for (const fragment of fragments) {
-    entryLines.push(...stripBlankEdges(fragment.body.split("\n")));
+    entryLines.push(...stripBlankEdges(rebaseFragmentLinks(fragment.body, fragment.name).split("\n")));
   }
 
   const out = [...head];

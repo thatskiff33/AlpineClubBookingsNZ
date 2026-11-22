@@ -121,7 +121,7 @@ export function AdminBookingToolsCard({
    */
   financialReviewWarnings?: BookingFinancialReviewWarning[];
   features: FeatureFlags;
-  currentWorkParty?: { id: string; name: string } | null; // the booking's work party, offered for removal (fork #130)
+  currentWorkParty?: { id: string; name: string } | null; // the booking's work party, offered for removal (fork triyder/AlpineClubBookingsNZ#130)
   /** Admin capacity hold state (#1764); omitted for deleted bookings. */
   capacityHold?: {
     hasAdminCapacityHold: boolean;

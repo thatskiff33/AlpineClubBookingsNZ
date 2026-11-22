@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Which local lodge a central lodge id means (#62, D5): the active lodge an
+// Which local lodge a central lodge id means (triyder/AlpineClubBookingsNZ#62, D5): the active lodge an
 // administrator explicitly linked to it, else nothing — and only ever for a
 // lodge the central server says this club owns. Every club links explicitly,
 // a one-lodge club included (owner decision, 24 Oct 2026, #4262): there is no

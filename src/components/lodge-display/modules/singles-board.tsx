@@ -14,7 +14,7 @@ import {
 import { shortDay } from "./status-helpers";
 import { useClubFormat } from "@/components/club-format-provider";
 
-// The by-booking singles board (fork issues #30/#58; visual reference:
+// The by-booking singles board (fork issues hoppers99/AlpineClubBookingsNZ#30/#58; visual reference:
 // docs/lobby-display/mockups/singles-by-booking.html): Room | Guest | night
 // columns — the room label spans its guests' rows, one row per guest, each
 // guest keeping their OWN night bar and check-out date (four people in one

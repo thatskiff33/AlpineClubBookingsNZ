@@ -1133,7 +1133,7 @@ export const config = {
     "/api/cron/xero/:path*",
     "/api/display/:path*",
     "/api/finance/:path*",
-    // Food orders (fork #121): the foodOrders gate on "/api/food-orders" (same reason as above).
+    // Food orders (fork triyder/AlpineClubBookingsNZ#121): the foodOrders gate on "/api/food-orders" (same reason as above).
     "/api/food-orders/:path*",
     "/api/group-bookings/:path*",
     "/api/inductions/:path*",

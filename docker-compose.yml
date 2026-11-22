@@ -1,7 +1,7 @@
 x-app-environment: &app-environment
   TZ: Pacific/Auckland
   # The Alpine Central Server this deployment pairs with, offered on the setup
-  # page while no address is saved (#81). Empty = nothing offered.
+  # page while no address is saved (triyder/AlpineClubBookingsNZ#81). Empty = nothing offered.
   SERVERNZ_DEFAULT_BASE_URL: ${SERVERNZ_DEFAULT_BASE_URL:-}
   # How long the Next.js server holds an idle keep-alive connection open, in ms
   # (#3293). It MUST outlive Caddy's upstream connection pool, which
@@ -438,10 +438,17 @@ services:
     mem_limit: ${POSTGRES_MEM_LIMIT:-768m}
     cpus: 0.5
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tac -d tacbookings"]
+      # Probes TCP (-h 127.0.0.1), not the unix socket: on a fresh volume the image's
+      # temporary init server answers the socket, so a socket probe can report healthy
+      # just before that server shuts down for the real start (#5407).
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U tac -d tacbookings"]
       interval: 5s
       timeout: 5s
       retries: 5
+      # The TCP probe fails for the whole first-start initialisation, so failures in
+      # this window do not count toward `retries`; a success inside it still marks
+      # the container healthy at once.
+      start_period: 60s
 
   app:
     <<: *app-service

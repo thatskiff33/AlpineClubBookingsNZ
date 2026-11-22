@@ -805,7 +805,7 @@ and promo codes (`INV-REQ-011`, `INV-REQ-013`) are applied the same way.
 
 ## INV-MOD-063
 
-**Officer work-party correction on a started stay (fork #127, fork #130; owner
+**Officer work-party correction on a started stay (fork triyder/AlpineClubBookingsNZ#127, fork triyder/AlpineClubBookingsNZ#130; owner
 decisions 1 and 2 of 18 Nov 2026, maintainers' comments on #5149:
 https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6951626920
 and https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6952444211).** An officer's "Add to work party" or "Remove from work party"
@@ -825,7 +825,7 @@ A correction moves no guest or night, so on a booking whose status already
 holds its beds the pricing pass skips the bed check (through
 `skipBookingLifecycleRules`, which there gates only capacity; a census pins
 that). A booking holding none yet takes the check, as a $0 settle makes it
-PAID. The money is fork #129's: no change fee, an Add's
+PAID. The money is triyder/AlpineClubBookingsNZ#129's: no change fee, an Add's
 reduction returned in full and untiered, a Remove's increase owed on the
 booking, with credit already given and refunds already paid left alone. Every
 other in-progress edit still refuses a promo change (`INV-MOD-019`).

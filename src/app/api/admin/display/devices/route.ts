@@ -4,7 +4,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { nameField } from "@/lib/zod-helpers";
 
-// Admin lobby-display device management (fork issue #33, epic #25): list and
+// Admin lobby-display device management (fork issue hoppers99/AlpineClubBookingsNZ#33, epic hoppers99/AlpineClubBookingsNZ#25): list and
 // create device records. Creation never generates a token — pairing does
 // (ADR-001; confirm endpoint at devices/[id]/pairing, claim on the display).
 

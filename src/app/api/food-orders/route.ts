@@ -37,7 +37,7 @@ import { requireActiveSession } from "@/lib/session-guards";
 import { parseJsonRequestBody } from "@/lib/api-json";
 
 /**
- * The member's Order food door (fork #121): `GET` returns what the form needs,
+ * The member's Order food door (fork triyder/AlpineClubBookingsNZ#121): `GET` returns what the form needs,
  * `POST` places an order. Guarded by `requireFoodOrderViewer` (module, session,
  * not an organisation).
  *

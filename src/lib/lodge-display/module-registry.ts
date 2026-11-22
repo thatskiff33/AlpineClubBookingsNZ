@@ -47,7 +47,7 @@ export type DisplayModuleDependencyMode = "degrades" | "hides";
  * (`intOption`/`boolOption`/`enumOption`, `module-options.ts`) would reject or
  * silently default: a drift-guard test binds each descriptor's
  * default/bounds/allowed set to the parser's behaviour and to the source
- * constants (issue #30 AC6 keeps the parser the runtime authority; these are the
+ * constants (issue hoppers99/AlpineClubBookingsNZ#30 AC6 keeps the parser the runtime authority; these are the
  * UI mirror). Scalars only (int/bool/enum) — the same constraint the save
  * contract enforces in `validateSlotContent`. No descriptor may widen a privacy
  * field (ADR-004 §5): widening is structurally impossible (modules only see the

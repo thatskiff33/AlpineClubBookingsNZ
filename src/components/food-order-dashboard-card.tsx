@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 /**
- * The dashboard's Order food card (fork #121), beside "Report an issue". The
+ * The dashboard's Order food card (fork triyder/AlpineClubBookingsNZ#121), beside "Report an issue". The
  * dashboard renders it only while the `foodOrders` module is on; organisation
  * accounts, who cannot order, are not shown it.
  */

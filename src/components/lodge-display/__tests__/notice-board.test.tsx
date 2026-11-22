@@ -7,7 +7,7 @@ import { NoticeBoard } from "@/components/lodge-display/modules/notice-board";
 import { DISPLAY_MODULE_COMPONENTS } from "@/components/lodge-display/modules";
 import { evaluateDisplayCondition } from "@/lib/lodge-display/conditions";
 
-// Issue #36 (LTV-011): the committee notice board — text-node-only rendering
+// Issue hoppers99/AlpineClubBookingsNZ#36 (LTV-011): the committee notice board — text-node-only rendering
 // (a notice can never inject markup), config placeholder resolution inside
 // the notice, empty-notice skippability via the content:notice condition.
 
@@ -31,7 +31,7 @@ function state(overrides: Partial<DisplayState>): DisplayState {
   };
 }
 
-describe("NoticeBoard (issue #36)", () => {
+describe("NoticeBoard (issue hoppers99/AlpineClubBookingsNZ#36)", () => {
   it("renders paragraphs with resolved placeholders (AC2/AC5 path)", () => {
     render(
       <NoticeBoard

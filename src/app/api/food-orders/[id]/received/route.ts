@@ -19,9 +19,9 @@ import { requireActiveSession } from "@/lib/session-guards";
 import { parseJsonRequestBody } from "@/lib/api-json";
 
 /**
- * Tick items of a food order received (fork #121; owner change, 13 Nov 2026:
+ * Tick items of a food order received (fork triyder/AlpineClubBookingsNZ#121; owner change, 13 Nov 2026:
  * food can arrive in parts). The order closes as Received when its last item
- * is (fork #121 owner decision 7).
+ * is (fork triyder/AlpineClubBookingsNZ#121 owner decision 7).
  *
  * Who: `canManageFoodOrder` — a hut leader at THIS order's lodge today, or
  * Lodge Operations edit. An order the caller may not even see answers

@@ -27,7 +27,7 @@ import {
 import { apiRefusalFromResponse } from "@/lib/api-error-message";
 
 /**
- * The Food Orders settings card (fork #121). Lodge Operations.
+ * The Food Orders settings card (fork triyder/AlpineClubBookingsNZ#121). Lodge Operations.
  *
  * Canonical settings-section pattern (docs/ARCHITECTURE.md → "Admin/member
  * layer"): loads read-only, Edit reveals Save/Cancel, Cancel restores the
@@ -35,7 +35,7 @@ import { apiRefusalFromResponse } from "@/lib/api-error-message";
  * `AdminViewOnlySectionBanner`, mounted in every state so its live region exists
  * from first paint, and every gated control opts out of its own explanation.
  *
- * The address is checked by the server only as a valid email (fork #121 owner decision
+ * The address is checked by the server only as a valid email (fork triyder/AlpineClubBookingsNZ#121 owner decision
  * 10). It is not matched against members: keeping it current is the
  * committee's job, and the copy says so.
  */
