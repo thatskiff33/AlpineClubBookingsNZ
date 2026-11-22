@@ -103,6 +103,10 @@ export async function postRefundObligation(tx: Db, context: BookingJournalContex
  * holds a reservation on (#4516 review F3), cannot be withdrawn: that refusal rolls the release back, never
  * caught. A retry of the door posts a fresh R05 under the chain's next key, and its slices reserve their keys'
  * next generation (`reservationGenerationKey`, review F4).
+ *
+ * The caller already holds `lock(1)` and then the booking row (#5191): this takes the Payment row, and the owner read
+ * under the booking row comes after it (`lockedRefundBooking`, or a part's `debtorRead: "booking-row"`), so a caller
+ * that had not taken that row first would take it after the Payment row.
  */
 export async function withdrawRefundObligation(tx: Db, context: BookingJournalContext, input: {
   bookingId: string; scope: RefundObligationScope; id: string; actorMemberId?: string | null; reason: string;
@@ -196,8 +200,9 @@ type OwnedRefundBooking = RefundBooking & { owner: MemberMoneyDebtor };
 
 /**
  * The exact mirror of the R05, on the debtor it named. A debtor merged away since leaves that receivable stray, so
- * the R05's own receivable, when the merge snapshot missed it, and then the mirror's are carried along the committed merge chain to the owner, as a reversed receipt's is (D4, #5191); a merge
- * after this commits nets it in its own snapshot instead, and with no merge nothing moves.
+ * the R05's own receivable, when the merge snapshot missed it, and then the mirror's are carried along the committed
+ * merge chain to the owner, as a reversed receipt's is (D4, #5191); a merge after this commits nets it in its own
+ * snapshot instead, and with no merge nothing moves.
  */
 async function reverseRefundObligation(tx: Db, context: MemberMoneyPostingContext, input: {
   booking: OwnedRefundBooking; live: MemberMoneyEventKey; actorMemberId: string | null; reason: string;
@@ -220,6 +225,9 @@ async function reverseRefundObligation(tx: Db, context: MemberMoneyPostingContex
  * released only that reservation. The keep, in its own transaction under the Payment row, reverses that R05 while
  * nothing has paid it or holds a reservation on it. One that something paid or still reserves is left as it is
  * and said: that money is moving or moved, and the keep cannot undo it.
+ *
+ * The caller already holds `lock(1)` and then the booking row (#5191; the completion takes both before the Payment
+ * row), because `lockedRefundBooking` reads the owner under the booking row after this has taken the Payment row.
  */
 export async function closeKeptCaptureReturn(tx: Db, context: BookingJournalContext, input: {
   bookingId: string; paymentIntentId: string; actorMemberId: string | null;

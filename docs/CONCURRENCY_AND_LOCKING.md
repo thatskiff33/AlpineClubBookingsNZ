@@ -7187,10 +7187,11 @@ writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
   booking row, one `merge-residue` transfer per hop, as a reversed receipt does
   (D4). The R05 itself is carried first when the merge's snapshot missed it:
   the reservation step reads its debtor without a lock, so its R05 can land on
-  a member after that member's snapshot. Merge first, the owner move has committed, so the door reads the
-  survivor and moves the residue; door first, the merge waits on the booking row
-  and its snapshot nets the reversal, so nothing moves. No new key, site or
-  order. Proven in both orders against the real merge by
+  a member after that member's snapshot. Merge first, the owner move has
+  committed, so the door reads the survivor and moves the residue; door first,
+  the merge waits on the booking row and its snapshot nets the reversal, so
+  nothing moves. No new key or site; `release_claim` adds the booking row after
+  `lock(1)`. Proven in both orders against the real merge by
   `member-money-refund-appeal-merge.realdb.test.ts`.
 - **The reservation step** runs in its own short transaction on the root client,
   before each keyed slice is sent, taking only the Payment row. It releases the
