@@ -7,6 +7,7 @@ import {
   type MixedMethodApiRouteMetadata,
 } from "@/lib/api-route-security";
 import { SHARED_ADMIN_GUARD_WRAPPERS } from "@/lib/__tests__/helpers/admin-route-explicit-permissions";
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 function listRouteFiles(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -40,11 +41,20 @@ const JSON_RECEIVER_NAMES = new Set(["request", "req", "response"]);
  * route that no longer does (remove it from the list when you convert it).
  *
  * Each group is a reason the inline read could not be swapped for the shared
- * reader without changing what a caller sees. The list is the work list for
- * #5407 items 26 and 27 (the groups `uncaught`, `oneAnswer` and
- * `swallowedError`); the last four groups have no item there yet. It only
- * shrinks. Do not add a route to dodge the census: a new route uses the shared
- * reader.
+ * reader without changing what a caller sees.
+ *
+ * Pending work, the list for #5407:
+ * `uncaught` is item 26 (invalid JSON answers 500 today), and `oneAnswer` and
+ * `swallowedError` are item 27 (one answer for two faults; a bad body swallowed
+ * and treated as no body). These only shrink as those items land.
+ *
+ * Permanent exception, not work to do: `intentionalExtraResponse`, whose 400
+ * carries a field or headers on purpose.
+ *
+ * Do not add a route to dodge the census: a new route uses the shared reader.
+ * Comments are removed before matching (`stripComments`, INV-SSOT-004), so a
+ * comment that mentions `request.json()` is not a read and a commented-out
+ * read does not keep an entry alive.
  *
  * Not seen: `admin/mountain-conditions` POST reads `text()` and parses it
  * itself (#5407 item 28), and a body read under another receiver name or
@@ -687,8 +697,9 @@ describe("API route boundary metadata", () => {
     const routes = listRouteFiles(path.join(process.cwd(), "src/app/api")).map(
       relativeRoutePath,
     );
+    const code = (routePath: string) => stripComments(routeContents(routePath));
     const directReaders = routes.filter((routePath) =>
-      DIRECT_REQUEST_JSON_READ.test(routeContents(routePath)),
+      DIRECT_REQUEST_JSON_READ.test(code(routePath)),
     );
 
     const duplicated = allowlisted.filter(
@@ -702,7 +713,7 @@ describe("API route boundary metadata", () => {
     );
     // A request parameter under another name would slip past the pattern above.
     const otherReceivers = routes.flatMap((routePath) =>
-      [...routeContents(routePath).matchAll(/\b(\w+)\.json\(\)/g)]
+      [...code(routePath).matchAll(/\b(\w+)\.json\(\)/g)]
         .map((match) => match[1] ?? "")
         .filter((name) => !JSON_RECEIVER_NAMES.has(name))
         .map((name) => `${routePath}: ${name}.json()`),
