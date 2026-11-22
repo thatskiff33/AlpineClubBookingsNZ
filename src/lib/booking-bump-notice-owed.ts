@@ -44,7 +44,7 @@
  * the sends and the sweep run after the commit on the base client and take no
  * advisory key.
  */
-import { BookingStatus, type Prisma } from "@prisma/client";
+import { BookingStatus, Prisma } from "@prisma/client";
 import { claimOwedAlert, listOwedAlertKeys, settleOwedAlert } from "@/lib/alert-cooldown";
 import { alertOfficersOfBump } from "@/lib/booking-bump-alert";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -130,7 +130,7 @@ export async function recordBumpNoticesOwed(
 }
 
 /** What the notices need, read again by the sweep. */
-export const BUMP_NOTICE_BOOKING_SELECT = {
+export const BUMP_NOTICE_BOOKING_SELECT = Prisma.validator<Prisma.BookingSelect>()({
   id: true,
   status: true,
   lodgeId: true,
@@ -140,7 +140,7 @@ export const BUMP_NOTICE_BOOKING_SELECT = {
   member: { select: { id: true, email: true, firstName: true, lastName: true, canLogin: true } },
   organisation: { select: { name: true, email: true } },
   guests: { select: { id: true } },
-} satisfies Prisma.BookingSelect;
+});
 
 export type BumpNoticeBooking = Prisma.BookingGetPayload<{ select: typeof BUMP_NOTICE_BOOKING_SELECT }>;
 
