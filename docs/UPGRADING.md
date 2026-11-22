@@ -63,8 +63,11 @@ It complements the two documents next to it and does not repeat them:
    The count starts from the later of that release and the release that first
    shipped the tool, so a tool that arrives in a patch after it still gets its
    two minor releases: a tool for the upgrade to 0.14.0 first shipped in 0.15.0
-   is gone from 0.17.0. Two rather than one because a club can skip a release,
-   and the deploy script does not stop it (principle 1). When the tool goes,
+   is gone from 0.17.0. Releases are cut from `main`, so the change that
+   removes a tool merges only once the next release cut will be that minor
+   release; merged earlier, a patch release in between would lose a tool the
+   rule says it still ships. Two rather than one because a club can skip a
+   release, and the deploy script does not stop it (principle 1). When the tool goes,
    its documentation becomes a short note naming the release tag that still
    carries it, and any invariant that names it is reworded in the same change.
    A club that still needs it runs it from that tag. It has not been tested
