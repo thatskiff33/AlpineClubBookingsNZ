@@ -1936,6 +1936,33 @@ describe("after-deploy steps: filed by prepare, opened as a checklist by publish
     expect(read(repo, "docs/UPGRADING.md").match(/### After deploying this release/g)).toHaveLength(1);
   });
 
+  it("keeps filed steps last when --amend folds only late upgrade steps, so none lands under the after-deploy heading", () => {
+    const { repo, plan } = preparedFixture();
+    finishNotesKeepingSteps(repo, plan.version);
+    const prep = git(repo, "rev-parse", "HEAD");
+    git(repo, "switch", "-q", "--detach", "origin/main");
+    git(repo, "merge", "-q", "--no-ff", "-m", `Merge pull request #4501 from ${plan.branch}`, prep);
+    const late = "### Run the pre-deploy check (#4610)\n\nRun it before deploying.";
+    fs.writeFileSync(
+      path.join(repo, "docs", "UPGRADING.md"),
+      read(repo, "docs/UPGRADING.md").replace("## Unreleased\n\n", `## Unreleased\n\n${late}\n\n`),
+    );
+    git(repo, "add", "--all");
+    git(repo, "commit", "-qm", "Merge pull request #4610");
+    git(repo, "push", "-q", "origin", "HEAD:main");
+
+    prepareRelease({ repoRoot: repo, amend: true, execute: true, run: fixtureRunner(repo), log: silentLog() });
+
+    const guide = read(repo, "docs/UPGRADING.md");
+    const section = guide.slice(guide.indexOf("## v0.13.2 → v0.13.3"), guide.indexOf("## v0.13.1 → v0.13.2"));
+    const order = ["### Reconnect Xero once (#4400)", "### Run the pre-deploy check (#4610)", "### After deploying this release", "**Owner:** Run `pnpm"];
+    const at = order.map((text) => section.indexOf(text));
+    expect(at.every((index) => index > 0), section).toBe(true);
+    expect([...at].sort((a, b) => a - b), section).toEqual(at);
+    expect(section.match(/<!-- deploy-steps:start -->/g)).toHaveLength(1);
+    expect(section.trimEnd().endsWith("<!-- deploy-steps:end -->\n\n---")).toBe(true);
+  });
+
   it("opens the checklist issue assigned to @me before the release, and the release body links it", () => {
     const { repo } = mergedDeployFixture();
     const run = fixtureRunner(repo, {

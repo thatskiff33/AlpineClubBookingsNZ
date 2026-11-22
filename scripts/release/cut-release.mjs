@@ -603,14 +603,16 @@ export function planReleaseDocs({
   const describe = [];
   const deploySteps = countDeploySteps(deployItems);
   // Steps already filed come out first, so a late fold sees only the section's
-  // own upgrade steps, then go back at its end with the new ones after them.
-  const filed = deploySteps > 0 ? takeUpgradeDeploySteps(guide, upgradeHeading) : { text: guide, items: [] };
+  // own upgrade steps, then go back at its end with any new ones after them —
+  // even when the fold brings no new step, or late upgrade steps would land
+  // under the after-deploy heading.
+  const filed = takeUpgradeDeploySteps(guide, upgradeHeading);
   if (upgrade.action !== "none" || deploySteps > 0) {
     const folded = upgrade.action === "none" ? filed.text : foldUpgradingInto(filed.text, { fromVersion, toVersion: version, amend });
-    const items = filed.items.length > 0 ? [...filed.items, "", ...deployItems] : deployItems;
+    const items = filed.items.length > 0 && deploySteps > 0 ? [...filed.items, "", ...deployItems] : [...filed.items, ...deployItems];
     files.push({
       relative: UPGRADING_PATH,
-      text: deploySteps > 0 ? fileUpgradeDeploySteps(folded, upgradeHeading, items) : folded,
+      text: items.length > 0 ? fileUpgradeDeploySteps(folded, upgradeHeading, items) : folded,
       created: false,
     });
   }
