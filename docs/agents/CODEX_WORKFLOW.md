@@ -273,7 +273,7 @@ suite must pass and none may skip. `migrations` runs
 always, then, when the change can move CI's migration jobs, drift and the
 data-migration suites with the same no-skip check (its header has the rule).
 `typecheck` runs `scripts/ci/sekreton-typecheck.sh` (production project only,
-skipped under 6 GiB); PR CI keeps the rest.
+skipped under 6 GiB, heap sized to the runner); PR CI keeps the rest.
 `fast-censuses` (`pnpm run ci:fast-censuses`) and `migrations` first run
 `sekreton-prepare-base.sh`: fetch `origin` (failure fails), or without one use
 local `main`.
