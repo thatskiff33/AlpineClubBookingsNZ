@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
@@ -1193,11 +1194,7 @@ function isOpenSlotUniqueViolation(error: unknown): boolean {
     return true;
   }
   // Test seam / defensive: a plain P2002-coded object still maps to the conflict.
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    (error as { code?: unknown }).code === "P2002"
-  );
+  return isPrismaUniqueConstraintError(error);
 }
 
 // ---------------------------------------------------------------------------
