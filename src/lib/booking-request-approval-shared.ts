@@ -2,10 +2,13 @@
  * Two approval-time steps the public booking-request pipeline
  * (`booking-request.ts`) and the school pipeline (`school-booking-request.ts`)
  * wrote out identically (#5398): the held booking's lodge read before the
- * approval transaction, and the member-guest notices after its commit. They sit
- * beside `booking-request-shared.ts`, which holds the in-transaction clones,
- * only because that module is at its size budget. Each pipeline keeps its own
- * log text, and nothing else between the two pipelines is merged here.
+ * approval transaction, and the member-guest notices after its commit. They
+ * belong with the other steps both pipelines share in `booking-request-shared.ts`
+ * (its in-transaction clones and its post-commit helpers, such as
+ * `notifyMemberGuestsHoldReleased` and `sendOwnerSubstitutionAdminAlert`), and
+ * sit in this sibling file only because that module is at its 700-line size
+ * budget. Each pipeline keeps its own log text, and nothing else between the
+ * two pipelines is merged here.
  */
 import type { BookingRequest } from "@prisma/client";
 import type { MemberGuestAddNotificationRow } from "@/lib/member-guest-add-policy";
