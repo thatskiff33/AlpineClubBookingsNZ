@@ -954,4 +954,20 @@ describe("POST /api/bookings through an AI app connection", () => {
   it("keeps the officer's role on the website", async () => {
     expect(new Set(await scanRole(false))).toEqual(new Set(["ADMIN"]));
   });
+
+  it("refuses a connection from an admin-only account, which has no member to book as", async () => {
+    // Role checks read the session they are given, so the route's choice of
+    // session decides the answer.
+    const roles = (user: { accessRoles?: Array<{ role: string } | string> }) =>
+      (user.accessRoles ?? []).map((item) => (typeof item === "string" ? item : item.role));
+    h.hasAdminAccess.mockImplementation((user: never) => roles(user).includes("ADMIN"));
+    h.hasAccessRole.mockImplementation((user: never, role: string) => roles(user).includes(role));
+    h.auth.mockResolvedValue(ADMIN_SESSION);
+    const request = makeRequest(draftPayload());
+    request.headers.set("x-mcp-principal", "signed-principal");
+    const res = await POST(request);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ code: "ADMIN_MUST_BOOK_ON_BEHALF" });
+    expect(h.createDraftBooking).not.toHaveBeenCalled();
+  });
 });

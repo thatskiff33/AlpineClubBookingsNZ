@@ -55,6 +55,15 @@ export type ConnectionShapeFor<T> = ShapeFor<T, false>;
 /** A shape that must name every field `T` has, at every depth: for a route whose whole answer is the action's. */
 export type CompleteConnectionShapeFor<T> = ShapeFor<T, true>;
 
+/**
+ * The members of a union of answers as one object type with every field any
+ * member has, so a complete shape for a route with several success answers
+ * must name the fields of each.
+ */
+export type EveryFieldOf<U> = {
+  [K in U extends unknown ? keyof U : never]: U extends unknown ? (K extends keyof U ? U[K] : never) : never;
+};
+
 /** Checks a shape against the type it projects, at compile time only. */
 export function connectionShapeFor<T>(shape: ConnectionShapeFor<T>): ConnectionShape {
   return shape as ConnectionShape;

@@ -18,7 +18,8 @@ import {
   hasAdminAreaAccess,
 } from "@/lib/admin-permissions";
 import { clubFormatValues } from "@/lib/club-format-server";
-import { arrivesAsMcpConnection, memberOnlySessionUser } from "@/lib/mcp-connection-request";
+import { arrivesAsMcpConnection, connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
+import { CANCEL_BOOKING_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 import {
   TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
   transactionContendedResponse,
@@ -142,7 +143,7 @@ export async function POST(
     );
 
     if (result.status === 200) {
-      return NextResponse.json(result.data);
+      return connectionJson(request, result.data, CANCEL_BOOKING_CONNECTION_SHAPE);
     }
     return NextResponse.json(
       { error: result.error },

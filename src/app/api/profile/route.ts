@@ -189,21 +189,6 @@ export async function PUT(req: NextRequest) {
     }
   }
 
-  if (data.postalSameAsPhysical) {
-    const postalAddress = copyStreetAddressToPostal({
-      streetAddressLine1: data.streetAddressLine1,
-      streetAddressLine2: data.streetAddressLine2,
-      streetCity: data.streetCity,
-      streetRegion: data.streetRegion,
-      streetPostalCode: data.streetPostalCode,
-      streetCountry: data.streetCountry,
-    });
-
-    for (const field of POSTAL_FIELDS) {
-      updateData[field] = postalAddress[field]?.trim() || null;
-    }
-  }
-
   // Date of birth. The age tier is resolved after loading the member below so
   // enforcement (org / FORCED-type force, and preserving an ALLOWED-type manual
   // N/A) is applied and a DOB recompute can never silently un-force N/A (#2106).
@@ -244,6 +229,27 @@ export async function PUT(req: NextRequest) {
   });
   if (!existing) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
+  }
+
+  // Postal same as physical: copied from the street address as it will be
+  // saved, sent fields over stored ones. The profile form sends every street
+  // field; an AI app (ALP-718) may send the flag alone, which must copy the
+  // stored street address rather than blank the postal one.
+  if (data.postalSameAsPhysical) {
+    const street = (field: (typeof STREET_FIELDS)[number]) =>
+      (field in updateData ? updateData[field] : existing[field]) as string | null | undefined;
+    const postalAddress = copyStreetAddressToPostal({
+      streetAddressLine1: street("streetAddressLine1"),
+      streetAddressLine2: street("streetAddressLine2"),
+      streetCity: street("streetCity"),
+      streetRegion: street("streetRegion"),
+      streetPostalCode: street("streetPostalCode"),
+      streetCountry: street("streetCountry"),
+    });
+
+    for (const field of POSTAL_FIELDS) {
+      updateData[field] = postalAddress[field]?.trim() || null;
+    }
   }
 
   // #2106: apply age-tier enforcement to a DOB change. Only touch the tier when

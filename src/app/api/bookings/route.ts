@@ -139,7 +139,8 @@ import {
 } from "@/lib/access-roles";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { refuseOnBehalfUnlessBookingOfficer } from "@/lib/on-behalf-booking";
-import { arrivesAsMcpConnection, memberOnlySessionUser } from "@/lib/mcp-connection-request";
+import { arrivesAsMcpConnection, connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-request";
+import { MEMBER_DRAFT_SUMMARY_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 import { getMemberDraftSummary } from "@/lib/member-draft-summary";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
@@ -239,9 +240,9 @@ function bookingCreateContendedResponse(
  * the draft branch) is sent the draft's narrow summary, with no dietary,
  * consent or internal columns; the website's answer is unchanged.
  */
-async function draftCreatedForConnection(memberId: string, bookingId: string) {
+async function draftCreatedForConnection(request: Request, memberId: string, bookingId: string) {
   const summary = await getMemberDraftSummary(memberId, bookingId);
-  return NextResponse.json(summary ?? { id: bookingId }, { status: 201 });
+  return connectionJson(request, summary ?? { id: bookingId }, MEMBER_DRAFT_SUMMARY_CONNECTION_SHAPE, { status: 201 });
 }
 
 export async function POST(request: NextRequest) {
@@ -259,13 +260,13 @@ export async function POST(request: NextRequest) {
   if (inactiveResponse) {
     return inactiveResponse;
   }
-  const isAdmin = hasAdminAccess(session.user);
-  // Dual-hat detection: a USER token alongside admin roles means this account
-  // books for itself through the member flow under full member rules (#1442).
-  const isMember = hasAccessRole(session.user, "USER");
   // bookings:edit holders may book on behalf (#1313, `refuseOnBehalfUnlessBookingOfficer`
   // below); an AI app connection never may, and sees clashes as a member (INV-MCP-006).
   const memberAuthority = memberOnlySessionUser(request, session.user);
+  const isAdmin = hasAdminAccess(memberAuthority);
+  // Dual-hat detection: a USER token alongside admin roles means this account
+  // books for itself through the member flow under full member rules (#1442).
+  const isMember = hasAccessRole(memberAuthority, "USER");
   const actorRole = bookingManagementAuthorizationRole(memberAuthority);
 
   const json = await parseJsonRequestBody(request);
@@ -351,8 +352,10 @@ export async function POST(request: NextRequest) {
   > | null = null;
 
   // Only admin-only accounts (no USER token) are forced onto the on-behalf
-  // page; dual-hat admins self-book here under full member rules (#1442).
-  if (isAdmin && !isMember && !parsed.data.forMemberId) {
+  // page; dual-hat admins self-book here under full member rules (#1442). A
+  // connection reads as no admin, so its admin-only account is refused here
+  // by name: it has no member to book as, and may not book on behalf.
+  if (!isMember && !parsed.data.forMemberId && (isAdmin || arrivesAsMcpConnection(request))) {
     return NextResponse.json(
       { error: "Admins must book on behalf of a member. Use the admin booking page.", code: "ADMIN_MUST_BOOK_ON_BEHALF" },
       { status: 403 }
@@ -1547,7 +1550,7 @@ export async function POST(request: NextRequest) {
       });
       await notifyMemberGuestAdds(newBooking);
       await notifyFamilyAdds(newBooking);
-      return arrivesAsMcpConnection(request) ? draftCreatedForConnection(effectiveMemberId, newBooking.id) : NextResponse.json(newBooking, { status: 201 });
+      return arrivesAsMcpConnection(request) ? draftCreatedForConnection(request, effectiveMemberId, newBooking.id) : NextResponse.json(newBooking, { status: 201 });
     } catch (err) {
       const deferred = deferredServiceRefusal(err);
       if (deferred) return deferred;

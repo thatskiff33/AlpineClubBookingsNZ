@@ -4,7 +4,9 @@ import {
   filterLodgesByEligibility,
   getEligibleLodgeIdsForMember,
 } from "@/lib/lodge-access";
+import { LODGE_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 import { lodgeOrderBy } from "@/lib/lodges";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 
@@ -14,7 +16,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 // The client hides the selector when one lodge comes back (ADR-002
 // presentation rule); eligibility filtering means a restricted member simply
 // never sees lodges they cannot book.
-export async function GET() {
+export async function GET(request: Request) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
@@ -35,5 +37,5 @@ export async function GET() {
   const access = await getEligibleLodgeIdsForMember(prisma, session.user.id);
   const eligible = filterLodgesByEligibility(access, lodges);
 
-  return NextResponse.json({ lodges: eligible });
+  return connectionJson(request, { lodges: eligible }, LODGE_LIST_CONNECTION_SHAPE);
 }

@@ -12,15 +12,16 @@
  * Types only from the route modules: nothing here reaches the database.
  */
 import type { CancelBookingResult } from "@/lib/booking-cancel-result";
+import type { CancelPreviewAnswer } from "@/lib/cancel-preview-answer";
 import type { BookingMessageClubTokens } from "@/lib/booking-message-definitions";
 import type { serializePublicCommitteeAssignment } from "@/lib/committee";
-import type { CancelCardRefundSplit } from "@/lib/cancel-card-refund-shortfall";
 import type { AuditTimelineResponse } from "@/lib/audit-query";
 import {
   completeConnectionShapeFor,
   connectionShapeFor,
   eachEntry,
   type ConnectionShape,
+  type EveryFieldOf,
 } from "@/lib/connection-projection";
 import type { MemberDraftSummary } from "@/lib/member-draft-summary";
 import type { MemberLodgeRoster } from "@/lib/member-lodge-roster";
@@ -31,7 +32,6 @@ import {
 import type { MemberBookingSummary, MemberProfileSummary } from "@/lib/member-self-read";
 import type { MemberNoticeView } from "@/lib/notices";
 import type { AgeTierSettingData } from "@/lib/policies/age-tier";
-import type { calculateCancellationPreview } from "@/lib/policies/booking-route-decisions";
 import type { WhakapapaCurlData } from "@/lib/whakapapa-report";
 
 // --- Stage 1 (ALP-653) ------------------------------------------------------
@@ -148,18 +148,8 @@ export const MEMBER_DRAFT_LIST_CONNECTION_SHAPE: ConnectionShape = {
   drafts: MEMBER_DRAFT_SUMMARY_CONNECTION_SHAPE,
 };
 
-type CancelPreviewAnswer = ReturnType<typeof calculateCancellationPreview> & {
-  hasPayment: boolean;
-  manualRefund: boolean;
-  paymentSettledByHand: boolean;
-  groupCancellationRefundCents: number;
-  groupCancellationRefundNote: string;
-  cardShortfall: CancelCardRefundSplit;
-  refundDisputed: true;
-  refundMethodForced: string | null;
-};
-
-export const CANCEL_PREVIEW_CONNECTION_SHAPE = completeConnectionShapeFor<CancelPreviewAnswer>({
+/** Every field of either cancel preview answer: a field the route gains must be decided here. */
+export const CANCEL_PREVIEW_CONNECTION_SHAPE = completeConnectionShapeFor<EveryFieldOf<CancelPreviewAnswer>>({
   refundAmountCents: true,
   keptAmountCents: true,
   changeFeeCents: true,

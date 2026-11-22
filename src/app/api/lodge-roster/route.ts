@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { hasAccessRole } from "@/lib/access-roles";
 import { LODGE_ROSTER_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 import { projectForConnection } from "@/lib/connection-projection";
 import { mcpModuleOffResponse } from "@/lib/mcp/http";
@@ -38,7 +39,9 @@ export async function GET(request: Request) {
   // The proxy gates this path on the module too; a gate that lived only there
   // has shipped bypassed before (#2780).
   const modules = await loadEffectiveModuleFlags();
-  if (!modules.memberLodgeRoster) {
+  // A kiosk-only (LODGE) account never reaches the member page this reuses:
+  // the authenticated layout sends it to `/lodge/kiosk` (INV-PRIV-017).
+  if (!modules.memberLodgeRoster || !hasAccessRole(guard.session.user, "USER")) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

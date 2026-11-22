@@ -29,6 +29,8 @@ export const MCP_PERMANENT_EXCLUSION_REASONS = {
   "needs-browser":
     "Needs the member's browser: card entry, a file, or a link sent to them by email.",
   infrastructure: "Health checks, deploy hooks and test-only helpers.",
+  // Declared here, first applied by ALP-794 to the booking edits that change
+  // what a booking costs.
   "moves-money":
     "Takes, moves or refunds money, or changes what a booking costs, which the member confirms on the website.",
   declaration:
@@ -148,6 +150,8 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "GET /api/privacy/replay",
     ],
   },
+  // Door codes and emergency access: never sent to an AI provider.
+  { reason: "access-secrets", routes: ["GET /api/lodge-instructions"] },
   { reason: "site-helper", routes: ["POST /api/help/chat"] },
   { reason: "public-visitor", routes: ["POST /api/contact", "POST /api/applications"] },
   // The nominee confirms through a link emailed to them.
@@ -178,7 +182,6 @@ const MEMBER_NOT_YET_PREFIXES: Readonly<Record<MemberNotYetGroup, readonly strin
     "/api/food-orders",
     "/api/inductions",
     "/api/issue-reports",
-    "/api/lodge-instructions",
     "/api/lodge-maintenance",
     "/api/maintenance-reports",
     "/api/work-parties",

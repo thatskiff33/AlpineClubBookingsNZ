@@ -66,6 +66,7 @@ import { POST as markNoticeRead } from "@/app/api/notices/[id]/read/route";
 import { GET as getPrefs, PUT as putPrefs } from "@/app/api/notifications/preferences/route";
 import { PUT as putProfile } from "@/app/api/profile/route";
 import { expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
+import { lodgeSession } from "@/lib/__tests__/helpers/sessions";
 import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
 
 /** Every key anywhere in a JSON value. */
@@ -198,12 +199,31 @@ describe("update_my_profile", () => {
     }
   });
 
-  it("keeps the date of birth, address and occupation an app did not send", async () => {
+  it("keeps every stored field an app did not send", async () => {
     await expectActionContract({ actionId: "update_my_profile", handler: putProfile, args });
     const data = h.prisma.member.update.mock.calls[0][0].data as Record<string, unknown>;
-    // Not read as missing: the stored values complete the profile.
-    for (const kept of ["dateOfBirth", "occupation", "streetAddressLine1", "postalAddressLine1", "ageTier"]) {
-      expect(data, kept).not.toHaveProperty(kept);
+    // Not read as missing: the stored values complete the profile. Only the
+    // fields the app sent (and the always-saved name and phone) are written.
+    expect(Object.keys(data).sort()).toEqual(Object.keys(args).sort());
+  });
+
+  it("copies the stored street address when an app sends only postalSameAsPhysical", async () => {
+    await expectActionContract({
+      actionId: "update_my_profile",
+      handler: putProfile,
+      args: { ...args, postalSameAsPhysical: true },
+    });
+    const data = h.prisma.member.update.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data).toMatchObject({
+      postalAddressLine1: "1 Ridge Road",
+      postalAddressLine2: null,
+      postalCity: "Ohakune",
+      postalRegion: "Manawatū-Whanganui",
+      postalPostalCode: "4625",
+      postalCountry: "NZ",
+    });
+    for (const street of ["streetAddressLine1", "streetCity", "dateOfBirth", "occupation"]) {
+      expect(data, street).not.toHaveProperty(street);
     }
   });
 
@@ -261,6 +281,18 @@ describe("get_notice and mark_notice_read", () => {
       params: Promise.resolve({ id: "notice-1" }),
     });
     expect(res.status).toBe(404);
+    expect(h.getNoticeForMember).not.toHaveBeenCalled();
+  });
+
+  it("is absent for a kiosk-only account, which never reaches the member notices page", async () => {
+    h.auth.mockResolvedValue(lodgeSession());
+    h.getNoticeForMember.mockResolvedValue(notice);
+    for (const headers of [{}, { [MCP_PRINCIPAL_HEADER]: "p" }]) {
+      const res = await getNotice(new Request("https://club.example.test/api/notices/notice-1", { headers }), {
+        params: Promise.resolve({ id: "notice-1" }),
+      });
+      expect(res.status).toBe(404);
+    }
     expect(h.getNoticeForMember).not.toHaveBeenCalled();
   });
 
@@ -346,6 +378,15 @@ describe("get_lodge_roster", () => {
     });
     expect(browser).toEqual(connection);
     expect(h.buildMemberLodgeRoster).toHaveBeenCalledWith("officer-1");
+  });
+
+  it("is absent for a kiosk-only account, which never reaches the roster page (INV-PRIV-017)", async () => {
+    h.auth.mockResolvedValue(lodgeSession());
+    for (const headers of [{}, { [MCP_PRINCIPAL_HEADER]: "p" }]) {
+      const res = await getRoster(new Request("https://club.example.test/api/lodge-roster", { headers }));
+      expect(res.status).toBe(404);
+    }
+    expect(h.buildMemberLodgeRoster).not.toHaveBeenCalled();
   });
 
   it("is absent while the roster is switched off", async () => {

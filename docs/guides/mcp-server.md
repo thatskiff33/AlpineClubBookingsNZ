@@ -232,7 +232,11 @@ reasons are permanent — those routes are never actions:
 - **Needs the browser** — card entry, file uploads and downloads, and links
   sent to the member by email (for example confirming a nomination).
 - **Moves money** — anything that takes, moves or refunds money or changes
-  what a booking costs, which the member confirms on the website.
+  what a booking costs, which the member confirms on the website. No route
+  carries this reason yet: ALP-794 gives it to changing a booking or its
+  dates, adding or removing a guest, confirming a draft booking and sending a
+  guest a payment link. A member's refund request is not one of them: it is a
+  request an officer reviews, so ALP-794 treats it as an ordinary write.
 - **Declarations** — the member's own acknowledgements and consents:
   acknowledging a notice, confirming their details at onboarding, asking for
   their account to be deleted.
@@ -241,8 +245,8 @@ reasons are permanent — those routes are never actions:
   privacy replay.
 - **Visitor forms** — the contact form and membership applications, for
   people who are not signed in.
-- **Access details** — lodge door codes and similar, which stay on the
-  website.
+- **Access details** — the lodge instructions, which carry door codes and
+  emergency access details. They are never sent to an AI provider.
 - **The website's help assistant** — the member's own AI app answers them
   instead.
 

@@ -15,6 +15,7 @@
  * also a Full Admin, so a route that lent a connection officer reach would
  * answer with more than the member's own records and fail the test.
  */
+import { NextRequest } from "next/server";
 import { expect } from "vitest";
 
 import type { ConnectionField, ConnectionShape } from "@/lib/connection-projection";
@@ -49,7 +50,8 @@ function requestFor(
   if (viaConnection) headers[MCP_PRINCIPAL_HEADER] = "contract-test-principal";
   if (body !== null) headers["content-type"] = "application/json";
   return {
-    request: new Request(url, {
+    // A NextRequest, as the App Router hands every handler.
+    request: new NextRequest(url, {
       method: action.method,
       headers,
       body: body === null ? undefined : JSON.stringify(body),

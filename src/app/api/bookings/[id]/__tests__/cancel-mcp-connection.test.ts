@@ -97,6 +97,23 @@ describe("POST /api/bookings/[id]/cancel through an AI app connection", () => {
     expect(h.cancelBooking).not.toHaveBeenCalled();
   });
 
+  it("sends a connection only the cancel_my_booking fields of the service's answer", async () => {
+    const data = {
+      success: true,
+      refundAmountCents: 0,
+      refundPercentage: 0,
+      refundMethod: "card",
+      message: "ok",
+      internalLedgerNote: "not for an AI provider",
+    };
+    h.cancelBooking.mockResolvedValue({ status: 200, data });
+    const viaConnection = await POST(cancelRequest({ refundMethod: "card" }, true), { params });
+    const { internalLedgerNote: _withheld, ...promised } = data;
+    expect(await viaConnection.json()).toEqual(promised);
+    const viaBrowser = await POST(cancelRequest({ refundMethod: "card" }, false), { params });
+    expect(await viaBrowser.json()).toEqual(data);
+  });
+
   it("keeps the officer's reach on the website, without the header", async () => {
     const res = await POST(cancelRequest({ refundMethod: "card" }, false), { params });
     expect(res.status).toBe(200);
