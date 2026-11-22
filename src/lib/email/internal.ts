@@ -30,6 +30,7 @@ import nodemailer, {
 import logger from "@/lib/logger";
 import {
   CAPTURE_TRANSPORT_MODE_LABEL,
+  EMAIL_TRANSPORT_TIMEOUT_OPTIONS,
   resolveEmailDeliveryConfig,
   type ImplicitSesDefault,
 } from "@/lib/email-delivery";
@@ -92,9 +93,16 @@ export async function getEmailTransporter(clearance: DeliveryClearance) {
     );
   }
 
-  const { host, port, auth, connectionTimeout, greetingTimeout, socketTimeout } =
-    config.transportOptions;
-  const signature = `${config.mode}:${host}:${port}:${auth.user}:${connectionTimeout}:${greetingTimeout}:${socketTimeout}`;
+  const options = config.transportOptions;
+  // Every timeout is part of the key, listed from the one definition, so a
+  // changed setting builds a new transport (#5407).
+  const signature = [
+    config.mode,
+    options.host,
+    options.port,
+    options.auth.user,
+    ...EMAIL_TRANSPORT_TIMEOUT_OPTIONS.map((option) => options[option]),
+  ].join(":");
   if (!cachedTransporter || cachedTransportSignature !== signature) {
     cachedTransporter = nodemailer.createTransport(config.transportOptions);
     cachedTransportSignature = signature;

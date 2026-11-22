@@ -28,12 +28,13 @@ import {
   EMAIL_TRANSPORT_TIMEOUT_SETTINGS,
   resolveEmailDeliveryConfigFromEnv,
 } from "@/lib/email-delivery";
-import { verifyEmailTransport } from "@/lib/email/internal";
+import { getEmailTransporter, verifyEmailTransport } from "@/lib/email/internal";
+import { resolveDeliveryPolicy } from "@/lib/environment-delivery-policy";
 import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 
 const DEFAULTS = {
   connectionTimeout: 30_000,
-  greetingTimeout: 30_000,
+  greetingTimeout: 15_000,
   socketTimeout: 120_000,
 };
 
@@ -90,6 +91,30 @@ describe("every transport carries the timeouts (#5407 item 34)", () => {
     expect(config.warnings.filter((line) => line.includes("_TIMEOUT_MS"))).toEqual([]);
   });
 
+  it("warns, and keeps both values, when the greeting cap is above the setup budget", () => {
+    // nodemailer gives the greeting the smaller of its cap and what is left of
+    // the connection deadline, so a higher cap can never take effect.
+    const config = resolveEmailDeliveryConfigFromEnv({
+      ...RELAY_ENV,
+      EMAIL_SMTP_CONNECTION_TIMEOUT_MS: "20000",
+      EMAIL_SMTP_GREETING_TIMEOUT_MS: "25000",
+    });
+    expect(config.ok).toBe(true);
+    expect(config.transportOptions).toMatchObject({ connectionTimeout: 20_000, greetingTimeout: 25_000 });
+    expect(config.warnings).toContain(
+      "EMAIL_SMTP_GREETING_TIMEOUT_MS (25000) is above EMAIL_SMTP_CONNECTION_TIMEOUT_MS (20000), which already covers the greeting, so it has no effect; set it lower or raise EMAIL_SMTP_CONNECTION_TIMEOUT_MS",
+    );
+  });
+
+  it("does not warn when the greeting cap equals the setup budget", () => {
+    const config = resolveEmailDeliveryConfigFromEnv({
+      ...RELAY_ENV,
+      EMAIL_SMTP_CONNECTION_TIMEOUT_MS: "20000",
+      EMAIL_SMTP_GREETING_TIMEOUT_MS: "20000",
+    });
+    expect(config.warnings.filter((line) => line.includes("_TIMEOUT_MS"))).toEqual([]);
+  });
+
   it("maps each setting to the option nodemailer reads", () => {
     const config = resolveEmailDeliveryConfigFromEnv({
       ...RELAY_ENV,
@@ -143,5 +168,39 @@ describe("every transport carries the timeouts (#5407 item 34)", () => {
         socketTimeout: DEFAULTS.socketTimeout,
       }),
     );
+  });
+});
+
+describe("the sending transport's cache key (#5407)", () => {
+  function stubRelay(host: string, extra: Record<string, string> = {}) {
+    for (const [name, value] of Object.entries({ ...RELAY_ENV, EMAIL_SERVER_HOST: host, ...extra })) {
+      vi.stubEnv(name, value);
+    }
+    vi.stubEnv("USE_AWS_SES", "false");
+    vi.stubEnv("USE_LOCAL_CAPTURE", "false");
+  }
+
+  async function transporter() {
+    const decision = await resolveDeliveryPolicy();
+    if (decision.kind !== "allow") throw new Error(`expected an allow, got ${decision.kind}`);
+    return getEmailTransporter(decision.clearance);
+  }
+
+  it("reuses the transport for an unchanged configuration and builds a new one when a timeout changes", async () => {
+    declareEnvironmentRole("production");
+    // A host no other case uses, so a transport cached by an earlier case is not reused.
+    stubRelay("cache-key.example.org");
+    mocks.createTransport.mockImplementation(() => ({ id: mocks.createTransport.mock.calls.length }));
+
+    const first = await transporter();
+    const again = await transporter();
+    expect(mocks.createTransport).toHaveBeenCalledTimes(1);
+    expect(again.transporter).toBe(first.transporter);
+
+    vi.stubEnv("EMAIL_SMTP_SOCKET_TIMEOUT_MS", "60000");
+    const changed = await transporter();
+    expect(mocks.createTransport).toHaveBeenCalledTimes(2);
+    expect(changed.transporter).not.toBe(first.transporter);
+    expect(mocks.createTransport).toHaveBeenLastCalledWith(expect.objectContaining({ socketTimeout: 60_000 }));
   });
 });
