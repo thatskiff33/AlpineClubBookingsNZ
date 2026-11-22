@@ -407,10 +407,11 @@ export async function buildUniqueMembershipTypeKey(
 
 /**
  * The built-in type a role falls back to when a member has no season
- * assignment. Takes `Role` only (#5407): `USER` and any unlisted value fall
- * through to the billable `FULL`, so an arbitrary string here could put a
- * member on a type that owes a subscription. A caller holding a wider value
- * narrows it at its own boundary (`isRole`, `isNonMemberRole`).
+ * assignment. Takes `Role` only (#5407), and maps each `Role` explicitly; an
+ * untyped value (a cast, a fixture) still returns the billable `FULL`, so an
+ * arbitrary string here could put a member on a type that owes a
+ * subscription. A caller holding a wider value narrows it at its own boundary
+ * (`isRole`, `isNonMemberRole`).
  */
 export function defaultMembershipTypeKeyForRole(
   role: Role,
