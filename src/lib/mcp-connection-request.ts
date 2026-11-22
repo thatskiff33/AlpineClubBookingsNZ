@@ -17,7 +17,7 @@ import type { Session } from "next-auth";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { hasAccessRole } from "@/lib/access-roles";
+import { hasAccessRole, type AccessRoleInput } from "@/lib/access-roles";
 import { emptyAdminPermissionMatrix } from "@/lib/admin-permissions";
 import { projectForConnection, type ConnectionShape } from "@/lib/connection-projection";
 import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
@@ -52,7 +52,7 @@ export async function servingMcpConnection(): Promise<boolean> {
  *
  * Call it once, before any officer branch, and decide with what it returns.
  */
-export function memberOnlySessionUser<U extends Session["user"]>(request: Request, user: U): U {
+export function memberOnlySessionUser<U extends Session["user"] | MemberOnlyInput>(request: Request, user: U): U {
   if (!arrivesAsMcpConnection(request)) return user;
   return {
     ...user,
@@ -62,6 +62,9 @@ export function memberOnlySessionUser<U extends Session["user"]>(request: Reques
     adminPermissionMatrix: emptyAdminPermissionMatrix(),
   };
 }
+
+/** A session user as `requireActiveSession` returns it: roles, matrix and the login flag. */
+type MemberOnlyInput = AccessRoleInput & { id: string; role: string; adminPermissionMatrix?: unknown };
 
 const CLASSIFYING_ACCESS_ROLES = ["USER", "ORG"] as const;
 const LEGACY_ORGANISATION_ROLE = "SCHOOL";

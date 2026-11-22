@@ -1,23 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { formatDateOnly } from "@/lib/date-only";
-import { parsedDateOnlySchema } from "@/lib/date-only-schema";
+import { workPartiesForStayQuerySchema } from "@/lib/work-party-query-schema";
+import { WORK_PARTIES_FOR_STAY_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { connectionJson } from "@/lib/mcp-connection-request";
 import { findActiveWorkPartyEventsForRange } from "@/lib/work-party";
-
-const querySchema = z.object({
-  checkIn: parsedDateOnlySchema,
-  checkOut: parsedDateOnlySchema,
-  // Lodge being booked (multi-lodge): events bound to another lodge are
-  // filtered out; lodge-less events are club-wide and always listed.
-  lodgeId: z.string().min(1).optional(),
-});
 
 /**
  * Active work party (working bee) events overlapping the requested stay.
- * Drives the "I am attending a working bee" picker on the booking form.
+ * Drives the "I am attending a working bee" picker on the booking form, and
+ * is the AI app action `find_work_parties_for_stay` (ALP-796).
  */
 export async function GET(req: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.bookingQuery, req);
@@ -33,7 +27,7 @@ export async function GET(req: NextRequest) {
   }
 
   const { searchParams } = new URL(req.url);
-  const parsed = querySchema.safeParse({
+  const parsed = workPartiesForStayQuerySchema.safeParse({
     checkIn: searchParams.get("checkIn"),
     checkOut: searchParams.get("checkOut"),
     lodgeId: searchParams.get("lodgeId") ?? undefined,
@@ -60,7 +54,7 @@ export async function GET(req: NextRequest) {
     parsed.data.lodgeId,
   );
 
-  return NextResponse.json({
+  return connectionJson(req, {
     events: events.map((event) => ({
       id: event.id,
       name: event.name,
@@ -70,5 +64,5 @@ export async function GET(req: NextRequest) {
       discountPercent: event.discountPercent,
       lodgeName: event.lodge?.name ?? null,
     })),
-  });
+  }, WORK_PARTIES_FOR_STAY_CONNECTION_SHAPE);
 }

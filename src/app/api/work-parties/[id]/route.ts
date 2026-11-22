@@ -5,6 +5,9 @@ import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { canViewWorkParties } from "@/lib/work-party-access";
 import { findMemberWorkParty } from "@/lib/work-party-member";
+import { workPartyIdParamsSchema } from "@/lib/work-party-query-schema";
+import { MEMBER_WORK_PARTY_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**
  * One work party as a member sees it (#5148): what the `/dashboard/work-parties/[id]`
@@ -15,6 +18,8 @@ import { findMemberWorkParty } from "@/lib/work-party-member";
  * organisation account, a non-member login — gets 404, as do an inactive or
  * unknown work party and a club with the Work Parties module off: for them the
  * work party does not exist, and the states stay indistinguishable.
+ *
+ * Also the AI app action `get_work_party` (ALP-796).
  */
 export async function GET(
   req: NextRequest,
@@ -31,7 +36,11 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const { id } = await params;
+  const parsedParams = workPartyIdParamsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  const { id } = parsedParams.data;
   const workParty = await findMemberWorkParty(
     id,
     await clubTodayDateOnlyInstant()
@@ -40,5 +49,5 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  return NextResponse.json({ workParty });
+  return connectionJson(req, { workParty }, MEMBER_WORK_PARTY_CONNECTION_SHAPE);
 }

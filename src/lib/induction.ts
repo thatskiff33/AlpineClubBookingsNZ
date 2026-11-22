@@ -412,6 +412,31 @@ export async function voidInduction(params: {
   return updated;
 }
 
+/**
+ * An induction as the induction routes send it: the record without the
+ * inductee's or assigned signers' other member columns. One mapper for
+ * `GET /api/inductions` and `GET /api/inductions/[id]`, so the two cannot
+ * answer the same record differently.
+ */
+export function memberInductionView(induction: MemberInductionWithDetail) {
+  return {
+    ...induction,
+    member: {
+      id: induction.member.id,
+      firstName: induction.member.firstName,
+      lastName: induction.member.lastName,
+    },
+    assignedSigners: induction.assignedSigners.map((signer) => ({
+      memberId: signer.memberId,
+      firstName: signer.member.firstName,
+      lastName: signer.member.lastName,
+      emailSentAt: signer.emailSentAt,
+    })),
+  };
+}
+
+export type MemberInductionView = ReturnType<typeof memberInductionView>;
+
 /** The member's most recent induction with full detail (for their own page). */
 export async function getInductionForMember(
   memberId: string,
