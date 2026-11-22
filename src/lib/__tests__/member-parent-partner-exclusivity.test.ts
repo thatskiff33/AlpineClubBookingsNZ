@@ -12,37 +12,12 @@ import {
   isMemberParentPartnerExclusionViolation,
   loadMemberMergeExclusivityTopology,
   memberHasPartnerRelationshipWith,
-  membersAreDirectParentPair,
   notDirectParentWithMemberWhere,
   notPartnerWithMemberWhere,
 } from "@/lib/member-parent-partner-exclusivity";
 import { collectPrismaErrorText } from "@/lib/prisma-errors";
 
-const unrelated = {
-  id: "member-a",
-  parentMemberId: null,
-  secondaryParentId: null,
-};
-
 describe("direct parent/partner exclusivity predicates", () => {
-  it.each([
-    ["first member primary", { ...unrelated, parentMemberId: "member-b" }, { ...unrelated, id: "member-b" }],
-    ["first member secondary", { ...unrelated, secondaryParentId: "member-b" }, { ...unrelated, id: "member-b" }],
-    ["second member primary", unrelated, { ...unrelated, id: "member-b", parentMemberId: "member-a" }],
-    ["second member secondary", unrelated, { ...unrelated, id: "member-b", secondaryParentId: "member-a" }],
-  ])("recognises %s parentage", (_label, memberOne, memberTwo) => {
-    expect(membersAreDirectParentPair(memberOne, memberTwo)).toBe(true);
-  });
-
-  it("does not mistake unrelated parent pointers for the candidate pair", () => {
-    expect(
-      membersAreDirectParentPair(
-        { ...unrelated, parentMemberId: "member-c" },
-        { ...unrelated, id: "member-b", secondaryParentId: "member-d" },
-      ),
-    ).toBe(false);
-  });
-
   it("derives one orientation-independent query covering both parent columns", () => {
     expect(directParentPairWhere("member-b", "member-a")).toEqual({
       OR: [

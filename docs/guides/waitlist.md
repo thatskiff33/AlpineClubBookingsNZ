@@ -43,6 +43,21 @@ which by definition that booking is not. See
    for capacity" or "Offer expires {date}" — and flags an offer email that is
    missing or undeliverable, with a link to review email deliverability.
 
+3. **What the position means.** It is the entry's place in its own lodge's queue
+   right now, worked out each time the page loads, so it moves up as soon as
+   anyone ahead cancels, is offered a bed, is confirmed or drops off. It can
+   also move down: an entry whose offer lapsed, a silenced entry whose **No
+   emails** is turned off, or a booking returned to the waitlist takes its
+   original place again, and where the queues are ordered by join time alone,
+   an older opt-in from another lodge counts ahead. It counts
+   only entries at the same lodge whose nights overlap, so two entries can both
+   be #1 at different lodges or on stays that do not overlap. Where your club
+   lets members opt into another lodge and orders the queues by join time
+   alone, an older opt-in from another lodge counts ahead too. The number is
+   not a promise of who is offered next: a bed goes to the first entry whose
+   party fits, so a smaller party further back can be offered first. An entry
+   with an offer out shows the offer instead of a number.
+
 ### Filter the queue
 
 1. Use **From**, **To**, and **Page size**, then click **Apply**. Click
@@ -127,11 +142,11 @@ A booking with **No emails** switched on
 ([Bookings](bookings.md#turn-off-all-emails-for-one-booking)) behaves
 differently on this board, and the badges say which case you are looking at:
 
-- **"Position #N — silenced, will not be offered"** (or **"Silenced — will not
-  be offered while emails are off"** when it has no position yet) — the entry is
-  skipped when beds are handed out, so no offer is made at all. It keeps its
-  place in the queue and does not hold up the members behind it; the position
-  numbers everyone else sees are unchanged.
+- **"Silenced — will not be offered while emails are off"** — the entry is
+  skipped when beds are handed out, so no offer is made at all. It shows no
+  position, and it is not counted in anyone else's: the members behind it move
+  up while it is silenced. Turning **No emails** off puts it back in its
+  original place, and those behind it move back down.
 - **"Offer email withheld (No emails)"** — an offer email was withheld, and that
   offer has since lapsed. Nothing needs doing.
 - **"Offer live but emails are off — member not told"** — the entry is holding a

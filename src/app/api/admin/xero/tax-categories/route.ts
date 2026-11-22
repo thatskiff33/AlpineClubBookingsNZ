@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import logger from "@/lib/logger";
-import { isPrismaUniqueConstraintError, isTransactionContention } from "@/lib/prisma-errors";
+import { isSingletonUpsertContention } from "@/lib/prisma-errors";
 import { requireAdmin } from "@/lib/session-guards";
 import { MAPPED_XERO_TAX_CATEGORIES, type MappedXeroTaxCategory } from "@/lib/xero-tax-categories";
 import { readXeroTaxCategoryAdminState } from "@/lib/xero-tax-category-admin-state";
@@ -24,15 +24,6 @@ import {
  * A wrong mapping changes the tax code on every line Xero receives in that
  * category. The rules on what may be saved are `xero-tax-category-write.ts`.
  */
-
-/**
- * Retryable, answered 503: Prisma's transaction contention (`isTransactionContention`),
- * and P2002 from two racing first saves of one category's unique row. The loser
- * wrote nothing, so a retry is safe.
- */
-function isWriteContention(error: unknown): boolean {
-  return isTransactionContention(error) || isPrismaUniqueConstraintError(error);
-}
 
 const category = z.enum(MAPPED_XERO_TAX_CATEGORIES as [MappedXeroTaxCategory, ...MappedXeroTaxCategory[]]);
 const mapSchema = z.object({ category, taxType: z.string().trim().min(1).max(50) }).strict();
@@ -82,7 +73,13 @@ async function answerWrite(run: () => Promise<XeroTaxCategoryWriteOutcome>) {
     if ("refused" in outcome) return refusalResponse(outcome);
     return NextResponse.json({ changed: true, state: await readXeroTaxCategoryAdminState() });
   } catch (error) {
-    if (!isWriteContention(error)) throw error;
+    // Retryable, answered 503: Prisma's transaction contention, and P2002. The
+    // only unique keys `xero-tax-category-write.ts` can hit are
+    // XeroTaxCategoryMapping's `category` (two racing first saves of one
+    // category; the Serializable loser wrote nothing) and the per-row cuids on
+    // that table and AuditLog, which has no other unique constraint. The clear
+    // path only deletes from the mapping.
+    if (!isSingletonUpsertContention(error)) throw error;
     logger.warn({ err: error }, "Xero tax category mapping save hit write contention");
     return NextResponse.json({ error: "Another update is in progress — try again shortly." }, { status: 503 });
   }

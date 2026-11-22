@@ -6,8 +6,9 @@ It is intentionally narrow. The cron layer owns schedule metadata, in-process ov
 
 ## Registration Boundary
 
-- `src/instrumentation.ts` registers the daily finance sync job exactly once when the Node.js server starts.
-- `src/lib/finance-sync-cron.ts` owns the schedule constants, Sentry monitor check-ins, overlap-safe runner, and `CronJobRun` recording for the finance sync cron.
+- `src/instrumentation.node.ts` schedules the daily finance sync job when the Node.js server starts, in the club's saved timezone (`cronTimeZone()`). Registration does not depend on the finance dashboard module: every run asks whether the module is on, and when it is off the run does nothing and records `SKIPPED`.
+- `src/lib/finance-sync-cron-config.ts` owns the job name, monitor slug, schedule and Sentry monitor definition.
+- `src/lib/finance-sync-cron.ts` owns the Sentry monitor check-ins, overlap-safe runner, and `CronJobRun` recording for the finance sync cron.
 - `src/lib/finance-sync-service.ts` remains the durable workflow boundary for `FinanceSyncRun` creation and snapshot persistence.
 
 ## Schedule
@@ -15,7 +16,7 @@ It is intentionally narrow. The cron layer owns schedule metadata, in-process ov
 - job name: `finance-daily-sync`
 - monitor slug: `finance-daily-sync`
 - schedule: `15 10 * * *`
-- timezone: `Pacific/Auckland`
+- timezone: the club's saved timezone, read at boot (`INV-CONFIG-002`); never the container's `TZ`
 
 ## Runner Behavior
 

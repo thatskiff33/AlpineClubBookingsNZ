@@ -5,6 +5,7 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
+import { shallowChangedFields } from "@/lib/audit-changed-fields";
 import {
   ACCESS_ROLE_DEFINITION_SELECT,
   serializeAccessRoleDefinition,
@@ -38,13 +39,6 @@ function fullAdminOnlyResponse() {
     { error: "Only a Full Admin can manage access roles" },
     { status: 403 },
   );
-}
-
-function changedFields(
-  before: Record<string, unknown>,
-  after: Record<string, unknown>,
-) {
-  return Object.keys(after).filter((key) => before[key] !== after[key]);
 }
 
 export async function PATCH(
@@ -141,7 +135,7 @@ export async function PATCH(
         outcome: "success",
         summary: "Access role updated",
         metadata: {
-          changedFields: changedFields(
+          changedFields: shallowChangedFields(
             existing,
             data as Record<string, unknown>,
           ),

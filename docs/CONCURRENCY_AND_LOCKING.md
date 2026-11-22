@@ -176,6 +176,30 @@ queue behind it whichever lodge they touch, so two members booking different
 lodges still queue behind one another. A waitlist create
 (`createWaitlistedBooking`) takes this lodge key alone.
 
+**A waitlist position read takes no lock** (#5402, `INV-CAP-041`). The position
+is display only and drives no decision, so a screen or API reads it through
+`getWaitlistPositions` on `prisma` with no advisory key; taking `lock(1)` would
+queue page renders behind the club-wide waitlist serialisation. It reads the
+queue first, then the cross-lodge order setting only when another lodge's entry
+named the target's lodge. Nothing writes both, so a commit between the two
+statements still yields a number that was true at some moment. The one change
+the second read alone can pick up is the club flipping its cross-lodge order,
+and then the number is the new setting's, which can differ by several places;
+the next read is consistent either way.
+Inside a writer (`createWaitlistedBooking`, the offer pass, `expireStaleOffers`,
+return-to-waitlist) the read runs on the writer's own `tx` after its locks, so
+it sees the writer's changes.
+
+Stated limit: a position quoted in an email or audit row can be one place out
+when a change the writer's locks do not exclude commits at the same moment:
+(a) an officer flips a booking's "No emails" switch, which takes no advisory
+lock (new with #5402, because positions used to ignore the switch); (b) under
+`MERGED`, any change to another lodge's opt-in entry, such as a create, a
+cancel or an expiry revert there; (c) two creates at the same lodge storing
+`createdAt` in the opposite order to the order they took the lodge key (true
+before #5402 as well). Screens are right on the next read, and nothing branches
+on the number. No writer's key, order, participant or transaction changed.
+
 ### Tier 2 — global booking-status / money serialisation
 
 `pg_advisory_xact_lock(1)` (the literal global lock) serialises **status
@@ -2708,6 +2732,9 @@ mispricing a booking.
   upgrade commits first, the other writer replaces the upgraded hash as it
   would have replaced the old one. Proved on PostgreSQL by
   `password-rehash.realdb.test.ts` (a forced interleaving behind a held row).
+  The same suite queues two upgrades of one older hash behind a held row
+  (#5342): exactly one writes, and the stored hash is at the current cost and
+  still verifies.
 
 #### Member photo writer (epic #171)
 
@@ -5699,8 +5726,10 @@ while it chooses its route (`cardShortfallSettlement`; a capacity race's again
 in `capacityRaceChargeForHandBack`), all before its claim; it takes no member
 key, since a shortfall gives nothing back as credit. So the writer sees either
 whole or waits for it. No key, order or registry entry is added. Proved in both
-orders by `card-refund-reversal-bank-cash-floor.realdb.test.ts` (closes) and,
-for a cancel's bank part, `card-refund-reversal-shortfall-floor.realdb.test.ts`.
+orders by `card-refund-reversal-bank-cash-floor.realdb.test.ts` (closes) and by
+`card-refund-reversal-shortfall-floor.realdb.test.ts`, for a cancel's bank part
+and for a capacity race's part to check against its late dashboard refund
+(#5344).
 
 **One order for the refunded total: `Payment` row, then refund rows, then
 transaction rows** — and, in a transaction that also takes the per-member

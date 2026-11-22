@@ -559,7 +559,6 @@ export const SELECT_GRANTS: readonly AiDiagnosticsSelectGrant[] = [
       "requiresAdminReview",
       "adminReviewStatus",
       "adultMemberHostingReviewStatus",
-      "waitlistPosition",
       "wholeLodgeHold",
       "adminCapacityHoldAt",
       "capacityOverriddenAt",

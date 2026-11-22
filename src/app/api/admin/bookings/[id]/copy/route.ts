@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { ApiError } from "@/lib/api-error";
 import { copyBookingToDraft } from "@/lib/admin-booking-copy";
 import logger from "@/lib/logger";
@@ -20,20 +21,10 @@ export async function POST(
   });
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json(
-      {
-        error: "Invalid JSON",
-        details: { body: ["Request body must be valid JSON"] },
-      },
-      { status: 400 },
-    );
-  }
+  const json = await parseJsonRequestBody(request);
+  if (!json.ok) return json.response;
 
-  const parsed = copyBookingSchema.safeParse(body);
+  const parsed = copyBookingSchema.safeParse(json.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
