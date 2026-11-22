@@ -5,6 +5,7 @@
  * with the AI app actions that call them (ALP-720, `INV-SSOT`): the app is
  * described exactly the fields the route enforces.
  */
+import { NoticeStatus } from "@prisma/client";
 import { z } from "zod";
 
 import { adminListPageField, adminListPageQueryFields } from "@/lib/admin-list-page";
@@ -32,7 +33,8 @@ export const createNoticeSchema = z
   .object({
     title: z.string().trim().min(1).max(NOTICE_TITLE_MAX_LENGTH),
     bodyHtml: z.string().max(NOTICE_BODY_MAX_LENGTH),
-    status: z.enum(["DRAFT", "PUBLISHED"]).optional().default("DRAFT"),
+    // A notice is created as a draft or published, never archived.
+    status: z.enum([NoticeStatus.DRAFT, NoticeStatus.PUBLISHED]).optional().default(NoticeStatus.DRAFT),
     expiresAt: z.string().datetime().nullable().optional(),
     pinned: z.boolean().optional().default(false),
     requiresAcknowledgement: z.boolean().optional().default(false),
@@ -49,7 +51,7 @@ export const updateNoticeSchema = z
   .object({
     title: z.string().trim().min(1).max(NOTICE_TITLE_MAX_LENGTH).optional(),
     bodyHtml: z.string().max(NOTICE_BODY_MAX_LENGTH).optional(),
-    status: z.enum(["DRAFT", "PUBLISHED", "ARCHIVED"]).optional(),
+    status: z.enum(NoticeStatus).optional(),
     expiresAt: z.string().datetime().nullable().optional(),
     pinned: z.boolean().optional(),
     requiresAcknowledgement: z.boolean().optional(),

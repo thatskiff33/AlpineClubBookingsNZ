@@ -16,6 +16,7 @@ import {
   replaceNominatorParamsSchema,
   replaceNominatorSchema,
 } from "@/lib/admin-membership-api/requests";
+import { ADMIN_LIST_DEFAULT_PAGE_SIZE, ADMIN_LIST_MAX_PAGE_SIZE } from "@/lib/admin-list-page";
 import {
   DELETION_REQUEST_LIST_CONNECTION_SHAPE,
   MEMBER_APPLICATION_LIST_CONNECTION_SHAPE,
@@ -30,8 +31,7 @@ import { recordIdParamsSchema } from "@/lib/route-id-params";
 
 import type { McpAction } from "../catalogue";
 
-const PAGING =
-  "Paged: `page` from 1, `pageSize` 25 by default and at most 100; the answer carries `total` and `totalPages`.";
+const PAGING = `Paged: \`page\` from 1, \`pageSize\` ${ADMIN_LIST_DEFAULT_PAGE_SIZE} by default and at most ${ADMIN_LIST_MAX_PAGE_SIZE}; the answer carries \`total\` and \`totalPages\`.`;
 
 export const MEMBERSHIP_REQUEST_MCP_ACTIONS: readonly McpAction[] = [
   {
@@ -110,7 +110,7 @@ export const MEMBERSHIP_REQUEST_MCP_ACTIONS: readonly McpAction[] = [
   {
     id: "list_membership_cancellation_requests",
     title: "List membership cancellation requests",
-    summary: `Membership cancellation requests, each with who raised it, its reason and, for every member it would cancel, their status, confirmation and what blocks approval: a future booking (named), money owing in Xero, or a Xero check that could not be made. \`status\` is REQUESTED (the default), APPROVED, REJECTED, WITHDRAWN, COMPLETED or ALL. When you hold Membership edit access, each call can make a live Xero check for the members awaiting approval, which counts against the club's daily Xero allowance, so do not call it repeatedly; without that access \`invoiceCheckSkipped\` is true and an empty blocker list does not mean nothing is owing. Approving stays on the website, for an officer other than the one who raised it; \`holdsPrivilegedAccess\` means only a Full Admin may approve. ${PAGING}`,
+    summary: `Membership cancellation requests, each with who raised it, its reason and, for every member it would cancel, their status, confirmation and what blocks approval: a future booking (named), money owing in Xero, or a Xero check that could not be made. \`status\` is REQUESTED (the default), APPROVED, REJECTED, WITHDRAWN, COMPLETED or ALL. The live Xero invoice check runs only on the website, where an officer can approve, so here \`invoiceCheckSkipped\` is true for each member awaiting approval and an empty blocker list does not mean nothing is owing. Approving stays on the website, for an officer other than the one who raised it. ${PAGING}`,
     method: "GET",
     path: "/api/admin/membership-cancellation-requests",
     query: membershipCancellationRequestListQuerySchema,

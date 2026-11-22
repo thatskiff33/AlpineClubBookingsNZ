@@ -15,6 +15,9 @@ import {
 const inductionKind = z.enum(Object.keys(INDUCTION_KIND_LABELS) as [InductionKind, ...InductionKind[]]);
 const inductionStatus = z.enum(Object.keys(INDUCTION_STATUS_LABELS) as [InductionStatus, ...InductionStatus[]]);
 
+/** The most inductions the register sends, newest first. */
+export const INDUCTION_REGISTER_LIMIT = 500;
+
 /** The most signers one induction may be assigned. */
 export const MAX_ASSIGNED_INDUCTION_SIGNERS = 10;
 

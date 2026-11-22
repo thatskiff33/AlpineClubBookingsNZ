@@ -501,7 +501,8 @@ describe("list_membership_cancellation_requests", () => {
       route: "cancel_others_first",
     },
     invoiceCheckSkipped: false,
-    holdsPrivilegedAccess: false,
+    // The screen's warning; an AI app never learns who holds admin access.
+    holdsPrivilegedAccess: true,
     accountType: "MEMBER",
     includedWithoutOwnOrSecondAdultConfirmation: false,
   };
@@ -570,7 +571,6 @@ describe("list_membership_cancellation_requests", () => {
                 },
               ],
               invoiceCheckSkipped: false,
-              holdsPrivilegedAccess: false,
               accountType: "MEMBER",
               includedWithoutOwnOrSecondAdultConfirmation: false,
             },
@@ -581,15 +581,14 @@ describe("list_membership_cancellation_requests", () => {
       ...listPage,
     });
     expect(browser).toMatchObject({
-      data: [{ participants: [{ sharedInvoiceNotice: { invoiceNumber: "INV-0042" } }] }],
+      data: [{ participants: [{ sharedInvoiceNotice: { invoiceNumber: "INV-0042" }, holdsPrivilegedAccess: true }] }],
     });
-    // A Full Admin holds Membership edit, so the metered check runs as on the screen.
-    expect(h.getAdminMembershipCancellationRequests).toHaveBeenCalledWith({
-      status: "ALL",
-      page: 1,
-      pageSize: 10,
-      viewerCanApprove: true,
-    });
+    // The metered Xero check runs for the officer's screen, never for their app,
+    // which cannot approve: the connection call comes first.
+    expect(h.getAdminMembershipCancellationRequests.mock.calls.map(([options]) => options.viewerCanApprove)).toEqual([
+      false,
+      true,
+    ]);
   });
 
   it("sends only the kind of an unpaid-invoice blocker", async () => {

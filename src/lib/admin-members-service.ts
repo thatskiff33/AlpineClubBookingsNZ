@@ -24,7 +24,12 @@ import {
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
-import type { AdminMembersQuery } from "@/lib/admin-membership-api/members";
+import {
+  ADMIN_MEMBER_CONTACTABILITY_FILTERS,
+  ADMIN_MEMBER_LIFECYCLE_FILTERS,
+  ADMIN_MEMBER_SUBSCRIPTION_STATUS_FILTERS,
+  type AdminMembersQuery,
+} from "@/lib/admin-membership-api/members";
 import {
   effectiveSubscriptionBehavior,
   isSubscriptionNotRequiredForMembershipType,
@@ -184,26 +189,12 @@ export const createMemberSchema = z.object({
   postalSameAsPhysical: z.boolean().optional(),
 });
 
-const SUBSCRIPTION_STATUS_FILTERS = [
-  "PAID",
-  "UNPAID",
-  "OVERDUE",
-  "NOT_INVOICED",
-] as const;
 /**
  * How many excluded matches the dependant-link search explains when it finds no
  * eligible candidate (#2254). Enough to name the person the admin was looking
  * for, small enough that the extra query stays trivial.
  */
 const DEPENDENT_LINK_INELIGIBLE_EXPLANATION_LIMIT = 5;
-
-const MEMBER_LIFECYCLE_STATUS_FILTERS = [
-  "active",
-  "inactive",
-  "cancelled",
-  "archived",
-  "all",
-] as const;
 
 export type CreateMemberInput = z.infer<typeof createMemberSchema>;
 
@@ -535,7 +526,7 @@ export async function listAdminMembers(
 
   const lifecycleStatus =
     lifecycleStatusFilter &&
-    (MEMBER_LIFECYCLE_STATUS_FILTERS as readonly string[]).includes(
+    (ADMIN_MEMBER_LIFECYCLE_FILTERS as readonly string[]).includes(
       lifecycleStatusFilter,
     )
       ? lifecycleStatusFilter
@@ -621,12 +612,9 @@ export async function listAdminMembers(
   // convenience. `unreachableMemberWhere` is the single definition of who
   // qualifies, shared with the stuck-states dashboard so the count on one screen
   // and the list on the other can never disagree.
-  if (contactabilityFilter === "unreachable") {
-    andConditions.push(unreachableMemberWhere());
-  } else if (contactabilityFilter === "inheritance-unresolved") {
-    andConditions.push(unreachableMemberWhere("inheritance-unresolved"));
-  } else if (contactabilityFilter === "placeholder-address") {
-    andConditions.push(unreachableMemberWhere("placeholder-address"));
+  const contactability = ADMIN_MEMBER_CONTACTABILITY_FILTERS.find((value) => value === contactabilityFilter);
+  if (contactability) {
+    andConditions.push(unreachableMemberWhere(contactability === "unreachable" ? undefined : contactability));
   }
 
   // Filter: login access stage. This mirrors the single Access-column stage the
@@ -682,7 +670,7 @@ export async function listAdminMembers(
     );
   } else if (
     subscriptionFilter &&
-    (SUBSCRIPTION_STATUS_FILTERS as readonly string[]).includes(
+    (ADMIN_MEMBER_SUBSCRIPTION_STATUS_FILTERS as readonly string[]).includes(
       subscriptionFilter,
     )
   ) {

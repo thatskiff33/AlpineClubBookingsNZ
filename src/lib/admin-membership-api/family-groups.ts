@@ -36,9 +36,15 @@ export const revokePartnerInviteQuerySchema = z.object({
   id: z.string().trim().min(1),
 });
 
+/** The longest name a group made from a suggestion may have. */
+export const FAMILY_SUGGESTION_GROUP_NAME_MAX_LENGTH = 100;
+
+/** The most members the family-group member search returns. */
+export const FAMILY_GROUP_MEMBER_SEARCH_LIMIT = 10;
+
 /** `POST /api/admin/family-suggestions`. */
 export const createFamilyGroupFromSuggestionSchema = z.object({
-  name: z.string().min(1, "Group name required").max(100),
+  name: z.string().min(1, "Group name required").max(FAMILY_SUGGESTION_GROUP_NAME_MAX_LENGTH),
   memberIds: z.array(z.string().min(1)).min(2, "At least 2 members required"),
 });
 

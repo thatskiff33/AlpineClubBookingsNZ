@@ -22,7 +22,6 @@ interface MemberStanding {
   firstName: string;
   lastName: string;
   email: string;
-  role: string;
   ageTier: string;
   active: boolean;
   cancelledAt: Date | null;
@@ -37,7 +36,6 @@ const MEMBER_STANDING_SHAPE = {
   firstName: true,
   lastName: true,
   email: true,
-  role: true,
   ageTier: true,
   active: true,
   cancelledAt: true,
@@ -160,7 +158,9 @@ export const MEMBER_DETAIL_CONNECTION_SHAPE = connectionShapeFor<MemberDetailAns
 /**
  * A member's audit timeline as the admin screen reads it: the same fields as
  * the member's own timeline (when, what kind, the outcome and what happened),
- * never request details, devices, addresses or metadata.
+ * never request details, devices, addresses or metadata. The route reads it
+ * with the officer audience, so every category is listed and each summary is
+ * the officers' summary (the text recorded with the entry), not the member's.
  */
 export const MEMBER_AUDIT_TIMELINE_CONNECTION_SHAPE: ConnectionShape = MEMBER_ACCOUNT_ACTIVITY_CONNECTION_SHAPE;
 

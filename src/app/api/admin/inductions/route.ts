@@ -13,6 +13,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { sendInductionSignOffRequestEmail } from "@/lib/email";
 import {
   createInductionSchema,
+  INDUCTION_REGISTER_LIMIT,
   inductionListQuerySchema,
 } from "@/lib/admin-membership-api/inductions";
 import { connectionJson } from "@/lib/mcp-connection-request";
@@ -52,7 +53,7 @@ export async function GET(request: NextRequest) {
   const inductions = await prisma.memberInduction.findMany({
     where,
     orderBy: { createdAt: "desc" },
-    take: 500,
+    take: INDUCTION_REGISTER_LIMIT,
     include: {
       member: {
         select: {

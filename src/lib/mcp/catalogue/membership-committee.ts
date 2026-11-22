@@ -14,6 +14,7 @@ import {
 } from "@/lib/admin-membership-api/committee";
 import {
   createInductionSchema,
+  INDUCTION_REGISTER_LIMIT,
   inductionListQuerySchema,
   MAX_ASSIGNED_INDUCTION_SIGNERS,
   reassignInductionSignersSchema,
@@ -140,7 +141,7 @@ export const MEMBERSHIP_COMMITTEE_MCP_ACTIONS: readonly McpAction[] = [
     id: "list_inductions",
     title: "List member inductions",
     summary:
-      "The induction register, newest first and at most 500: each induction's member, kind, status, sign-off count and assigned signers. Narrow by `status`, `kind`, or `search` on the member's name or email.",
+      `The induction register, newest first and at most ${INDUCTION_REGISTER_LIMIT}: each induction's member, kind, status, sign-off count and assigned signers. Narrow by \`status\`, \`kind\`, or \`search\` on the member's name or email.`,
     method: "GET",
     path: "/api/admin/inductions",
     query: inductionListQuerySchema,

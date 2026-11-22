@@ -5,6 +5,8 @@ import { ADMIN_FAMILY_GROUP_MAX_MEMBERS } from "@/lib/admin-family-group-create"
 import {
   createFamilyGroupFromSuggestionSchema,
   createFamilyGroupSchema,
+  FAMILY_GROUP_MEMBER_SEARCH_LIMIT,
+  FAMILY_SUGGESTION_GROUP_NAME_MAX_LENGTH,
   familyGroupMemberSearchQuerySchema,
   hideFamilySuggestionSchema,
   reviewFamilyGroupRequestSchema,
@@ -93,7 +95,7 @@ export const MEMBERSHIP_FAMILY_GROUP_MCP_ACTIONS: readonly McpAction[] = [
     id: "search_family_group_members",
     title: "Find members for a family group",
     summary:
-      'Up to 10 active, non-archived members whose first name, last name or email address contains `q` (at least 2 characters), with `total` the full number of matches. `ageTierIn` limits the search to a comma-separated list of age tiers, such as "INFANT,CHILD,YOUTH" when choosing a child. Give `prospectiveParentMemberId` (a child request\'s requester) to have `ineligibleReason` set on any member who is that person\'s partner and so cannot be linked as their child. Each member carries their email address, to tell similar records apart, and their recorded parents (`parentLinks`), whose ids are the choices for `inheritEmailFromId` when approving a child request. No ages.',
+      `Up to ${FAMILY_GROUP_MEMBER_SEARCH_LIMIT} active, non-archived members whose first name, last name or email address contains \`q\` (at least 2 characters), with \`total\` the full number of matches. \`ageTierIn\` limits the search to a comma-separated list of age tiers, such as "INFANT,CHILD,YOUTH" when choosing a child. Give \`prospectiveParentMemberId\` (a child request's requester) to have \`ineligibleReason\` set on any member who is that person's partner and so cannot be linked as their child. Each member carries their email address, to tell similar records apart, and their recorded parents (\`parentLinks\`), whose ids are the choices for \`inheritEmailFromId\` when approving a child request. No ages.`,
     method: "GET",
     path: "/api/admin/family-groups/member-search",
     query: familyGroupMemberSearchQuerySchema,
@@ -162,7 +164,7 @@ export const MEMBERSHIP_FAMILY_GROUP_MCP_ACTIONS: readonly McpAction[] = [
     id: "create_family_group_from_suggestion",
     title: "Create a family group from a suggestion",
     summary:
-      "Creates a family group called `name` (up to 100 characters) with the members in `memberIds` (at least 2, each once), usually a suggestion's `suggestedName` and members. Refused if any member does not exist or is inactive. Nobody is emailed.",
+      `Creates a family group called \`name\` (up to ${FAMILY_SUGGESTION_GROUP_NAME_MAX_LENGTH} characters) with the members in \`memberIds\` (at least 2, each once), usually a suggestion's \`suggestedName\` and members. Refused if any member does not exist or is inactive. Nobody is emailed.`,
     method: "POST",
     path: "/api/admin/family-suggestions",
     body: createFamilyGroupFromSuggestionSchema,

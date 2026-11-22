@@ -5,7 +5,7 @@
  * Each queue sends what an officer needs to see who a request is about, what
  * it asks and where it stands. The screens' own extras stay behind: an
  * applicant's date of birth, phone, address and family members' details, a
- * lifecycle request's member snapshot, sign-in flags, and the Xero detail of a
+ * lifecycle request's member snapshot, sign-in flags and access roles, and the Xero detail of a
  * cancellation blocker (only that an unpaid invoice blocks approval, never its
  * number, amount or links). Each list is sent once, under its own name, not
  * also under the `data` alias the screens read.
@@ -222,7 +222,6 @@ const CANCELLATION_PARTICIPANT_SHAPE: ConnectionShape = {
     cancelledAtParticipant: true,
     reviewedBy: OFFICER_SHAPE,
     invoiceCheckSkipped: true,
-    holdsPrivilegedAccess: true,
     accountType: true,
     includedWithoutOwnOrSecondAdultConfirmation: true,
   }),

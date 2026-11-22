@@ -7,6 +7,7 @@
  */
 import { z } from "zod";
 
+import { ADMIN_LIST_DEFAULT_PAGE_SIZE, ADMIN_LIST_MAX_PAGE_SIZE } from "@/lib/admin-list-page";
 import { memberAuditLogQuerySchema } from "@/lib/member-audit-log-query";
 import { recordIdParamsSchema } from "@/lib/route-id-params";
 
@@ -22,13 +23,27 @@ function parseClampedInt(
   return Math.min(max, Math.max(min, parsed));
 }
 
-const SORT_BY_WHITELIST = [
-  "name",
-  "email",
-  "access",
-  "ageTier",
-  "active",
-  "createdAt",
+/** What the member list sorts by; anything else sorts by name. */
+export const ADMIN_MEMBER_SORT_FIELDS = ["name", "email", "access", "ageTier", "active", "createdAt"] as const;
+
+/** `lifecycleStatus`: archived members are left out unless it is `archived` or `all`. */
+export const ADMIN_MEMBER_LIFECYCLE_FILTERS = ["active", "inactive", "cancelled", "archived", "all"] as const;
+
+/** `subscription` values matched against this season's subscription row's status. */
+export const ADMIN_MEMBER_SUBSCRIPTION_STATUS_FILTERS = ["PAID", "UNPAID", "OVERDUE", "NOT_INVOICED"] as const;
+
+/** Every `subscription` value: a status above, or no subscription needed or held this season. */
+export const ADMIN_MEMBER_SUBSCRIPTION_FILTERS = [
+  ...ADMIN_MEMBER_SUBSCRIPTION_STATUS_FILTERS,
+  "NOT_REQUIRED",
+  "NONE",
+] as const;
+
+/** `contactability`: the members the club cannot email, and why (#2716). */
+export const ADMIN_MEMBER_CONTACTABILITY_FILTERS = [
+  "unreachable",
+  "inheritance-unresolved",
+  "placeholder-address",
 ] as const;
 
 export const adminMembersQuerySchema = z
@@ -66,8 +81,8 @@ export const adminMembersQuerySchema = z
       ...value,
       trimmedQuery: q?.trim(),
       page: parseClampedInt(value.page, 1, 1, Number.MAX_SAFE_INTEGER),
-      pageSize: parseClampedInt(value.pageSize, 25, 1, 100),
-      sortBy: (SORT_BY_WHITELIST as readonly string[]).includes(sortByRaw)
+      pageSize: parseClampedInt(value.pageSize, ADMIN_LIST_DEFAULT_PAGE_SIZE, 1, ADMIN_LIST_MAX_PAGE_SIZE),
+      sortBy: (ADMIN_MEMBER_SORT_FIELDS as readonly string[]).includes(sortByRaw)
         ? sortByRaw
         : "name",
       sortDir: value.sortDir === "desc" ? "desc" : "asc",

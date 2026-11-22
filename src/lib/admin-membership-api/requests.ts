@@ -5,6 +5,8 @@
  * fields each route enforces.
  */
 import {
+  ApplicationStatus,
+  DeletionRequestStatus,
   MemberLifecycleAction,
   MemberLifecycleActionRequestStatus,
   MembershipCancellationRequestStatus,
@@ -21,7 +23,7 @@ import { recordIdParamsSchema } from "@/lib/route-id-params";
 
 /** `GET /api/admin/member-applications`: every status when `status` is left out. */
 export const memberApplicationListQuerySchema = z.object({
-  status: z.enum(["PENDING_NOMINATORS", "PENDING_ADMIN", "APPROVED", "REJECTED"]).optional(),
+  status: z.enum(ApplicationStatus).optional(),
   ...adminListPageQueryFields,
 });
 
@@ -115,8 +117,15 @@ export const membershipCancellationParticipantParamsSchema = z.object({
   participantId: z.string().min(1),
 });
 
-/** `GET /api/admin/deletion-requests`: PENDING, the open queue, when `status` is left out. */
+/**
+ * `GET /api/admin/deletion-requests`: PENDING, the open queue, when `status`
+ * is left out. PENDING also lists APPROVAL_IN_PROGRESS, so that status is not
+ * a filter of its own.
+ */
 export const deletionRequestListQuerySchema = z.object({
-  status: z.enum(["PENDING", "APPROVED", "REJECTED", "ALL"]).optional().default("PENDING"),
+  status: z
+    .enum([DeletionRequestStatus.PENDING, DeletionRequestStatus.APPROVED, DeletionRequestStatus.REJECTED, "ALL"])
+    .optional()
+    .default(DeletionRequestStatus.PENDING),
   ...adminListPageQueryFields,
 });

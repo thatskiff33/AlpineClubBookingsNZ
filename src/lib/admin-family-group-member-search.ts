@@ -2,7 +2,10 @@ import { exactContains } from "@/lib/prisma-exact-prefix";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import type { familyGroupMemberSearchQuerySchema } from "@/lib/admin-membership-api/family-groups";
+import {
+  FAMILY_GROUP_MEMBER_SEARCH_LIMIT,
+  type familyGroupMemberSearchQuerySchema,
+} from "@/lib/admin-membership-api/family-groups";
 import { formatMemberIdentityAge } from "@/lib/member-age";
 import { clubTime } from "@/lib/club-time/server";
 import { buildParentLinks, type ParentLinkSummary } from "@/lib/member-parent-links";
@@ -36,7 +39,6 @@ import {
  * parent from that choice and left only the requester.
  */
 
-const MAX_RESULTS = 10;
 
 export type FamilyGroupMemberSearchQuery = z.infer<
   typeof familyGroupMemberSearchQuerySchema
@@ -144,7 +146,7 @@ export async function searchFamilyGroupCandidateMembers(
         ...MEMBER_PARTNER_RELATIONSHIP_SELECT,
       },
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
-      take: MAX_RESULTS,
+      take: FAMILY_GROUP_MEMBER_SEARCH_LIMIT,
     }),
     prisma.member.count({ where }),
   ]);

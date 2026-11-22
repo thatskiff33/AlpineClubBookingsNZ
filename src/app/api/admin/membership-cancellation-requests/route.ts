@@ -7,7 +7,7 @@ import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import logger from "@/lib/logger";
 import { membershipCancellationRequestListQuerySchema } from "@/lib/admin-membership-api/requests";
 import { MEMBERSHIP_CANCELLATION_REQUEST_LIST_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-requests";
-import { connectionJson } from "@/lib/mcp-connection-request";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
 
 export async function GET(request: NextRequest) {
@@ -38,10 +38,13 @@ export async function GET(request: NextRequest) {
     // Inside the try so a throw here is logged and answered like any other
     // failure of this route, rather than escaping as a bare framework 500 with
     // nothing in the log to explain it.
-    const viewerCanApprove = hasAdminAreaAccess(guard.session.user, {
-      area: "membership",
-      level: "edit",
-    });
+    //
+    // An AI app connection never approves (website-only, ALP-720), so it never
+    // earns the check either: an app polling the queue cannot spend the
+    // club's Xero allowance.
+    const viewerCanApprove =
+      !arrivesAsMcpConnection(request) &&
+      hasAdminAreaAccess(guard.session.user, { area: "membership", level: "edit" });
 
     const data = await getAdminMembershipCancellationRequests({
       status: parsed.data.status as AdminCancellationStatusFilter,

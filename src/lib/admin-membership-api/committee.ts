@@ -5,9 +5,8 @@
  * fields the route enforces. A committee role's own fields are the admin
  * form's (`forms/committee-role-schema.ts`).
  */
+import { ContactEmailMode } from "@prisma/client";
 import { z } from "zod";
-
-const COMMITTEE_CONTACT_EMAIL_MODES = ["ROLE", "MEMBER", "CUSTOM"] as const;
 
 /** The assignment fields both writes accept, without defaults. */
 const assignmentFields = {
@@ -16,7 +15,7 @@ const assignmentFields = {
   published: z.boolean().optional(),
   showPhone: z.boolean().optional(),
   contactable: z.boolean().optional(),
-  contactEmailMode: z.enum(COMMITTEE_CONTACT_EMAIL_MODES).optional(),
+  contactEmailMode: z.enum(ContactEmailMode).optional(),
   contactEmailOverride: z
     .string()
     .trim()
@@ -47,7 +46,7 @@ export const committeeAssignmentCreateSchema = z
     published: assignmentFields.published.default(false),
     showPhone: assignmentFields.showPhone.default(false),
     contactable: assignmentFields.contactable.default(false),
-    contactEmailMode: assignmentFields.contactEmailMode.default("ROLE"),
+    contactEmailMode: assignmentFields.contactEmailMode.default(ContactEmailMode.ROLE),
     isActive: assignmentFields.isActive.default(true),
   })
   .strict()

@@ -1,7 +1,13 @@
 /**
  * Members: finding a member, their record, family links and lodge access (Membership admin area, ALP-720).
  */
+import { z } from "zod";
+
 import {
+  ADMIN_MEMBER_CONTACTABILITY_FILTERS,
+  ADMIN_MEMBER_LIFECYCLE_FILTERS,
+  ADMIN_MEMBER_SORT_FIELDS,
+  ADMIN_MEMBER_SUBSCRIPTION_FILTERS,
   adminMemberAuditLogQuerySchema,
   adminMembersQuerySchema,
   assignPartnerLinkSchema,
@@ -10,6 +16,7 @@ import {
   memberLodgeAccessUpdateSchema,
   removePartnerLinkQuerySchema,
 } from "@/lib/admin-membership-api/members";
+import { ADMIN_LIST_DEFAULT_PAGE_SIZE, ADMIN_LIST_MAX_PAGE_SIZE } from "@/lib/admin-list-page";
 import { AGE_TIER_VALUES } from "@/lib/age-tier-schema";
 import { AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
 import {
@@ -24,6 +31,7 @@ import {
   PARTNER_LINK_ASSIGNED_CONNECTION_SHAPE,
   PARTNER_LINK_REMOVED_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/membership-members";
+import { MEMBER_AUDIT_LOG_DEFAULT_PAGE_SIZE, MEMBER_AUDIT_LOG_MAX_PAGE_SIZE } from "@/lib/member-audit-log-query";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
 import { recordIdParamsSchema } from "@/lib/route-id-params";
 
@@ -32,24 +40,36 @@ import type { McpAction } from "../catalogue";
 /**
  * The member-list filters an app is offered: the route's own fields, picked
  * so the screen's picker internals, legacy aliases, sign-in and access-role
- * filters and the live Xero group lookup stay screen-only.
+ * filters and the live Xero group lookup stay screen-only. The fixed-value
+ * filters are enums here, so the app is told the route's values; sorting by
+ * access role is screen-only too, as access roles are never sent.
  */
-const memberListActionQuerySchema = adminMembersQuerySchema.in.pick({
-  q: true,
-  page: true,
-  pageSize: true,
-  sortBy: true,
-  sortDir: true,
-  lifecycleStatus: true,
-  ageTier: true,
-  membershipType: true,
-  subscription: true,
-  familyGroup: true,
-  contactability: true,
-  dependentLinkEligibleFor: true,
-  parentLinkEligibleFor: true,
-  partnerLinkEligibleFor: true,
-});
+const MEMBER_LIST_APP_SORT_FIELDS = ADMIN_MEMBER_SORT_FIELDS.filter((field) => field !== "access");
+
+const memberListActionQuerySchema = adminMembersQuerySchema.in
+  .pick({
+    q: true,
+    page: true,
+    pageSize: true,
+    sortBy: true,
+    sortDir: true,
+    lifecycleStatus: true,
+    ageTier: true,
+    membershipType: true,
+    subscription: true,
+    familyGroup: true,
+    contactability: true,
+    dependentLinkEligibleFor: true,
+    parentLinkEligibleFor: true,
+    partnerLinkEligibleFor: true,
+  })
+  .extend({
+    sortBy: z.enum(MEMBER_LIST_APP_SORT_FIELDS).optional(),
+    sortDir: z.enum(["asc", "desc"]).optional(),
+    lifecycleStatus: z.enum(ADMIN_MEMBER_LIFECYCLE_FILTERS).optional(),
+    subscription: z.enum(ADMIN_MEMBER_SUBSCRIPTION_FILTERS).optional(),
+    contactability: z.enum(ADMIN_MEMBER_CONTACTABILITY_FILTERS).optional(),
+  });
 
 const quoted = (values: readonly string[]) => values.map((value) => `\`${value}\``).join(", ");
 
@@ -57,7 +77,7 @@ export const MEMBERSHIP_MEMBER_MCP_ACTIONS: readonly McpAction[] = [
   {
     id: "list_members",
     title: "Find members",
-    summary: `Finds members, 25 a page (\`pageSize\` up to 100, \`page\` from 1), by surname unless \`sortBy\` is \`email\`, \`access\`, \`ageTier\`, \`active\` or \`createdAt\` (\`sortDir\` \`asc\` or \`desc\`). \`q\` matches a name, an email address or the start of a member id. Archived members are left out unless \`lifecycleStatus\` is \`archived\` or \`all\`; \`active\`, \`inactive\` and \`cancelled\` narrow the list. \`ageTier\` is one of ${quoted(AGE_TIER_VALUES)}. \`membershipType\` is a type id from \`list_membership_types\`, or \`${UNASSIGNED_MEMBERSHIP_TYPE_VALUE}\` for members with no type this season. \`subscription\` is this season's \`PAID\`, \`UNPAID\`, \`OVERDUE\`, \`NOT_INVOICED\`, \`NOT_REQUIRED\` or \`NONE\`. \`familyGroup\` is a family group id, \`any\` or \`none\`. \`contactability\` is \`unreachable\`, \`inheritance-unresolved\` or \`placeholder-address\` for members the club cannot email. \`dependentLinkEligibleFor\`, \`parentLinkEligibleFor\` and \`partnerLinkEligibleFor\` each take a member id and list only who could be linked to that member as their dependant, their parent or their partner. Each member comes with their email, age tier, status, membership type and this season's subscription status; \`deletedAccount\` marks an erased account. \`get_member\` has the rest.`,
+    summary: `Finds members, ${ADMIN_LIST_DEFAULT_PAGE_SIZE} a page (\`pageSize\` up to ${ADMIN_LIST_MAX_PAGE_SIZE}, \`page\` from 1), by surname unless \`sortBy\` is one of ${quoted(MEMBER_LIST_APP_SORT_FIELDS)} (\`sortDir\` \`asc\` or \`desc\`). \`q\` matches a name, an email address or the start of a member id. Archived members are left out unless \`lifecycleStatus\` (one of ${quoted(ADMIN_MEMBER_LIFECYCLE_FILTERS)}) is \`archived\` or \`all\`; the others narrow the list. \`ageTier\` is one of ${quoted(AGE_TIER_VALUES)}. \`membershipType\` is a type id from \`list_membership_types\`, or \`${UNASSIGNED_MEMBERSHIP_TYPE_VALUE}\` for members with no type this season. \`subscription\` filters on this season's subscription: one of ${quoted(ADMIN_MEMBER_SUBSCRIPTION_FILTERS)}. \`familyGroup\` is a family group id, \`any\` or \`none\`. \`contactability\` is one of ${quoted(ADMIN_MEMBER_CONTACTABILITY_FILTERS)}, for members the club cannot email. \`dependentLinkEligibleFor\`, \`parentLinkEligibleFor\` and \`partnerLinkEligibleFor\` each take a member id and list only who could be linked to that member as their dependant, their parent or their partner. Each member comes with their email, age tier, status, membership type and this season's subscription status; \`deletedAccount\` marks an erased account. \`get_member\` has the rest.`,
     method: "GET",
     path: "/api/admin/members",
     query: memberListActionQuerySchema,
@@ -80,7 +100,7 @@ export const MEMBERSHIP_MEMBER_MCP_ACTIONS: readonly McpAction[] = [
   {
     id: "list_member_activity",
     title: "List a member's account history",
-    summary: `A member's account history as officers see it, newest first: when, what kind, the outcome and a one-line summary of each entry. \`category\` is one of ${quoted(AUDIT_TIMELINE_CATEGORY_OPTIONS.map(({ value }) => value))} (\`all\` when left out). \`page\` counts from 1; \`pageSize\` is at most 50 (10 when left out).`,
+    summary: `A member's account history as officers see it, newest first: when, what kind, the outcome and a one-line summary of each entry. \`category\` is one of ${quoted(AUDIT_TIMELINE_CATEGORY_OPTIONS.map(({ value }) => value))} (\`all\` when left out). \`page\` counts from 1; \`pageSize\` is at most ${MEMBER_AUDIT_LOG_MAX_PAGE_SIZE} (${MEMBER_AUDIT_LOG_DEFAULT_PAGE_SIZE} when left out).`,
     method: "GET",
     path: "/api/admin/members/[id]/audit-log",
     params: recordIdParamsSchema,

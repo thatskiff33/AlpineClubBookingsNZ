@@ -106,7 +106,7 @@ import { POST as linkDependant } from "@/app/api/admin/members/[id]/dependents/l
 import { DELETE as unlinkDependant } from "@/app/api/admin/members/[id]/dependents/[dependentId]/route";
 import { GET as listMembershipTypes } from "@/app/api/admin/membership-types/route";
 import { expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
-import { findMcpAction } from "@/lib/mcp/catalogue";
+import { findMcpAction, mcpActionInputSchema } from "@/lib/mcp/catalogue";
 
 /** Fields a connection never gets, carried by every member fixture below. */
 const personalFields = {
@@ -116,7 +116,9 @@ const personalFields = {
   xeroContactId: "xero-contact-1",
   canLogin: true,
   forcePasswordChange: false,
-  accessRoles: ["USER"],
+  // Access roles are never sent: an app must not learn who holds admin access.
+  role: "ADMIN",
+  accessRoles: ["ADMIN"],
   comments: "Officer note",
 };
 
@@ -125,7 +127,6 @@ const standing = {
   firstName: "Ana",
   lastName: "Hale",
   email: "ana@example.test",
-  role: "USER",
   ageTier: "ADULT",
   active: true,
   cancelledAt: null,
@@ -198,6 +199,15 @@ describe("list_members", () => {
     const offered = Object.keys(findMcpAction("list_members")?.query?.shape ?? {});
     for (const screenOnly of ["xeroContactGroup", "xeroLinked", "inheritEmailEligible", "excludeId", "inviteStatus", "role"]) {
       expect(offered).not.toContain(screenOnly);
+    }
+  });
+
+  it("refuses to sort by access role and any filter value the route does not know", () => {
+    const listAction = findMcpAction("list_members");
+    if (!listAction) throw new Error("list_members is not catalogued");
+    for (const args of [{ sortBy: "access" }, { lifecycleStatus: "gone" }, { subscription: "LAPSED" }, { contactability: "x" }]) {
+      // The dispatcher validates the app's arguments with this schema before anything is sent.
+      expect(mcpActionInputSchema(listAction).safeParse(args).success, JSON.stringify(args)).toBe(false);
     }
   });
 });

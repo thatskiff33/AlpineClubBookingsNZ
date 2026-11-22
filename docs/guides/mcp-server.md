@@ -467,17 +467,23 @@ officer's AI provider, only the fields each action names:
 - Members (`list_members`, `get_member` and the family-link actions): name,
   email address, age group, membership standing, type and subscription status;
   the record adds their phone number, their parents (with email addresses),
-  dependants and family groups, and `get_member_partner_links` their partner. Never a date of birth, street or postal address, dietary
-  or medical details, provider ids, officer notes, access roles or sign-in
-  details. `list_member_activity` sends a member's account history as
-  `list_my_account_activity` does.
+  dependants and family groups, and `get_member_partner_links` their
+  partner. Never a date of birth, street or postal address, dietary or medical
+  details, provider ids, officer notes, access roles or sign-in details.
+- Account history (`list_member_activity`): every entry in a member's
+  history, as officers see it, including the admin, accounting and system
+  entries the member's own view leaves out. Each entry sends when it happened,
+  its category, its outcome and the summary written with it, which can name
+  other people or quote the email address or other detail the entry was
+  about. Not the devices, network addresses or full stored detail.
 - Family groups: each member's id, name, age group and whether they are
   active. An email address only where the screen uses one to tell similar
   people apart: member search, a request's people and candidate matches, and
   suggested groups. A partner invitation's address, never its link.
 - Applications and request queues: who a request is about, what it asks and
   where it stands. Not an applicant's date of birth, phone, address or family
-  details, nor an unpaid invoice's number, amount or link.
+  details, nor an unpaid invoice's number, amount or link. The live Xero
+  check for unpaid invoices runs only on the website.
 - Notices: the notice itself, and who read it, without their email addresses.
   Message board posts with their authors' names.
 - Committee: each holder's name, email address and phone number, as the
