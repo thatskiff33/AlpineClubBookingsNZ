@@ -43,22 +43,29 @@ const JSON_RECEIVER_NAMES = new Set(["request", "req", "response"]);
  * Each group is a reason the inline read could not be swapped for the shared
  * reader without changing what a caller sees.
  *
- * Pending work, the list for #5407:
- * `uncaught` is item 26 (invalid JSON answers 500 today), and `oneAnswer` and
- * `swallowedError` are item 27 (one answer for two faults; a bad body swallowed
- * and treated as no body). These only shrink as those items land.
+ * Pending work, the list for #5407 (these only shrink as the items land):
+ * `uncaught` (18 routes) is item 26: invalid JSON answers 500 today.
+ * `oneAnswer` (28 routes) and `swallowedError` (32 routes) are item 27: the JSON
+ * fault and the schema fault get one answer; a bad body is swallowed and
+ * treated as no body.
  *
- * Permanent exception, not work to do: `intentionalExtraResponse`, whose 400
- * carries a field or headers on purpose.
+ * Permanent exception, not work to do: `intentionalExtraResponse` (2 routes),
+ * whose 400 carries a field or headers on purpose.
  *
  * Do not add a route to dodge the census: a new route uses the shared reader.
  * Comments are removed before matching (`stripComments`, INV-SSOT-004), so a
  * comment that mentions `request.json()` is not a read and a commented-out
  * read does not keep an entry alive.
  *
- * Not seen: `admin/mountain-conditions` POST reads `text()` and parses it
- * itself (#5407 item 28), and a body read under another receiver name or
- * through `clone()`; `JSON_RECEIVER_NAMES` below fails on a new name.
+ * What this census does not cover: bodies read without `.json()` on the
+ * incoming request, that is `text()` plus `JSON.parse`, `clone()`,
+ * `formData()` and streams. Three routes read `text()` to accept an empty body
+ * and answer an unparseable one through `invalidJsonBodyResponse` (members
+ * joining-fee preview, members xero-push, and `admin/mountain-conditions` POST,
+ * #5407 item 28). The signed-webhook routes (Stripe, Xero, SES SNS, ServerNZ
+ * posts) read the raw bounded text on purpose, because the signature covers the
+ * exact bytes; `mcp` and `mcp/oauth/register` use the same bounded reader.
+ * `JSON_RECEIVER_NAMES` below fails on a new `.json()` receiver name.
  */
 const directJsonReadAllowlist: Record<
   string,
@@ -66,7 +73,7 @@ const directJsonReadAllowlist: Record<
 > = {
   uncaught: {
     reason:
-      "The read has no try/catch around it, so a body that is not valid JSON is answered with a 500 today. Converting it would change the status, so converting it changes the status from 500 to 400 (#5407 item 26).",
+      "The read has no try/catch of its own, or only an outer catch-all that logs and answers 500, so a body that is not valid JSON is answered with a 500 today. Converting it changes the status from 500 to 400 (#5407 item 26).",
     routes: [
       "src/app/api/admin/age-tier-settings/route.ts",
       "src/app/api/admin/booking-change-requests/[id]/route.ts",
@@ -90,7 +97,7 @@ const directJsonReadAllowlist: Record<
   },
   oneAnswer: {
     reason:
-      "One try wraps the JSON read and the schema parse (or more) and gives both faults the same answer and status, often not the shared reader's 400. A shared reader would split them, which changes a response (#5407 item 27).",
+      "The JSON fault and the schema fault get the same answer, in most routes because one try wraps the read and the parse, in admin/menu-role through one shared invalid() answer. The status or wording is often not the shared reader's, and a shared reader would split the two faults, which changes a response (#5407 item 27).",
     routes: [
       "src/app/api/admin/booking-policies/adult-member-hosting/route.ts",
       "src/app/api/admin/booking-policies/minimum-stay/[id]/route.ts",
