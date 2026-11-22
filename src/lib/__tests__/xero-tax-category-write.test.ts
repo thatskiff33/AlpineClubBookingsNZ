@@ -40,6 +40,7 @@ vi.mock("@/lib/club-tax-settings", async (importOriginal) => ({
 }));
 
 import { clearXeroTaxCategory, mapXeroTaxCategory } from "@/lib/xero-tax-category-write";
+import { EXEMPT_CLEAR_REFUSED_WHILE_DISCONNECTED } from "@/lib/xero-opening-credits-exempt-guards";
 
 const ACTOR = "member-full-admin";
 const TENANT = "tenant-connected";
@@ -182,10 +183,13 @@ describe("clearXeroTaxCategory", () => {
         // Disconnecting deletes the connection row, so every stored mapping reads as "not this organisation's".
         h.prisma.xeroConnection.findUnique.mockResolvedValue(connected(null));
         h.schedule.mockResolvedValue(schedule);
+        // Its own sentence: nothing is "in use" or "sent to Xero" while disconnected.
         await expect(clearExempt()).resolves.toEqual({
           refused: "in-use",
-          message: expect.stringMatching(/Unmap the Opening Credits account under Account Mappings first, then clear Exempt\.$/),
+          message: EXEMPT_CLEAR_REFUSED_WHILE_DISCONNECTED,
         });
+        expect(EXEMPT_CLEAR_REFUSED_WHILE_DISCONNECTED).toMatch(/^Xero is not connected/);
+        expect(EXEMPT_CLEAR_REFUSED_WHILE_DISCONNECTED).not.toMatch(/is in use|is sent to Xero/);
         expect(h.tx.xeroTaxCategoryMapping.delete).not.toHaveBeenCalled();
         expect(h.tx.auditLog.create).not.toHaveBeenCalled();
       },
@@ -193,8 +197,18 @@ describe("clearXeroTaxCategory", () => {
 
     it("refuses it while a connection row names no organisation", async () => {
       h.prisma.xeroConnection.findUnique.mockResolvedValue({ tenantId: null, expiresAt: new Date() });
-      await expect(clearExempt()).resolves.toMatchObject({ refused: "in-use" });
+      await expect(clearExempt()).resolves.toEqual({
+        refused: "in-use",
+        message: EXEMPT_CLEAR_REFUSED_WHILE_DISCONNECTED,
+      });
       expect(h.tx.xeroTaxCategoryMapping.delete).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when the connection read throws: no clear, no transaction", async () => {
+      h.prisma.xeroConnection.findUnique.mockRejectedValue(new Error("database unavailable"));
+      await expect(clearExempt()).rejects.toThrow("database unavailable");
+      expect(h.tx.xeroTaxCategoryMapping.delete).not.toHaveBeenCalled();
+      expect(h.tx.auditLog.create).not.toHaveBeenCalled();
     });
 
     it("clears it while Xero is disconnected once Opening Credits is unmapped, or the club is not registered", async () => {

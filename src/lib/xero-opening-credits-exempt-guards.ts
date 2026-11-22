@@ -258,6 +258,15 @@ async function openingCreditsAccountIsMapped(): Promise<boolean> {
 }
 
 /**
+ * The clear refusal's sentence while Xero is not connected. Nothing is sent to
+ * Xero in that state, so it must not say the category "is in use", and both
+ * mapping panels are hidden until an organisation is connected, so the way out
+ * it names starts with connecting.
+ */
+export const EXEMPT_CLEAR_REFUSED_WHILE_DISCONNECTED =
+  "Xero is not connected, so the app cannot tell whether this Exempt mapping is the one the club will need when it reconnects. The Opening Credits account is mapped, and the club is, or is scheduled to be, GST-registered, so each spent opening credit needs the Exempt rate. Connect Xero first. Once connected, a mapping chosen in a different Xero organisation can be cleared; for the club's own organisation, unmap the Opening Credits account under Account Mappings first, then clear Exempt.";
+
+/**
  * Why the Exempt mapping may not be cleared, or null when it may
  * (`clearXeroTaxCategory`). While the Opening Credits account is mapped and the
  * club is, or is scheduled to be, GST-registered, every spent opening credit
@@ -280,7 +289,8 @@ export async function exemptClearRefusalWhileOpeningCreditsMapped(): Promise<str
   // unmapped, the club's own included: cleared in that state, it would be
   // missing when the same organisation is connected again, and spent opening
   // credits would stall. So while Xero is disconnected the refusal stands.
-  if (mappings.tenantId !== null && mappedTaxTypeFor(mappings, "EXEMPT") === null) return null;
+  if (mappings.tenantId === null) return EXEMPT_CLEAR_REFUSED_WHILE_DISCONNECTED;
+  if (mappedTaxTypeFor(mappings, "EXEMPT") === null) return null;
   return "The Exempt tax category is in use: the Opening Credits account is mapped, and the club is, or is scheduled to be, GST-registered, so each spent opening credit is sent to Xero with the Exempt rate. Unmap the Opening Credits account under Account Mappings first, then clear Exempt.";
 }
 
