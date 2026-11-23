@@ -344,7 +344,8 @@ describe("Admin Subscriptions API: billing note on a saved Not-required row (#51
     const row = await rowFor(seasonRow({
       status: "NOT_REQUIRED", subscriptionBehavior: "BASED_ON_AGE_TIER", ageTier: "ADULT",
     }));
-    expect(row.status).toBe("NOT_REQUIRED");
+    // The lists follow billing, so the row shows billing's status.
+    expect(row.status).toBe("NOT_INVOICED");
     expect(row.billingNote).toBe(NOTE);
   });
 

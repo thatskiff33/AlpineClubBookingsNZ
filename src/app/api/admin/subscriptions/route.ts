@@ -13,7 +13,10 @@ import {
 } from "@/lib/xero-contact-groups";
 import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
 import { subscriptionNotRequiredMemberConditions } from "@/lib/subscription-liability-where";
-import { SEASON_ROW_STATE_SELECT } from "@/lib/subscription-season-row-note";
+import {
+  listSubscriptionStatus,
+  SEASON_ROW_STATE_SELECT,
+} from "@/lib/subscription-season-row-note";
 import {
   isSubscriptionsListMemberNotRequired,
   subscriptionsListBillingNote,
@@ -273,13 +276,18 @@ export async function GET(request: NextRequest) {
 
     const candidatesByMemberId = new Map<string, SubscriptionCandidate>();
     for (const subscription of subscriptions) {
-      const displayStatus = isSubscriptionsListMemberNotRequired(
-        subscription.member,
-        liabilityRule,
-        subscription.status
-      )
-        ? "NOT_REQUIRED"
-        : subscription.status;
+      const billingNote = subscriptionsListBillingNote(subscription, liabilityRule);
+      // #5190: the members list's status; a noted row shows billing's status,
+      // so the status filter and the counts below place it where it reads.
+      const displayStatus = listSubscriptionStatus({
+        notRequired: isSubscriptionsListMemberNotRequired(
+          subscription.member,
+          liabilityRule,
+          subscription.status
+        ),
+        seasonRowStatus: subscription.status,
+        billingNote,
+      });
       candidatesByMemberId.set(subscription.memberId, {
         id: subscription.id,
         memberId: subscription.memberId,
@@ -290,7 +298,7 @@ export async function GET(request: NextRequest) {
         paidAt: subscription.paidAt,
         manuallyMarkedPaidAt: subscription.manuallyMarkedPaidAt,
         manualPaymentNote: subscription.manualPaymentNote,
-        billingNote: subscriptionsListBillingNote(subscription, liabilityRule),
+        billingNote,
         xeroContactGroupsLoaded: true,
         xeroContactGroups: [],
         member: serializeSubscriptionMemberLoginStage(subscription.member),

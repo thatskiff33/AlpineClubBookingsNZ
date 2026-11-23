@@ -13,7 +13,15 @@ import {
 } from "@/lib/membership-types";
 import type { AgeTierSettingData } from "@/lib/policies/age-tier";
 import type { SubscriptionLiabilitySettings } from "@/lib/policies/subscription";
-import { subscriptionNotRequiredMemberConditions } from "@/lib/subscription-liability-where";
+import {
+  MEMBER_LIST_SUBSCRIPTION_STATUS_FILTERS,
+  memberListSubscriptionFilterConditions,
+  subscriptionNotRequiredMemberConditions,
+} from "@/lib/subscription-liability-where";
+import {
+  listSubscriptionStatus,
+  notRequiredRowBillingNote,
+} from "@/lib/subscription-season-row-note";
 
 // #5190: the admin members list, its CSV export and the subscriptions list
 // filter "subscription not required" in SQL and then show the shared rule's own
@@ -201,4 +209,125 @@ describe("subscriptionNotRequiredMemberConditions matches the shared liability r
       }
     },
   );
+});
+
+// #5190 review (owner decision 22 Nov 2026): a saved "Not required" row the
+// billing side treats as owing shows billing's status with a note. Every list
+// filter must hold exactly the members whose row shows that status (#2149),
+// so each member below matches one filter: the one its row displays.
+describe("memberListSubscriptionFilterConditions matches the displayed status", () => {
+  const FILTERS = ["NOT_REQUIRED", "NONE", ...MEMBER_LIST_SUBSCRIPTION_STATUS_FILTERS];
+  const ROWS: Array<{ status: SubscriptionStatus; covered: boolean } | null> = [
+    null,
+    { status: "NOT_REQUIRED", covered: false },
+    { status: "NOT_REQUIRED", covered: true },
+    { status: "NOT_INVOICED", covered: false },
+    { status: "PAID", covered: false },
+  ];
+
+  function* listMembers() {
+    for (const role of ROLES)
+      for (const ageTier of STORED_TIERS)
+        for (const dateOfBirth of DATES_OF_BIRTH)
+          for (const assignment of ASSIGNMENTS)
+            for (const row of ROWS)
+              for (const active of [true, false])
+                yield { role, ageTier, dateOfBirth, assignment, row, active };
+  }
+  type ListMember = ReturnType<typeof listMembers> extends Generator<infer T> ? T : never;
+
+  function dbRow(member: ListMember) {
+    return {
+      ...asRow({ ...member, rowStatus: null }),
+      active: member.active,
+      archivedAt: null,
+      subscriptions: member.row
+        ? [{
+            seasonYear: SEASON,
+            status: member.row.status,
+            xeroInvoiceId: null,
+            manuallyMarkedPaidAt: null,
+            chargeCoverage: member.row.covered ? [{ id: "claim", releasedAt: null }] : [],
+          }]
+        : [],
+    };
+  }
+
+  function displayed(member: ListMember, liabilitySettings: SubscriptionLiabilitySettings) {
+    const seasonRow = member.row
+      ? {
+          status: member.row.status,
+          xeroInvoiceId: null,
+          manuallyMarkedPaidAt: null,
+          chargeCoverage: member.row.covered ? [{ id: "claim" }] : [],
+        }
+      : null;
+    const facts = {
+      subscriptionBehavior: effectiveSubscriptionBehavior(member.assignment, member.role),
+      member: { ...member, archivedAt: null },
+      seasonYear: SEASON,
+      ageTierSettings: AGE_TIER_SETTINGS,
+      liabilitySettings,
+    };
+    return (
+      listSubscriptionStatus({
+        notRequired: isSubscriptionNotRequiredForMembershipType({
+          ...facts,
+          seasonRowStatus: seasonRow?.status,
+        }),
+        seasonRowStatus: seasonRow?.status,
+        billingNote: notRequiredRowBillingNote({ ...facts, seasonRow }),
+      }) ?? "NONE"
+    );
+  }
+
+  it.each(SETTINGS)("places every member under the filter its row shows, under %o", (liabilitySettings) => {
+    const notRequiredConditions = subscriptionNotRequiredMemberConditions({
+      seasonYear: SEASON,
+      ageTierSettings: AGE_TIER_SETTINGS,
+      liabilitySettings,
+    });
+    let noted = 0;
+    for (const member of listMembers()) {
+      const shown = displayed(member, liabilitySettings);
+      if (member.row?.status === "NOT_REQUIRED" && shown === "NOT_INVOICED") noted += 1;
+      const matched = FILTERS.filter((filter) =>
+        matchesWhere(dbRow(member), {
+          AND: memberListSubscriptionFilterConditions(filter, {
+            seasonYear: SEASON,
+            notRequiredConditions,
+          }),
+        }),
+      );
+      expect(matched, JSON.stringify(member)).toEqual([shown]);
+    }
+    // Under NOT_CHOSEN billing ignores the saved row, so some rows are noted.
+    if (liabilitySettings.requiredTypeAgeRule === "NOT_CHOSEN") expect(noted).toBeGreaterThan(0);
+  });
+
+  it("shows a noted member as not invoiced, under that filter only", () => {
+    const member: ListMember = {
+      role: "USER",
+      ageTier: "ADULT",
+      dateOfBirth: null,
+      assignment: "BASED_ON_AGE_TIER",
+      row: { status: "NOT_REQUIRED", covered: false },
+      active: true,
+    };
+    const liabilitySettings = SETTINGS[0];
+    expect(displayed(member, liabilitySettings)).toBe("NOT_INVOICED");
+    const notRequiredConditions = subscriptionNotRequiredMemberConditions({
+      seasonYear: SEASON,
+      ageTierSettings: AGE_TIER_SETTINGS,
+      liabilitySettings,
+    });
+    for (const filter of FILTERS) {
+      expect(
+        matchesWhere(dbRow(member), {
+          AND: memberListSubscriptionFilterConditions(filter, { seasonYear: SEASON, notRequiredConditions }),
+        }),
+        filter,
+      ).toBe(filter === "NOT_INVOICED");
+    }
+  });
 });

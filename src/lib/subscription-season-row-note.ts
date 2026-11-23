@@ -12,7 +12,10 @@ import {
   resolveMemberSubscriptionLiability,
   type SubscriptionLiabilitySettings,
 } from "@/lib/policies/subscription";
-import { isInSubscriptionBillingPopulation } from "@/lib/subscription-billing-population";
+import {
+  isInSubscriptionBillingPopulation,
+  SUBSCRIPTION_BILLING_POPULATION_WHERE,
+} from "@/lib/subscription-billing-population";
 
 /**
  * A season row nothing has billed, paid, covered or marked: the creation seed's
@@ -131,4 +134,55 @@ export function notRequiredRowBillingNote(
   input: Parameters<typeof hasNotRequiredRowBillingNote>[0],
 ): string | null {
   return hasNotRequiredRowBillingNote(input) ? NOT_REQUIRED_ROW_BILLING_NOTE : null;
+}
+
+/**
+ * The status a noted row shows (#5190 review, owner decision 22 Nov 2026: the
+ * lists follow billing, so a noted member "changes from Not required to
+ * owing"). Billing ignores the saved row and has sent no invoice, so the row
+ * reads as billing sees it: not invoiced. The list filters and counts use this
+ * same status ({@link listSubscriptionStatus},
+ * {@link notRequiredRowBillingNoteWhere}), so a filter matches what the row
+ * shows (#2149).
+ */
+export const NOT_REQUIRED_ROW_BILLING_STATUS =
+  "NOT_INVOICED" as const satisfies SubscriptionStatus;
+
+/**
+ * The one status the admin members list, its CSV export and the subscriptions
+ * list show for a member this season: "Not required" when the lists' rule
+ * exempts them, {@link NOT_REQUIRED_ROW_BILLING_STATUS} for a noted row, else
+ * the saved row's status (null with no row).
+ */
+export function listSubscriptionStatus(input: {
+  notRequired: boolean;
+  seasonRowStatus: SubscriptionStatus | null | undefined;
+  billingNote: string | null;
+}): SubscriptionStatus | null {
+  if (input.notRequired) return "NOT_REQUIRED";
+  if (input.billingNote !== null) return NOT_REQUIRED_ROW_BILLING_STATUS;
+  return input.seasonRowStatus ?? null;
+}
+
+/**
+ * The SQL form of {@link hasNotRequiredRowBillingNote}: in the billing
+ * population, an untouched `NOT_REQUIRED` row this season, and not exempt by
+ * the lists' rule. `notRequiredConditions` is
+ * `subscriptionNotRequiredMemberConditions` for the same season and settings.
+ */
+export function notRequiredRowBillingNoteWhere(input: {
+  seasonYear: number;
+  notRequiredConditions: Prisma.MemberWhereInput[];
+}): Prisma.MemberWhereInput {
+  return {
+    AND: [
+      SUBSCRIPTION_BILLING_POPULATION_WHERE,
+      {
+        subscriptions: {
+          some: { seasonYear: input.seasonYear, ...UNTOUCHED_NOT_REQUIRED_ROW },
+        },
+      },
+      { NOT: { OR: input.notRequiredConditions } },
+    ],
+  };
 }

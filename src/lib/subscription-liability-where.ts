@@ -14,6 +14,10 @@ import {
   type LiabilityAgeTierSource,
   type SubscriptionLiabilitySettings,
 } from "@/lib/policies/subscription";
+import {
+  NOT_REQUIRED_ROW_BILLING_STATUS,
+  notRequiredRowBillingNoteWhere,
+} from "@/lib/subscription-season-row-note";
 
 /**
  * The SQL form of "this member owes no subscription this season" (#5190): the
@@ -121,4 +125,73 @@ function exemptAgeTierWhere(
       })),
     ],
   };
+}
+
+/** The saved-row statuses the members list and its CSV export filter on. */
+export const MEMBER_LIST_SUBSCRIPTION_STATUS_FILTERS = [
+  "PAID",
+  "UNPAID",
+  "OVERDUE",
+  "NOT_INVOICED",
+] as const;
+
+/**
+ * The members list's and CSV export's subscription filter (#2149, #5190), one
+ * definition for both. Each value matches exactly the members whose row shows
+ * that status (`listSubscriptionStatus`): "NOT_REQUIRED" the lists' exempt set
+ * plus an owing member's un-noted saved "Not required" row; "NONE" an owing
+ * member with no row; a status an owing member whose row has
+ * it, and "NOT_INVOICED" also a noted saved "Not required" row
+ * (`notRequiredRowBillingNoteWhere`). An unknown value filters nothing.
+ */
+export function memberListSubscriptionFilterConditions(
+  filter: string | null | undefined,
+  input: { seasonYear: number; notRequiredConditions: Prisma.MemberWhereInput[] },
+): Prisma.MemberWhereInput[] {
+  const { seasonYear, notRequiredConditions } = input;
+  const owing: Prisma.MemberWhereInput = { NOT: { OR: notRequiredConditions } };
+  const noted = notRequiredRowBillingNoteWhere({ seasonYear, notRequiredConditions });
+  if (filter === "NOT_REQUIRED") {
+    return [
+      {
+        OR: [
+          ...notRequiredConditions,
+          // An owing member whose saved "Not required" row carries no note
+          // (covered, outside the billing population) still shows that row.
+          {
+            AND: [
+              owing,
+              { subscriptions: { some: { seasonYear, status: "NOT_REQUIRED" } } },
+              { NOT: noted },
+            ],
+          },
+        ],
+      },
+    ];
+  }
+  if (filter === "NONE") {
+    // #2149: no separate role exclusion; the conditions exempt bare
+    // operational/non-member accounts through the role's default type.
+    return [owing, { subscriptions: { none: { seasonYear } } }];
+  }
+  if (
+    !filter ||
+    !(MEMBER_LIST_SUBSCRIPTION_STATUS_FILTERS as readonly string[]).includes(filter)
+  ) {
+    return [];
+  }
+  const savedStatus: Prisma.MemberWhereInput = {
+    subscriptions: {
+      some: { seasonYear, status: filter as (typeof MEMBER_LIST_SUBSCRIPTION_STATUS_FILTERS)[number] },
+    },
+  };
+  if (filter !== NOT_REQUIRED_ROW_BILLING_STATUS) return [owing, savedStatus];
+  return [
+    {
+      OR: [
+        { AND: [owing, savedStatus] },
+        noted,
+      ],
+    },
+  ];
 }

@@ -36,7 +36,7 @@ vi.mock("@/lib/prisma", () => ({
     memberCredit: { count: vi.fn().mockResolvedValue(0) },
     adminCreditAdjustmentRequest: { count: vi.fn().mockResolvedValue(0) },
     refundRequest: { count: vi.fn().mockResolvedValue(0) },
-    memberSubscription: { count: vi.fn().mockResolvedValue(0) },
+    memberSubscription: { count: vi.fn().mockResolvedValue(0), findMany: vi.fn().mockResolvedValue([]) },
     seasonalMembershipAssignment: { findUnique: vi.fn().mockResolvedValue(null) },
     membershipSubscriptionCharge: { count: vi.fn().mockResolvedValue(0) },
     // #4514: member hard-delete eligibility reads the journal's debtors.
@@ -175,6 +175,8 @@ import { GET as exportMembers } from "@/app/api/admin/members/export/route";
 import { POST as importMembers } from "@/app/api/admin/members/import/route";
 import { POST as bulkUpdate } from "@/app/api/admin/members/bulk-update/route";
 import { GET as getMemberDetail } from "@/app/api/admin/members/[id]/route";
+import { GET as getSubscriptions } from "@/app/api/admin/subscriptions/route";
+import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
 import { DATE_ONLY_INVALID_MESSAGE } from "@/lib/date-only-schema";
 import {
   googleSubCollisionError,
@@ -1162,7 +1164,8 @@ describe("Phase 3: Admin Member Management", () => {
           subscriptionBehavior: "BASED_ON_AGE_TIER", ageTier: "YOUTH",
           subscriptions: [untouchedNotRequiredRow],
         }));
-        expect(row.subscriptionStatus).toBe("NOT_REQUIRED");
+        // The lists follow billing, so the row shows billing's status.
+        expect(row.subscriptionStatus).toBe("NOT_INVOICED");
         expect(row.subscriptionBillingNote).toBe(NOTE);
       });
 
@@ -1213,7 +1216,7 @@ describe("Phase 3: Admin Member Management", () => {
           subscriptionBehavior: "BASED_ON_AGE_TIER", ageTier: "YOUTH",
           subscriptions: [untouchedNotRequiredRow],
         }));
-        expect(stillOwing.subscriptionStatus).toBe("NOT_REQUIRED");
+        expect(stillOwing.subscriptionStatus).toBe("NOT_INVOICED");
         expect(stillOwing.subscriptionBillingNote).toBe(NOTE);
         // Once the clear-up has flipped it, the row says what billing does.
         const flipped = await rowFor(noteMember({
@@ -1601,7 +1604,7 @@ describe("Phase 3: Admin Member Management", () => {
 
       const csv = await res.text();
       const lines = csv.split("\r\n");
-      expect(lines[0]).toBe("Title,First Name,Last Name,Gender,Occupation,Email,Phone Country Code,Phone Area Code,Phone Number,Street Address Line 1,Street Address Line 2,City,Region,Country,Postal Code,Date of Birth,Life Member Date,Role,Age Tier,Active,Cancelled At,Archived At,Xero Contact ID,Subscription Status,Subscription Note,Comments,Created At");
+      expect(lines[0]).toBe("Title,First Name,Last Name,Gender,Occupation,Email,Phone Country Code,Phone Area Code,Phone Number,Street Address Line 1,Street Address Line 2,City,Region,Country,Postal Code,Date of Birth,Life Member Date,Role,Age Tier,Active,Cancelled At,Archived At,Xero Contact ID,Subscription Status,Comments,Created At,Subscription Note");
       expect(lines[1]).toContain("Alice");
       expect(lines[1]).toContain("PAID");
     });
@@ -1796,14 +1799,15 @@ describe("Phase 3: Admin Member Management", () => {
       const res = await exportMembers(new NextRequest("http://localhost/api/admin/members/export"));
       const lines = (await res.text()).split("\r\n");
       const headers = lines[0].split(",");
-      const noteIndex = headers.indexOf("Subscription Note");
-      expect(noteIndex).toBe(headers.indexOf("Subscription Status") + 1);
+      // Last, so every earlier column keeps its position.
+      expect(headers.indexOf("Subscription Note")).toBe(headers.length - 1);
       const noted = lines.find((line) => line.startsWith(",Noted,"))!;
-      expect(noted).toContain(
-        `NOT_REQUIRED,"${NOT_REQUIRED_ROW_BILLING_NOTE}",`,
-      );
+      // The status column shows billing's status, as the list does.
+      expect(noted).toContain(",NOT_INVOICED,");
+      expect(noted.endsWith(`,"${NOT_REQUIRED_ROW_BILLING_NOTE}"`)).toBe(true);
       const plain = lines.find((line) => line.startsWith(",Plain,"))!;
-      expect(plain).toContain(",NONE,,");
+      expect(plain).toContain(",NONE,");
+      expect(plain.endsWith(",")).toBe(true);
     });
 
     it("applies INFANT age tier filter to export", async () => {
@@ -1813,6 +1817,99 @@ describe("Phase 3: Admin Member Management", () => {
       await exportMembers(new NextRequest("http://localhost/api/admin/members/export?ageTier=INFANT"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
       expect(call.where?.AND).toEqual(expect.arrayContaining([{ ageTier: "INFANT" }]));
+    });
+  });
+
+  // #5190 review (owner decision 22 Nov 2026): a saved "Not required" row the
+  // billing side treats as owing reads the same on all three lists: billing's
+  // status with the note, under that status's filter and count (#2149).
+  describe("one noted member on the members list, CSV and subscriptions list (#5190)", () => {
+    const notedRow = {
+      id: "sub-noted", memberId: "noted-1", seasonYear: 2026, status: "NOT_REQUIRED",
+      xeroInvoiceId: null, xeroInvoiceNumber: null, paidAt: null,
+      manuallyMarkedPaidAt: null, manualPaymentNote: null, chargeCoverage: [],
+    };
+    const notedMember = {
+      id: "noted-1", firstName: "Noted", lastName: "Member", email: "noted@test.com",
+      phoneCountryCode: null, phoneAreaCode: null, phoneNumber: null,
+      dateOfBirth: null, role: "USER", financeAccessLevel: "NONE",
+      ageTier: "YOUTH", active: true, archivedAt: null, cancelledAt: null, deletedAt: null,
+      canLogin: false, xeroContactId: null, joinedDate: null,
+      createdAt: new Date("2025-01-01"), forcePasswordChange: false,
+      passwordChangedAt: null, lastLoginAt: null,
+      streetAddressLine1: null, streetAddressLine2: null, streetCity: null,
+      streetRegion: null, streetPostalCode: null, streetCountry: null,
+      postalAddressLine1: null, postalAddressLine2: null, postalCity: null,
+      postalRegion: null, postalPostalCode: null, postalCountry: null,
+      familyGroupMemberships: [], passwordResetTokens: [],
+      subscriptions: [notedRow],
+      seasonalMembershipAssignments: [{
+        seasonYear: 2026,
+        membershipType: {
+          id: "type-age", key: "AGE", name: "Age based", isActive: true,
+          subscriptionBehavior: "BASED_ON_AGE_TIER",
+        },
+      }],
+    };
+    const FILTERS = ["NOT_REQUIRED", "NONE", "PAID", "UNPAID", "OVERDUE", "NOT_INVOICED"];
+
+    beforeEach(() => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([notedMember] as any);
+      vi.mocked(prisma.memberSubscription.findMany).mockResolvedValue([
+        { ...notedRow, member: notedMember },
+      ] as any);
+    });
+
+    // The subscription clauses the route sent, judged against the member.
+    function subscriptionFilterHolds(where: { AND?: unknown[] } | undefined) {
+      const clauses = (where?.AND ?? []).filter((clause) =>
+        JSON.stringify(clause).includes("subscriptions"),
+      );
+      expect(clauses.length).toBeGreaterThan(0);
+      return matchesWhere(notedMember, { AND: clauses });
+    }
+
+    it("shows billing's status with the note on all three lists", async () => {
+      const list = await (await getMembers(new NextRequest("http://localhost/api/admin/members"))).json();
+      expect(list.members[0].subscriptionStatus).toBe("NOT_INVOICED");
+      expect(list.members[0].subscriptionBillingNote).toBe(NOT_REQUIRED_ROW_BILLING_NOTE);
+
+      const csv = (await (await exportMembers(new NextRequest("http://localhost/api/admin/members/export"))).text()).split("\r\n");
+      const headers = csv[0].split(",");
+      const cells = csv[1].split(",");
+      expect(cells[headers.indexOf("Subscription Status")]).toBe("NOT_INVOICED");
+      expect(csv[1].endsWith(`,"${NOT_REQUIRED_ROW_BILLING_NOTE}"`)).toBe(true);
+
+      // The subscriptions list reads the member through their season row; the
+      // rule-exempt query finds nobody.
+      vi.mocked(prisma.member.findMany).mockResolvedValue([] as any);
+      const subs = await (await getSubscriptions(new NextRequest("http://localhost/api/admin/subscriptions"))).json();
+      expect(subs.data[0].status).toBe("NOT_INVOICED");
+      expect(subs.data[0].billingNote).toBe(NOT_REQUIRED_ROW_BILLING_NOTE);
+      expect(subs.summary).toMatchObject({ total: 1, notInvoiced: 1, notRequired: 0 });
+    });
+
+    it.each(FILTERS)("is under the %s filter only if that is the status it shows", async (filter) => {
+      const expected = filter === "NOT_INVOICED";
+
+      vi.mocked(prisma.member.findMany).mockClear();
+      await getMembers(new NextRequest(`http://localhost/api/admin/members?subscription=${filter}`));
+      const listWhere = vi.mocked(prisma.member.findMany).mock.calls[0][0]!.where as { AND?: unknown[] };
+      expect(subscriptionFilterHolds(listWhere)).toBe(expected);
+
+      vi.mocked(prisma.member.findMany).mockClear();
+      await exportMembers(new NextRequest(`http://localhost/api/admin/members/export?subscription=${filter}`));
+      const csvWhere = vi.mocked(prisma.member.findMany).mock.calls[0][0]!.where as { AND?: unknown[] };
+      expect(subscriptionFilterHolds(csvWhere)).toBe(expected);
+
+      if (filter !== "NONE") {
+        vi.mocked(prisma.member.findMany).mockResolvedValue([] as any);
+        const subs = await (await getSubscriptions(
+          new NextRequest(`http://localhost/api/admin/subscriptions?status=${filter}`),
+        )).json();
+        expect(subs.total).toBe(expected ? 1 : 0);
+      }
     });
   });
 

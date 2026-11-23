@@ -83,8 +83,12 @@ import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
 import { nameField } from "@/lib/zod-helpers";
 import { ROLE_VALUES, isRole } from "@/lib/member-roles";
 import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
-import { subscriptionNotRequiredMemberConditions } from "@/lib/subscription-liability-where";
 import {
+  memberListSubscriptionFilterConditions,
+  subscriptionNotRequiredMemberConditions,
+} from "@/lib/subscription-liability-where";
+import {
+  listSubscriptionStatus,
   notRequiredRowBillingNote,
   SEASON_ROW_STATE_SELECT,
 } from "@/lib/subscription-season-row-note";
@@ -203,12 +207,6 @@ const SORT_BY_WHITELIST = [
   "ageTier",
   "active",
   "createdAt",
-] as const;
-const SUBSCRIPTION_STATUS_FILTERS = [
-  "PAID",
-  "UNPAID",
-  "OVERDUE",
-  "NOT_INVOICED",
 ] as const;
 /**
  * How many excluded matches the dependant-link search explains when it finds no
@@ -688,35 +686,14 @@ export async function listAdminMembers(
     );
   }
 
-  // Filter: subscription
-  if (subscriptionFilter === "NOT_REQUIRED") {
-    andConditions.push({ OR: notRequiredSubscriptionConditions });
-  } else if (subscriptionFilter === "NONE") {
-    // #2149: no separate role exclusion — the NOT_REQUIRED conditions above now
-    // exempt bare operational/non-member accounts via the assignment-aware
-    // fallback, so a fee-paying admin (REQUIRED assignment) correctly stays in
-    // the owing set instead of being dropped by a blanket role filter.
-    andConditions.push(
-      { NOT: { OR: notRequiredSubscriptionConditions } },
-      {
-        subscriptions: { none: { seasonYear: currentSeasonYear } },
-      },
-    );
-  } else if (
-    subscriptionFilter &&
-    (SUBSCRIPTION_STATUS_FILTERS as readonly string[]).includes(
-      subscriptionFilter,
-    )
-  ) {
-    andConditions.push(
-      { NOT: { OR: notRequiredSubscriptionConditions } },
-      {
-        subscriptions: {
-          some: { seasonYear: currentSeasonYear, status: subscriptionFilter },
-        },
-      },
-    );
-  }
+  // Filter: subscription. One definition with the CSV export (#2149, #5190):
+  // each value matches the members whose row shows that status.
+  andConditions.push(
+    ...memberListSubscriptionFilterConditions(subscriptionFilter, {
+      seasonYear: currentSeasonYear,
+      notRequiredConditions: notRequiredSubscriptionConditions,
+    }),
+  );
 
   // Filter: family group (via join table)
   if (familyGroupFilter === "none") {
@@ -1179,10 +1156,12 @@ export async function listAdminMembers(
       // visible warning; the refusals in
       // bulk update, member edit and the login providers are the enforcement.
       deletedAccount: isDeletedAccountRecord(m),
-      subscriptionStatus:
-        subscriptionNotRequired
-          ? "NOT_REQUIRED"
-          : (m.subscriptions[0]?.status ?? null),
+      // #5190: a noted row shows billing's status, as its filter matches.
+      subscriptionStatus: listSubscriptionStatus({
+        notRequired: subscriptionNotRequired,
+        seasonRowStatus: m.subscriptions?.[0]?.status,
+        billingNote: subscriptionBillingNote,
+      }),
       subscriptionXeroInvoiceId:
         m.subscriptions[0]?.xeroInvoiceId ?? null,
       subscriptionBillingNote,

@@ -11,8 +11,12 @@ import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import { createAuditLog } from "@/lib/audit";
 import { isRole } from "@/lib/member-roles";
 import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
-import { subscriptionNotRequiredMemberConditions } from "@/lib/subscription-liability-where";
 import {
+  memberListSubscriptionFilterConditions,
+  subscriptionNotRequiredMemberConditions,
+} from "@/lib/subscription-liability-where";
+import {
+  listSubscriptionStatus,
   notRequiredRowBillingNote,
   SEASON_ROW_STATE_SELECT,
 } from "@/lib/subscription-season-row-note";
@@ -36,12 +40,6 @@ import {
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const AGE_TIER_VALUES = Object.values(AgeTier);
-const SUBSCRIPTION_STATUS_FILTERS = [
-  "PAID",
-  "UNPAID",
-  "OVERDUE",
-  "NOT_INVOICED",
-] as const;
 const MEMBER_LIFECYCLE_STATUS_FILTERS = [
   "active",
   "inactive",
@@ -213,32 +211,13 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const subscriptionFilter = sp.get("subscription");
-  if (subscriptionFilter === "NOT_REQUIRED") {
-    andConditions.push({ OR: notRequiredSubscriptionConditions });
-  } else if (subscriptionFilter === "NONE") {
-    // #2149: no blanket role exclusion — see admin-members-service.
-    andConditions.push(
-      { NOT: { OR: notRequiredSubscriptionConditions } },
-      {
-        subscriptions: { none: { seasonYear: currentSeasonYear } },
-      },
-    );
-  } else if (
-    subscriptionFilter &&
-    (SUBSCRIPTION_STATUS_FILTERS as readonly string[]).includes(
-      subscriptionFilter,
-    )
-  ) {
-    andConditions.push(
-      { NOT: { OR: notRequiredSubscriptionConditions } },
-      {
-        subscriptions: {
-          some: { seasonYear: currentSeasonYear, status: subscriptionFilter },
-        },
-      },
-    );
-  }
+  // #2149/#5190: the members list's own filter, so the CSV holds the same rows.
+  andConditions.push(
+    ...memberListSubscriptionFilterConditions(sp.get("subscription"), {
+      seasonYear: currentSeasonYear,
+      notRequiredConditions: notRequiredSubscriptionConditions,
+    }),
+  );
 
   const familyGroupFilter = sp.get("familyGroup");
   if (familyGroupFilter === "none") {
@@ -335,6 +314,11 @@ export async function GET(req: NextRequest) {
       ageTierSettings,
       liabilitySettings: lockoutSettings,
     });
+    const noteOf = (m: MemberRow) =>
+      notRequiredRowBillingNote({
+        ...liabilityFactsOf(m),
+        seasonRow: m.subscriptions[0],
+      });
     const columns: Array<{ header: string; value: (m: MemberRow) => string }> =
       [
         ...(flags.showTitle
@@ -451,31 +435,28 @@ export async function GET(req: NextRequest) {
         {
           header: "Subscription Status",
           value: (m: MemberRow) =>
-            // #2149: membership type is the sole authority (role carries no
-            // exemption); mirrors the members-list flag and the SQL filter.
-            isSubscriptionNotRequiredForMembershipType({
-              ...liabilityFactsOf(m),
-              seasonRowStatus: m.subscriptions[0]?.status,
-            })
-              ? "NOT_REQUIRED"
-              : m.subscriptions[0]?.status || "NONE",
-        },
-        {
-          // #5190 (owner decision 22 Nov 2026): the members list's row note,
-          // so the export carries the same fact. Empty for every other row.
-          header: "Subscription Note",
-          value: (m: MemberRow) =>
-            csvEscape(
-              notRequiredRowBillingNote({
+            // #2149/#5190: the members list's status, from the same rule; a
+            // noted row shows billing's status, as the filter matches it.
+            listSubscriptionStatus({
+              notRequired: isSubscriptionNotRequiredForMembershipType({
                 ...liabilityFactsOf(m),
-                seasonRow: m.subscriptions[0],
-              }) ?? "",
-            ),
+                seasonRowStatus: m.subscriptions[0]?.status,
+              }),
+              seasonRowStatus: m.subscriptions[0]?.status,
+              billingNote: noteOf(m),
+            }) ?? "NONE",
         },
         { header: "Comments", value: (m: MemberRow) => csvEscape(m.comments || "") },
         {
           header: "Created At",
           value: (m: MemberRow) => new Date(m.createdAt).toISOString(),
+        },
+        {
+          // #5190 (owner decision 22 Nov 2026): the members list's row note,
+          // so the export carries the same fact. Empty for every other row.
+          // Last, so every earlier column keeps its position.
+          header: "Subscription Note",
+          value: (m: MemberRow) => csvEscape(noteOf(m) ?? ""),
         },
       ];
 
