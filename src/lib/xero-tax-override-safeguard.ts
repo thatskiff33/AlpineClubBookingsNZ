@@ -4,6 +4,7 @@ import { buildStructuredAuditLogCreateArgs } from "@/lib/audit";
 import logger from "@/lib/logger";
 import type { XeroTaxOverrides } from "@/lib/member-money";
 import { prisma } from "@/lib/prisma";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import { lineTaxAmountsMatch, lineTaxMismatches, parseStoredLineTaxMismatches, type XeroLineTaxMismatch } from "@/lib/xero-line-tax-mismatches";
 import { invoiceLineItemsTotalCents } from "@/lib/xero-modification-line-items";
 
@@ -125,7 +126,7 @@ export async function recordXeroTaxOverrideMismatch(input: {
     });
     logger.warn({ bookingId, providerInvoiceId, xeroSyncOperationId, lines }, "Xero changed the GST the app sent on an invoice; GST overrides are paused until finance resumes them");
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+    if (isPrismaKnownUniqueConstraintError(error)) {
       logger.info({ bookingId, providerInvoiceId, xeroSyncOperationId }, "This operation's GST mismatch was already recorded");
       return;
     }

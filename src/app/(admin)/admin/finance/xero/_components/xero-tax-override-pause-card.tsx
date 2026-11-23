@@ -14,6 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
+import { formatBookingReference } from "@/lib/booking-reference"
 import { formatCents } from "@/lib/utils"
 import type { XeroLineTaxMismatch } from "@/lib/xero-line-tax-mismatches"
 
@@ -152,7 +153,7 @@ export function XeroTaxOverridePauseCard() {
                 {view.invoices.map((invoice) => (
                   <li key={invoice.id} className="rounded-md border p-3 text-sm" data-testid="xero-tax-override-invoice">
                     <p className="font-medium">
-                      {`Invoice ${invoice.invoiceNumber ?? invoice.providerInvoiceId} (booking ${invoice.bookingId.slice(0, 8)}), `}
+                      {`Invoice ${invoice.invoiceNumber ?? invoice.providerInvoiceId} (booking ${formatBookingReference(invoice.bookingId)}), `}
                       {invoice.documentKind === "CREATE" ? "when it was raised" : "when it was updated"}
                     </p>
                     <ul className="mt-1 list-disc pl-5">
