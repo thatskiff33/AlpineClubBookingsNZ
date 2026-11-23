@@ -363,7 +363,7 @@ Screen: `/admin/message-board`.
 
 Shows: Club messages, moderation controls and sharing problems.
 
-Journey: Read club posts and use the moderation actions allowed by the current role.
+Journey: Read club posts and use the moderation actions their role allows.
 
 [Guide](guides/message-board.md) · [History](UX_FLOW_HISTORY.md#club-message-board-2994-epic-2992)
 
