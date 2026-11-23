@@ -20,6 +20,7 @@ import type { McpGrantScope } from "@prisma/client";
 
 import { getAppBaseUrl } from "@/lib/app-url";
 import logger from "@/lib/logger";
+import { FORWARDED_FOR_HEADER } from "@/lib/rate-limit-http";
 
 import { recordMcpAudit } from "./audit";
 import {
@@ -188,7 +189,7 @@ export async function runMcpAction(
       headers: {
         host: publicUrl.host,
         "x-forwarded-proto": publicUrl.protocol.replace(":", ""),
-        "x-forwarded-for": caller.clientIp,
+        [FORWARDED_FOR_HEADER]: caller.clientIp,
         accept: "application/json",
         "user-agent": caller.userAgent ?? "ai-app-connection",
         [MCP_PRINCIPAL_HEADER]: principal.value,

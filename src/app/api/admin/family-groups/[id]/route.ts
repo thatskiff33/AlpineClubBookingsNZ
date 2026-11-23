@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
@@ -7,10 +8,10 @@ import logger from "@/lib/logger";
 import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
 import { formatMemberIdentityAge } from "@/lib/member-age";
 import { clubTime } from "@/lib/club-time/server";
-
+import { ADMIN_FAMILY_GROUP_MAX_MEMBERS, ADMIN_FAMILY_GROUP_NAME_MAX_LENGTH } from "@/lib/admin-family-group-create";
 const updateFamilyGroupSchema = z.object({
-  name: z.string().min(1).max(200).optional(),
-  memberIds: z.array(z.string()).min(1).max(10).optional(),
+  name: z.string().min(1).max(ADMIN_FAMILY_GROUP_NAME_MAX_LENGTH).optional(),
+  memberIds: z.array(z.string()).min(1).max(ADMIN_FAMILY_GROUP_MAX_MEMBERS).optional(),
 });
 
 /**
@@ -140,12 +141,9 @@ export async function PUT(
   const session = guard.session;
   const { id } = await params;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = updateFamilyGroupSchema.safeParse(body);
   if (!parsed.success) {

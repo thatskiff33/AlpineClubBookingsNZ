@@ -73,6 +73,7 @@ import {
 } from "@/lib/email/admin-alerts-settlement";
 import {
   sendBookingBumpedEmail,
+  sendBookingGuestsCancelledEmail,
   sendSplitGuestPortionCancelledEmail,
 } from "@/lib/email/booking";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -976,7 +977,7 @@ describe("#2430 booking-bumped points each recipient class somewhere it can go",
     recipientCanBookOnline: boolean,
   ): Promise<EmailTemplateData> {
     await sendBookingBumpedEmail(
-      { bookingId: "booking_1", recipientMemberId: "member_1" },
+      { bookingId: "booking_1", recipientMemberId: "member_1", idempotencyKey: "booking_1:0" },
       "someone@example.org",
       "Alice",
       new Date("2026-07-10"),
@@ -1055,5 +1056,54 @@ We apologise for the inconvenience.`,
       expect(rendered).not.toMatch(/:\s*$/m);
       expect(rendered).not.toContain("{{");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #5407: a bump notice carries the bump's event key, so the email core keeps
+// one EmailLog row per bump however often the cron sends it, and the sender
+// hands the core's outcome back for the cron to act on.
+// ---------------------------------------------------------------------------
+describe("#5407 the bump notices carry the bump's event key", () => {
+  const OUTCOME = { status: "already_recorded", emailLogId: "email:booking-bumped:booking_1:0" } as const;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.sendEmail.mockResolvedValue(OUTCOME);
+  });
+
+  it("passes the key to the email core for the bumped notice and returns its outcome", async () => {
+    await expect(
+      sendBookingBumpedEmail(
+        { bookingId: "booking_1", recipientMemberId: "member_1", idempotencyKey: "booking_1:0" },
+        "someone@example.org",
+        "Alice",
+        new Date("2026-07-10"),
+        new Date("2026-07-12"),
+        2,
+        null,
+        true,
+      ),
+    ).resolves.toBe(OUTCOME);
+    expect(mocks.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ templateName: "booking-bumped", idempotencyKey: "booking_1:0" }),
+    );
+    expect(mocks.sendEmail.mock.calls[0]![0]).not.toHaveProperty("deferDelivery");
+  });
+
+  it("passes the key to the email core for the guests-cancelled notice and returns its outcome", async () => {
+    await expect(
+      sendBookingGuestsCancelledEmail(
+        { bookingId: "booking_1", recipientMemberId: "member_1", idempotencyKey: "booking_1:0" },
+        "someone@example.org",
+        "Alice",
+        new Date("2026-07-10"),
+        new Date("2026-07-12"),
+        null,
+      ),
+    ).resolves.toBe(OUTCOME);
+    expect(mocks.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ templateName: "booking-guests-cancelled", idempotencyKey: "booking_1:0" }),
+    );
   });
 });

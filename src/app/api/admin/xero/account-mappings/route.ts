@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -10,6 +11,7 @@ import {
   normalizeMappingCode,
   type XeroMappingWritableKey,
 } from "@/lib/xero-account-mapping-keys";
+import { openingCreditsMappingSaveRefusal } from "@/lib/xero-opening-credits-exempt-guards";
 
 // The writable key set comes from the ONE registry (#2717): adding a mapping
 // key used to mean editing this allowlist, this zod schema, the admin picker's
@@ -111,12 +113,11 @@ export async function PUT(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = UpdateMappingsSchema.safeParse(body);
   if (!parsed.success) {
@@ -126,6 +127,17 @@ export async function PUT(request: NextRequest) {
   const updates = parsed.data;
 
   try {
+    // #4988: Opening Credits never shares its account with another mapped role
+    // (owner decision, 21 Nov 2026), and a GST-registered club maps the Exempt
+    // tax category before it maps the account. Decided before any row is
+    // written, so a refused save changes nothing.
+    const refusal = await openingCreditsMappingSaveRefusal({
+      stored: await prisma.xeroAccountMapping.findMany({ select: { key: true, code: true } }),
+      updates,
+    });
+    // 503 only when Xero's tax rates could not be read, as the tax category route answers it.
+    if (refusal) return NextResponse.json({ error: refusal.message }, { status: refusal.retryable ? 503 : 409 });
+
     type MappingValue = { code?: string | null; itemCode?: string | null };
     const ops = (Object.entries(updates) as [XeroMappingWritableKey, MappingValue | undefined][])
       .filter(([, val]) => val !== undefined)

@@ -3,14 +3,19 @@
  * a password changed at the same moment (#5261).
  *
  * `upgradePasswordHashAfterProof` is one `updateMany` guarded on the proved
- * hash, with no lock and no transaction. Three cases:
+ * hash, with no lock and no transaction. Four cases:
  *
  *   1. an older-cost hash is replaced by a current-cost one that verifies;
  *   2. a password changed before the upgrade's write is left alone;
  *   3. FORCED interleaving: a change holds the Member row uncommitted, the
  *      upgrade's write blocks on it (barrier: `pg_stat_activity` reports it
  *      waiting on a lock), the change commits, and PostgreSQL re-checks the
- *      guard against the committed row, so the upgrade matches nothing.
+ *      guard against the committed row, so the upgrade matches nothing;
+ *   4. FORCED interleaving (#5342): two sign-ins upgrade the same older hash.
+ *      A holder keeps the row locked (without changing the hash) until both
+ *      writes are waiting on it, then commits. Exactly one write matches; the
+ *      other re-checks the guard against the winner's hash and matches
+ *      nothing, so exactly one call returns true and the hash still verifies.
  *
  * OFF unless `RUN_CONCURRENCY_RACE_TESTS=1`, and only against
  * `CONCURRENCY_RACE_DATABASE_URL` (loopback, port 55442+, the
@@ -104,7 +109,7 @@ let changedHash: string;
       return rehash.upgradePasswordHashAfterProof({ memberId: MEMBER, plain: PLAIN, storedHash: olderHash });
     }
 
-    async function waitForBlockedWriter() {
+    async function waitForBlockedWriter(writers = 1) {
       const startedAt = process.hrtime.bigint();
       while (realElapsedMs(startedAt) < BARRIER_TIMEOUT_MS) {
         const rows = await prisma.$queryRaw<Array<{ waiting: number }>>`
@@ -114,10 +119,12 @@ let changedHash: string;
             AND wait_event_type = 'Lock'
             AND pid <> pg_backend_pid()
         `;
-        if ((rows[0]?.waiting ?? 0) >= 1) return;
+        if ((rows[0]?.waiting ?? 0) >= writers) return;
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
-      throw new Error("Timed out waiting for the upgrade's write to block on the held Member row.");
+      throw new Error(
+        `Timed out waiting for ${writers} upgrade write(s) to block on the held Member row.`,
+      );
     }
 
     it("replaces an older-cost hash with a current-cost one that still verifies", async () => {
@@ -157,6 +164,39 @@ let changedHash: string;
       await expect(upgraded).resolves.toBe(false);
       expect(await storedHash()).toBe(changedHash);
       expect(await hashing.verifyPassword(CHANGED, await storedHash())).toBe(true);
+    });
+
+    it("lets exactly one of two parallel upgrades of the same older hash win (#5342)", async () => {
+      const held = deferred();
+      const release = deferred();
+      // Locks the row without changing the hash: both upgrades' guards still
+      // match when the holder commits, so only the order between them decides.
+      const holder = holderClient.$transaction(
+        async (tx) => {
+          await tx.member.update({ where: { id: MEMBER }, data: { passwordHash: olderHash } });
+          held.resolve();
+          await release.promise;
+        },
+        { timeout: 20_000 },
+      );
+      await held.promise;
+
+      const first = upgrade();
+      const second = upgrade();
+      try {
+        // Barrier: both writes have computed their hash and are queued on the row.
+        await waitForBlockedWriter(2);
+      } finally {
+        release.resolve();
+        await holder;
+      }
+
+      const results = await Promise.all([first, second]);
+      expect(results.filter(Boolean)).toHaveLength(1);
+      const stored = await storedHash();
+      expect(stored).not.toBe(olderHash);
+      expect(hashing.passwordHashCost(stored)).toBe(hashing.PASSWORD_BCRYPT_COST);
+      expect(await hashing.verifyPassword(PLAIN, stored)).toBe(true);
     });
   },
 );

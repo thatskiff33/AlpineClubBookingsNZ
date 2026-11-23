@@ -10,6 +10,8 @@ import {
 import { fetchWhakapapaCurlData } from "@/lib/whakapapa-report.server";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
+import { SKIFIELD_REPORT_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { connectionJson } from "@/lib/mcp-connection-request";
 
 export const runtime = "nodejs";
 
@@ -74,7 +76,7 @@ export async function GET(request: Request) {
     cachedData &&
     (isFrozenUntil(existing.frozenUntil) || isFresh(existing.fetchedAt))
   ) {
-    return NextResponse.json(cachedData, {
+    return connectionJson(request, cachedData, SKIFIELD_REPORT_CONNECTION_SHAPE, {
       status: 200,
       headers: {
         "Cache-Control": PUBLIC_CACHE_CONTROL,
@@ -110,7 +112,7 @@ export async function GET(request: Request) {
       },
     });
 
-    return NextResponse.json(curlData, {
+    return connectionJson(request, curlData, SKIFIELD_REPORT_CONNECTION_SHAPE, {
       status: 200,
       headers: {
         "Cache-Control": PUBLIC_CACHE_CONTROL,
@@ -119,12 +121,14 @@ export async function GET(request: Request) {
   } catch (error) {
     logger.error({ err: error }, "Failed to refresh Whakapapa report data");
     if (cachedData) {
-      return NextResponse.json(
+      return connectionJson(
+        request,
         {
           ...cachedData,
           error: "Unable to refresh Whakapapa report data.",
           stale: true,
         },
+        SKIFIELD_REPORT_CONNECTION_SHAPE,
         {
           status: 200,
           headers: {

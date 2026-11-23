@@ -30,7 +30,7 @@ import {
 } from "@/lib/food-order-rules";
 
 /**
- * The Order food form (fork #121). One line per item — a description, a
+ * The Order food form (fork triyder/AlpineClubBookingsNZ#121). One line per item — a description, a
  * decimal quantity and its Type (owner change, 13 Nov 2026), whose labels are
  * singular when the quantity is exactly 1 — with Add item and Remove; at least
  * one line.

@@ -493,6 +493,13 @@ which a hold forces false whatever the bed arithmetic says, so the entry keeps
 its queue position until the hold is released rather than being offered or
 dropped.
 
+**A waitlist position is read from the offer order, not stored** (#5402,
+`INV-CAP-041`). Waitlisted and offered entries hold no capacity, so the
+position is not an occupancy figure: it is one plus the opportunities the offer
+pass would consider before the entry's own if a bed freed at its lodge on all
+its nights. It is an upper bound, because the pass offers the first entry whose
+party fits on every night, so a smaller party behind can be offered first.
+
 **Whole-lodge flat pricing is untouched.** `priceWholeLodgeFlat`
 (`src/lib/policies/pricing.ts`) sums a flat per-night season rate and never
 reads a bed count, so a hold whose represented set narrows costs the holding

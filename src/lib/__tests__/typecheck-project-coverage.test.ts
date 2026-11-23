@@ -111,11 +111,18 @@ const JAVASCRIPT_VITEST_TESTS = [
   // #3513: the fast-census runner is a bare-node `.mjs` tool; its own suite
   // deliberately remains JavaScript under the same convention.
   "scripts/ci/run-fast-censuses.test.mjs",
+  // #5196: the budget-gate wrapper is a bare-node `.mjs` tool run by CI before
+  // dependencies matter; its own suite stays JavaScript under the same convention.
+  "scripts/ci/run-budget-gate.test.mjs",
   "scripts/ci/server-only-boundary-selftest.test.mjs",
   "scripts/ci/wait-for-run-artifacts.test.mjs",
   // ALP-4 (#4024): the fragility audit is a set of bare-node `.mjs` tools;
   // their shared suite stays JavaScript under the same convention.
   "scripts/audit/fragility.test.mjs",
+  // #5214: the bare-node docs link check and the Markdown link patterns it
+  // shares with the `.mjs` changelog compiler; their suites stay JavaScript
+  // beside the compiler's.
+  "scripts/check-doc-links.test.mjs",
   "scripts/issue-thread.test.mjs",
   // #4452: `lanes:stale` is a read-only `.mjs` tool run with bare node; its
   // suite stays JavaScript like the other script suites here.
@@ -127,6 +134,7 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/lib/github-heading-anchor.test.mjs",
   // #5379: the after-deploy fragment format, read by that gate and `release:cut`.
   "scripts/lib/deploy-fragments.test.mjs",
+  "scripts/lib/markdown-links.test.mjs",
   "scripts/release/compile-changelog.test.mjs",
   // #4465: `release:cut` drives the `.mjs` compiler under bare node, so its
   // suite stays JavaScript beside the compiler's.
@@ -190,6 +198,11 @@ const DECLARED_JAVASCRIPT_MODULES = [
     load: () => import("../../../scripts/ci/check-allow-builds.mjs"),
   },
   {
+    module: "scripts/ci/resolve-main-push-base.mjs",
+    declaration: "scripts/ci/resolve-main-push-base.d.mts",
+    load: () => import("../../../scripts/ci/resolve-main-push-base.mjs"),
+  },
+  {
     module: "scripts/ci/server-only-boundary-selftest.mjs",
     declaration: "scripts/ci/server-only-boundary-selftest.d.mts",
     load: () => import("../../../scripts/ci/server-only-boundary-selftest.mjs"),
@@ -213,6 +226,11 @@ const DECLARED_JAVASCRIPT_MODULES = [
     module: "scripts/lib/budget-base-ref.mjs",
     declaration: "scripts/lib/budget-base-ref.d.mts",
     load: () => import("../../../scripts/lib/budget-base-ref.mjs"),
+  },
+  {
+    module: "scripts/release/fragment-links.mjs",
+    declaration: "scripts/release/fragment-links.d.mts",
+    load: () => import("../../../scripts/release/fragment-links.mjs"),
   },
   {
     module: "scripts/release/upgrade-docs.mjs",

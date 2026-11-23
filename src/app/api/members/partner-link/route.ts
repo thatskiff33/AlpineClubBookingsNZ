@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireActiveSession } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
@@ -60,12 +61,9 @@ export async function POST(req: NextRequest) {
   const rateLimited = await applyRateLimit(rateLimiters.familyGroupJoinRequest, req);
   if (rateLimited) return rateLimited;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const parsedJson = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!parsedJson.ok) return parsedJson.response;
+  const body = parsedJson.body;
 
   const parsed = requestSchema.safeParse(body);
   if (!parsed.success) {
@@ -134,12 +132,9 @@ export async function PUT(req: NextRequest) {
   const guard = await requireActiveSession();
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = respondSchema.safeParse(body);
   if (!parsed.success) {

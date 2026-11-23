@@ -7,6 +7,7 @@ import {
   ClubTaxTreatmentUnavailableError,
   DEFAULT_CLUB_TAX_SCHEDULE,
   MAX_TAX_RATE_BASIS_POINTS,
+  clubTaxPeriodIsRecorded,
   clubTaxTreatmentOn,
   loadClubTaxSchedule,
   type ClubTaxPeriod,
@@ -85,6 +86,17 @@ describe("club tax settings", () => {
     it("keeps the code defaults as the baseline when only a scheduled period is written", async () => {
       expect(await loadClubTaxSchedule(db([row("p1", { gstRegistered: false, xeroTaxType: null, effectiveFrom: new Date("2027-04-01T00:00:00.000Z") })])))
         .toEqual([CLUB_TAX_SETTINGS_DEFAULTS, expect.objectContaining({ gstRegistered: false, effectiveFrom: "2027-04-01" })]);
+    });
+
+    it("tells a period the club recorded from the code baseline an absent default row stands for (#5066)", async () => {
+      const [baseline, later] = await loadClubTaxSchedule(db([row("p1", { effectiveFrom: new Date("2027-04-01T00:00:00.000Z") })]));
+      expect(clubTaxPeriodIsRecorded(baseline!)).toBe(false);
+      expect(clubTaxPeriodIsRecorded(later!)).toBe(true);
+      expect(DEFAULT_CLUB_TAX_SCHEDULE.map(clubTaxPeriodIsRecorded)).toEqual([false]);
+      // A stored baseline is recorded, even with the code defaults' own values.
+      const [stored] = await loadClubTaxSchedule(db([row(CLUB_TAX_SETTINGS_ID, { effectiveFrom: new Date("2010-10-01T00:00:00.000Z") })]));
+      expect(stored).toEqual(CLUB_TAX_SETTINGS_DEFAULTS);
+      expect(clubTaxPeriodIsRecorded(stored!)).toBe(true);
     });
 
     it("refuses a scheduled period starting on or before the baseline", async () => {

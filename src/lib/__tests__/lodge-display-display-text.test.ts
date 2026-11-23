@@ -95,12 +95,12 @@ describe("resolveDisplayHtml — value tokens inside authored html", () => {
   });
 });
 
-// Issue #176: value resolution runs AFTER the CMS sanitiser, so a config value
+// Issue hoppers99/AlpineClubBookingsNZ#176: value resolution runs AFTER the CMS sanitiser, so a config value
 // that OPENS a URL attribute brings its own scheme past the sanitiser's scheme
 // allowlist. The scheme guard neutralises anything but http/https/mailto/tel and
 // relative/anchor references — but ONLY when the resolved value determines the
 // scheme (token at the start of an href/src), never for ordinary copy.
-describe("resolveDisplayHtml — URL-scheme guard for resolved tokens (issue #176)", () => {
+describe("resolveDisplayHtml — URL-scheme guard for resolved tokens (issue hoppers99/AlpineClubBookingsNZ#176)", () => {
   it("neutralises a javascript: config value resolved at the start of an href", () => {
     const s = state({ config: { link: "javascript:alert(1)" } });
     const html = resolveDisplayHtml('<a href="{{config:link}}">x</a>', s, CLUB_FORMAT_TEST);
@@ -166,13 +166,13 @@ describe("resolveDisplayHtml — URL-scheme guard for resolved tokens (issue #17
   });
 });
 
-// Phase 2 — composition-closing attribute scheme pass (issue #186). The phase-1
+// Phase 2 — composition-closing attribute scheme pass (issue hoppers99/AlpineClubBookingsNZ#186). The phase-1
 // guard above only inspects the token that OPENS a URL attribute, so a scheme
 // split across adjacent tokens reconstitutes past it. The attribute-level pass
 // re-checks the COMPLETE resolved value of every token-bearing href/src
 // attribute, while leaving literal (no-token) attributes untouched so the
-// display's allowed `data:` <img> srcs (issue #161) survive.
-describe("resolveDisplayHtml — split-token scheme composition (issue #186)", () => {
+// display's allowed `data:` <img> srcs (issue hoppers99/AlpineClubBookingsNZ#161) survive.
+describe("resolveDisplayHtml — split-token scheme composition (issue hoppers99/AlpineClubBookingsNZ#186)", () => {
   it("neutralises a javascript: scheme reconstituted across two adjacent tokens in an href", () => {
     // Neither half is a scheme on its own: 'javascript' has no colon, ':alert(1)'
     // is not at the attribute start. Only the concatenation forms javascript:.
@@ -206,7 +206,7 @@ describe("resolveDisplayHtml — split-token scheme composition (issue #186)", (
     ).toBe('<a href="https://x.nz/wing/lodge-3">x</a>');
   });
 
-  it("leaves a literal data: <img> src (no token) untouched — no #161 regression", () => {
+  it("leaves a literal data: <img> src (no token) untouched — no hoppers99/AlpineClubBookingsNZ#161 regression", () => {
     const dataUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB";
     const s = state({ config: { wifi: "alpine1234" } });
     const html = resolveDisplayHtml(

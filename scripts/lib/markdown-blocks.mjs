@@ -341,6 +341,9 @@ export function scanMarkdownBlocks(text) {
   const fenced = [];
   const fenceOpeners = [];
   const headings = [];
+  // Raw HTML block lines (a subset of `fenced`): literal to Markdown, but their
+  // `id`/`name` attributes are still live anchors.
+  const html = [];
   let literal = null;
   let paragraph = null;
   let retainedListContainers = null;
@@ -378,6 +381,7 @@ export function scanMarkdownBlocks(text) {
             continue;
           }
           fenced.push(numberedLine);
+          html.push(numberedLine);
           if (
             literal.terminator.type === "explicit" &&
             literal.terminator.end.test(content)
@@ -458,6 +462,7 @@ export function scanMarkdownBlocks(text) {
           outside.opensContainer)
       ) {
         fenced.push(numberedLine);
+        html.push(numberedLine);
         paragraph = null;
         if (
           htmlTerminator.type === "blank" ||
@@ -527,6 +532,7 @@ export function scanMarkdownBlocks(text) {
   return {
     fenced,
     headings,
+    html,
     literalAudit: [...fenced, ...fenceOpeners].sort((left, right) => left.number - right.number),
     scannable,
   };

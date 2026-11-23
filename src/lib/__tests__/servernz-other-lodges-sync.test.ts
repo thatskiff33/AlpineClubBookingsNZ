@@ -5,7 +5,7 @@ import { Prisma } from "@prisma/client";
 
 const mockFindMany = vi.fn();
 const mockFindUnique = vi.fn();
-// The merge's lookup by NAME (#69: names may repeat, so it reads every row of
+// The merge's lookup by NAME (triyder/AlpineClubBookingsNZ#69: names may repeat, so it reads every row of
 // the name). By default answered from `mockFindUnique`'s one row for the name.
 const mockFindByName = vi.fn();
 const mockExecuteRaw = vi.fn();
@@ -17,7 +17,7 @@ const mockDeleteMany = vi.fn();
 const mockAmenityDeleteMany = vi.fn();
 const mockAmenityUpsert = vi.fn();
 
-// #77: the upload first refills this club's own lodge from its Fees page.
+// triyder/AlpineClubBookingsNZ#77: the upload first refills this club's own lodge from its Fees page.
 const mockFeesSync = vi.fn();
 vi.mock("@/lib/other-lodge-fees-sync", () => ({
   syncOwnOtherLodgesFromFees: (...args: unknown[]) => mockFeesSync(...args),
@@ -32,7 +32,7 @@ vi.mock("@/lib/prisma", () => {
         typeof args?.where?.name === "string" ? mockFindByName(args) : mockFindMany(args),
       findUnique: (...args: unknown[]) => mockFindUnique(...args),
       create: (...args: unknown[]) => mockCreate(...args),
-      // A lookup by name (#58) is a findFirst among visible lodges; the same
+      // A lookup by name (triyder/AlpineClubBookingsNZ#58) is a findFirst among visible lodges; the same
       // fake answers both, and the registry below honours `hiddenAt`.
       findFirst: (...args: unknown[]) => mockFindUnique(...args),
       updateMany: (...args: unknown[]) => mockUpdateMany(...args),
@@ -44,7 +44,7 @@ vi.mock("@/lib/prisma", () => {
     },
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
     $executeRaw: (...args: unknown[]) => mockExecuteRaw(...args),
-    // The record step re-reads the address under the settings lock (#64).
+    // The record step re-reads the address under the settings lock (triyder/AlpineClubBookingsNZ#64).
     serverNzSettings: { findUnique: (...args: unknown[]) => mockSettingsRow(...args) },
   };
   return { prisma };
@@ -130,7 +130,7 @@ vi.mock("@/lib/logger", () => ({
 const mockLoadSettings = vi.fn();
 const mockRecordUpload = vi.fn();
 const mockRecordDownload = vi.fn();
-// The record step's options (#64: the keyed marker and the transaction client)
+// The record step's options (triyder/AlpineClubBookingsNZ#64: the keyed marker and the transaction client)
 // land here, so the cursor-and-owned-list assertions above them stay exact.
 const mockRecordOptions = vi.fn();
 
@@ -157,18 +157,18 @@ const SETTINGS = {
   otherLodgesLastUploadAt: null as string | null,
   otherLodgesLastDownloadAt: null as string | null,
   otherLodgesCursor: null as string | null,
-  // Unknown until a download records it (#52); by central id (#62, #69).
+  // Unknown until a download records it (triyder/AlpineClubBookingsNZ#52); by central id (triyder/AlpineClubBookingsNZ#62, triyder/AlpineClubBookingsNZ#69).
   otherLodgesOwnedLodges: null as Array<{ id: string; name: string }> | null,
   otherLodgesOwnedLodgesUnreadable: false,
-  // Keyed already (#64), so downloads are incremental unless a test says not.
+  // Keyed already (triyder/AlpineClubBookingsNZ#64), so downloads are incremental unless a test says not.
   otherLodgesKeyedAt: "2026-08-01T00:00:00.000Z" as string | null,
 };
 
-/** The owned list as the pull carries it (#69: by id): each name under `id:<name>`. */
+/** The owned list as the pull carries it (triyder/AlpineClubBookingsNZ#69: by id): each name under `id:<name>`. */
 const owns = (...names: string[]) => names.map((name) => ({ id: `id:${name}`, name }));
 
 /**
- * Upload fixtures (#69): only rows keyed by an OWNED central id go up. Keys
+ * Upload fixtures (triyder/AlpineClubBookingsNZ#69): only rows keyed by an OWNED central id go up. Keys
  * each row (`c:<row id>` unless it has one) and adds the ids to the owned list,
  * on top of whatever settings the test set before.
  */
@@ -188,7 +188,7 @@ const SENT_ON = { baseUrl: "https://central.test", credentialVersion: "v-old" };
 /** A row as the central server sends it. */
 const REMOTE_UPDATED_AT = "2026-08-14T00:00:00.000Z";
 
-/** The #50 and API 2.1 detail fields as they travel: dates as `YYYY-MM-DD`, no amenities. */
+/** The triyder/AlpineClubBookingsNZ#50 and API 2.1 detail fields as they travel: dates as `YYYY-MM-DD`, no amenities. */
 const WIRE_DETAILS = {
   siteUrl: "https://club.test",
   doubleBeds: 4,
@@ -214,7 +214,7 @@ const WIRE_DETAILS = {
 };
 
 /**
- * The rates (#61) as this site holds them — integer cents under the `…Cents`
+ * The rates (triyder/AlpineClubBookingsNZ#61) as this site holds them — integer cents under the `…Cents`
  * columns — which is also what the pull hands the merge, because the wire
  * schema converts at the boundary. `RATES_DOLLARS` is the same set as the
  * upload sends it: the server's keys, in dollars.
@@ -347,7 +347,7 @@ describe("uploadOtherClubsToServer", () => {
       updated: 2,
       unchanged: 0,
       skipped: 0,
-      // One answer per item, in the order sent (#69).
+      // One answer per item, in the order sent (triyder/AlpineClubBookingsNZ#69).
       results: [
         { name: "Aorangi Ski Club", status: "updated" },
         { name: "Arlberg Ski Club", status: "updated" },
@@ -370,7 +370,7 @@ describe("uploadOtherClubsToServer", () => {
     expect(mockRecordUpload).toHaveBeenCalledWith(newer, expect.objectContaining({ serverNzSettings: expect.anything() }));
   });
 
-  it("refills this club's own lodge from its Fees page BEFORE reading the changed rows (#77)", async () => {
+  it("refills this club's own lodge from its Fees page BEFORE reading the changed rows (triyder/AlpineClubBookingsNZ#77)", async () => {
     const order: string[] = [];
     mockFeesSync.mockImplementation(async () => {
       order.push("fees");
@@ -389,7 +389,7 @@ describe("uploadOtherClubsToServer", () => {
     expect(order).toEqual(["fees", "read"]);
   });
 
-  it("runs no refill while the owned list is unknown or unreadable (#77)", async () => {
+  it("runs no refill while the owned list is unknown or unreadable (triyder/AlpineClubBookingsNZ#77)", async () => {
     mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesOwnedLodges: null });
     await uploadOtherClubsToServer();
     mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesOwnedLodgesUnreadable: true });
@@ -490,7 +490,7 @@ describe("downloadOtherClubsFromServer", () => {
   });
 });
 
-// ── Lodge details and amenities (#50) ──────────────────────────────────────
+// ── Lodge details and amenities (triyder/AlpineClubBookingsNZ#50) ──────────────────────────────────────
 
 describe("lodge details and amenities round trip", () => {
   it("uploads every data column, dates as YYYY-MM-DD, and the whole amenity list — and nothing else", async () => {
@@ -750,7 +750,7 @@ describe("lodge details and amenities round trip", () => {
     expect(result).toMatchObject({ unchanged: 1 });
   });
 
-  it("writes a changed rate in cents (#61)", async () => {
+  it("writes a changed rate in cents (triyder/AlpineClubBookingsNZ#61)", async () => {
     mockPullOtherLodges.mockResolvedValue({
       lodges: [remoteLodge("Aorangi Ski Club", { winterRateAdultCents: 4800, summerRateAdultCents: null })],
       count: 1,
@@ -769,7 +769,7 @@ describe("lodge details and amenities round trip", () => {
     expect(result).toMatchObject({ updated: 1 });
   });
 
-  it("leaves the stored rates alone when the server sent none (#61)", async () => {
+  it("leaves the stored rates alone when the server sent none (triyder/AlpineClubBookingsNZ#61)", async () => {
     // A 2.1-shaped row as the wire schema hands it on: no rate keys at all.
     const noRates: Record<string, unknown> = remoteLodge("Aorangi Ski Club", { bedCapacity: 30 });
     for (const key of Object.keys(RATES_CENTS)) delete noRates[key];
@@ -1165,7 +1165,7 @@ describe("download cursor overlap", () => {
   });
 });
 
-// ── Own lodges only (#52) ──────────────────────────────────────────────────
+// ── Own lodges only (triyder/AlpineClubBookingsNZ#52) ──────────────────────────────────────────────────
 //
 // The central server says which lodges this club owns (`ownLodges` on every
 // pull). The download records that list, and the upload sends ONLY those lodges
@@ -1174,7 +1174,7 @@ describe("download cursor overlap", () => {
 // (server-stamped, so above the watermark) went straight back up each night for
 // the server to refuse (#53).
 
-describe("own lodges only (#52)", () => {
+describe("own lodges only (triyder/AlpineClubBookingsNZ#52)", () => {
   const ACCEPTED = {
     created: 0,
     updated: 1,
@@ -1197,7 +1197,7 @@ describe("own lodges only (#52)", () => {
     expect(mockRecordDownload).toHaveBeenCalledWith("c-500", owns("Aorangi Ski Club"));
   });
 
-  it("records the owned lodges exactly as the pull carried them, ids and all (#62)", async () => {
+  it("records the owned lodges exactly as the pull carried them, ids and all (triyder/AlpineClubBookingsNZ#62)", async () => {
     mockPullOtherLodges.mockResolvedValue({
       lodges: [],
       count: 0,
@@ -1211,7 +1211,7 @@ describe("own lodges only (#52)", () => {
     expect(mockRecordDownload).toHaveBeenCalledWith("c-510", [{ id: "ol_a", name: "Aorangi Ski Club" }]);
   });
 
-  it("warns when the server's owned list was refused, and records none (#62)", async () => {
+  it("warns when the server's owned list was refused, and records none (triyder/AlpineClubBookingsNZ#62)", async () => {
     mockPullOtherLodges.mockResolvedValue({
       lodges: [],
       count: 0,
@@ -1281,7 +1281,7 @@ describe("own lodges only (#52)", () => {
     mockFindMany.mockResolvedValue([
       { ...localCopyOf("ol_1", ours.toISOString()), name: "Aorangi Ski Club", centralId: "id:Aorangi Ski Club" },
       // Another club's lodge, freshly downloaded and server-stamped NEWER than
-      // ours: before #52 this row went up every night (#53).
+      // ours: before triyder/AlpineClubBookingsNZ#52 this row went up every night (#53).
       { ...localCopyOf("ol_2", theirs.toISOString()), name: "Arlberg Ski Club", centralId: "c-theirs" },
     ]);
     mockUploadOtherLodges.mockResolvedValue(ACCEPTED);
@@ -1309,7 +1309,7 @@ describe("own lodges only (#52)", () => {
     expect(result.sent).toBe(0);
   });
 
-  it("sends NOTHING while the list is UNKNOWN, and never an unkeyed row (#69)", async () => {
+  it("sends NOTHING while the list is UNKNOWN, and never an unkeyed row (triyder/AlpineClubBookingsNZ#69)", async () => {
     // An unkeyed copy of another club's lodge sent without an id would be
     // CREATED on the server as this club's: names may repeat.
     mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesOwnedLodges: null });
@@ -1326,7 +1326,7 @@ describe("own lodges only (#52)", () => {
     expect(result.ownedUnknown).toBe(true);
   });
 
-  it("matches ownership by central id, never by name (#69)", async () => {
+  it("matches ownership by central id, never by name (triyder/AlpineClubBookingsNZ#69)", async () => {
     mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesOwnedLodges: owns("Aorangi Ski Club") });
     mockFindMany.mockResolvedValue([
       // The owned lodge's name, but not keyed (or keyed to another lodge).
@@ -1340,7 +1340,7 @@ describe("own lodges only (#52)", () => {
   });
 });
 
-describe("own lodges only: the review fixes (#52)", () => {
+describe("own lodges only: the review fixes (triyder/AlpineClubBookingsNZ#52)", () => {
   it("uploads NOTHING when the stored owned list is present but unreadable, and says so", async () => {
     // A column that was written and no longer parses is a defect, not a fresh
     // install: the permissive "send every row" fallback is for never-told only.
@@ -1529,9 +1529,9 @@ describe("own lodges only: the review fixes (#52)", () => {
   });
 });
 
-// ── Central id (#64) ───────────────────────────────────────────────────────
+// ── Central id (triyder/AlpineClubBookingsNZ#64) ───────────────────────────────────────────────────────
 
-describe("download keyed by the central server's lodge id (#64)", () => {
+describe("download keyed by the central server's lodge id (triyder/AlpineClubBookingsNZ#64)", () => {
   type Row = Omit<ReturnType<typeof localCopyOf>, "bookingOfficerPhone"> & {
     bookingOfficerPhone: string | null;
     name: string;
@@ -1542,14 +1542,14 @@ describe("download keyed by the central server's lodge id (#64)", () => {
   /**
    * A tiny registry the merge reads and writes through the mocks, so renames
    * and keying behave as the indexes make them behave: the central id is
-   * unique, a name is not (#69).
+   * unique, a name is not (triyder/AlpineClubBookingsNZ#69).
    */
-  /** Bookings and booking requests citing a row, by row id (#58). */
+  /** Bookings and booking requests citing a row, by row id (triyder/AlpineClubBookingsNZ#58). */
   const refs = new Map<string, [number, number]>();
   function registry(initial: Row[]) {
     refs.clear();
     const rows = initial.map((r) => ({ ...r }));
-    // The download's raw writes (#58): hiding a deleted lodge, and unlinking a
+    // The download's raw writes (triyder/AlpineClubBookingsNZ#58): hiding a deleted lodge, and unlinking a
     // club lodge linked to it. Prisma.sql objects (the whole-download forget)
     // are answered 0.
     mockExecuteRaw.mockImplementation(async (strings: TemplateStringsArray | { sql: string }, ...values: unknown[]) => {
@@ -1644,7 +1644,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(rows[0]).toMatchObject({ name: "Our New Name", bedCapacity: 30 });
   });
 
-  it("records the owned list by id, whatever our lodge is called here (#69)", async () => {
+  it("records the owned list by id, whatever our lodge is called here (triyder/AlpineClubBookingsNZ#69)", async () => {
     registry([row("ol_9", "Our New Name", "c-ours")]);
     pull([]);
 
@@ -1656,7 +1656,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
   it("keys a row matched by name once (the backfill), without moving its updatedAt", async () => {
     // Another club's lodge, so its phone is never stored: none here either.
     const rows = registry([{ ...row("ol_1", "Aorangi Ski Club", null), bookingOfficerPhone: null }]);
-    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null }); // a whole download keys by name (#69)
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null }); // a whole download keys by name (triyder/AlpineClubBookingsNZ#69)
     pull([remoteLodge("Aorangi Ski Club", { id: "c-1" })]);
 
     const result = await downloadOtherClubsFromServer();
@@ -1675,7 +1675,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
         bedCapacity: 2,
       },
     ]);
-    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null }); // a whole download keys by name (#69)
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null }); // a whole download keys by name (triyder/AlpineClubBookingsNZ#69)
     pull([remoteLodge("Our Lodge", { id: "c-ours" })]);
 
     const result = await downloadOtherClubsFromServer();
@@ -1684,7 +1684,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(result.keptLocal).toBe(1);
   });
 
-  it("renames a chain in one pass (A becomes B while B becomes C): a name is never held (#69)", async () => {
+  it("renames a chain in one pass (A becomes B while B becomes C): a name is never held (triyder/AlpineClubBookingsNZ#69)", async () => {
     const rows = registry([row("ol_a", "Alpha", "c-a"), row("ol_b", "Beta", "c-b")]);
     pull([remoteLodge("Beta", { id: "c-a" }), remoteLodge("Gamma", { id: "c-b" })]);
 
@@ -1699,7 +1699,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(mockUpdateMany).toHaveBeenCalledTimes(2);
   });
 
-  it("renames a lodge onto a name another local row has: names may repeat (#69)", async () => {
+  it("renames a lodge onto a name another local row has: names may repeat (triyder/AlpineClubBookingsNZ#69)", async () => {
     const rows = registry([row("ol_1", "Old Name", "c-1"), row("ol_x", "New Name", null)]);
     pull([remoteLodge("New Name", { id: "c-1", bedCapacity: 40 })]);
 
@@ -1710,7 +1710,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(result).toMatchObject({ updated: 1, renamed: 1, nameConflicts: [] });
   });
 
-  it("creates a second lodge of a name a row keyed to ANOTHER central lodge has, never welding them (#69)", async () => {
+  it("creates a second lodge of a name a row keyed to ANOTHER central lodge has, never welding them (triyder/AlpineClubBookingsNZ#69)", async () => {
     const rows = registry([row("ol_1", "Shared Name", "c-1")]);
     pull([remoteLodge("Shared Name", { id: "c-2" })]);
 
@@ -1723,7 +1723,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(result).toMatchObject({ created: 1, updated: 0, nameConflicts: [] });
   });
 
-  it("never keys a row by name on an INCREMENTAL download: the lodge is new here (#69)", async () => {
+  it("never keys a row by name on an INCREMENTAL download: the lodge is new here (triyder/AlpineClubBookingsNZ#69)", async () => {
     const rows = registry([row("ol_1", "Kea Lodge", null)]);
     pull([remoteLodge("Kea Lodge", { id: "c-1" })]);
 
@@ -1737,7 +1737,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     );
   });
 
-  it("on a whole download, never takes over a row keyed to another LISTED lodge of the name (#69)", async () => {
+  it("on a whole download, never takes over a row keyed to another LISTED lodge of the name (triyder/AlpineClubBookingsNZ#69)", async () => {
     // ol_1 is c-1's row; c-1 was renamed on the server, and a new lodge c-2 now
     // has ol_1's old name. Each name is the pull's only one, yet c-2 is new here.
     const rows = registry([row("ol_1", "Shared Name", "c-1")]);
@@ -1752,7 +1752,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     );
   });
 
-  it("still keys by name on a whole download that dropped a row, never twinning unkeyed rows (#69)", async () => {
+  it("still keys by name on a whole download that dropped a row, never twinning unkeyed rows (triyder/AlpineClubBookingsNZ#69)", async () => {
     const rows = registry([row("ol_1", "Kea Lodge", null)]);
     mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
     pull([remoteLodge("Kea Lodge", { id: "c-1" })], { dropped: 1 });
@@ -1829,7 +1829,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(mockCreate.mock.calls[0][0].data).toMatchObject({ name: "Tui Lodge", centralId: "c-theirs" });
   });
 
-  it("keys the ONE unkeyed row of a name, and creates a new lodge when two share it (#69)", async () => {
+  it("keys the ONE unkeyed row of a name, and creates a new lodge when two share it (triyder/AlpineClubBookingsNZ#69)", async () => {
     const one = registry([row("ol_1", "Kea Lodge", null)]);
     mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
     pull([remoteLodge("Kea Lodge", { id: "c-1" })]);
@@ -1851,7 +1851,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(result.created).toBe(1);
   });
 
-  it("reports, and never creates, a lodge sent WITHOUT an id whose name two local rows share (#69)", async () => {
+  it("reports, and never creates, a lodge sent WITHOUT an id whose name two local rows share (triyder/AlpineClubBookingsNZ#69)", async () => {
     const rows = registry([row("ol_1", "Kea Lodge", "c-1"), row("ol_2", "Kea Lodge", "c-2")]);
     pull([remoteLodge("Kea Lodge", { bedCapacity: 50 })]);
 
@@ -1880,7 +1880,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     ["no id", {}],
     ["an empty id", { id: "" }],
     ["a padded id", { id: " c-1 " }],
-  ])("matches a lodge with %s by name, as before #64", async (_l, over) => {
+  ])("matches a lodge with %s by name, as before triyder/AlpineClubBookingsNZ#64", async (_l, over) => {
     const rows = registry([row("ol_1", "Aorangi Ski Club", null)]);
     pull([remoteLodge("Aorangi Ski Club", { ...over, bedCapacity: 50 })]);
 
@@ -1928,7 +1928,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: false }));
   });
 
-  it("renames a THREE-step chain whatever order the pull sends it in (#69: no name is held)", async () => {
+  it("renames a THREE-step chain whatever order the pull sends it in (triyder/AlpineClubBookingsNZ#69: no name is held)", async () => {
     const rows = registry([
       row("ol_1", "A Lodge", "c-1"),
       row("ol_2", "B Lodge", "c-2"),
@@ -1949,7 +1949,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
 
   it("does not key a row an admin saved since the read, and keeps their edit", async () => {
     const rows = registry([row("ol_9", "Our Lodge", null)]);
-    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null }); // a whole download keys by name (#69)
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null }); // a whole download keys by name (triyder/AlpineClubBookingsNZ#69)
     const realFind = mockFindUnique.getMockImplementation()!;
     const realFindByName = mockFindByName.getMockImplementation()!;
     let reads = 0;
@@ -2049,7 +2049,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: true }));
   });
 
-  it("never re-keys a row whose id the whole download DOES list: a new lodge of its name is created (#69)", async () => {
+  it("never re-keys a row whose id the whole download DOES list: a new lodge of its name is created (triyder/AlpineClubBookingsNZ#69)", async () => {
     // A brand-new lodge c-2 has the name of ol_1, which the server lists as c-1.
     const rows = registry([row("ol_1", "Shared Name", "c-1")]);
     mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
@@ -2074,7 +2074,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: false }));
   });
 
-  it("marks the registry keyed when a new lodge shares a keyed row's name (#69)", async () => {
+  it("marks the registry keyed when a new lodge shares a keyed row's name (triyder/AlpineClubBookingsNZ#69)", async () => {
     registry([row("ol_1", "Shared Name", "c-1")]);
     mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
     pull([remoteLodge("Shared Name", { id: "c-2" }), remoteLodge("Shared Name", { id: "c-1" })]);
@@ -2220,7 +2220,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
 
   it("retries a create that lost a race for its central id, merging into the row the other writer made", async () => {
     const rows = registry([]);
-    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null }); // a whole download keys by name (#69)
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null }); // a whole download keys by name (triyder/AlpineClubBookingsNZ#69)
     mockCreate.mockImplementationOnce(async () => {
       rows.push(row("ol_race", "Brand New Lodge", null)); // the other writer's row
       throw new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
@@ -2237,7 +2237,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
   });
 
 
-  it("HIDES a lodge the server deleted, keeping the row, its data and its central id (#58)", async () => {
+  it("HIDES a lodge the server deleted, keeping the row, its data and its central id (triyder/AlpineClubBookingsNZ#58)", async () => {
     const rows = registry([row("ol_1", "Gone Lodge", "c-gone"), row("ol_2", "Kept Lodge", "c-2")]);
     pull([], { deletedLodgeIds: ["c-gone"] });
 
@@ -2251,7 +2251,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(result.hiddenLodges).toEqual(["Gone Lodge"]);
   });
 
-  it("unlinks a club lodge linked to the deleted central lodge (#62)", async () => {
+  it("unlinks a club lodge linked to the deleted central lodge (triyder/AlpineClubBookingsNZ#62)", async () => {
     registry([row("ol_1", "Gone Lodge", "c-gone")]);
     pull([], { deletedLodgeIds: ["c-gone"] });
 
@@ -2293,7 +2293,7 @@ describe("download keyed by the central server's lodge id (#64)", () => {
     expect(rows[0]).toMatchObject({ hiddenAt: expect.any(Date), bedCapacity: 24 });
   });
 
-  it("lets a live lodge share a HIDDEN lodge's name, never matching the hidden row (#58)", async () => {
+  it("lets a live lodge share a HIDDEN lodge's name, never matching the hidden row (triyder/AlpineClubBookingsNZ#58)", async () => {
     // Two lodges may share a name; the id tells them apart. The hidden row keeps
     // its name for the bookings that name it, and the new lodge is created.
     const rows = registry([{ ...row("ol_old", "Ruapehu Lodge", null), hiddenAt: new Date("2026-01-01T00:00:00.000Z") }]);
@@ -2384,8 +2384,8 @@ describe("download keyed by the central server's lodge id (#64)", () => {
 
 });
 
-describe("upload carries the central id (#64, API 2.3)", () => {
-  it("sends every row under its `id`, and never an unkeyed one (#69)", async () => {
+describe("upload carries the central id (triyder/AlpineClubBookingsNZ#64, API 2.3)", () => {
+  it("sends every row under its `id`, and never an unkeyed one (triyder/AlpineClubBookingsNZ#69)", async () => {
     mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesOwnedLodges: [{ id: "c-1", name: "Keyed" }] });
     mockFindMany.mockResolvedValue([
       { ...localCopyOf("ol_1", "2026-08-01T00:00:00.000Z"), name: "Keyed", centralId: "c-1" },
@@ -2410,7 +2410,7 @@ describe("upload carries the central id (#64, API 2.3)", () => {
   });
 });
 
-describe("upload answers are matched by position and id, never by name (#69, API 2.5)", () => {
+describe("upload answers are matched by position and id, never by name (triyder/AlpineClubBookingsNZ#69, API 2.5)", () => {
   const at = (iso: string) => new Date(iso);
   const twins = () =>
     ownAll([
@@ -2491,7 +2491,7 @@ describe("upload answers are matched by position and id, never by name (#69, API
   });
 });
 
-describe("upload leaves out a booking page address the server would refuse (#55)", () => {
+describe("upload leaves out a booking page address the server would refuse (triyder/AlpineClubBookingsNZ#55)", () => {
   it("sends the lodge without that address, keeps a good one, and names the lodge in a warning", async () => {
     mockFindMany.mockResolvedValue(
       ownAll([

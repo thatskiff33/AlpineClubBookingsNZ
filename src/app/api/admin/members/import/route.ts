@@ -1,7 +1,7 @@
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { memberImportIdentityKey } from "@/lib/member-import-identity";
 import { NextRequest, NextResponse } from "next/server";
 import type { AgeTier, Gender, Title } from "@prisma/client";
-import { z } from "zod";
 import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -23,13 +23,9 @@ import { ensureMemberAccessRolesFromCompatibilityFields } from "@/lib/member-acc
 import {
   DEFAULT_MEMBER_IMPORT_DATE_FORMAT,
   deriveMemberImportNameFields,
-  MEMBER_IMPORT_ADDRESS_MAX_LENGTHS,
-  MEMBER_IMPORT_COMMENTS_MAX_LENGTH,
   MEMBER_IMPORT_DATE_FIELD_KEYS,
   MEMBER_IMPORT_CANCELLED_DATE_FLAG_HINT,
-  MEMBER_IMPORT_DATE_FORMAT_VALUES,
   MEMBER_IMPORT_FIELD_DEFINITIONS,
-  MEMBER_IMPORT_OCCUPATION_MAX_LENGTH,
   isMemberImportCancelledDateInFuture,
   normalizeMemberImportDateValue,
   type MemberImportDateFieldKey,
@@ -37,6 +33,14 @@ import {
 } from "@/lib/member-csv-import";
 import { clubTime } from "@/lib/club-time/server";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import { dateOnlyInstantOf } from "@/lib/club-time";
+import { findOversizedMemberImportFamilyKeys } from "@/lib/member-csv-import-type-family";
+import { memberImportBodySchema, type MemberImportRow } from "@/lib/member-import-request-schema";
+import {
+  assignImportedMembershipTypes,
+  createImportFamilyGroups,
+  resolveImportTypeAndFamily,
+} from "@/lib/member-import-type-family";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import {
   GENDER_OPTIONS,
@@ -49,110 +53,13 @@ import { isFullAdmin } from "@/lib/access-roles";
 import {
   DIETARY_REQUIREMENTS_LABEL,
   DIETARY_REQUIREMENTS_TOO_LONG_MESSAGE,
-  dietaryRequirementsValueSchema,
   isDietaryRequirementsWithinLimit,
   normalizeImportedDietaryRequirements,
 } from "@/lib/member-dietary-field";
 import { grantMembershipAdminDietaryAccess } from "@/lib/member-dietary";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 
-const nullableImportString = (max: number) =>
-  z.string().max(max).optional().nullable();
-const dateFormatSchema = z.enum(MEMBER_IMPORT_DATE_FORMAT_VALUES);
-
-const importRowSchema = z
-  .object({
-    fullName: nullableImportString(200),
-    title: nullableImportString(40),
-    firstName: nullableImportString(100),
-    lastName: nullableImportString(100),
-    gender: nullableImportString(40),
-    occupation: nullableImportString(MEMBER_IMPORT_OCCUPATION_MAX_LENGTH),
-    // #2941: the one shape every JSON writer shares. The 500-character rule
-    // is applied below, only when this import actually takes the column.
-    dietaryRequirements: dietaryRequirementsValueSchema,
-    email: z.string().email("Invalid email address"),
-    phone: z.string().max(20).optional().nullable(), // Legacy: single phone string (will be put in phoneNumber)
-    phoneCountryCode: z.string().max(5).optional().nullable(),
-    phoneAreaCode: z.string().max(5).optional().nullable(),
-    phoneNumber: z.string().max(15).optional().nullable(),
-    dateOfBirth: z.string().max(32).optional().nullable(),
-    joinedDate: z.string().max(32).optional().nullable(),
-    cancelledDate: z.string().max(32).optional().nullable(),
-    streetAddressLine1: nullableImportString(
-      MEMBER_IMPORT_ADDRESS_MAX_LENGTHS.streetAddressLine1,
-    ),
-    streetAddressLine2: nullableImportString(
-      MEMBER_IMPORT_ADDRESS_MAX_LENGTHS.streetAddressLine2,
-    ),
-    streetCity: nullableImportString(
-      MEMBER_IMPORT_ADDRESS_MAX_LENGTHS.streetCity,
-    ),
-    streetRegion: nullableImportString(
-      MEMBER_IMPORT_ADDRESS_MAX_LENGTHS.streetRegion,
-    ),
-    streetCountry: nullableImportString(
-      MEMBER_IMPORT_ADDRESS_MAX_LENGTHS.streetCountry,
-    ),
-    streetPostalCode: nullableImportString(
-      MEMBER_IMPORT_ADDRESS_MAX_LENGTHS.streetPostalCode,
-    ),
-    lifeMemberDate: z.string().max(32).optional().nullable(),
-    comments: nullableImportString(MEMBER_IMPORT_COMMENTS_MAX_LENGTH),
-    role: z.enum(MEMBER_IMPORT_ROLE_VALUES).optional().default("USER"),
-    sourceLineNumber: z.number().int().positive().optional(),
-    sourceColumnLabels: z.record(z.string(), z.string().max(128)).optional(),
-  })
-  .superRefine((row, ctx) => {
-    const names = deriveMemberImportNameFields(row);
-    if (!names.firstName) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["firstName"],
-        message: "First name is required",
-      });
-    }
-    if (!names.lastName) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["lastName"],
-        message: "Last name is required",
-      });
-    }
-    if (names.firstName.length > 100) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["firstName"],
-        message: "First name must be 100 characters or fewer",
-      });
-    }
-    if (names.lastName.length > 100) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["lastName"],
-        message: "Last name must be 100 characters or fewer",
-      });
-    }
-  });
-
-const importBodySchema = z.object({
-  rows: z
-    .array(importRowSchema)
-    .min(1, "At least one row is required")
-    .max(500, "Maximum 500 rows per import"),
-  dateFormats: z
-    .object({
-      dateOfBirth: dateFormatSchema.optional(),
-      joinedDate: dateFormatSchema.optional(),
-      lifeMemberDate: dateFormatSchema.optional(),
-      cancelledDate: dateFormatSchema.optional(),
-    })
-    .optional(),
-  sendInvites: z.boolean().default(false),
-  autoLinkXero: z.boolean().default(false),
-});
-
-type ImportRow = z.infer<typeof importRowSchema>;
+type ImportRow = MemberImportRow;
 
 type ImportIdentity = {
   email: string;
@@ -235,14 +142,11 @@ export async function POST(req: NextRequest) {
   );
   if (rateLimitResponse) return rateLimitResponse;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
-  const parsed = importBodySchema.safeParse(body);
+  const parsed = memberImportBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten() },
@@ -294,8 +198,31 @@ export async function POST(req: NextRequest) {
     skippedRows: [] as Array<{ row: number; email: string; reason: string }>,
     rowNotes: [] as Array<{ row: number; email: string; note: string }>,
     errors: [] as Array<{ row: number; errors: string[] }>,
+    // #4988: the Membership Type and Family Key columns.
+    familyGroupsCreated: 0,
+    membershipTypesAssigned: 0,
+    membershipTypeFailures: [] as Array<{ row: number; email: string; error: string }>,
     total: rows.length,
   };
+
+  // #4988: the club's ACTIVE membership types, read once and only when the
+  // file uses the column. Matched by name; an unknown name blocks its row.
+  const activeMembershipTypes = rows.some((row) => row.membershipType?.trim())
+    ? await prisma.membershipType.findMany({
+        where: { isActive: true },
+        select: { id: true, name: true },
+      })
+    : [];
+  // A key shared by more rows than one family group may hold blocks every one
+  // of those rows; counted over the whole file, exactly as the preview does.
+  const oversizedFamilyKeys = findOversizedMemberImportFamilyKeys(
+    rows.map((row) => row.familyKey ?? undefined),
+  );
+  // What a skipped row's ignored #4988 columns mean, appended to its reason.
+  const skippedColumnsNote = (row: ImportRow) =>
+    row.membershipType?.trim() || row.familyKey?.trim()
+      ? "; its Membership Type and Family Key were not applied"
+      : "";
 
   // Load existing members for duplicate identity checks and login ownership.
   const allEmails = [...new Set(rows.map((r) => r.email.toLowerCase().trim()))];
@@ -372,15 +299,16 @@ export async function POST(req: NextRequest) {
     role: (typeof MEMBER_IMPORT_ROLE_VALUES)[number];
     canLogin: boolean;
     rowNote: string | null;
+    membershipTypeId: string | null;
+    familyKey: string | null;
   }
   const validatedRows: ValidatedRow[] = [];
   // ONE read of the club's season for the whole import (#2870, correctness
   // review). It was derived inside the per-row loop below, and an import that
   // straddles club midnight on a season boundary would then classify its early
   // and late rows against different seasons — an age tier decides a price band.
-  const clubCurrentSeasonStart = getSeasonStartDate(
-    clubSeasonYear(await clubTimeZone()),
-  );
+  const clubSeason = clubSeasonYear(await clubTimeZone());
+  const clubCurrentSeasonStart = getSeasonStartDate(clubSeason);
 
   // `rows.entries()` rather than a counting loop: the index is only ever used
   // to number the row for the admin's error report, and iterating the array
@@ -403,7 +331,7 @@ export async function POST(req: NextRequest) {
       results.skippedRows.push({
         row: rowNum,
         email,
-        reason: "Matching member already exists for this email and name",
+        reason: `Matching member already exists for this email and name${skippedColumnsNote(row)}`,
       });
       continue;
     }
@@ -424,7 +352,7 @@ export async function POST(req: NextRequest) {
       results.skippedRows.push({
         row: rowNum,
         email,
-        reason: `Duplicate member identity already appears earlier in this import${lifecycleNote}`,
+        reason: `Duplicate member identity already appears earlier in this import${lifecycleNote}${skippedColumnsNote(row)}`,
       });
       continue;
     }
@@ -506,6 +434,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const { membershipTypeId, familyKey } = resolveImportTypeAndFamily({
+      membershipType: row.membershipType,
+      familyKey: row.familyKey,
+      activeMembershipTypes,
+      oversizedFamilyKeys,
+      columnContext: (key) => getImportColumnContext(row, key),
+      rowErrors,
+    });
+
     if (rowErrors.length > 0) {
       results.errors.push({ row: rowNum, errors: rowErrors });
       continue;
@@ -576,6 +513,8 @@ export async function POST(req: NextRequest) {
       role: (row.role || "USER") as (typeof MEMBER_IMPORT_ROLE_VALUES)[number],
       canLogin,
       rowNote,
+      membershipTypeId,
+      familyKey,
     });
   }
 
@@ -594,7 +533,7 @@ export async function POST(req: NextRequest) {
 
   // All-or-nothing: create all members in a transaction
   try {
-    const createdMembers = await prisma.$transaction(
+    const createdImport = await prisma.$transaction(
       async (tx) => {
         const created: Array<{
           id: string;
@@ -605,6 +544,8 @@ export async function POST(req: NextRequest) {
           cancelled: boolean;
           rowNum: number;
           rowNote: string | null;
+          membershipTypeId: string | null;
+          familyKey: string | null;
         }> = [];
         for (const row of validatedRows) {
           const member = await tx.member.create({
@@ -657,6 +598,8 @@ export async function POST(req: NextRequest) {
             cancelled: row.cancelledAt !== null,
             rowNum: row.rowNum,
             rowNote: row.rowNote,
+            membershipTypeId: row.membershipTypeId,
+            familyKey: row.familyKey,
           });
           await ensureMemberAccessRolesFromCompatibilityFields(tx, {
             memberId: member.id,
@@ -693,10 +636,19 @@ export async function POST(req: NextRequest) {
             tx,
           );
         }
-        return created;
+
+        // #4988: members created here that share a Family Key become one group.
+        const familyGroupsCreated = await createImportFamilyGroups(
+          tx,
+          created,
+          session.user.id,
+        );
+        return { created, familyGroupsCreated };
       },
       { timeout: 30000 },
     );
+    const createdMembers = createdImport.created;
+    results.familyGroupsCreated = createdImport.familyGroupsCreated;
 
     results.created = createdMembers.length;
     results.createdLoginEnabled = createdMembers.filter(
@@ -717,6 +669,18 @@ export async function POST(req: NextRequest) {
           ]
         : [],
     );
+
+    // #4988: the Membership Type column assigns the current season, after commit.
+    const assignment = await assignImportedMembershipTypes({
+      members: createdMembers,
+      seasonYear: clubSeason,
+      clubTodayDateOnly: dateOnlyInstantOf(club.today()),
+      adminMemberId: session.user.id,
+      request: req,
+    });
+    results.membershipTypesAssigned = assignment.assigned;
+    results.membershipTypeFailures = assignment.failures;
+    results.rowNotes.push(...assignment.rowNotes);
 
     // Invite emails remain post-commit best-effort; import/audit durability is
     // handled inside the transaction above.

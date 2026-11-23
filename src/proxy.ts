@@ -1133,7 +1133,7 @@ export const config = {
     "/api/cron/xero/:path*",
     "/api/display/:path*",
     "/api/finance/:path*",
-    // Food orders (fork #121): the foodOrders gate on "/api/food-orders" (same reason as above).
+    // Food orders (fork triyder/AlpineClubBookingsNZ#121): the foodOrders gate on "/api/food-orders" (same reason as above).
     "/api/food-orders/:path*",
     "/api/group-bookings/:path*",
     "/api/inductions/:path*",
@@ -1147,8 +1147,8 @@ export const config = {
     // pages 404. Same failure the calendar entry above was added to prevent.
     "/api/lodge-maintenance/:path*",
     "/api/maintenance-reports/:path*",
-    // AI app connections (ALP-653): the mcpServer rule gates "/api/mcp" and
-    // "/api/member/mcp-grants", which the first entry above excludes.
+    "/api/lodge-roster/:path*", // memberLodgeRoster (ALP-718), same reason
+    // AI app connections (ALP-653): the mcpServer rule's "/api/mcp" and "/api/member/mcp-grants".
     "/api/mcp/:path*",
     "/api/member/mcp-grants/:path*",
     "/api/notices/:path*",

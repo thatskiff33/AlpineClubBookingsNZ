@@ -245,6 +245,11 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   spec("AdminCreditAdjustmentRequest", "member", "memberId", "move"),
   spec("AdminCreditAdjustmentRequest", "requestedBy", "requestedById", "move"),
   spec("AdminCreditAdjustmentRequest", "reviewedBy", "reviewedById", "move"),
+  // #4988: who posted and who reversed an opening-credit batch. Nullable
+  // SetNull actor back-refs with no Member unique, so `move` re-points the
+  // history onto the surviving member.
+  spec("OpeningCreditBatch", "postedBy", "postedById", "move"),
+  spec("OpeningCreditBatch", "reversedBy", "reversedById", "move"),
   spec("RefundRequest", "member", "memberId", "move"),
   // B5 (#2262): both are nullable SetNull actor back-refs with no Member unique
   // constraint, exactly like MemberSubscription.manuallyMarkedPaidBy above —
@@ -269,7 +274,7 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   // to `member-merge-snapshot-columns.ts`. If you are here adding an actor column
   // to one of these models, that sibling module is where it goes.
   spec("MaintenanceReport", "member", "memberId", "move"),
-  // Fork #121: the member who placed a food order. Their order history follows
+  // Fork triyder/AlpineClubBookingsNZ#121: the member who placed a food order. Their order history follows
   // them to the surviving record, like the maintenance reporter.
   spec("FoodOrder", "member", "memberId", "move"),
   spec("HutLeaderAssignment", "member", "memberId", "move"),

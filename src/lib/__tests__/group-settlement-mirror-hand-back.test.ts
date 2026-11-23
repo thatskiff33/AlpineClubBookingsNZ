@@ -27,7 +27,7 @@ vi.mock("@/lib/email", () => ({ sendAdminXeroSyncErrorAlert: (input: unknown) =>
 import { bankTransferRefundPayee, paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { paymentShowsCaptureEvidence } from "@/lib/booking-payment-state";
 import { netCollectedPaymentTookMoney } from "@/lib/payment-net-collected";
-import { paymentHasCaptureEvidence as flattenedCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
+import { paymentHasCaptureEvidence } from "@/lib/payment-capture-evidence";
 import {
   alertGroupMirrorRefundXeroByHand,
   applyGroupSettlementMirrorRefund,
@@ -277,12 +277,12 @@ describe("review round 3: an IB organiser child's settle mirror is capture evide
     expect(paymentShowsCaptureEvidence(partlyRefunded, false, member)).toBe(false);
   });
 
-  it("Net Collected counts a paid-back IB organiser child as money taken; the flattened backfill restores one", () => {
+  it("Net Collected counts a paid-back IB organiser child as money taken, and so does the loaded-ledger capture evidence", () => {
     const row = { ...partlyRefunded, amountCents: 4_500, _count: { transactions: 0 }, recoveryOperations: [], refunds: [] };
     expect(netCollectedPaymentTookMoney({ ...row, booking: organiser })).toBe(true);
     expect(netCollectedPaymentTookMoney({ ...row, booking: member })).toBe(false);
     const flattened = { id: "p", bookingId: "b", source: "INTERNET_BANKING" as const, status: "FAILED" as const, amountCents: 4_500, refundedAmountCents: 1_500, transactions: [] };
-    expect(flattenedCaptureEvidence({ ...flattened, status: "PARTIALLY_REFUNDED", booking: organiser })).toBe(true);
-    expect(flattenedCaptureEvidence({ ...flattened, status: "PARTIALLY_REFUNDED", booking: member })).toBe(false);
+    expect(paymentHasCaptureEvidence({ ...flattened, status: "PARTIALLY_REFUNDED", booking: organiser })).toBe(true);
+    expect(paymentHasCaptureEvidence({ ...flattened, status: "PARTIALLY_REFUNDED", booking: member })).toBe(false);
   });
 });

@@ -779,13 +779,13 @@ the chips (`privacy` 20 -> 21, 498 -> 499). #3372 then added
 refund Stripe gave up on (`payment` 52 -> 53, 499 -> 500), and
 `booking-payment.card-refund.paid-twice-resolved`, the treasurer marking a
 refund paid back twice as sorted out with the member (`payment` 53 -> 54; 499 ->
-500 on the tree composed with #52's removals below and #3750's change-request
+500 on the tree composed with triyder/AlpineClubBookingsNZ#52's removals below and #3750's change-request
 approval, MEASURED). #3819 added one, disjoint from all of these: the
 per-lodge "Who can be hut leader for school bookings" save,
 `LODGE_SETTINGS_UPDATED` beside its lodge-settings sibling (`admin` 109 -> 110,
 RE-MEASURED).
 
-#52 then REMOVED two (`admin` 109 -> 107, 497 -> 495 on the tree composed
+triyder/AlpineClubBookingsNZ#52 then REMOVED two (`admin` 109 -> 107, 497 -> 495 on the tree composed
 with all of the above; MEASURED with
 `npm run audit:census` on that branch rather than subtracted from the literal):
 `OTHER_LODGE_CREATED` and `OTHER_LODGE_DELETED` went with the create and delete
@@ -795,33 +795,33 @@ list. `OTHER_LODGE_UPDATED` stays, still `admin` under INV-PRIV-013's rule, so
 the lodge-gated keep shrinks from nineteen pinned sites to seventeen without
 anyone's readership changing.
 
-#62 then added one (`admin` 107 -> 108, 497 -> 498, MEASURED with
+triyder/AlpineClubBookingsNZ#62 then added one (`admin` 107 -> 108, 497 -> 498, MEASURED with
 `pnpm run audit:census`): `LODGE_CENTRAL_LINK_UPDATED`, the record that an
 administrator linked a local lodge to its lodge on the Alpine Central Server.
 `admin` under INV-PRIV-013's rule, like every writer in the lodge-records
 subsystem, so the lodge-gated keep grows from seventeen pinned sites to
 eighteen; the row names two central lodge ids and the administrator, no member.
 
-#58 then added one more (`admin` 108 -> 109, 498 -> 499, MEASURED with
+triyder/AlpineClubBookingsNZ#58 then added one more (`admin` 108 -> 109, 498 -> 499, MEASURED with
 `pnpm run audit:census`): `OTHER_LODGE_HIDDEN`, the record that an
 administrator hid an Other lodges row the Alpine Central Server does not list.
 `admin` under INV-PRIV-013's rule, beside the registry's update, so the
 lodge-gated keep grows from eighteen pinned sites to nineteen; the row names
 the lodge by id and name only, no member.
 
-#58 also added the download's own record of the lodges it hid because the
+triyder/AlpineClubBookingsNZ#58 also added the download's own record of the lodges it hid because the
 central server deleted them (`alpine_server.other_lodges.hidden`, `lodge`
 66 -> 67, 499 -> 500, MEASURED): lodge names and a count of unlinked club
 lodges, no member. A library writer, so it joins no keep.
 
-#77 added the record that this club's own Other lodge was refilled from its
+triyder/AlpineClubBookingsNZ#77 added the record that this club's own Other lodge was refilled from its
 Fees page (`OTHER_LODGE_RATES_FROM_FEES`, `lodge` 67 -> 68, 500 -> 501,
 MEASURED): the lodge, the trigger and the fields that changed, no member. A
 library writer, so it joins no keep.
 `main` then added #3750's executed approval of a change request on a finished
 stay (`booking` 107 -> 108, `booking-change-request.approve` with
 `executed: true`). The sync of `main` into epic #3789 composed #3819's addition
-with #52's two removals and #3750's addition, all disjoint: `admin` 108,
+with triyder/AlpineClubBookingsNZ#52's two removals and #3750's addition, all disjoint: `admin` 108,
 `booking` 108, 499 row-producing sites, and the lodge-gated keep eighteen
 (RE-MEASURED with `pnpm run audit:census` on the composed tree, never added
 together). The later sync of `main` 0ff7e6d46 into the epic (#3821) composed
