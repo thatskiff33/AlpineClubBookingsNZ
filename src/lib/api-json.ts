@@ -60,8 +60,13 @@ export async function parseJsonRequestBody(
  * `undefined`, and the route applies its defaults. A body that is present but
  * is not valid JSON answers the same invalid-JSON 400 as
  * `parseJsonRequestBody`, so a malformed body is never mistaken for an absent
- * one. No JSON value parses to `undefined`, so a route can always tell "no
- * body" from a body that was sent, `null` included.
+ * one.
+ *
+ * The rule for a route whose body is optional: an empty body or a JSON `null`
+ * means "no body". This reader returns `undefined` for the first and `null`
+ * for the second, and the routes apply their default with `body ?? default`,
+ * which treats both alike. A route that ever needs to tell them apart can,
+ * since no JSON value parses to `undefined`.
  */
 export async function parseOptionalJsonRequestBody(
   request: Request,

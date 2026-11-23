@@ -8,7 +8,8 @@
   These routes now answer such a body with a 400 and the standard message
   "Invalid JSON". A body with a wrong or missing field still gets the same
   answer as before. Where a body is optional, an empty one still means "use
-  the defaults", exactly as before. The app's own screens always send valid
+  the defaults", exactly as before, and a body of just `null` now means the
+  same. The app's own screens always send valid
   JSON or no body, so officers and members will not notice a difference. A
   script or integration that sent a malformed body and relied on it being
   ignored will now be refused instead.

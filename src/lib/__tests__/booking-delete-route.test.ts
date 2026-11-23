@@ -85,6 +85,17 @@ describe("DELETE /api/bookings/[id]", () => {
     expect(mockedDeleteBooking).not.toHaveBeenCalled();
   });
 
+  it("treats a JSON null body as no body, like an empty one (#5407)", async () => {
+    const response = await DELETE(makeDeleteRequest("null"), {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(mockedDeleteBooking).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "booking-1", reason: undefined }),
+    );
+  });
+
   it("deletes without a reason for an empty or whitespace-only JSON body (#5407)", async () => {
     for (const body of ["", " \n"]) {
       mockedDeleteBooking.mockClear();
