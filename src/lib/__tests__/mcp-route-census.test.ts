@@ -4,13 +4,8 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 import { getAdminRouteRequirement } from "@/lib/admin-permissions";
-import {
-  FINANCE_WORKSPACE_API_PREFIX,
-  MCP_ACTIONS,
-  MCP_WEBSITE_ONLY_ACTIONS,
-  mcpActionAdminRequirement,
-  mcpActionRouteFile,
-} from "@/lib/mcp/catalogue";
+import { MCP_ACTIONS, MCP_WEBSITE_ONLY_ACTIONS, mcpActionRouteFile } from "@/lib/mcp/catalogue";
+import { FINANCE_WORKSPACE_API_PREFIX, mcpActionAdminRequirement } from "@/lib/mcp/officer-actions";
 import {
   classifyMcpRoute,
   MCP_NOT_YET_TASKS,

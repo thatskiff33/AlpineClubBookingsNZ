@@ -23,7 +23,8 @@ vi.mock("@/lib/app-url", () => ({ getAppBaseUrl: () => "https://club.example.tes
 vi.mock("@/lib/app-version", () => ({ getAppVersion: () => "test" }));
 
 import { adminSession, memberSession } from "@/lib/__tests__/helpers/sessions";
-import { MCP_ACTIONS, mcpActionAdminRequirement, type McpAction } from "@/lib/mcp/catalogue";
+import { MCP_ACTIONS, type McpAction } from "@/lib/mcp/catalogue";
+import { mcpActionAdminRequirement } from "@/lib/mcp/officer-actions";
 import { callMcpTool, listMcpTools, type McpServerContext } from "@/lib/mcp/server";
 import type { Session } from "next-auth";
 

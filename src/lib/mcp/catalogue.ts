@@ -22,7 +22,7 @@
  */
 import { z } from "zod";
 
-import { getAdminRouteRequirement, type AdminAccessRequirement } from "@/lib/admin-permissions";
+import type { AdminAccessRequirement } from "@/lib/admin-permissions";
 import { availabilityQuerySchema } from "@/lib/availability-query-schema";
 import { bookingIdParamsSchema, cancelBookingMutationSchema } from "@/lib/booking-cancel-schema";
 import { bookingCreateCoreShape } from "@/lib/booking-create-fields";
@@ -88,6 +88,8 @@ import { noticeIdParamsSchema } from "@/lib/notices-shared";
 import { partnerLinkDeleteQuerySchema, partnerLinkRequestSchema } from "@/lib/partner-link-request-schemas";
 import type { StepUpHttpMethod } from "@/lib/step-up-routes";
 
+// An action's flat arguments, kept beside the catalogue that defines them.
+export { mcpActionInputJsonSchema, mcpActionInputSchema, splitMcpActionArguments } from "./action-input";
 import { FINANCE_MONEY_MCP_ACTIONS } from "./catalogue/finance-money";
 import { FINANCE_XERO_CONTACTS_MCP_ACTIONS } from "./catalogue/finance-xero-contacts";
 import { FINANCE_XERO_SYNC_MCP_ACTIONS } from "./catalogue/finance-xero-sync";
@@ -103,7 +105,7 @@ import { FINANCE_XERO_SYNC_MCP_ACTIONS } from "./catalogue/finance-xero-sync";
  */
 export type McpActionKind = "read" | "write" | "destructive";
 
-type ObjectSchema = z.ZodObject<z.ZodRawShape>;
+export type ObjectSchema = z.ZodObject<z.ZodRawShape>;
 
 export interface McpAction {
   /** The tool name the AI app calls. Lower snake case, never reused. */
@@ -655,84 +657,10 @@ export function mcpActionRouteFile(action: Pick<McpAction, "path">): string {
   return `src/app${action.path}/route.ts`;
 }
 
-/** The finance workspace's API, gated by its own guards rather than the admin route map. */
-export const FINANCE_WORKSPACE_API_PREFIX = "/api/finance";
-
-/**
- * The admin area and level an action needs, or null for a member action
- * (`INV-MCP-009`).
- * An officer action is offered only to someone holding it (`server.ts`), and
- * its route runs with the officer's real permissions, so the route's own
- * guard decides the call exactly as it does for the officer's browser.
- */
-export function mcpActionAdminRequirement(
-  action: Pick<McpAction, "path" | "method" | "requires">,
-): AdminAccessRequirement | null {
-  // `requires` first: the map files all of `/api/finance` under one prefix, so
-  // only the entry, which the census holds to the handler's guard, knows a
-  // workspace read that needs edit.
-  return action.requires ?? getAdminRouteRequirement(action.path, action.method);
-}
-
 export function findMcpAction(id: string): McpAction | undefined {
   return MCP_ACTIONS.find((action) => action.id === id);
 }
 
 export function findMcpWebsiteOnlyAction(id: string): McpWebsiteOnlyAction | undefined {
   return MCP_WEBSITE_ONLY_ACTIONS.find((action) => action.id === id);
-}
-
-const EMPTY_INPUT = z.object({});
-
-/**
- * The one flat object an app sends for an action: its path, query and body
- * fields together. The catalogue test refuses an action whose three parts
- * share a key, so each argument has one destination.
- */
-export function mcpActionInputSchema(action: McpAction): ObjectSchema {
-  const shape = {
-    ...action.params?.shape,
-    ...action.query?.shape,
-    ...action.body?.shape,
-  };
-  return Object.keys(shape).length === 0 ? EMPTY_INPUT : z.object(shape);
-}
-
-/**
- * JSON Schema for an action's arguments as the app must send them: `io:
- * "input"` describes a date as the string the route parses, not the value the
- * route's transform produces.
- */
-export function mcpActionInputJsonSchema(action: McpAction): Record<string, unknown> {
-  const schema = z.toJSONSchema(mcpActionInputSchema(action), {
-    io: "input",
-    unrepresentable: "any",
-  }) as Record<string, unknown>;
-  delete schema.$schema;
-  return { ...schema, type: "object" };
-}
-
-/** Where each of an app's flat arguments goes on the request. */
-export function splitMcpActionArguments(
-  action: McpAction,
-  args: Readonly<Record<string, unknown>>,
-): {
-  readonly params: Record<string, unknown>;
-  readonly query: Record<string, unknown>;
-  readonly body: Record<string, unknown> | null;
-} {
-  const pick = (schema: ObjectSchema | undefined) => {
-    const picked: Record<string, unknown> = {};
-    for (const key of Object.keys(schema?.shape ?? {})) {
-      if (args[key] !== undefined) picked[key] = args[key];
-    }
-    return picked;
-  };
-  const hasBody = action.body !== undefined || action.fixedBody !== undefined;
-  return {
-    params: pick(action.params),
-    query: pick(action.query),
-    // `fixedBody` is spread last: an app cannot turn a draft into a booking.
-    body: hasBody ? { ...pick(action.body), ...action.fixedBody } : null,
-  };
 }

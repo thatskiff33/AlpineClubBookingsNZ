@@ -185,7 +185,7 @@ only the rules.
 - **An officer action runs only on a route its admin area gates, and is
   offered only to someone holding that area at the route's level.**
   `mcpActionAdminRequirement` in
-  [`catalogue.ts`](../../src/lib/mcp/catalogue.ts) reads the requirement from
+  [`officer-actions.ts`](../../src/lib/mcp/officer-actions.ts) reads the requirement from
   the admin route map, or, for `/api/finance`, from the entry's `requires`,
   which the census holds to the guard the handler calls. The tool list,
   `find_actions`, `describe_action` and `run_action` all ask it.

@@ -23,11 +23,11 @@ import {
   findMcpWebsiteOnlyAction,
   MCP_ACTIONS,
   MCP_WEBSITE_ONLY_ACTIONS,
-  mcpActionAdminRequirement,
   mcpActionInputJsonSchema,
   type McpAction,
 } from "./catalogue";
 import { runMcpAction, websiteOnlyAnswer, type McpActionOutcome, type McpCaller } from "./dispatch";
+import { mcpActionAdminRequirement } from "./officer-actions";
 import { MCP_SCOPE_LABELS } from "./scope-labels";
 import { mcpScopeAllows } from "./settings";
 
