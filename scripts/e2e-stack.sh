@@ -60,8 +60,8 @@ HOST_DATABASE_URL="postgresql://tac:${DB_PASSWORD}@localhost:${STAGING_POSTGRES_
 # deliberately never clears `ClubTheme.completedAt`, so setup can be completed
 # through the app but never un-completed. The `pre-setup` project uses it and
 # restores the row afterwards; the two-factor fixtures and the seeded
-# membership-application resets (e2e/helpers/reset.ts) use it for state no
-# admin route can reach. Everything else drives the app over HTTP.
+# membership-application resets (e2e/helpers/membership-application-reset.ts)
+# use it for state no admin route can reach. Everything else drives the app over HTTP.
 export E2E_DATABASE_URL="$HOST_DATABASE_URL"
 
 # Heap ceiling for `next build` when `prepare` builds the app image (#5164).

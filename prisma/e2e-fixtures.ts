@@ -442,6 +442,8 @@ export const PUBLIC_APPLICANT_EMAIL = demoEmail("penny.public");
 // gate never fires for this fixture.
 export const MAPPING_APPLICATION_ID = "e2e-mapping-app";
 export const MAPPING_TARGET_MEMBER_ID = "e2e-mapping-target";
+/** The mapping target is seeded as a non-login member; the approval promotes it. */
+export const MAPPING_TARGET_CAN_LOGIN = false;
 export const MAPPING_APPLICANT = {
   email: demoEmail("rex.rejoiner"),
   firstName: "Rex",

@@ -14,7 +14,7 @@ import {
   WAITLISTER,
 } from "./helpers/fixtures";
 import { personas } from "./helpers/personas";
-import { resetSeededMappingApplication, resetSeededMembershipApplication } from "./helpers/reset";
+import { resetSeededMappingApplication, resetSeededMembershipApplication } from "./helpers/membership-application-reset";
 
 // High row (docs/END_TO_END_TEST_MATRIX.md): "Application, nomination reminders,
 // admin refresh/replacement, approval, ..." — the public application →
