@@ -72,6 +72,20 @@ function assertPayload(kind: string, payload: OwedNoticePayload): void {
   }
 }
 
+/**
+ * Refuse identity parts the id cannot keep apart: each of the kind, the
+ * subject and the variant must be an id (`OWED_NOTICE_PAYLOAD_ID`, so no
+ * colon). Otherwise subject `s:123` at 456 ms and subject `s` at 123 ms with
+ * variant `456` would share an id, and the second marker would be silently
+ * skipped as a duplicate. Throws before any write, like `assertPayload`.
+ */
+function assertIdentity({ kind, subjectId, variant }: OwedNoticeInput): void {
+  for (const [part, value] of [["kind", kind], ["subjectId", subjectId], ["variant", variant]] as const) {
+    if (value === undefined || value === null) continue;
+    if (!OWED_NOTICE_PAYLOAD_ID.test(value)) throw new Error(`Owed notice ${kind}: ${part} ${JSON.stringify(value)} is not an id`);
+  }
+}
+
 /** The stored marker for an input, as `recordOwedNotices` writes it (`kind` is the stored text, which may be one this release does not know). */
 export function owedNoticeMarker(input: OwedNoticeInput): OwedNoticeMarker {
   return {
@@ -99,6 +113,7 @@ export async function recordOwedNotices(
   notices: readonly OwedNoticeInput[],
 ): Promise<OwedNoticeMarker[]> {
   const markers = notices.map((notice) => {
+    assertIdentity(notice);
     if (notice.payload) assertPayload(notice.kind, notice.payload);
     return owedNoticeMarker(notice);
   });
@@ -179,12 +194,17 @@ export async function deferOwedNotice({
   });
 }
 
+/** The most unknown-kind markers one report counts; past it the report says "at least". */
+export const UNKNOWN_KIND_REPORT_LIMIT = 100;
+
 /**
- * How many markers of a kind none of `knownKinds` names were created before
- * `createdBefore`. They are never deleted here: a newer release running beside
- * this one may own them. The drain only reports them.
+ * Markers of kinds none of `knownKinds` names, created before
+ * `createdBefore`: how many (at most `UNKNOWN_KIND_REPORT_LIMIT`, so the read
+ * is bounded however large the table grows) and which kinds. They are never
+ * deleted here: a newer release running beside this one may own them. The
+ * drain only reports them.
  */
-export async function countStaleUnknownOwedNotices({
+export async function findStaleUnknownOwedNotices({
   knownKinds,
   createdBefore,
   store = prisma,
@@ -192,8 +212,13 @@ export async function countStaleUnknownOwedNotices({
   knownKinds: readonly string[];
   createdBefore: Date;
   store?: OwedNoticeStore;
-}): Promise<number> {
-  return store.owedNotice.count({ where: { kind: { notIn: [...knownKinds] }, createdAt: { lt: createdBefore } } });
+}): Promise<{ count: number; kinds: string[] }> {
+  const rows = await store.owedNotice.findMany({
+    where: { kind: { notIn: [...knownKinds] }, createdAt: { lt: createdBefore } },
+    select: { kind: true },
+    take: UNKNOWN_KIND_REPORT_LIMIT,
+  });
+  return { count: rows.length, kinds: [...new Set(rows.map((row) => row.kind))].sort() };
 }
 
 /** How many markers of one kind one sweep offers, oldest stamp first. */

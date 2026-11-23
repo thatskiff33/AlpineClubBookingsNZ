@@ -62,7 +62,7 @@ export async function alertOfficersOfBump(
   booking: BumpedBooking,
   flagged: boolean,
   /** #5433: the job sending it, for the logs (the confirm-pending job, or the email retry job's sweep). */
-  job = "confirmPendingBookings",
+  job: string,
 ): Promise<"settled" | "unreached" | "threw"> {
   try {
     const result = await sendAdminBookingBumpedAlert({

@@ -73,7 +73,11 @@ interface OwedNoticeDelivererBase<S> {
    * A marker older than this is past its cut-off whatever `sendBy` says: with
    * `pastCutoff` it takes that step (so the step can never be skipped by the
    * age check), and without one it is cleared with an error log, unsent and
-   * unread. A marker that cannot be read is always cleared.
+   * unread. A marker that cannot be read is always cleared. Whatever the kind,
+   * a marker older than `OWED_NOTICE_HARD_CEILING_MULTIPLE` times this is
+   * cleared with an error log, unread, so a step that keeps failing (or a
+   * subject that cannot be read) cannot keep a marker, and its escalations,
+   * alive for good.
    */
   maxAgeMs: number;
   /** The subject as it stands now, read outside any transaction; null when it is gone. */
@@ -88,8 +92,12 @@ interface OwedNoticeDelivererBase<S> {
   sendBy(subject: S, marker: OwedNoticeMarker): Date;
   /**
    * Past the cut-off, in place of the send: for a member's notice, alert the
-   * officers once. Answered like `deliver`. Absent, the marker is cleared with
-   * an error log.
+   * officers. Answered like `deliver`. Absent, the marker is cleared with an
+   * error log. It runs AT LEAST once, not exactly once: a stop after it returns
+   * and before the marker is cleared runs it again on a later sweep. A kind
+   * whose step must happen once (owner decision D1: officers are alerted once)
+   * sends it through `alertOfficersOncePastCutoff` (`./past-cutoff-once.ts`),
+   * a once-ever claim keyed on the marker's id.
    */
   pastCutoff?(subject: S, marker: OwedNoticeMarker): Promise<OwedNoticeOutcome>;
 }
@@ -211,6 +219,9 @@ export async function deliverOwedNotice<S>(
 
 export type OwedNoticeSweepOutcome = "delivered" | "kept" | "cleared" | "expired" | "claim-lost";
 
+/** Past this many times its kind's maximum age a marker is cleared unread, whatever the kind (`maxAgeMs`). */
+export const OWED_NOTICE_HARD_CEILING_MULTIPLE = 2;
+
 /**
  * One due marker, for the sweep run by `job`: claim it on the sweep's bound
  * before anything else, then apply the subject's current state and the
@@ -228,11 +239,13 @@ export async function sweepOwedNotice(
   const claimedAt = await ref.claim(dueBefore, now);
   if (!claimedAt) return "claim-lost";
   const { marker } = ref;
-  const overAge = marker !== null && now.getTime() - marker.eventAt.getTime() > deliverer.maxAgeMs;
-  if (!marker || (overAge && !deliverer.pastCutoff)) {
+  const ageMs = marker === null ? Number.POSITIVE_INFINITY : now.getTime() - marker.eventAt.getTime();
+  const overAge = ageMs > deliverer.maxAgeMs;
+  const pastCeiling = ageMs > deliverer.maxAgeMs * OWED_NOTICE_HARD_CEILING_MULTIPLE;
+  if (!marker || pastCeiling || (overAge && !deliverer.pastCutoff)) {
     logger.error(
       { key: ref.key, kind: deliverer.kind, job },
-      "An owed notice was still owed past its maximum age, or its marker could not be read; cleared without sending it",
+      "An owed notice was still owed past its maximum age (twice it for a kind with a past-cut-off step), or its marker could not be read; cleared without sending it",
     );
     await ref.settle(claimedAt);
     return "expired";

@@ -9,7 +9,7 @@ import { OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-s
 import { bookingOwner } from "@/lib/booking-owner";
 import { formatBookingReference } from "@/lib/booking-reference";
 import { deliverBumpNotices, recordBumpNoticesOwed, type OwedBumpNotice } from "@/lib/booking-bump-notice-owed";
-import { drainOwedNotices, type OwedNoticeSweepResult } from "@/lib/owed-notice/drain";
+import { CONFIRM_PENDING_OWED_NOTICE_CAP, drainOwedNotices, type OwedNoticeSweepResult } from "@/lib/owed-notice/drain";
 import { bookingBumpReason } from "@/lib/booking-bump-reason";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
@@ -1153,7 +1153,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
     cancelledBookingIds: [],
     partialBumpedBookingIds: [],
     failedBookingIds: [...recovery.failedBookingIds],
-    owedNotices: await drainOwedNotices(now, { job: "confirmPendingBookings" }),
+    owedNotices: await drainOwedNotices(now, { ...CONFIRM_PENDING_OWED_NOTICE_CAP, job: "confirmPendingBookings" }),
   };
 
   for (const candidate of pendingBookings) {

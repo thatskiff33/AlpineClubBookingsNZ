@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/owed-notice/drain", () => ({
+  EMAIL_RETRY_OWED_NOTICE_CAP: { maxRows: 100, budgetMs: 120_000 },
   drainOwedNotices: (...args: unknown[]) => {
     mocks.order.push("drain");
     return mocks.drain(...args);
@@ -28,7 +29,8 @@ vi.mock("@/lib/cron-email-retry", () => ({
 }));
 vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 
-import { EMAIL_RETRY_OWED_NOTICE_CAP, runEmailRetryJob } from "@/lib/cron-email-retry-job";
+import { runEmailRetryJob } from "@/lib/cron-email-retry-job";
+import { EMAIL_RETRY_OWED_NOTICE_CAP } from "@/lib/owed-notice/drain";
 
 const SWEPT = { checked: 2, delivered: 1, cleared: 1, expired: 0 };
 
@@ -44,8 +46,6 @@ describe("runEmailRetryJob", () => {
     await expect(runEmailRetryJob()).resolves.toEqual({ retried: 3, succeeded: 2, failed: 1, owedNotices: SWEPT });
     expect(mocks.order).toEqual(["drain", "retry"]);
     expect(mocks.drain).toHaveBeenCalledWith(expect.any(Date), { ...EMAIL_RETRY_OWED_NOTICE_CAP, job: "email-retry" });
-    expect(EMAIL_RETRY_OWED_NOTICE_CAP.maxRows).toBeGreaterThan(0);
-    expect(EMAIL_RETRY_OWED_NOTICE_CAP.budgetMs).toBeLessThan(30 * 60 * 1000);
   });
 
   it("replays the failed rows even when the sweep throws, and records that it did", async () => {

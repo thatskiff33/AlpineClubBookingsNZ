@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createAlertCooldownStore } from "./support/alert-cooldown-store";
 import { createOwedNoticeStore } from "./support/owed-notice-store";
 
 /*
@@ -13,11 +14,16 @@ import { createOwedNoticeStore } from "./support/owed-notice-store";
 
 const mocks = vi.hoisted(() => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 const table = createOwedNoticeStore();
+// The unknown-kind report's once-a-day claim.
+const cooldown = createAlertCooldownStore();
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     get owedNotice() {
       return table.delegate;
+    },
+    get alertCooldown() {
+      return cooldown.delegate;
     },
   },
 }));
@@ -25,12 +31,20 @@ vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 
 import {
   deliverOwedNotice,
+  OWED_NOTICE_HARD_CEILING_MULTIPLE,
   owedNoticeTableSource,
   type OwedNoticeDeliverer,
   type OwedNoticeOutcome,
   type OwedNoticeSource,
 } from "@/lib/owed-notice/deliver";
-import { drainOwedNotices, UNKNOWN_KIND_REPORT_AFTER_MS, type OwedNoticeDrainOptions } from "@/lib/owed-notice/drain";
+import {
+  CONFIRM_PENDING_OWED_NOTICE_CAP,
+  drainOwedNotices,
+  EMAIL_RETRY_OWED_NOTICE_CAP,
+  UNKNOWN_KIND_REPORT_AFTER_MS,
+  UNKNOWN_KIND_REPORT_EVERY_MS,
+  type OwedNoticeDrainOptions,
+} from "@/lib/owed-notice/drain";
 import type { OwedNoticeKind } from "@/lib/owed-notice/kinds";
 import {
   claimOwedNotice,
@@ -101,6 +115,7 @@ const drainWith = (
 beforeEach(() => {
   vi.clearAllMocks();
   table.rows.clear();
+  cooldown.rows.clear();
 });
 
 describe("recordOwedNotices, inside the change's transaction", () => {
@@ -336,7 +351,8 @@ describe("drainOwedNotices, the sweep", () => {
     await expect(drainWith(deliverer, at(WAIT))).resolves.toMatchObject({ checked: 1, delivered: 1 });
     expect(spies.load).toHaveBeenCalledTimes(1);
     expect(table.rows.get(other)).toMatchObject({ stampedAt: EVENT_AT, attempts: 0 });
-    expect(table.delegate.findMany.mock.calls.map(([args]) => args.where.kind)).toEqual([KIND]);
+    // The sweep's reads are by kind, its own only; the unknown-kind report reads `notIn` its kinds.
+    expect(table.delegate.findMany.mock.calls.map(([args]) => args.where.kind)).toEqual([KIND, { notIn: [KIND] }]);
   });
 
   it("sends once when two sweeps reach a marker at the same moment", async () => {
@@ -433,6 +449,117 @@ describe("a capped run (#5433 review)", () => {
     const result = await drainWith(deliverer, at(WAIT), [owedNoticeTableSource], { budgetMs: 1_000, elapsedMs: () => elapsed });
 
     expect(result).toMatchObject({ checked: 1, capped: true });
+    expect(table.rows.size).toBe(1);
+  });
+});
+
+describe("a marker of any kind has a hard lifetime (#5433 review)", () => {
+  it("clears a marker past twice its maximum age unread, even for a kind with a past-cut-off step that keeps failing", async () => {
+    const ceiling = MAX_AGE * OWED_NOTICE_HARD_CEILING_MULTIPLE;
+    seed("s1", at(ceiling - WAIT));
+    const { deliverer, spies } = testDeliverer(KIND, "member", { withPastCutoff: true });
+    spies.pastCutoff.mockResolvedValue("unreached");
+
+    // Just inside the ceiling the step still runs (and fails).
+    await expect(drainWith(deliverer, at(ceiling))).resolves.toMatchObject({ expired: 0 });
+    expect(spies.pastCutoff).toHaveBeenCalledTimes(1);
+
+    table.rows.get(owedNoticeId(KIND, "s1", EVENT_AT))!.stampedAt = at(ceiling - WAIT);
+    await expect(drainWith(deliverer, at(ceiling + 1))).resolves.toMatchObject({ expired: 1 });
+    expect(spies.pastCutoff).toHaveBeenCalledTimes(1);
+    expect(spies.load).toHaveBeenCalledTimes(1);
+    expect(table.rows.size).toBe(0);
+  });
+});
+
+describe("a marker's identity cannot collide (#5433 review)", () => {
+  it("refuses a subject or a variant that is not an id, so no two markers share an id", async () => {
+    const tx = { owedNotice: table.delegate } as never;
+    // Subject `s:123` at 456 ms would share an id with subject `s` at 123 ms, variant `456`.
+    await expect(recordOwedNotices(tx, [{ kind: KIND, subjectId: "s:123", eventAt: new Date(456) }])).rejects.toThrow("subjectId");
+    await expect(recordOwedNotices(tx, [{ kind: KIND, subjectId: "s", eventAt: new Date(123), variant: "4:56" }])).rejects.toThrow("variant");
+    await expect(recordOwedNotices(tx, [{ kind: KIND, subjectId: "", eventAt: EVENT_AT }])).rejects.toThrow("subjectId");
+    await expect(recordOwedNotices(tx, [{ kind: "a:b" as OwedNoticeKind, subjectId: "s", eventAt: EVENT_AT }])).rejects.toThrow("kind");
+    expect(table.delegate.createMany).not.toHaveBeenCalled();
+    // A cuid-shaped booking id and a one-letter variant, as the bump writes them, pass.
+    await expect(recordOwedNotices(tx, [{ kind: KIND, subjectId: "cm1abc2def3ghi4jkl5mno6p", eventAt: EVENT_AT, variant: "g" }])).resolves.toHaveLength(1);
+  });
+});
+
+describe("a capped run is fair across kinds (#5433 review)", () => {
+  const OTHER = "test-kind-two" as OwedNoticeKind;
+
+  it("takes kinds in turn, so a backlog in one kind cannot starve another", async () => {
+    for (const subject of ["a1", "a2", "a3", "a4", "a5"]) seed(subject);
+    seed("b1", EVENT_AT, OTHER);
+    const first = testDeliverer(KIND);
+    const second = testDeliverer(OTHER);
+
+    const result = await drainOwedNotices(at(WAIT), {
+      job: "test-sweep",
+      maxRows: 2,
+      deliverers: [first.deliverer as OwedNoticeDeliverer, second.deliverer as OwedNoticeDeliverer],
+      sources: [owedNoticeTableSource],
+    });
+
+    expect(result).toMatchObject({ delivered: 2, capped: true });
+    expect(first.spies.deliver).toHaveBeenCalledTimes(1);
+    expect(second.spies.deliver).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not spend the allowance on a marker another run already claimed", async () => {
+    seed("held", at(WAIT + 5));
+    seed("free");
+    const { deliverer, spies } = testDeliverer(KIND);
+    // A source that lists the held marker too, as one read just before another run claimed it would.
+    const listsBoth: OwedNoticeSource = {
+      name: "lists both",
+      async listDue(d, at) {
+        const due = await owedNoticeTableSource.listDue(d, at);
+        const held = await owedNoticeTableSource.listDue(d, { ...at, dueBefore: new Date(at.dueBefore.getTime() + 10 * WAIT) });
+        return [...held.filter((ref) => !due.some((other) => other.key === ref.key)), ...due];
+      },
+    };
+
+    const result = await drainWith(deliverer, at(WAIT), [listsBoth], { maxRows: 1 });
+
+    expect(result).toEqual({ checked: 2, delivered: 1, cleared: 0, expired: 0 });
+    expect(spies.deliver).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports no cap when it took exactly its limit and nothing it read was left", async () => {
+    for (const subject of ["a", "b"]) seed(subject);
+    const { deliverer } = testDeliverer(KIND);
+
+    await expect(drainWith(deliverer, at(WAIT), [owedNoticeTableSource], { maxRows: 2 })).resolves.toEqual({
+      checked: 2,
+      delivered: 2,
+      cleared: 0,
+      expired: 0,
+    });
+  });
+
+  it("caps the confirm-pending job's sweep below the email retry job's, both well inside a 30-minute slot", () => {
+    expect(CONFIRM_PENDING_OWED_NOTICE_CAP.maxRows).toBeLessThan(EMAIL_RETRY_OWED_NOTICE_CAP.maxRows);
+    expect(CONFIRM_PENDING_OWED_NOTICE_CAP.budgetMs).toBeLessThan(EMAIL_RETRY_OWED_NOTICE_CAP.budgetMs);
+    expect(EMAIL_RETRY_OWED_NOTICE_CAP.budgetMs).toBeLessThan(30 * 60 * 1000);
+  });
+});
+
+describe("the unknown-kind report is at most daily (#5433 review)", () => {
+  it("logs once a day across runs, and again after a day", async () => {
+    seed("old", EVENT_AT, "a-kind-nobody-delivers", EVENT_AT);
+    const { deliverer } = testDeliverer(KIND);
+    const reports = () => mocks.logger.error.mock.calls.filter(([, message]) => String(message).includes("kind this release does not deliver"));
+    const firstRun = at(UNKNOWN_KIND_REPORT_AFTER_MS + WAIT);
+
+    await drainWith(deliverer, firstRun);
+    await drainWith(deliverer, new Date(firstRun.getTime() + 30 * 60 * 1000));
+    expect(reports()).toHaveLength(1);
+    expect(reports()[0]![0]).toMatchObject({ count: 1, kinds: ["a-kind-nobody-delivers"] });
+
+    await drainWith(deliverer, new Date(firstRun.getTime() + UNKNOWN_KIND_REPORT_EVERY_MS + 1));
+    expect(reports()).toHaveLength(2);
     expect(table.rows.size).toBe(1);
   });
 });

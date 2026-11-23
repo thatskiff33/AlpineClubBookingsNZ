@@ -3,7 +3,7 @@
  * sweep of owed notices (#5433, `owed-notice/drain.ts`), then the replay of
  * `FAILED` email rows (`retryFailedEmails`).
  *
- * The sweep is capped (`EMAIL_RETRY_OWED_NOTICE_CAP`: rows and a time budget)
+ * The sweep is capped (`EMAIL_RETRY_OWED_NOTICE_CAP`: 100 markers or two minutes)
  * and leaves the rest, still owed, for the next run, so a large backlog cannot
  * push this job past its half-hour slot and make the next run skip. It never
  * throws; should it ever, the error is logged and the replay runs anyway. The
@@ -17,10 +17,7 @@
  */
 import { retryFailedEmails } from "@/lib/cron-email-retry";
 import logger from "@/lib/logger";
-import { drainOwedNotices, type OwedNoticeSweepResult } from "@/lib/owed-notice/drain";
-
-/** One run's sweep: at most 100 markers and two minutes, well inside the job's 30-minute slot. */
-export const EMAIL_RETRY_OWED_NOTICE_CAP = { maxRows: 100, budgetMs: 2 * 60 * 1000 } as const;
+import { drainOwedNotices, EMAIL_RETRY_OWED_NOTICE_CAP, type OwedNoticeSweepResult } from "@/lib/owed-notice/drain";
 
 const JOB = "email-retry";
 
