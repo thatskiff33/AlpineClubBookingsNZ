@@ -121,6 +121,11 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Waitlist Offer: {{memberName}}",
     "defaultBody": "Waitlist Offer Made\n\nA waitlist offer has been sent to {{memberName}}.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nQueue Position: #{{position}}\n\nThe member has 48 hours to confirm their booking.\n\nView Waitlist: {{BASE_URL}}" + adminHref("waitlist")
   },
+  // #5433: a waitlist email owed to a member passed its cut-off unsent.
+  "admin-waitlist-notice-unsent": {
+    "defaultSubject": "Waitlist email not sent: {{memberName}}",
+    "defaultBody": "Waitlist Email Not Sent\n\n{{noticeNote}}\n\nMember: {{memberName}}\nBooking: {{bookingReference}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen Booking: {{bookingUrl}}"
+  },
   "nomination-request": {
     "defaultSubject": "Nomination request for {{applicantName}} — {{CLUB_NAME}}",
     "defaultBody": "Membership Nomination Request\n\nHi {{nominatorName}},\n\n{{applicantName}} has listed you as one of their {{CLUB_NAME}} nominators.\n\nDependent family members included in this application: {{familyMemberCount}}\n\nPlease review the application and confirm whether you agree to nominate this person for membership.\n\nYou will need to sign in before you can confirm the nomination.\n\nReview Application: {{BASE_URL}}/nominations/{{token}}\n\nThis link expires on {{expiresAt}}."

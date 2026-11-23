@@ -13,6 +13,8 @@
  */
 import { BUMP_NOTICE_DELIVERERS, legacyBumpMarkerSource } from "@/lib/booking-bump-notice-owed";
 import { owedNoticeTableSource, type OwedNoticeDeliverer, type OwedNoticeSource } from "@/lib/owed-notice/deliver";
+import { WAITLIST_OFFER_EXPIRED_NOTICE_DELIVERER } from "@/lib/waitlist-offer-expired-notice";
+import { WAITLIST_OFFER_NOTICE_DELIVERERS } from "@/lib/waitlist-offer-notices";
 
 export interface OwedNoticeRegistry {
   deliverers: readonly OwedNoticeDeliverer[];
@@ -30,7 +32,7 @@ let registry: OwedNoticeRegistry | null = null;
 
 export function owedNoticeRegistry(): OwedNoticeRegistry {
   registry ??= {
-    deliverers: [...BUMP_NOTICE_DELIVERERS],
+    deliverers: [...BUMP_NOTICE_DELIVERERS, ...WAITLIST_OFFER_NOTICE_DELIVERERS, WAITLIST_OFFER_EXPIRED_NOTICE_DELIVERER],
     sources: [owedNoticeTableSource, legacyBumpMarkerSource],
   };
   return registry;

@@ -217,6 +217,12 @@ export async function deliverOwedNotice<S>(
   }
 }
 
+/**
+ * How long an officers' alert stays owed (#5433, settled by the lane: officer
+ * alerts seven days), for a kind with no reason to differ.
+ */
+export const OWED_OFFICER_ALERT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
 export type OwedNoticeSweepOutcome = "delivered" | "kept" | "cleared" | "expired" | "claim-lost";
 
 /** Past this many times its kind's maximum age a marker is cleared unread, whatever the kind (`maxAgeMs`). */

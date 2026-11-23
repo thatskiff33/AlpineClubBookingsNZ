@@ -277,14 +277,19 @@ export async function sendAdminCapacityWarningAlert(
   });
 }
 
+/**
+ * The officers' waitlist offer alert. Returns what happened to each recipient
+ * (#5433): the owed offer notice holds its marker for a day when nobody
+ * received it and nothing will replay it (`adminAlertNeedsResend`).
+ */
 export async function sendAdminWaitlistOfferAlert(data: {
   memberName: string;
   checkIn: Date;
   checkOut: Date;
   guestCount: number;
   position: number;
-}) {
-  await sendToAdmins({
+}): Promise<AdminAlertRecipientsResult> {
+  return sendToAdmins({
     subject: `Waitlist Offer: ${data.memberName}`,
     html: await renderEmailHtml(() => adminWaitlistOfferTemplate(data)),
     templateName: "admin-waitlist-offer",

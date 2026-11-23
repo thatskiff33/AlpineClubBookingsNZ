@@ -1,6 +1,7 @@
 import { LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE } from "@/lib/late-capture-outside-app-note";
 import { UNMATCHED_APP_LEDGER_MATCH_LABEL, UNMATCHED_APP_STRIPE_PAYMENT_NOTE, UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
 import { STRIPE_DISPUTE_HOLD_NOTE, STRIPE_DISPUTE_NEXT_STEP, stripeDisputeSubjectLabel } from "@/lib/stripe-dispute-note";
+import { WAITLIST_NOTICE_UNSENT_NOTE } from "@/lib/waitlist-notice-unsent-note";
 import {
   EMAIL_AUDIT_DEFAULTS,
   type EmailAuditTemplateName,
@@ -448,6 +449,9 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // #1992/#2007: memberName identifies the affected member and reviewUrl is the
   // admin action link (the payments board), mirroring the other admin alerts.
   "admin-duplicate-capture-refund": ["memberName", "reviewUrl"],
+  // #5433: {{noticeNote}} says which waitlist email went unsent and what to
+  // do; the member and the booking link are what an officer acts on.
+  "admin-waitlist-notice-unsent": ["noticeNote", "memberName", "bookingUrl"],
   // #3672: the organiser's booking, and each waiting joiner linked to the
   // booking whose admin tools record their payment.
   "admin-group-joiner-started-stay": [
@@ -1131,6 +1135,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
       "Organiser settled a joiner's spot as part of a combined group payment",
     frequency: "One email per joiner booking covered by the settled payment",
   },
+  "admin-waitlist-notice-unsent": {
+    triggerSummary:
+      "A waitlist email owed to a member (the offer of a place, or the notice that an offer lapsed) could not be sent before its cut-off, so it was cleared unsent (#5433)",
+    frequency:
+      "Once per unsent notice, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
+  },
   "admin-group-joiner-started-stay": {
     triggerSummary:
       "A paid organiser-pays group had joiners its bill did not cover whose stay had started; they were switched to paying for themselves without an email, so the treasurer collects by hand (#3672)",
@@ -1458,6 +1468,8 @@ export function sampleValue(token: string): string {
   if (token === "holdKeptNote") {
     return internetBankingHoldKeptParagraph("part-paid");
   }
+  // #5433: previewed as the offer arm, the commoner of the two.
+  if (token === "noticeNote") return WAITLIST_NOTICE_UNSENT_NOTE.offer;
   // #4042: previewed as the cash arm, what the shipped default always said.
   if (token === "handBackNote") return manualRefundTaskAlertNote("cash-cancellation");
   if (token === "handBackLabel") return manualRefundTaskAlertLabel("cash-cancellation");
@@ -2065,6 +2077,8 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "handBackConflictNote",
   // #3643: why an expired internet banking hold was kept, not released.
   "holdKeptNote",
+  // #5433: which waitlist email went unsent past its cut-off, and what to do.
+  "noticeNote",
   // #4042: which hand-back a manual refund task alert is about - its body
   // paragraphs, its subject/heading phrase, and whom the money goes back to.
   "handBackNote",
