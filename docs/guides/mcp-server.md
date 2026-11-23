@@ -234,7 +234,8 @@ How an officer action works:
   entry's `requires`, which the census holds to the guard the route calls; so
   the sync status, a read the workspace guards at edit, is an edit action.
   `find_actions`, `describe_action`, `run_action` and the tool list all ask it,
-  so a Finance viewer is shown the reads only, and an officer without the area,
+  so a Finance viewer is shown the reads other than the sync status, and an
+  officer without the area,
   or a member, is shown none and is told the action does not exist.
 - **It runs with the officer's real permissions.** The call reaches the
   route through the front door, the route's own guard (`requireAdmin`, or the
@@ -246,8 +247,9 @@ How an officer action works:
   amount boxes take dollars as typed, so `list_payments` does not offer them.
 
 All of these are reached through `find_actions`. Kinds follow the catalogue
-rule: a change that only re-runs work is `write`; one that records or applies
-money, posts to Xero, or closes an item for good is `destructive`.
+rule: a change that only re-reads or refreshes is `write`; one that records
+or applies money, may post a document to Xero, or closes an item for good is
+`destructive`.
 
 **Payments, credits, refunds, subscriptions and reports**
 
@@ -289,12 +291,12 @@ not offered: it is club setup.
 | `get_xero_sync_health` | The health counts on the Xero screens | read | `GET /api/admin/xero/health` |
 | `get_xero_api_usage` | Today's Xero API use against the budget | read | `GET /api/admin/xero/usage` |
 | `list_xero_operations` | The sync queue | read | `GET /api/admin/xero/operations` |
-| `retry_xero_operation`, `requeue_xero_operation` | Runs one operation again | write | `POST /api/admin/xero/operations/[id]/retry`, `…/requeue` |
+| `retry_xero_operation`, `requeue_xero_operation` | Runs one operation again | destructive | `POST /api/admin/xero/operations/[id]/retry`, `…/requeue` |
 | `mark_xero_operation_failed` | Marks a stuck running operation failed | destructive | `POST /api/admin/xero/operations/[id]/mark-failed` |
 | `mark_xero_operation_non_replayable` | Marks an operation as never to be replayed | destructive | `POST /api/admin/xero/operations/[id]/mark-non-replayable` |
 | `resolve_xero_operation` | Records that an operation was put right in Xero by hand | destructive | `POST /api/admin/xero/operations/[id]/resolve` |
 | `reset_stale_running_xero_operations` | Resets every stuck running operation | destructive | `POST /api/admin/xero/operations/reset-stale-running` |
-| `retry_all_failed_xero_operations` | Queues every active failed operation again | write | `POST /api/admin/xero/operations/retry-all` |
+| `retry_all_failed_xero_operations` | Queues every active failed operation again | destructive | `POST /api/admin/xero/operations/retry-all` |
 | `list_xero_inbound_events` | Events Xero sent the site | read | `GET /api/admin/xero/inbound-events` |
 | `replay_xero_inbound_event` | Processes one again | write | `POST /api/admin/xero/inbound-events/[id]/replay` |
 | `get_xero_record_activity` | One record's Xero operations, links and events | read | `GET /api/admin/xero/records/[localModel]/[localId]` |

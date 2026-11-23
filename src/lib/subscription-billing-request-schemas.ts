@@ -12,10 +12,10 @@ import { z } from "zod";
 import { CLOSE_ALREADY_PAID_REASON_MAX } from "@/lib/subscription-charge-already-paid";
 import { seasonYearQuerySchema, seasonYearSchema } from "@/lib/season-year-range";
 
-/** How a family's subscriptions are invoiced, club-wide (#159). */
 /** The longest note an officer may leave when marking a family invoiced. */
 export const FAMILY_INVOICED_NOTE_MAX = 500;
 
+/** How a family's subscriptions are invoiced, club-wide (#159). */
 export const FAMILY_BILLING_MODES = [
   "BILL_FAMILY_VIA_BILLING_MEMBER",
   "BILL_MEMBERS_INDIVIDUALLY",

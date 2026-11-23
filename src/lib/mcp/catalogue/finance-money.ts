@@ -88,7 +88,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     id: "list_payments",
     title: "List payments",
     summary:
-      "One page of the club's booking payments, newest activity first unless `sortBy` says otherwise, with totals over every payment the filters match. Dates are `YYYY-MM-DD`; `from`/`to` bound the latest activity, `checkInFrom`/`checkInTo` the stay. `search` matches a member, booking or reference. Amounts are integer cents. A row's `refundedAmountCents` includes any account credit a cancellation issued; `cancellationSettlement` splits it into `refundToOriginalMethodCents` (back to the card or bank) and `accountCreditCents`, and `disputes` lists any card dispute.",
+      "One page of the club's booking payments, newest activity first unless `sortBy` says otherwise, with totals over every payment the filters match. Dates are `YYYY-MM-DD`; `from`/`to` bound the latest activity, `checkInFrom`/`checkInTo` the stay. `search` matches a member, booking or reference. Amounts are integer cents. A row's `refundedAmountCents` includes any account credit a cancellation issued; `cancellationSettlement` splits it into `refundToOriginalMethodCents` (back to the card or bank) and `accountCreditCents`; its `restoredAppliedCreditCents` is credit the booking had used, given back on cancellation, and is not part of `refundedAmountCents`. `disputes` lists any card dispute.",
     method: "GET",
     path: "/api/admin/payments",
     query: z.object(adminPaymentsFilterFields),

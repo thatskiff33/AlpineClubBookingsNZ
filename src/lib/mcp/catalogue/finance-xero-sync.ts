@@ -7,12 +7,13 @@
  * (`mcpActionAdminRequirement`). Setting Xero up, and disconnecting it, stay
  * on the website (`exclusions.ts`).
  *
- * Kinds: a retry, requeue, replay or sync that re-runs work the club's own
- * jobs would also run is `write`. Marking an operation failed, non-replayable
- * or resolved by hand, resetting stuck operations, forcing a booking's
- * invoice into Xero over an officer's resolved-in-Xero mark, and a contact
- * force-sync that may create a Xero contact are `destructive`: none can be
- * taken back from the app.
+ * Kinds: a replay or sync that re-reads Xero or refreshes the club's own
+ * records is `write`. Retrying or requeuing an operation (which may raise
+ * the document it failed to), marking one failed, non-replayable or resolved
+ * by hand, resetting stuck operations, forcing a booking's invoice into Xero
+ * over an officer's resolved-in-Xero mark, and a contact force-sync that may
+ * create a Xero contact are `destructive`: none can be taken back from the
+ * app.
  */
 import { z } from "zod";
 
@@ -119,11 +120,11 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     id: "retry_xero_operation",
     title: "Retry a Xero sync operation",
     summary:
-      "Queues a failed or partly completed Xero operation (`id`, from `list_xero_operations`) to run again in the background, and answers with the queued retry's id. It runs the same work the operation tried, so it may create or update the document in Xero; the operation's own guards refuse one that is resolved by hand, non-replayable or already running. Harmless to repeat.",
+      "Queues a failed or partly completed Xero operation (`id`, from `list_xero_operations`) to run again in the background, and answers with the queued retry's id. It runs the same work the operation tried, so it may create or update the document in Xero, which cannot be withdrawn from the app; the operation's own guards refuse one that is resolved by hand, non-replayable or already running. Harmless to repeat.",
     method: "POST",
     path: "/api/admin/xero/operations/[id]/retry",
     params: recordIdParamsSchema,
-    kind: "write",
+    kind: "destructive",
     returns: XERO_OPERATION_QUEUED_CONNECTION_SHAPE,
     core: false,
   },
@@ -135,7 +136,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/xero/operations/[id]/requeue",
     params: recordIdParamsSchema,
-    kind: "write",
+    kind: "destructive",
     returns: XERO_OPERATION_QUEUED_CONNECTION_SHAPE,
     core: false,
   },
@@ -196,7 +197,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
       "Queues a background retry for each active failed Xero operation that can be replayed (up to 200), skipping any its guards refuse, and answers with how many were found, queued and skipped, and why each skipped one was. Rows already repaired or superseded are counted in `legacySkipped` and left alone. Harmless to repeat.",
     method: "POST",
     path: "/api/admin/xero/operations/retry-all",
-    kind: "write",
+    kind: "destructive",
     returns: XERO_RETRY_ALL_CONNECTION_SHAPE,
     core: false,
   },
