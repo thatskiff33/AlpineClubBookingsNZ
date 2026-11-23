@@ -387,7 +387,12 @@ function isSensitiveMetadataKey(key: string): boolean {
 }
 
 function isLongHtml(value: string): boolean {
-  return value.length > 500 && /<\/?[a-z][\s\S]*>/i.test(value);
+  if (value.length <= 500) return false;
+  // Same test as /<\/?[a-z][\s\S]*>/i (a tag opener with a ">" somewhere
+  // after it), done in linear time: that regex backtracks quadratically on
+  // long strings of repeated "<a" (CodeQL js/polynomial-redos).
+  const opener = /<\/?[a-z]/i.exec(value);
+  return opener !== null && value.lastIndexOf(">") > opener.index;
 }
 
 function isLikelyPaymentCardNumber(value: string): boolean {
