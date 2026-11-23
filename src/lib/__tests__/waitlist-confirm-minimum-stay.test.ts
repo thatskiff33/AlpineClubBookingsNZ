@@ -239,6 +239,7 @@ import {
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { confirmWaitlistOffer } from "@/lib/waitlist";
+import { WAITLIST_CROSS_LODGE_WEBSITE_ONLY_CODE } from "@/lib/waitlist-confirm-recovery-contract";
 // The real formatter, so this path and the cross-lodge promotion are checked
 // against one shared string rather than against two copies of it.
 import { formatMissingPaidUpAdultWaitlistRefusal } from "@/lib/policies/subscription-lockout-pricing";
@@ -529,6 +530,55 @@ describe("confirmWaitlistOffer policy backstop inside the claim (#2363)", () => 
     const result = await confirmWaitlistOffer("booking-1", "member-1", CLUB_FORMAT_TEST);
     expect(result.error).toContain("expired");
     expect(result.code).toBeUndefined();
+  });
+});
+
+// ALP-794: an AI app connection cannot see the offered lodge, price or expiry,
+// so it may not accept a cross-lodge offer (ADR-004 decision 2: the member
+// re-confirms at the figure they can see, on the website).
+describe("confirmWaitlistOffer refuses a connection a cross-lodge offer (ALP-794)", () => {
+  const website = { crossLodgeOnWebsiteOnly: true };
+
+  it("refuses without touching the offer: no new booking, no cancelled place", async () => {
+    h.prismaBookingFindUnique.mockResolvedValue(offer({ waitlistOfferedLodgeId: "lodge-b" }));
+
+    const result = await confirmWaitlistOffer("booking-1", "member-1", CLUB_FORMAT_TEST, website);
+
+    expect(result).toEqual({
+      success: false,
+      error: "Accept this offer at another lodge on the club website.",
+      code: WAITLIST_CROSS_LODGE_WEBSITE_ONLY_CODE,
+    });
+    expect(h.confirmCrossLodgeWaitlistOffer).not.toHaveBeenCalled();
+    expect(h.transaction).not.toHaveBeenCalled();
+    expect(h.txBookingUpdateMany).not.toHaveBeenCalled();
+    expect(h.logAudit).not.toHaveBeenCalled();
+  });
+
+  it("tells nobody else the offer is cross-lodge: the cross-lodge path answers them", async () => {
+    h.prismaBookingFindUnique.mockResolvedValue(offer({ waitlistOfferedLodgeId: "lodge-b" }));
+    h.confirmCrossLodgeWaitlistOffer.mockResolvedValue({ success: false, error: "Forbidden" });
+
+    const result = await confirmWaitlistOffer("booking-1", "someone-else", CLUB_FORMAT_TEST, website);
+
+    expect(result).toEqual({ success: false, error: "Forbidden" });
+  });
+
+  it("still accepts a same-lodge offer through a connection", async () => {
+    const result = await confirmWaitlistOffer("booking-1", "member-1", CLUB_FORMAT_TEST, website);
+
+    expect(result.success).toBe(true);
+    expect(h.txBookingUpdateMany).toHaveBeenCalled();
+  });
+
+  it("leaves the website's cross-lodge accept unchanged", async () => {
+    h.prismaBookingFindUnique.mockResolvedValue(offer({ waitlistOfferedLodgeId: "lodge-b" }));
+    h.confirmCrossLodgeWaitlistOffer.mockResolvedValue({ success: true, newBookingId: "booking-9" });
+
+    const result = await confirmWaitlistOffer("booking-1", "member-1", CLUB_FORMAT_TEST);
+
+    expect(h.confirmCrossLodgeWaitlistOffer).toHaveBeenCalledWith("booking-1", "member-1", CLUB_FORMAT_TEST);
+    expect(result).toEqual({ success: true, newBookingId: "booking-9" });
   });
 });
 

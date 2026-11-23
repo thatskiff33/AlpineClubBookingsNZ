@@ -32,6 +32,7 @@ import {
   WAITLIST_CONFIRM_OFFER_RELEASE_FAILED_AUDIT_ACTION,
   WAITLIST_CONFIRM_RELEASED_UNAVAILABLE_BODY,
   WAITLIST_CONFIRM_STATUS_MOVED_BODY,
+  WAITLIST_CROSS_LODGE_WEBSITE_ONLY_CODE,
   WAITLIST_OFFER_CONSUMED_STATUS_MOVED_FLAGS,
   WAITLIST_OFFER_RELEASED_CAPACITY_BODY,
   WAITLIST_OFFER_RELEASED_FLAGS,
@@ -87,9 +88,9 @@ function contendedStatus(error: unknown): 503 | 500 {
 /**
  * A successful accept. Also the AI app action `accept_waitlist_offer`
  * (ALP-794), whose answer carries the `id` of the booking the member now pays
- * for (the new one on a cross-lodge offer), so the app can send them to it.
- * The website's answer is unchanged. Only the booking's own member may accept
- * (`confirmWaitlistOffer`): there is no officer branch to narrow.
+ * for, so the app can send them to it. A connection is refused a cross-lodge
+ * offer (website only), so it never reaches the new-booking branch. Only the
+ * booking's own member may accept (`confirmWaitlistOffer`): no officer branch.
  */
 function acceptedAnswer(request: NextRequest, bookingId: string, body: Record<string, unknown>) {
   return connectionJson(
@@ -120,7 +121,10 @@ export async function POST(
 
   let result: Awaited<ReturnType<typeof confirmWaitlistOffer>>;
   try {
-    result = await confirmWaitlistOffer(bookingId, session.user.id, format);
+    // A connection may not accept a cross-lodge offer (ALP-794): website only.
+    result = await confirmWaitlistOffer(bookingId, session.user.id, format, {
+      crossLodgeOnWebsiteOnly: arrivesAsMcpConnection(request),
+    });
   } catch (err) {
     // Phase one's claim (or the cross-lodge create) is the first write, and it
     // rolled back (INV-LOCK-006); the offer still stands.
@@ -154,6 +158,7 @@ export async function POST(
       // hard-stop family that may not enter review.
       : result.code === "ADULT_MEMBER_HOSTING_REQUIRED" ? 409
       : result.code === HOSTING_COVERAGE_RETRY_CODE ? 409
+      : result.code === WAITLIST_CROSS_LODGE_WEBSITE_ONLY_CODE ? 409
       : 400;
     return NextResponse.json(
       {

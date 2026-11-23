@@ -70,6 +70,7 @@ import {
 } from "@/lib/night-adjustment-write";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import type { ClubFormat } from "@/lib/club-format";
+import { WAITLIST_CROSS_LODGE_WEBSITE_ONLY_CODE } from "@/lib/waitlist-confirm-recovery-contract";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 export const WAITLIST_OFFER_HOURS =
@@ -757,6 +758,13 @@ const WAITLIST_MINIMUM_STAY_ERROR =
 const WAITLIST_CONFIRM_RETRY_ERROR =
   "This offer was updated a moment ago. Please try confirming it again.";
 
+/** A connection's cross-lodge accept (`WAITLIST_CROSS_LODGE_WEBSITE_ONLY_CODE`). */
+const WAITLIST_CROSS_LODGE_WEBSITE_ONLY_REFUSAL = Object.freeze({
+  success: false,
+  error: "Accept this offer at another lodge on the club website.",
+  code: WAITLIST_CROSS_LODGE_WEBSITE_ONLY_CODE,
+});
+
 /**
  * Confirm a waitlist offer. Re-checks capacity and transitions to
  * PAYMENT_PENDING or PENDING based on member/non-member rules.
@@ -764,6 +772,12 @@ const WAITLIST_CONFIRM_RETRY_ERROR =
  * A cross-lodge offer (ADR-004, waitlistOfferedLodgeId set) takes the
  * create-and-cancel path instead: a fresh booking at the offered lodge and
  * the entry cancelled, with `newBookingId` pointing at the replacement.
+ *
+ * ALP-794: an AI app connection (`crossLodgeOnWebsiteOnly`) is refused a
+ * cross-lodge offer with nothing written, since the app cannot show the
+ * offered lodge or price. Only the offer's own member is told so; anyone else
+ * gets the cross-lodge path's own refusal. An offer that turns cross-lodge
+ * after the dispatch read is sent back to it by the CONFIRM_RETRY backstop.
  *
  * #2363: both paths re-check the CURRENT minimum-stay policy set before the
  * offer is turned into held capacity. An offer lives 48 hours, and an admin or
@@ -781,7 +795,8 @@ export async function confirmWaitlistOffer(
   bookingId: string,
   memberId: string,
   /** The club's format (#3565), resolved once by the request, before any transaction. */
-  format: ClubFormat
+  format: ClubFormat,
+  options: { crossLodgeOnWebsiteOnly?: boolean } = {},
 ): Promise<{
   success: boolean;
   newStatus?: BookingStatus;
@@ -834,6 +849,9 @@ export async function confirmWaitlistOffer(
     },
   });
   if (offerKind?.waitlistOfferedLodgeId) {
+    if (options.crossLodgeOnWebsiteOnly && offerKind.memberId === memberId) {
+      return { ...WAITLIST_CROSS_LODGE_WEBSITE_ONLY_REFUSAL };
+    }
     return confirmCrossLodgeWaitlistOffer(bookingId, memberId, format);
   }
 

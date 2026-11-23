@@ -25,9 +25,26 @@ reason: the read and the create decide on the member-only user, take their
   schema from refund-appeal-request.ts, and answer with their shapes.
 
 file: src/app/api/bookings/[id]/waitlist-confirm/route.ts
-lines: 606
-reason: the accept decides on the member-only user and answers a connection
-  with the accepted-offer shape.
+lines: 611
+reason: answers a connection with the accepted-offer shape and the id of the
+  booking to pay for, and refuses it a cross-lodge offer with 409; owner-only
+  through confirmWaitlistOffer, no officer branch.
+
+function: src/app/api/bookings/[id]/waitlist-confirm/route.ts#POST
+lines: 509
+reason: tells confirmWaitlistOffer the caller is a connection and maps its
+  cross-lodge refusal to 409, beside the handler's other refusal statuses.
+
+file: src/lib/waitlist.ts
+lines: 1380
+reason: the cross-lodge refusal for a connection, at the one dispatch that
+  chooses the cross-lodge path, with its frozen body and doc comment.
+
+function: src/lib/waitlist.ts#confirmWaitlistOffer
+lines: 440
+reason: the refusal has to sit at the cross-lodge dispatch; anywhere earlier
+  races an offer turning cross-lodge, which the claim's backstop sends back
+  to exactly this branch.
 
 function: src/app/api/bookings/quote/route.ts#POST
 lines: 397

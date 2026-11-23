@@ -84,6 +84,7 @@ import { POST as acceptOffer } from "@/app/api/bookings/[id]/waitlist-confirm/ro
 import { PATCH as withdrawBookingException } from "@/app/api/bookings/exception-requests/[id]/route";
 import { expectActionContract, officerMemberSession } from "@/lib/__tests__/helpers/mcp-action-contract";
 import { MCP_PRINCIPAL_HEADER } from "@/lib/mcp/principal";
+import { WAITLIST_CROSS_LODGE_WEBSITE_ONLY_CODE } from "@/lib/waitlist-confirm-recovery-contract";
 
 /** The same write as a connection and as the officer's browser, for a booking that is not the member's. */
 async function statusesFor(
@@ -316,18 +317,24 @@ describe("accept_waitlist_offer", () => {
     });
     expect(connection).toEqual({ id: "booking-1", ...(browser as object) });
     expect(connection).toMatchObject({ requiresPayment: true });
-    expect(h.confirmWaitlistOffer).toHaveBeenCalledWith("booking-1", "officer-1", expect.anything());
+    expect(h.confirmWaitlistOffer).toHaveBeenCalledWith("booking-1", "officer-1", expect.anything(), { crossLodgeOnWebsiteOnly: true });
   });
 
-  it("answers a cross-lodge accept with the new booking's id", async () => {
-    h.confirmWaitlistOffer.mockResolvedValue({ success: true, newStatus: "PAYMENT_PENDING", newBookingId: "booking-9" });
+  it("refuses a connection a cross-lodge offer with 409; the browser may still accept it", async () => {
+    // The service refuses a connection (`waitlist-confirm-minimum-stay.test.ts`
+    // proves nothing is written); the route asks it to, and only for a connection.
+    h.confirmWaitlistOffer.mockImplementation(async (_id, _member, _format, options) =>
+      options?.crossLodgeOnWebsiteOnly
+        ? { success: false, error: "Accept this offer at another lodge on the club website.", code: WAITLIST_CROSS_LODGE_WEBSITE_ONLY_CODE }
+        : { success: true, newStatus: "PAYMENT_PENDING", newBookingId: "booking-9" });
     h.prisma.booking.findUnique.mockResolvedValue({ finalPriceCents: 15000, status: "PAYMENT_PENDING" });
-    const { connection } = await expectActionContract({
-      actionId: "accept_waitlist_offer",
-      handler: acceptOffer,
-      args: { id: "booking-1" },
-    });
-    expect(connection).toMatchObject({ id: "booking-9", newBookingId: "booking-9", requiresPayment: true });
+    expect(
+      await statusesFor(acceptOffer, "POST", "/api/bookings/booking-1/waitlist-confirm", { id: "booking-1" }, {}),
+    ).toEqual({ connection: 409, browser: 200 });
+    expect(h.confirmWaitlistOffer.mock.calls.map((call) => call[3])).toEqual([
+      { crossLodgeOnWebsiteOnly: true },
+      { crossLodgeOnWebsiteOnly: false },
+    ]);
   });
 });
 
