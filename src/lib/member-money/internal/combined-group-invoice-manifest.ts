@@ -1,5 +1,6 @@
 import { Prisma, type MemberMoneyAccount, type MemberMoneyExportCoverageReleaseReason } from "@prisma/client";
 import type { LineItem } from "xero-node";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import { prisma } from "../../prisma";
 import logger from "../../logger";
 import { storedInvoiceRequestLines } from "../../xero-json";
@@ -173,7 +174,7 @@ export async function recordCombinedGroupInvoiceManifest(
       logger.info(context, "The combined group invoice's manifest was already recorded differently; the first row stands");
     }
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+    if (isPrismaKnownUniqueConstraintError(error)) {
       logger.info(context, "Another document covered these components first, or another run recorded this manifest first; the first row stands");
       return;
     }
