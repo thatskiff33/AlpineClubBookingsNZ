@@ -7,7 +7,6 @@ import { getAdminRouteRequirement } from "@/lib/admin-permissions";
 import {
   MCP_ACTIONS,
   MCP_WEBSITE_ONLY_ACTIONS,
-  mcpActionAdminRequirement,
   mcpActionRouteFile,
 } from "@/lib/mcp/catalogue";
 import { MEMBERSHIP_MCP_ACTIONS } from "@/lib/mcp/catalogue/membership";
@@ -17,6 +16,7 @@ import {
   MCP_PERMANENT_EXCLUSION_REASONS,
   mcpPermanentExclusion,
 } from "@/lib/mcp/exclusions";
+import { mcpActionAdminRequirement } from "@/lib/mcp/officer-actions";
 import { MCP_STATIC_SIBLING_SEGMENTS } from "@/lib/mcp/static-route-segments";
 import { fileExists, hasExport, unwrap, walkDir } from "@/lib/step-up-route-census-ast";
 import {

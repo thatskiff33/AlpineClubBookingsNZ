@@ -27,7 +27,8 @@ vi.mock("@/lib/mcp/dispatch", () => ({
 }));
 
 import * as mcpRoute from "@/app/api/mcp/route";
-import { MCP_ACTIONS, mcpActionAdminRequirement } from "@/lib/mcp/catalogue";
+import { MCP_ACTIONS } from "@/lib/mcp/catalogue";
+import { mcpActionAdminRequirement } from "@/lib/mcp/officer-actions";
 
 const { POST } = mcpRoute;
 

@@ -24,7 +24,6 @@ import { FORWARDED_FOR_HEADER } from "@/lib/rate-limit-http";
 
 import { recordMcpAudit } from "./audit";
 import {
-  mcpActionAdminRequirement,
   mcpActionInputSchema,
   mcpActionRouteFile,
   splitMcpActionArguments,
@@ -33,6 +32,7 @@ import {
 } from "./catalogue";
 import { MCP_PERMANENT_EXCLUSION_REASONS, mcpPermanentExclusion } from "./exclusions";
 import { sendMcpLoopbackRequest } from "./loopback";
+import { mcpActionAdminRequirement } from "./officer-actions";
 import { issueMcpPrincipal, MCP_PRINCIPAL_HEADER } from "./principal";
 import { MCP_SCOPE_LABELS } from "./scope-labels";
 import { mcpScopeAllows } from "./settings";

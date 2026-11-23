@@ -315,6 +315,12 @@ function sanitizeAuditDetails(value?: string | null): string | undefined {
   return reduced?.text ?? sanitized;
 }
 
+/** Normalized key names redacted only on an exact match (`body`, not `nobody`). */
+const SENSITIVE_EXACT_METADATA_KEYS: ReadonlySet<string> = new Set([
+  "token", "rawbody", "requestbody", "body", "html", "emailhtml", "htmlbody", "emailbody",
+  "messagehtml", "card", "cardnumber", "cardcvc", "cardcvv", "cvc", "cvv",
+]);
+
 /**
  * THIS LIST DELIBERATELY REDACTS LESS THAN THE LOG REDACTOR — INV-PRIV-011
  * (#2683).
@@ -368,21 +374,7 @@ function isSensitiveMetadataKey(key: string): boolean {
     normalized.includes("authorization") ||
     normalized.includes("cookie") ||
     normalized.includes("secret") ||
-    normalized === "token" ||
-    normalized === "rawbody" ||
-    normalized === "requestbody" ||
-    normalized === "body" ||
-    normalized === "html" ||
-    normalized === "emailhtml" ||
-    normalized === "htmlbody" ||
-    normalized === "emailbody" ||
-    normalized === "messagehtml" ||
-    normalized === "card" ||
-    normalized === "cardnumber" ||
-    normalized === "cardcvc" ||
-    normalized === "cardcvv" ||
-    normalized === "cvc" ||
-    normalized === "cvv"
+    SENSITIVE_EXACT_METADATA_KEYS.has(normalized)
   );
 }
 
