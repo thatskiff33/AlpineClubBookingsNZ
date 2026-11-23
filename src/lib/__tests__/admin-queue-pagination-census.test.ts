@@ -41,6 +41,15 @@ const CAPPED_QUEUE_ROUTES: Record<string, readonly string[]> = {
   "/api/admin/communications/history": ["src/app/api/admin/communications/history/route.ts"],
 };
 
+/**
+ * A capped route whose query schema lives in a lib module the route imports
+ * (ALP-721 moved these so an AI app action reads the same schema), keyed by
+ * route. Every other route declares its schema in its own file.
+ */
+const QUERY_SCHEMA_HOMES: Readonly<Record<string, string>> = {
+  "/api/admin/refund-requests": "src/lib/admin-refund-requests-query.ts",
+};
+
 /** Client files that read a capped queue route without listing its rows. */
 const NOT_A_QUEUE_LIST: Record<string, string> = {};
 
@@ -188,8 +197,15 @@ describe("row-capped officer queues page through every row (INV-OPS-020)", () =>
 
   it("every capped route's schema spreads adminListPageQueryFields", () => {
     const failures = Object.keys(CAPPED_QUEUE_ROUTES).filter((route) => {
-      const file = path.join(ROOT, "src/app", `${route}/route.ts`);
-      return !/\.\.\.adminListPageQueryFields\b/.test(stripComments(readFileSync(file, "utf8")));
+      const routeCode = stripComments(readFileSync(path.join(ROOT, "src/app", `${route}/route.ts`), "utf8"));
+      const home = QUERY_SCHEMA_HOMES[route];
+      // A schema home counts only while the route still imports it.
+      const homeModule = home?.replace(/^src\//, "@/").replace(/\.ts$/, "");
+      const code =
+        home && routeCode.includes(`"${homeModule}"`)
+          ? stripComments(readFileSync(path.join(ROOT, home), "utf8"))
+          : routeCode;
+      return !/\.\.\.adminListPageQueryFields\b/.test(code);
     });
     expect(failures).toEqual([]);
   });
