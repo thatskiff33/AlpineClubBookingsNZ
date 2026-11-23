@@ -44,9 +44,9 @@ export async function POST(
     return inactiveResponse;
   }
 
-  const jsonBody = await parseOptionalJsonRequestBody(request);
+  const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: {}, objectOnly: true });
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body ?? {};
+  const body = jsonBody.body;
   const requestedMethod = (body as { paymentMethod?: unknown }).paymentMethod;
   const paymentMethod: BookingPaymentMethod =
     typeof requestedMethod === "string" &&

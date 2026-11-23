@@ -49,9 +49,9 @@ export async function POST(
   // plus the optional map-to-existing-contact decision (issue #1255). The body
   // is empty for general requests and for school approvals that keep the
   // submitted numbers, so parse defensively.
-  const jsonBody = await parseOptionalJsonRequestBody(req);
+  const jsonBody = await parseOptionalJsonRequestBody(req, { whenAbsent: {}, objectOnly: true });
   if (!jsonBody.ok) return jsonBody.response;
-  const body = (jsonBody.body ?? {}) as {
+  const body = jsonBody.body as {
     childCounts?: unknown;
     ownerContactMemberId?: unknown;
     pricedHeadcount?: unknown;

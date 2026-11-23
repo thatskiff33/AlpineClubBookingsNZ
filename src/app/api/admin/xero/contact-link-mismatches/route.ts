@@ -50,10 +50,9 @@ export async function POST(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
-  const jsonBody = await parseOptionalJsonRequestBody(request);
+  const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: {} });
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body ?? {};
-  const parsed = resyncBodySchema.safeParse(body ?? {});
+  const parsed = resyncBodySchema.safeParse(jsonBody.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid request body", details: parsed.error.flatten() },

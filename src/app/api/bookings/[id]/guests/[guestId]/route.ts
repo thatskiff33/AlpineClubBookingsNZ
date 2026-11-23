@@ -84,9 +84,9 @@ export async function DELETE(
   const { id: bookingId, guestId } = await params;
   const ipAddress = getClientIp(request);
 
-  const jsonBody = await parseOptionalJsonRequestBody(request);
+  const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: null, objectOnly: true });
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body ?? null;
+  const body = jsonBody.body;
   const rawSettlementMethod = (body as { settlementMethod?: unknown } | null)
     ?.settlementMethod;
   if (

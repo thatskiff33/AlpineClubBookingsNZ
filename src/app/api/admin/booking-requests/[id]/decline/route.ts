@@ -33,9 +33,9 @@ export async function POST(
   const { id } = await params;
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  const jsonBody = await parseOptionalJsonRequestBody(req);
+  const jsonBody = await parseOptionalJsonRequestBody(req, { whenAbsent: {} });
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body ?? {};
+  const body = jsonBody.body;
 
   const parsed = declineSchema.safeParse(body);
   if (!parsed.success) {

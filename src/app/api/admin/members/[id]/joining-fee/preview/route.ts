@@ -49,12 +49,10 @@ export async function POST(
   }
 
   // Body is optional; an empty/absent body means "preview this member".
-  const jsonBody = await parseOptionalJsonRequestBody(request, {
-    error: "Invalid JSON",
-  });
+  const jsonBody = await parseOptionalJsonRequestBody(request, { error: "Invalid JSON", whenAbsent: {} });
   if (!jsonBody.ok) return jsonBody.response;
 
-  const parsedBody = previewSchema.safeParse(jsonBody.body ?? {});
+  const parsedBody = previewSchema.safeParse(jsonBody.body);
   if (!parsedBody.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsedBody.error.flatten() },

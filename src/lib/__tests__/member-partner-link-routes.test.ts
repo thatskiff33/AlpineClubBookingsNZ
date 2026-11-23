@@ -489,6 +489,19 @@ describe("DELETE /api/admin/members/[id]/partner-link", () => {
     );
   });
 
+  it("refuses a JSON null body with the schema 422 and removes nothing (#5407)", async () => {
+    const res = await adminDeletePartnerLink(
+      new NextRequest("http://localhost/api/admin/members/member-a/partner-link?id=link-1", {
+        method: "DELETE",
+        body: "null",
+        headers: { "Content-Type": "application/json" },
+      }),
+      { params: Promise.resolve({ id: "member-a" }) }
+    );
+    expect(res.status).toBe(422);
+    expect(adminRemovePartnerLink).not.toHaveBeenCalled();
+  });
+
   it("refuses a body that is not JSON and removes nothing (#5407)", async () => {
     const res = await adminDeletePartnerLink(
       new NextRequest("http://localhost/api/admin/members/member-a/partner-link?id=link-1", {

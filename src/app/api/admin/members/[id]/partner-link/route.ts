@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
-import { parseJsonRequestBody } from "@/lib/api-json";
+import { parseJsonRequestBody, parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import {
@@ -104,9 +103,9 @@ export async function DELETE(
   // CONFIRMED removal. A bodyless DELETE (pending removal) must still succeed,
   // so an empty body is treated as an empty object; a malformed one is a 400.
   const deleteSchema = z.object({ notifyMember: z.boolean().optional() });
-  const jsonBody = await parseOptionalJsonRequestBody(req);
+  const jsonBody = await parseOptionalJsonRequestBody(req, { whenAbsent: {} });
   if (!jsonBody.ok) return jsonBody.response;
-  const parsedBody = deleteSchema.safeParse(jsonBody.body ?? {});
+  const parsedBody = deleteSchema.safeParse(jsonBody.body);
   if (!parsedBody.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsedBody.error.flatten().fieldErrors },

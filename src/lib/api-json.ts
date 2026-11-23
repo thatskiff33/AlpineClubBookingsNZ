@@ -54,31 +54,60 @@ export async function parseJsonRequestBody(
   }
 }
 
+export type OptionalJsonBodyOptions = Partial<InvalidJsonBodyOptions> & {
+  /** The body the route uses when none was sent. */
+  whenAbsent?: unknown;
+  /**
+   * Set by a route with no schema of its own to refuse a body that parsed but
+   * is not a JSON object (`null`, an array, a string, a number, a boolean).
+   */
+  objectOnly?: boolean;
+};
+
+// JSON's own insignificant whitespace (RFC 8259): space, tab, CR, LF. Not
+// `trim()`, which also strips no-break and line-separator characters.
+const JSON_WHITESPACE_ONLY = /^[ \t\r\n]*$/;
+
 /**
- * Reads a body the route accepts but does not require (#5407). An empty body,
- * or one of only whitespace, means "no body": the result is `ok` with `body`
- * `undefined`, and the route applies its defaults. A body that is present but
- * is not valid JSON answers the same invalid-JSON 400 as
- * `parseJsonRequestBody`, so a malformed body is never mistaken for an absent
- * one.
- *
- * The rule for a route whose body is optional: an empty body or a JSON `null`
- * means "no body". This reader returns `undefined` for the first and `null`
- * for the second, and the routes apply their default with `body ?? default`,
- * which treats both alike. A route that ever needs to tell them apart can,
- * since no JSON value parses to `undefined`.
+ * Reads a body the route accepts but does not require (#5407). The rule: only
+ * an absent body means "use the defaults". A body that is empty or JSON
+ * whitespace only is absent, and the result is `ok` with `body` set to
+ * `options.whenAbsent` (`undefined` when not given). Anything else is a body
+ * that was sent: valid JSON is returned as parsed, `null` included, so a
+ * route's schema answers a `null` or other non-object body as it would any
+ * other wrong shape, and never runs its default action for it; with
+ * `objectOnly`, this reader answers such a body itself. A body that is not
+ * valid JSON answers the same invalid-JSON 400 as `parseJsonRequestBody`.
+ * The request is decoded as UTF-8, which drops a leading byte-order mark.
  */
 export async function parseOptionalJsonRequestBody(
   request: Request,
-  options?: InvalidJsonBodyOptions,
+  options: OptionalJsonBodyOptions = {},
 ): Promise<JsonRequestBodyResult> {
+  let body: unknown;
   try {
     const text = await request.text();
-    return {
-      ok: true,
-      body: text.trim() === "" ? undefined : (JSON.parse(text) as unknown),
-    };
+    if (JSON_WHITESPACE_ONLY.test(text)) return { ok: true, body: options.whenAbsent };
+    body = JSON.parse(text) as unknown;
   } catch {
-    return { ok: false, response: invalidJsonBodyResponse(options) };
+    return {
+      ok: false,
+      response: invalidJsonBodyResponse(options.error ? { error: options.error } : undefined),
+    };
   }
+  if (options.objectOnly && (typeof body !== "object" || body === null || Array.isArray(body))) {
+    return { ok: false, response: nonObjectJsonBodyResponse() };
+  }
+  return { ok: true, body };
+}
+
+/**
+ * The 400 for an optional body that parsed but is not a JSON object, on a
+ * route that reads its fields without a schema (`objectOnly` above).
+ */
+function nonObjectJsonBodyResponse(): NextResponse {
+  return NextResponse.json(
+    { error: "Invalid request body", details: { body: ["Request body must be a JSON object"] } },
+    { status: 400 },
+  );
 }

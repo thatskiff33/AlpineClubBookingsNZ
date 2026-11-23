@@ -32,9 +32,9 @@ export async function POST(
   // Optional map-to-existing-contact decision (issue #1255). Sending a quote
   // auto-holds capacity, which materialises the owner, so the decision rides in
   // the send body. The authoritative guard runs inside the hold transaction.
-  const jsonBody = await parseOptionalJsonRequestBody(req);
+  const jsonBody = await parseOptionalJsonRequestBody(req, { whenAbsent: {}, objectOnly: true });
   if (!jsonBody.ok) return jsonBody.response;
-  const body = (jsonBody.body ?? {}) as {
+  const body = jsonBody.body as {
     ownerContactMemberId?: unknown;
     childCounts?: unknown;
   };

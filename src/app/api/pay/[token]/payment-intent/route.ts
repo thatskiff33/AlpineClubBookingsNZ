@@ -34,9 +34,9 @@ export async function POST(
 
   try {
     // #4300: an optional body naming the intent the payer has just paid.
-    const jsonBody = await parseOptionalJsonRequestBody(request);
+    const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: null, objectOnly: true });
     if (!jsonBody.ok) return jsonBody.response;
-    const body = (jsonBody.body ?? null) as { paidPaymentIntentId?: unknown } | null;
+    const body = jsonBody.body as { paidPaymentIntentId?: unknown } | null;
     const paidPaymentIntentId = typeof body?.paidPaymentIntentId === "string" ? body.paidPaymentIntentId : null;
     const result = await createPaymentIntentForPaymentLink(token, { paidPaymentIntentId });
 

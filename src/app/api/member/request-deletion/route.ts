@@ -54,11 +54,11 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const jsonBody = await parseOptionalJsonRequestBody(request);
+  const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: {}, objectOnly: true });
   if (!jsonBody.ok) return jsonBody.response;
   let body: { reason?: string } = {};
   try {
-    body = requestSchema.parse(jsonBody.body ?? {});
+    body = requestSchema.parse(jsonBody.body);
   } catch {
     // reason is optional, treat a schema failure as empty
     body = {};

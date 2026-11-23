@@ -43,9 +43,9 @@ export async function POST(
   const session = guard.session;
 
   const { id } = await params;
-  const jsonBody = await parseOptionalJsonRequestBody(req);
+  const jsonBody = await parseOptionalJsonRequestBody(req, { whenAbsent: {} });
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body ?? {};
+  const body = jsonBody.body;
 
   const parsed = holdSchema.safeParse(body);
   if (!parsed.success) {

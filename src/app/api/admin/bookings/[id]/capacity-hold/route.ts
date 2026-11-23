@@ -52,9 +52,9 @@ export async function POST(
   const session = guard.session;
   const { id: bookingId } = await params;
 
-  const jsonBody = await parseOptionalJsonRequestBody(request);
+  const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: {}, objectOnly: true });
   if (!jsonBody.ok) return jsonBody.response;
-  const parsed = capacityHoldSchema.safeParse(jsonBody.body ?? {});
+  const parsed = capacityHoldSchema.safeParse(jsonBody.body);
   const allowOverbook = parsed.success ? Boolean(parsed.data.allowOverbook) : false;
   const auditRequest = getAuditRequestContext(request);
 

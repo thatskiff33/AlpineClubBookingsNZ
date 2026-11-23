@@ -105,12 +105,10 @@ export async function POST(
   let createdXeroContactId: string | null = null;
   let subscriptionRefreshPending = false;
   try {
-    const jsonBody = await parseOptionalJsonRequestBody(req, {
-      error: "Invalid JSON",
-    });
+    const jsonBody = await parseOptionalJsonRequestBody(req, { error: "Invalid JSON", whenAbsent: {} });
     if (!jsonBody.ok) return jsonBody.response;
 
-    const parsed = pushSchema.safeParse(jsonBody.body ?? {});
+    const parsed = pushSchema.safeParse(jsonBody.body);
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
     }

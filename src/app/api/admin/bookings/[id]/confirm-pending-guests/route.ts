@@ -101,9 +101,9 @@ export async function POST(
 
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  const jsonBody = await parseOptionalJsonRequestBody(request);
+  const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: {} });
   if (!jsonBody.ok) return jsonBody.response;
-  const parsedBody = confirmPendingGuestsSchema.safeParse(jsonBody.body ?? {});
+  const parsedBody = confirmPendingGuestsSchema.safeParse(jsonBody.body);
   if (!parsedBody.success) {
     return NextResponse.json({ error: "Invalid input", details: parsedBody.error.flatten() }, { status: 400 });
   }

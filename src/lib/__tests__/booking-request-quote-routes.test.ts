@@ -182,6 +182,17 @@ describe("admin booking request quote routes", () => {
     expect(mockSendQuote).not.toHaveBeenCalled();
   });
 
+  it.each(["null", "[]"])("refuses the non-object send body %s with a 400 and sends nothing", async (raw) => {
+    const res = await sendQuoteRoute(
+      jsonRequest("http://localhost/api/admin/booking-requests/req-1/send-quote", raw),
+      { params: Promise.resolve({ id: "req-1" }) }
+    );
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ error: "Invalid request body" });
+    expect(mockSendQuote).not.toHaveBeenCalled();
+  });
+
   it("keeps its own answer for a send body of the wrong shape", async () => {
     const res = await sendQuoteRoute(
       jsonRequest("http://localhost/api/admin/booking-requests/req-1/send-quote", {

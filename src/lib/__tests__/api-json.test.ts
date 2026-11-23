@@ -116,6 +116,95 @@ describe("optional JSON body (#5407)", () => {
     },
   );
 
+  // JSON's own whitespace only: a no-break space, a line separator or any
+  // other Unicode space is a body that was sent, and it is not JSON.
+  it.each([" ", "   ", " ", "　"])(
+    "answers the body %j with the invalid-JSON 400, not as no body",
+    async (raw) => {
+      const result = await parseOptionalJsonRequestBody(post(raw), { whenAbsent: {} });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        await expect(result.response.text()).resolves.toBe(DEFAULT_INVALID_JSON_BYTES);
+      }
+    },
+  );
+
+  // UTF-8 decoding drops a leading byte-order mark before the reader sees the
+  // text, as it does for request.json().
+  it("treats a body of only a byte-order mark as no body, and reads JSON after one", async () => {
+    expect(await parseOptionalJsonRequestBody(post("﻿"), { whenAbsent: {} })).toEqual({
+      ok: true,
+      body: {},
+    });
+    expect(await parseOptionalJsonRequestBody(post('﻿{"a":1}'))).toEqual({
+      ok: true,
+      body: { a: 1 },
+    });
+  });
+
+  describe("only an absent body gets the route's default", () => {
+    it("returns whenAbsent for an empty or whitespace-only body", async () => {
+      for (const raw of ["", " \r\n\t"]) {
+        expect(await parseOptionalJsonRequestBody(post(raw), { whenAbsent: { x: 1 } })).toEqual({
+          ok: true,
+          body: { x: 1 },
+        });
+      }
+    });
+
+    it("returns a JSON null as null, never as the default", async () => {
+      expect(await parseOptionalJsonRequestBody(post("null"), { whenAbsent: {} })).toEqual({
+        ok: true,
+        body: null,
+      });
+    });
+
+    it.each(["null", "[]", "[{}]", '"text"', "0", "true"])(
+      "with objectOnly, refuses the non-object body %j with a 400",
+      async (raw) => {
+        const result = await parseOptionalJsonRequestBody(post(raw), {
+          whenAbsent: {},
+          objectOnly: true,
+        });
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.response.status).toBe(400);
+          await expect(result.response.json()).resolves.toEqual({
+            error: "Invalid request body",
+            details: { body: ["Request body must be a JSON object"] },
+          });
+        }
+      },
+    );
+
+    it("with objectOnly, still returns an object body and the default for an absent one", async () => {
+      const options = { whenAbsent: { d: true }, objectOnly: true };
+      expect(await parseOptionalJsonRequestBody(post('{"a":1}'), options)).toEqual({
+        ok: true,
+        body: { a: 1 },
+      });
+      expect(await parseOptionalJsonRequestBody(post(""), options)).toEqual({
+        ok: true,
+        body: { d: true },
+      });
+    });
+
+    it("keeps a route's own invalid-JSON wording beside the other options", async () => {
+      const result = await parseOptionalJsonRequestBody(post("{not json"), {
+        error: "Invalid JSON",
+        whenAbsent: {},
+        objectOnly: true,
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        await expect(result.response.text()).resolves.toBe(JSON.stringify({ error: "Invalid JSON" }));
+      }
+    });
+  });
+
   it("treats an empty body sent with a JSON content type as no body", async () => {
     const result = await parseOptionalJsonRequestBody(
       new Request("http://localhost/api/example", {

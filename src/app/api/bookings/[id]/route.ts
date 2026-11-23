@@ -78,10 +78,10 @@ export async function DELETE(
     }
 
     // The reason is optional: an empty body deletes without one.
-    const jsonBody = await parseOptionalJsonRequestBody(request);
+    const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: {} });
     if (!jsonBody.ok) return jsonBody.response;
 
-    const parsedBody = deleteBookingBodySchema.safeParse(jsonBody.body ?? {});
+    const parsedBody = deleteBookingBodySchema.safeParse(jsonBody.body);
     if (!parsedBody.success) {
       return NextResponse.json(
         { error: "Invalid input", details: parsedBody.error.flatten() },

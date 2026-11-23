@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
   // content type runs with the defaults, as before (#5407).
   let body: unknown;
   if (request.headers.get("content-type")?.includes("application/json")) {
-    const jsonBody = await parseOptionalJsonRequestBody(request);
+    const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: {}, objectOnly: true });
     if (!jsonBody.ok) return jsonBody.response;
     body = jsonBody.body;
   }

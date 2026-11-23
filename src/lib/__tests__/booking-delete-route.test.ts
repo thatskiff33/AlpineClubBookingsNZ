@@ -85,15 +85,15 @@ describe("DELETE /api/bookings/[id]", () => {
     expect(mockedDeleteBooking).not.toHaveBeenCalled();
   });
 
-  it("treats a JSON null body as no body, like an empty one (#5407)", async () => {
+  it("refuses a JSON null body with the schema 400 and deletes nothing (#5407)", async () => {
+    // Only an absent body means "delete without a reason"; null is a wrong shape.
     const response = await DELETE(makeDeleteRequest("null"), {
       params: Promise.resolve({ id: "booking-1" }),
     });
 
-    expect(response.status).toBe(200);
-    expect(mockedDeleteBooking).toHaveBeenCalledWith(
-      expect.objectContaining({ bookingId: "booking-1", reason: undefined }),
-    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "Invalid input" });
+    expect(mockedDeleteBooking).not.toHaveBeenCalled();
   });
 
   it("deletes without a reason for an empty or whitespace-only JSON body (#5407)", async () => {

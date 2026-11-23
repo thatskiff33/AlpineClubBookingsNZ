@@ -144,6 +144,14 @@ describe("POST /api/finance/sync/backfill-monthly-facts (#5407)", () => {
     );
   });
 
+  it("refuses a JSON null body with a 400 and runs nothing, where it used to run the defaults", async () => {
+    const response = await backfillMonthlyFacts(post(path, "null", "application/json"));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "Invalid request body" });
+    expect(mocks.backfillFinanceMonthlyFacts).not.toHaveBeenCalled();
+  });
+
   it("passes a valid body's options through", async () => {
     const response = await backfillMonthlyFacts(
       post(path, JSON.stringify({ fromMonth: "2020-04", maxChunks: 5 }), "application/json"),

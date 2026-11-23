@@ -21,9 +21,9 @@ export async function POST(
   });
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  const jsonBody = await parseOptionalJsonRequestBody(request);
+  const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: {} });
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body ?? {};
+  const body = jsonBody.body;
   const parsed = reviewSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

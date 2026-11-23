@@ -213,6 +213,14 @@ describe("POST /api/pay/[token]/payment-intent: malformed body (#5407)", () => {
     });
   });
 
+  it("refuses a JSON null body with a 400 and creates no intent", async () => {
+    const response = await post("null");
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "Invalid request body" });
+    expect(h.createPaymentIntentForPaymentLink).not.toHaveBeenCalled();
+  });
+
   it("refuses a body that is not JSON and creates no intent", async () => {
     await expectDefaultInvalidJsonAnswer(await post(MALFORMED_JSON_BODY));
     expect(h.createPaymentIntentForPaymentLink).not.toHaveBeenCalled();

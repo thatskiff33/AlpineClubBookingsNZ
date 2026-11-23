@@ -80,9 +80,9 @@ export async function POST(
   // #2576 §7. The only field this route reads off the body: an officer's explicit
   // confirmation and reason for overriding a same-owner coverage refusal. Absent on
   // every ordinary confirmation (the button sends no body); a malformed one is a 400 (#5407).
-  const jsonBody = await parseOptionalJsonRequestBody(request);
+  const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: null, objectOnly: true });
   if (!jsonBody.ok) return jsonBody.response;
-  const hostingOverride = readHostingCoverageOverride(jsonBody.body ?? null);
+  const hostingOverride = readHostingCoverageOverride(jsonBody.body);
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();

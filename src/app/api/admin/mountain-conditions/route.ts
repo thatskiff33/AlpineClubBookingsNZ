@@ -257,11 +257,9 @@ export async function POST(request: NextRequest) {
   // parses with the supplied (unsaved) config so an admin can test a URL /
   // selector change before committing it. An empty body refreshes from the
   // stored config and persists as usual.
-  const jsonBody = await parseOptionalJsonRequestBody(request, {
-    error: "Invalid JSON",
-  });
+  const jsonBody = await parseOptionalJsonRequestBody(request, { error: "Invalid JSON", objectOnly: true });
   if (!jsonBody.ok) return jsonBody.response;
-  const body = jsonBody.body ?? null;
+  const body = jsonBody.body;
 
   const isPreview = Boolean(
     body && typeof body === "object" && (body as { preview?: unknown }).preview,

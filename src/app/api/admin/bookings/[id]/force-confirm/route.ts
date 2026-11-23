@@ -56,9 +56,9 @@ export async function POST(
   const session = guard.session;
   const { id: bookingId } = await params;
 
-  const jsonBody = await parseOptionalJsonRequestBody(request);
+  const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: {} });
   if (!jsonBody.ok) return jsonBody.response;
-  const parsed = forceConfirmSchema.safeParse(jsonBody.body ?? {});
+  const parsed = forceConfirmSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
