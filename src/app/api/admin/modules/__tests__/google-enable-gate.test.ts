@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   getGoogleSetupState: vi.fn(),
   findUnique: vi.fn(),
   upsert: vi.fn(),
+  update: vi.fn(),
   transaction: vi.fn(),
   auditCreate: vi.fn(),
   invalidate: vi.fn(),
@@ -21,7 +22,11 @@ vi.mock("@/lib/google-config", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    clubModuleSettings: { findUnique: mocks.findUnique, upsert: mocks.upsert },
+    clubModuleSettings: {
+      findUnique: mocks.findUnique,
+      upsert: mocks.upsert,
+      update: mocks.update,
+    },
     auditLog: { create: mocks.auditCreate },
     $transaction: mocks.transaction,
   },
@@ -62,6 +67,7 @@ beforeEach(() => {
   // Currently everything off (googleLogin off).
   mocks.findUnique.mockResolvedValue({ ...DEFAULT_MODULE_SETTINGS });
   mocks.upsert.mockResolvedValue({ ...DEFAULT_MODULE_SETTINGS });
+  mocks.update.mockResolvedValue({ ...DEFAULT_MODULE_SETTINGS });
 });
 
 describe("PUT /api/admin/modules — googleLogin enable-gate", () => {
@@ -77,6 +83,7 @@ describe("PUT /api/admin/modules — googleLogin enable-gate", () => {
     );
     expect(res.status).toBe(409);
     expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
   });
 
   it("REFUSES when credentials need re-entry even if a stale verified marker exists", async () => {
@@ -91,6 +98,7 @@ describe("PUT /api/admin/modules — googleLogin enable-gate", () => {
     );
     expect(res.status).toBe(409);
     expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
   });
 
   it("REFUSES (fail-closed) when the verified state cannot be resolved", async () => {
@@ -100,6 +108,7 @@ describe("PUT /api/admin/modules — googleLogin enable-gate", () => {
     );
     expect(res.status).toBe(409);
     expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
   });
 
   it("ALLOWS enabling googleLogin once verified", async () => {
