@@ -348,6 +348,15 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     expect(previews).toEqual([...PREVIEW_ROUTE_KEYS].sort());
   });
 
+  it.each(["post_to_message_board", "place_food_order", "report_maintenance_issue", "confirm_family_member_details"])(
+    "marks %s destructive: it notifies other people or overwrites another person's record (#5305)",
+    (id) => {
+      // Owner decision, #5305 comment 7092977781: the app confirms with the
+      // member first, and the call is audited as important.
+      expect(MCP_ACTIONS.find((action) => action.id === id)?.kind).toBe("destructive");
+    },
+  );
+
   it("says what every action answers with", () => {
     for (const action of MCP_ACTIONS) {
       expect(Object.keys(action.returns).length, action.id).toBeGreaterThan(0);

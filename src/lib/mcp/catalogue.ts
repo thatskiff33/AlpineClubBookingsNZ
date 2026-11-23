@@ -90,8 +90,10 @@ import type { StepUpHttpMethod } from "@/lib/step-up-routes";
  * (`get_skifield_report` refreshes the ski field report's), or its route's own
  * audit row (a lookup of other members records every query, blocked ones
  * included). `write` changes something the member can undo.
- * `destructive` cannot be undone from the app. A view-only connection runs
- * `read` actions only.
+ * `destructive` cannot be undone from the app, notifies other people, or
+ * overwrites another person's record (owner decision, #5305): the app is told
+ * to confirm with the member first, and the call is audited as important. A
+ * view-only connection runs `read` actions only.
  */
 export type McpActionKind = "read" | "write" | "destructive";
 
@@ -518,7 +520,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     params: familyMemberIdParamsSchema,
     body: delegatedFamilyDetailsSchema.omit({ inheritContactFromSelf: true }),
     fixedBody: { inheritContactFromSelf: true },
-    kind: "write",
+    kind: "destructive",
     returns: FAMILY_MEMBER_DETAILS_CONNECTION_SHAPE,
     core: false,
   },

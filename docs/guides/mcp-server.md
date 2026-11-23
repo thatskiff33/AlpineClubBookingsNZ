@@ -135,9 +135,12 @@ member presses **Allow**, and again on every use (`INV-MCP-002`).
   the change actions as tools; asking for one by name is refused and the app
   is told to have the member reconnect with view and change.
 - **View and change** also runs actions that change something. Each change
-  action is marked for the app as either undoable (`write`) or not
-  (`destructive`). Actions marked destructive carry a hint telling the app to
-  confirm with the member first.
+  action is marked for the app as `write` (the member can undo it) or
+  `destructive`: it cannot be undone from the app, it notifies other people
+  (a message-board post, a food order or maintenance report emailed to the
+  club's officers), or it overwrites another person's record (confirming a
+  family member's details). Actions marked destructive carry a hint telling
+  the app to confirm with the member first, and are audited as important.
 
 A connection's effective level is always the lesser of what the member chose
 and what the club allows now.
@@ -231,7 +234,7 @@ against them, whatever officer roles they hold.
 | `request_family_child` | Asks to add an infant, child or youth to a family group; an officer reviews it | write | `POST /api/members/family/request-child` |
 | `request_family_adult` | Asks to add an adult who shares the member's email and has no login; an officer reviews it | write | `POST /api/members/family/request-adult` |
 | `request_family_member_removal` | Asks to remove someone from a family group; nobody is removed until an officer agrees | write | `POST /api/members/family/request-removal` |
-| `confirm_family_member_details` | Saves the name and date of birth of a family member without a login; their phone and addresses are copied from the member's own profile. Answers with name, age group and profile state | write | `PUT /api/members/family/[memberId]/details` |
+| `confirm_family_member_details` | Saves the name and date of birth of a family member without a login; their phone and addresses are copied from the member's own profile. Answers with name, age group and profile state | destructive | `PUT /api/members/family/[memberId]/details` |
 | `get_member_guest_options` | Whether members can be added as guests, and found by name or only by exact email | read | `GET /api/members/guest-candidates` |
 | `search_members_for_guest` | Members whose name starts with what was typed, at most ten: id, name and age group. Only while the club has name search on | read | `GET /api/members/guest-candidates/search` |
 | `find_member_by_email` | The member, or household, with exactly this email: id, name and age group | read (a `POST` that changes no member's data) | `POST /api/members/guest-candidates/resolve` |
@@ -261,9 +264,9 @@ is on the committee, a hut leader or an admin.
 | --- | --- | --- | --- |
 | `list_club_events` | Events on the club calendar in a window: title, place, details, times, whether it is an online meeting, how it repeats. Not the meeting link, and not whether the member may edit. Organisation accounts are refused, as on the website | read | `GET /api/calendar/events` |
 | `list_message_board_posts` | One page of the message board as plain text: author's name, text, time, whether the member wrote it, and the marker for the next page. Not the author's member id or the formatted body | read | `GET /api/club-posts` |
-| `post_to_message_board` | Posts plain text under the member's name, on this club's board only. Pictures, formatting and sharing with other clubs stay on the website: the route refuses a connection that sends them | write | `POST /api/club-posts` (always `shareToAllClubs: false`) |
+| `post_to_message_board` | Posts plain text under the member's name, on this club's board only. Pictures, formatting and sharing with other clubs stay on the website: the route refuses a connection that sends them | destructive | `POST /api/club-posts` (always `shareToAllClubs: false`) |
 | `get_food_order_options` | Whether the club takes food orders, who receives them, the lodges the member may order for, the club's today, the item unit codes and the form's limits. Never the food officer's email address | read | `GET /api/food-orders` |
-| `place_food_order` | Sends the club a food order; the food officer is emailed it | write | `POST /api/food-orders` |
+| `place_food_order` | Sends the club a food order; the food officer is emailed it | destructive | `POST /api/food-orders` |
 | `list_my_food_orders` | The member's own orders, filtered and paged, with the totals. Not who ticked or priced an order | read | `GET /api/food-orders/history` |
 | `get_my_induction` | The member's own latest lodge induction: status, checklist, sign-offs needed, and who has signed in which role. Not comments or the checklist's competency prompts | read | `GET /api/inductions` |
 | `get_induction` | One of the member's own inductions; another member's answers Not Found | read | `GET /api/inductions/[id]` |
@@ -271,7 +274,7 @@ is on the committee, a hut leader or an admin.
 | `get_work_party` | One open work party | read | `GET /api/work-parties/[id]` |
 | `find_work_parties_for_stay` | The open work parties a stay overlaps, as the booking form offers them | read | `GET /api/work-parties/active` |
 | `get_maintenance_report_form` | The club's maintenance questions and the lodges to report against | read | `GET /api/maintenance-reports` |
-| `report_maintenance_issue` | Sends the club a maintenance report without a photo; the officers are emailed it. The route refuses a connection that sends a photo | write | `POST /api/maintenance-reports` |
+| `report_maintenance_issue` | Sends the club a maintenance report without a photo; the officers are emailed it. The route refuses a connection that sends a photo | destructive | `POST /api/maintenance-reports` |
 
 The new route reuses the dashboard card's loader
 (`listUpcomingMemberWorkParties`) and is members only, like the work party

@@ -6,7 +6,10 @@
   overlaps), and send a maintenance report. Each answers **Not Found** while
   its module is off, as the website does. Posting, ordering and reporting
   still need a connection the member approved for **View and change**, and
-  each one is recorded in the audit log.
+  each one is recorded in the audit log. Because each tells other people, the
+  app is asked to confirm with the member first. The same now applies to
+  confirming a family member's details, which changes another person's
+  record.
 
   A connection acts only as the member: it sees their own food orders and
   inductions even when the person is on the committee, a hut leader or an
