@@ -13,6 +13,7 @@ import { bookingFinalPriceCents } from "../src/lib/booking-final-price";
 import { hashPassword } from "../src/lib/password-hashing";
 import { DEMO_SEED_DOMAIN } from "../src/lib/demo-seed-guard";
 import { ensureMemberAccessRolesFromCompatibilityFields } from "../src/lib/member-access-role-writes";
+import { DEMO_MEMBER_DEFAULTS } from "./demo-member-defaults";
 
 export const DEMO_MEMBER_NIGHTLY_CENTS = 4500;
 
@@ -122,12 +123,7 @@ export async function createDemoMember(
       passwordHash,
       firstName,
       lastName,
-      role: "USER",
-      ageTier: "ADULT",
-      active: true,
-      canLogin: true,
-      emailVerified: true,
-      forcePasswordChange: false,
+      ...DEMO_MEMBER_DEFAULTS,
       joinedDate: demoDate("2024-05-01"),
       ...extra,
     },

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { Prisma } from "@prisma/client";
+import { expectDefaultInvalidJsonAnswer, MALFORMED_JSON_BODY } from "./helpers/invalid-json-body";
 
 const mocks = vi.hoisted(() => ({
   queueSupersededPrimaryIntentCancellations: vi.fn().mockResolvedValue([]),
@@ -2739,5 +2740,62 @@ describe("lock(1) transaction contention (INV-LOCK-006)", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual(PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY);
+  });
+});
+
+// #5407 item 26: create-setup-intent reads its body inside a catch-all that
+// logs and answers 500, and confirm-payment reads it with no handling at all,
+// so a malformed body used to be a 500 on both. It is now the shared
+// invalid-JSON 400, before any booking read or Stripe call.
+describe("malformed body on the card routes (#5407)", () => {
+  function requestWithBody(path: string, body: string) {
+    return new NextRequest(`http://localhost${path}`, {
+      method: "POST",
+      body,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  it("create-setup-intent answers the shared 400 and reads no booking", async () => {
+    const res = await createSetupIntentRoute(
+      requestWithBody("/api/payments/create-setup-intent", MALFORMED_JSON_BODY),
+    );
+
+    await expectDefaultInvalidJsonAnswer(res);
+    expect(mockPrisma.booking.findUnique).not.toHaveBeenCalled();
+    expect(mockStripeCreateSetupIntent).not.toHaveBeenCalled();
+  });
+
+  it("create-setup-intent keeps the schema answer for a body of the wrong shape", async () => {
+    const res = await createSetupIntentRoute(
+      requestWithBody("/api/payments/create-setup-intent", JSON.stringify({ bookingId: 7 })),
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "Invalid input" });
+    expect(mockPrisma.booking.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("confirm-payment answers the shared 400 and reads no payment", async () => {
+    const res = await confirmPaymentRoute(
+      requestWithBody("/api/bookings/booking-1/confirm-payment", MALFORMED_JSON_BODY),
+      { params: Promise.resolve({ id: "booking-1" }) },
+    );
+
+    await expectDefaultInvalidJsonAnswer(res);
+    expect(mockPrisma.payment.findUnique).not.toHaveBeenCalled();
+    expect(mockGetPaymentIntent).not.toHaveBeenCalled();
+    expect(mocks.markBookingPaymentSucceeded).not.toHaveBeenCalled();
+  });
+
+  it("confirm-payment keeps the schema answer for a body of the wrong shape", async () => {
+    const res = await confirmPaymentRoute(
+      requestWithBody("/api/bookings/booking-1/confirm-payment", JSON.stringify({})),
+      { params: Promise.resolve({ id: "booking-1" }) },
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "Invalid input" });
+    expect(mockPrisma.payment.findUnique).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,10 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
+import {
+  expectDefaultInvalidJsonAnswer,
+  MALFORMED_JSON_BODY,
+} from "@/lib/__tests__/helpers/invalid-json-body";
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
@@ -138,6 +142,22 @@ describe("POST /api/admin/menu-role", () => {
     admit();
     const response = await POST(post({ role: "" }));
     expect(response.status).toBe(400);
+    // The route's own answer for a well-formed body of the wrong shape.
+    expect(await response.json()).toEqual({ error: "Invalid request" });
+    expect(mocks.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("answers a body that is not JSON with the shared invalid-JSON 400 (#5407)", async () => {
+    mocks.live = true;
+    admit();
+    const response = await POST(
+      new NextRequest("http://localhost/api/admin/menu-role", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: MALFORMED_JSON_BODY,
+      }),
+    );
+    await expectDefaultInvalidJsonAnswer(response);
     expect(mocks.findUnique).not.toHaveBeenCalled();
   });
 

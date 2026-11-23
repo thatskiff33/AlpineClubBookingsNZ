@@ -136,3 +136,43 @@ describe("POST /api/admin/members/[id]/joining-fee/preview — applicant DOB rou
     expect(previewForMember).not.toHaveBeenCalled();
   });
 });
+
+// #5407 item 28: the body is optional and is read through the shared optional
+// reader, no longer by hand. An empty body still previews the member; a body
+// that is not JSON keeps this route's own invalid-JSON wording.
+describe("POST /api/admin/members/[id]/joining-fee/preview — optional body (#5407)", () => {
+  it.each([
+    ["no body", undefined],
+    ["an empty body", ""],
+    ["a whitespace-only body", "  \n"],
+  ])("previews the member for %s", async (_label, raw) => {
+    const response = await POST(
+      new NextRequest("http://localhost/api/admin/members/app-1/joining-fee/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        ...(raw === undefined ? {} : { body: raw }),
+      }),
+      routeParams,
+    );
+
+    expect(response.status).toBe(200);
+    expect(previewForMember).toHaveBeenCalled();
+    expect(previewForInputs).not.toHaveBeenCalled();
+  });
+
+  it("answers a body that is not JSON with its own invalid-JSON 400, byte for byte", async () => {
+    const response = await POST(
+      new NextRequest("http://localhost/api/admin/members/app-1/joining-fee/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{not json",
+      }),
+      routeParams,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe(JSON.stringify({ error: "Invalid JSON" }));
+    expect(previewForMember).not.toHaveBeenCalled();
+    expect(previewForInputs).not.toHaveBeenCalled();
+  });
+});

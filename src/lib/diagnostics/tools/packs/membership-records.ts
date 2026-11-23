@@ -231,7 +231,7 @@ import "server-only";
 import { z } from "zod";
 
 import { auditCategoriesForCorrelationDomain } from "@/lib/audit-categories";
-
+import { SHORT_BOOKING_ID_LENGTH } from "@/lib/booking-reference";
 import { deletedAccountSql } from "@/lib/deleted-account";
 
 import { defineDiagnosticsTool, type DiagnosticsToolEntry } from "../define";
@@ -837,7 +837,7 @@ const memberFamilyState = defineDiagnosticsTool<MemberIdArgs>({
  */
 const MEMBER_BOOKING_SUMMARY_SQL = `SELECT
   b."id" AS booking_ref,
-  pg_catalog.upper(pg_catalog.left(b."id", 8)) AS booking_reference,
+  pg_catalog.upper(pg_catalog.left(b."id", ${SHORT_BOOKING_ID_LENGTH})) AS booking_reference,
   'OWNER'::text AS involvement,
   b."lodgeId" AS lodge_ref,
   l."name" AS lodge_name,
@@ -867,7 +867,7 @@ WHERE b."memberId" = $1::text
 UNION ALL
 SELECT
   b2."id" AS booking_ref,
-  pg_catalog.upper(pg_catalog.left(b2."id", 8)) AS booking_reference,
+  pg_catalog.upper(pg_catalog.left(b2."id", ${SHORT_BOOKING_ID_LENGTH})) AS booking_reference,
   'GUEST'::text AS involvement,
   b2."lodgeId" AS lodge_ref,
   l2."name" AS lodge_name,

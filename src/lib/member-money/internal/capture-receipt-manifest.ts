@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import { prisma } from "../../prisma";
 import logger from "../../logger";
 import { asRecord, readString } from "../../xero-json";
@@ -76,7 +77,7 @@ export async function recordCaptureReceiptManifest(input: CaptureReceiptManifest
       logger.info({ bookingId, paymentKey, providerPaymentId }, "The capture receipt's manifest was already recorded differently; the first row stands");
     }
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+    if (isPrismaKnownUniqueConstraintError(error)) {
       logger.info({ bookingId, paymentKey, providerPaymentId }, "Another run recorded the capture receipt's manifest first; the first row stands");
       return;
     }

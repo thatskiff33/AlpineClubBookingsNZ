@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import { hashPassword, verifyPassword } from "@/lib/password-hashing";
 import { auth } from "@/lib/auth";
@@ -26,7 +27,9 @@ export async function POST(req: NextRequest) {
     return inactiveResponse;
   }
 
-  const body = await req.json();
+  const jsonBody = await parseJsonRequestBody(req);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   // Validate the new password against the club's configured login-security
   // policy (min length + optional character classes; hard 128 ceiling always).
   // No configured row is byte-identical to the historical min(12).max(128).

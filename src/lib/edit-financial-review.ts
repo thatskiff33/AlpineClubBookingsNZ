@@ -5,6 +5,7 @@ import {
   ManualRefundTaskStatus,
   Prisma,
 } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import { ApiError } from "@/lib/api-error";
 import { isRootPrismaClient } from "@/lib/db-transaction";
 import logger from "@/lib/logger";
@@ -349,8 +350,7 @@ export async function raiseEditFinancialReviewTask({
     };
   } catch (error) {
     if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002" &&
+      isPrismaKnownUniqueConstraintError(error) &&
       // Only the occurrence key. Today it is the only unique constraint on this
       // table other than the cuid primary key, so the check changes nothing -
       // but a later `@@unique([bookingId, kind])` or similar would otherwise be

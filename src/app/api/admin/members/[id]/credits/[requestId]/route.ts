@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { z } from "zod";
 import {
@@ -32,7 +33,9 @@ export async function PATCH(
     if (!guard.ok) return guard.response;
     const session = guard.session;
     const { id, requestId } = await params;
-    const body = await request.json();
+    const jsonBody = await parseJsonRequestBody(request);
+    if (!jsonBody.ok) return jsonBody.response;
+    const body = jsonBody.body;
     const parsed = reviewSchema.safeParse(body);
 
     if (!parsed.success) {

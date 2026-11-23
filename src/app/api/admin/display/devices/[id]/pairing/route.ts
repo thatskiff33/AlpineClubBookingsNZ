@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { confirmDevicePairing } from "@/lib/lodge-display-auth";
@@ -26,8 +27,10 @@ export async function POST(
   if (rateLimited) return rateLimited;
 
   let code: string;
+  const jsonBody = await parseJsonRequestBody(req);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    code = bodySchema.parse(await req.json()).code;
+    code = bodySchema.parse(jsonBody.body).code;
   } catch {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
