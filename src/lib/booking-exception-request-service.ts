@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
 import { bookingOwner } from "@/lib/booking-owner";
@@ -1183,10 +1184,7 @@ function freezeProposal(
 }
 
 function isOpenSlotUniqueViolation(error: unknown): boolean {
-  if (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === "P2002"
-  ) {
+  if (isPrismaKnownUniqueConstraintError(error)) {
     const target = error.meta?.target;
     if (Array.isArray(target)) {
       return target.some((column) => String(column).includes("openStateKey"));

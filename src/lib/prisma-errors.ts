@@ -98,10 +98,18 @@ export function isSingletonUpsertContention(error: unknown): boolean {
 
 /**
  * Any object whose `code` is `P2002`, recognised by shape rather than class, so
- * a test double or an error that crossed a module boundary still counts. A
- * site asking `instanceof Prisma.PrismaClientKnownRequestError` is narrower and
- * stays as it is: moving it here would widen what it catches (#5407 item 6). A
- * site that must know which constraint collided reads
+ * a test double or an error that crossed a module boundary still counts.
+ *
+ * One of two spellings of the test (#5407 item 6). A site that requires
+ * Prisma's own error class asks `isPrismaKnownUniqueConstraintError` in
+ * `prisma-known-errors.ts` instead: the same code test plus the class, kept
+ * there because this module imports nothing. Moving such a site here would
+ * widen what it catches. Three sites add a condition of their own on top of
+ * the class and code (the `joinCode` collision in `group-booking.ts`, the
+ * occurrence key in `edit-financial-review.ts`, the open-slot key in
+ * `booking-exception-request-service.ts`), and the bed range assignment
+ * retries a set of codes; `prisma-p2002-census.test.ts` lists what it allows.
+ * A site that must know which constraint collided reads
  * `describeUniqueConstraintTarget` below.
  */
 export function isPrismaUniqueConstraintError(error: unknown) {
