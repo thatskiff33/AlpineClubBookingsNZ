@@ -29,11 +29,13 @@ const HTTP_METHODS: ReadonlySet<string> = new Set(STEP_UP_HTTP_METHODS);
 
 /**
  * The only `POST`s that may run as a `read` (`preview: true`): each changes
- * nothing, which a reviewer checked against the route. A view-only connection
- * runs them and no audit row is written, so adding one here is a decision.
+ * no member's data, which a reviewer checked against the route. A view-only
+ * connection runs them and the dispatcher writes no `MCP_ACTION_CALLED` audit
+ * row, so adding one here is a decision.
  */
 const PREVIEW_ROUTE_KEYS: readonly string[] = [
-  // ALP-795: looks a member up by exact email; writes only its own audit row.
+  // ALP-795: looks a member up by exact email; writes only its own audit row
+  // and its rate-limit counters.
   "POST src/app/api/members/guest-candidates/resolve/route.ts",
 ];
 

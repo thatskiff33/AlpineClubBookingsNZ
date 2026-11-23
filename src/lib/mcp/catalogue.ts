@@ -84,9 +84,10 @@ import type { StepUpHttpMethod } from "@/lib/step-up-routes";
 
 /**
  * `read` changes none of the member's own data. A read may still touch shared
- * housekeeping: the rate-limit counter its route applies, or a public cache
- * (`get_skifield_report` refreshes the ski field report's). `write` changes
- * something the member can undo.
+ * housekeeping: the rate-limit counter its route applies, a public cache
+ * (`get_skifield_report` refreshes the ski field report's), or its route's own
+ * audit row (a lookup of other members records every query, blocked ones
+ * included). `write` changes something the member can undo.
  * `destructive` cannot be undone from the app. A view-only connection runs
  * `read` actions only.
  */
@@ -111,8 +112,9 @@ export interface McpAction {
   readonly fixedBody?: Readonly<Record<string, unknown>>;
   readonly kind: McpActionKind;
   /**
-   * A `POST` that changes nothing, such as a quote, run as a `read`. The
-   * census pins every route allowed to be one.
+   * A `POST` that changes no member's data, such as a quote, run as a `read`;
+   * like any read it may touch housekeeping (see `McpActionKind`). The census
+   * pins every route allowed to be one.
    */
   readonly preview?: true;
   /**
@@ -544,7 +546,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     id: "find_member_by_email",
     title: "Find a member by email to add as a guest",
     summary:
-      "The member with exactly this email address, or each member of a household who share it, to add as a guest on a booking: each one's `memberId`, name and age group. An empty list says nothing about why. Changes nothing; each lookup is recorded.",
+      "The member with exactly this email address, or each member of a household who share it, to add as a guest on a booking: each one's `memberId`, name and age group. An empty list says nothing about why. Changes no member's data; each lookup is recorded and rate limited.",
     method: "POST",
     path: "/api/members/guest-candidates/resolve",
     body: memberGuestResolveBodySchema,

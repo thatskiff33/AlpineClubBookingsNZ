@@ -234,7 +234,7 @@ against them, whatever officer roles they hold.
 | `confirm_family_member_details` | Saves the name and date of birth of a family member without a login; their phone and addresses are copied from the member's own profile. Answers with name, age group and profile state | write | `PUT /api/members/family/[memberId]/details` |
 | `get_member_guest_options` | Whether members can be added as guests, and found by name or only by exact email | read | `GET /api/members/guest-candidates` |
 | `search_members_for_guest` | Members whose name starts with what was typed, at most ten: id, name and age group. Only while the club has name search on | read | `GET /api/members/guest-candidates/search` |
-| `find_member_by_email` | The member, or household, with exactly this email: id, name and age group | read (a `POST` that changes nothing) | `POST /api/members/guest-candidates/resolve` |
+| `find_member_by_email` | The member, or household, with exactly this email: id, name and age group | read (a `POST` that changes no member's data) | `POST /api/members/guest-candidates/resolve` |
 | `get_my_partner_link` | The member's partner, pending partner requests, one-step candidates and any unclaimed emailed invitation (its id and expiry, not the address) | read | `GET /api/members/partner-link` |
 | `request_partner_link` | Asks a partner with a login, by email or family member id, to confirm. A family member without a login is declared on the website, because that confirms the partnership at once | write | `POST /api/members/partner-link` |
 | `end_partner_link` | Withdraws a pending request, ends a confirmed partnership (the other person is told) or cancels an unclaimed invitation | destructive | `DELETE /api/members/partner-link` |
@@ -309,9 +309,10 @@ stop an AI model being misled. What limits the damage:
   all, and a draft booking holds no beds and takes no money;
 - every call of a change action writes an audit row (`INV-MCP-008`).
 
-Calls that only read are **not** audited, and neither are connections ended by
-the system or the app (see `INV-MCP-008`); the connection's last-used date
-shows that it was used.
+Calls that only read are **not** audited as AI app calls, and neither are
+connections ended by the system or the app (see `INV-MCP-008`); the
+connection's last-used date shows that it was used. A guest lookup still
+writes the website's own audit row.
 
 ### An officer's connection sends other members' data to their AI provider
 
@@ -402,8 +403,11 @@ behind partner requests and invitations, and the club information below:
 - `request_partner_link` and `end_partner_link`: the club's reply.
 - `get_membership_cancellation_options`: the names, age groups and
   relationships of the people the person may ask to cancel, their family group
-  names, the club's warning text, and the person's requests with each
-  participant's name and status. No email addresses.
+  names, why anyone cannot be included (no membership to cancel, not active, or
+  already in an open request, with that request's status and date), and the
+  club's warning and rejoining text. Also the requests the person raised or is
+  part of: who asked and the reason they gave, and each participant's name,
+  age group, status and when they confirmed or declined. No email addresses.
 - `get_age_groups`, `get_booking_messages`, `list_committee` and
   `get_skifield_report`: information the club already publishes. Each
   committee entry carries a name, a role and the free-text description the
@@ -469,8 +473,8 @@ route census reject any remaining `not-yet` exclusion.
 1. Add an entry to `MCP_ACTIONS` in
    [`catalogue.ts`](../../src/lib/mcp/catalogue.ts): a new snake-case `id`
    (never reused), the route's `method` and `path`, and its `kind` — `read`
-   only for a `GET`, or a `POST` that changes nothing marked `preview: true`
-   and pinned in the census's `PREVIEW_ROUTE_KEYS`. Import the route's own
+   only for a `GET`, or for a `POST` that changes no member's data, marked
+   `preview: true` and pinned in the census's `PREVIEW_ROUTE_KEYS`. Import the route's own
    request schemas for `params`, `query` and `body` from the module the route
    imports them from; never describe a field a second time (`INV-SSOT-001`).
    Set `fixedBody` for any field the app must not choose.

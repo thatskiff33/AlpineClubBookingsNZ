@@ -41,7 +41,8 @@ import { MEMBER_GUEST_CANDIDATES_CONNECTION_SHAPE } from "@/lib/connection-shape
  * says so where it is defined.
  *
  * Also the AI app action `find_member_by_email` (ALP-795), run as a read: it
- * changes nothing but its own audit row. The per-member limits are shared
+ * changes no member's data, writing only its own audit row and its rate-limit
+ * counters. The per-member limits are shared
  * with the member's browser, the address backstop counts per connection, and
  * a connection is sent the candidate fields only.
  */
