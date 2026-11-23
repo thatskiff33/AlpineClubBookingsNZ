@@ -263,6 +263,9 @@ describe("POST /api/admin/xero/contact-group-mismatches (resync)", () => {
     );
 
     expect(res.status).toBe(200);
+    // The first snapshot is uncapped, so flaggedContacts counts every
+    // flagged contact rather than the first page of each list.
+    expect(mockGroupSnapshot.mock.calls[0]).toEqual([]);
     expect(mockFetchContactsByIds).toHaveBeenCalledWith(
       expect.objectContaining({
         contactIds: [...ids("xc", 200), ...ids("org", 200)],
