@@ -61,6 +61,8 @@ async function bumpedBookingLodgeName(lodgeId: string): Promise<string | null> {
 export async function alertOfficersOfBump(
   booking: BumpedBooking,
   flagged: boolean,
+  /** #5433: the job sending it, for the logs (the confirm-pending job, or the email retry job's sweep). */
+  job: string,
 ): Promise<"settled" | "unreached" | "threw"> {
   try {
     const result = await sendAdminBookingBumpedAlert({
@@ -74,12 +76,12 @@ export async function alertOfficersOfBump(
     });
     if (!adminAlertNeedsResend(result)) return "settled";
     logger.warn(
-      { bookingId: booking.id, failedBeforeLogged: result.failedBeforeLogged, job: "confirmPendingBookings" },
+      { bookingId: booking.id, failedBeforeLogged: result.failedBeforeLogged, job },
       "No officer received the booking-bumped alert and nothing will replay it; it stays owed for a day",
     );
     return "unreached";
   } catch (err) {
-    logger.error({ err, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to send admin booking-bumped alert");
+    logger.error({ err, bookingId: booking.id, job }, "Failed to send admin booking-bumped alert");
     return "threw";
   }
 }
