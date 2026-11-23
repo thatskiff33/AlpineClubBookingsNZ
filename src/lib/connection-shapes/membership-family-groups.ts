@@ -140,7 +140,8 @@ interface RequestPersonAnswer {
   email: string;
   ageTier: string;
   active: boolean;
-  ageLabel: string;
+  // The service also answers an identity `ageLabel`; it is left out of this
+  // type so the shape cannot select it (`member-identity-age-surfaces` census).
 }
 
 /** A pending request as `listAdminFamilyGroupRequests` answers it (its body is untyped). */
