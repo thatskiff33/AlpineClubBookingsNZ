@@ -325,11 +325,20 @@ export const XERO_SYNC_NOW_CLUB_CONNECTION_SHAPE = connectionShapeFor<{
   restored: number;
 }>({ message: true, events: true, records: true, invoices: true, writtenDown: true, restored: true });
 
-/** `POST /api/admin/xero/sync-contacts`: the report, by member name, without emails or Xero contact ids. */
-export const XERO_SYNC_CONTACTS_CONNECTION_SHAPE = connectionShapeFor<{ syncReport: SyncReport }>({
+/**
+ * `POST /api/admin/xero/sync-contacts`: the report, by member name, without
+ * emails or Xero contact ids. An update is told by the fields it changed
+ * (`xeroContactChangedFields`, added by the route), not the screen's "Phone
+ * set to …" lines, which carry the new values.
+ */
+export const XERO_SYNC_CONTACTS_CONNECTION_SHAPE = connectionShapeFor<{
+  syncReport: Omit<SyncReport, "updated"> & {
+    updated: Array<SyncReport["updated"][number] & { changedFields: string[] }>;
+  };
+}>({
   syncReport: {
     created: { name: true, group: true },
-    updated: { name: true, memberId: true, changes: true },
+    updated: { name: true, memberId: true, changedFields: true },
     skippedNoChanges: true,
     skippedNameMismatch: { memberId: true, memberName: true, xeroContactName: true, reasons: true },
     skippedNoEmail: { name: true },

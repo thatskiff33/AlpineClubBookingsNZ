@@ -3,9 +3,9 @@ import type { z } from "zod";
 import { xeroSyncContactsBodySchema } from "@/lib/admin-xero-sync-schemas";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { XERO_SYNC_CONTACTS_CONNECTION_SHAPE } from "@/lib/connection-shapes/finance-xero-sync";
-import { connectionJson } from "@/lib/mcp-connection-request";
+import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 import { requireAdmin } from "@/lib/session-guards";
-import { syncContactsFromXero } from "@/lib/xero-bulk-contact-sync";
+import { syncContactsFromXero, xeroContactChangedFields } from "@/lib/xero-bulk-contact-sync";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import logger from "@/lib/logger";
 
@@ -47,11 +47,12 @@ export async function POST(request?: Request) {
       auditActorMemberId: session.user.id,
       auditSource: "admin-xero-sync-contacts",
     });
-    const answer = { syncReport: report };
     // A bare `POST()` (a caller with no request) is never a connection.
-    return request
-      ? connectionJson(request, answer, XERO_SYNC_CONTACTS_CONNECTION_SHAPE)
-      : NextResponse.json(answer);
+    if (!request || !arrivesAsMcpConnection(request)) return NextResponse.json({ syncReport: report });
+    // An AI app is told each update's changed fields, never the screen's
+    // "Phone set to …" lines, which carry the member's new details (ALP-721).
+    const updated = report.updated.map((row) => ({ ...row, changedFields: xeroContactChangedFields(row.changes) }));
+    return connectionJson(request, { syncReport: { ...report, updated } }, XERO_SYNC_CONTACTS_CONNECTION_SHAPE);
   } catch (error) {
     const xeroError = getXeroApiErrorInfo(error, "Contact sync failed");
     if (!xeroError.handled) {

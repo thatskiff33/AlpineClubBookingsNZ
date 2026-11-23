@@ -9,13 +9,15 @@
  *
  * Kinds: a retry, requeue, replay or sync that re-runs work the club's own
  * jobs would also run is `write`. Marking an operation failed, non-replayable
- * or resolved by hand, resetting stuck operations, and forcing a booking's
- * invoice into Xero over an officer's resolved-in-Xero mark are `destructive`:
- * none can be taken back from the app.
+ * or resolved by hand, resetting stuck operations, forcing a booking's
+ * invoice into Xero over an officer's resolved-in-Xero mark, and a contact
+ * force-sync that may create a Xero contact are `destructive`: none can be
+ * taken back from the app.
  */
 import { z } from "zod";
 
 import {
+  xeroForceSyncBodySchema,
   xeroForceSyncFields,
   xeroInboundEventsQuerySchema,
   xeroOperationReasonBodySchema,
@@ -26,6 +28,7 @@ import {
   xeroSyncContactsBodySchema,
   xeroSyncMembershipsQuerySchema,
   xeroSyncNowRecordFields,
+  xeroSyncNowRequestSchema,
 } from "@/lib/admin-xero-sync-schemas";
 import {
   XERO_FORCE_SYNC_CONTACT_CONNECTION_SHAPE,
@@ -49,8 +52,15 @@ import {
   XERO_USAGE_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/finance-xero-sync";
 import { recordIdParamsSchema } from "@/lib/route-id-params";
+import { SEASON_YEAR_MAX, SEASON_YEAR_MIN } from "@/lib/season-year-range";
+import { XERO_OPERATION_REASON_MAX, XERO_OPERATION_REASON_MIN } from "@/lib/xero-operation-resolution";
+import { XERO_LOCAL_MODELS } from "@/lib/xero-record-links";
 
 import type { McpAction } from "../catalogue";
+
+/** A fixed `syncType` or `scope` must be one the route's schema accepts. */
+type ForceSyncType = z.input<typeof xeroForceSyncBodySchema>["syncType"];
+type SyncNowScope = z.input<typeof xeroSyncNowRequestSchema>["scope"];
 
 /** A force-sync names its member or booking in `query`; `syncType` is the action's own. */
 const forceSyncBody = z.object({ query: xeroForceSyncFields.query });
@@ -133,7 +143,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     id: "mark_xero_operation_failed",
     title: "Mark a stuck Xero operation failed",
     summary:
-      "Marks one Xero operation (`id`) that has been stuck running past the staleness threshold (`staleRunning` in `list_xero_operations`) as failed, or an interrupted repair back to partly completed, with the officer's `reason` (3 to 500 characters) in the audit log. Refused while it may still be running. It cannot be undone; afterwards the operation can be retried.",
+      `Marks one Xero operation (\`id\`) that has been stuck running past the staleness threshold (\`staleRunning\` in \`list_xero_operations\`) as failed, or an interrupted repair back to partly completed, with the officer's \`reason\` (${XERO_OPERATION_REASON_MIN} to ${XERO_OPERATION_REASON_MAX} characters) in the audit log. Refused while it may still be running. It cannot be undone; afterwards the operation can be retried.`,
     method: "POST",
     path: "/api/admin/xero/operations/[id]/mark-failed",
     params: recordIdParamsSchema,
@@ -146,7 +156,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     id: "mark_xero_operation_non_replayable",
     title: "Mark a Xero operation non-replayable",
     summary:
-      "Marks one failed or partly completed Xero operation (`id`) as never to be retried, with the officer's `reason` (3 to 500 characters) in the audit log. No retry, requeue or retry-all will run it again. It cannot be undone from the app.",
+      `Marks one failed or partly completed Xero operation (\`id\`) as never to be retried, with the officer's \`reason\` (${XERO_OPERATION_REASON_MIN} to ${XERO_OPERATION_REASON_MAX} characters) in the audit log. No retry, requeue or retry-all will run it again. It cannot be undone from the app.`,
     method: "POST",
     path: "/api/admin/xero/operations/[id]/mark-non-replayable",
     params: recordIdParamsSchema,
@@ -159,7 +169,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     id: "resolve_xero_operation",
     title: "Mark a Xero operation resolved in Xero",
     summary:
-      "Records that an officer fixed a failed or partly completed Xero operation (`id`) directly in Xero, with their `reason` (3 to 500 characters). It drops off the active failure list and no repair path runs it again. A failed payment refund note's create asks for `creditNoteNumber`, the number of the credit note the officer made in Xero (`resolveAsksCreditNoteNumber` in `list_xero_operations`), which is checked in Xero and recorded against the payment; send it for no other row. It cannot be undone from the app.",
+      `Records that an officer fixed a failed or partly completed Xero operation (\`id\`) directly in Xero, with their \`reason\` (${XERO_OPERATION_REASON_MIN} to ${XERO_OPERATION_REASON_MAX} characters). It drops off the active failure list and no repair path runs it again. A failed payment refund note's create asks for \`creditNoteNumber\`, the number of the credit note the officer made in Xero (\`resolveAsksCreditNoteNumber\` in \`list_xero_operations\`), which is checked in Xero and recorded against the payment; send it for no other row. It cannot be undone from the app.`,
     method: "POST",
     path: "/api/admin/xero/operations/[id]/resolve",
     params: recordIdParamsSchema,
@@ -222,7 +232,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     id: "get_xero_record_activity",
     title: "Read one record's Xero activity",
     summary:
-      "Everything Xero-related about one local record and the records around it: the latest 25 sync operations, the Xero documents it is linked to (by type and number), the latest 25 inbound events about them, and a summary. `localModel` is one of Member, Booking, Payment, BookingModification, ManualRefundTask, MemberSubscription, MembershipCancellationRequest or MembershipCancellationRequestParticipant; `localId` is that record's id.",
+      `Everything Xero-related about one local record and the records around it: the latest 25 sync operations, the Xero documents it is linked to (by type and number), the latest 25 inbound events about them, and a summary. \`localModel\` is one of ${XERO_LOCAL_MODELS.slice(0, -1).join(", ")} or ${XERO_LOCAL_MODELS.at(-1)}; \`localId\` is that record's id.`,
     method: "GET",
     path: "/api/admin/xero/records/[localModel]/[localId]",
     params: xeroRecordActivityParamsSchema,
@@ -240,7 +250,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/xero/sync-now",
     body: z.object(xeroSyncNowRecordFields),
-    fixedBody: { scope: "member" },
+    fixedBody: { scope: "member" satisfies SyncNowScope },
     kind: "write",
     returns: XERO_SYNC_NOW_RECORD_CONNECTION_SHAPE,
     core: false,
@@ -253,7 +263,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/xero/sync-now",
     body: z.object(xeroSyncNowRecordFields),
-    fixedBody: { scope: "booking" },
+    fixedBody: { scope: "booking" satisfies SyncNowScope },
     kind: "write",
     returns: XERO_SYNC_NOW_RECORD_CONNECTION_SHAPE,
     core: false,
@@ -265,7 +275,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
       "Runs the club's scheduled Xero inbound sync now: stored inbound events, contact and membership changes, invoices and credit notes. Answers with what it reconciled. At most 3 sync-now runs a minute. Harmless to repeat.",
     method: "POST",
     path: "/api/admin/xero/sync-now",
-    fixedBody: { scope: "club" },
+    fixedBody: { scope: "club" satisfies SyncNowScope },
     kind: "write",
     returns: XERO_SYNC_NOW_CLUB_CONNECTION_SHAPE,
     core: false,
@@ -286,7 +296,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     id: "sync_xero_memberships",
     title: "Refresh membership statuses from Xero",
     summary:
-      "Refreshes active linked members' subscription status from their Xero invoices. `seasonYear` (2020 to 2040) picks the season, the current one by default. `mode` is `incremental` (the default: changed invoices and members due a retry) or `backfill` (also rechecks members whose status is stale). Answers with what it checked and updated. Harmless to repeat.",
+      `Refreshes active linked members' subscription status from their Xero invoices. \`seasonYear\` (${SEASON_YEAR_MIN} to ${SEASON_YEAR_MAX}) picks the season, the current one by default. \`mode\` is \`incremental\` (the default: changed invoices and members due a retry) or \`backfill\` (also rechecks members whose status is stale). Answers with what it checked and updated. Harmless to repeat.`,
     method: "POST",
     path: "/api/admin/xero/sync-memberships",
     query: xeroSyncMembershipsQuerySchema,
@@ -300,12 +310,12 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     id: "force_sync_member_xero_contact",
     title: "Force-sync a member's Xero contact",
     summary:
-      "Finds or creates the member's contact in Xero and repairs the member's link to it. `query` is the member's id (or a unique start of it) or their exact email address. Refused, naming the fields, when the member's record lacks what Xero needs. Harmless to repeat: an existing contact is reused.",
+      "Finds or creates the member's contact in Xero and repairs the member's link to it. A contact it creates cannot be removed from the app. `query` is the member's id (or a unique start of it) or their exact email address. Refused, naming the fields, when the member's record lacks what Xero needs. Harmless to repeat: an existing contact is reused.",
     method: "POST",
     path: "/api/admin/xero/force-sync",
     body: forceSyncBody,
-    fixedBody: { syncType: "CONTACT" },
-    kind: "write",
+    fixedBody: { syncType: "CONTACT" satisfies ForceSyncType },
+    kind: "destructive",
     returns: XERO_FORCE_SYNC_CONTACT_CONNECTION_SHAPE,
     core: false,
   },
@@ -317,7 +327,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/xero/force-sync",
     body: forceSyncBody,
-    fixedBody: { syncType: "MEMBERSHIP" },
+    fixedBody: { syncType: "MEMBERSHIP" satisfies ForceSyncType },
     kind: "write",
     returns: XERO_FORCE_SYNC_MEMBERSHIP_CONNECTION_SHAPE,
     core: false,
@@ -330,7 +340,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/xero/force-sync",
     body: forceSyncBody,
-    fixedBody: { syncType: "INVOICE" },
+    fixedBody: { syncType: "INVOICE" satisfies ForceSyncType },
     kind: "destructive",
     returns: XERO_FORCE_SYNC_INVOICE_CONNECTION_SHAPE,
     core: false,

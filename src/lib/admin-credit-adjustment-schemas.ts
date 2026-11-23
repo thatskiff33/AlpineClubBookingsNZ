@@ -7,12 +7,14 @@
  */
 import { z } from "zod";
 
+import { ADMIN_CREDIT_GRANT_ACCOUNTS } from "@/lib/admin-credit-grant-account";
+
 export const adminCreditAdjustmentRequestSchema = z
   .object({
     amountCents: z.number().int().refine((v) => v !== 0, "Amount cannot be zero"),
     description: z.string().min(1, "Description is required").max(500),
     idempotencyKey: z.string().uuid("Idempotency key must be a UUID"),
-    grantAccount: z.enum(["MEMBER_OWN_MONEY", "GOODWILL"]).optional(),
+    grantAccount: z.enum(ADMIN_CREDIT_GRANT_ACCOUNTS).optional(),
   })
   .superRefine((value, ctx) => {
     if (value.amountCents > 0 && !value.grantAccount) {

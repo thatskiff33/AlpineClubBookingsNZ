@@ -231,7 +231,8 @@ How an officer action works:
   (`INV-MCP-009`).
   `mcpActionAdminRequirement` reads the requirement from the admin route map
   (`getAdminRouteRequirement`), or, for the `/api/finance` workspace, from the
-  entry's `requires`, which the census holds to the guard the route calls.
+  entry's `requires`, which the census holds to the guard the route calls; so
+  the sync status, a read the workspace guards at edit, is an edit action.
   `find_actions`, `describe_action`, `run_action` and the tool list all ask it,
   so a Finance viewer is shown the reads only, and an officer without the area,
   or a member, is shown none and is told the action does not exist.
@@ -269,7 +270,7 @@ money, posts to Xero, or closes an item for good is `destructive`.
 | `get_subscription_billing` | The season's billing preview, charges and exceptions | read | `GET /api/admin/subscription-billing` |
 | `refresh_subscription_billing` | Refreshes the preview and clears exceptions it no longer finds | write | `POST /api/admin/subscription-billing` (`REFRESH_PREVIEW`) |
 | `confirm_subscription_billing_batch` | Raises the season's subscription invoices from a preview | destructive | same (`CONFIRM_ANNUAL_BATCH`) |
-| `retry_subscription_charge` | Queues a charge's invoice again | write | same (`RETRY_CHARGE`) |
+| `retry_subscription_charge` | Queues a charge's invoice again, raising it if it never was | destructive | same (`RETRY_CHARGE`) |
 | `close_paid_subscription_charge` | Closes a charge whose subscriptions are already paid | destructive | same (`CLOSE_ALREADY_PAID`) |
 | `mark_family_invoiced`, `unmark_family_invoiced` | Sets or clears a family's already-invoiced mark | write | same (`MARK_FAMILY_INVOICED`, `UNMARK_FAMILY_INVOICED`) |
 | `get_finance_booking_metrics` | The finance workspace's booking figures | read | `GET /api/finance/bookings/metrics` |
@@ -300,7 +301,7 @@ not offered: it is club setup.
 | `sync_member_from_xero`, `sync_booking_from_xero`, `sync_club_from_xero` | Reads one member, one booking or the whole club from Xero now | write | `POST /api/admin/xero/sync-now` (`scope` fixed) |
 | `sync_xero_contacts` | Matches Xero contacts to members | write | `POST /api/admin/xero/sync-contacts` |
 | `sync_xero_memberships` | Refreshes membership statuses from Xero | write | `POST /api/admin/xero/sync-memberships` |
-| `force_sync_member_xero_contact`, `force_refresh_member_xero_membership` | Forces one member's contact or membership status | write | `POST /api/admin/xero/force-sync` (`syncType` fixed) |
+| `force_sync_member_xero_contact`, `force_refresh_member_xero_membership` | Forces one member's contact (creating one if Xero has none) or membership status | destructive, write | `POST /api/admin/xero/force-sync` (`syncType` fixed) |
 | `force_sync_booking_xero_invoice` | Forces a paid booking's invoice into Xero, even beside one made by hand | destructive | same |
 | `run_xero_link_maintenance` | The nightly link backfill and clean-up, now | write | `POST /api/admin/xero/link-maintenance` |
 
@@ -323,8 +324,9 @@ not offered: it is club setup.
 ## What stays on the website, and why
 
 Every route method that is not an action has a stated reason
-([`exclusions.ts`](../../src/lib/mcp/exclusions.ts), `INV-MCP-006`). Fifteen
-reasons are permanent — those routes are never actions:
+([`exclusions.ts`](../../src/lib/mcp/exclusions.ts), `INV-MCP-006`). The
+permanent reasons (`MCP_PERMANENT_EXCLUSION_REASONS`) say a route is never an
+action:
 
 - **Fresh proof** — anything on the fresh-proof list (`STEP_UP_ROUTES`), which
   asks an officer to prove who they are again, and the few handlers that ask
@@ -464,9 +466,10 @@ actions send other members' records:
   and record ids with their payments, credit balances and ledgers, refund
   requests, subscriptions, billing charges, and Xero sync state, as each
   action names. Amounts are cents. Each shape leaves out email addresses,
-  Stripe and Xero internal ids, raw provider payloads and idempotency keys;
-  Xero contact search answers with names only, and the erased-member review
-  carries no member or contact id. A refusal's text passes to the app
+  Stripe ids, raw provider payloads and idempotency keys, and Xero internal
+  ids except a contact's id: Xero contact search and the link and push
+  answers carry it so the app can link a member to that contact. The
+  erased-member review carries no member or contact id. A refusal's text passes to the app
   unchanged.
 - `get_age_groups`, `get_booking_messages`, `list_committee` and
   `get_skifield_report`: information the club already publishes. Each
@@ -548,8 +551,8 @@ route census reject any remaining `not-yet` exclusion.
    target or officer override flag from a connection. An officer action
    instead runs on a route its admin area gates and goes in that area's module
    under [`catalogue/`](../../src/lib/mcp/catalogue/); an `/api/finance` route,
-   which the admin route map does not cover, sets `requires` to the level its
-   guard enforces.
+   whose level the admin route map cannot tell (it goes by method), sets
+   `requires` to the level its guard enforces, and `requires` wins.
 3. Test the contract with `expectActionContract` from
    `src/lib/__tests__/helpers/mcp-action-contract.ts`, signed in as
    `officerMemberSession()`: the connection's answer has exactly the

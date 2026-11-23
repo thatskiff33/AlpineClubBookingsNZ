@@ -90,10 +90,12 @@ export interface McpAction {
   readonly fixedBody?: Readonly<Record<string, unknown>>;
   readonly kind: McpActionKind;
   /**
-   * For an officer route outside `/api/admin` (only `/api/finance`), the area
-   * and level its own guard enforces, which the admin route map cannot say.
-   * The census holds it to the guard the route calls. An `/api/admin` action
-   * never sets it: the route map decides (`mcpActionAdminRequirement`).
+   * For an `/api/finance` route, the area and level its own guard enforces:
+   * the admin route map files the whole workspace at `finance`, by method
+   * only, so it cannot say that a read such as the sync status needs edit.
+   * The census holds it to the guard the route calls, and it wins over the
+   * map. An `/api/admin` action never sets it: the route map decides
+   * (`mcpActionAdminRequirement`).
    */
   readonly requires?: AdminAccessRequirement;
   /**
@@ -454,7 +456,10 @@ export const FINANCE_WORKSPACE_API_PREFIX = "/api/finance";
 export function mcpActionAdminRequirement(
   action: Pick<McpAction, "path" | "method" | "requires">,
 ): AdminAccessRequirement | null {
-  return getAdminRouteRequirement(action.path, action.method) ?? action.requires ?? null;
+  // `requires` first: the map files all of `/api/finance` under one prefix, so
+  // only the entry, which the census holds to the handler's guard, knows a
+  // workspace read that needs edit.
+  return action.requires ?? getAdminRouteRequirement(action.path, action.method);
 }
 
 export function findMcpAction(id: string): McpAction | undefined {

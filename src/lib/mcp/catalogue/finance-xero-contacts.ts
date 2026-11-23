@@ -31,6 +31,7 @@ import {
   XERO_MISSING_INVOICES_QUEUED_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/finance-xero-contacts";
 import { recordIdParamsSchema } from "@/lib/route-id-params";
+import { CONTACT_GROUP_MISMATCH_LIMIT } from "@/lib/xero-contact-group-mismatch-summary";
 import {
   erasedMemberContactReviewQuerySchema,
   xeroContactGroupMismatchResyncBodySchema,
@@ -136,7 +137,7 @@ export const FINANCE_XERO_CONTACTS_MCP_ACTIONS: readonly McpAction[] = [
     id: "resync_xero_contact_group_mismatches",
     title: "Re-read flagged contact groups from Xero",
     summary:
-      "Re-reads from Xero the contacts the group mismatch list flags (up to `limit`, default 200), updates the app's cached copy and answers with the list again. Changes nothing in Xero and is safe to repeat. Refused until the full Xero groups refresh has run once.",
+      `Re-reads from Xero the contacts the group mismatch list flags (up to \`limit\`, default ${CONTACT_GROUP_MISMATCH_LIMIT}), updates the app's cached copy and answers with the list again. Changes nothing in Xero and is safe to repeat. Refused until the full Xero groups refresh has run once.`,
     method: "POST",
     path: "/api/admin/xero/contact-group-mismatches",
     body: xeroContactGroupMismatchResyncBodySchema,

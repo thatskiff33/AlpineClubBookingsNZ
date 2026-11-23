@@ -165,7 +165,11 @@ vi.mock("@/lib/xero-sync-now", () => ({
   syncClubFromXeroNow: h.syncClubFromXeroNow,
   XeroSyncNowError: h.XeroSyncNowError,
 }));
-vi.mock("@/lib/xero-bulk-contact-sync", () => ({ syncContactsFromXero: h.syncContactsFromXero }));
+// The real change-to-field mapping, so the test sees what the route sends.
+vi.mock("@/lib/xero-bulk-contact-sync", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/xero-bulk-contact-sync")>()),
+  syncContactsFromXero: h.syncContactsFromXero,
+}));
 vi.mock("@/lib/xero-membership-sync", () => ({
   refreshAllMembershipStatuses: h.refreshAllMembershipStatuses,
   checkMembershipStatus: h.checkMembershipStatus,
@@ -699,7 +703,14 @@ describe("sync_xero_contacts", () => {
   it("answers with the report by name, never emails or Xero contact ids, and passes the repair flags", async () => {
     const report = {
       created: [{ name: "Aroha Ngata", email: "aroha@example.org", xeroContactId: "xero-contact-uuid", group: "Adults" }],
-      updated: [{ name: "Aroha Ngata", memberId: "member-7", xeroContactId: "xero-contact-uuid", changes: ["phone"] }],
+      updated: [
+        {
+          name: "Aroha Ngata",
+          memberId: "member-7",
+          xeroContactId: "xero-contact-uuid",
+          changes: ["Phone set to +64 21 555 0199"],
+        },
+      ],
       skippedNoChanges: 5,
       skippedNameMismatch: [
         {
@@ -724,6 +735,9 @@ describe("sync_xero_contacts", () => {
       args: { fullResync: true },
     });
     expect(JSON.stringify(connection)).not.toMatch(WITHHELD);
+    // The screen's change lines carry the member's new phone number.
+    expect(JSON.stringify(connection)).not.toContain("555 0199");
+    expect(connection).toMatchObject({ syncReport: { updated: [{ changedFields: ["phone"] }] } });
     expect(browser).toEqual({ syncReport: report });
     expect(h.syncContactsFromXero).toHaveBeenCalledWith(
       expect.objectContaining({ fullResync: true, auditActorMemberId: "treasurer-1" }),

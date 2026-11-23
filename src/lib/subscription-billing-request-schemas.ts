@@ -10,22 +10,24 @@ import type { FamilyBillingMode } from "@prisma/client";
 import { z } from "zod";
 
 import { CLOSE_ALREADY_PAID_REASON_MAX } from "@/lib/subscription-charge-already-paid";
+import { seasonYearQuerySchema, seasonYearSchema } from "@/lib/season-year-range";
 
 /** How a family's subscriptions are invoiced, club-wide (#159). */
+/** The longest note an officer may leave when marking a family invoiced. */
+export const FAMILY_INVOICED_NOTE_MAX = 500;
+
 export const FAMILY_BILLING_MODES = [
   "BILL_FAMILY_VIA_BILLING_MEMBER",
   "BILL_MEMBERS_INDIVIDUALLY",
 ] as const satisfies readonly FamilyBillingMode[];
 
-const seasonYearField = z.number().int().min(2020).max(2040);
-
 export const subscriptionBillingQuerySchema = z.object({
-  seasonYear: z.coerce.number().int().min(2020).max(2040).optional(),
+  seasonYear: seasonYearQuerySchema.optional(),
   decisionDate: z.string().optional(),
 });
 
 export const confirmAnnualBatchFields = {
-  seasonYear: seasonYearField,
+  seasonYear: seasonYearSchema,
   decisionDate: z.string(),
   confirmationToken: z.string().length(64),
   confirmed: z.literal(true),
@@ -45,7 +47,7 @@ export const closeAlreadyPaidFields = {
 // longer regenerates) and returns the refreshed billing data. The read-only
 // GET never mutates; this action is the documented way stale rows clear.
 export const refreshPreviewFields = {
-  seasonYear: seasonYearField,
+  seasonYear: seasonYearSchema,
   decisionDate: z.string(),
 };
 
@@ -60,13 +62,13 @@ const updateSettingsFields = {
 // marker; UNMARK sets releasedAt (row retained for audit). Both finance:edit
 // gated (the POST guard) and idempotent.
 export const markFamilyInvoicedFields = {
-  seasonYear: seasonYearField,
+  seasonYear: seasonYearSchema,
   familyGroupId: z.string().min(1),
-  note: z.string().max(500).optional(),
+  note: z.string().max(FAMILY_INVOICED_NOTE_MAX).optional(),
 };
 
 export const unmarkFamilyInvoicedFields = {
-  seasonYear: seasonYearField,
+  seasonYear: seasonYearSchema,
   familyGroupId: z.string().min(1),
 };
 

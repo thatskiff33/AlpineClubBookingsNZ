@@ -11,29 +11,23 @@ import { z } from "zod";
 
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 
-export const manualSubscriptionPaymentBodySchema = z
-  .object({
-    direction: z.enum(["paid", "unpaid"]),
-    note: z.string().max(MANUAL_PAYMENT_NOTE_MAX).optional().nullable(),
-    // Explicit confirmation so a manual money-state change is never a
-    // single-click accident.
-    confirmed: z.literal(true),
-    // #2260: the admin's "email the member or not" decision. Shape-checked
-    // here, contract-checked in the route — see its 422 branch.
-    notifyMember: z.boolean().optional(),
-  })
-  .strict();
+/** What both bodies carry: the direction, the officer's note, confirmation and the email decision. */
+const manualPaymentDecisionFields = {
+  direction: z.enum(["paid", "unpaid"]),
+  note: z.string().max(MANUAL_PAYMENT_NOTE_MAX).optional().nullable(),
+  // Explicit confirmation so a manual money-state change is never a
+  // single-click accident.
+  confirmed: z.literal(true),
+  // #2260: the admin's "email the member or not" decision. Shape-checked
+  // here, contract-checked in each route — see their 422 branches.
+  notifyMember: z.boolean().optional(),
+};
+
+export const manualSubscriptionPaymentBodySchema = z.object(manualPaymentDecisionFields).strict();
 
 export const manualBookingPaymentBodySchema = z
   .object({
-    direction: z.enum(["paid", "unpaid"]),
-    note: z.string().max(MANUAL_PAYMENT_NOTE_MAX).optional().nullable(),
-    // Explicit confirmation so a manual money-state change is never a
-    // single-click accident.
-    confirmed: z.literal(true),
-    // #2260: the admin's "email the member or not" decision. Shape-checked
-    // here, contract-checked in the route — see its 422 branches.
-    notifyMember: z.boolean().optional(),
+    ...manualPaymentDecisionFields,
     // The amount owing the dialog showed. NOT the settlement amount — that is
     // recomputed under the locks — but a mismatch means the price or the
     // applied credit moved, so the settle is refused rather than recorded at a

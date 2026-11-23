@@ -11,6 +11,7 @@ import { z } from "zod";
 import { adminListPageField } from "@/lib/admin-list-page";
 import { HAND_MADE_CREDIT_NOTE_NUMBER_MAX } from "@/lib/bank-refund-void-follow-up-copy";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import { seasonYearQuerySchema } from "@/lib/season-year-range";
 import { XERO_OPERATION_REASON_MAX, XERO_OPERATION_REASON_MIN } from "@/lib/xero-operation-resolution";
 import { XERO_LOCAL_MODELS } from "@/lib/xero-record-links";
 
@@ -117,7 +118,7 @@ export const xeroSyncContactsBodySchema = z.object({
 /** `POST /api/admin/xero/sync-memberships`: query parameters. */
 export const xeroSyncMembershipsQuerySchema = z.object({
   seasonYear: z
-    .union([z.coerce.number().int().min(2020).max(2040), z.literal("")])
+    .union([seasonYearQuerySchema, z.literal("")])
     .optional(),
   mode: z.enum(["incremental", "backfill"]).default("incremental"),
 });

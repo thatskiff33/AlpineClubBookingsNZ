@@ -80,7 +80,7 @@ describe("who is shown the Finance actions", () => {
     expect(h.runMcpAction).not.toHaveBeenCalled();
   });
 
-  it("shows a finance viewer the reads only", async () => {
+  it("shows a finance viewer only the actions at view", async () => {
     const viewer = adminSession({ id: "viewer-1", accessRoles: ["USER", "FINANCE_USER"] });
     expect(await visibleFinanceIds(viewer)).toEqual(ids(VIEW_ACTIONS));
     for (const action of EDIT_ACTIONS) {
@@ -88,6 +88,19 @@ describe("who is shown the Finance actions", () => {
       expect(ran.text, action.id).toContain("There is no action called");
     }
     expect(h.runMcpAction).not.toHaveBeenCalled();
+  });
+
+  // Pinned by id, not read back from `mcpActionAdminRequirement`: the sync
+  // status is a read whose route guards at edit, which the admin route map
+  // (by method) would call view.
+  it("never offers a finance viewer a change, nor the sync status its route refuses them", async () => {
+    const viewer = adminSession({ id: "viewer-1", accessRoles: ["USER", "FINANCE_USER"] });
+    const visible = await visibleFinanceIds(viewer);
+    for (const id of visible) expect(MCP_ACTIONS.find((action) => action.id === id)?.kind, id).toBe("read");
+    expect(visible).toContain("get_finance_booking_metrics");
+    expect(visible).not.toContain("get_finance_sync_status");
+    const manager = adminSession({ id: "treasurer-1", accessRoles: ["USER", "FINANCE_ADMIN"] });
+    expect(await visibleFinanceIds(manager)).toContain("get_finance_sync_status");
   });
 
   it("shows a finance manager every finance action", async () => {

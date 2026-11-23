@@ -29,6 +29,7 @@ import { prisma } from "@/lib/prisma";
 import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoice-evidence";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { readDisputesByBookingId } from "@/lib/stripe-dispute-hold";
+import { getCancellationSettlementBreakdown } from "@/lib/payment-status-display";
 import {
   endOfDateOnlyForTimeZone,
   parseDateOnly,
@@ -630,13 +631,10 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
             latestOperationStatus: null,
             latestOperationAt: null,
           },
-        xeroState:
-          filteredCandidateById.get(payment.id)?.xeroState ??
-          "none",
-        settlementKind:
-          filteredCandidateById.get(payment.id)?.settlementKind ??
-          "none",
+        xeroState: filteredCandidateById.get(payment.id)?.xeroState ?? "none",
+        settlementKind: filteredCandidateById.get(payment.id)?.settlementKind ?? "none",
         disputes: disputesByBookingId.get(payment.bookingId) ?? [],
+        cancellationSettlement: getCancellationSettlementBreakdown(payment.refundedAmountCents, payment.booking.creditsFromCancellation), // ALP-721: the screen's card-refund and account-credit split, so an AI app reads the same figures
       }));
 
     // #3372: "Net Collected" (once gross "Total Revenue", #773) is net over

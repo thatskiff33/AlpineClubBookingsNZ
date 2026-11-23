@@ -5,6 +5,7 @@
 import { z } from "zod";
 
 import { adminListPageQueryFields } from "@/lib/admin-list-page";
+import { seasonYearQuerySchema } from "@/lib/season-year-range";
 
 /** A row's status as the list shows it: `NOT_REQUIRED` is worked out, not stored. */
 export const ADMIN_SUBSCRIPTION_LIST_STATUSES = [
@@ -30,7 +31,7 @@ export const adminSubscriptionSortBySchema = z
   .default("member");
 
 export const adminSubscriptionsQuerySchema = z.object({
-  seasonYear: z.coerce.number().int().min(2020).max(2040).optional(),
+  seasonYear: seasonYearQuerySchema.optional(),
   status: z.enum(ADMIN_SUBSCRIPTION_STATUS_FILTER_VALUES).optional().default("all"),
   ageTier: z.enum(["INFANT", "CHILD", "YOUTH", "ADULT", "all"]).optional().default("all"),
   xeroContactGroup: z.string().trim().min(1).max(100).optional(),

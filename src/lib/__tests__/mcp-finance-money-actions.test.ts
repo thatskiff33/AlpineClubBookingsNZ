@@ -224,7 +224,8 @@ describe("list_payments", () => {
         xeroActivity: { failed: 0, partial: 0, pending: 0 },
         xeroState: "synced",
         settlementKind: "none",
-        disputes: [],
+        disputes: [{ stripeDisputeId: "dp_secret_ref", status: "needs_response", amountCents: 42_000, paymentId: "pay-1" }],
+        cancellationSettlement: { accountCreditCents: 30_000, restoredAppliedCreditCents: 0, refundToOriginalMethodCents: 12_000 },
         booking: {
           id: "booking-1",
           status: "CONFIRMED",
@@ -257,7 +258,16 @@ describe("list_payments", () => {
       handler: listPayments,
       args: { status: "SUCCEEDED", checkInFrom: "2026-07-01", page: 1 },
     });
-    expect(JSON.stringify(connection)).not.toMatch(/aroha@example\.org|pi_secret_ref|xero-inv-uuid/);
+    expect(JSON.stringify(connection)).not.toMatch(/aroha@example\.org|pi_secret_ref|xero-inv-uuid|dp_secret_ref/);
+    // A refund is told apart from account credit, and a disputed capture is visible.
+    expect(connection).toMatchObject({
+      data: [
+        {
+          cancellationSettlement: { accountCreditCents: 30_000, refundToOriginalMethodCents: 12_000 },
+          disputes: [{ status: "needs_response", amountCents: 42_000 }],
+        },
+      ],
+    });
     expect(browser).toEqual(PAYMENTS_BODY);
     expect(h.listAdminPayments).toHaveBeenCalledWith(
       expect.objectContaining({ status: "SUCCEEDED", checkInFrom: "2026-07-01", page: 1 }),

@@ -277,6 +277,23 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     }
   });
 
+  it("gives the fresh-proof reason only to a route that still asks for one", () => {
+    // The reverse of the test above: a hand-listed handler that stops asking
+    // for a fresh proof must not stay excluded under a reason that is no longer true.
+    const stepUp = new Set(STEP_UP_ROUTES.map((route) => stepUpRouteKey(route.file, route.method)));
+    const freshProof = routeMethods.filter((route) => {
+      const result = classifyMcpRoute(route.file, route.method);
+      return result.kind === "excluded" && result.reason === "fresh-proof";
+    });
+    expect(freshProof.length).toBeGreaterThan(0);
+    for (const route of freshProof) {
+      const asks =
+        stepUp.has(stepUpRouteKey(route.file, route.method)) ||
+        Boolean(handlerSource(route.file, route.method)?.includes("requireRecentAuth("));
+      expect(asks, `${route.method} ${route.file}`).toBe(true);
+    }
+  });
+
   it("gates every officer action by the area its route enforces", () => {
     for (const action of MCP_ACTIONS) {
       const mapped = getAdminRouteRequirement(action.path, action.method);

@@ -11,6 +11,7 @@ import { Invoice, type XeroClient } from "xero-node";
 import logger from "@/lib/logger";
 import { prisma } from "./prisma";
 import { clubSeasonYear } from "./financial-year";
+import { SEASON_YEAR_MAX, SEASON_YEAR_MIN } from "@/lib/season-year-range";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
@@ -349,8 +350,7 @@ export async function syncMemberSubscriptionHistoryForLinkedContact(
       ).filter(
         (seasonYear): seasonYear is number =>
           Number.isInteger(seasonYear) &&
-          seasonYear >= 2020 &&
-          seasonYear <= 2040
+          seasonYear >= SEASON_YEAR_MIN && seasonYear <= SEASON_YEAR_MAX
       )
     )
   ).sort((left, right) => right - left);

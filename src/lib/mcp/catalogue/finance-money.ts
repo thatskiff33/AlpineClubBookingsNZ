@@ -15,13 +15,20 @@ import {
   adminCreditAdjustmentReviewSchema,
   adminCreditApprovalsQuerySchema,
 } from "@/lib/admin-credit-adjustment-schemas";
+import { ADMIN_CREDIT_GRANT_ACCOUNTS } from "@/lib/admin-credit-grant-account";
 import { adminPaymentsFilterFields } from "@/lib/admin-payments-query";
 import { adminRefundRequestsQuerySchema } from "@/lib/admin-refund-requests-query";
 import { adminReportQuerySchema } from "@/lib/admin-reports-query";
 import { adminSubscriptionsQuerySchema } from "@/lib/admin-subscriptions-query";
 import { bankRefundVoidAnsweredBodySchema } from "@/lib/bank-refund-void-answered-body";
-import { financeBackfillMonthlyFactsBodyFields } from "@/lib/finance-backfill-request";
-import { financeBookingMetricsQueryFields } from "@/lib/finance-booking-metrics-query";
+import {
+  DEFAULT_FINANCE_BACKFILL_MAX_CHUNKS,
+  financeBackfillMonthlyFactsBodyFields,
+} from "@/lib/finance-backfill-request";
+import {
+  financeBookingMetricsQueryFields,
+  MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS,
+} from "@/lib/finance-booking-metrics-query";
 import {
   ADMIN_PAYMENTS_CONNECTION_SHAPE,
   BANK_REFUND_VOID_ANSWERED_CONNECTION_SHAPE,
@@ -56,25 +63,32 @@ import {
   manualBookingPaymentBodySchema,
   manualSubscriptionPaymentBodySchema,
 } from "@/lib/manual-payment-request-schemas";
+import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import { recordIdParamsSchema } from "@/lib/route-id-params";
+import { CLOSE_ALREADY_PAID_REASON_MAX } from "@/lib/subscription-charge-already-paid";
 import {
   closeAlreadyPaidFields,
   confirmAnnualBatchFields,
+  FAMILY_INVOICED_NOTE_MAX,
   markFamilyInvoicedFields,
   refreshPreviewFields,
   retryChargeFields,
+  subscriptionBillingMutationSchema,
   subscriptionBillingQuerySchema,
   unmarkFamilyInvoicedFields,
 } from "@/lib/subscription-billing-request-schemas";
 
 import type { McpAction } from "../catalogue";
 
+/** A fixed `action` must be one the route's schema accepts. */
+type BillingAction = z.input<typeof subscriptionBillingMutationSchema>["action"];
+
 export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
   {
     id: "list_payments",
     title: "List payments",
     summary:
-      "One page of the club's booking payments, newest activity first unless `sortBy` says otherwise, with totals over every payment the filters match. Dates are `YYYY-MM-DD`; `from`/`to` bound the latest activity, `checkInFrom`/`checkInTo` the stay. `search` matches a member, booking or reference. Amounts are integer cents.",
+      "One page of the club's booking payments, newest activity first unless `sortBy` says otherwise, with totals over every payment the filters match. Dates are `YYYY-MM-DD`; `from`/`to` bound the latest activity, `checkInFrom`/`checkInTo` the stay. `search` matches a member, booking or reference. Amounts are integer cents. A row's `refundedAmountCents` includes any account credit a cancellation issued; `cancellationSettlement` splits it into `refundToOriginalMethodCents` (back to the card or bank) and `accountCreditCents`, and `disputes` lists any card dispute.",
     method: "GET",
     path: "/api/admin/payments",
     query: z.object(adminPaymentsFilterFields),
@@ -86,7 +100,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     id: "request_credit_adjustment",
     title: "Request a credit adjustment",
     summary:
-      "Asks for a manual change to one member's account credit, in integer cents: positive adds credit and must name `grantAccount` (`MEMBER_OWN_MONEY` or `GOODWILL`), negative deducts and names none. Nothing changes until a different officer approves it. `idempotencyKey` is a new UUID for each request; sending the same one again does not make a second request.",
+      `Asks for a manual change to one member's account credit, in integer cents: positive adds credit and must name \`grantAccount\` (${ADMIN_CREDIT_GRANT_ACCOUNTS.map((account) => `\`${account}\``).join(" or ")}), negative deducts and names none. Nothing changes until a different officer approves it. \`idempotencyKey\` is a new UUID for each request; sending the same one again does not make a second request.`,
     method: "POST",
     path: "/api/admin/members/[id]/credits",
     params: recordIdParamsSchema,
@@ -159,7 +173,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     id: "answer_bank_refund_void",
     title: "Answer a voided bank refund note",
     summary:
-      "Records that an officer has dealt with a bank-transfer refund whose Xero credit note was voided and that the nightly check could not match to one refund. `id` is the voided note's link from the stuck-states list. `note` (required, up to 500 characters) says what was done; `confirmed` must be `true`, sent only after the officer confirms. It moves no money and changes nothing in Xero, but the item leaves the list for good.",
+      `Records that an officer has dealt with a bank-transfer refund whose Xero credit note was voided and that the nightly check could not match to one refund. \`id\` is the voided note's link from the stuck-states list. \`note\` (required, up to ${MANUAL_PAYMENT_NOTE_MAX} characters) says what was done; \`confirmed\` must be \`true\`, sent only after the officer confirms. It moves no money and changes nothing in Xero, but the item leaves the list for good.`,
     method: "POST",
     path: "/api/admin/payments/bank-refund-voids/[id]/answered",
     params: recordIdParamsSchema,
@@ -219,7 +233,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     id: "record_subscription_manual_payment",
     title: "Record a subscription paid by hand",
     summary:
-      "Marks one member subscription paid outside Xero (`direction` `paid`), or reverses an earlier manual mark (`direction` `unpaid`). `id` is the subscription (from `list_subscriptions`). Marking paid must say `notifyMember` (true emails the member a receipt); a reversal emails nobody and must not send it. `note` (up to 500 characters) says how it was paid; `confirmed` must be `true`, sent only after the officer confirms. It never raises or voids a Xero invoice. It changes the member's money record straight away; a mistake is put right by reversing it.",
+      `Marks one member subscription paid outside Xero (\`direction\` \`paid\`), or reverses an earlier manual mark (\`direction\` \`unpaid\`). \`id\` is the subscription (from \`list_subscriptions\`). Marking paid must say \`notifyMember\` (true emails the member a receipt); a reversal emails nobody and must not send it. \`note\` (up to ${MANUAL_PAYMENT_NOTE_MAX} characters) says how it was paid; \`confirmed\` must be \`true\`, sent only after the officer confirms. It never raises or voids a Xero invoice. It changes the member's money record straight away; a mistake is put right by reversing it.`,
     method: "POST",
     path: "/api/admin/subscriptions/[id]/manual-payment",
     params: recordIdParamsSchema,
@@ -232,7 +246,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     id: "record_booking_manual_payment",
     title: "Record a booking paid in cash or by bank transfer",
     summary:
-      "Records one booking's payment as settled in cash or by a bank transfer that never reached Xero (`direction` `paid`), or reverses an earlier manual settlement (`direction` `unpaid`; the booking stays booked, unpaid again). `id` is the booking. Marking paid must send `notifyMember` (true emails the member a booking confirmation) and `expectedAmountCents`, the amount owing the officer was shown, in integer cents: the payment is refused if the amount has changed since. If the booking also has an extra payment owing, send `additionalCoverage` with `covered` (does this money cover the extra too?) and `expectedAdditionalAmountCents`, the extra shown. A reversal sends none of these. `note` (up to 500 characters) says how it was paid; `confirmed` must be `true`, sent only after the officer confirms. It never raises or voids a Xero invoice.",
+      `Records one booking's payment as settled in cash or by a bank transfer that never reached Xero (\`direction\` \`paid\`), or reverses an earlier manual settlement (\`direction\` \`unpaid\`; the booking stays booked, unpaid again). \`id\` is the booking. Marking paid must send \`notifyMember\` (true emails the member a booking confirmation) and \`expectedAmountCents\`, the amount owing the officer read off the booking on the website, in integer cents (no AI app action reports it yet: never send \`list_payments\`' \`amountCents\`, which leaves out applied credit and change fees): the payment is refused if the amount has changed since. If the booking also has an extra payment owing, send \`additionalCoverage\` with \`covered\` (does this money cover the extra too?) and \`expectedAdditionalAmountCents\`, the extra shown. A reversal sends none of these. \`note\` (up to ${MANUAL_PAYMENT_NOTE_MAX} characters) says how it was paid; \`confirmed\` must be \`true\`, sent only after the officer confirms. It never raises or voids a Xero invoice.`,
     method: "POST",
     path: "/api/admin/bookings/[id]/mark-paid",
     params: recordIdParamsSchema,
@@ -261,7 +275,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/subscription-billing",
     body: z.object(refreshPreviewFields),
-    fixedBody: { action: "REFRESH_PREVIEW" },
+    fixedBody: { action: "REFRESH_PREVIEW" satisfies BillingAction },
     kind: "write",
     returns: SUBSCRIPTION_BILLING_REFRESHED_CONNECTION_SHAPE,
     core: false,
@@ -274,7 +288,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/subscription-billing",
     body: z.object(confirmAnnualBatchFields),
-    fixedBody: { action: "CONFIRM_ANNUAL_BATCH" },
+    fixedBody: { action: "CONFIRM_ANNUAL_BATCH" satisfies BillingAction },
     kind: "destructive",
     returns: SUBSCRIPTION_BILLING_ANNUAL_BATCH_CONFIRMED_CONNECTION_SHAPE,
     core: false,
@@ -283,12 +297,12 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     id: "retry_subscription_charge",
     title: "Retry a subscription charge's invoice",
     summary:
-      "Queues the Xero invoice work again for one subscription charge whose invoice failed or was never raised. `chargeId` is the charge (from `get_subscription_billing`). Answers with the queued operation, or says no work was needed; repeating it is harmless. Refused while Xero invoicing is switched off.",
+      "Queues the Xero invoice work again for one subscription charge whose invoice failed or was never raised. `chargeId` is the charge (from `get_subscription_billing`). A charge whose invoice was never raised gets one, which Xero may email to the member and which cannot be withdrawn from the app. Answers with the queued operation, or says no work was needed; repeating it is harmless. Refused while Xero invoicing is switched off.",
     method: "POST",
     path: "/api/admin/subscription-billing",
     body: z.object(retryChargeFields),
-    fixedBody: { action: "RETRY_CHARGE" },
-    kind: "write",
+    fixedBody: { action: "RETRY_CHARGE" satisfies BillingAction },
+    kind: "destructive",
     returns: SUBSCRIPTION_BILLING_CHARGE_RETRIED_CONNECTION_SHAPE,
     core: false,
   },
@@ -296,11 +310,11 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     id: "close_paid_subscription_charge",
     title: "Close a subscription charge already paid",
     summary:
-      "Closes one subscription charge held in conflict because every subscription it covers is already paid, so no invoice is raised for it. `chargeId` is the charge (from `get_subscription_billing`); `reason` (required, up to 500 characters) is recorded with it. A closed charge cannot be reopened from the app; closing one already closed changes nothing.",
+      `Closes one subscription charge held in conflict because every subscription it covers is already paid, so no invoice is raised for it. \`chargeId\` is the charge (from \`get_subscription_billing\`); \`reason\` (required, up to ${CLOSE_ALREADY_PAID_REASON_MAX} characters) is recorded with it. A closed charge cannot be reopened from the app; closing one already closed changes nothing.`,
     method: "POST",
     path: "/api/admin/subscription-billing",
     body: z.object(closeAlreadyPaidFields),
-    fixedBody: { action: "CLOSE_ALREADY_PAID" },
+    fixedBody: { action: "CLOSE_ALREADY_PAID" satisfies BillingAction },
     kind: "destructive",
     returns: SUBSCRIPTION_BILLING_CHARGE_CLOSED_CONNECTION_SHAPE,
     core: false,
@@ -309,11 +323,11 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     id: "mark_family_invoiced",
     title: "Mark a family as already invoiced",
     summary:
-      "Records that one family group has already been invoiced for the season some other way, so the annual batch raises no family charge for it. `seasonYear` is the season's starting year, `familyGroupId` the family and `note` (optional, up to 500 characters) why. Undone with `unmark_family_invoiced`; marking a family already marked changes nothing.",
+      `Records that one family group has already been invoiced for the season some other way, so the annual batch raises no family charge for it. \`seasonYear\` is the season's starting year, \`familyGroupId\` the family and \`note\` (optional, up to ${FAMILY_INVOICED_NOTE_MAX} characters) why. Undone with \`unmark_family_invoiced\`; marking a family already marked changes nothing.`,
     method: "POST",
     path: "/api/admin/subscription-billing",
     body: z.object(markFamilyInvoicedFields),
-    fixedBody: { action: "MARK_FAMILY_INVOICED" },
+    fixedBody: { action: "MARK_FAMILY_INVOICED" satisfies BillingAction },
     kind: "write",
     returns: SUBSCRIPTION_BILLING_FAMILY_MARKER_CONNECTION_SHAPE,
     core: false,
@@ -326,7 +340,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/subscription-billing",
     body: z.object(unmarkFamilyInvoicedFields),
-    fixedBody: { action: "UNMARK_FAMILY_INVOICED" },
+    fixedBody: { action: "UNMARK_FAMILY_INVOICED" satisfies BillingAction },
     kind: "write",
     returns: SUBSCRIPTION_BILLING_FAMILY_MARKER_CONNECTION_SHAPE,
     core: false,
@@ -335,7 +349,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     id: "get_finance_booking_metrics",
     title: "Get finance booking metrics",
     summary:
-      "The finance workspace's booking figures. A realised window (`realizedFrom`/`realizedTo`, and optionally `realizedCutoff`, the last day counted) covers stays that have happened: bookings, nights, occupancy and booked revenue by status and by day. A forward window (`forwardFrom`/`forwardTo`, and optionally `forwardAsOf`) covers bookings ahead, split into committed (paid) and at risk (not yet paid). Send one window or both; each pair goes together and spans at most 366 days. Dates are `YYYY-MM-DD`. Also answers with payment totals (collected, refunded, owed) and how many bookings' money reconciles. Amounts are integer cents.",
+      `The finance workspace's booking figures. A realised window (\`realizedFrom\`/\`realizedTo\`, and optionally \`realizedCutoff\`, the last day counted) covers stays that have happened: bookings, nights, occupancy and booked revenue by status and by day. A forward window (\`forwardFrom\`/\`forwardTo\`, and optionally \`forwardAsOf\`) covers bookings ahead, split into committed (paid) and at risk (not yet paid). Send one window or both; each pair goes together and spans at most ${MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS} days. Dates are \`YYYY-MM-DD\`. Also answers with payment totals (collected, refunded, owed) and how many bookings' money reconciles. Amounts are integer cents.`,
     method: "GET",
     path: "/api/finance/bookings/metrics",
     query: z.object(financeBookingMetricsQueryFields),
@@ -372,7 +386,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     id: "backfill_finance_monthly_facts",
     title: "Backfill the finance monthly figures",
     summary:
-      "Rebuilds the finance workspace's month-by-month figures from Xero's history, twelve months at a time, back to `fromMonth` (`YYYY-MM`, optional; otherwise until Xero has no earlier figures). `maxChunks` (optional, default 30) caps how many twelve-month steps it takes. It replaces the workspace's stored monthly figures with Xero's and changes nothing in Xero; repeating it is harmless. Refused while another finance sync is running.",
+      `Rebuilds the finance workspace's month-by-month figures from Xero's history, twelve months at a time, back to \`fromMonth\` (\`YYYY-MM\`, optional; otherwise until Xero has no earlier figures). \`maxChunks\` (optional, default ${DEFAULT_FINANCE_BACKFILL_MAX_CHUNKS}) caps how many twelve-month steps it takes. It replaces the workspace's stored monthly figures with Xero's and changes nothing in Xero; repeating it is harmless. Refused while another finance sync is running.`,
     method: "POST",
     path: "/api/finance/sync/backfill-monthly-facts",
     body: z.object(financeBackfillMonthlyFactsBodyFields),

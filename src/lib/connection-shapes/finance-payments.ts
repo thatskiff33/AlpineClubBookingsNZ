@@ -10,8 +10,19 @@
  * database.
  */
 import { connectionShapeFor } from "@/lib/connection-projection";
+import type { ApplyManualBookingPaymentResult } from "@/lib/manual-booking-payment";
+import type {
+  DismissedManualRefundTaskPayload,
+  OpenManualRefundTaskPayload,
+  toAutoRefundedManualRefundTaskPayload,
+} from "@/lib/manual-refund-task-queue-payload";
+import type { AdminAdjustmentRequestListItem } from "@/lib/member-credit";
 
-/** `GET /api/admin/payments`: one page of payments and the filtered totals. */
+/**
+ * `GET /api/admin/payments`: one page of payments and the filtered totals.
+ * `refundedAmountCents` counts cancellation credit too, so each row also
+ * carries the screen's split of it into card refund and account credit.
+ */
 export const ADMIN_PAYMENTS_CONNECTION_SHAPE = connectionShapeFor<{
   data: Array<{
     id: string;
@@ -27,6 +38,12 @@ export const ADMIN_PAYMENTS_CONNECTION_SHAPE = connectionShapeFor<{
     lastUpdatedAt: Date;
     xeroState: string;
     settlementKind: string;
+    cancellationSettlement: {
+      accountCreditCents: number;
+      restoredAppliedCreditCents: number;
+      refundToOriginalMethodCents: number;
+    };
+    disputes: Array<{ status: string; amountCents: number }>;
     booking: {
       id: string;
       status: string;
@@ -63,6 +80,13 @@ export const ADMIN_PAYMENTS_CONNECTION_SHAPE = connectionShapeFor<{
     lastUpdatedAt: true,
     xeroState: true,
     settlementKind: true,
+    cancellationSettlement: {
+      accountCreditCents: true,
+      restoredAppliedCreditCents: true,
+      refundToOriginalMethodCents: true,
+    },
+    // The card dispute's state and cents, not Stripe's dispute id.
+    disputes: { status: true, amountCents: true },
     booking: {
       id: true,
       status: true,
@@ -109,24 +133,7 @@ type CreditPerson = { id: string; firstName: string; lastName: string };
  * review queue. A connection is answered `{ requests }`; the browser keeps
  * the bare list.
  */
-export const CREDIT_APPROVALS_CONNECTION_SHAPE = connectionShapeFor<{
-  requests: Array<{
-    id: string;
-    memberId: string;
-    amountCents: number;
-    description: string;
-    grantAccount: string | null;
-    status: string;
-    requestedById: string;
-    reviewedById: string | null;
-    reviewedAt: Date | null;
-    createdAt: Date;
-    member: CreditPerson;
-    requestedBy: CreditPerson;
-    reviewedBy: CreditPerson | null;
-    approvedCredit: { id: string; createdAt: Date } | null;
-  }>;
-}>({
+export const CREDIT_APPROVALS_CONNECTION_SHAPE = connectionShapeFor<{ requests: AdminAdjustmentRequestListItem[] }>({
   requests: {
     id: true,
     memberId: true,
@@ -269,59 +276,11 @@ export const BANK_REFUND_VOID_ANSWERED_CONNECTION_SHAPE = connectionShapeFor<{
  * `viewerOwnsBooking`) stay behind.
  */
 export const MANUAL_REFUND_TASKS_CONNECTION_SHAPE = connectionShapeFor<{
-  tasks: Array<{
-    id: string;
-    bookingId: string;
-    amountCents: number | null;
-    raisedAmountCents: number | null;
-    kind: string | null;
-    awaitingLateCaptureApproval: boolean;
-    partPaymentReview: boolean;
-    editRefundHandBack: boolean;
-    refundRequestHandBack: boolean;
-    paidToGroupOrganiser: boolean;
-    groupOrganiserHandBack: boolean;
-    journalHandBackDismissRefusal: string | null;
-    disputedHandBackLost: boolean;
-    disputeReduction: { reducedByCents: number; stillOwedCents: number } | null;
-    markPaidRefusal: string | null;
-    cardShortfallHandBack: boolean;
-    cardShortfallCheck: boolean;
-    bankRefundVoidFollowUp: { voidedCreditNoteNumber: string | null; voidedAt: string } | null;
-    partPaymentReviewXeroPaid: { reportedAt: string; cashCents: number } | null;
-    reason: string;
-    createdAt: string;
-    memberName: string;
-    checkIn: string;
-    checkOut: string;
-  }>;
+  tasks: OpenManualRefundTaskPayload[];
   autoRefundedUnavailable: boolean;
-  autoRefunded: Array<{
-    id: string;
-    bookingId: string;
-    amountCents: number | null;
-    reason: string;
-    note: string | null;
-    refundedAt: string | null;
-    bookingDeleted: boolean;
-    memberName: string;
-    checkIn: string;
-    checkOut: string;
-  }>;
+  autoRefunded: Array<ReturnType<typeof toAutoRefundedManualRefundTaskPayload>>;
   dismissedUnavailable: boolean;
-  dismissed: Array<{
-    id: string;
-    bookingId: string;
-    amountCents: number | null;
-    kind: string | null;
-    reason: string;
-    note: string | null;
-    dismissedAt: string | null;
-    bookingDeleted: boolean;
-    memberName: string;
-    checkIn: string;
-    checkOut: string;
-  }>;
+  dismissed: DismissedManualRefundTaskPayload[];
 }>({
   tasks: {
     id: true,
@@ -476,22 +435,7 @@ export const REFUND_REQUESTS_CONNECTION_SHAPE = connectionShapeFor<{
 /** `POST /api/admin/bookings/[id]/mark-paid`: the settlement recorded or reversed, in integer cents. */
 export const MANUAL_BOOKING_PAYMENT_CONNECTION_SHAPE = connectionShapeFor<{
   success: boolean;
-  booking: {
-    bookingId: string;
-    paymentId: string;
-    direction: string;
-    memberNotified: boolean;
-    receipt: string;
-    amountCents: number;
-    bookingStatus: string;
-    creditElectionCents: number | null;
-    additional: {
-      outstandingCents: number;
-      settled: boolean;
-      recordedAmountCents: number;
-      payableOnline: boolean;
-    } | null;
-  };
+  booking: ApplyManualBookingPaymentResult;
   message: string;
 }>({
   success: true,
