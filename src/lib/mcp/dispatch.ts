@@ -56,6 +56,12 @@ export interface McpCaller {
   readonly clientName: string;
   /** The lesser of what the member approved and what the club allows now. */
   readonly scope: McpGrantScope;
+  /**
+   * An officer approved this connection on the screen that says the app can
+   * act as an officer. Without it no officer action is offered or run
+   * (`INV-MCP-009`); member actions are unaffected.
+   */
+  readonly officerConsent: boolean;
   readonly clientIp: string;
   readonly userAgent: string | null;
 }

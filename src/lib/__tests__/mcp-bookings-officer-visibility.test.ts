@@ -18,7 +18,12 @@ vi.mock("@/lib/mcp/dispatch", () => ({
 import { getAdminRouteRequirement, type AdminPermissionMatrix } from "@/lib/admin-permissions";
 import { MCP_ACTIONS, mcpActionAdminRequirement } from "@/lib/mcp/catalogue";
 import { classifyMcpRoute } from "@/lib/mcp/exclusions";
-import { callMcpTool, listMcpTools, type McpServerContext } from "@/lib/mcp/server";
+import {
+  callMcpTool,
+  listMcpTools,
+  MCP_OFFICER_RECONNECT_MESSAGE,
+  type McpServerContext,
+} from "@/lib/mcp/server";
 
 // Every action on a Bookings & Beds route, and those of them the area alone
 // unlocks: a route may name a stricter permission of its own (`requires`).
@@ -32,11 +37,12 @@ const NO_AREAS: AdminPermissionMatrix = {
   lodge: "none", content: "none", support: "none",
 };
 
-function context(matrix: Partial<AdminPermissionMatrix>): McpServerContext {
+/** An officer's connection, approved on the officer screen unless `officerConsent` says otherwise. */
+function context(matrix: Partial<AdminPermissionMatrix>, officerConsent = true): McpServerContext {
   return {
     caller: {
       grantId: "grant-1", memberId: "officer-1", clientName: "Example Assistant",
-      scope: "READ_WRITE", clientIp: "203.0.113.9", userAgent: null,
+      scope: "READ_WRITE", officerConsent, clientIp: "203.0.113.9", userAgent: null,
     },
     session: {
       user: {
@@ -96,10 +102,8 @@ describe("Bookings & Beds officer actions: who is offered them", () => {
   });
 
   it("offers an action on a Bookings & Beds route at the permission its handler names", async () => {
-    const withdraw = AREA_ROUTE_ACTIONS.find((action) => action.id === "withdraw_additional_payment_request");
-    expect(withdraw && mcpActionAdminRequirement(withdraw)).toEqual({ area: "finance", level: "edit" });
-    expect(await foundIds(context({ bookings: "edit" }))).not.toContain("withdraw_additional_payment_request");
-    expect(await foundIds(context({ bookings: "edit", finance: "edit" }))).toContain("withdraw_additional_payment_request");
+    const familyRead = AREA_ROUTE_ACTIONS.find((action) => action.id === "get_member_family_for_booking");
+    expect(familyRead && mcpActionAdminRequirement(familyRead)).toEqual({ area: "bookings", level: "edit" });
 
     const viewOnly = new Set(await foundIds(context({ bookings: "view" })));
     expect(viewOnly.has("get_member_family_for_booking")).toBe(false);
@@ -107,6 +111,19 @@ describe("Bookings & Beds officer actions: who is offered them", () => {
     // And below it: the bed previews' own guard asks only view, as on the board.
     expect(viewOnly.has("preview_bed_allocation_move")).toBe(true);
     expect(viewOnly.has("preview_bed_allocation_removal")).toBe(true);
+  });
+
+  it("leaves withdrawing an extra payment request to the Finance lane, even for a Finance editor", async () => {
+    // Owner decision, #5305 comment 7093303964, item 3: a money action, ALP-721.
+    expect(classifyMcpRoute("src/app/api/admin/bookings/[id]/additional-payment/withdraw/route.ts", "POST")).toEqual({
+      kind: "excluded", reason: "not-yet:ALP-721",
+    });
+    const found = await foundIds(context({ bookings: "edit", finance: "edit" }));
+    expect(found.filter((id) => id.includes("withdraw"))).toEqual([]);
+    // Every requires-pinned action in this area asks for the area itself.
+    for (const action of AREA_ROUTE_ACTIONS) {
+      expect(mcpActionAdminRequirement(action)?.area, action.id).toBe("bookings");
+    }
   });
 
   it("keeps the open member search switch website-only, even for a Bookings & Beds editor", async () => {
@@ -143,39 +160,61 @@ describe("Bookings & Beds officer actions: who is offered them", () => {
   });
 });
 
-// Owner decision, #5305 item 2 (23 Nov 2026): an action that notifies other
-// people, or overwrites another person's record, is `destructive`, so the app
-// asks first and the call is audited as important. What stays `write` is club
-// setup (or a lookup that changes nothing); a new change action on a Bookings &
-// Beds route is `destructive` unless it is reviewed onto this list.
-const CLUB_SETUP_WRITES = [
+// Owner decisions on #5305: an action that notifies other people, or
+// overwrites another person's record, is `destructive` (item 2, comment
+// 7092977781), and so is every change to club-wide configuration (item 2,
+// comment 7093303964), so the app asks the officer first and the call is
+// audited as important. Only a lookup that changes nothing stays `write`; a new
+// change action on a Bookings & Beds route is `destructive` unless it is
+// reviewed onto this list.
+const LOOKUP_WRITES = [
   // A POST lookup: changes no record and notifies no one.
   "find_member_guest_by_email",
+];
+
+// Every club-wide configuration change this area catalogues.
+const CLUB_CONFIGURATION_CHANGES = [
   // Bed allocation settings and the lodge's rooms and beds.
   "update_bed_allocation_settings",
   "create_lodge_room",
   "create_lodge_rooms_in_bulk",
   "import_rooms_and_beds_from_config",
   "update_lodge_room",
+  "delete_lodge_room",
   "create_lodge_bed",
   "update_lodge_bed",
-  // Seasons, booking policies, age groups and booking-request settings.
+  "delete_lodge_bed",
+  // Seasons and hut rates, booking policies, age groups and settings.
   "create_season",
   "update_season",
+  "delete_season",
   "update_cancellation_policy",
   "create_booking_period",
   "update_booking_period",
+  "delete_booking_period",
   "create_minimum_stay_policy",
   "update_minimum_stay_policy",
+  "deactivate_minimum_stay_policy",
   "update_group_discount_policy",
+  "update_adult_member_hosting_policy",
   "update_age_tier_settings",
   "update_booking_request_settings",
-].sort();
+  // Promo codes.
+  "create_promo_code",
+  "update_promo_code",
+  "restore_promo_code",
+  "delete_promo_code",
+];
 
 describe("Bookings & Beds officer actions: kinds", () => {
-  it("keeps `write` only for club setup that notifies no one and overwrites no one's record", () => {
+  it("keeps `write` only for a lookup that changes no record and notifies no one", () => {
     const writes = AREA_ROUTE_ACTIONS.filter((action) => action.kind === "write").map((action) => action.id);
-    expect(writes.sort()).toEqual(CLUB_SETUP_WRITES);
+    expect(writes.sort()).toEqual(LOOKUP_WRITES);
+  });
+
+  it("marks every club-wide configuration change destructive, so the app asks the officer first", () => {
+    const kindOf = new Map(AREA_ROUTE_ACTIONS.map((action) => [action.id, action.kind]));
+    for (const id of CLUB_CONFIGURATION_CHANGES) expect(kindOf.get(id), id).toBe("destructive");
   });
 
   it("marks every action that changes a member's booking, request, bed or promo code, or notifies someone, destructive", () => {
@@ -186,10 +225,73 @@ describe("Bookings & Beds officer actions: kinds", () => {
       "set_booking_no_emails", "set_booking_requested_room", "clear_booking_requested_room",
       "force_confirm_waitlisted_booking", "return_booking_to_waitlist", "send_fresh_booking_email_copy",
       "send_additional_payment_reminder", "price_booking_request", "send_booking_request_quote",
-      "create_promo_code", "update_promo_code", "restore_promo_code", "delete_promo_code",
-      "update_adult_member_hosting_policy",
     ]) {
       expect(kindOf.get(id), id).toBe("destructive");
     }
+  });
+});
+
+// Owner decision, #5305 comment 7093303964, item 1: a connection approved
+// before the officer screen, or by someone who was not then an officer, runs
+// no officer action until its officer approves again (`INV-MCP-009`).
+describe("Bookings & Beds officer actions: an officer approves again", () => {
+  const ids = new Set(BOOKINGS_ACTIONS.map((action) => action.id));
+
+  it("shows a connection without that approval none of them, and says how to get them", async () => {
+    const ctx = context({ bookings: "edit" }, false);
+    expect(listMcpTools(ctx).filter((tool) => ids.has(tool.name))).toEqual([]);
+    const found = JSON.parse((await callMcpTool(ctx, "find_actions", {})).text) as {
+      actions: Array<{ id: string }>; officerActions?: string;
+    };
+    expect(found.actions.filter((action) => ids.has(action.id))).toEqual([]);
+    expect(found.officerActions).toBe(MCP_OFFICER_RECONNECT_MESSAGE);
+    const who = JSON.parse((await callMcpTool(ctx, "who_am_i", {})).text) as { officerActions?: string };
+    expect(who.officerActions).toBe(MCP_OFFICER_RECONNECT_MESSAGE);
+  });
+
+  it("refuses to describe or run one, by name or through run_action, and runs nothing", async () => {
+    const ctx = context({ bookings: "edit" }, false);
+    for (const action of BOOKINGS_ACTIONS) {
+      for (const outcome of [
+        await callMcpTool(ctx, "describe_action", { id: action.id }),
+        await callMcpTool(ctx, "run_action", { id: action.id, arguments: {} }),
+        await callMcpTool(ctx, action.id, {}),
+      ]) {
+        expect(outcome, action.id).toEqual({ isError: true, text: MCP_OFFICER_RECONNECT_MESSAGE });
+      }
+    }
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("keeps the officer's member actions working meanwhile", async () => {
+    const ctx = context({ bookings: "edit" }, false);
+    const member = MCP_ACTIONS.find((action) => action.id === "list_my_bookings");
+    expect(member && mcpActionAdminRequirement(member)).toBeNull();
+    expect(await foundIds(ctx)).toContain("list_my_bookings");
+    await callMcpTool(ctx, "run_action", { id: "list_my_bookings", arguments: {} });
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ id: "list_my_bookings" }), {}, ctx.caller);
+  });
+
+  it("offers and runs them once the officer has approved on the officer screen", async () => {
+    const ctx = context({ bookings: "edit" }, true);
+    const found = await foundIds(ctx);
+    expect(BOOKINGS_ACTIONS.filter((action) => !found.includes(action.id))).toEqual([]);
+    const outcome = JSON.parse((await callMcpTool(ctx, "find_actions", {})).text) as { officerActions?: string };
+    expect(outcome.officerActions).toBeUndefined();
+    await callMcpTool(ctx, "run_action", { id: "search_bookings", arguments: {} });
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ id: "search_bookings" }), {}, ctx.caller);
+  });
+
+  it("leaves a member's connection, which never had that approval, exactly as it was", async () => {
+    const ctx = context({}, false);
+    const outcome = JSON.parse((await callMcpTool(ctx, "find_actions", {})).text) as {
+      actions: Array<{ id: string }>; officerActions?: string;
+    };
+    expect(outcome.officerActions).toBeUndefined();
+    expect(outcome.actions.map((action) => action.id)).toContain("list_my_bookings");
+    const describeOfficer = await callMcpTool(ctx, "describe_action", { id: "search_bookings" });
+    expect(describeOfficer.text).toContain("There is no action called");
+    const who = JSON.parse((await callMcpTool(ctx, "who_am_i", {})).text) as { officerActions?: string };
+    expect(who.officerActions).toBeUndefined();
   });
 });

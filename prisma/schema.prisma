@@ -10033,6 +10033,11 @@ model McpGrant {
   sessionIssuedAt   DateTime
   /// Whether that browser session had passed its two-factor challenge.
   twoFactorVerified Boolean        @default(false)
+  /// When an officer approved this connection on the screen that says the
+  /// app can also act as an officer (ALP-719, owner decision #5305 item 1).
+  /// Null for a member's approval and for any approval given before that
+  /// screen: such a connection is never offered an officer action.
+  officerConsentAt  DateTime?
   /// Why the connection ended, for the member and admin lists.
   endedReason       String?        @db.VarChar(40)
   endedAt           DateTime?
