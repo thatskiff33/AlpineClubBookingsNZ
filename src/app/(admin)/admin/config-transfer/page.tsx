@@ -25,6 +25,7 @@ import {
   visibleImportPlanItems,
 } from "@/lib/config-transfer/preview";
 import { getAdminPage } from "@/lib/admin-hubs";
+import { ConfigImportClearUpWarning } from "@/components/admin/config-import-clear-up-warning";
 
 // Full-admin Configuration Export & Import page. Export selected categories to a
 // portable zip; import a bundle via a mandatory dry-run before applying (the
@@ -115,8 +116,7 @@ export default function ConfigTransferPage() {
   const [resealing, setResealing] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [applied, setApplied] = useState<string | null>(null);
-  // #5190: the import committed but its liability clear-up did not.
-  const [applyWarning, setApplyWarning] = useState<string | null>(null);
+  const [clearUpFailed, setClearUpFailed] = useState(false); // #5190
 
   const canExport = useMemo(() => selected.size > 0, [selected]);
 
@@ -178,7 +178,7 @@ export default function ConfigTransferPage() {
     setPlanning(true);
     setImportError(null);
     setApplied(null);
-    setApplyWarning(null);
+    setClearUpFailed(false);
     setPlan(null);
     try {
       const form = new FormData();
@@ -289,11 +289,7 @@ export default function ConfigTransferPage() {
       }
       const t = data.result.totals;
       setApplied(`Applied: ${formatConfigImportTotals(t)}.`);
-      setApplyWarning(
-        data.result.liabilityClearUp === "failed"
-          ? 'The import was applied, but clearing stale "Not required" subscription records afterwards did not finish. Save the membership lockout settings once to run it again.'
-          : null,
-      );
+      setClearUpFailed(data.result.liabilityClearUp === "failed");
       setPlan(null);
       setResolutions([]);
       setImportCategories(null);
@@ -391,7 +387,7 @@ export default function ConfigTransferPage() {
               setFile(e.target.files?.[0] ?? null);
               setPlan(null);
               setApplied(null);
-              setApplyWarning(null);
+              setClearUpFailed(false);
               setImportError(null);
               setResolutions([]);
               setImportCategories(null);
@@ -649,11 +645,7 @@ export default function ConfigTransferPage() {
               {applied}
             </p>
           )}
-          {applyWarning && (
-            <p role="alert" className="rounded-md bg-warning-3 p-2 text-sm text-warning-11">
-              {applyWarning}
-            </p>
-          )}
+          {clearUpFailed && <ConfigImportClearUpWarning />}
           {importError && (
             <p className="rounded-md bg-danger-3 p-2 text-sm text-danger-11">
               {importError}
