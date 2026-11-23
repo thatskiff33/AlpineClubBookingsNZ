@@ -104,7 +104,7 @@ export async function maybeNotifyXeroRepeatedFailure(
     now,
     label: "repeated Xero failure alert",
     context: { correlationKey: operation.correlationKey },
-    send: () =>
+    raiseAlert: () =>
       sendAdminXeroRepeatedFailureAlert({
         subject,
         correlationKey,

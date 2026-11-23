@@ -43,7 +43,7 @@ export async function notifyXeroSyncError(data: {
       windowMs: XERO_SYNC_ERROR_ALERT_WINDOW_MS,
       label: "Xero sync error alert",
       context: { operation: data.operation, errorType: data.errorType },
-      send: () =>
+      raiseAlert: () =>
         sendAdminXeroSyncErrorAlert({
           ...data,
           errorMessage: redactSensitiveText(data.errorMessage),

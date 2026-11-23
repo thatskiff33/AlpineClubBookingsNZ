@@ -60,14 +60,16 @@ export async function sendAdminAlertOncePerWindow({
   now = new Date(),
   label,
   context,
-  send,
+  raiseAlert,
 }: {
   key: string;
   windowMs: number;
   now?: Date;
   label: string;
   context: Record<string, unknown>;
-  send: () => Promise<AdminAlertRecipientsResult>;
+  // Not named `send`: the advisory-lock isolation census (INV-LOCK-005) joins
+  // functions by name, and an unrelated `send` elsewhere reaches a lock helper.
+  raiseAlert: () => Promise<AdminAlertRecipientsResult>;
 }): Promise<WindowedAlertAttempt> {
   let claimed: boolean;
   try {
@@ -82,7 +84,7 @@ export async function sendAdminAlertOncePerWindow({
 
   let result: AdminAlertRecipientsResult;
   try {
-    result = await send();
+    result = await raiseAlert();
   } catch (error) {
     await releaseAlertCooldown({ key, claimedAt: now }).catch((err) =>
       logger.error({ err, ...context }, `Failed to release the ${label} claim`)
