@@ -192,6 +192,15 @@ only the rules.
 - **The route runs with the officer's real permissions** and its own guard
   decides, as for the browser, and answers through the projection. A
   step-up route stays website-only (`fresh-proof`, `INV-MCP-006`).
+- **An officer action needs the officer's own approval for officer actions**
+  (owner decision, #5305). `McpGrant.officerConsentAt` is set only when
+  someone holding an admin area approves on the screen that says the app can
+  also act as an officer. Without it, `mcpCallerMayUse` hides every officer
+  action and `describe_action` and `run_action` tell the app the officer must
+  reconnect; member actions keep working. Earlier approvals, and those given
+  before the member became an officer, carry no date.
+- **Every club-wide configuration change is `destructive`**, so the app asks
+  the officer first.
 
 ## INV-MCP-007
 

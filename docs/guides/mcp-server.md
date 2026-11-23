@@ -122,6 +122,12 @@ disconnect them under **Connections**. An app on the member's own computer
 - Three reminders: the app acts as the member and what it reads goes to the
   company that runs it; card payments and password or sign-in changes stay on
   the website; the app can be disconnected on the profile at any time.
+- **For an officer only**, a fourth: as a club officer, the app can also read
+  other members' bookings and details that their admin role allows, and with
+  **View and change**, change them (owner decision,
+  [#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7093303964)).
+  Approving this screen is what lets the connection run officer actions
+  (below).
 
 The screen refuses, with a reason and nothing shared, when the app or its
 return address is not registered or not approved, when the account is a lodge
@@ -267,15 +273,23 @@ ask them to prove who they are again and the switch that opens member search
   [`admin-permissions.ts`](../../src/lib/admin-permissions.ts), or, where the
   route's handler names a stricter permission of its own, that permission
   (the entry's `requires`, which the route census checks against the
-  handler). Anyone without it never sees the action in the tool list,
+  handler). The connection must also carry the officer's approval for officer
+  actions (next point). Anyone without it never sees the action in the tool list,
   `find_actions` or `describe_action`, and cannot run it by name. A view-only
   officer is offered only reads, and not the four reads that need edit (the
   two family reads, the non-member contact search and the booking request
   member-link check).
+- **Officers approve again.** Only a connection approved on the screen that
+  tells an officer the app can act as an officer is offered officer actions
+  (`McpGrant.officerConsentAt`, `INV-MCP-009`). A connection approved before
+  this release, or before its member became an officer, keeps its member
+  actions; `find_actions` and `who_am_i` tell the app, and `describe_action`
+  and `run_action` refuse an officer action, saying the officer must connect
+  the app again (owner decision,
+  [#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7093303964)).
 - **The route still decides.** Each action calls the admin route the screen
   calls, which checks the officer's own permissions exactly as for the
-  browser. Withdrawing an extra payment request needs **Finance** edit, as
-  on the website.
+  browser.
 - **Only `search_bookings` is listed as its own tool**; the rest are reached
   through `find_actions` and `run_action`, so the tool list stays short.
 - **Asks first.** Every action that emails or notifies a member, guest or
@@ -283,8 +297,12 @@ ask them to prove who they are again and the switch that opens member search
   bed or promo code, is `destructive`: the app confirms with the officer
   before running it, and the call is logged as important (owner decision,
   [#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7092977781)).
-  Only club setup (seasons, policies, age groups, settings, rooms and beds)
-  and the member email lookup stay `write`.
+  So is every change to club-wide configuration: seasons and hut rates,
+  booking periods, minimum stays, the cancellation, group discount and
+  adult-member hosting policies, age groups, booking-request and bed
+  allocation settings, rooms and beds, and promo codes (owner decision,
+  [#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7093303964)).
+  Only the member email lookup stays `write`.
 - **Previews.** `preview_bed_allocation_move`, `preview_bed_allocation_removal`
   and `check_booking_request_member_links` are `POST` routes that change
   nothing; they run as reads on a view-only connection.
@@ -303,6 +321,12 @@ or releasing the hold of a booking request, confirming a booking's pending
 guests, deciding a booking held for review, and adding a booking to a work
 party or removing it from one.
 
+Withdrawing an extra payment request sits under a booking's address but moves
+money (it cancels the card request and retires the amount owing), so it is
+left to the Finance actions (ALP-721), like marking a booking paid (owner
+decision,
+[#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7093303964)).
+
 #### Bookings
 
 | Action | What it does | Kind | Needs | Route |
@@ -318,7 +342,6 @@ party or removing it from one.
 | `get_booking_work_party_options` | Read the work parties a booking could join | read | view | `GET /api/admin/bookings/[id]/work-party` |
 | `copy_booking_to_draft` | Copy a booking to a new draft | destructive | edit | `POST /api/admin/bookings/[id]/copy` |
 | `send_additional_payment_reminder` | Remind a member of an extra amount owing | destructive | edit | `POST /api/admin/bookings/[id]/additional-payment-reminder` |
-| `withdraw_additional_payment_request` | Withdraw an extra payment request | destructive | Finance edit | `POST /api/admin/bookings/[id]/additional-payment/withdraw` |
 | `place_admin_capacity_hold` | Hold beds for an unpaid booking | destructive | edit | `POST /api/admin/bookings/[id]/capacity-hold` |
 | `release_admin_capacity_hold` | Release the beds held for an unpaid booking | destructive | edit | `DELETE /api/admin/bookings/[id]/capacity-hold` |
 | `set_exclusive_lodge_hold` | Set or clear a whole-lodge hold | destructive | edit | `POST /api/admin/bookings/[id]/exclusive-hold` |
@@ -381,15 +404,15 @@ party or removing it from one.
 | `preview_bed_allocation_removal` | Preview removing bed allocations | read | view | `POST /api/admin/bed-allocation/allocations/removal` |
 | `remove_bed_allocations` | Remove bed allocations | destructive | edit | `PUT /api/admin/bed-allocation/allocations/removal` |
 | `get_bed_allocation_settings` | Read a lodge's bed allocation settings | read | view | `GET /api/admin/bed-allocation/settings` |
-| `update_bed_allocation_settings` | Change a lodge's bed allocation settings | write | edit | `PUT /api/admin/bed-allocation/settings` |
+| `update_bed_allocation_settings` | Change a lodge's bed allocation settings | destructive | edit | `PUT /api/admin/bed-allocation/settings` |
 | `list_lodge_rooms_and_beds` | List a lodge's rooms and beds | read | view | `GET /api/admin/bed-allocation/rooms` |
-| `create_lodge_room` | Add a room | write | edit | `POST /api/admin/bed-allocation/rooms` |
-| `create_lodge_rooms_in_bulk` | Add several rooms with beds | write | edit | `POST /api/admin/bed-allocation/rooms/bulk` |
-| `import_rooms_and_beds_from_config` | Import rooms and beds from the club's configuration | write | edit | `POST /api/admin/bed-allocation/rooms/import-from-config` |
-| `update_lodge_room` | Change a room | write | edit | `PATCH /api/admin/bed-allocation/rooms/[id]` |
+| `create_lodge_room` | Add a room | destructive | edit | `POST /api/admin/bed-allocation/rooms` |
+| `create_lodge_rooms_in_bulk` | Add several rooms with beds | destructive | edit | `POST /api/admin/bed-allocation/rooms/bulk` |
+| `import_rooms_and_beds_from_config` | Import rooms and beds from the club's configuration | destructive | edit | `POST /api/admin/bed-allocation/rooms/import-from-config` |
+| `update_lodge_room` | Change a room | destructive | edit | `PATCH /api/admin/bed-allocation/rooms/[id]` |
 | `delete_lodge_room` | Delete a room | destructive | edit | `DELETE /api/admin/bed-allocation/rooms/[id]` |
-| `create_lodge_bed` | Add a bed | write | edit | `POST /api/admin/bed-allocation/beds` |
-| `update_lodge_bed` | Change a bed | write | edit | `PATCH /api/admin/bed-allocation/beds/[id]` |
+| `create_lodge_bed` | Add a bed | destructive | edit | `POST /api/admin/bed-allocation/beds` |
+| `update_lodge_bed` | Change a bed | destructive | edit | `PATCH /api/admin/bed-allocation/beds/[id]` |
 | `delete_lodge_bed` | Delete a bed | destructive | edit | `DELETE /api/admin/bed-allocation/beds/[id]` |
 
 #### Seasons, booking policies and settings
@@ -398,28 +421,28 @@ party or removing it from one.
 | --- | --- | --- | --- | --- |
 | `list_seasons` | List seasons and hut rates | read | view | `GET /api/admin/seasons` |
 | `get_season` | Read a season | read | view | `GET /api/admin/seasons/[id]` |
-| `create_season` | Create a season | write | edit | `POST /api/admin/seasons` |
-| `update_season` | Change a season or its hut rates | write | edit | `PUT /api/admin/seasons/[id]` |
+| `create_season` | Create a season | destructive | edit | `POST /api/admin/seasons` |
+| `update_season` | Change a season or its hut rates | destructive | edit | `PUT /api/admin/seasons/[id]` |
 | `delete_season` | Delete a season | destructive | edit | `DELETE /api/admin/seasons/[id]` |
 | `get_cancellation_policy` | Read the cancellation policy | read | view | `GET /api/admin/booking-policies/cancellation` |
-| `update_cancellation_policy` | Change the cancellation policy | write | edit | `PUT /api/admin/booking-policies/cancellation` |
+| `update_cancellation_policy` | Change the cancellation policy | destructive | edit | `PUT /api/admin/booking-policies/cancellation` |
 | `list_booking_periods` | List booking periods | read | view | `GET /api/admin/booking-policies/periods` |
 | `get_booking_period` | Read a booking period | read | view | `GET /api/admin/booking-policies/periods/[id]` |
-| `create_booking_period` | Create a booking period | write | edit | `POST /api/admin/booking-policies/periods` |
-| `update_booking_period` | Change a booking period | write | edit | `PUT /api/admin/booking-policies/periods/[id]` |
+| `create_booking_period` | Create a booking period | destructive | edit | `POST /api/admin/booking-policies/periods` |
+| `update_booking_period` | Change a booking period | destructive | edit | `PUT /api/admin/booking-policies/periods/[id]` |
 | `delete_booking_period` | Delete a booking period | destructive | edit | `DELETE /api/admin/booking-policies/periods/[id]` |
 | `list_minimum_stay_policies` | List minimum-stay policies | read | view | `GET /api/admin/booking-policies/minimum-stay` |
-| `create_minimum_stay_policy` | Create a minimum-stay policy | write | edit | `POST /api/admin/booking-policies/minimum-stay` |
-| `update_minimum_stay_policy` | Change a minimum-stay policy | write | edit | `PUT /api/admin/booking-policies/minimum-stay/[id]` |
+| `create_minimum_stay_policy` | Create a minimum-stay policy | destructive | edit | `POST /api/admin/booking-policies/minimum-stay` |
+| `update_minimum_stay_policy` | Change a minimum-stay policy | destructive | edit | `PUT /api/admin/booking-policies/minimum-stay/[id]` |
 | `deactivate_minimum_stay_policy` | Delete (deactivate) a minimum-stay policy | destructive | edit | `DELETE /api/admin/booking-policies/minimum-stay/[id]` |
 | `get_group_discount_policy` | Read the group discount policy | read | view | `GET /api/admin/booking-policies/group-discount` |
-| `update_group_discount_policy` | Change the group discount policy | write | edit | `PUT /api/admin/booking-policies/group-discount` |
+| `update_group_discount_policy` | Change the group discount policy | destructive | edit | `PUT /api/admin/booking-policies/group-discount` |
 | `get_adult_member_hosting_policy` | Read the adult-member hosting policy | read | view | `GET /api/admin/booking-policies/adult-member-hosting` |
 | `update_adult_member_hosting_policy` | Change the adult-member hosting policy | destructive | edit | `PUT /api/admin/booking-policies/adult-member-hosting` |
 | `get_age_tier_settings` | Read the age group settings | read | view | `GET /api/admin/age-tier-settings` |
-| `update_age_tier_settings` | Change the age group settings | write | edit | `PUT /api/admin/age-tier-settings` |
+| `update_age_tier_settings` | Change the age group settings | destructive | edit | `PUT /api/admin/age-tier-settings` |
 | `get_booking_request_settings` | Read the booking request settings | read | view | `GET /api/admin/booking-requests/settings` |
-| `update_booking_request_settings` | Change the booking request settings | write | edit | `PUT /api/admin/booking-requests/settings` |
+| `update_booking_request_settings` | Change the booking request settings | destructive | edit | `PUT /api/admin/booking-requests/settings` |
 | `get_member_guest_settings` | Read the member-guest settings | read | view | `GET /api/admin/member-guest-settings` |
 
 ## What stays on the website, and why
@@ -502,7 +525,10 @@ starting with Bookings & Beds (ALP-719; the other areas follow). Whatever the
 officer asks about through those, such as another member's bookings, family
 or contact details, goes to that officer's AI provider. The
 switch governs the connection, not the action list. That is why **Officers
-may connect an AI app** is a separate switch, off by default. Before
+may connect an AI app** is a separate switch, off by default. An officer
+action also needs the officer's own approval on the screen that tells them
+the app can act as an officer, so a connection approved before that screen
+reaches only the officer's own records until they connect again. Before
 switching it on, the club should cover it in its privacy notice and decide
 which AI providers are acceptable.
 
