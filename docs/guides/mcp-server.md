@@ -236,15 +236,22 @@ booking, even an officer's, and never sends an officer's on-behalf fields.
 | `set_my_arrival_time`, `clear_my_arrival_time` | Sets or clears the expected arrival time | write | `PUT`, `DELETE /api/bookings/[id]/arrival-time` |
 | `set_my_requested_room`, `clear_my_requested_room` | Asks for a room, or withdraws the request | write | `PUT`, `DELETE /api/bookings/[id]/requested-room` |
 | `list_booking_change_requests` | The change and exception requests on a booking | read | `GET /api/bookings/[id]/change-requests` |
-| `request_booking_change` | Asks an officer to change a stay the member can no longer change themselves | write | `POST /api/bookings/[id]/change-requests` |
+| `request_booking_change` | Asks an officer to change a stay the member can no longer change themselves. Emails the booking officers | destructive | `POST /api/bookings/[id]/change-requests` |
 | `list_my_exception_requests` | The member's requests to book or change outside the rules | read | `GET /api/bookings/exception-requests` |
-| `request_booking_exception` | Asks an officer to allow a new stay the rules refuse | write | `POST /api/bookings/exception-requests` |
-| `request_booking_change_exception` | Asks an officer to allow a change the rules refuse | write | `POST /api/bookings/[id]/exception-requests` |
+| `request_booking_exception` | Asks an officer to allow a new stay the rules refuse. Emails the booking officers | destructive | `POST /api/bookings/exception-requests` |
+| `request_booking_change_exception` | Asks an officer to allow a change the rules refuse. Emails the booking officers | destructive | `POST /api/bookings/[id]/exception-requests` |
 | `withdraw_booking_exception_request`, `withdraw_booking_change_exception_request` | Withdraws an open exception request. Cannot be undone | destructive | `PATCH /api/bookings/exception-requests/[id]`, `PATCH /api/bookings/[id]/exception-requests/[requestId]` |
 | `list_my_refund_reviews` | The refund reviews on a cancelled booking | read | `GET /api/bookings/[id]/refund-request` |
-| `request_refund_review` | Asks the club to review a refund. No money moves: an officer decides | write | `POST /api/bookings/[id]/refund-request` |
-| `accept_waitlist_offer` | Accepts a place the club offered at the booking's own lodge; an offer at another lodge is accepted on the website. If payment is needed, the app tells the member to pay on the website | write | `POST /api/bookings/[id]/waitlist-confirm` |
+| `request_refund_review` | Asks the club to review a refund. No money moves: an officer decides. Emails the officers | destructive | `POST /api/bookings/[id]/refund-request` |
+| `accept_waitlist_offer` | Accepts a place the club offered at the booking's own lodge; an offer at another lodge is accepted on the website. If payment is needed, the app tells the member to pay on the website. Confirming re-checks adult hosting cover, which can email other members on a group trip | destructive | `POST /api/bookings/[id]/waitlist-confirm` |
 | `delete_my_draft_booking` | Deletes one of the member's drafts. Never a confirmed booking | destructive | `DELETE /api/bookings/[id]` |
+
+An action that notifies anyone but the member, or changes another person's
+record, is `destructive` (owner decision on
+[#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7092977781),
+item 2): the app asks the member to confirm before running it, and the call is
+logged as important. Notes, arrival times and room requests notify no one and
+stay `write`.
 
 A preview is a `read`: a view-only connection may run it. It changes none of
 the member's bookings, but it is not write-free: each call counts against the

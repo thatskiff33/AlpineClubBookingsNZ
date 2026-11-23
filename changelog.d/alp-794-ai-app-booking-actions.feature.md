@@ -8,7 +8,10 @@
   request), ask for a refund review, accept a waitlist offer at the booking's
   own lodge and delete a draft. Changes still need a connection approved for **View and change**, and
   each one is recorded in the audit log. A connection always acts as the member,
-  never with an officer's powers.
+  never with an officer's powers. Anything that emails the club's officers or
+  other members (the requests, the refund review and accepting a waitlist
+  offer) is marked as needing the member's confirmation, so the app asks them
+  first and the audit log records it as important.
 
   Changing a booking's dates or guests, confirming a draft and sending a guest
   a payment link can move money, so they stay on the website; so do agreeing
