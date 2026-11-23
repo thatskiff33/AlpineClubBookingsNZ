@@ -11,6 +11,7 @@ import { z } from "zod";
 
 import { MEMBER_PRIVILEGE_CHECK_SELECT } from "@/lib/access-role-definitions";
 import { ADMIN_HUBS_LIVE } from "@/lib/admin-hubs/release";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   ADMIN_MENU_ROLE_COOKIE,
   adminMenuRoleCookieOptions,
@@ -69,13 +70,9 @@ export async function POST(request: Request) {
   const guard = await requireAdmin({ permission: "any-admin" });
   if (!guard.ok) return guard.response;
 
-  let json: unknown;
-  try {
-    json = await request.json();
-  } catch {
-    return invalid();
-  }
-  const parsed = bodySchema.safeParse(json);
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = bodySchema.safeParse(jsonBody.body);
   if (!parsed.success) return invalid();
 
   const member = await prisma.member.findUnique({

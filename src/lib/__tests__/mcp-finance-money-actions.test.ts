@@ -1387,8 +1387,10 @@ describe("finance workspace actions", () => {
     // A blank or non-string month means none; a numeric string chunk count is read as a number.
     expect((await post({ fromMonth: "  ", maxChunks: "12" })).status).toBe(200);
     expect(h.backfillFinanceMonthlyFacts).toHaveBeenLastCalledWith(expect.objectContaining({ fromMonth: null, maxChunks: 12 }));
-    expect((await post(null)).status).toBe(200);
+    expect((await post(undefined)).status).toBe(200);
     expect(h.backfillFinanceMonthlyFacts).toHaveBeenLastCalledWith(expect.objectContaining({ fromMonth: null, maxChunks: 30 }));
+    // Only an absent body means the defaults; a JSON null is refused (#5407).
+    expect((await post(null)).status).toBe(400);
     const badMonth = await post({ fromMonth: "2024-13", maxChunks: 0 });
     expect(badMonth.status).toBe(400);
     expect(await badMonth.json()).toEqual({ error: "fromMonth must be a YYYY-MM month key" });

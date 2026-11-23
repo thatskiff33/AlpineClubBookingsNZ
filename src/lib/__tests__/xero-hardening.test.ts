@@ -26,6 +26,10 @@ const mocks = vi.hoisted(() => ({
   paymentRefundFindMany: vi.fn(),
   healExecuteRaw: vi.fn(),
   healOperationFindFirst: vi.fn(),
+  // #5407 item 29: an in-memory `AlertCooldown` table, so the real claim and
+  // release in `alert-cooldown.ts` run against it.
+  cooldowns: new Map<string, Date>(),
+  cooldownUpdateMany: vi.fn(),
 }));
 
 // #2902: the over-coverage drift class compares coverage against the
@@ -70,6 +74,22 @@ vi.mock("@/lib/prisma", () => ({
     },
     emailLog: {
       findFirst: mocks.emailFindFirst,
+    },
+    alertCooldown: {
+      updateMany: mocks.cooldownUpdateMany,
+      create: async ({ data }: { data: { key: string; lastAlertedAt: Date } }) => {
+        if (mocks.cooldowns.has(data.key)) {
+          throw Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+        }
+        mocks.cooldowns.set(data.key, data.lastAlertedAt);
+        return data;
+      },
+      deleteMany: async ({ where }: { where: { key: string; lastAlertedAt: Date } }) => {
+        const held = mocks.cooldowns.get(where.key);
+        if (!held || held.getTime() !== where.lastAlertedAt.getTime()) return { count: 0 };
+        mocks.cooldowns.delete(where.key);
+        return { count: 1 };
+      },
     },
     notificationDeliveryPolicy: {
       findUnique: mocks.notificationDeliveryPolicyFindUnique,
@@ -116,7 +136,34 @@ describe("maybeNotifyXeroRepeatedFailure", () => {
     vi.clearAllMocks();
     mocks.operationCount.mockResolvedValue(3);
     mocks.emailFindFirst.mockResolvedValue(null);
-    mocks.sendRepeatedFailureAlert.mockResolvedValue(undefined);
+    mocks.sendRepeatedFailureAlert.mockResolvedValue({
+      deliveryAllowed: true,
+      recipients: 1,
+      sent: 1,
+      queuedForRetry: 0,
+      notDelivered: 0,
+      failedBeforeLogged: 0,
+    });
+    mocks.cooldowns.clear();
+    mocks.cooldownUpdateMany.mockImplementation(
+      async ({
+        where,
+        data,
+      }: {
+        where: { key: string; lastAlertedAt: { lt: Date } | Date };
+        data: { lastAlertedAt: Date };
+      }) => {
+        const held = mocks.cooldowns.get(where.key);
+        // A claim matches an older stamp (`lt`); a defer matches its own stamp.
+        const matches =
+          where.lastAlertedAt instanceof Date
+            ? held?.getTime() === where.lastAlertedAt.getTime()
+            : held !== undefined && held.getTime() < where.lastAlertedAt.lt.getTime();
+        if (!matches) return { count: 0 };
+        mocks.cooldowns.set(where.key, data.lastAlertedAt);
+        return { count: 1 };
+      }
+    );
   });
 
   it("sends an alert once a correlation key has repeated failures", async () => {
@@ -178,12 +225,13 @@ describe("maybeNotifyXeroRepeatedFailure", () => {
     expect(mocks.sendRepeatedFailureAlert).not.toHaveBeenCalled();
   });
 
-  it("suppresses alerts when one has already been sent in the current window", async () => {
-    mocks.emailFindFirst.mockResolvedValue({ id: "email_1" });
-
-    const result = await maybeNotifyXeroRepeatedFailure({
+  describe("one alert per correlation key per window (#5407 item 29)", () => {
+    const KEY = "payment:pay_1:invoice:v1";
+    const COOLDOWN_KEY = `xero-repeated-failure:${KEY}`;
+    const WINDOW_MS = 24 * 60 * 60 * 1000;
+    const failing = (correlationKey = KEY) => ({
       id: "op_1",
-      correlationKey: "payment:pay_1:invoice:v1",
+      correlationKey,
       entityType: "INVOICE",
       operationType: "CREATE",
       localModel: "Payment",
@@ -193,62 +241,149 @@ describe("maybeNotifyXeroRepeatedFailure", () => {
       xeroObjectId: "inv_1",
       xeroObjectUrl: null,
     });
-
-    expect(result).toEqual({
-      triggered: false,
-      failureCount: 3,
+    const sendResult = (overrides: Record<string, unknown> = {}) => ({
+      deliveryAllowed: true,
+      recipients: 1,
+      sent: 1,
+      queuedForRetry: 0,
+      notDelivered: 0,
+      failedBeforeLogged: 0,
+      ...overrides,
     });
-    expect(mocks.sendRepeatedFailureAlert).not.toHaveBeenCalled();
-  });
 
-  it("dedups on every status that means the alert was RAISED, not just delivered", async () => {
-    /*
-      #3035 review. This dedup used to look for `QUEUED`/`SENT` only, which was
-      every outcome that existed when it was written. Since #3035 the
-      environment-safety boundary lands this alert as `SKIPPED_NON_PRODUCTION` on
-      a copy and `FAILED` on an installation nobody has declared — so on those the
-      dedup matched nothing, every qualifying operation re-attempted the alert,
-      and each attempt wrote another counted withheld row into the very number
-      that distinguishes a live club wrongly declared a copy from an idle one.
+    it("sends once per key in the window, holding the claim on the correlation key", async () => {
+      expect(await maybeNotifyXeroRepeatedFailure(failing())).toEqual({ triggered: true, failureCount: 3 });
+      expect(await maybeNotifyXeroRepeatedFailure(failing())).toEqual({ triggered: false, failureCount: 3 });
 
-      `FAILED` is not a lost alert: this template retains its body, so the email
-      retry cron replays that row.
-    */
-    const statuses = await (async () => {
-      mocks.emailFindFirst.mockResolvedValue(null);
-      await maybeNotifyXeroRepeatedFailure({
-        id: "op_1",
-        correlationKey: "payment:pay_1:invoice:v1",
-        entityType: "INVOICE",
-        operationType: "CREATE",
-        localModel: "Payment",
-        localId: "pay_1",
-        lastErrorMessage: "Rate limit exceeded",
-        xeroObjectType: "INVOICE",
-        xeroObjectId: "inv_1",
-        xeroObjectUrl: null,
-      });
-      const where = mocks.emailFindFirst.mock.calls.at(-1)?.[0]?.where as {
-        status?: { in?: string[] };
-      };
-      return where?.status?.in ?? [];
-    })();
-
-    // Anti-vacuity: an absent filter would make `.toContain` on an empty array
-    // fail rather than pass, but say so out loud.
-    expect(statuses.length).toBeGreaterThan(2);
-    for (const status of [
-      "QUEUED",
-      "SENT",
-      "FAILED",
-      "SKIPPED_NON_PRODUCTION",
-      "SKIPPED_NO_EMAILS",
-      "BOUNCED",
-    ]) {
-      expect(statuses, `${status} means the alert was already raised`).toContain(
-        status,
+      expect(mocks.sendRepeatedFailureAlert).toHaveBeenCalledTimes(1);
+      expect(mocks.sendRepeatedFailureAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ subject: `Repeated Xero Failure: ${KEY}` })
       );
-    }
+      expect([...mocks.cooldowns.keys()]).toEqual([COOLDOWN_KEY]);
+    });
+
+    it("holds the limit when the club saved its own subject, which the mail log then stores", async () => {
+      // The old limit looked the earlier alert up in EmailLog by the built-in
+      // subject. With a saved subject the stored row never matched, which this
+      // lookup models by always finding nothing; the limit must still hold.
+      mocks.emailFindFirst.mockResolvedValue(null);
+
+      await maybeNotifyXeroRepeatedFailure(failing());
+      await maybeNotifyXeroRepeatedFailure(failing());
+      await maybeNotifyXeroRepeatedFailure(failing());
+
+      expect(mocks.sendRepeatedFailureAlert).toHaveBeenCalledTimes(1);
+      expect(mocks.emailFindFirst).not.toHaveBeenCalled();
+    });
+
+    it("alerts separately for two different correlation keys", async () => {
+      await maybeNotifyXeroRepeatedFailure(failing("payment:pay_1:invoice:v1"));
+      await maybeNotifyXeroRepeatedFailure(failing("payment:pay_2:invoice:v1"));
+
+      expect(mocks.sendRepeatedFailureAlert).toHaveBeenCalledTimes(2);
+    });
+
+    it("alerts again once the earlier alert is older than the window", async () => {
+      mocks.cooldowns.set(COOLDOWN_KEY, new Date(Date.now() - WINDOW_MS - 1));
+
+      expect(await maybeNotifyXeroRepeatedFailure(failing())).toEqual({ triggered: true, failureCount: 3 });
+    });
+
+    it("does not alert while an alert raised at the window's start still holds the key", async () => {
+      mocks.cooldowns.set(COOLDOWN_KEY, new Date(Date.now() - WINDOW_MS));
+
+      expect(await maybeNotifyXeroRepeatedFailure(failing())).toEqual({ triggered: false, failureCount: 3 });
+      expect(mocks.sendRepeatedFailureAlert).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["sent", sendResult()],
+      ["queued for the retry cron (FAILED with its body kept)", sendResult({ sent: 0, queuedForRetry: 1 })],
+      ["withheld on a copy or bounced (SKIPPED_NON_PRODUCTION, BOUNCED)", sendResult({ sent: 0, notDelivered: 1 })],
+    ])("keeps the claim when the alert was RAISED, not just delivered: %s (#3035)", async (_label, result) => {
+      mocks.sendRepeatedFailureAlert.mockResolvedValue(result);
+
+      await maybeNotifyXeroRepeatedFailure(failing());
+      await maybeNotifyXeroRepeatedFailure(failing());
+
+      expect(mocks.sendRepeatedFailureAlert).toHaveBeenCalledTimes(1);
+      expect(mocks.cooldowns.has(COOLDOWN_KEY)).toBe(true);
+    });
+
+    const NOBODY_ELIGIBLE = [
+      ["the delivery policy skipped it", sendResult({ deliveryAllowed: false, recipients: 0, sent: 0 })],
+      ["no admin is opted in", sendResult({ recipients: 0, sent: 0 })],
+    ] as const;
+
+    it.each(NOBODY_ELIGIBLE)(
+      "holds the claim for a day, never giving it back, when nobody could receive it: %s (#3635 F1)",
+      async (_label, result) => {
+        mocks.sendRepeatedFailureAlert.mockResolvedValue(result);
+
+        await maybeNotifyXeroRepeatedFailure(failing());
+        await maybeNotifyXeroRepeatedFailure(failing());
+        await maybeNotifyXeroRepeatedFailure(failing());
+
+        // One attempt (and so at most one Xero read) per day, not one per failure.
+        expect(mocks.sendRepeatedFailureAlert).toHaveBeenCalledTimes(1);
+        expect(mocks.cooldowns.get(COOLDOWN_KEY)?.getTime()).toBe(Date.now());
+      },
+    );
+
+    it.each(NOBODY_ELIGIBLE)(
+      "holds it for a day, not the whole window, under a longer window: %s",
+      async (_label, result) => {
+        mocks.sendRepeatedFailureAlert.mockResolvedValue(result);
+
+        await maybeNotifyXeroRepeatedFailure(failing(), { windowHours: 48 });
+
+        // Moved back so a 48-hour claim succeeds again exactly one day on.
+        expect(mocks.cooldowns.get(COOLDOWN_KEY)?.getTime()).toBe(Date.now() - WINDOW_MS);
+      },
+    );
+
+    it("holds the claim for a day when the alert reached nobody and nothing will replay it (#5448)", async () => {
+      // Every copy failed before its mail log row existed: no retry row, so
+      // only sending again reaches anyone (`adminAlertNeedsResend`).
+      mocks.sendRepeatedFailureAlert.mockResolvedValue(
+        sendResult({ sent: 0, notDelivered: 1, failedBeforeLogged: 1 }),
+      );
+
+      await maybeNotifyXeroRepeatedFailure(failing(), { windowHours: 48 });
+      await maybeNotifyXeroRepeatedFailure(failing(), { windowHours: 48 });
+
+      expect(mocks.sendRepeatedFailureAlert).toHaveBeenCalledTimes(1);
+      // Deferred: due again one day on, not after the 48-hour window.
+      expect(mocks.cooldowns.get(COOLDOWN_KEY)?.getTime()).toBe(Date.now() - WINDOW_MS);
+    });
+
+    it("keeps the whole window for copies withheld or refused on purpose", async () => {
+      mocks.sendRepeatedFailureAlert.mockResolvedValue(sendResult({ sent: 0, notDelivered: 1 }));
+
+      await maybeNotifyXeroRepeatedFailure(failing(), { windowHours: 48 });
+
+      expect(mocks.cooldowns.get(COOLDOWN_KEY)?.getTime()).toBe(Date.now());
+    });
+
+    it("gives the claim back when the send throws, so the next failure alerts", async () => {
+      mocks.sendRepeatedFailureAlert.mockRejectedValueOnce(new Error("render failed"));
+
+      expect(await maybeNotifyXeroRepeatedFailure(failing())).toEqual({ triggered: false, failureCount: 3 });
+      expect(await maybeNotifyXeroRepeatedFailure(failing())).toEqual({ triggered: true, failureCount: 3 });
+      expect(mocks.sendRepeatedFailureAlert).toHaveBeenCalledTimes(2);
+    });
+
+    it("sends nothing and fails when the claim throws, giving back a stamp that may have landed", async () => {
+      mocks.cooldownUpdateMany.mockImplementationOnce(async ({ data }: { data: { lastAlertedAt: Date } }) => {
+        // The write committed, then the connection dropped before the reply.
+        mocks.cooldowns.set(COOLDOWN_KEY, data.lastAlertedAt);
+        throw new Error("database unavailable");
+      });
+
+      await expect(maybeNotifyXeroRepeatedFailure(failing())).rejects.toThrow("database unavailable");
+      expect(mocks.sendRepeatedFailureAlert).not.toHaveBeenCalled();
+      expect(mocks.cooldowns.has(COOLDOWN_KEY)).toBe(false);
+    });
   });
 });
 

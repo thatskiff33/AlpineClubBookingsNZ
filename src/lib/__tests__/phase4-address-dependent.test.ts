@@ -133,7 +133,7 @@ vi.mock("@/lib/email", () => ({
   sendPasswordResetEmail: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/verification-tokens", () => ({
-  createEmailVerificationToken: vi.fn().mockResolvedValue("token123"),
+  createEmailVerificationToken: vi.fn().mockResolvedValue({ token: "token123", expiresAt: new Date("2026-07-03T00:00:00.000Z") }),
 }));
 vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: vi.fn().mockReturnValue(null),

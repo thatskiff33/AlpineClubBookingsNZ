@@ -3,9 +3,10 @@
  * (`POST /api/finance/sync/backfill-monthly-facts`). The route and its AI app
  * action read it (ALP-721, `INV-SSOT`).
  *
- * The route has always been lenient about what reaches it, and still is: a
- * body that is not an object, a `fromMonth` that is not a non-blank string,
- * and a missing or null `maxChunks` all mean "no limit given", and
+ * The route refuses a JSON body that is not an object before this schema
+ * reads it (#5407); past that it stays lenient: a missing body, a `fromMonth`
+ * that is not a non-blank string, and a missing or null `maxChunks` all mean
+ * "no limit given", and
  * `maxChunks` is read as a number (`"12"` is 12). What it then refuses, and
  * the words it refuses with, are unchanged. An app is offered the strict
  * fields only.

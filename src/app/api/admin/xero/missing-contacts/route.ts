@@ -12,6 +12,7 @@
  * against, which the engine re-computes and compares before it touches anybody.
  */
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 import { logAudit } from "@/lib/audit";
 import {
@@ -68,8 +69,9 @@ export async function POST(request: NextRequest) {
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  const body = await request.json().catch(() => null);
-  const parsed = xeroMissingContactRunBodySchema.safeParse(body);
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = xeroMissingContactRunBodySchema.safeParse(jsonBody.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid request", details: parsed.error.flatten() },

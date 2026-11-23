@@ -2530,6 +2530,15 @@ Scheduled hardening (cron tasks, all idempotent):
   events, link problems).
 - Repeated-failure alerting (`maybeNotifyXeroRepeatedFailure`) and the
   once-per-hour error alert (`notifyXeroSyncError`) keep failure noise bounded.
+  The repeated-failure alert goes out once per correlation key per 24-hour
+  window, held by an `AlertCooldown` claim on that key (#5407), so a subject
+  the club saves for the alert cannot switch the limit off. The claim is kept
+  once the alert is raised (sent, queued for retry, bounced or withheld on a
+  copy), held for a day when nobody could receive it (the alert switched off
+  or nobody opted in) or when it reached nobody and nothing will replay it (a
+  copy failed before its mail log row existed, #5448). It is given back only
+  when the send threw, or when the claim write itself threw (its stamp may
+  have landed, so it is removed and the failure reported to the caller).
 
 ### Repairing Stripe refund-note links (#2901)
 
@@ -3984,10 +3993,13 @@ settled by owner decision on 1 and 2 August 2026, is three sentences long:
    the read and returns null unless it succeeded, so an email names the
    organisation only when it was confirmed at send time and otherwise degrades
    to the generic link. It is affordable because the senders bound it, not
-   traffic: the repeated-failure alert is deduplicated against `EmailLog` for
-   the window, the settlement conflict is throttled by a cross-instance
-   `AlertCooldown` claim, and the nightly report takes one read for the whole
-   email.
+   traffic: the repeated-failure alert and the settlement conflict are each
+   throttled by a cross-instance `AlertCooldown` claim, and the nightly report
+   takes one read for the whole email. The repeated-failure sender also reads
+   the delivery policy and the opted-in audience first and makes no Xero read
+   when either rules the alert out; with the claim held for a day in that
+   case, a switched-off alert costs at most one policy read a day per failing
+   key and no Xero read at all.
 
 The producers behind the six server-fed render sites, all covered:
 

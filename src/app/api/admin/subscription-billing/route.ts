@@ -1,3 +1,4 @@
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { revalidateAdminPage } from "@/lib/admin-page-revalidation";
 import { NextRequest, NextResponse } from "next/server";
 import { parseJsonRequestBody } from "@/lib/api-json";
@@ -219,9 +220,8 @@ export async function POST(request: Request) {
           created = true;
         });
       } catch (error) {
-        // A concurrent mark lost the race to the partial unique index — the family
-        // is now marked either way, so the action is idempotently satisfied.
-        if (!(error && typeof error === "object" && "code" in error && error.code === "P2002")) throw error;
+        // A concurrent mark lost the race to the partial unique index: the family is marked either way.
+        if (!isPrismaUniqueConstraintError(error)) throw error;
       }
       if (created) {
         await createAuditLog({

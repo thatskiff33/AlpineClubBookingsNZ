@@ -1,5 +1,6 @@
 import { FinanceSyncRunStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import {
   FINANCE_BACKFILL_MONTHLY_FACTS_CONNECTION_SHAPE,
@@ -17,17 +18,15 @@ export async function POST(request: NextRequest) {
     return authResult.response;
   }
 
+  // The body is optional and read only when it says it is JSON; any other
+  // content type runs with the defaults, as before (#5407).
   let body: unknown;
-  try {
-    body = request.headers.get("content-type")?.includes("application/json")
-      ? await request.json()
-      : {};
-  } catch {
-    return NextResponse.json(
-      { error: "Invalid request body" },
-      { status: 400 }
-    );
+  if (request.headers.get("content-type")?.includes("application/json")) {
+    const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: {}, objectOnly: true });
+    if (!jsonBody.ok) return jsonBody.response;
+    body = jsonBody.body;
   }
+
   const parsed = financeBackfillMonthlyFactsBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid request body" }, { status: 400 });

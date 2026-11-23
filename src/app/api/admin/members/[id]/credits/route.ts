@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   CREDIT_ADJUSTMENT_REQUESTED_CONNECTION_SHAPE,
   MEMBER_CREDITS_CONNECTION_SHAPE,
@@ -71,8 +72,9 @@ export async function POST(
     if (!guard.ok) return guard.response;
     const session = guard.session;
     const { id } = await params;
-    const body = await request.json();
-    const parsed = adminCreditAdjustmentRequestSchema.safeParse(body);
+    const jsonBody = await parseJsonRequestBody(request);
+    if (!jsonBody.ok) return jsonBody.response;
+    const parsed = adminCreditAdjustmentRequestSchema.safeParse(jsonBody.body);
 
     if (!parsed.success) {
       return NextResponse.json(

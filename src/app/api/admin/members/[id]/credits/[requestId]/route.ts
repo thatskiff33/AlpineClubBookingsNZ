@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { adminCreditAdjustmentReviewSchema } from "@/lib/admin-credit-adjustment-schemas";
 import {
@@ -32,8 +33,9 @@ export async function PATCH(
     if (!guard.ok) return guard.response;
     const session = guard.session;
     const { id, requestId } = await params;
-    const body = await request.json();
-    const parsed = adminCreditAdjustmentReviewSchema.safeParse(body);
+    const jsonBody = await parseJsonRequestBody(request);
+    if (!jsonBody.ok) return jsonBody.response;
+    const parsed = adminCreditAdjustmentReviewSchema.safeParse(jsonBody.body);
 
     if (!parsed.success) {
       return NextResponse.json(

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { getXeroMemberGroupingSnapshot } from "@/lib/xero-member-grouping-resync";
 import {
@@ -49,8 +50,9 @@ export async function POST(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
-  const body = await request.json().catch(() => ({}));
-  const parsed = xeroContactGroupMismatchResyncBodySchema.safeParse(body ?? {});
+  const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: {} });
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = xeroContactGroupMismatchResyncBodySchema.safeParse(jsonBody.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid request body", details: parsed.error.flatten() },

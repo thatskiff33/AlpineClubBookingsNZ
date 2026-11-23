@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { scheduleAfterResponse } from "@/lib/schedule-after-response";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
-import { invalidJsonBodyResponse } from "@/lib/api-json";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { prisma } from "@/lib/prisma";
@@ -114,17 +114,10 @@ export async function POST(
   let createdXeroContactId: string | null = null;
   let subscriptionRefreshPending = false;
   try {
-    let body: unknown = {};
-    const rawBody = await req.text();
-    if (rawBody.trim()) {
-      try {
-        body = JSON.parse(rawBody);
-      } catch {
-        return invalidJsonBodyResponse({ error: "Invalid JSON" });
-      }
-    }
+    const jsonBody = await parseOptionalJsonRequestBody(req, { error: "Invalid JSON", whenAbsent: {} });
+    if (!jsonBody.ok) return jsonBody.response;
 
-    const parsed = xeroMemberContactPushBodySchema.safeParse(body);
+    const parsed = xeroMemberContactPushBodySchema.safeParse(jsonBody.body);
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
     }

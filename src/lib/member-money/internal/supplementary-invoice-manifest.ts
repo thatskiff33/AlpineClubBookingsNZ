@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import type { LineItem } from "xero-node";
 import { prisma } from "../../prisma";
 import logger from "../../logger";
@@ -125,7 +126,7 @@ export async function recordSupplementaryInvoiceManifest(input: {
       logger.info({ bookingId, providerInvoiceId }, "The supplementary invoice's manifest was already recorded differently; the first row stands");
     }
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+    if (isPrismaKnownUniqueConstraintError(error)) {
       // The coverage key (role, account, charge, slice) is reported as its
       // index, "MemberMoneyExportCoverage_documentRole_account_chargeIdenti_key"
       // (PostgreSQL's 63-character cut), or as its fields; both carry
