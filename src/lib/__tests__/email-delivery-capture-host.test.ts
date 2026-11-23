@@ -218,6 +218,10 @@ describe("the parser refuses a capture declared against a public host", () => {
       port: 1025,
       secure: false,
       auth: { user: "capture", pass: "capture-only" },
+      // #5407 item 34: every transport carries the default timeouts.
+      connectionTimeout: 30_000,
+      greetingTimeout: 30_000,
+      socketTimeout: 120_000,
     });
     expect(emailTransportKindOf(config)).toBe("local-capture");
   });
