@@ -2094,6 +2094,12 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
   connection rather than a separate finance token store.
 - Cron run records, email logs, webhook logs, processed webhook events, and
   backup/audit-retention support records.
+- Owed notices (`OwedNotice`, #5433): a notice a committed change still owes,
+  written in the change's own transaction by a deterministic id and cleared
+  once sent; the confirm-pending and email retry jobs sweep what the first
+  attempt never sent (`src/lib/owed-notice/`, Email Retry Lifecycle in
+  `docs/STATE_MACHINES.md`). Ids and whole numbers only, and no foreign key
+  to its subject.
 - Public website content records: `PageContent` owns routable page
   header/body/menu content, while `SiteContent` owns shared public chrome such
   as the editable footer columns that never appear in the website menu.

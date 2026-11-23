@@ -313,6 +313,13 @@ shows the database role as `under_provisioned` with the blocker
 credential is missing one or more required read-only grants, so no tool was
 run." Re-run the same command, with the same settings, from the old release.
 
+### Owed notices get their own table (#5433)
+
+Nothing to do: the usual migration step creates the `OwedNotice` table. A
+rollback to the previous release leaves any notice this release recorded and
+had not yet sent until you upgrade again, when it is sent, or cleared if it
+is more than seven days old.
+
 ### Four unused columns leave the app's queries (#5396, #5407)
 
 **What changes.** No migration runs and nothing administrators or members see

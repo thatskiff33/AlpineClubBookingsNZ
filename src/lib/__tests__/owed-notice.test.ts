@@ -55,7 +55,7 @@ function testDeliverer(kind: string, audience: "member" | "officers" = "member",
   const spies = {
     load: vi.fn(async (): Promise<Subject | null> => ({ id: "s1", open: true })),
     stillOwed: vi.fn(async (subject: Subject): Promise<true | string> => (subject.open ? true : "closed")),
-    deliver: vi.fn(async (..._args: unknown[]): Promise<OwedNoticeOutcome> => "settled"),
+    deliver: vi.fn<(...args: unknown[]) => Promise<OwedNoticeOutcome>>(async () => "settled"),
     pastCutoff: vi.fn(async (): Promise<OwedNoticeOutcome> => "settled"),
   };
   const common = {

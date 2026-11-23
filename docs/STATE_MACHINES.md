@@ -4240,48 +4240,76 @@ template and booking change. Only the retry worker sends it, after its normal
 same email row; failure to persist that row leaves the invoice operation
 retryable. This avoids a synchronous send racing email recovery.
 
-The confirm-pending cron's bump notices (#5407) are owed before any row
-exists. The bump's transaction writes one `AlertCooldown` marker for the
-member's email (`booking-bumped` or `booking-guests-cancelled`) and one for the
-officers' `admin-booking-bumped` alert, each stamped with the moment of the bump.
-After the commit each marker is claimed by a stamp-guarded update, its notice
-sent at once, and the marker cleared when the notice is settled. A send that
-throws, or a job that stops first, leaves the marker. An officers' alert that
-reached nobody because every failed copy has no `EmailLog` row (it failed
-before the row was written, or its row write failed) leaves it too, held a day
-rather than an hour, as the once-only alerts are, so a lasting fault writes one
-undeliverable-alert escalation a day, not one an hour. A copy that failed
-after its row was written is the retry cron's, and no officer to tell is
-final. A later run of the same cron claims each marker whose stamp, the bump
-or its last attempt, is at least an hour old (a day, after an attempt that
-reached nobody), and sends it again (`booking-bump-notice-owed.ts`). It clears
-without sending when the booking is gone, is no longer cancelled, or has a
-`CANCELLED`, `MEMBER_PAID` or `NON_MEMBER_CONFIRMED` booking event after the
-bump (it was reinstated and moved on; the bump itself writes only `BUMPED`),
-or when the marker is more than seven days old, which it logs as an error. A
-settlement marker, a `CANCELLED` event that cancels nothing, does not count
+A notice a committed change owes is recorded before any row exists (#5433,
+`src/lib/owed-notice/`). The change's transaction writes one `OwedNotice`
+marker per notice, with a deterministic id (kind, subject, event time and an
+optional variant), stamped with the event time. After the commit each marker
+is claimed by a stamp-guarded update, its notice sent at once, and the marker
+cleared when the notice is settled. A send that throws, or a job that stops
+first, leaves the marker. An officers' alert that reached nobody because
+every failed copy has no `EmailLog` row (it failed before the row was
+written, or its row write failed) leaves it too, held for the kind's longer
+retry, so a lasting fault does not write an undeliverable-alert escalation on
+every run. A copy that failed after its row was written is the retry cron's,
+and no officer to tell is final. The sweep (`drainOwedNotices`) runs from the
+confirm-pending job and from this job, every 30 minutes. For each kind this
+release knows, it claims each marker whose stamp, the event or its last
+attempt, is at least the kind's wait old, and then:
+
+- clears it with an error log, sending nothing, when it is past the kind's
+  maximum age or cannot be read;
+- clears it without sending when its subject is gone or has moved on (the
+  kind's `stillOwed` reads current state);
+- past the kind's cut-off, runs the kind's own step instead (for a member's
+  notice, an alert to officers) or, with none, clears it with an error log;
+- otherwise sends it again, as right after the commit.
+
+A kind the running release has no deliverer for is never read, so a marker a
+newer release wrote during a blue-green switchover stays for that release.
+
+A member's notice carries an event key, which becomes its `EmailLog` id, so
+however often it is sent it has one row, and a provider failure leaves that
+row `FAILED` for the retry cron. An officers' alert has one row per officer
+and no such id, so it can arrive twice: after a crash between its send and
+the clear, or when a send is still running a kind's whole wait after its
+claim (or two app instances' clocks differ by about that much) and a sweep
+claims the marker again. The member is still sent one email in both cases.
+
+**Stated limit, for every keyed notice.** A crash during the provider call
+itself leaves the member's row `QUEUED`. The retry cron selects `FAILED` rows
+only and nothing replays a `QUEUED` one, and the sweep's own send finds the
+row recorded and sends nothing. That is deliberate: for money-related notices
+a duplicate is worse than a missed email. The same holds for every inline
+send with an event key.
+
+The confirm-pending cron's bump notices (#5407) are the first kinds on this
+mechanism: one marker for the member's email (`booking-bumped` or
+`booking-guests-cancelled`) and one for the officers' `admin-booking-bumped`
+alert. Their wait is an hour (a day after an attempt that reached nobody),
+their maximum age and cut-off seven days with no officer alert past it, and
+the member's event key is `<bookingId>:<bumpedAtMs>`, as #5407 shipped. The
+sweep clears a bump notice without sending when the booking is gone, is no
+longer cancelled, or has a `CANCELLED`, `MEMBER_PAID` or
+`NON_MEMBER_CONFIRMED` booking event after the bump (it was reinstated and
+moved on; the bump itself writes only `BUMPED`). A settlement marker, a
+`CANCELLED` event that cancels nothing, does not count
 (`NOT_A_SETTLEMENT_MARKER_WHERE`). Most cancel and confirmation events are
 narrative, written best effort after their own commits; a few decision
 records commit with what they describe. A lost narrative event still leaves
 the booking told it was bumped, so this narrows the reinstated case rather
-than closing it.
-
-The member's email carries an id derived from the template, booking and bump
-time, so however often it is sent it has one row, and a provider failure
-leaves that row `FAILED` for the retry cron. The officers' alert has one row
-per officer and no such id, so it can arrive twice: after a crash between its
-send and the clear, or when a send is still running an hour after its claim
-(or two app instances' clocks differ by about that much) and a sweep claims the
-marker again. The member is still sent one email in both cases. A crash during
-the provider call itself leaves the member's row `QUEUED`, which nothing
-replays.
+than closing it. A release before #5433 wrote the bump markers to
+`AlertCooldown`; the sweep still drains those, with the same claim and event
+key, so a bump is sent one member email whichever table holds its marker
+(`booking-bump-notice-owed.ts`).
 
 ```text
-bump commits + markers -> claim -> send settled -> marker cleared
-bump commits + markers -> claim -> send throws -> marker kept -> later run (an hour on) claims -> send -> cleared
-bump commits + markers -> claim -> officers' copies all lack a row -> marker held a day -> later run claims -> send -> cleared
-bump commits + markers -> job stops -> later run claims -> booking still CANCELLED, nothing since -> send -> cleared
-later run claims -> booking gone, reinstated, cancelled or confirmed since, or marker over 7 days old -> cleared, nothing sent
+change commits + markers -> claim -> send settled -> marker cleared
+change commits + markers -> claim -> send throws -> marker kept -> later sweep (a wait on) claims -> send -> cleared
+change commits + markers -> claim -> officers' copies all lack a row -> marker held (a day for the bump) -> later sweep claims -> send -> cleared
+change commits + markers -> job stops -> later sweep claims -> subject still owes it -> send -> cleared
+later sweep claims -> subject gone or moved on, or marker past its maximum age -> cleared, nothing sent
+later sweep claims -> past the kind's cut-off -> kind's own step (or cleared, error log)
+later sweep -> kind this release does not know -> left in place
 ```
 
 A message whose retry belongs entirely to something else keeps no body
