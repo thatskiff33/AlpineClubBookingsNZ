@@ -3696,6 +3696,32 @@ model AlertCooldown {
   lastAlertedAt DateTime
 }
 
+// #5433: a notice (an email or an officers' alert) that a committed change
+// still owes. Written inside the change's own transaction, cleared once the
+// notice is sent, and swept by a later run when the first attempt never
+// started (`src/lib/owed-notice/`). The id is deterministic,
+// `<kind>:<subjectId>:<eventAtMs>[:variant]`, so the write is by primary key
+// with ON CONFLICT DO NOTHING and can never abort the transaction. `kind` is
+// plain text, not an enum, so a release can add a kind the release still
+// draining beside it does not know and skips. `subjectId` (a booking id today)
+// has NO foreign key, as on EmailLog: the marker must outlive a hard booking
+// delete, which its sweep reads as "no longer owed". `payload` holds ids and
+// whole numbers only, never personal data. `stampedAt` is the claim stamp:
+// the event time when written, then each attempt's claim.
+model OwedNotice {
+  id        String   @id
+  kind      String
+  subjectId String
+  eventAt   DateTime
+  variant   String?
+  payload   Json?
+  stampedAt DateTime
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([kind, stampedAt])
+}
+
 model PaymentRecoveryOperation {
   id                   String                         @id @default(cuid())
   type                 PaymentRecoveryOperationType
