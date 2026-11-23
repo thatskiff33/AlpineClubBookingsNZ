@@ -2,10 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminGuestDietaryBodySchema } from "@/lib/admin-bookings-schemas/bookings";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
-import {
-  ADMIN_GUEST_DIETARY_CONNECTION_SHAPE,
-  type AdminGuestDietaryAnswer,
-} from "@/lib/connection-shapes/bookings-bookings";
+import { ADMIN_GUEST_DIETARY_CONNECTION_SHAPE } from "@/lib/connection-shapes/bookings-bookings";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import {
   grantBookingAdminDietaryAccess,
@@ -113,9 +110,10 @@ export async function PATCH(
   if (result.status === "not-found") {
     return NextResponse.json({ error: "Guest not found on this booking" }, { status: 404 });
   }
-  const answer: AdminGuestDietaryAnswer = {
-    guestId,
-    dietaryRequirements: result.value,
-  };
-  return connectionJson(req, answer, ADMIN_GUEST_DIETARY_CONNECTION_SHAPE);
+  // The browser gets the saved value back; a connection only the guest id.
+  return connectionJson(
+    req,
+    { guestId, dietaryRequirements: result.value },
+    ADMIN_GUEST_DIETARY_CONNECTION_SHAPE,
+  );
 }

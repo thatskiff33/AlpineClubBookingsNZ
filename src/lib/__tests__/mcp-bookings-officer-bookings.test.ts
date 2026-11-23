@@ -1002,7 +1002,7 @@ describe("send_fresh_booking_email_copy", () => {
 });
 
 describe("update_booking_guest_dietary", () => {
-  it("saves the guest's needs for this stay and answers the saved value", async () => {
+  it("saves the guest's needs for this stay and answers the guest, not the value", async () => {
     const grant = { actorMemberId: OFFICER, level: "edit" };
     h.dietaryEnabled.mockResolvedValue(true);
     h.dietaryGrant.mockResolvedValue(grant);
@@ -1021,9 +1021,9 @@ describe("update_booking_guest_dietary", () => {
       { bookingId: "booking-1", guestId: "guest-1", value: "  No nuts  ", occupant },
       h.prisma,
     );
-    const answer = { guestId: "guest-1", dietaryRequirements: "No nuts" };
-    expect(connection).toEqual(answer);
-    expect(browser).toEqual(answer);
+    // INV-PRIV-022: the saved value goes back to the screen, never to the app.
+    expect(connection).toEqual({ guestId: "guest-1" });
+    expect(browser).toEqual({ guestId: "guest-1", dietaryRequirements: "No nuts" });
   });
 });
 

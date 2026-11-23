@@ -297,17 +297,12 @@ export const ADMIN_FRESH_EMAIL_COPY_CONNECTION_SHAPE = connectionShapeFor<AdminF
 });
 
 /**
- * `PATCH /api/admin/bookings/[id]/guest-dietary`. The action is about the
- * value, so the saved (trimmed, or cleared) value is sent back.
+ * `PATCH /api/admin/bookings/[id]/guest-dietary`: which guest was saved. The
+ * saved value itself is never sent back to a connection (`INV-PRIV-022`): the
+ * app already holds what it sent, and the screen alone shows the stored value.
  */
-export interface AdminGuestDietaryAnswer {
-  guestId: string;
-  dietaryRequirements: string | null;
-}
-
-export const ADMIN_GUEST_DIETARY_CONNECTION_SHAPE = connectionShapeFor<AdminGuestDietaryAnswer>({
+export const ADMIN_GUEST_DIETARY_CONNECTION_SHAPE = connectionShapeFor<{ guestId: string }>({
   guestId: true,
-  dietaryRequirements: true,
 });
 
 /** `POST /api/admin/bookings/[id]/no-emails`. */

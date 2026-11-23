@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { isConnectionShapeModule } from "./support/connection-shape-modules";
 import { stripComments } from "./support/strip-comments";
 import { moduleImports, productionSourceFiles } from "./support/static-import-graph";
 
@@ -105,14 +106,20 @@ describe("waitlist position census (#5402, INV-CAP-041)", () => {
   });
 
   it("never selects the stored column", () => {
+    // A connection shape's `waitlistPosition: true` sends the position the
+    // route already read; it is not a select (support/connection-shape-modules).
     const offenders = sources
+      .filter(({ file }) => !isConnectionShapeModule(file))
       .filter(({ code }) => /\bwaitlistPosition\s*:\s*true\b/.test(code))
       .map(({ file }) => file);
     expect(offenders).toEqual([]);
   });
 
   it("gives the name no value but null except at the reviewed payload, prop and type keys", () => {
-    const uses = sources.flatMap(({ file, code }) => positionKeyUses(file, code)).sort();
+    const uses = sources
+      .filter(({ file }) => !isConnectionShapeModule(file))
+      .flatMap(({ file, code }) => positionKeyUses(file, code))
+      .sort();
     expect(
       uses,
       "a new waitlistPosition key may be a stored write; positions are read with getWaitlistPositions (INV-CAP-041)",

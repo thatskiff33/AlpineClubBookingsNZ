@@ -9,21 +9,8 @@
  */
 import { z } from "zod";
 
-import {
-  ADMIN_LIST_DEFAULT_PAGE_SIZE,
-  ADMIN_LIST_MAX_PAGE_SIZE,
-  adminListPageQueryFields,
-  adminQueueFocusIdField,
-} from "@/lib/admin-list-page";
+import { adminListPageQueryFields, adminQueueFocusIdField } from "@/lib/admin-list-page";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
-
-const queuePage = adminListPageQueryFields.page.describe("The page to read, from 1.");
-
-function queuePageSize(rows: string) {
-  return adminListPageQueryFields.pageSize.describe(
-    `${rows} per page, 1 to ${ADMIN_LIST_MAX_PAGE_SIZE}; ${ADMIN_LIST_DEFAULT_PAGE_SIZE} by default.`,
-  );
-}
 
 /** `GET /api/admin/booking-change-requests`: the locked-period change queue. */
 export const adminBookingChangeRequestQueueQuerySchema = z.object({
@@ -32,8 +19,7 @@ export const adminBookingChangeRequestQueueQuerySchema = z.object({
     .optional()
     .default("REQUESTED")
     .describe("Which requests: `REQUESTED` (the default: waiting for a decision, oldest first), `APPROVED`, `REJECTED` or `ALL`."),
-  page: queuePage,
-  pageSize: queuePageSize("Requests"),
+  ...adminListPageQueryFields,
   requestId: adminQueueFocusIdField.describe("One request's id, to read just that request."),
 });
 
@@ -63,8 +49,7 @@ export const adminBookingExceptionRequestQueueQuerySchema = z.object({
     .describe(
       "Which requests: `REQUESTED` (the default: waiting for a decision, oldest first), `APPROVED`, `REJECTED`, `CANCELLED`, `SUPERSEDED`, `EXPIRED` (the provisional hold ran out) or `ALL`.",
     ),
-  page: queuePage,
-  pageSize: queuePageSize("Requests"),
+  ...adminListPageQueryFields,
 });
 
 /** `GET /api/admin/booking-reviews`: bookings held for an officer's review. */
@@ -74,8 +59,7 @@ export const adminBookingReviewQueueQuerySchema = z.object({
     .optional()
     .default("PENDING")
     .describe("Which reviews: `PENDING` (the default: waiting, oldest first), `APPROVED`, `REJECTED` or `ALL` (pending first)."),
-  page: queuePage,
-  pageSize: queuePageSize("Bookings"),
+  ...adminListPageQueryFields,
   // A focused deep link (`?bookingId=`) reads its one booking, inside the same
   // review scope, so the panel can pin it when it is not on the page
   // (INV-OPS-020).
@@ -91,6 +75,5 @@ export const adminBookingReviewQueueQuerySchema = z.object({
 export const adminWaitlistQuerySchema = z.object({
   from: dateOnlyStringSchema.optional().describe("Only entries arriving on or after this date, `YYYY-MM-DD`."),
   to: dateOnlyStringSchema.optional().describe("Only entries leaving on or before this date, `YYYY-MM-DD`."),
-  page: queuePage,
-  pageSize: queuePageSize("Entries"),
+  ...adminListPageQueryFields,
 });

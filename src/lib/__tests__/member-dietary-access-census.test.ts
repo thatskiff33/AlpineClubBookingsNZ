@@ -174,6 +174,12 @@ const DIETARY_REACH: Readonly<Record<string, CensusEntry>> = {
   // #4988: moved from the route, for its size ceiling; it reads and writes nothing.
   "src/lib/member-import-request-schema.ts":
     "member CSV import request shape; the route alone decides whether the column applies",
+  // ALP-719: the AI app action shares the edit route's body schema. Its answer
+  // carries the guest id only, so no value goes back to the app.
+  "src/lib/admin-bookings-schemas/bookings.ts": {
+    reason: "the booking-value edit route's request shape (R4), shared with its AI app action; the route alone decides",
+    ...BOOKING,
+  },
   "src/lib/member-merge-field-rules.ts": "fill-if-blank merge rule",
   "src/lib/member-merge-field-kinds.ts": "merge screen value kind",
   // #4915: moved from the door, for its size budget; it reads nothing.

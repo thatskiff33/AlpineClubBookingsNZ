@@ -85,6 +85,22 @@ function cappedRoutesRead(code: string): string[] {
   );
 }
 
+/**
+ * The route file's code, and that of each `@/lib` module it imports a
+ * `...QuerySchema` from: where the route's query schema can live.
+ */
+function querySchemaSources(routeFile: string): string[] {
+  const code = stripComments(readFileSync(routeFile, "utf8"));
+  const sources = [code];
+  for (const match of code.matchAll(/import\s*\{([^}]*)\}\s*from\s*"@\/lib\/([^"]+)"/g)) {
+    if (!/\w+QuerySchema\b/.test(match[1] ?? "")) continue;
+    const base = path.join(SRC, "lib", match[2] ?? "");
+    const schemaModule = [`${base}.ts`, path.join(base, "index.ts")].find((candidate) => existsSync(candidate));
+    if (schemaModule) sources.push(stripComments(readFileSync(schemaModule, "utf8")));
+  }
+  return sources;
+}
+
 function queueReaders(): Map<string, string[]> {
   const readers = new Map<string, string[]>();
   for (const file of sourceFiles(SRC)) {
@@ -187,9 +203,11 @@ describe("row-capped officer queues page through every row (INV-OPS-020)", () =>
   });
 
   it("every capped route's schema spreads adminListPageQueryFields", () => {
+    // The schema is in the route, or in the lib module the route imports its
+    // `...QuerySchema` from (shared with the AI app catalogue, ALP-719).
     const failures = Object.keys(CAPPED_QUEUE_ROUTES).filter((route) => {
       const file = path.join(ROOT, "src/app", `${route}/route.ts`);
-      return !/\.\.\.adminListPageQueryFields\b/.test(stripComments(readFileSync(file, "utf8")));
+      return !querySchemaSources(file).some((code) => /\.\.\.adminListPageQueryFields\b/.test(code));
     });
     expect(failures).toEqual([]);
   });

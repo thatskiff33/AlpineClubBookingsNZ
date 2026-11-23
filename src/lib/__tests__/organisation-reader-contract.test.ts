@@ -563,6 +563,10 @@ const OWNER_PROJECTION = [
   /organisation: \{ select: \{ name: true,? \} \},?/g,
   // The same thing declared in a `GetPayload` type argument.
   /organisation: \{ select: \{ name: true; email: true;? \} \};?/g,
+  // An AI app connection shape (ALP-719) sending the owner's name, as the
+  // admin screen shows it: an allow-list of what a connection is sent, never
+  // a select. Without `select:` it is not valid Prisma, so it cannot hide one.
+  /organisation: \{ name: true \},?/g,
   // And declared as a plain TypeScript field by a caller that wrote its own
   // row shape rather than deriving one.
   /organisation: \{ name: string; email: string \| null \}(?: \| null)?;?/g,

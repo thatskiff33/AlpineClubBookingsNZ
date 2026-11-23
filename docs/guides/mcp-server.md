@@ -447,8 +447,8 @@ officer's own (`INV-MCP-006`).
 
 It also reaches the officer actions for each admin area the officer holds,
 starting with Bookings & Beds (ALP-719; the other areas follow). Whatever the
-officer asks about through those, such as another member's bookings, family,
-contact details or dietary needs, goes to that officer's AI provider. The
+officer asks about through those, such as another member's bookings, family
+or contact details, goes to that officer's AI provider. The
 switch governs the connection, not the action list. That is why **Officers
 may connect an AI app** is a separate switch, off by default. Before
 switching it on, the club should cover it in its privacy notice and decide
@@ -515,9 +515,8 @@ as that area's admin screens show it to the officer:
 - bookings and requests: booker and guest names, age groups, dates, lodge,
   status and prices; the reason or message a member wrote on a change,
   exception or booking request, and the officers' notes on it; the names of
-  the officers who priced or reviewed a request or booking; a guest's dietary
-  needs when the officer changes them; the family members an officer can book
-  for (name, age group, relationship);
+  the officers who priced or reviewed a request or booking; the family
+  members an officer can book for (name, age group, relationship);
 - contact details where the officer is matching or choosing a contact: the
   email address and phone number of a non-member contact or a booking
   request's contact, and the names and email addresses of a school's
@@ -532,8 +531,9 @@ Each answer is cut to a named shape
 though the admin screens still show them: the booker's email address on a
 search result, waitlist entry or review queue, payment and Xero record ids,
 the address a booking email went to, the member ids of the officers who
-reviewed something, and who approved a bed allocation or last saved a
-setting. Seasons, policies and settings
+reviewed something, who approved a bed allocation or last saved a setting,
+and a guest's dietary needs: an officer's app may change them, but the saved
+value is never sent back (`INV-PRIV-022`). Seasons, policies and settings
 carry no personal information.
 
 The app also holds whatever the person typed to it, such as the guest names

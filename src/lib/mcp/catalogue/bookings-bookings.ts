@@ -295,7 +295,7 @@ const ONE_BOOKING_TOOLS: readonly McpAction[] = [
     id: "update_booking_guest_dietary",
     title: "Change a guest's dietary needs for a stay",
     summary:
-      `Officer: change or clear one guest's dietary or allergy needs for this booking only (not their profile), up to ${DIETARY_REQUIREMENTS_MAX_LENGTH} characters. Send the guest as last read in \`occupant\`; a guest changed since is refused. Only while the club has the dietary field on. Answers with the guest id and the saved value.`,
+      `Officer: change or clear one guest's dietary or allergy needs for this booking only (not their profile), up to ${DIETARY_REQUIREMENTS_MAX_LENGTH} characters. Send the guest as last read in \`occupant\`; a guest changed since is refused. Only while the club has the dietary field on. Answers with the guest id only: the saved value is not sent back.`,
     method: "PATCH",
     path: "/api/admin/bookings/[id]/guest-dietary",
     params: bookingIdParamsSchema,
