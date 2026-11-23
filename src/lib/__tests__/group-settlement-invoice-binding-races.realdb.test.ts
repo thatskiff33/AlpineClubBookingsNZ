@@ -330,6 +330,9 @@ let savedModuleSettings: { xeroIntegration: boolean; internetBankingPayments: bo
       // #4710: the late part-success's audit rows and once-ever alert claim.
       const ops = (await prisma.xeroSyncOperation.findMany({ where: { localId: SETTLEMENT_ID }, select: { id: true } })).map((op) => op.id);
       await prisma.auditLog.deleteMany({ where: { entityId: { in: ops } } });
+      // #5407: notifyXeroSyncError now holds its window in AlertCooldown, and the clock is
+      // frozen, so a claim one test leaves would suppress the next test's alert.
+      await prisma.alertCooldown.deleteMany({ where: { key: (await import("@/lib/xero-error-alert")).XERO_SYNC_ERROR_ALERT_COOLDOWN_KEY } });
       await prisma.alertCooldown.deleteMany({ where: { key: { in: ops.map((op) => `xero-success-after-resolution:${op}:${BOUND_INVOICE}`) } } });
       await prisma.xeroObjectLink.deleteMany({ where: { localId: SETTLEMENT_ID } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localId: SETTLEMENT_ID } });

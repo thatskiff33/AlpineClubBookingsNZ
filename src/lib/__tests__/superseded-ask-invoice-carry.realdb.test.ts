@@ -150,6 +150,9 @@ function deferred() {
       await prisma.xeroObjectLink.deleteMany({ where: { xeroObjectId: { startsWith: "pay_race_3403_" } } });
       await prisma.processedWebhookEvent.deleteMany({ where: { eventId: { startsWith: "evt_race_3403_" } } });
       await prisma.webhookLog.deleteMany({ where: { eventId: { startsWith: "evt_race_3403_" } } });
+      // #5407: notifyXeroSyncError now holds its window in AlertCooldown, and the clock is
+      // frozen, so a claim one test leaves would suppress the next test's alert.
+      await prisma.alertCooldown.deleteMany({ where: { key: (await import("@/lib/xero-error-alert")).XERO_SYNC_ERROR_ALERT_COOLDOWN_KEY } });
       await prisma.alertCooldown.deleteMany({ where: { key: { contains: BOOKING_ID } } });
       await prisma.emailLog.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.auditLog.deleteMany({ where: { OR: [{ targetId: BOOKING_ID }, { subjectMemberId: MEMBER_ID }] } });

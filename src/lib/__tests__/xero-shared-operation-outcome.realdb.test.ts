@@ -164,6 +164,9 @@ let sync: typeof import("@/lib/xero-sync");
     });
 
     beforeEach(async () => {
+      // #5407: notifyXeroSyncError now holds its window in AlertCooldown, and the clock is
+      // frozen, so a claim one test leaves would suppress the next test's alert.
+      await prisma.alertCooldown.deleteMany({ where: { key: (await import("@/lib/xero-error-alert")).XERO_SYNC_ERROR_ALERT_COOLDOWN_KEY } });
       await clearFixtures();
       script = [];
       calls = 0;

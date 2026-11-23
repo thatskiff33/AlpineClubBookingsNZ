@@ -65,6 +65,9 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       // #4525 (M13): the refund note and its payment this suite records leave export manifests naming the booking.
       await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       const ops = await prisma.xeroSyncOperation.findMany({ where: { localModel: "Payment", localId: PAYMENT_ID }, select: { id: true } });
+      // #5407: notifyXeroSyncError now holds its window in AlertCooldown, and the clock is
+      // frozen, so a claim one test leaves would suppress the next test's alert.
+      await prisma.alertCooldown.deleteMany({ where: { key: (await import("@/lib/xero-error-alert")).XERO_SYNC_ERROR_ALERT_COOLDOWN_KEY } });
       await prisma.alertCooldown.deleteMany({ where: { key: { in: ops.map((op) => `xero-success-after-resolution:${op.id}:${NOTE_B}`) } } });
       await prisma.alertCooldown.deleteMany({ where: { key: { in: ops.map((op) => `xero-success-after-resolution:${op.id}`) } } });
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
