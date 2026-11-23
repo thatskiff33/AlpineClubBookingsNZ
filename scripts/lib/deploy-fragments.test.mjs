@@ -78,6 +78,19 @@ describe("deploy fragment shape", () => {
     expect(problems(fragment({ what: `Run it.\n${DEPLOY_STEPS_END}` }))).toMatch(/must not contain/);
   });
 
+  it("refuses a relative or same-page link in any section, and allows absolute URLs and code", () => {
+    for (const [section, link] of [
+      ["what", "See [the guide](../docs/guides/mcp-server.md)."],
+      ["check", "It matches [the list](#after-deploying-this-release)."],
+      ["what", "See [the runbook][rb].\n\n[rb]: docs/RUNBOOK.md"],
+      ["check", "It shows [the page](/admin/audit-log)."],
+    ]) {
+      expect(problems(fragment({ [section]: link })), link).toMatch(/it links ".+": .*write a path in backticks or link an absolute https:\/\/ URL/);
+    }
+    expect(problems(fragment({ what: "See [the guide](https://github.com/club/bookings/blob/main/docs/guides/mcp-server.md)." }))).toBe("");
+    expect(problems(fragment({ what: "Read `docs/guides/mcp-server.md`, not `[x](../y.md)`." }))).toBe("");
+  });
+
   it("throws on a malformed step rather than parse part of it", () => {
     expect(() => parseDeployFragment("1-x.deploy.md", fragment({ who: "everyone" }))).toThrow(/changelog\.d\/1-x\.deploy\.md: .*one of owner/);
   });

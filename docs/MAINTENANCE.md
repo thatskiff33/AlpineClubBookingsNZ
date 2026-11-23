@@ -3799,13 +3799,17 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
    version's notes.
    Before `gh release create` it opens the **post-deploy checklist**
    (#5379): a "v<version> post-deploy checklist" issue with the notes page's
-   after-deploy steps, one checkbox each linking its pull request, assigned to
-   whoever publishes (`--assignee @me`), and the release body links it under
-   "After deploying this release". A re-run reuses an issue with that exact
-   title. A release with no steps opens none. If the issue cannot be opened,
-   the release is still published, linking the notes page instead, and the
-   script writes the body to a file and prints the one-line `gh issue create`
-   command to run. The dry run prints the issue's title and body.
+   after-deploy steps, one checkbox each linking its pull request, labelled
+   `post-deploy-checklist` and assigned to the repository's owner (owner
+   decision D2 on #5379); the release body links it under "After deploying
+   this release". `--checklist-assignee <login>` names someone else. When an
+   organisation owns the repository, or GitHub cannot say who does, it is
+   assigned to whoever publishes (`@me`) and the plan says why. A re-run
+   finds the issue by its label and exact title and reuses it. A release with
+   no steps opens none. If the issue cannot be opened, the release is still
+   published, linking the notes page instead, and the script writes the body
+   to a file and prints the `gh label create` and `gh issue create` commands
+   to run. The dry run prints the issue's title, assignee and body.
    Add validation evidence, migration notes, image names and non-blocking
    maintainability follow-ups to the published release by hand.
 9. Deploy the tag (`DEPLOYMENT.md`, "Cut the release first").

@@ -16,6 +16,7 @@
  * `pnpm install` in `verify`.
  */
 import { scannableLines } from "./markdown-blocks.mjs";
+import { inlineLinkTargets, maskCode, refDefTargets } from "./markdown-links.mjs";
 
 /** The suffix that marks a `changelog.d/` fragment as an after-deploy step. */
 export const DEPLOY_FRAGMENT_SUFFIX = ".deploy.md";
@@ -42,15 +43,31 @@ export const AFTER_DEPLOY_TITLE = "After deploying this release";
 export const DEPLOY_STEPS_START = "<!-- deploy-steps:start -->";
 export const DEPLOY_STEPS_END = "<!-- deploy-steps:end -->";
 
-/** One sentence placed above the rendered steps wherever they are filed. */
+/** The sentences placed above the rendered steps wherever they are filed. */
 export const DEPLOY_STEPS_INTRO =
-  "Do these once the release is deployed. Each was written by the pull request that needs it, and " +
+  "Do these once the release is deployed, except a step marked \"before or during the deploy\": that one cannot " +
+  "wait, so do it before you deploy. Each was written by the pull request that needs it, and " +
   "`release:cut publish` opens a checklist issue with the same steps.";
 
 const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*#*[ \t]*$/;
 /** A first line that cannot follow `**Who:** ` on one line: a list item, fence, quote, table or indented code. */
 const NOT_PROSE = /^(?:[ \t]*(?:[-*+][ \t]|\d+[.)][ \t]|`{3}|~{3}|>|\|)|[ \t]{4})/;
 const MARKER_TEXT = /<!-{2}\s*deploy-steps:/;
+/** A link target with a scheme (`https:`, `mailto:`), the only kind that means the same thing in every copy of a step. */
+const ABSOLUTE_TARGET = /^<?[a-z][a-z0-9+.-]*:/i;
+
+/**
+ * The relative link targets in `text`: every inline or reference link whose
+ * target has no scheme. A step is copied into the upgrade guide, the release
+ * notes page and a GitHub issue, where a relative or same-page link points
+ * somewhere different in each, so none is allowed. Code is not read.
+ */
+function relativeLinkTargets(text) {
+  const masked = maskCode(text);
+  return [...inlineLinkTargets(masked), ...refDefTargets(masked)]
+    .map(({ target }) => target)
+    .filter((target) => !ABSOLUTE_TARGET.test(target));
+}
 
 /** Whether a `changelog.d/` filename is an after-deploy step rather than a changelog entry. */
 export function isDeployFragmentName(name) {
@@ -115,7 +132,8 @@ function splitFragment(text) {
  * is empty; "Who" is one of `DEPLOY_ROLES` on one line; "What to do" and "How
  * to check it worked" each open with a line of prose (it follows the role, or
  * the words "How to check it worked:", on one line); nothing names the
- * rendered block's markers.
+ * rendered block's markers; every link is absolute (`https://…`), since a
+ * relative one breaks once the step is copied out of `changelog.d/`.
  */
 export function deployFragmentProblems(name, text) {
   const problems = [];
@@ -143,6 +161,13 @@ export function deployFragmentProblems(name, text) {
   }
   if (labelled.some(([, lines]) => lines.some((line) => MARKER_TEXT.test(line)))) {
     problems.push(`it must not contain the "${DEPLOY_STEPS_START}" or "${DEPLOY_STEPS_END}" markers`);
+  }
+  const relative = relativeLinkTargets(String(text ?? ""));
+  if (relative.length > 0) {
+    problems.push(
+      `it links ${relative.map((target) => `"${target}"`).join(", ")}: a step is copied into the upgrade guide, the notes page ` +
+        "and an issue, where a relative link breaks, so write a path in backticks or link an absolute https:// URL",
+    );
   }
   return problems;
 }

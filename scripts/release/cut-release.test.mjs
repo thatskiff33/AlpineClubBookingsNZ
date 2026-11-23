@@ -186,8 +186,13 @@ const ciJob = (id, name, conclusion = "success") => ({ id, name, status: conclus
 const PUBLISHED_JOBS = ciJobs(ciJob(1, "Verify"), ciJob(2, PUBLISH_IMAGES_JOB_NAME));
 
 /** What `gh` answers when a test does not say otherwise. */
+/** The post-deploy checklist issues GitHub lists by label (#5379), and who owns the repository. */
+const GH_CHECKLISTS = "gh api --hostname github.com repos/fixture-owner/fixture-repo/issues?labels=post-deploy-checklist&state=all";
+const GH_OWNER_TYPE = "gh api --hostname github.com users/fixture-owner --jq .type";
+
 const GH_DEFAULTS = {
   "gh repo view": { status: 0, stdout: "fixture-owner/fixture-repo\n", stderr: "" },
+  [GH_OWNER_TYPE]: { status: 0, stdout: "User\n", stderr: "" },
   "gh release view": { status: 1, stdout: "", stderr: "release not found" },
   [GH_RUNS]: ciRuns(ciRun(101)),
   [GH_JOBS]: PUBLISHED_JOBS,
@@ -327,6 +332,12 @@ describe("argument parsing", () => {
     expect(() => parseArgs(["prepare", "--date", "31/10/2026"])).toThrow(/YYYY-MM-DD/);
     expect(() => parseArgs(["prepare", "--commit", "abc"])).toThrow(/belong to publish/);
     expect(() => parseArgs(["prepare", "--carry-late-fragments"])).toThrow(/belong to publish/);
+    expect(() => parseArgs(["prepare", "--checklist-assignee", "someone"])).toThrow(/belong to publish/);
+    expect(parseArgs(["publish", "--checklist-assignee", "club-owner"])).toMatchObject({ checklistAssignee: "club-owner" });
+    expect(parseArgs(["publish", "--checklist-assignee", "@me"])).toMatchObject({ checklistAssignee: "@me" });
+    expect(parseArgs(["publish"])).toMatchObject({ checklistAssignee: null });
+    expect(() => parseArgs(["publish", "--checklist-assignee", "two words"])).toThrow(/GitHub login or @me/);
+    expect(() => parseArgs(["publish", "--checklist-assignee", "-dash"])).toThrow(/GitHub login or @me/);
     expect(() => parseArgs(["prepare", "--amend", "--bump", "minor"])).toThrow(/--amend keeps the prepared version/);
     expect(() => parseArgs(["publish", "--amend"])).toThrow(/belong to prepare/);
     expect(parseArgs(["prepare", "--amend", "--execute"])).toMatchObject({ amend: true, execute: true });
@@ -1969,10 +1980,13 @@ describe("after-deploy steps: filed by prepare, opened as a checklist by publish
     expect(section.trimEnd().endsWith("<!-- deploy-steps:end -->\n\n---")).toBe(true);
   });
 
-  it("opens the checklist issue assigned to @me before the release, and the release body links it", () => {
+  it("opens the labelled checklist issue assigned to the repository's owner before the release, and the release body links it", () => {
     const { repo } = mergedDeployFixture();
     const run = fixtureRunner(repo, {
-      "gh issue list": json([{ number: 12, title: "v0.13.2 post-deploy checklist", url: "https://github.com/x/y/issues/12" }]),
+      [GH_CHECKLISTS]: json([
+        { number: 12, title: "v0.13.2 post-deploy checklist", html_url: "https://github.com/x/y/issues/12" },
+        { number: 13, title: TITLE, html_url: "https://github.com/x/y/pull/13", pull_request: {} },
+      ]),
       "gh issue create": { status: 0, stdout: `${ISSUE_URL}\n`, stderr: "" },
     });
     const writeNotes = namedWriter();
@@ -1983,8 +1997,11 @@ describe("after-deploy steps: filed by prepare, opened as a checklist by publish
     const remote = run.calls.filter((call) => /^(git push|gh (issue create|release create))/.test(call));
     expect(remote).toEqual([
       "git push origin refs/tags/v0.13.3",
-      `gh issue create --repo fixture-owner/fixture-repo --title ${TITLE} --body-file ${checklistFile} --assignee @me`,
+      `gh issue create --repo fixture-owner/fixture-repo --title ${TITLE} --body-file ${checklistFile} --label post-deploy-checklist --assignee fixture-owner`,
       expect.stringMatching(/^gh release create v0\.13\.3 /),
+    ]);
+    expect(run.calls.filter((call) => call.startsWith("gh label create"))).toEqual([
+      expect.stringMatching(/^gh label create post-deploy-checklist --repo fixture-owner\/fixture-repo --force /),
     ]);
     const checklist = writeNotes.written["v0.13.3-post-deploy-checklist"].text;
     expect(checklist).toContain("- Release: https://github.com/fixture-owner/fixture-repo/releases/tag/v0.13.3");
@@ -2002,8 +2019,8 @@ describe("after-deploy steps: filed by prepare, opened as a checklist by publish
 
   it("reuses the checklist issue a previous run opened, and still checks it when the release already exists", () => {
     const { repo } = mergedDeployFixture();
-    const existing = json([{ number: 77, title: TITLE, url: ISSUE_URL }]);
-    const run = fixtureRunner(repo, { "gh issue list": existing });
+    const existing = json([{ number: 77, title: TITLE, html_url: ISSUE_URL }]);
+    const run = fixtureRunner(repo, { [GH_CHECKLISTS]: existing });
     const log = silentLog();
 
     publishRelease({ repoRoot: repo, execute: true, run, writeNotes: namedWriter(), log });
@@ -2013,7 +2030,7 @@ describe("after-deploy steps: filed by prepare, opened as a checklist by publish
 
     git(repo, "push", "-q", "origin", "refs/tags/v0.13.3"); // the first run's push, which the runner only recorded
     const again = fixtureRunner(repo, {
-      "gh issue list": json([]),
+      [GH_CHECKLISTS]: json([]),
       "gh issue create": { status: 0, stdout: `${ISSUE_URL}\n`, stderr: "" },
       "gh release view": { status: 0, stdout: "v0.13.3\n", stderr: "" },
     });
@@ -2026,8 +2043,8 @@ describe("after-deploy steps: filed by prepare, opened as a checklist by publish
   it("still publishes when the issue cannot be opened, printing the command and linking the notes page instead", () => {
     const { repo } = mergedDeployFixture();
     const run = fixtureRunner(repo, {
-      "gh issue list": json([]),
-      "gh issue create": { status: 1, stdout: "", stderr: "could not assign @me" },
+      [GH_CHECKLISTS]: json([]),
+      "gh issue create": { status: 1, stdout: "", stderr: "could not assign fixture-owner" },
     });
     const writeNotes = namedWriter();
     const log = silentLog();
@@ -2036,9 +2053,9 @@ describe("after-deploy steps: filed by prepare, opened as a checklist by publish
 
     expect(result).toMatchObject({ executed: true, checklist: { url: null } });
     const checklistFile = writeNotes.written["v0.13.3-post-deploy-checklist"].file;
-    expect(log.text()).toContain(`The "${TITLE}" issue was NOT opened: gh issue create failed: could not assign @me.`);
+    expect(log.text()).toContain(`The "${TITLE}" issue was NOT opened: gh issue create failed: could not assign fixture-owner.`);
     expect(log.text()).toContain(
-      `gh issue create --repo fixture-owner/fixture-repo --title "${TITLE}" --body-file ${checklistFile} --assignee @me`,
+      `gh issue create --repo fixture-owner/fixture-repo --title "${TITLE}" --body-file ${checklistFile} --label post-deploy-checklist --assignee fixture-owner`,
     );
     expect(writeNotes.written["v0.13.3"].text).toContain(
       "work through [the list in this release's notes page](https://github.com/fixture-owner/fixture-repo/blob/v0.13.3/docs/releases/v0.13.3.md#after-deploying-this-release).",
@@ -2048,12 +2065,15 @@ describe("after-deploy steps: filed by prepare, opened as a checklist by publish
 
   it("prints the checklist's title and body in a dry run and opens nothing", () => {
     const { repo } = mergedDeployFixture();
-    const run = fixtureRunner(repo, { "gh issue list": json([]) });
+    const run = fixtureRunner(repo, { [GH_CHECKLISTS]: json([]) });
     const log = silentLog();
 
     publishRelease({ repoRoot: repo, run, log });
 
-    expect(log.text()).toContain(`Post-deploy checklist: would open "${TITLE}", assigned to @me, with this body:`);
+    expect(log.text()).toContain(
+      `Post-deploy checklist: would open "${TITLE}", labelled post-deploy-checklist and assigned to fixture-owner, with this body:`,
+    );
+    expect(log.text()).toContain("assigned to fixture-owner (the owner of fixture-owner/fixture-repo)");
     expect(log.text()).toContain("    | - [ ] **Owner:** Run `pnpm run xero:stuck-queued-report` once.");
     expect(run.calls.some((call) => /^gh (issue create|release create)/.test(call))).toBe(false);
   });
@@ -2067,6 +2087,54 @@ describe("after-deploy steps: filed by prepare, opened as a checklist by publish
 
     expect(run.calls.some((call) => call.startsWith("gh issue"))).toBe(false);
     expect(log.text()).toContain("Post-deploy checklist: none");
+  });
+
+  it.each([
+    ["--checklist-assignee when given", { checklistAssignee: "club-secretary" }, {}, "club-secretary", "(--checklist-assignee)"],
+    [
+      "@me, saying why, when an organisation owns the repository",
+      {},
+      { [GH_OWNER_TYPE]: { status: 0, stdout: "Organization\n", stderr: "" } },
+      "@me",
+      "fixture-owner, which is not a person's account",
+    ],
+    [
+      "@me, saying why, when GitHub cannot say who owns it",
+      {},
+      { [GH_OWNER_TYPE]: { status: 1, stdout: "", stderr: "HTTP 401" } },
+      "@me",
+      "gh could not say whether fixture-owner is a person's account",
+    ],
+  ])("assigns the checklist issue to %s", (_case, options, stubs, login, why) => {
+    const { repo } = mergedDeployFixture();
+    const created = { status: 0, stdout: `${ISSUE_URL}\n`, stderr: "" };
+    const run = fixtureRunner(repo, { [GH_CHECKLISTS]: json([]), "gh issue create": created, ...stubs });
+    const log = silentLog();
+
+    publishRelease({ repoRoot: repo, execute: true, run, writeNotes: namedWriter(), log, ...options });
+
+    expect(run.calls.find((call) => call.startsWith("gh issue create"))).toMatch(new RegExp(` --assignee ${login}$`));
+    expect(log.text()).toContain(why);
+    expect(run.calls.some((call) => call.startsWith(GH_OWNER_TYPE))).toBe(!options.checklistAssignee);
+  });
+
+  it("opens no issue when the label cannot be made, and prints both commands", () => {
+    const { repo } = mergedDeployFixture();
+    const run = fixtureRunner(repo, {
+      [GH_CHECKLISTS]: json([]),
+      "gh label create": { status: 1, stdout: "", stderr: "HTTP 403" },
+    });
+    const writeNotes = namedWriter();
+    const log = silentLog();
+
+    const result = publishRelease({ repoRoot: repo, execute: true, run, writeNotes, log });
+
+    expect(result).toMatchObject({ executed: true, checklist: { url: null } });
+    expect(run.calls.some((call) => call.startsWith("gh issue create"))).toBe(false);
+    expect(log.text()).toContain(`The "${TITLE}" issue was NOT opened: gh label create failed: HTTP 403.`);
+    expect(log.text()).toMatch(/!! {3}gh label create post-deploy-checklist /);
+    expect(log.text()).toMatch(/!! {3}gh issue create .* --label post-deploy-checklist --assignee fixture-owner/);
+    expect(run.calls.some((call) => call.startsWith("gh release create"))).toBe(true);
   });
 
   it("refuses a deploy step that merged after the release-prep commit, like any late fragment", () => {

@@ -138,7 +138,8 @@
      headings Who, What to do and How to check it worked
      (`changelog.d/README.md`, "After-deploy steps"). `verify` fails a PR whose
      answer here or under Migration Or Deployment Impact names such a step
-     without one (#5379). -->
+     without one (#5379). With no such step, answer "None. No after-deploy
+     step." -->
 
 -
 

@@ -22,7 +22,7 @@
  *     `release/v<version>-late` and appends them to the existing, untagged
  *     `## <version>` changelog and upgrade-guide sections.
  *
- *   pnpm run release:cut publish [--commit <sha>] [--carry-late-fragments] [--execute]
+ *   pnpm run release:cut publish [--commit <sha>] [--carry-late-fragments] [--checklist-assignee <login>] [--execute]
  *     After the pull request merges: tags the merged commit (default
  *     `origin/main`), pushes the tag, and publishes the GitHub release on the
  *     repository `origin` names. The commit must be on `main`'s first-parent
@@ -32,7 +32,8 @@
  *     not record the release (#4983). A re-run after a partial failure resumes
  *     where it stopped. When the release has after-deploy steps
  *     (`changelog.d/*.deploy.md`, #5379), it opens the "v<version> post-deploy
- *     checklist" issue and links it from the release.
+ *     checklist" issue, assigned to the repository's owner (or
+ *     `--checklist-assignee`), and links it from the release.
  *
  * Both phases print the whole plan and change nothing unless `--execute` is
  * given. With `--execute`, local steps run first and remote ones (tag push,
@@ -140,6 +141,31 @@ const API_PAGE = 100;
  * this many pages the check refuses rather than reading on.
  */
 const API_MAX_PAGES = 10;
+
+/**
+ * Every path `prepare` stages, so the only paths a release-prep pull request
+ * changes. The after-deploy step gate exempts a pull request that stays inside
+ * them (`scripts/ci/check-pr-deploy-fragment.mjs`, #5379).
+ */
+export const RELEASE_PREP_PATHS = Object.freeze([
+  "CHANGELOG.md",
+  "package.json",
+  FRAGMENTS_DIRNAME,
+  ALLOWANCE_DIR,
+  UPGRADING_PATH,
+  RELEASE_NOTES_DIR,
+]);
+
+/**
+ * The label every post-deploy checklist issue carries (#5379). A re-run finds
+ * the issue an earlier run opened by this label through GitHub's issues list,
+ * which reads the issue at once; a title search goes through GitHub's search
+ * index, which can lag behind a just-opened issue and so open a second one.
+ */
+export const CHECKLIST_LABEL = "post-deploy-checklist";
+
+/** A GitHub login, or `@me` (whoever `gh` is signed in as). */
+const ASSIGNEE_PATTERN = /^(?:@me|[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})$/;
 
 const BUMPS = ["patch", "minor", "major"];
 const [REMOTE, MAIN_BRANCH] = MAIN_REF.split("/");
@@ -271,7 +297,7 @@ export function releaseBody({ section, tag, repo, checklist = null }) {
   };
 }
 
-/** Parse argv into `{ phase, execute, bump, date, commit, amend, carryLateFragments }`. */
+/** Parse argv into `{ phase, execute, bump, date, commit, amend, carryLateFragments, checklistAssignee }`. */
 export function parseArgs(argv) {
   const options = {
     phase: null,
@@ -282,9 +308,10 @@ export function parseArgs(argv) {
     commit: null,
     amend: false,
     carryLateFragments: false,
+    checklistAssignee: null,
   };
   const flags = { "--execute": "execute", "--dry-run": "dryRun", "--amend": "amend", "--carry-late-fragments": "carryLateFragments" };
-  const takesValue = { "--bump": "bump", "--date": "date", "--commit": "commit" };
+  const takesValue = { "--bump": "bump", "--date": "date", "--commit": "commit", "--checklist-assignee": "checklistAssignee" };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--") continue;
@@ -308,8 +335,11 @@ export function parseArgs(argv) {
   if (options.date !== null && !DATE_PATTERN.test(options.date)) {
     throw new ReleaseCutError(`--date must be YYYY-MM-DD, got: ${options.date}`);
   }
-  if (options.phase === "prepare" && (options.commit !== null || options.carryLateFragments)) {
-    throw new ReleaseCutError("--commit and --carry-late-fragments belong to publish.");
+  if (options.phase === "prepare" && (options.commit !== null || options.carryLateFragments || options.checklistAssignee !== null)) {
+    throw new ReleaseCutError("--commit, --carry-late-fragments and --checklist-assignee belong to publish.");
+  }
+  if (options.checklistAssignee !== null && !ASSIGNEE_PATTERN.test(options.checklistAssignee)) {
+    throw new ReleaseCutError(`--checklist-assignee must be a GitHub login or @me, got: ${options.checklistAssignee}`);
   }
   if (options.amend && (options.bump !== null || options.date !== null)) {
     throw new ReleaseCutError("--amend keeps the prepared version and date; drop --bump and --date.");
@@ -871,7 +901,7 @@ export function prepareRelease({
   docs.describe.forEach((line) => log(`  - ${line}`));
 
   // Stage deletions too: the compiler removes consumed fragments and spent allowances.
-  const stagePaths = ["CHANGELOG.md", "package.json", FRAGMENTS_DIRNAME, ALLOWANCE_DIR, UPGRADING_PATH, RELEASE_NOTES_DIR].filter(
+  const stagePaths = RELEASE_PREP_PATHS.filter(
     (relative) => fs.existsSync(path.join(repoRoot, relative)),
   );
   // A docs-only fold (late upgrade steps, or a notes page that was never written) compiles nothing.
@@ -1150,6 +1180,7 @@ export function publishRelease({
   execute = false,
   commit = null,
   carryLateFragments = false,
+  checklistAssignee = null,
   run = defaultRun(repoRoot),
   writeNotes = defaultWriteNotes,
   log = console.log,
@@ -1286,9 +1317,10 @@ export function publishRelease({
   if (checklist === null) {
     log(`  Post-deploy checklist: none — ${releaseNotesPath(version)} lists no after-deploy steps, so no issue is opened.`);
   } else {
+    checklist.assignee = resolveChecklistAssignee(cmd, repo, checklistAssignee);
     log(
       `  Post-deploy checklist: ${checklist.count} after-deploy step(s); the "${checklist.title}" issue is opened (or reused), ` +
-        "assigned to whoever runs this (@me), and linked from the release body.",
+        `assigned to ${checklist.assignee.login} (${checklist.assignee.why}), and linked from the release body.`,
     );
   }
   if (state !== "fresh") log(`  Resuming: ${state === "tagged" ? `the local tag ${tag} is already on the commit` : `${REMOTE} already has ${tag} on the commit`}.`);
@@ -1311,7 +1343,10 @@ export function publishRelease({
     ...(state === "fresh" ? [`git tag -a ${tag} -m "${name} ${tag} …" ${target.slice(0, 12)}`] : []),
     ...(state !== "pushed" ? [`git push ${REMOTE} refs/tags/${tag}`] : []),
     ...(checklist !== null
-      ? [`gh issue create --repo ${repo.slug} --title "${checklist.title}" --assignee @me (unless it exists), then rewrite the body with its link`]
+      ? [
+          `gh issue create --repo ${repo.slug} --title "${checklist.title}" --label ${CHECKLIST_LABEL} ` +
+            `--assignee ${checklist.assignee.login} (unless it exists), then rewrite the body with its link`,
+        ]
       : []),
     `gh release create ${tag} --repo ${repo.slug} --verify-tag --title ${tag} --notes-file <body>`,
   ];
@@ -1412,25 +1447,50 @@ function releaseChecklist(cmd, { target, tag, version, repo }) {
 }
 
 /**
+ * Who the checklist issue is assigned to, as `{ login, why }`. Owner decision
+ * D2 on #5379 (22 Nov 2026) assigns it to the owner. So: `--checklist-assignee`
+ * when given; otherwise the repository's owner when that is a person's
+ * account; otherwise `@me`, whoever runs this, with the reason named. A
+ * repository owned by an organisation has no one owner to name, and an
+ * unanswered lookup is not a reason to stop a release.
+ */
+function resolveChecklistAssignee(cmd, repo, override) {
+  if (override !== null) return { login: override, why: "--checklist-assignee" };
+  const result = cmd.run("gh", ["api", "--hostname", repo.host, `users/${repo.owner}`, "--jq", ".type"]);
+  const type = (result.status === 0 && result.stdout.trim()) || null;
+  if (type === "User") return { login: repo.owner, why: `the owner of ${repo.slug}` };
+  const reason =
+    type === null
+      ? `gh could not say whether ${repo.owner} is a person's account`
+      : `${repo.slug} is owned by ${repo.owner}, which is not a person's account`;
+  return { login: "@me", why: `whoever runs this: ${reason}; name someone with --checklist-assignee <login>` };
+}
+
+/**
  * The checklist issue already on `repo` with exactly `title`, open or closed,
  * as `{ status: "found", url }`, `{ status: "none" }`, or `{ status: "unknown",
- * detail }` when `gh` could not answer. A re-run reuses the issue it finds.
+ * detail }` when `gh` could not answer. A re-run reuses the issue it finds. It
+ * lists the issues carrying `CHECKLIST_LABEL` through the REST issues list,
+ * not `gh issue list`, which sends a label filter through the search index too.
  */
 function findChecklistIssue(cmd, repo, title) {
-  const result = cmd.run("gh", [
-    "issue", "list", "--repo", repo.slug, "--state", "all", "--search", `"${title}" in:title`,
-    "--json", "number,title,url", "--limit", "100",
-  ]);
-  if (result.status !== 0) return { status: "unknown", detail: `${result.stderr}${result.stdout}`.trim() || "gh issue list failed" };
+  const args = [
+    "api", "--hostname", repo.host,
+    `repos/${repo.owner}/${repo.name}/issues?labels=${CHECKLIST_LABEL}&state=all&per_page=${API_PAGE}`,
+  ];
+  const result = cmd.run("gh", args);
+  if (result.status !== 0) return { status: "unknown", detail: `${result.stderr}${result.stdout}`.trim() || "gh api failed" };
+  const unreadable = { status: "unknown", detail: `\`${display("gh", args)}\` answered in a shape this script does not read` };
   let issues;
   try {
     issues = JSON.parse(result.stdout);
   } catch {
-    return { status: "unknown", detail: "gh issue list answered in a shape this script does not read" };
+    return unreadable;
   }
-  if (!Array.isArray(issues)) return { status: "unknown", detail: "gh issue list answered in a shape this script does not read" };
-  const match = issues.find((issue) => issue?.title === title && typeof issue.url === "string");
-  return match ? { status: "found", url: match.url } : { status: "none" };
+  if (!Array.isArray(issues)) return unreadable;
+  // The issues list includes pull requests, which carry a `pull_request` key.
+  const match = issues.find((issue) => !issue?.pull_request && issue?.title === title && typeof issue.html_url === "string");
+  return match ? { status: "found", url: match.html_url } : { status: "none" };
 }
 
 /** The dry run's view of the checklist issue: whether it exists, then its title and body. */
@@ -1440,7 +1500,7 @@ function previewChecklistIssue(cmd, { repo, checklist, log }) {
     found.status === "found"
       ? `Post-deploy checklist: "${checklist.title}" already exists (${found.url}); it would be reused.`
       : found.status === "none"
-        ? `Post-deploy checklist: would open "${checklist.title}", assigned to @me, with this body:`
+        ? `Post-deploy checklist: would open "${checklist.title}", labelled ${CHECKLIST_LABEL} and assigned to ${checklist.assignee.login}, with this body:`
         : `Post-deploy checklist: could not check for "${checklist.title}" (${found.detail}); with --execute it would print the command to open it instead. Its body:`,
   );
   if (found.status !== "found") checklist.text.trimEnd().split("\n").forEach((line) => log(`    | ${line}`));
@@ -1459,20 +1519,31 @@ function ensureChecklistIssue(cmd, { repo, tag, checklist, writeNotes, log }) {
     return { url: found.url };
   }
   const file = writeNotes(`${tag}-post-deploy-checklist`, checklist.text);
-  const args = ["issue", "create", "--repo", repo.slug, "--title", checklist.title, "--body-file", file, "--assignee", "@me"];
-  const created = found.status === "none" ? cmd.run("gh", args) : null;
-  const url = created?.status === 0 ? created.stdout.split("\n").map((line) => line.trim()).find((line) => /^https:\/\//.test(line)) : null;
-  if (url) {
-    log(`Post-deploy checklist: opened ${url}.`);
-    return { url };
+  // `gh issue create --label` refuses a label the repository lacks; --force makes this idempotent.
+  const labelArgs = [
+    "label", "create", CHECKLIST_LABEL, "--repo", repo.slug, "--force",
+    "--color", "0E8A16", "--description", "A release's post-deploy checklist, opened by release:cut publish",
+  ];
+  const args = [
+    "issue", "create", "--repo", repo.slug, "--title", checklist.title, "--body-file", file,
+    "--label", CHECKLIST_LABEL, "--assignee", checklist.assignee.login,
+  ];
+  const failure = (result, step) => `${step} failed${`${result.stderr}${result.stdout}`.trim() ? `: ${`${result.stderr}${result.stdout}`.trim()}` : ""}`;
+  let why = `gh could not say whether it already exists (${found.detail})`;
+  if (found.status === "none") {
+    const labelled = cmd.run("gh", labelArgs);
+    const created = labelled.status === 0 ? cmd.run("gh", args) : null;
+    const url = created?.status === 0 ? created.stdout.split("\n").map((line) => line.trim()).find((line) => /^https:\/\//.test(line)) : null;
+    if (url) {
+      log(`Post-deploy checklist: opened ${url}, assigned to ${checklist.assignee.login}.`);
+      return { url };
+    }
+    why = created === null ? failure(labelled, "gh label create") : failure(created, "gh issue create");
   }
-  const why =
-    created === null
-      ? `gh could not say whether it already exists (${found.detail})`
-      : `gh issue create failed${`${created.stderr}${created.stdout}`.trim() ? `: ${`${created.stderr}${created.stdout}`.trim()}` : ""}`;
   log(`!! The "${checklist.title}" issue was NOT opened: ${why}.`);
   log("!! The release is still published; its body links the notes page's list of the steps instead.");
   log(`!! Open the issue by hand (its body is in ${file}), checking first that it does not already exist:`);
+  log(`!!   ${display("gh", labelArgs)}`);
   log(`!!   ${display("gh", args)}`);
   return { url: null };
 }
@@ -1501,6 +1572,7 @@ export function main(argv = process.argv.slice(2), { log = console.log, error = 
         execute: options.execute,
         commit: options.commit,
         carryLateFragments: options.carryLateFragments,
+        checklistAssignee: options.checklistAssignee,
         log,
       });
     }
@@ -1510,7 +1582,7 @@ export function main(argv = process.argv.slice(2), { log = console.log, error = 
     if (failure.recovery) error(`\nRecovery:\n${failure.recovery}`);
     error("\nUsage: pnpm run release:cut prepare [--bump patch|minor|major] [--date YYYY-MM-DD] [--execute]");
     error("       pnpm run release:cut prepare --amend [--execute]");
-    error("       pnpm run release:cut publish [--commit <sha>] [--carry-late-fragments] [--execute]");
+    error("       pnpm run release:cut publish [--commit <sha>] [--carry-late-fragments] [--checklist-assignee <login>] [--execute]");
     return 1;
   }
 }

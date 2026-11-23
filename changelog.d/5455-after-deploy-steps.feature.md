@@ -10,13 +10,15 @@
   release" in the release's section of `docs/UPGRADING.md` and in its notes
   page, and refuses to cut, changing nothing, while one is malformed.
   `pnpm run release:cut publish` then opens a "vX.Y.Z post-deploy checklist"
-  issue, assigned to whoever publishes, with one box per step linking the pull
-  request it came from, and links it from the GitHub release. If the issue
-  cannot be opened, the release is still published and the exact command to
-  open it is printed.
+  issue, assigned to the repository's owner (or to `--checklist-assignee
+  <login>`), with one box per step linking the pull request it came from, and
+  links it from the GitHub release. If the issue cannot be opened, the release
+  is still published and the exact commands to open it are printed.
 
   The `verify` check (and `pnpm run pr:check`) now fails a pull request whose
   "Manual Checks Required" or "Migration Or Deployment Impact" section names a
-  step for after the deploy without such a file, or whose file is malformed.
+  step for after the deploy without such a file, or whose file is malformed. A
+  pull request with no such step answers "None. No after-deploy step.", which
+  passes.
   The steps already gathered for the release after v0.14.0 (#5378) are written
   this way, so the next release produces that checklist itself.

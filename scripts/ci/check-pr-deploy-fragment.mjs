@@ -11,11 +11,13 @@
  * A PR fails when:
  *   1. its "Manual Checks Required" or "Migration Or Deployment Impact" section
  *      names a step for after the deploy or the release ("after deploy", "after
- *      the release", "owner runs", "once after upgrading", …) and the diff adds
- *      or changes no `.deploy.md` fragment. A release-prep PR, which deletes
- *      the fragments it files and edits `CHANGELOG.md`, is exempt: its body
- *      describes the steps it is filing. There is no escape marker: a PR with
- *      no such step says so without the phrase;
+ *      release", "once this ships", "the owner should run", "after upgrading",
+ *      …) and the diff adds or changes no `.deploy.md` fragment. A negated
+ *      answer names no step: "None. No after-deploy step." and "None after
+ *      deploy." pass. A release-prep PR, which deletes the fragments it files,
+ *      edits `CHANGELOG.md` and changes nothing outside the paths
+ *      `release:cut prepare` writes (`RELEASE_PREP_PATHS`), is exempt: its body
+ *      describes the steps it is filing. There is no escape marker;
  *   2. a `.deploy.md` fragment it adds or changes is malformed;
  *   3. its diff is unknown, since neither rule can then be judged.
  *
@@ -38,6 +40,7 @@ import {
 } from "./pr-body.mjs";
 import { DEPLOY_FRAGMENT_SUFFIX, deployFragmentProblems, isDeployFragmentName } from "../lib/deploy-fragments.mjs";
 import { isMainModule } from "../lib/is-main-module.mjs";
+import { RELEASE_PREP_PATHS } from "../release/cut-release.mjs";
 
 const GATE_LABEL = "PR after-deploy step check";
 
@@ -48,22 +51,50 @@ export const DEPLOY_STEP_SECTIONS = Object.freeze(["## Manual Checks Required", 
 const AFTER_DEPLOY_PHRASES = [
   /\bafter[ -](?:the[ -])?deploy(?:ing|ment|s|ed)?\b/i,
   /\bpost[ -]deploy(?:ment)?\b/i,
-  /\bafter (?:the|this|each) release\b/i,
-  /\bowner runs?\b/i,
-  /\bonce after upgrading\b/i,
+  // "After release, run …", "after the release"; not "after release-prep merges".
+  /\bafter (?:(?:the|this|each|a) )?release\b(?!-)/i,
+  /\bonce (?:this|it) (?:ships|is (?:deployed|released|live))\b/i,
+  /\b(?:owner|operator) (?:(?:should|must|will|needs to) )?runs?\b/i,
+  /\bafter upgrading\b/i,
 ];
+
+/** "after deploy", "post-deploy", "after the release", "after upgrading": when a step would happen. */
+const AFTER_WORDS = String.raw`(?:(?:after|post)[ -](?:the[ -])?deploy(?:ing|ment|s|ed)?|after (?:(?:the|this|each|a) )?release(?!-)|after upgrading)\b`;
+
+/**
+ * A negated answer: "no", "none" or "nothing" and an after-deploy word in one
+ * clause, such as "None. No after-deploy step.", "None after deploy." or
+ * "Nothing to do after release." (house idioms on many merged PRs), or the
+ * word first, as in "After deploy: nothing". Only a few filler words may stand
+ * between them, so "No migration, but after deploy run …" still names a step,
+ * and "None before merge. After deploy, …" does too: the full stop ends the
+ * clause.
+ */
+const NEGATED_AFTER_DEPLOY = new RegExp(
+  String.raw`\b(?:no|none|nothing)\b(?:[ \t]+(?:manual|further|other|extra|separate|additional|special|owner|operator|deploy(?:ment)?|steps?|actions?|checks?|tasks?|work|is|are|needed|required|necessary|to[ \t]+do))*[ \t]+${AFTER_WORDS}` +
+    String.raw`|\b${AFTER_WORDS}[:,]?[ \t]+(?:nothing|none)\b`,
+  "gi",
+);
+
+/** `section` with each negated after-deploy answer blanked, so it cannot read as a step. */
+const withoutNegatedAnswers = (section) => section.replace(NEGATED_AFTER_DEPLOY, (match) => " ".repeat(match.length));
+
+/** Whether `file` is one `release:cut prepare` writes, so a release-prep PR may change it. */
+const isReleasePrepPath = (file) => RELEASE_PREP_PATHS.some((prefix) => file === prefix || file.startsWith(`${prefix}/`));
 
 const isDeployFragmentPath = (file) => /^changelog\.d\/[^/]+$/i.test(file) && isDeployFragmentName(path.posix.basename(file));
 
 /**
  * The first phrase in the step sections of `body` naming an after-deploy step,
- * as `{ section, phrase }`, or `null`. Comments and fenced code are skipped.
+ * as `{ section, phrase }`, or `null`. Comments, fenced code and negated
+ * answers ("No after-deploy step") are skipped.
  */
 export function afterDeployMention(body) {
   const answers = stripNonAnswerText(body);
   for (const heading of DEPLOY_STEP_SECTIONS) {
-    const section = sectionAfterHeading(answers, heading);
-    if (section === null) continue;
+    const raw = sectionAfterHeading(answers, heading);
+    if (raw === null) continue;
+    const section = withoutNegatedAnswers(raw);
     for (const pattern of AFTER_DEPLOY_PHRASES) {
       const match = pattern.exec(section);
       if (match) return { section: heading, phrase: match[0] };
@@ -104,13 +135,14 @@ export function validateDeployFragment(body, changes, { contentsOf } = {}) {
   if (mention === null) return { outcome: "no-step" };
   const releasePrep =
     changes.some((change) => change.status === "D" && isDeployFragmentPath(change.path)) &&
-    changes.some((change) => change.path === "CHANGELOG.md");
+    changes.some((change) => change.path === "CHANGELOG.md") &&
+    changes.every((change) => isReleasePrepPath(change.path));
   if (releasePrep) return { outcome: "release-prep" };
   throw new Error(
     `"${mention.section}" names a step for after the deploy ("${mention.phrase}"), but the PR adds no ` +
       `changelog.d/<pr-number>-<slug>${DEPLOY_FRAGMENT_SUFFIX} fragment. Write each such step as one ` +
       `(changelog.d/README.md, "After-deploy steps") so the release's post-deploy checklist carries it. ` +
-      "If there is no such step, say so without that phrase.",
+      "If there is no such step, answer \"None. No after-deploy step.\"",
   );
 }
 

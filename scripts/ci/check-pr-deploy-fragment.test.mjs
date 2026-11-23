@@ -1,4 +1,10 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { afterDeployMention, validateDeployFragment } from "./check-pr-deploy-fragment.mjs";
+
+/** Real merged PR bodies, trimmed to the two step sections (`_source` in the file says where from). */
+const REAL_BODIES = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "fixtures", "pr-after-deploy-bodies.json"), "utf8"));
 
 const GOOD = "## Who\n\nowner\n\n## What to do\n\nRun the report once.\n\n## How to check it worked\n\nIt lists no rows.\n";
 const BAD = "## Who\n\neveryone\n\n## What to do\n\nRun it.\n";
@@ -73,8 +79,81 @@ describe("PR after-deploy step gate (#5379)", () => {
     expect(() =>
       validateDeployFragment(named, changes("D changelog.d/5309-stuck-report.deploy.md"), { contentsOf: headOf({}) }),
     ).toThrow(/names a step for after the deploy/);
-    const releasePrep = changes("D changelog.d/5309-stuck-report.deploy.md", "D changelog.d/5379-x.md", "M CHANGELOG.md", "M package.json");
+    const releasePrep = changes(
+      "D changelog.d/5309-stuck-report.deploy.md",
+      "D changelog.d/5379-x.md",
+      "M CHANGELOG.md",
+      "M package.json",
+      "M docs/UPGRADING.md",
+      "A docs/releases/v0.15.0.md",
+      "M docs/releases/README.md",
+      "D size-allowances.d/5100-x.md",
+    );
     expect(validateDeployFragment(named, releasePrep, { contentsOf: headOf({}) }).outcome).toBe("release-prep");
+  });
+
+  it("does not exempt a PR that looks like release prep but changes anything prepare does not write", () => {
+    const step = body({ manual: "- After deploy, the owner runs the stuck-row report." });
+    for (const extra of ["M src/lib/xero/outbox.ts", "M docs/MAINTENANCE.md", "A changelog.d-other/x.md", "M package.json.bak"]) {
+      const diff = changes("D changelog.d/5309-stuck-report.deploy.md", "M CHANGELOG.md", extra);
+      expect(() => validateDeployFragment(step, diff, { contentsOf: headOf({}) }), extra).toThrow(/names a step for after the deploy/);
+    }
+  });
+
+  it("passes merged PRs whose bodies say they have no after-deploy step (#5450, #5435, #5340)", () => {
+    for (const number of ["5450", "5435", "5340"]) {
+      expect(afterDeployMention(REAL_BODIES[number]), number).toBeNull();
+      expect(validateDeployFragment(REAL_BODIES[number], CODE, { contentsOf: headOf({}) }).outcome, number).toBe("no-step");
+    }
+  });
+
+  it("fails merged PRs whose bodies name an after-deploy step without a fragment (#4998, #5107)", () => {
+    for (const number of ["4998", "5107"]) {
+      expect(afterDeployMention(REAL_BODIES[number]), number).toEqual({ section: "## Manual Checks Required", phrase: "After deploy" });
+      expect(() => validateDeployFragment(REAL_BODIES[number], CODE, { contentsOf: headOf({}) }), number).toThrow(
+        /"## Manual Checks Required" names a step for after the deploy \("After deploy"\)/,
+      );
+    }
+  });
+
+  it("reads a negated answer as no step, in either order and either section", () => {
+    for (const answer of [
+      "- None. No after-deploy step.",
+      "- None. No migration and no after-deploy steps.",
+      "- None after deploy.",
+      "- No post-deploy action needed.",
+      "- Nothing to do after release.",
+      "- No step is needed after upgrading.",
+      "- After deploy: nothing; the feature stays off.",
+    ]) {
+      expect(afterDeployMention(body({ manual: answer })), answer).toBeNull();
+      expect(afterDeployMention(body({ impact: answer })), answer).toBeNull();
+    }
+  });
+
+  it("still finds a step beside a negation in another clause or sentence", () => {
+    for (const [answer, phrase] of [
+      ["- No migration, but after deploy run the census once.", "after deploy"],
+      ["- No migration but after deploy run the census once.", "after deploy"],
+      ["- None before merge. After deploy, the audit log shows the recovery rows.", "After deploy"],
+      ["- None. After deploy, an officer presses Try again on one exhausted row.", "After deploy"],
+      ["- No after-deploy step for clubs; after deploy, the owner reads the census.", "after deploy"],
+    ]) {
+      expect(afterDeployMention(body({ manual: answer })), answer).toMatchObject({ phrase });
+    }
+  });
+
+  it("finds the wider ways a step is written", () => {
+    for (const [answer, phrase] of [
+      ["- After release, run the backfill once.", "After release"],
+      ["- Once this ships, the owner should run the report.", "Once this ships"],
+      ["- The owner should run the report.", "owner should run"],
+      ["- After upgrading, set FOO.", "After upgrading"],
+      ["- Once it is deployed, map the account.", "Once it is deployed"],
+    ]) {
+      expect(afterDeployMention(body({ manual: answer })), answer).toEqual({ section: "## Manual Checks Required", phrase });
+    }
+    expect(afterDeployMention(body({ manual: "- The tag is cut after release-prep merges." }))).toBeNull();
   });
 
   it("does not let a changelog entry stand in for a deploy step", () => {

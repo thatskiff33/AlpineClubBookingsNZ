@@ -195,7 +195,12 @@ The endpoint's event list in the Stripe dashboard includes all four.
 - **What to do** and **How to check it worked** each open with a sentence,
   not a list, quote, table or code block; more paragraphs, lists or code may
   follow. Say "before or during the deploy" in What to do when the step cannot
-  wait until after.
+  wait until after: the filed list tells the reader to do such a step before
+  deploying.
+- Every link is an absolute `https://` URL; write a repository path in
+  backticks instead. A step is copied into the upgrade guide, the notes page
+  and a GitHub issue, where a relative or same-page link points somewhere
+  different in each, so a relative link is refused.
 - The name is lower-case letters, digits and hyphens. It normally opens with
   the pull request's number, which the checklist links; a lane that names its
   files before the pull request exists may use its lane name and rename it
@@ -210,12 +215,16 @@ What happens to it:
 
 - **`verify` and `pnpm run pr:check`** fail a pull request whose "Manual Checks
   Required" or "Migration Or Deployment Impact" answer names a step for after
-  the deploy or the release ("after deploy", "post-deploy", "after the
-  release", "owner runs", "once after upgrading") while its diff adds or changes
-  no `.deploy.md` fragment, and fail any `.deploy.md` it adds or changes that is
-  malformed (`scripts/ci/check-pr-deploy-fragment.mjs`). There is no escape
-  marker: a pull request with no such step says so without those phrases. The
-  release-prep pull request, which deletes the fragments it files, is exempt.
+  the deploy or the release ("after deploy", "post-deploy", "after release",
+  "once this ships", "the owner runs" or "should run", "after upgrading") while
+  its diff adds or changes no `.deploy.md` fragment, and fail any `.deploy.md`
+  it adds or changes that is malformed
+  (`scripts/ci/check-pr-deploy-fragment.mjs`). There is no escape marker. A
+  pull request with no such step answers "None. No after-deploy step.": a
+  negated answer ("None after deploy.", "Nothing to do after release.") names
+  no step, but a step in another clause or sentence beside it still counts.
+  The release-prep pull request, which deletes the fragments it files and
+  changes nothing but the files `release:cut prepare` writes, is exempt.
 - **`pnpm run release:cut prepare`** refuses to cut, changing nothing, while any
   `.deploy.md` is malformed. Otherwise it files every step, one checkbox each,
   under "After deploying this release" at the end of the release's section of
@@ -224,11 +233,14 @@ What happens to it:
   `compile-changelog.mjs` run on its own validates them but leaves them in
   place.
 - **`pnpm run release:cut publish`** opens a "v<version> post-deploy checklist"
-  issue from the notes page's steps, assigned to whoever publishes, and links
-  it from the GitHub release. A re-run reuses the issue. If it cannot be
-  opened, the release is still published, linking the notes page instead, and
-  the exact `gh issue create` command is printed. A release with no steps
-  opens no issue.
+  issue from the notes page's steps, labelled `post-deploy-checklist`, and links
+  it from the GitHub release. It is assigned to the repository's owner (owner
+  decision D2 on #5379), or to `--checklist-assignee <login>` when given; when
+  an organisation owns the repository, or GitHub cannot say, it is assigned to
+  whoever publishes (`@me`) and the plan says why. A re-run finds the issue by
+  its label and reuses it. If it cannot be opened, the release is still
+  published, linking the notes page instead, and the exact `gh` commands are
+  printed. A release with no steps opens no issue.
 
 ## Compiling a release
 
