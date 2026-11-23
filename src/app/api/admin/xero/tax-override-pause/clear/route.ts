@@ -11,6 +11,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseJsonRequestBody } from "@/lib/api-json";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 import {
@@ -31,8 +32,9 @@ export async function POST(request: Request) {
   const guard = await requireAdmin({ permission: { area: "finance", level: "edit" } });
   if (!guard.ok) return guard.response;
 
-  const body = await request.json().catch(() => null);
-  const parsed = clearSchema.safeParse(body);
+  const json = await parseJsonRequestBody(request);
+  if (!json.ok) return json.response;
+  const parsed = clearSchema.safeParse(json.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Tick that you have checked these invoices in Xero, and say what you found, before resuming." },

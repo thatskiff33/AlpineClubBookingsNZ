@@ -105,4 +105,18 @@ describe("the GST-override pause API (#5208)", () => {
     expect((await clear(body)).status).toBe(400);
     expect(h.prisma.$transaction).not.toHaveBeenCalled();
   });
+
+  it("answers a body that is not JSON with the shared invalid-JSON 400 and clears nothing", async () => {
+    h.request.method = "POST";
+    h.request.path = "/api/admin/xero/tax-override-pause/clear";
+    const response = await POST(new Request("https://club.example.com/api/admin/xero/tax-override-pause/clear", {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{not json",
+    }));
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Invalid JSON",
+      details: { body: ["Request body must be valid JSON"] },
+    });
+    expect(h.prisma.$transaction).not.toHaveBeenCalled();
+  });
 });
