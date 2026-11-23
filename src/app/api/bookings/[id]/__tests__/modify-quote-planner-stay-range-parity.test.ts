@@ -1965,6 +1965,7 @@ describe("#2563 exactly one stay-range resolution exists, and the route calls it
     expect(source.match(/resolveModificationStayRanges\(/g)).toHaveLength(1);
   });
 
+  // #5407 item 42: walks src/ for every caller; timed out at 5,000ms on a busy host.
   it("the resolver's rules live in one file, with only known callers", () => {
     // If a new surface starts resolving modification stay ranges, this list is
     // where it has to be declared — the point being that it is a decision, not a
@@ -2004,7 +2005,7 @@ describe("#2563 exactly one stay-range resolution exists, and the route calls it
     // generic date helpers several unrelated modules declare for themselves; what
     // must not exist twice is THIS envelope.)
     expect(sourceFilesNaming("const unionEnvelope")).toEqual([RESOLVER_FILE]);
-  });
+  }, 30_000);
 
   it("the route boundary maps the resolver's error without restating the rule", () => {
     const source = readRepoFile(ROUTE_FILE);

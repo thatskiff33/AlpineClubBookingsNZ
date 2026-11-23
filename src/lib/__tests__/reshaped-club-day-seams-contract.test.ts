@@ -202,6 +202,7 @@ describe("#3123 reshaped seams keep their required club day", () => {
     expect(offenders).toEqual([]);
   });
 
+  // #5407 item 42: walks src/ for every call site; timed out at 5,000ms on a busy host.
   it("every call site of every reshaped seam supplies the day or zone", () => {
     const sources = productionSources();
     // A guard that scanned nothing would pass, so prove the corpus is real.
@@ -236,8 +237,9 @@ describe("#3123 reshaped seams keep their required club day", () => {
     for (const seam of SEAMS) {
       expect(seen.get(seam.name) ?? 0).toBeGreaterThan(0);
     }
-  });
+  }, 30_000);
 
+  // #5407 item 42: reads every production source from disk; timed out at 5,000ms on a busy host.
   it("the booking edit policy still has the call sites this migration threaded", () => {
     // The widest cascade in the group, pinned as a COUNT so a new caller cannot
     // be added without this file being read. Twelve `getBookingEditPolicy` calls
@@ -268,5 +270,5 @@ describe("#3123 reshaped seams keep their required club day", () => {
     }
     expect(policyCalls).toBe(13);
     expect(startedCalls).toBe(7);
-  });
+  }, 30_000);
 });
