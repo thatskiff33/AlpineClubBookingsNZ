@@ -76,14 +76,6 @@ const REVIEWED_SHORT_FORMS: string[] = [
   "src/app/(admin)/admin/finance/subscriptions/page.tsx :: sub.xeroInvoiceId",
   // A membership cancellation request's id.
   "src/app/(admin)/admin/membership/membership-cancellations/page.tsx :: request.id",
-
-  // A BOOKING ID, BUT NEITHER STORED NOR MATCHED. The promo redemptions list
-  // shows officers the LAST eight characters upper-cased, where every other
-  // screen shows `formatBookingReference`. Changing what officers see is a
-  // behaviour change outside #5407 item 36, so it was reported for a decision
-  // rather than changed here. It leaves this list when it moves to
-  // `formatBookingReference`.
-  "src/app/api/admin/promo-codes/[id]/redemptions/route.ts :: id",
 ];
 
 const SHORT_FORM = /\.\s*(?:slice|substring|substr)\(\s*(?:0\s*,\s*8|-\s*8)\s*\)/g;
