@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 
 import type { MinimumStayPolicyExceptionViolation } from "@/lib/booking-policy-exceptions";
 import { PolicyExceptionMemberMessageError } from "@/lib/booking-exception-requests";
@@ -224,6 +225,30 @@ import {
   readUnifiedExceptionQueue,
   type ExceptionRequestGuestInput,
 } from "@/lib/booking-exception-request-service";
+
+/**
+ * #5407 item 39: a unique violation shaped the way the database driver in use
+ * really reports it (see `describeUniqueConstraintTarget`): Prisma's own
+ * error class, no `meta.target`, and the colliding columns, quoted as
+ * Postgres quotes them, under `driverAdapterError.cause.constraint.fields`.
+ */
+function driverUniqueViolation(fields: string[] | null): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+    code: "P2002",
+    clientVersion: "7.10.1",
+    meta: {
+      modelName: "NewBookingPolicyExceptionRequest",
+      driverAdapterError: {
+        name: "DriverAdapterError",
+        cause: {
+          originalCode: "23505",
+          kind: "UniqueConstraintViolation",
+          ...(fields ? { constraint: { fields } } : {}),
+        },
+      },
+    },
+  });
+}
 
 function minStayViolation(): MinimumStayPolicyExceptionViolation {
   return {
@@ -742,6 +767,28 @@ describe("createNewBookingExceptionRequest", () => {
     );
   });
 
+  describe("narrowing a unique violation to the open slot, as the driver reports it (#5407 item 39)", () => {
+    it("maps a collision on openStateKey to the open-request conflict", async () => {
+      mocks.nbCreate.mockRejectedValue(driverUniqueViolation(['"openStateKey"']));
+      await expect(createNewBookingExceptionRequest(newBookingInput())).rejects.toBeInstanceOf(
+        OpenExceptionRequestConflictError,
+      );
+    });
+
+    it("rethrows a collision on any other column instead of calling it an open request", async () => {
+      const violation = driverUniqueViolation(["id"]);
+      mocks.nbCreate.mockRejectedValue(violation);
+      await expect(createNewBookingExceptionRequest(newBookingInput())).rejects.toBe(violation);
+    });
+
+    it("still maps a violation whose constraint cannot be read to the conflict, as before", async () => {
+      mocks.nbCreate.mockRejectedValue(driverUniqueViolation(null));
+      await expect(createNewBookingExceptionRequest(newBookingInput())).rejects.toBeInstanceOf(
+        OpenExceptionRequestConflictError,
+      );
+    });
+  });
+
   it("supersede: claims the old request REQUESTED->SUPERSEDED, then creates the new one", async () => {
     await createNewBookingExceptionRequest(newBookingInput({ supersedeRequestId: "old-1" }));
 
@@ -942,6 +989,34 @@ describe("createModificationExceptionRequest", () => {
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
     expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["the open slot", ['"openStateKey"'], "conflict"],
+    ["another column", ["id"], "rethrown"],
+  ] as const)(
+    "narrows a driver-shaped unique violation on %s (#5407 item 39)",
+    async (_label, fields, expected) => {
+      const violation = driverUniqueViolation([...fields]);
+      mocks.bcrCreate.mockRejectedValue(violation);
+      const attempt = createModificationExceptionRequest({
+        bookingOwnerMemberId: null,
+        requestedByMemberId: "m1",
+        bookingId: "booking-1",
+        lodgeId: "lodge_1",
+        base,
+        proposed: base,
+        memberMessage: "please allow",
+        requestedSummary: "x",
+        delta: { checkOut: "2026-07-05" },
+        baseHoldsCapacity: true,
+      });
+      if (expected === "conflict") {
+        await expect(attempt).rejects.toBeInstanceOf(OpenExceptionRequestConflictError);
+      } else {
+        await expect(attempt).rejects.toBe(violation);
+      }
+    },
+  );
 
   it("lost-claim-no-side-effect: a supersede claiming 0 rows creates NOTHING", async () => {
     mocks.bcrUpdateMany.mockResolvedValue({ count: 0 });
