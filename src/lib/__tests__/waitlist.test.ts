@@ -57,6 +57,8 @@ const mockReconcileBedAllocations = vi.fn().mockResolvedValue(undefined);
  * money guard.
  */
 const mockBookingGuestFindMany = vi.fn().mockResolvedValue([]);
+/** #5433: an owed notice's claim after the commit; won unless a case says otherwise. */
+const mockOwedNoticeClaim = vi.fn().mockResolvedValue({ count: 1 });
 
 /**
  * #2619 — the hosting participant fence, on the transaction client.
@@ -193,7 +195,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     // #5433: the owed notices' claim and clear after the commit.
     owedNotice: {
-      updateMany: async () => ({ count: 1 }),
+      updateMany: (...args: unknown[]) => mockOwedNoticeClaim(...args),
       deleteMany: async () => ({ count: 1 }),
     },
   },
@@ -1868,6 +1870,95 @@ describe("expireStaleOffers", () => {
         data: expect.objectContaining({ status: "WAITLIST_OFFERED" }),
       })
     );
+  });
+});
+
+describe("the offer's and the lapse's owed notices (#5433)", () => {
+  const offeredAt = new Date("2026-06-28T00:00:00.000Z");
+  const nights = { checkIn: new Date("2026-07-10"), checkOut: new Date("2026-07-12") };
+
+  it("records the member's and the officers' notices inside the offer's transaction, then delivers them after its commit", async () => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
+    const { sendWaitlistOfferEmail } = await import("@/lib/email");
+    mockTxBookingFindMany.mockResolvedValueOnce([
+      {
+        id: "booking1",
+        ...nights,
+        createdAt: new Date("2026-04-01"),
+        guests: [{ id: "g1" }],
+        member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
+        memberId: "m1",
+        lodgeId: "lodge-1",
+        waitlistAlternateLodges: [],
+        promoRedemptions: [],
+      },
+    ]).mockResolvedValue([]);
+    (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
+    let committed = false;
+    mockPrismaTransaction.mockImplementationOnce(async (fn: (tx: unknown) => Promise<unknown>) => {
+      const result = await fn(mockTx);
+      committed = true;
+      return result;
+    });
+    mockOwedNoticeClaim.mockImplementation(async () => {
+      expect(committed).toBe(true);
+      return { count: 1 };
+    });
+
+    await processWaitlistForDates({ ...nights, lodgeId: "lodge-1" }, CLUB_FORMAT_TEST);
+
+    const offerWrite = mockTx.booking.update.mock.calls.find(([args]) => args.data.status === "WAITLIST_OFFERED")![0];
+    const offerTime = (offerWrite.data.waitlistOfferedAt as Date).getTime();
+    expect(mockTx.owedNotice.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({ id: `waitlist-offer-member:booking1:${offerTime}` }),
+        expect.objectContaining({ id: `waitlist-offer-officers:booking1:${offerTime}`, payload: { position: 1 } }),
+      ],
+      skipDuplicates: true,
+    });
+    // The window starts at the offer's own time.
+    expect((offerWrite.data.waitlistOfferExpiresAt as Date).getTime() - offerTime).toBe(48 * 60 * 60 * 1000);
+    expect(mockOwedNoticeClaim).toHaveBeenCalledTimes(2);
+    expect(sendWaitlistOfferEmail).toHaveBeenCalledTimes(1);
+    mockOwedNoticeClaim.mockResolvedValue({ count: 1 });
+  });
+
+  it("delivers nothing when the offer's transaction fails", async () => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const { sendWaitlistOfferEmail, sendAdminWaitlistOfferAlert } = await import("@/lib/email");
+    mockPrismaTransaction.mockRejectedValueOnce(new Error("could not serialize"));
+
+    await expect(processWaitlistForDates({ ...nights, lodgeId: "lodge-1" }, CLUB_FORMAT_TEST)).resolves.toEqual({ offeredBookingId: null, failed: true });
+
+    expect(mockOwedNoticeClaim).not.toHaveBeenCalled();
+    expect(sendWaitlistOfferEmail).not.toHaveBeenCalled();
+    expect(sendAdminWaitlistOfferAlert).not.toHaveBeenCalled();
+  });
+
+  it("sends no offer-expired email, and owes none, for a lapsed offer the member was never told about, and one for an offer they were (D2)", async () => {
+    const { expireStaleOffers } = await import("@/lib/waitlist");
+    const { sendWaitlistOfferExpiredEmail } = await import("@/lib/email");
+    const lapsed = (id: string) => ({
+      id,
+      lodgeId: "lodge-1",
+      waitlistOfferedLodgeId: null,
+      waitlistOfferedAt: offeredAt,
+      ...nights,
+      createdAt: new Date("2026-04-01"),
+      member: { email: `${id}@test.com`, firstName: id, lastName: "Doe" },
+    });
+    mockTxBookingFindMany.mockResolvedValueOnce([lapsed("nevertold"), lapsed("told")]).mockResolvedValue([]);
+    // The never-told offer's member notice still stands, and no email row exists for either.
+    mockTx.owedNotice.findMany.mockResolvedValueOnce([{ id: `waitlist-offer-member:nevertold:${offeredAt.getTime()}` }]);
+
+    const result = await expireStaleOffers(CLUB_FORMAT_TEST);
+
+    // Both lapse as before.
+    expect(result.expiredCount).toBe(2);
+    const written = mockTx.owedNotice.createMany.mock.calls.flatMap(([args]) => args.data.map((row: { id: string }) => row.id));
+    expect(written).toEqual([`waitlist-offer-expired:told:${Date.parse("2026-07-01T00:00:00.000Z")}`]);
+    expect(vi.mocked(sendWaitlistOfferExpiredEmail).mock.calls.map(([context]) => context.bookingId)).toEqual(["told"]);
   });
 });
 
