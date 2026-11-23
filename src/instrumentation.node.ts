@@ -1443,8 +1443,8 @@ export async function register() {
       );
 
       try {
-        const { retryFailedEmails } = await import("./lib/cron-email-retry");
-        const result = await retryFailedEmails();
+        const { runEmailRetryJob } = await import("./lib/cron-email-retry-job");
+        const result = await runEmailRetryJob();
         logger.info({ job: "email-retry", ...result }, "Email retry complete");
         await recordCronRun("email-retry", startedAt, "SUCCESS", result);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "email-retry", status: "ok" });

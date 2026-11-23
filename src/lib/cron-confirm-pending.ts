@@ -8,7 +8,8 @@ import { OPEN_INTENT_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-s
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { formatBookingReference } from "@/lib/booking-reference";
-import { deliverBumpNotices, drainOwedBumpNotices, recordBumpNoticesOwed, type OwedBumpNotice, type OwedBumpNoticeSweepResult } from "@/lib/booking-bump-notice-owed";
+import { deliverBumpNotices, recordBumpNoticesOwed, type OwedBumpNotice } from "@/lib/booking-bump-notice-owed";
+import { drainOwedNotices, type OwedNoticeSweepResult } from "@/lib/owed-notice/drain";
 import { bookingBumpReason } from "@/lib/booking-bump-reason";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
@@ -322,8 +323,8 @@ export interface CronConfirmResult {
   // members-only amount to settle here. Always empty.
   partialBumpedBookingIds: string[];
   failedBookingIds: string[];
-  // #5407: what this run's sweep did with the bump notices earlier runs left owed.
-  owedBumpNotices: OwedBumpNoticeSweepResult;
+  // #5407, #5433: what this run's sweep did with the notices earlier runs left owed.
+  owedNotices: OwedNoticeSweepResult;
 }
 
 /**
@@ -1107,10 +1108,9 @@ async function cancelSupersededLinkIntentsBestEffort(
  * For each PENDING booking where nonMemberHoldUntil <= now():
  * 1. Re-check bed availability under the booking advisory lock.
  * 2. If beds are unavailable, cancel the provisional booking, revoke payment
- *    links, and send the appropriate no-charge bump/cancellation email and
- *    the officers' alert. Both are recorded as owed in the cancel's own
- *    transaction and swept by a later run if this one stops before sending
- *    them (#5407, `booking-bump-notice-owed.ts`).
+ *    links, and send the no-charge bump/cancellation email and the officers'
+ *    alert, both recorded as owed in the cancel's transaction and swept by a
+ *    later run if this one stops first (#5407, #5433, `owed-notice/`).
  * 3. If beds are available and a saved payment method exists, claim capacity,
  *    charge off-session, then move to PAID and queue the booking's Xero invoice.
  * 4. If the booking is request-origin and has no saved card, keep the #707
@@ -1153,7 +1153,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
     cancelledBookingIds: [],
     partialBumpedBookingIds: [],
     failedBookingIds: [...recovery.failedBookingIds],
-    owedBumpNotices: await drainOwedBumpNotices(now),
+    owedNotices: await drainOwedNotices(now),
   };
 
   for (const candidate of pendingBookings) {
