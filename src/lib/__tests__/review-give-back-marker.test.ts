@@ -24,6 +24,7 @@ import { describe, expect, it } from "vitest";
 
 import { balancedBrackets } from "./support/balanced-brackets";
 import { blankLiterals } from "./support/strip-comments";
+import { toPosix } from "../../../scripts/audit/ts-call-site-scan";
 
 const ROOT = join(__dirname, "..", "..", "..");
 
@@ -59,7 +60,7 @@ describe("only a review's give-back marks an applied-credit row with its source 
         const args = argumentsAt(text, (match.index ?? 0) + match[0].length - 1, structure);
         const write = match[1] ?? "";
         if (args.includes("sourceBookingId") && (write === "giveBackAppliedCredit" || args.includes("BOOKING_APPLIED"))) {
-          marked.push(`${relative(ROOT, file)} ${enclosingFunction(text, match.index ?? 0)} ${write}`);
+          marked.push(`${toPosix(relative(ROOT, file))} ${enclosingFunction(text, match.index ?? 0)} ${write}`);
         }
       }
     }
