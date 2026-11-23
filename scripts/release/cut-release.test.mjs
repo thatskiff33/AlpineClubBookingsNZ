@@ -162,7 +162,11 @@ function makeFixture({
   git(seed, "push", "-q", "origin", "main", "--tags");
 
   const repo = path.join(tempDir("release-cut-clone-"), "repo");
-  execFileSync("git", ["clone", "-q", origin, repo], { stdio: "ignore" });
+  // `-c` sets autocrlf in the clone before its checkout (#5407 item 35): set
+  // afterwards by `configure`, a host whose own git config converts line
+  // endings has already checked out CRLF files over an LF index, and every
+  // file reads as modified.
+  execFileSync("git", ["clone", "-q", "-c", "core.autocrlf=false", origin, repo], { stdio: "ignore" });
   configure(repo);
   git(repo, "config", "remote.origin.url", GITHUB_URL);
   git(repo, "config", `url.${origin}.insteadOf`, GITHUB_URL);
