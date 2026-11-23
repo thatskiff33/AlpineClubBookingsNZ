@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import {
@@ -89,8 +90,10 @@ export async function POST(request: NextRequest) {
   }
 
   let parsed: z.infer<typeof createRequestSchema>;
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    parsed = createRequestSchema.parse(await request.json());
+    parsed = createRequestSchema.parse(jsonBody.body);
   } catch {
     return NextResponse.json(
       { error: "Invalid cancellation request payload" },

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import {
   claimDisplayToken,
@@ -34,8 +35,10 @@ const secureCookies = process.env.NODE_ENV === "production";
 
 export async function POST(req: NextRequest) {
   let action: z.infer<typeof bodySchema>["action"];
+  const jsonBody = await parseJsonRequestBody(req);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    action = bodySchema.parse(await req.json()).action;
+    action = bodySchema.parse(jsonBody.body).action;
   } catch {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }

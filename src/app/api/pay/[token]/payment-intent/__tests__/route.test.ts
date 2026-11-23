@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import {
+  expectDefaultInvalidJsonAnswer,
+  MALFORMED_JSON_BODY,
+} from "@/lib/__tests__/helpers/invalid-json-body";
 
 const h = vi.hoisted(() => ({
   applyRateLimit: vi.fn(),
@@ -170,5 +174,67 @@ describe("POST /api/pay/[token]/payment-intent repayment response", () => {
     await expect(response.json()).resolves.toEqual({
       error: "This payment link is not valid.",
     });
+  });
+});
+
+// #5407 item 27: the body is optional. The pay page sends none, and the
+// card-success check sends the intent it has just paid. An empty body is still
+// "no intent named"; a body that is present but not JSON used to be swallowed
+// as one and now answers the shared invalid-JSON 400, before any intent is
+// created or reused. The rate limit still comes first.
+describe("POST /api/pay/[token]/payment-intent: malformed body (#5407)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.applyRateLimit.mockResolvedValue(null);
+    h.createPaymentIntentForPaymentLink.mockResolvedValue({
+      type: "clientSecret",
+      clientSecret: "secret_fresh",
+      paymentIntentId: "pi_fresh",
+    });
+  });
+
+  function post(body?: string) {
+    return POST(
+      new NextRequest("http://localhost/api/pay/public-token/payment-intent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        ...(body === undefined ? {} : { body }),
+      }),
+      { params: Promise.resolve({ token: "public-token" }) },
+    );
+  }
+
+  it("treats an empty body as naming no paid intent", async () => {
+    const response = await post("");
+
+    expect(response.status).toBe(200);
+    expect(h.createPaymentIntentForPaymentLink).toHaveBeenCalledWith("public-token", {
+      paidPaymentIntentId: null,
+    });
+  });
+
+  it("refuses a JSON null body with a 400 and creates no intent", async () => {
+    const response = await post("null");
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "Invalid request body" });
+    expect(h.createPaymentIntentForPaymentLink).not.toHaveBeenCalled();
+  });
+
+  it("refuses a body that is not JSON and creates no intent", async () => {
+    await expectDefaultInvalidJsonAnswer(await post(MALFORMED_JSON_BODY));
+    expect(h.createPaymentIntentForPaymentLink).not.toHaveBeenCalled();
+  });
+
+  it("answers the rate limit before reading the body", async () => {
+    const { NextResponse } = await import("next/server");
+    h.applyRateLimit.mockResolvedValue(
+      NextResponse.json({ error: "Too many requests" }, { status: 429 }),
+    );
+
+    const response = await post(MALFORMED_JSON_BODY);
+
+    expect(response.status).toBe(429);
+    expect(h.createPaymentIntentForPaymentLink).not.toHaveBeenCalled();
   });
 });

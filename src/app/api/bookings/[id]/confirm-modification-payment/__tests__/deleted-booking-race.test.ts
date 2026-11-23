@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import {
+  expectDefaultInvalidJsonAnswer,
+  MALFORMED_JSON_BODY,
+} from "@/lib/__tests__/helpers/invalid-json-body";
 
 /**
  * #2700 surface 2 — a modification payment captured against a booking the club
@@ -408,5 +412,35 @@ describe("POST confirm-modification-payment — capture on a deleted booking (#2
     expect(res.status).toBe(400);
     expect(mocks.raiseTask).not.toHaveBeenCalled();
     expect(mocks.markPaymentIntentTransactionSucceeded).not.toHaveBeenCalled();
+  });
+});
+
+// #5407 item 26: the body is read with no handling of its own, so a malformed
+// body used to be a 500. It is now the shared invalid-JSON 400, before the
+// payment is read or Stripe is asked anything.
+describe("POST confirm-modification-payment: malformed body (#5407)", () => {
+  function callWithBody(body: string) {
+    return POST(
+      new NextRequest(
+        "http://localhost/api/bookings/booking-1/confirm-modification-payment",
+        { method: "POST", headers: { "content-type": "application/json" }, body },
+      ),
+      { params: Promise.resolve({ id: "booking-1" }) },
+    );
+  }
+
+  it("answers the shared invalid-JSON 400 and reads no payment", async () => {
+    await expectDefaultInvalidJsonAnswer(await callWithBody(MALFORMED_JSON_BODY));
+    expect(mocks.paymentFindUnique).not.toHaveBeenCalled();
+    expect(mocks.getPaymentIntent).not.toHaveBeenCalled();
+    expect(mocks.markPaymentIntentTransactionSucceeded).not.toHaveBeenCalled();
+  });
+
+  it("keeps the schema answer for a well-formed body of the wrong shape", async () => {
+    const response = await callWithBody(JSON.stringify({}));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "Invalid input" });
+    expect(mocks.paymentFindUnique).not.toHaveBeenCalled();
   });
 });

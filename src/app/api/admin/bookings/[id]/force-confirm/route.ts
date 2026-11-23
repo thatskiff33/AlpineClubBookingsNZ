@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
@@ -55,13 +56,11 @@ export async function POST(
   const session = guard.session;
   const { id: bookingId } = await params;
 
-  const body = await request.json().catch(() => ({}));
-  const parsed = forceConfirmSchema.safeParse(body);
+  const jsonBody = await parseOptionalJsonRequestBody(request, { whenAbsent: {} });
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = forceConfirmSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
   const allowOverbook = parsed.data.allowOverbook ?? false;
   const notifyMember = parsed.data.notifyMember;
