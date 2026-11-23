@@ -3,13 +3,13 @@ import { vi } from "vitest";
 /**
  * An in-memory `AlertCooldown` table for unit tests (#5407), answering the
  * `where` shapes `alert-cooldown.ts` and its callers write: an exact `key`,
- * an exact-prefix `key: { startsWith }` (`exactPrefix`), and `lastAlertedAt`
- * as an exact instant or `{ lt | lte }`. Its delegate methods are `vi.fn`s,
+ * an exact-prefix `key: { startsWith }` (`exactPrefix`), `key: { in }`, and
+ * `lastAlertedAt` as an exact instant or `{ lt | lte | gte }`. Its delegate methods are `vi.fn`s,
  * so a test can assert calls or make one fail. The real table's primary key
  * is proved against PostgreSQL in the `.realdb` suites.
  */
-type StampFilter = Date | { lt?: Date; lte?: Date };
-type CooldownWhere = { key?: string | { startsWith: string }; lastAlertedAt?: StampFilter };
+type StampFilter = Date | { lt?: Date; lte?: Date; gte?: Date };
+type CooldownWhere = { key?: string | { startsWith: string } | { in: string[] }; lastAlertedAt?: StampFilter };
 
 function unescapeLike(text: string): string {
   return text.replace(/\\(.)/g, "$1");
@@ -17,11 +17,13 @@ function unescapeLike(text: string): string {
 
 function matches(key: string, at: Date, where: CooldownWhere): boolean {
   if (typeof where.key === "string" && where.key !== key) return false;
-  if (where.key && typeof where.key === "object" && !key.startsWith(unescapeLike(where.key.startsWith))) return false;
+  if (where.key && typeof where.key === "object" && "in" in where.key && !where.key.in.includes(key)) return false;
+  if (where.key && typeof where.key === "object" && "startsWith" in where.key && !key.startsWith(unescapeLike(where.key.startsWith))) return false;
   const stamp = where.lastAlertedAt;
   if (stamp instanceof Date) return at.getTime() === stamp.getTime();
   if (stamp?.lt && !(at < stamp.lt)) return false;
   if (stamp?.lte && !(at <= stamp.lte)) return false;
+  if (stamp?.gte && !(at >= stamp.gte)) return false;
   return true;
 }
 
