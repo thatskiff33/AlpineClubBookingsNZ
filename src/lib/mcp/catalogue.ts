@@ -10,8 +10,7 @@
  * the routes import them from (`INV-SSOT`). A field described twice would let
  * the app be told one shape while the route enforces another. So is each
  * action's answer (`returns`): the shape the route projects a connection's
- * answer onto, from `connection-shapes.ts` (`connection-shapes-lodge-life.ts`
- * for lodge life).
+ * answer onto, from `connection-shapes.ts` (or an area's own shapes module).
  *
  * `mcp-route-census.test.ts` holds every route method in `src/app/api` to
  * either an entry here or a reasoned exclusion (`exclusions.ts`).
@@ -91,9 +90,8 @@ import type { StepUpHttpMethod } from "@/lib/step-up-routes";
  * audit row (a lookup of other members records every query, blocked ones
  * included). `write` changes something the member can undo.
  * `destructive` cannot be undone from the app, notifies other people, or
- * overwrites another person's record (owner decision, #5305): the app is told
- * to confirm with the member first, and the call is audited as important. A
- * view-only connection runs `read` actions only.
+ * overwrites another person's record (owner decision, #5305): the app confirms
+ * first, and it is audited as important. View-only runs `read` actions only.
  */
 export type McpActionKind = "read" | "write" | "destructive";
 
