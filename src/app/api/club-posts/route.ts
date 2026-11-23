@@ -22,7 +22,7 @@ import {
 import {
   CLUB_POST_CREATED_CONNECTION_SHAPE,
   CLUB_POST_PAGE_CONNECTION_SHAPE,
-} from "@/lib/connection-shapes";
+} from "@/lib/connection-shapes-lodge-life";
 import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 /**

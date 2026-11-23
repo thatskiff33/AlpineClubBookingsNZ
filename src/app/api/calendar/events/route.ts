@@ -18,7 +18,7 @@ import {
   whereVisibleCalendarEvent,
 } from "@/lib/calendar-events";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { CALENDAR_EVENTS_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { CALENDAR_EVENTS_CONNECTION_SHAPE } from "@/lib/connection-shapes-lodge-life";
 import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 // Widest window a single list request may span, guarding against an unbounded

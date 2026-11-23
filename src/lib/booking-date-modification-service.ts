@@ -95,6 +95,7 @@ import {
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { getNonMemberHoldPolicy } from "@/lib/cancellation";
+import { nonMemberHoldEnd } from "@/lib/non-member-hold-end";
 import { lateNoticeChangeFee } from "@/lib/late-notice-change-fee";
 import {
   cleanupChoreAssignmentsForDateChange,
@@ -209,9 +210,7 @@ async function recalculateNonMemberHold(
       holdEnabled: holdPolicy.enabled,
     });
     if (holdDecision.shouldBePending) {
-      newNonMemberHoldUntil = new Date(
-        newCheckIn.getTime() - holdPolicy.holdDays * 24 * 60 * 60 * 1000,
-      );
+      newNonMemberHoldUntil = nonMemberHoldEnd(newCheckIn, holdPolicy.holdDays);
     } else {
       newNonMemberHoldUntil = null;
       releasesToPaymentPending = booking.status === "PENDING";

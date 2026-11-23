@@ -6,7 +6,7 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { canViewWorkParties } from "@/lib/work-party-access";
 import { findMemberWorkParty } from "@/lib/work-party-member";
 import { workPartyIdParamsSchema } from "@/lib/work-party-query-schema";
-import { MEMBER_WORK_PARTY_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { MEMBER_WORK_PARTY_CONNECTION_SHAPE } from "@/lib/connection-shapes-lodge-life";
 import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**

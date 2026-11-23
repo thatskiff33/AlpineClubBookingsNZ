@@ -45,13 +45,12 @@ export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_R
 
 /**
  * The task that will bring each remaining group of routes into the catalogue.
- * The member keys are the follow-ons ALP-718 split its member routes into
- * that have not yet shipped (ALP-796, lodge life, has); the rest are the
- * officer areas.
+ * The member keys are the follow-ons ALP-718 split its member routes into,
+ * less those that have shipped (ALP-795, family and membership; ALP-796,
+ * lodge life); the rest are the officer areas.
  */
 export const MCP_NOT_YET_TASKS = {
   memberBookings: "ALP-794",
-  memberFamilyAndMembership: "ALP-795",
   memberGroupsAndWholeLodge: "ALP-797",
   bookings: "ALP-719",
   membership: "ALP-720",
@@ -64,7 +63,6 @@ export const MCP_NOT_YET_TASKS = {
 
 type MemberNotYetGroup =
   | "memberBookings"
-  | "memberFamilyAndMembership"
   | "memberGroupsAndWholeLodge";
 
 export type McpExclusionReason = McpPermanentExclusionReason | `not-yet:${string}`;
@@ -139,6 +137,11 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "POST /api/member/request-deletion",
       // Signing off another member's induction is the signer's own declaration.
       "POST /api/inductions/[id]/sign-off",
+      // ALP-795: joining a family group, confirming a partnership and asking
+      // for memberships to be cancelled are the member's own decisions.
+      "PUT /api/members/family/invitations",
+      "PUT /api/members/partner-link",
+      "POST /api/member/membership-cancellation-requests",
     ],
   },
   {
@@ -158,8 +161,10 @@ const PERMANENT_ROUTES: ReadonlyArray<{
   {
     reason: "needs-browser",
     routes: [
-      // The nominee confirms through a link emailed to them.
+      // The nominee confirms through a link emailed to them, as does each member
+      // named in a membership cancellation request.
       "POST /api/applications/nominate",
+      "POST /api/member/membership-cancellation-requests/confirm",
       // The chore roster is opened from the link in the roster email.
       "GET /api/chores/[token]",
       "PUT /api/chores/[token]",
@@ -187,10 +192,6 @@ const MEMBER_NOT_YET_PREFIXES: Readonly<Record<MemberNotYetGroup, readonly strin
     "/api/booking-policies",
     "/api/bookings",
     "/api/promo-codes",
-  ],
-  memberFamilyAndMembership: [
-    "/api/member/membership-cancellation-requests",
-    "/api/members",
   ],
   memberGroupsAndWholeLodge: [
     "/api/booking-requests",

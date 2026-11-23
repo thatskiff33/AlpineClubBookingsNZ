@@ -37,7 +37,7 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   FOOD_ORDER_CREATED_CONNECTION_SHAPE,
   FOOD_ORDER_OPTIONS_CONNECTION_SHAPE,
-} from "@/lib/connection-shapes";
+} from "@/lib/connection-shapes-lodge-life";
 import { foodOrderPlaceSchema } from "@/lib/food-order-schema";
 import { connectionJson } from "@/lib/mcp-connection-request";
 

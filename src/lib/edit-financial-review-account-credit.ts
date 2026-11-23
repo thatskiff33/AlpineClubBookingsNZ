@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 
 import { recordBookingEvent } from "@/lib/booking-events";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import { bookingAmountOwedCents, bookingWorthCents, recordedChangeFeeCents } from "@/lib/booking-payment-state";
 import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
 import { daysUntilDate, loadCancellationPolicy } from "@/lib/cancellation";
@@ -58,7 +59,7 @@ export type EditReviewAccountCreditOutcome = {
 
 /** The give-back row's human description; nothing reads it back (#3791). */
 export function reviewShareGiveBackDescription(bookingId: string): string {
-  return `Applied credit returned after booking ${bookingId.slice(0, 8)} financial review`;
+  return `Applied credit returned after booking ${storedShortBookingId(bookingId)} financial review`;
 }
 
 /**

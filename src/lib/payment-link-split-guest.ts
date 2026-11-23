@@ -327,7 +327,7 @@ export async function issueSplitGuestPaymentLink(
       guestCount: booking.guests.length,
       priceCents: booking.finalPriceCents,
       amountDueCents: (await readBookingAmountOwed(booking)).dueCents,
-      bookingReference: booking.id,
+      bookingId: booking.id,
       expiresAt: minted.expiresAt, // the row's own instant, not a re-derivation
       lodgeId: booking.lodgeId ?? null,
     }, format);

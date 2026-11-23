@@ -4,7 +4,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { formatDateOnly } from "@/lib/date-only";
 import { workPartiesForStayQuerySchema } from "@/lib/work-party-query-schema";
-import { WORK_PARTIES_FOR_STAY_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { WORK_PARTIES_FOR_STAY_CONNECTION_SHAPE } from "@/lib/connection-shapes-lodge-life";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { findActiveWorkPartyEventsForRange } from "@/lib/work-party";
 

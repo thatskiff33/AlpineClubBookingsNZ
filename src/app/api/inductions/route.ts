@@ -6,7 +6,7 @@ import {
   memberInductionView,
 } from "@/lib/induction";
 import { requireActiveSession } from "@/lib/session-guards";
-import { MEMBER_OWN_INDUCTION_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { MEMBER_OWN_INDUCTION_CONNECTION_SHAPE } from "@/lib/connection-shapes-lodge-life";
 import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 /**

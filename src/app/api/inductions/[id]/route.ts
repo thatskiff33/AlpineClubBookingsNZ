@@ -8,7 +8,7 @@ import {
 } from "@/lib/induction";
 import { INDUCTION_SIGN_OFF_DECLARATION } from "@/lib/induction-checklist-template";
 import { requireActiveSession } from "@/lib/session-guards";
-import { MEMBER_INDUCTION_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { MEMBER_INDUCTION_CONNECTION_SHAPE } from "@/lib/connection-shapes-lodge-life";
 import { inductionIdParamsSchema } from "@/lib/induction-params";
 import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 

@@ -12,12 +12,6 @@
  * Types only from the route modules: nothing here reaches the database.
  */
 import type { CancelBookingResult } from "@/lib/booking-cancel-result";
-import type { CalendarEventDTO } from "@/lib/calendar-events";
-import type { ClubPostPage } from "@/lib/club-posts";
-import type { FoodOrderHistory } from "@/lib/food-orders";
-import type { MemberInductionView } from "@/lib/induction";
-import type { PublicMaintenanceQuestion } from "@/lib/maintenance-reports";
-import type { MemberWorkPartyDTO } from "@/lib/work-party-member";
 import type { CancelPreviewAnswer } from "@/lib/cancel-preview-answer";
 import type { BookingMessageClubTokens } from "@/lib/booking-message-definitions";
 import type { serializePublicCommitteeAssignment } from "@/lib/committee";
@@ -30,6 +24,13 @@ import {
   type EveryFieldOf,
 } from "@/lib/connection-projection";
 import type { MemberDraftSummary } from "@/lib/member-draft-summary";
+import type { MemberGuestCandidateResponse } from "@/lib/member-guest-find";
+import type {
+  PartnerLinkMemberView,
+  PartnerLinkState,
+  PendingPartnerInviteIntent,
+} from "@/lib/member-partner-link";
+import type { MembershipCancellationOverview } from "@/lib/membership-cancellation-requests";
 import type { MemberLodgeRoster } from "@/lib/member-lodge-roster";
 import {
   MEMBER_NOTIFICATION_PREFERENCE_KEYS,
@@ -80,9 +81,15 @@ export const MEMBER_BOOKING_CONNECTION_SHAPE: ConnectionShape = {
   booking: MEMBER_BOOKING_SUMMARY_SHAPE,
 };
 
-/** Who can go on a booking: no dates of birth, email addresses, parent links, notes or pending requests. */
+/**
+ * Who can go on a booking, and the ids the family actions take (ALP-795):
+ * the member's family group ids, each person's groups, whether they have
+ * their own login, and whether the member may confirm their details. No dates
+ * of birth, email addresses, parent links, notes or pending requests.
+ */
 export const MEMBER_FAMILY_CONNECTION_SHAPE = connectionShapeFor<{
   displayName: string | null;
+  familyGroupIds: string[];
   familyMembers: Array<{
     id: string;
     firstName: string;
@@ -90,9 +97,13 @@ export const MEMBER_FAMILY_CONNECTION_SHAPE = connectionShapeFor<{
     ageTier: string;
     relationship: string;
     canBeBooked: boolean;
+    canLogin: boolean;
+    canCurrentUserConfirmDetails: boolean;
+    familyGroupIds: string[];
   }>;
 }>({
   displayName: true,
+  familyGroupIds: true,
   familyMembers: {
     id: true,
     firstName: true,
@@ -100,6 +111,9 @@ export const MEMBER_FAMILY_CONNECTION_SHAPE = connectionShapeFor<{
     ageTier: true,
     relationship: true,
     canBeBooked: true,
+    canLogin: true,
+    canCurrentUserConfirmDetails: true,
+    familyGroupIds: true,
   },
 });
 
@@ -308,167 +322,155 @@ export const SKIFIELD_REPORT_CONNECTION_SHAPE = connectionShapeFor<
   stale: true,
 });
 
-// --- Lodge life (ALP-796) ---------------------------------------------------
+// --- Family and membership (ALP-795) ----------------------------------------
 
-/** The events a member sees, without the series bookkeeping or whether they may edit. */
-export const CALENDAR_EVENTS_CONNECTION_SHAPE = connectionShapeFor<{
-  events: CalendarEventDTO[];
-  canManage: boolean;
+/** A confirmed no-login family member: name, age group and profile state. Never the date of birth or the copied contact details. */
+export const FAMILY_MEMBER_DETAILS_CONNECTION_SHAPE = connectionShapeFor<{
+  member: { id: string; firstName: string; lastName: string; ageTier: string; canLogin: boolean };
+  profileStatus: {
+    isProfileComplete: boolean;
+    isDetailsConfirmed: boolean;
+    canBeBookedAsMember: boolean;
+    missingFields: string[];
+  };
 }>({
-  events: {
-    id: true,
-    title: true,
-    location: true,
-    details: true,
-    allDay: true,
-    startsAt: true,
-    endsAt: true,
-    isMeeting: true,
-    recurrence: { frequency: true, interval: true, endMode: true, until: true, count: true },
-    workPartyEventId: true,
-  },
+  member: { id: true, firstName: true, lastName: true, ageTier: true, canLogin: true },
+  profileStatus: { isProfileComplete: true, isDetailsConfirmed: true, canBeBookedAsMember: true, missingFields: true },
 });
 
-/**
- * One page of the message board as plain text. Never the author's member id
- * or the rich body, whose picture addresses the app has no use for.
- */
-export const CLUB_POST_PAGE_CONNECTION_SHAPE = connectionShapeFor<ClubPostPage>({
-  posts: {
-    id: true,
-    authorName: true,
-    content: true,
-    sharedToAllClubs: true,
-    postedAt: true,
-    mine: true,
-    originClubName: true,
-  },
-  cursor: { before: true, beforeId: true },
+export const FAMILY_GROUP_CREATE_CONNECTION_SHAPE = connectionShapeFor<{
+  message: string;
+  requestId: string;
+  familyGroupId: string;
+  childRequestIds: string[];
+}>({ message: true, requestId: true, familyGroupId: true, childRequestIds: true });
+
+export const FAMILY_INVITE_CONNECTION_SHAPE = connectionShapeFor<{ message: string; invitationId: string }>({
+  message: true,
+  invitationId: true,
 });
 
-/** A new post, food order or maintenance report: its id. */
-const CREATED_RECORD_SHAPE = connectionShapeFor<{ id: string }>({ id: true });
-export const CLUB_POST_CREATED_CONNECTION_SHAPE: ConnectionShape = CREATED_RECORD_SHAPE;
-export const FOOD_ORDER_CREATED_CONNECTION_SHAPE: ConnectionShape = CREATED_RECORD_SHAPE;
-export const MAINTENANCE_REPORT_CREATED_CONNECTION_SHAPE: ConnectionShape = CREATED_RECORD_SHAPE;
-
-/** What the order form needs. The food officer's address is never in the answer. */
-export const FOOD_ORDER_OPTIONS_CONNECTION_SHAPE = connectionShapeFor<{
-  ready: boolean;
-  officerLabel: string;
-  lodges: Array<{ id: string; name: string }>;
-  today: string;
-  units: readonly string[];
-  limits: { maxItems: number; descriptionMaxLength: number; quantityMax: number; notesMaxLength: number };
-}>({
-  ready: true,
-  officerLabel: true,
-  lodges: { id: true, name: true },
-  today: true,
-  units: true,
-  limits: { maxItems: true, descriptionMaxLength: true, quantityMax: true, notesMaxLength: true },
+/** The four family requests an officer reviews: adult, child, join and removal. */
+export const FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE = connectionShapeFor<{ message: string; requestId: string }>({
+  message: true,
+  requestId: true,
 });
 
-/**
- * The member's own orders and their totals. Not who ticked or priced an order
- * (other people's names), the management flags, or the officer page's lodge
- * list and email link.
- */
-export const FOOD_ORDER_HISTORY_CONNECTION_SHAPE = connectionShapeFor<FoodOrderHistory>({
-  orders: {
-    id: true,
-    lodgeId: true,
-    lodgeName: true,
-    neededBy: true,
-    notes: true,
-    status: true,
-    items: { description: true, quantity: true, unit: true, receivedAt: true },
-    receivedAt: true,
-    priceCents: true,
-    createdAt: true,
-  },
-  page: true,
-  pageSize: true,
-  orderCount: true,
-  pricedCount: true,
-  priceTotalCents: true,
-});
-
-/**
- * The member's own induction: where it stands, the checklist, and who has
- * signed. Not the signers' comments, the final or voiding comments, or the
- * checklist's competency and notes prompts (health, safety and competency
- * notes stay on the website).
- */
-const MEMBER_INDUCTION_SHAPE = connectionShapeFor<MemberInductionView>({
-  id: true,
-  kind: true,
-  status: true,
-  requiredSignOffs: true,
-  inductionDate: true,
-  completedAt: true,
-  createdAt: true,
-  template: {
-    name: true,
-    sections: {
-      title: true,
-      description: true,
-      items: { label: true, isMandatory: true, requiresDemonstration: true },
-    },
-  },
-  signOffs: { signerName: true, signerRole: true, signedAt: true },
-  assignedSigners: { firstName: true, lastName: true },
-});
-
-export const MEMBER_OWN_INDUCTION_CONNECTION_SHAPE: ConnectionShape = { own: MEMBER_INDUCTION_SHAPE };
-export const MEMBER_INDUCTION_CONNECTION_SHAPE: ConnectionShape = { induction: MEMBER_INDUCTION_SHAPE };
-
-/** A work party as a member sees it (`MemberWorkPartyDTO`): never the internal promo code. */
-const MEMBER_WORK_PARTY_SHAPE = completeConnectionShapeFor<MemberWorkPartyDTO>({
-  id: true,
-  name: true,
-  description: true,
-  startDate: true,
-  endDate: true,
-  discountPercent: true,
-  lodgeId: true,
-  lodgeName: true,
-  join: { checkIn: true, checkOut: true },
-});
-
-export const MEMBER_WORK_PARTY_LIST_CONNECTION_SHAPE: ConnectionShape = { workParties: MEMBER_WORK_PARTY_SHAPE };
-export const MEMBER_WORK_PARTY_CONNECTION_SHAPE: ConnectionShape = { workParty: MEMBER_WORK_PARTY_SHAPE };
-
-export const WORK_PARTIES_FOR_STAY_CONNECTION_SHAPE = connectionShapeFor<{
-  events: Array<{
+/** Who invited the member, to which group, and when. Not the request row's other columns. */
+export const FAMILY_INVITATIONS_CONNECTION_SHAPE = connectionShapeFor<{
+  invitations: Array<{
     id: string;
-    name: string;
-    description: string | null;
-    startDate: string;
-    endDate: string;
-    discountPercent: number;
-    lodgeName: string | null;
+    createdAt: Date;
+    familyGroup: { id: string; name: string | null };
+    requester: { id: string; firstName: string; lastName: string } | null;
   }>;
 }>({
-  events: {
+  invitations: {
     id: true,
-    name: true,
-    description: true,
-    startDate: true,
-    endDate: true,
-    discountPercent: true,
-    lodgeName: true,
+    createdAt: true,
+    familyGroup: { id: true, name: true },
+    requester: { id: true, firstName: true, lastName: true },
   },
 });
 
-/** The questions and lodges to report against. Not whether photos are on: a connection cannot attach one. */
-export const MAINTENANCE_REPORT_FORM_CONNECTION_SHAPE = connectionShapeFor<{
-  questions: PublicMaintenanceQuestion[];
-  lodges: Array<{ id: string; name: string; isDefault: boolean }>;
-  photosEnabled: boolean;
-  summaryMaxLength: number;
-}>({
-  questions: { id: true, label: true, helpText: true, type: true, required: true, choices: true, sortOrder: true },
-  lodges: { id: true, name: true, isDefault: true },
-  summaryMaxLength: true,
+export const MEMBER_GUEST_OPTIONS_CONNECTION_SHAPE = connectionShapeFor<{
+  enabled: boolean;
+  openSearchEnabled: boolean;
+  approvalRequired: boolean;
+  pendingHoldExpiryDays: number;
+}>({ enabled: true, openSearchEnabled: true, approvalRequired: true, pendingHoldExpiryDays: true });
+
+/**
+ * What the website's own guest picker shows of another member: id, name and
+ * age group (owner decision D-19). Never a contact detail or a date of birth.
+ * `truncated` is a boolean, never a count, as on the website.
+ */
+export const MEMBER_GUEST_CANDIDATES_CONNECTION_SHAPE = completeConnectionShapeFor<MemberGuestCandidateResponse>({
+  candidates: { memberId: true, firstName: true, lastName: true, ageTier: true },
+  truncated: true,
+});
+
+const PARTNER_LINK_MEMBER_SHAPE = completeConnectionShapeFor<PartnerLinkMemberView>({
+  id: true,
+  firstName: true,
+  lastName: true,
+  canLogin: true,
+});
+
+const PARTNER_LINK_VIEW_SHAPE = connectionShapeFor<PartnerLinkState["pendingIncoming"][number]>({
+  id: true,
+  status: true,
+  partner: PARTNER_LINK_MEMBER_SHAPE,
+  initiatedByMe: true,
+  assignedByAdmin: true,
+  confirmedAt: true,
+  createdAt: true,
+});
+
+/**
+ * The member's partnership, pending requests and one-step candidates. An
+ * outstanding emailed invitation shows its id and expiry, never the address
+ * it was sent to.
+ */
+export const PARTNER_LINK_STATE_CONNECTION_SHAPE = connectionShapeFor<
+  PartnerLinkState & {
+    oneStepCandidates: PartnerLinkMemberView[];
+    pendingPartnerInvite: PendingPartnerInviteIntent | null;
+  }
+>({
+  confirmed: PARTNER_LINK_VIEW_SHAPE,
+  pendingIncoming: PARTNER_LINK_VIEW_SHAPE,
+  pendingOutgoing: PARTNER_LINK_VIEW_SHAPE,
+  oneStepCandidates: PARTNER_LINK_MEMBER_SHAPE,
+  pendingPartnerInvite: { id: true, expiresAt: true },
+});
+
+/** A by-email request answers with the message only, whatever happened (D9); a family member request adds the link. */
+export const PARTNER_LINK_REQUEST_CONNECTION_SHAPE = connectionShapeFor<{
+  message: string;
+  linkId: string | null;
+  status: string;
+}>({ message: true, linkId: true, status: true });
+
+export const PARTNER_LINK_MESSAGE_CONNECTION_SHAPE = connectionShapeFor<{ message: string }>({ message: true });
+
+/**
+ * Who the member may ask to cancel, the club's warning and rejoining text, and
+ * their visible requests. No email addresses, and none of the club's Xero
+ * settings.
+ */
+export const MEMBERSHIP_CANCELLATION_OPTIONS_CONNECTION_SHAPE = connectionShapeFor<MembershipCancellationOverview>({
+  settings: { warningText: true, rejoinProcessText: true },
+  candidates: {
+    id: true,
+    name: true,
+    ageTier: true,
+    relationship: true,
+    canLogin: true,
+    requiresOwnConfirmation: true,
+    eligible: true,
+    ineligibleReason: true,
+    familyGroupNames: true,
+    activeRequest: { id: true, status: true, participantStatus: true, submittedAt: true },
+  },
+  requests: {
+    id: true,
+    status: true,
+    reason: true,
+    submittedAt: true,
+    reviewedAt: true,
+    completedAt: true,
+    requestedBy: { id: true, name: true },
+    participants: {
+      id: true,
+      memberId: true,
+      name: true,
+      ageTier: true,
+      canLogin: true,
+      active: true,
+      status: true,
+      confirmedAt: true,
+      declinedAt: true,
+    },
+  },
 });

@@ -19,7 +19,7 @@ import {
 } from "@/lib/food-orders";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSession } from "@/lib/session-guards";
-import { FOOD_ORDER_HISTORY_CONNECTION_SHAPE } from "@/lib/connection-shapes";
+import { FOOD_ORDER_HISTORY_CONNECTION_SHAPE } from "@/lib/connection-shapes-lodge-life";
 import { connectionJson } from "@/lib/mcp-connection-request";
 
 /**

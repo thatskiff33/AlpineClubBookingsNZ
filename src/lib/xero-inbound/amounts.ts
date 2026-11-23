@@ -153,10 +153,6 @@ export function buildXeroPaymentDisplayNumber(payment: XeroPayment): string | nu
   return payment.invoiceNumber ?? payment.creditNoteNumber ?? null;
 }
 
-export function buildBookingAppliedCreditDescription(bookingId: string) {
-  return `Applied to booking ${bookingId.slice(0, 8)}`;
-}
-
 export function buildCreditNoteAllocationTargets(
   creditNote: Pick<XeroCreditNote, "allocations">
 ): AccountCreditAllocationTarget[] {

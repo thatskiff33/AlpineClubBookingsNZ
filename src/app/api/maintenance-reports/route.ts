@@ -24,7 +24,7 @@ import {
 import {
   MAINTENANCE_REPORT_CREATED_CONNECTION_SHAPE,
   MAINTENANCE_REPORT_FORM_CONNECTION_SHAPE,
-} from "@/lib/connection-shapes";
+} from "@/lib/connection-shapes-lodge-life";
 import { arrivesAsMcpConnection, connectionJson } from "@/lib/mcp-connection-request";
 
 /**
