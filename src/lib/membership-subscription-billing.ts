@@ -21,14 +21,16 @@ import { getEffectiveMembershipAnnualFee, getEffectiveSubscriptionCategoryFee, g
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
-import {
-  getSeasonStartMonth,
-  seasonYearOfStoredDate,
-} from "@/lib/financial-year";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { seasonYearsLabel } from "@/lib/season-label";
 import { loadMembershipLockoutSettingsStrict } from "@/lib/membership-lockout-settings";
-import { liabilityRuleFor, resolveMemberSubscriptionLiability } from "@/lib/policies/subscription";
+import { getSeasonStartDate } from "@/lib/policies/age-tier";
+import {
+  getSeasonEndDate,
+  liabilityRuleFor,
+  resolveMemberSubscriptionLiability,
+} from "@/lib/policies/subscription";
 import { SUBSCRIPTION_BILLING_POPULATION_WHERE } from "@/lib/subscription-billing-population";
 import {
   SUBSCRIPTION_BILLING_CONFIRM_TIMEOUT_MS,
@@ -148,12 +150,9 @@ function digest(value: unknown) {
   return stableDigest(value);
 }
 
+/** The membership year's first and last days, as date-only instants. */
 function seasonBounds(seasonYear: number) {
-  const startMonth = getSeasonStartMonth();
-  const start = new Date(Date.UTC(seasonYear, startMonth - 1, 1));
-  const nextStart = new Date(Date.UTC(seasonYear + 1, startMonth - 1, 1));
-  const end = new Date(nextStart.getTime() - 24 * 60 * 60 * 1000);
-  return { start, end };
+  return { start: getSeasonStartDate(seasonYear), end: getSeasonEndDate(seasonYear) };
 }
 
 export function calculateMembershipCharge(input: {
