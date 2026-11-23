@@ -5,8 +5,9 @@
  * Each case commits a bump the way the confirm-pending cron does (the guarded
  * PENDING -> CANCELLED claim and `recordBumpNoticesOwed` in one transaction),
  * then runs the REAL post-commit delivery and sweep against the real
- * `AlertCooldown` table, the real email core and its `EmailLog` rows, and the
- * real officer audience:
+ * `OwedNotice` table (#5433; and `AlertCooldown`, where a release before
+ * #5433 left its markers), the real email core and its `EmailLog` rows, and
+ * the real officer audience:
  *
  * - right after the commit the email core's render throws (as one on a stored
  *   override can), so the member's email throws and every officer's copy
@@ -17,7 +18,9 @@
  * - a settlement marker (a `CANCELLED` event that cancels nothing) after the
  *   bump does not stop the notice; a genuine cancel after it does;
  * - a bump whose transaction rolls back leaves no marker;
- * - two sweeps at the same moment send the officers' alert once.
+ * - two sweeps at the same moment send each notice once;
+ * - a legacy `AlertCooldown` marker and an `OwedNotice` marker for the same
+ *   bump (#5433's blue-green overlap) record the member's email once.
  *
  * The cron's own wiring (that it writes the markers inside its transaction and
  * delivers after the commit) is proved in cron-confirm-pending.test.ts.
@@ -31,6 +34,7 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { listingTogether } from "./support/owed-notice-listing-barrier";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { resetStripeRaceHooks } from "./support/stripe-race-double";
 
@@ -101,10 +105,13 @@ const CASES = {
   race: caseIds("rce", 18),
   marker: caseIds("stl", 26),
   cancelled: caseIds("cxl", 6),
+  both: caseIds("bth", 14),
 };
 
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let owed: typeof import("@/lib/booking-bump-notice-owed");
+let drainOwedNotices: (typeof import("@/lib/owed-notice/drain"))["drainOwedNotices"];
+let owedNoticeTableSource: (typeof import("@/lib/owed-notice/deliver"))["owedNoticeTableSource"];
 let email: typeof import("@/lib/email");
 let formatBookingReference: (typeof import("@/lib/booking-reference"))["formatBookingReference"];
 let SETTLEMENT_MARKER_EVENT_REASONS: (typeof import("@/lib/manual-settlement-reversal-event"))["SETTLEMENT_MARKER_EVENT_REASONS"];
@@ -119,6 +126,7 @@ let harnessRole: { restore: () => void } | undefined;
         where: { OR: [{ bookingId: ids.bookingId }, { to: ADMIN_EMAIL, subject: { contains: formatBookingReference(ids.bookingId) } }] },
       });
       await prisma.alertCooldown.deleteMany({ where: { key: { contains: ids.bookingId } } });
+      await prisma.owedNotice.deleteMany({ where: { subjectId: ids.bookingId } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: ids.bookingId } });
       await prisma.bookingGuest.deleteMany({ where: { bookingId: ids.bookingId } });
       await prisma.booking.deleteMany({ where: { id: ids.bookingId } });
@@ -187,7 +195,9 @@ let harnessRole: { restore: () => void } | undefined;
         officerRows: await prisma.emailLog.count({
           where: { to: ADMIN_EMAIL, templateName: "admin-booking-bumped", subject: { contains: reference } },
         }),
-        markers: await prisma.alertCooldown.count({ where: { key: { contains: ids.bookingId } } }),
+        markers:
+          (await prisma.owedNotice.count({ where: { subjectId: ids.bookingId } })) +
+          (await prisma.alertCooldown.count({ where: { key: { contains: ids.bookingId } } })),
       };
     }
 
@@ -198,6 +208,8 @@ let harnessRole: { restore: () => void } | undefined;
       const { declareEnvironmentRoleForSuite } = await import("./helpers/environment-role");
       harnessRole = declareEnvironmentRoleForSuite("non-production");
       owed = await import("@/lib/booking-bump-notice-owed");
+      ({ drainOwedNotices } = await import("@/lib/owed-notice/drain"));
+      ({ owedNoticeTableSource } = await import("@/lib/owed-notice/deliver"));
       email = await import("@/lib/email");
       ({ formatBookingReference } = await import("@/lib/booking-reference"));
       ({ SETTLEMENT_MARKER_EVENT_REASONS } = await import("@/lib/manual-settlement-reversal-event"));
@@ -256,24 +268,26 @@ let harnessRole: { restore: () => void } | undefined;
 
       // The next sweep sends the member's email; the officers' alert, which
       // reached nobody, is held a day.
-      await owed.drainOwedBumpNotices(new Date(bumpedAt.getTime() + WAIT_PAST));
+      await drainOwedNotices(new Date(bumpedAt.getTime() + WAIT_PAST));
       const memberLogId = `email:booking-bumped:${owed.bumpNoticeIdempotencyKey(ids.bookingId, bumpedAt)}`;
       expect(await recorded(ids)).toEqual({ memberRows: [{ id: memberLogId }], officerRows: 0, markers: 1 });
 
       // A day later the sweep sends the officers' alert, once.
-      await owed.drainOwedBumpNotices(new Date(bumpedAt.getTime() + DAY + WAIT_PAST));
+      await drainOwedNotices(new Date(bumpedAt.getTime() + DAY + WAIT_PAST));
       expect(await recorded(ids)).toEqual({ memberRows: [{ id: memberLogId }], officerRows: 1, markers: 0 });
 
       // A further sweep finds nothing owed.
-      await owed.drainOwedBumpNotices(new Date(bumpedAt.getTime() + 2 * DAY));
+      await drainOwedNotices(new Date(bumpedAt.getTime() + 2 * DAY));
       expect(await recorded(ids)).toEqual({ memberRows: [{ id: memberLogId }], officerRows: 1, markers: 0 });
 
       // A member marker still standing after its send (a crash before the
       // clear): the sweep's send finds the row recorded and adds none.
-      const memberKey = owed.bumpNoticeOwedKey("member", ids.bookingId, bumpedAt, false);
-      await prisma.alertCooldown.create({ data: { key: memberKey, lastAlertedAt: bumpedAt } });
+      const memberId = owed.bumpNoticeId("member", ids.bookingId, bumpedAt, false);
+      await prisma.owedNotice.create({
+        data: { id: memberId, kind: "booking-bump-member", subjectId: ids.bookingId, eventAt: bumpedAt, variant: "b", stampedAt: bumpedAt },
+      });
       const sendsBefore = vi.mocked(email.sendBookingBumpedEmail).mock.calls.length;
-      await owed.drainOwedBumpNotices(new Date(bumpedAt.getTime() + 3 * DAY));
+      await drainOwedNotices(new Date(bumpedAt.getTime() + 3 * DAY));
       expect(vi.mocked(email.sendBookingBumpedEmail).mock.calls.length).toBe(sendsBefore + 1);
       expect(await recorded(ids)).toEqual({ memberRows: [{ id: memberLogId }], officerRows: 1, markers: 0 });
     });
@@ -289,22 +303,57 @@ let harnessRole: { restore: () => void } | undefined;
       expect((await prisma.booking.findUniqueOrThrow({ where: { id: ids.bookingId }, select: { status: true } })).status).toBe("PENDING");
     });
 
-    it("sends the officers' alert once when two sweeps reach its marker at the same moment", async () => {
+    it("sends each notice once when two sweeps reach its markers at the same moment", async () => {
       const ids = CASES.race;
       await deleteCaseRows(ids);
       await seedPendingBooking(ids);
       const { bumpedAt } = await commitBump(ids);
-      // Only the officers' marker is owed here; the member's was delivered.
-      await prisma.alertCooldown.delete({ where: { key: owed.bumpNoticeOwedKey("member", ids.bookingId, bumpedAt, false) } });
 
       const sweepAt = new Date(bumpedAt.getTime() + WAIT_PAST);
-      await Promise.all([owed.drainOwedBumpNotices(sweepAt), owed.drainOwedBumpNotices(sweepAt)]);
+      // Each drain lists a kind's markers only once both have, so they truly overlap.
+      const sources = [listingTogether(owedNoticeTableSource), owed.legacyBumpMarkerSource];
+      const results = await Promise.all([drainOwedNotices(sweepAt, { sources }), drainOwedNotices(sweepAt, { sources })]);
+      // Both runs listed both of this case's markers: run one after the other,
+      // the second would have found none of them.
+      for (const result of results) expect(result.checked).toBeGreaterThanOrEqual(2);
 
       const alertsForThisBooking = vi
         .mocked(email.sendAdminBookingBumpedAlert)
         .mock.calls.filter(([alert]) => alert.bookingReference === formatBookingReference(ids.bookingId));
       expect(alertsForThisBooking).toHaveLength(1);
-      expect(await recorded(ids)).toEqual({ memberRows: [], officerRows: 1, markers: 0 });
+      // The member's send itself ran once: the claim, not only the event key, kept the second sweep out.
+      const memberSendsForThisBooking = vi
+        .mocked(email.sendBookingBumpedEmail)
+        .mock.calls.filter(([context]) => context.bookingId === ids.bookingId);
+      expect(memberSendsForThisBooking).toHaveLength(1);
+      expect((await recorded(ids)).memberRows).toHaveLength(1);
+      expect(await recorded(ids)).toMatchObject({ officerRows: 1, markers: 0 });
+    });
+
+    // #5433 blue-green: the release before #5433 wrote its bump markers to
+    // AlertCooldown. A bump is committed by one release only, so this pair is
+    // the worst case, not the usual one: both stores hold the member's marker.
+    it("records the member's email once when a legacy AlertCooldown marker and an OwedNotice marker name the same bump", async () => {
+      const ids = CASES.both;
+      await deleteCaseRows(ids);
+      await seedPendingBooking(ids);
+      const { bumpedAt } = await commitBump(ids);
+      await prisma.owedNotice.delete({ where: { id: owed.bumpNoticeId("officers", ids.bookingId, bumpedAt, false) } });
+      await prisma.alertCooldown.create({
+        data: { key: owed.legacyBumpNoticeKey("member", ids.bookingId, bumpedAt, false), lastAlertedAt: bumpedAt },
+      });
+      expect((await recorded(ids)).markers).toBe(2);
+
+      await drainOwedNotices(new Date(bumpedAt.getTime() + WAIT_PAST));
+
+      // Both markers were sent (each store's sweep found its own), with one event key.
+      const memberSends = vi
+        .mocked(email.sendBookingBumpedEmail)
+        .mock.calls.filter(([context]) => context.bookingId === ids.bookingId);
+      expect(memberSends).toHaveLength(2);
+      expect(memberSends[0]![0].idempotencyKey).toBe(memberSends[1]![0].idempotencyKey);
+      const memberLogId = `email:booking-bumped:${owed.bumpNoticeIdempotencyKey(ids.bookingId, bumpedAt)}`;
+      expect(await recorded(ids)).toEqual({ memberRows: [{ id: memberLogId }], officerRows: 0, markers: 0 });
     });
 
     /** Commit a bump whose member email is owed alone, then record `reason` as a CANCELLED event after it. */
@@ -312,7 +361,7 @@ let harnessRole: { restore: () => void } | undefined;
       await deleteCaseRows(ids);
       await seedPendingBooking(ids);
       const { bumpedAt } = await commitBump(ids);
-      await prisma.alertCooldown.delete({ where: { key: owed.bumpNoticeOwedKey("officers", ids.bookingId, bumpedAt, false) } });
+      await prisma.owedNotice.delete({ where: { id: owed.bumpNoticeId("officers", ids.bookingId, bumpedAt, false) } });
       await prisma.bookingEvent.create({
         data: { bookingId: ids.bookingId, type: "CANCELLED", reason, occurredAt: new Date(bumpedAt.getTime() + 60_000) },
       });
@@ -323,7 +372,7 @@ let harnessRole: { restore: () => void } | undefined;
       const ids = CASES.marker;
       const bumpedAt = await bumpThenCancelledEvent(ids, SETTLEMENT_MARKER_EVENT_REASONS[0]!);
 
-      await owed.drainOwedBumpNotices(new Date(bumpedAt.getTime() + WAIT_PAST));
+      await drainOwedNotices(new Date(bumpedAt.getTime() + WAIT_PAST));
 
       expect((await recorded(ids)).memberRows).toHaveLength(1);
       expect((await recorded(ids)).markers).toBe(0);
@@ -333,7 +382,7 @@ let harnessRole: { restore: () => void } | undefined;
       const ids = CASES.cancelled;
       const bumpedAt = await bumpThenCancelledEvent(ids, null);
 
-      await owed.drainOwedBumpNotices(new Date(bumpedAt.getTime() + WAIT_PAST));
+      await drainOwedNotices(new Date(bumpedAt.getTime() + WAIT_PAST));
 
       expect(await recorded(ids)).toEqual({ memberRows: [], officerRows: 0, markers: 0 });
     });
