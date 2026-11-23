@@ -1742,6 +1742,32 @@ capacity or double-booking violation.
   `cross-lodge-waitlist-processor.test.ts`,
   `waitlist-queue-position.realdb.test.ts`.
 
+### INV-CAP-043
+
+- **An offer's window runs from the email that tells the member** (#5433,
+  owner decision D2, 23 Nov 2026). The offer email and the officers' alert are
+  owed notices: the offer pass records them in its transaction and sends them
+  after the commit (`waitlist-offer-notices.ts`). When a later run's sweep,
+  not that first attempt, sends the offer email, it first restarts the window:
+  a full window from that send, capped at the first instant of the check-in
+  date at the club, never earlier than the deadline in force
+  (`restartedWaitlistOfferExpiry`). The email states the deadline the restart
+  left. The first attempt never moves the window.
+- **The offer stays the same offer.** The restart moves only
+  `waitlistOfferExpiresAt`; `waitlistOfferedAt` keys the markers, the email's
+  event key and the "same offer" check, so the member is sent it once. An
+  offer email already recorded is not restarted, and a booking with "No
+  emails" on keeps its deadline.
+- **No "offer expired" email for an offer the member was never told
+  about**: no offer email row, and its notice still owed or past its cut-off
+  unsent. The lapse is otherwise unchanged (`INV-CAP-042`).
+- **Locks.** The restart is its own lock(1) and lodge-key transaction with a
+  claim guarded on the status, the offer and the deadline read
+  (`INV-LOCK-002`); a lost claim sends nothing.
+- Guards: `waitlist-offer-window.test.ts`,
+  `waitlist-offer-window-restart.test.ts`, `waitlist-offer-notices.test.ts`,
+  `waitlist.test.ts`, `waitlist-owed-notices.realdb.test.ts`.
+
 ### INV-LIFE-062
 
 A `HutLeaderAssignment` may additionally hold ONE bed (`bedId`), which makes it

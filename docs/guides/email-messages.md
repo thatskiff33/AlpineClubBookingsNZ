@@ -407,6 +407,31 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > sent, or when sending it takes longer than an hour. Nothing about the
 > wording changed.
 
+> **Upgrade note (#5433, waitlist offers).** A waitlist offer's emails are no
+> longer lost if the job making the offer is interrupted between saving the
+> offer and sending them. The member's **Spot Available!** email and the
+> officers' **Admin Waitlist Offer** alert, and the member's **Waitlist Offer
+> Expired** email after an offer lapses, are then sent by a later run of the
+> email retry job (every 30 minutes), usually within an hour. The member never
+> receives any of them twice; officers very rarely may.
+>
+> What a member can notice: when an offer email arrives late like this, the
+> offer gets a full window from when it arrives, up to the start of the
+> check-in date (owner decision, 23 Nov 2026), and the email states that new
+> deadline. The booking page shows the same deadline. If an offer lapses
+> before its email could be sent at all, the member is not sent a **Waitlist
+> Offer Expired** email for it: they were never told about the offer. Their
+> booking goes back on the waitlist as with any lapsed offer.
+>
+> What an officer can notice: a new alert, **Waitlist email not sent**
+> (`admin-waitlist-notice-unsent`), sent once when one of these member emails
+> could not be sent before it stopped being useful (for the offer, the later
+> of the check-in date and the offer's own deadline; otherwise after seven
+> days). It names the member and the booking so an officer can contact them.
+> It goes to officers who receive waitlist offer alerts, and its wording is
+> editable like the others. Its `{{noticeNote}}` token holds the whole
+> instruction for that email.
+
 ## Settings reference
 
 Shared email variables (top card):
