@@ -78,7 +78,9 @@ export async function maybeNotifyXeroRepeatedFailure(
     return { triggered: false, failureCount };
   }
 
-  const subject = getRepeatedFailureAlertSubject(operation.correlationKey);
+  // Narrowed here: the send below runs in a closure, where the guard above does not reach.
+  const correlationKey = operation.correlationKey;
+  const subject = getRepeatedFailureAlertSubject(correlationKey);
   /*
     ONE ALERT PER CORRELATION KEY PER WINDOW, held by an `AlertCooldown` claim
     keyed on the correlation key (#5407 item 29), through the shared windowed
@@ -105,7 +107,7 @@ export async function maybeNotifyXeroRepeatedFailure(
     send: () =>
       sendAdminXeroRepeatedFailureAlert({
         subject,
-        correlationKey: operation.correlationKey,
+        correlationKey,
         failureCount,
         windowHours,
         entityType: operation.entityType,
