@@ -3703,6 +3703,32 @@ model AlertCooldown {
   replayAlert       Json?
 }
 
+// #5433: a notice (an email or an officers' alert) that a committed change
+// still owes. Written inside the change's own transaction, cleared once the
+// notice is sent, and swept by a later run when the first attempt never
+// started (`src/lib/owed-notice/`). The id is deterministic,
+// `<kind>:<subjectId>:<eventAtMs>[:variant]`, so the write is by primary key
+// with ON CONFLICT DO NOTHING and can never abort the transaction. `kind` is
+// plain text, not an enum, so a release can add a kind the release still
+// draining beside it does not know and skips. `subjectId` (a booking id today)
+// has NO foreign key, as on EmailLog: the marker must outlive a hard booking
+// delete, which its sweep reads as "no longer owed". `payload` holds ids and
+// whole numbers only, never personal data. `stampedAt` is the claim stamp:
+// the event time when written, then each attempt's claim.
+model OwedNotice {
+  id        String   @id
+  kind      String
+  subjectId String
+  eventAt   DateTime
+  variant   String?
+  payload   Json?
+  stampedAt DateTime
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([kind, stampedAt])
+}
+
 model PaymentRecoveryOperation {
   id                   String                         @id @default(cuid())
   type                 PaymentRecoveryOperationType
@@ -5962,10 +5988,12 @@ model ServerNzSettings {
   // across the central server's HTTP calls.
   otherLodgesSyncStartedAt DateTime?
 
-  // NO LONGER READ (triyder/AlpineClubBookingsNZ#69, server API 2.5, which no longer sends the names):
-  // ownership is decided by `otherLodgesOwnedLodges` below, by central id. Kept,
-  // and left as last written, for the draining colour of the upgrade that
-  // stopped reading it; a later release drops it. As it was:
+  // RETIRED: `otherLodgesOwnedNames` is neither read (triyder/AlpineClubBookingsNZ#69, server API 2.5, which
+  // no longer sends the names; ownership is decided by `otherLodgesOwnedLodges`
+  // below, by central id) nor written (#5407). `@ignore` keeps it out of every
+  // query, the INSERT column lists included (INV-OPS-005), so the release that
+  // drops it (#5415) may run while this one drains. Nullable, no default: a new row
+  // leaves it NULL. `otherLodgesOwnedNamesAt` stays live. As it was:
   // The lodge NAMES the central server says this club owns (triyder/AlpineClubBookingsNZ#52), as it sends
   // them on every pull (`ownLodgeNames`): a JSON array of strings, keyed by name
   // because that is how the registry is keyed. THREE states, and the shape
@@ -5977,7 +6005,7 @@ model ServerNzSettings {
   // admin PATCH route refuses a lodge not in the list and the nightly upload
   // sends only the lodges in it. `otherLodgesOwnedNamesAt` is when the list was
   // last received, so an operator can see how stale it is.
-  otherLodgesOwnedNames   Json?
+  otherLodgesOwnedNames   Json?     @ignore
   otherLodgesOwnedNamesAt DateTime?
   // The same owned lodges with their PERMANENT central ids, `[{ id, name }]`
   // (server API 2.2 `ownLodges`, triyder/AlpineClubBookingsNZ#62). Same three states as the names and

@@ -1,3 +1,5 @@
+import { storedShortBookingId } from "@/lib/booking-reference";
+
 export const BOOKING_PAYMENT_METHOD_VALUES = [
   "stripe",
   "internet_banking",
@@ -8,10 +10,12 @@ export type BookingPaymentMethod =
 
 export const DEFAULT_BOOKING_PAYMENT_METHOD: BookingPaymentMethod = "stripe";
 
+/** Stored on the payment and typed by the member into their bank: never change its output. */
 export function buildInternetBankingPaymentReference(bookingId: string) {
-  return `BOOKING-${bookingId.slice(0, 8).toUpperCase()}`;
+  return `BOOKING-${storedShortBookingId(bookingId).toUpperCase()}`;
 }
 
+/** Stored on the group settlement and typed by the organiser into their bank: never change its output. */
 export function buildGroupSettlementPaymentReference(groupBookingId: string) {
-  return `GROUP-${groupBookingId.slice(0, 8).toUpperCase()}`;
+  return `GROUP-${storedShortBookingId(groupBookingId).toUpperCase()}`;
 }

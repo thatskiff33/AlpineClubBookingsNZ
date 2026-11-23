@@ -26,6 +26,7 @@
  * raises no second.
  */
 import type { ClubFormat } from "@/lib/club-format";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { prisma } from "@/lib/prisma";
 import { redactSensitiveText } from "@/lib/redact-sensitive-json";
@@ -58,7 +59,7 @@ export function primaryInvoiceReviewMessage(
   },
   format: ClubFormat,
 ): string {
-  const reference = `Booking ${input.bookingId.slice(0, 8)}`;
+  const reference = `Booking ${storedShortBookingId(input.bookingId)}`;
   const amount = formatCents(Math.abs(input.gapCents), format);
   if (input.kind === "UNDERBILLED" && input.keptInvoiceBillsChange) {
     return `The primary Xero invoice for ${reference} bills ${amount} less than the booking is worth: the booking was changed while the invoice was being raised, and the change that would carry the difference is already billed by the Xero invoice for a late card payment the club kept. Check both invoices and bill in Xero whatever part of ${amount} that invoice does not already bill, then choose Resolve (fixed in Xero).`;

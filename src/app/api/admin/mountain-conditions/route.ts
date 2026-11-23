@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
-import { invalidJsonBodyResponse, parseJsonRequestBody } from "@/lib/api-json";
+import { parseJsonRequestBody, parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -257,13 +257,9 @@ export async function POST(request: NextRequest) {
   // parses with the supplied (unsaved) config so an admin can test a URL /
   // selector change before committing it. An empty body refreshes from the
   // stored config and persists as usual.
-  let body: unknown = null;
-  try {
-    const text = await request.text();
-    body = text ? JSON.parse(text) : null;
-  } catch {
-    return invalidJsonBodyResponse({ error: "Invalid JSON" });
-  }
+  const jsonBody = await parseOptionalJsonRequestBody(request, { error: "Invalid JSON", objectOnly: true });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const isPreview = Boolean(
     body && typeof body === "object" && (body as { preview?: unknown }).preview,

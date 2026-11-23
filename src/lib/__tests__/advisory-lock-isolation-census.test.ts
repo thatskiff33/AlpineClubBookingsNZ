@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { incompatibleLockTransactions } from "./support/advisory-lock-isolation";
 import { lockCensusSources } from "./support/advisory-lock-source";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // INV-LOCK-005: no approved exceptions. Any future entry needs its reason here.
 const ALLOWED: Readonly<Record<string, string>> = {};
 
 // The whole-src case parses about 3,100 files: roughly 4 to 6 seconds idle and
 // several times that on a busy CI runner. Same limit as the step-up census (#5040).
-const CENSUS_TIMEOUT_MS = 90_000;
+// The budget is the shared CENSUS_TIMEOUT_MS (src/test/census-timeout.ts).
 
 describe("advisory lock transaction isolation (INV-LOCK-005)", () => {
   it("keeps lock/re-read transactions at READ COMMITTED throughout src", () => {

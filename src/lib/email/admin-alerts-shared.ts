@@ -110,26 +110,32 @@ export async function getAdminAlertEmails(
     .map((admin) => admin.email);
 }
 
+/** What one admin alert says. */
+type AdminAlertContent = {
+  subject: string;
+  html: string;
+  templateData?: EmailTemplateData;
+  attachments?: EmailAttachment[];
+};
+
 /**
  * Send an email to all active admins who opted into the alert category, and
  * say what happened to each recipient (`AdminAlertSendResult`). Callers that
  * do not hold a claim ignore the result.
+ *
+ * The content is given either directly or as `build`, which is called only
+ * once the policy allows the alert and someone is opted in to it (#5407): a
+ * sender whose content needs a live provider read (the Xero organisation
+ * stamp) then makes none for an alert that is switched off or has nobody to go
+ * to. Either way the result is the same.
  */
-export async function sendToAdmins({
-  subject,
-  html,
-  templateName,
-  preferenceKey,
-  templateData,
-  attachments,
-}: {
-  subject: string;
-  html: string;
-  templateName: string;
-  preferenceKey: AdminNotificationPreferenceKey;
-  templateData?: EmailTemplateData;
-  attachments?: EmailAttachment[];
-}): Promise<AdminAlertRecipientsResult> {
+export async function sendToAdmins(
+  input: {
+    templateName: string;
+    preferenceKey: AdminNotificationPreferenceKey;
+  } & (AdminAlertContent | { build: () => Promise<AdminAlertContent> }),
+): Promise<AdminAlertRecipientsResult> {
+  const { templateName, preferenceKey } = input;
   const delivery = await shouldSendAdminSystemEmail({ templateName });
   if (!delivery.send) {
     logger.info(
@@ -147,14 +153,22 @@ export async function sendToAdmins({
   }
 
   const emails = await getAdminAlertEmails(preferenceKey);
+  // An empty audience sends nothing, so a builder is not called for it; the
+  // delivery half still answers its own empty result.
+  const content: AdminAlertContent =
+    "build" in input
+      ? emails.length === 0
+        ? { subject: "", html: "" }
+        : await input.build()
+      : input;
   return sendAdminAlertTo({
     emails,
-    subject,
-    html,
+    subject: content.subject,
+    html: content.html,
     templateName,
     preferenceKey,
-    templateData,
-    attachments,
+    templateData: content.templateData,
+    attachments: content.attachments,
   });
 }
 

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { XERO_ACTIVE_OPERATION_STATUSES } from "@/lib/xero-active-operation-statuses";
 import { OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES } from "@/lib/xero-supplementary-invoice-statuses";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const HOME = "src/lib/xero-active-operation-statuses.ts";
 const MIGRATION = "prisma/migrations/20260706040000_xero_outbox_active_correlation_unique/migration.sql";
@@ -76,5 +77,5 @@ describe("Xero active operation statuses (#4354, INV-SSOT-001)", () => {
       duplicatedLists(file, readFileSync(file, "utf8")).map((line) => `${file}:${line}`),
     );
     expect(copies, "import XERO_ACTIVE_OPERATION_STATUSES instead of copying its population").toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

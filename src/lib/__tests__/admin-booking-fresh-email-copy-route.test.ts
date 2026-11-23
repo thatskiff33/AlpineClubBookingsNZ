@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { expectDefaultInvalidJsonAnswer, MALFORMED_JSON_BODY } from "./helpers/invalid-json-body";
 
 /**
  * POST /api/admin/bookings/[id]/fresh-email-copy.
@@ -103,6 +104,29 @@ describe("admin booking fresh email copy route", () => {
     const response = await POST(request(body), { params });
 
     expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Choose which booking email to send a fresh copy of.",
+    });
+    expect(mocks.sendBookingFreshEmailCopy).not.toHaveBeenCalled();
+  });
+
+  // #5407 item 27: the body is required (the panel always names a template). A
+  // body that is not JSON, or no body at all, used to be swallowed into the
+  // "choose a template" answer; it now gets the shared invalid-JSON 400.
+  it.each([
+    ["a body that is not JSON", MALFORMED_JSON_BODY],
+    ["an empty body", ""],
+  ])("answers %s with the shared invalid-JSON 400 (#5407)", async (_label, raw) => {
+    const response = await POST(
+      new NextRequest("http://localhost/api/admin/bookings/bk_1/fresh-email-copy", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: raw,
+      }),
+      { params },
+    );
+
+    await expectDefaultInvalidJsonAnswer(response);
     expect(mocks.sendBookingFreshEmailCopy).not.toHaveBeenCalled();
   });
 

@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 // rest of the line, and a census whose stripper under-reports goes FALSELY GREEN
 // - it passes while the thing it exists to catch is sitting in the file (#3164).
 import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3191 (epic #2797): the census behind `INV-MOD-028`'s hardest clause - "a
@@ -177,7 +178,7 @@ describe("only one module may fill in a blank night price", () => {
       offenders,
       `INV-MOD-028: a NULL BookingGuestNight.priceCents may only be filled in by a person supplying the amount, and ${REPAIR_WRITER} is the only writer that does. These modules also put a price on a night row one at a time - rewriting an existing row, or creating one: ${offenders.join(", ")}`,
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("mutation-proves the school exception requires exact ids, non-NULL prices and full-count rollback", () => {
     const code = stripCommentsAndStrings(readFileSync(join(SRC, PRICED_SCHOOL_WRITER), "utf8"));
@@ -216,7 +217,7 @@ describe("only one module may fill in a blank night price", () => {
     // make the widening pass by having nothing to find, exactly as a stale
     // allowlist entry would.
     expect(code).toMatch(/bookingGuestNight\s*\.\s*create\b/);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 describe("nothing in this feature can derive an amount", () => {
@@ -284,7 +285,7 @@ describe("nothing in this feature can derive an amount", () => {
         readFileSync(join(SRC, "lib/stored-night-price-repair.ts"), "utf8"),
       ),
     ).toMatch(/\bunpricedNightTargetCents\b/);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the stripper does not blind the patterns to real code", () => {
     // THE CONTROL. A stripper that returned an empty string would make every

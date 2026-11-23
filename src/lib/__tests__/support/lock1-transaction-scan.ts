@@ -29,8 +29,11 @@ import { collectAdvisoryLockSites } from "./advisory-lock-scan";
 //
 // The census decides which options it accepts; this module only reads.
 
-/** The calls that OPEN an interactive transaction, and which argument carries its options. */
-const TRANSACTION_OPENERS: Readonly<Record<string, number | null>> = {
+/**
+ * The calls that OPEN an interactive transaction, and which argument carries
+ * its options. Also read by the post-commit send census (#5433).
+ */
+export const TRANSACTION_OPENERS: Readonly<Record<string, number | null>> = {
   $transaction: 1,
   withOptionalTransaction: 2,
   // No options parameter: a lock(1) wait opened through it always runs on

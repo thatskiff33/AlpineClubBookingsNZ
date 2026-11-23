@@ -41,6 +41,7 @@ import {
   relativeSource,
   sourceFiles,
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * Every file allowed to CLAIM a Xero contact id for a local record, and WHICH
@@ -170,7 +171,7 @@ function discoverLinkerFiles(): string[] {
 
 void sep;
 
-describe("every Xero contact linker is declared (#2939, INV-INT-018)", () => {
+describe("every Xero contact linker is declared (#2939, INV-INT-018)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("finds exactly the linkers the invariant accounts for", () => {
     /*
       THE POPULATION, not a memory of it. A new file writing the column fails

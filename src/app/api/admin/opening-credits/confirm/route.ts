@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 
 import { ApiError } from "@/lib/api-error";
@@ -29,7 +30,9 @@ export async function POST(request: NextRequest) {
   const limited = await applyRateLimit({ id: "opening-credit-confirm", limit: 10, windowSeconds: 60 * 60 }, request);
   if (limited) return limited;
 
-  const parsed = confirmSchema.safeParse(await request.json().catch(() => null));
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = confirmSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Preview the file before confirming it" }, { status: 400 });
   }

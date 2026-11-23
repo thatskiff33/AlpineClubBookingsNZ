@@ -2094,6 +2094,12 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
   connection rather than a separate finance token store.
 - Cron run records, email logs, webhook logs, processed webhook events, and
   backup/audit-retention support records.
+- Owed notices (`OwedNotice`, #5433): a notice a committed change still owes,
+  written in the change's own transaction by a deterministic id and cleared
+  once sent; the confirm-pending and email retry jobs sweep what the first
+  attempt never sent (`src/lib/owed-notice/`, Email Retry Lifecycle in
+  `docs/STATE_MACHINES.md`). Ids and whole numbers only, and no foreign key
+  to its subject.
 - Public website content records: `PageContent` owns routable page
   header/body/menu content, while `SiteContent` owns shared public chrome such
   as the editable footer columns that never appear in the website menu.
@@ -3674,7 +3680,7 @@ flowchart TD
 | `credit-release-asks` | Every 15 minutes | Ask the member by card for credit that was released when a credit note was spent in Xero, record the card payment on the booking's own invoice, and close a request Xero shows paid (#4253, `INV-ADDPAY-045`, `INV-ADDPAY-046`). Raising a request is off until an operator sets the `CREDIT_RELEASE_ASK`/`WRITER` `XeroSyncCursor` row to `enabled: true`; releases from before that are asked for in audited batches only while the `BACKLOG` row is enabled too (`INV-ADDPAY-050`). Sixth task of the payments cycle (`src/lib/payments-cron-runner.ts`) |
 | `duplicate-capture-kept-alert` | Every 15 minutes | Deliver an owed alert for a card payment kept on a paid or completed booking with no other payment the app counts as settling it and no record of which payment settled it, when a crash or a failed send left it undelivered (#4285, `INV-PAY-043`). Fifth task of the payments cycle; tries a marker an hour after it was owed, re-judged first in one read-only snapshot (waiting only while a card refund that may take from this capture is in flight; who else holds money read the way an admin is told, so a capture behind a dead cancel or a duplicate refund that failed later is named; a booking cancelled since, told with the cancellation's recorded refund, a card refund read as the booking page reads it (not sent while a refund Stripe failed later is owed again; an organiser-card child's as its debt to the organiser's card) and a shortfall part as its hand-back task stands; every alert showing what the card still holds after card refunds), and the once-a-day cooldown still holds, so a send whose cooldown was claimed just before a crash waits about 24 hours |
 | `waitlist-processor` | Every 30 minutes | Expire offers and advance waitlist |
-| `email-retry` | Every 30 minutes | Retry failed email sends |
+| `email-retry` | Every 30 minutes | Sweep the owed notices (capped per run, #5433), then retry failed email sends |
 | `xero-outbox` | Every 15 minutes | Process queued Xero outbox operations |
 | `xero-operation-replay` | Every 15 minutes | Replay queued Xero retries |
 | `xero-inbound-reconcile` | Every 15 minutes | Process inbound Xero events |

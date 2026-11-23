@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { authenticatorEnrolmentBlock } from "@/lib/second-factor-enrolment";
 import { factorGateRedirect } from "@/lib/two-factor-gate";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 function walk(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -41,7 +42,7 @@ describe("officer enrolment gate callers (#4618)", () => {
     }
     expect(direct).toEqual([]);
     expect(combined.sort()).toEqual([...GATE_CALLERS].sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("refuses a gated officer whatever path the request claims, with no path", () => {
     const gated = {

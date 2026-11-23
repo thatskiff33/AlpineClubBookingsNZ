@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 // them from, so the modules that describe this relation at length are exactly
 // the ones a raw-text scanner would misfire on.
 import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3260 (`INV-SSOT-001`): a booking's final price is its total plus its signed
@@ -106,7 +107,7 @@ describe("INV-SSOT-001: one home for a booking's final-price relation", () => {
         ...offenders,
       ].join("\n"),
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("every edit door computes its new final price through the helper, with no parked branch left (#4317)", () => {
     // These four doors used to compose two halves: one branch called

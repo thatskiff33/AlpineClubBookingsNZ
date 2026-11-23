@@ -27,6 +27,7 @@ import { describe, expect, it } from "vitest";
 import { createZeroPriceConfirmationPayment } from "@/lib/booking-zero-price-payment";
 import { callsInOwnBody, enclosingFunction } from "./support/function-scope";
 import { productionSourceFiles } from "./support/prisma-delegate-read-scan";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = process.cwd();
 const HELPER = "createZeroPriceConfirmationPayment";
@@ -85,7 +86,7 @@ describe("the one $0 confirmation Payment writer (#5167)", () => {
       .filter((file) => calls(parse(file), callsNamed(HELPER)).length > 0)
       .sort();
     expect(callers).toEqual([...CREATORS].sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it.each(CREATORS)("%s writes no zero-amount Payment row inline", (file) => {
     const source = parse(file);

@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #4696, #5255 (`INV-SSOT`, `INV-INT-042`): the caller census in
@@ -99,11 +100,11 @@ describe("#4696, #5255: the once-ever helpers' caller census matches the code", 
     expect(readCensus().get(heading)?.slice().sort(), `put the caller in admin-alert-once.ts's census under "${heading}", or switch it to the other helper`).toEqual(
       callersNaming(NAMES[heading]),
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("finds no file calling both helpers, so each caller's retry is one answer", () => {
     const replayed = new Set(callersNaming(NAMES[REPLAYED]));
     const both = callersNaming(NAMES[RETRIED]).filter((file) => replayed.has(file));
     expect(both).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
