@@ -350,10 +350,8 @@ export async function recordOtherLodgesDownload(
   // Written only when the server sent a valid list: absent leaves the stored
   // one alone. `otherLodgesOwnedNamesAt` (named for the list it first timed)
   // records when. The name-only list of API 2.4 and earlier
-  // (`otherLodgesOwnedNames`) is no longer read here (triyder/AlpineClubBookingsNZ#69) and is LEFT AS IT
-  // WAS: the draining colour of a blue/green deploy still reads it, and
-  // clearing it would read there as "never told" (every edit refused, and the
-  // committee sync falling back to matching lodges by building name).
+  // (`otherLodgesOwnedNames`) is retired: unread since triyder/AlpineClubBookingsNZ#69, unwritten and
+  // `@ignore`d since #5407, so no query here can name it.
   const owned = {
     ...(ownLodges === undefined
       ? {}
@@ -424,7 +422,6 @@ export async function forgetServerConnectionAnswers(
     where: { id: SERVERNZ_SETTINGS_ID },
     create: { id: SERVERNZ_SETTINGS_ID },
     update: {
-      otherLodgesOwnedNames: Prisma.DbNull,
       otherLodgesOwnedNamesAt: null,
       // The owned ids are the same connection's answer (triyder/AlpineClubBookingsNZ#62).
       otherLodgesOwnedLodges: Prisma.DbNull,

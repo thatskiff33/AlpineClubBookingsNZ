@@ -14,7 +14,7 @@ vi.mock("@/lib/session-guards", () => ({
 }));
 vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: vi.fn().mockReturnValue(null),
-  rateLimiters: { familyGroupJoinRequest: {} },
+  rateLimiters: { familyGroupJoinRequest: {}, api: {} },
 }));
 vi.mock("@/lib/member-partner-link", () => ({
   getPartnerLinkState: vi.fn(),
@@ -85,7 +85,7 @@ beforeEach(() => {
 describe("GET /api/members/partner-link", () => {
   it("returns the guard response for unauthenticated requests", async () => {
     mockRequireActiveSession.mockResolvedValue(guardDenied);
-    const res = await getPartnerLink();
+    const res = await getPartnerLink(new Request("http://localhost/api/members/partner-link"));
     expect(res.status).toBe(401);
   });
 
@@ -96,7 +96,7 @@ describe("GET /api/members/partner-link", () => {
     ]);
     vi.mocked(getPendingPartnerInviteIntent).mockResolvedValue(null);
 
-    const res = await getPartnerLink();
+    const res = await getPartnerLink(new Request("http://localhost/api/members/partner-link"));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.oneStepCandidates).toHaveLength(1);

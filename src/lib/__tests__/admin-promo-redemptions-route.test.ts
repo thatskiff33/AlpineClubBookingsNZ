@@ -354,7 +354,9 @@ describe("GET /api/admin/promo-codes/[id]/redemptions", () => {
     const res = await GET(req(BASE_URL), params("pc-1"));
     const body = await res.json();
     const r3 = body.rows.find((r: { id: string }) => r.id === "r3");
-    expect(r3.booking.reference).toBe("AAAAAA03");
+    // The site's short reference, the FIRST eight characters as on every
+    // email and screen (#5407); the tail ("AAAAAA03") was this route's own form.
+    expect(r3.booking.reference).toBe("BK-AAAAA");
     expect(r3.booking.checkIn).toBe("2026-08-01");
     expect(r3.booking.checkOut).toBe("2026-08-04");
     expect(r3.booking.nights).toBe(3);

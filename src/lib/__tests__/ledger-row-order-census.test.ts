@@ -176,7 +176,7 @@ const EXISTENCE_READS: Record<string, string> = {
     "#4299: tests !primary to write the combined share's row once, before any extra-invoice cash; no row id is consumed.",
   "src/lib/booking-cancel.ts > paymentEligibleForPaidCancelPath > capturedTransaction":
     "returns Boolean(capturedTransaction) to choose the paid cancellation path; no row id is consumed.",
-  "src/lib/booking-cancel.ts > paymentHasCaptureEvidence > capturedTransaction":
+  "src/lib/booking-cancel.ts > queryPaymentCaptureEvidence > capturedTransaction":
     "passes Boolean(capturedTransaction) to paymentShowsCaptureEvidence; no row id is consumed.",
   "src/lib/manual-booking-payment-state.ts > getBookingManualPaymentState > [stampedTransaction, activeLink, mintOperation]":
     "uses stampedTransaction only in Boolean(stampedTransaction || activeLink || mintOperation) for the Xero block.",

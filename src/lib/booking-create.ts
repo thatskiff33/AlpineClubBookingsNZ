@@ -41,6 +41,7 @@ import {
   toGuestPricingInputs,
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
+import { nonMemberHoldEnd } from "@/lib/non-member-hold-end";
 import { priceBookingGuestsWithMembershipTypePolicy } from "@/lib/membership-type-policy";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { postBindingCharge } from "@/lib/booking-ledger-pending-charge";
@@ -1019,7 +1020,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           (await organiserPaysForJoinerInTx(tx, groupJoin.groupBookingId)));
 
       const nonMemberHoldUntil = primaryShouldBePending && !internetBankingPaymentSelected
-        ? new Date(checkIn.getTime() - holdDays * 24 * 60 * 60 * 1000)
+        ? nonMemberHoldEnd(checkIn, holdDays)
         : null;
 
       const newBooking = await tx.booking.create({
@@ -1326,9 +1327,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
             "Split booking child pricing requires non-member guests",
           );
         }
-        const childHoldUntil = new Date(
-          checkIn.getTime() - holdDays * 24 * 60 * 60 * 1000
-        );
+        const childHoldUntil = nonMemberHoldEnd(checkIn, holdDays);
         const childBooking = await tx.booking.create({
           data: {
             memberId: effectiveMemberId,

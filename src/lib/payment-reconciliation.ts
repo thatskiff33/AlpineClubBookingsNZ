@@ -1,4 +1,5 @@
 import { XERO_ACTIVE_OPERATION_STATUSES } from "./xero-active-operation-statuses";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import { NOT_CARD_REFUND_REVERSAL_INVOICE } from "@/lib/xero-card-refund-reversal-outbox";
 import { bookingOwner } from "@/lib/booking-owner";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
@@ -56,10 +57,7 @@ import {
 } from "@/lib/manual-settlement-reversal-event";
 import { closeCapacityRaceRefundRecordingEvent, recordBookingEvent, recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
 import { alertCapacityRaceRefundShortfall, raiseCapacityRaceRefundShortfallTask } from "@/lib/capacity-race-refund-shortfall";
-import {
-  sendAdminDuplicateCaptureRefundAlert,
-  sendAdminPaymentFailureAlert,
-} from "@/lib/email";
+import { sendAdminDuplicateCaptureRefundAlert, sendAdminPaymentFailureAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { formatCents } from "@/lib/utils";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
@@ -1354,7 +1352,7 @@ async function settleBookingPaymentInTransaction(
             bookingId: booking.id,
             giveBackCentsOf: (appliedCreditCents) =>
               appliedCreditCents - mirrorCreditAppliedCents,
-            description: `Applied credit returned: booking ${booking.id.slice(0, 8)} was paid in full by card`,
+            description: `Applied credit returned: booking ${storedShortBookingId(booking.id)} was paid in full by card`,
             format: settlement.format,
           },
           tx

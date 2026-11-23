@@ -15,12 +15,13 @@
  *
  * `ADMIN_ADJUSTMENT` names no booking and belongs to neither.
  *
- * A leaf: it imports only Prisma's types and the pure credit policy, so both
- * `member-credit.ts` and the ledger modules it calls can import it without a
- * cycle.
+ * A leaf: it imports only Prisma's types, the pure credit policy and the
+ * import-free booking reference, so both `member-credit.ts` and the ledger
+ * modules it calls can import it without a cycle.
  */
 import type { CreditType, Prisma } from "@prisma/client";
 
+import { storedShortBookingId } from "@/lib/booking-reference";
 import { calculateRestoredCreditAmount } from "@/lib/policies/member-credit";
 
 /**
@@ -46,6 +47,16 @@ export function bookingIssuedCreditWhere(bookingId: string) {
     sourceBookingId: bookingId,
     type: { in: [...BOOKING_ISSUED_CREDIT_TYPES] },
   } satisfies Prisma.MemberCreditWhereInput;
+}
+
+/**
+ * The description an applied-credit row is written with (`applyCreditToBooking`'s
+ * default, and the start of the credit election's) and that the Xero
+ * allocation repair rewrites a row back to (`credit-note-repairs.ts`): one
+ * builder, so the writer and the repair cannot drift (#5407 item 36).
+ */
+export function buildBookingAppliedCreditDescription(bookingId: string): string {
+  return `Applied to booking ${storedShortBookingId(bookingId)}`;
 }
 
 /**

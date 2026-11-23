@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { MODULE_DISABLED_ERROR_CODE } from "@/lib/api-error-message";
 import {
@@ -75,7 +76,7 @@ export function bedAllocationErrorResponse(error: unknown) {
   const contended = transactionContendedResponse(error, "Bed allocation transaction contended");
   if (contended) return contended;
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    if (error.code === "P2002") {
+    if (isPrismaKnownUniqueConstraintError(error)) {
       return NextResponse.json(
         { error: "A room or bed with that name already exists." },
         { status: 409 },
