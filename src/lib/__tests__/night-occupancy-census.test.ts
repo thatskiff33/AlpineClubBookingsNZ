@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * Census: there is ONE night-occupancy calculation, and it counts every term
@@ -422,7 +423,7 @@ describe("#2681 night-occupancy census: one calculation, every term", () => {
       offenders,
       "A new file is summing an occupancy term itself. Call computeNightOccupancy (src/lib/capacity.ts) instead, or — if it genuinely is not a per-night bed count — declare it in NON_OCCUPANCY_READERS in this file with the reason.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("enumerates every reader of the capacity-holding booking population", () => {
     const declared = new Set<string>([
@@ -449,7 +450,7 @@ describe("#2681 night-occupancy census: one calculation, every term", () => {
         `${file} is declared in the occupancy census but no longer exists`,
       ).toBe(true);
     }
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("enumerates every per-night active-guest counter", () => {
     const declared = new Set(
@@ -471,5 +472,5 @@ describe("#2681 night-occupancy census: one calculation, every term", () => {
         `${counter.file} is declared as a per-night guest counter but no longer uses countActiveGuestsForNight — drop the entry`,
       ).toBe(true);
     }
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

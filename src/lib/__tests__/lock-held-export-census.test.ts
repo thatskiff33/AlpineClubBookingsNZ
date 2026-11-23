@@ -3,6 +3,7 @@ import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { blankLiterals } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // Checks inspect locks rather than relying on caller-held locks themselves.
 const INSPECTORS = new Map([
@@ -155,7 +156,7 @@ const GLOBAL = "await assertGlobalLockHeld(input.db, 'x');";
 
 describe("caller-held lock export census", () => {
   // Parses every source file; under shard load that outlasts vitest's 5s default.
-  it("checks every non-test export, including newly added modules", { timeout: 90_000 }, () => {
+  it("checks every non-test export, including newly added modules", { timeout: CENSUS_TIMEOUT_MS }, () => {
     const checked: string[] = [];
     const failures = sources("src").flatMap((file) => violations(file.split(path.sep).join("/"), fs.readFileSync(file, "utf8"), checked));
     expect(failures).toEqual([]);

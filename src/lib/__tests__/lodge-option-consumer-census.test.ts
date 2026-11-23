@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const EXPECTED_DIRECT_CONSUMERS = [
   "src/app/(admin)/admin/lodge-ops/display/builder/page.tsx",
@@ -85,7 +86,7 @@ describe("production lodge-option consumers stay in the fail-closed census (#288
       .sort();
 
     expect(actual).toEqual([...EXPECTED_DIRECT_CONSUMERS].sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("counts every useLodgeOptions consumer outside the hook implementation", () => {
     const actual = sources
@@ -97,5 +98,5 @@ describe("production lodge-option consumers stay in the fail-closed census (#288
       .sort();
 
     expect(actual).toEqual([...EXPECTED_HOOK_CONSUMERS].sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

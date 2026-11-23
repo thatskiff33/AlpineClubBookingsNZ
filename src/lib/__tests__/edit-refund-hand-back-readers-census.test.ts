@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 
 import { balancedBrackets } from "./support/balanced-brackets";
 import { blankLiterals } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = path.resolve(__dirname, "../../..");
 
@@ -54,7 +55,7 @@ function readCalls(source: string): string[] {
   return calls;
 }
 
-describe("INV-PAY-117: a cancellation hand-back reader excludes an edit's refund hand-back", () => {
+describe("INV-PAY-117: a cancellation hand-back reader excludes an edit's refund hand-back", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const offenders: string[] = [];
   let readersByKind = 0;
   for (const file of sourceFiles(path.join(ROOT, "src"))) {

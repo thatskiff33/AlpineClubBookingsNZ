@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * No `"use client"` module may reach `import "server-only"`, however many hops away.
@@ -143,7 +144,7 @@ function findServerOnlyChain(entry: string): string[] | null {
   return null;
 }
 
-describe("client/server-only module boundary (#2573)", () => {
+describe("client/server-only module boundary (#2573)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("finds the client modules to check, so a broken scan cannot pass vacuously", () => {
     // The mutation guard for this file: if the `"use client"` detection ever stops
     // matching, every assertion below would pass over an empty set.

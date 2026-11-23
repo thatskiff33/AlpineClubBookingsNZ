@@ -8771,7 +8771,9 @@ A's locked re-read is "A, then the void, then B". B's recount queues on A's
 lock, or, with a pointer naming the note, the void's link write itself queues
 there, on the Payment row and not yet holding the link; either way B sees A's write. On a bank transfer B lowers the total back. On a card the
 ledger is raise-only (`INV-ADDPAY-021`, #1353): A's raise stands, and B raises the
-refund-ledger-divergence alert. The inbound void runs its own recount; the
+refund-ledger-divergence alert, but only as far as Stripe's recorded refunds back
+it. Since #4444 a card recount never rises above them (owner, 23 Nov 2026), so
+with none beyond the ledger A writes nothing and the limit does not arise. The inbound void runs its own recount; the
 Stripe status recorder runs none. The suite pins the void before A's locked
 re-read (A writes nothing, bank and card), a row deactivated there, and the void
 after it: per-refund, pointer-named canonical and card (the void waits on

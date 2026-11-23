@@ -5,13 +5,14 @@ import { describe, expect, it } from "vitest";
 import { findStepUpClientGaps } from "@/lib/step-up-client-census";
 import { runStepUpCensus } from "@/lib/step-up-route-census";
 import { FACTOR_RESET_ROUTE, STEP_UP_ROUTES } from "@/lib/step-up-routes";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const RESTORE = "src/app/api/admin/backups/restore/route.ts";
 
 // Every case re-scans the admin routes from source: about 3 seconds each on an
 // idle machine, and several times that on a busy CI runner. One limit for the
 // suite, well clear of both (#5040).
-const CENSUS_TIMEOUT_MS = 90_000;
+// The budget is the shared CENSUS_TIMEOUT_MS (src/test/census-timeout.ts).
 
 describe("step-up route census (#4619)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("matches every admin handler that reaches a listed operation", () => {

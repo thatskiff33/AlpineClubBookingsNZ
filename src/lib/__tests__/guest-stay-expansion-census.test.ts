@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * Census: every place a stay becomes nights is declared here (#2628).
@@ -210,7 +211,7 @@ describe("guest stay expansion census (#2628)", () => {
         .map((site) => site.file)
         .sort(),
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("counts them per SITE, so a second copy in a declared file fails too", () => {
     // The gap this closes: the first test compares a SET of file paths, so a

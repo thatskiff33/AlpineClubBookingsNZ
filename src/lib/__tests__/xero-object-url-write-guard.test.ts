@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { blankLiterals } from "./support/strip-comments";
 import { balancedBrackets, expressionAt } from "./support/balanced-brackets";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // #2314: `XeroObjectLink.xeroObjectUrl` and `XeroSyncOperation.xeroObjectUrl`
 // are stored ORGANISATION-AGNOSTIC. A short code baked into a row is wrong the
@@ -222,7 +223,7 @@ function loadWriteSites(): { sites: WriteSite[]; sources: Map<string, string> } 
   return { sites, sources };
 }
 
-describe("xeroObjectUrl write guard (#2314)", () => {
+describe("xeroObjectUrl write guard (#2314)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const { sites, sources } = loadWriteSites();
 
   it("strips the organisation at every direct write of the column", () => {
