@@ -6,10 +6,12 @@
  * officer's real permissions, and is offered only to an officer holding that
  * area at the route's level (`mcpActionAdminRequirement`).
  *
- * Linking, creating and unlinking a member's contact, the missing-contact run
- * and queuing missing invoices are `destructive`: each writes to Xero or
- * clears the member's subscription history, and the app cannot put it back.
- * A Refresh that re-reads Xero into the local cache is a `write`.
+ * Kinds follow the owner's rule (#5305): an action that notifies anyone, or
+ * changes a member's payment, refund, credit, invoice, subscription or Xero
+ * record (the app's stored copy included), is `destructive`, so the app
+ * confirms first and the call is logged as important. Every change here
+ * is one, including a Refresh that re-reads members' contacts or cash credits
+ * from Xero into the app's copy.
  */
 import {
   XERO_CASH_CREDITS_CONNECTION_SHAPE,
@@ -117,7 +119,7 @@ export const FINANCE_XERO_CONTACTS_MCP_ACTIONS: readonly McpAction[] = [
       "Reads every open overpayment and prepayment from Xero again and replaces the app's copy, then answers with the counts written and the refreshed list (amounts in integer cents). Changes nothing in Xero and is safe to repeat; limited to three a minute.",
     method: "POST",
     path: "/api/admin/xero/cash-credits",
-    kind: "write",
+    kind: "destructive",
     returns: XERO_CASH_CREDITS_REFRESHED_CONNECTION_SHAPE,
     core: false,
   },
@@ -141,7 +143,7 @@ export const FINANCE_XERO_CONTACTS_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/xero/contact-group-mismatches",
     body: xeroContactGroupMismatchResyncBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: XERO_CONTACT_GROUP_MISMATCHES_RESYNCED_CONNECTION_SHAPE,
     core: false,
   },
@@ -165,7 +167,7 @@ export const FINANCE_XERO_CONTACTS_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/xero/contact-link-mismatches",
     body: xeroContactLinkMismatchResyncBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: XERO_CONTACT_LINK_MISMATCHES_RESYNCED_CONNECTION_SHAPE,
     core: false,
   },
@@ -200,7 +202,7 @@ export const FINANCE_XERO_CONTACTS_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/xero/erased-member-contacts",
     query: erasedMemberContactReviewQuerySchema,
-    kind: "write",
+    kind: "destructive",
     returns: XERO_ERASED_MEMBER_CONTACTS_CHECKED_CONNECTION_SHAPE,
     core: false,
   },

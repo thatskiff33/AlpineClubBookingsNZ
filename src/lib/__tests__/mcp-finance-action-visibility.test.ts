@@ -109,3 +109,22 @@ describe("who is shown the Finance actions", () => {
     expect(await visibleFinanceIds(manager)).toEqual(ids(FINANCE_ACTIONS));
   });
 });
+
+/**
+ * Owner rule (#5305, decision 2): an action that notifies anyone, or changes a
+ * member's payment, refund, credit, invoice, subscription or Xero record, is
+ * `destructive`, so the app always confirms first and the call is logged as
+ * important. A Finance change stays `write` only when it touches no member's
+ * record at all, and each such action is named here with why.
+ */
+const CLUB_ONLY_WRITES: Readonly<Record<string, string>> = {
+  run_finance_sync: "rebuilds the finance workspace's club-wide report figures from Xero",
+  backfill_finance_monthly_facts: "rebuilds the club-wide month-by-month report figures",
+};
+
+describe("how a Finance change is confirmed", () => {
+  it("is destructive unless it touches no member's record", () => {
+    const writes = FINANCE_ACTIONS.filter((action) => action.kind === "write").map((action) => action.id);
+    expect(writes.sort()).toEqual(Object.keys(CLUB_ONLY_WRITES).sort());
+  });
+});

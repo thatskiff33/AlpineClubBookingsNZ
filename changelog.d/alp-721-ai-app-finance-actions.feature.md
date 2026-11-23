@@ -6,7 +6,10 @@
   booking or subscription paid by hand; run subscription billing; and check
   and repair the Xero sync, links and contacts. A Finance viewer is offered
   only what their access allows (the reads, less the finance sync status,
-  which needs edit), and an officer without the area is offered none. Refunds
+  which needs edit), and an officer without the area is offered none. Every
+  change that emails anyone or alters a member's payment, credit, invoice,
+  subscription or Xero record asks the officer to confirm first and is logged
+  as important; only the finance report sync and backfill do not. Refunds
   and anything else that asks for a fresh sign-in, card entry, and the club's
   setup screens (fees, tax, bank details, accounting mappings and connecting
   outside services) stay on the website. Amounts are always cents, and each

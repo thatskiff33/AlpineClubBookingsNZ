@@ -281,10 +281,14 @@ How an officer action works:
 - Every amount an app sends or reads is integer cents. The payments list's
   amount boxes take dollars as typed, so `list_payments` does not offer them.
 
-All of these are reached through `find_actions`. Kinds follow the catalogue
-rule: a change that only re-reads or refreshes is `write`; one that records
-or applies money, may post a document to Xero, or closes an item for good is
-`destructive`.
+All of these are reached through `find_actions`. Kinds follow the owner's
+rule ([#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7092977781),
+decision 2): a change that notifies anyone, or changes a member's payment,
+refund, credit, invoice, subscription or Xero record (the app's stored copy
+included), is `destructive`, so the app always confirms first and the call is
+logged as important. Only `run_finance_sync` and
+`backfill_finance_monthly_facts`, which rebuild club-wide report figures, are
+`write`.
 
 **Payments, credits, refunds, subscriptions and reports**
 
@@ -305,11 +309,11 @@ or applies money, may post a document to Xero, or closes an item for good is
 | `record_subscription_manual_payment` | Records a subscription paid by hand | destructive | `POST /api/admin/subscriptions/[id]/manual-payment` |
 | `record_booking_manual_payment` | Records a booking paid in cash or by bank transfer | destructive | `POST /api/admin/bookings/[id]/mark-paid` |
 | `get_subscription_billing` | The season's billing preview, charges and exceptions | read | `GET /api/admin/subscription-billing` |
-| `refresh_subscription_billing` | Refreshes the preview and clears exceptions it no longer finds | write | `POST /api/admin/subscription-billing` (`REFRESH_PREVIEW`) |
+| `refresh_subscription_billing` | Refreshes the preview and clears exceptions it no longer finds | destructive | `POST /api/admin/subscription-billing` (`REFRESH_PREVIEW`) |
 | `confirm_subscription_billing_batch` | Raises the season's subscription invoices from a preview | destructive | same (`CONFIRM_ANNUAL_BATCH`) |
 | `retry_subscription_charge` | Queues a charge's invoice again, raising it if it never was | destructive | same (`RETRY_CHARGE`) |
 | `close_paid_subscription_charge` | Closes a charge whose subscriptions are already paid | destructive | same (`CLOSE_ALREADY_PAID`) |
-| `mark_family_invoiced`, `unmark_family_invoiced` | Sets or clears a family's already-invoiced mark | write | same (`MARK_FAMILY_INVOICED`, `UNMARK_FAMILY_INVOICED`) |
+| `mark_family_invoiced`, `unmark_family_invoiced` | Sets or clears a family's already-invoiced mark | destructive | same (`MARK_FAMILY_INVOICED`, `UNMARK_FAMILY_INVOICED`) |
 | `get_finance_booking_metrics` | The finance workspace's booking figures | read | `GET /api/finance/bookings/metrics` |
 | `get_finance_sync_status` | The finance sync's latest run and failures (Finance edit) | read | `GET /api/finance/sync/status` |
 | `run_finance_sync` | Runs the finance sync now; a connection gets the outcome as JSON, the browser keeps its redirect | write | `POST /api/finance/sync/run` |
@@ -333,14 +337,14 @@ not offered: it is club setup.
 | `reset_stale_running_xero_operations` | Resets every stuck running operation | destructive | `POST /api/admin/xero/operations/reset-stale-running` |
 | `retry_all_failed_xero_operations` | Queues every active failed operation again | destructive | `POST /api/admin/xero/operations/retry-all` |
 | `list_xero_inbound_events` | Events Xero sent the site | read | `GET /api/admin/xero/inbound-events` |
-| `replay_xero_inbound_event` | Processes one again | write | `POST /api/admin/xero/inbound-events/[id]/replay` |
+| `replay_xero_inbound_event` | Processes one again | destructive | `POST /api/admin/xero/inbound-events/[id]/replay` |
 | `get_xero_record_activity` | One record's Xero operations, links and events | read | `GET /api/admin/xero/records/[localModel]/[localId]` |
-| `sync_member_from_xero`, `sync_booking_from_xero`, `sync_club_from_xero` | Reads one member, one booking or the whole club from Xero now | write | `POST /api/admin/xero/sync-now` (`scope` fixed) |
-| `sync_xero_contacts` | Matches Xero contacts to members | write | `POST /api/admin/xero/sync-contacts` |
-| `sync_xero_memberships` | Refreshes membership statuses from Xero | write | `POST /api/admin/xero/sync-memberships` |
-| `force_sync_member_xero_contact`, `force_refresh_member_xero_membership` | Forces one member's contact (creating one if Xero has none) or membership status | destructive, write | `POST /api/admin/xero/force-sync` (`syncType` fixed) |
+| `sync_member_from_xero`, `sync_booking_from_xero`, `sync_club_from_xero` | Reads one member, one booking or the whole club from Xero now | destructive | `POST /api/admin/xero/sync-now` (`scope` fixed) |
+| `sync_xero_contacts` | Matches Xero contacts to members | destructive | `POST /api/admin/xero/sync-contacts` |
+| `sync_xero_memberships` | Refreshes membership statuses from Xero | destructive | `POST /api/admin/xero/sync-memberships` |
+| `force_sync_member_xero_contact`, `force_refresh_member_xero_membership` | Forces one member's contact (creating one if Xero has none) or membership status | destructive | `POST /api/admin/xero/force-sync` (`syncType` fixed) |
 | `force_sync_booking_xero_invoice` | Forces a paid booking's invoice into Xero, even beside one made by hand | destructive | same |
-| `run_xero_link_maintenance` | The nightly link backfill and clean-up, now | write | `POST /api/admin/xero/link-maintenance` |
+| `run_xero_link_maintenance` | The nightly link backfill and clean-up, now | destructive | `POST /api/admin/xero/link-maintenance` |
 
 **Xero contacts and invoices**
 
@@ -349,11 +353,11 @@ not offered: it is club setup.
 | `search_xero_contacts` | Finds Xero contacts by name or email, without their email addresses | read | `GET /api/admin/xero/search-contacts` |
 | `link_member_to_xero_contact`, `unlink_member_from_xero_contact` | Links or unlinks a member and a contact | destructive | `POST /api/admin/members/[id]/xero-link`, `…/xero-unlink` |
 | `create_xero_contact_for_member` | Creates a member's contact in Xero | destructive | `POST /api/admin/members/[id]/xero-push` |
-| `list_xero_cash_credits`, `refresh_xero_cash_credits` | Open overpayments and prepayments, and re-reading them | read, write | `GET`, `POST /api/admin/xero/cash-credits` |
-| `list_xero_contact_group_mismatches`, `resync_xero_contact_group_mismatches` | Members whose contact groups disagree, and re-reading them | read, write | `GET`, `POST /api/admin/xero/contact-group-mismatches` |
-| `list_xero_contact_link_mismatches`, `resync_xero_contact_link_mismatches` | Linked contacts that no longer match their member, and re-reading them | read, write | `GET`, `POST /api/admin/xero/contact-link-mismatches` |
+| `list_xero_cash_credits`, `refresh_xero_cash_credits` | Open overpayments and prepayments, and re-reading them | read, destructive | `GET`, `POST /api/admin/xero/cash-credits` |
+| `list_xero_contact_group_mismatches`, `resync_xero_contact_group_mismatches` | Members whose contact groups disagree, and re-reading them | read, destructive | `GET`, `POST /api/admin/xero/contact-group-mismatches` |
+| `list_xero_contact_link_mismatches`, `resync_xero_contact_link_mismatches` | Linked contacts that no longer match their member, and re-reading them | read, destructive | `GET`, `POST /api/admin/xero/contact-link-mismatches` |
 | `list_xero_duplicate_contacts` | Contacts that share an email, by name and invoice count | read | `GET /api/admin/xero/duplicate-contacts` |
-| `list_erased_member_xero_contacts`, `check_erased_member_xero_contacts` | Erased members' contacts left in Xero, and checking them there | read, write | `GET`, `POST /api/admin/xero/erased-member-contacts` |
+| `list_erased_member_xero_contacts`, `check_erased_member_xero_contacts` | Erased members' contacts left in Xero, and checking them there | read, destructive | `GET`, `POST /api/admin/xero/erased-member-contacts` |
 | `list_members_missing_xero_contacts` | Members with no Xero contact, and what a run would do | read | `GET /api/admin/xero/missing-contacts` |
 | `create_missing_xero_contacts` | Creates or links the reviewed ones | destructive | `POST /api/admin/xero/missing-contacts` |
 | `list_bookings_missing_xero_invoices`, `queue_missing_xero_invoices` | Paid bookings with no Xero invoice, and queueing them | read, destructive | `GET`, `POST /api/admin/xero/missing-invoices` |

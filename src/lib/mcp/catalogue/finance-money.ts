@@ -6,6 +6,13 @@
  * holding that area at the route's level (`mcpActionAdminRequirement`).
  * Refunds and anything else that asks for a fresh sign-in stay on the website
  * (`exclusions.ts`). Every amount is integer cents.
+ *
+ * Kinds follow the owner's rule (#5305): an action that notifies anyone, or
+ * changes a member's payment, refund, credit, invoice, subscription or Xero
+ * record (the app's stored copy included), is `destructive`, so the app
+ * confirms first and the call is logged as important. Only the
+ * finance workspace's sync and backfill, which rebuild club-wide report
+ * figures and touch no member's record, are `write`.
  */
 import { z } from "zod";
 
@@ -276,7 +283,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/subscription-billing",
     body: z.object(refreshPreviewFields),
     fixedBody: { action: "REFRESH_PREVIEW" satisfies BillingAction },
-    kind: "write",
+    kind: "destructive",
     returns: SUBSCRIPTION_BILLING_REFRESHED_CONNECTION_SHAPE,
     core: false,
   },
@@ -328,7 +335,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/subscription-billing",
     body: z.object(markFamilyInvoicedFields),
     fixedBody: { action: "MARK_FAMILY_INVOICED" satisfies BillingAction },
-    kind: "write",
+    kind: "destructive",
     returns: SUBSCRIPTION_BILLING_FAMILY_MARKER_CONNECTION_SHAPE,
     core: false,
   },
@@ -341,7 +348,7 @@ export const FINANCE_MONEY_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/subscription-billing",
     body: z.object(unmarkFamilyInvoicedFields),
     fixedBody: { action: "UNMARK_FAMILY_INVOICED" satisfies BillingAction },
-    kind: "write",
+    kind: "destructive",
     returns: SUBSCRIPTION_BILLING_FAMILY_MARKER_CONNECTION_SHAPE,
     core: false,
   },

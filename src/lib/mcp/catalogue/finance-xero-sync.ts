@@ -7,13 +7,12 @@
  * (`mcpActionAdminRequirement`). Setting Xero up, and disconnecting it, stay
  * on the website (`exclusions.ts`).
  *
- * Kinds: a replay or sync that re-reads Xero or refreshes the club's own
- * records is `write`. Retrying or requeuing an operation (which may raise
- * the document it failed to), marking one failed, non-replayable or resolved
- * by hand, resetting stuck operations, forcing a booking's invoice into Xero
- * over an officer's resolved-in-Xero mark, and a contact force-sync that may
- * create a Xero contact are `destructive`: none can be taken back from the
- * app.
+ * Kinds follow the owner's rule (#5305): an action that notifies anyone, or
+ * changes a member's payment, refund, credit, invoice, subscription or Xero
+ * record (the app's stored copy included), is `destructive`, so the app
+ * confirms first and the call is logged as important. Every change here
+ * is one: each sync, replay, retry or repair rewrites members' bookings,
+ * payments, credits, contacts, subscriptions or Xero links.
  */
 import { z } from "zod";
 
@@ -223,7 +222,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/xero/inbound-events/[id]/replay",
     params: recordIdParamsSchema,
-    kind: "write",
+    kind: "destructive",
     returns: XERO_INBOUND_EVENT_REPLAYED_CONNECTION_SHAPE,
     core: false,
   },
@@ -252,7 +251,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/xero/sync-now",
     body: z.object(xeroSyncNowRecordFields),
     fixedBody: { scope: "member" satisfies SyncNowScope },
-    kind: "write",
+    kind: "destructive",
     returns: XERO_SYNC_NOW_RECORD_CONNECTION_SHAPE,
     core: false,
   },
@@ -265,7 +264,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/xero/sync-now",
     body: z.object(xeroSyncNowRecordFields),
     fixedBody: { scope: "booking" satisfies SyncNowScope },
-    kind: "write",
+    kind: "destructive",
     returns: XERO_SYNC_NOW_RECORD_CONNECTION_SHAPE,
     core: false,
   },
@@ -277,7 +276,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/xero/sync-now",
     fixedBody: { scope: "club" satisfies SyncNowScope },
-    kind: "write",
+    kind: "destructive",
     returns: XERO_SYNC_NOW_CLUB_CONNECTION_SHAPE,
     core: false,
   },
@@ -289,7 +288,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/xero/sync-contacts",
     body: xeroSyncContactsBodySchema,
-    kind: "write",
+    kind: "destructive",
     returns: XERO_SYNC_CONTACTS_CONNECTION_SHAPE,
     core: false,
   },
@@ -301,7 +300,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/xero/sync-memberships",
     query: xeroSyncMembershipsQuerySchema,
-    kind: "write",
+    kind: "destructive",
     returns: XERO_SYNC_MEMBERSHIPS_CONNECTION_SHAPE,
     core: false,
   },
@@ -329,7 +328,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/xero/force-sync",
     body: forceSyncBody,
     fixedBody: { syncType: "MEMBERSHIP" satisfies ForceSyncType },
-    kind: "write",
+    kind: "destructive",
     returns: XERO_FORCE_SYNC_MEMBERSHIP_CONNECTION_SHAPE,
     core: false,
   },
@@ -353,7 +352,7 @@ export const FINANCE_XERO_SYNC_MCP_ACTIONS: readonly McpAction[] = [
       "Runs the nightly Xero link upkeep now: records any missing links between local records and their Xero contacts, invoices and credit notes, and retires stale ones (including links to voided or deleted refund credit notes). Answers with the counts, and a `warning` when some repairs failed and are left for the next nightly run. Harmless to repeat.",
     method: "POST",
     path: "/api/admin/xero/link-maintenance",
-    kind: "write",
+    kind: "destructive",
     returns: XERO_LINK_MAINTENANCE_CONNECTION_SHAPE,
     core: false,
   },
