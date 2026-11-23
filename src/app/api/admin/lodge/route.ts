@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
@@ -273,13 +274,11 @@ export async function PUT(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  const body = await request.json();
-  const parsed = updateSchema.safeParse(body);
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = updateSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
 
   const { email, password, firstName, lastName, lodgeId } = parsed.data;
@@ -416,13 +415,11 @@ export async function POST(request: NextRequest) {
   }
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  const body = await request.json();
-  const parsed = createSchema.safeParse(body);
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = createSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
 
   const email = parsed.data.email.toLowerCase();

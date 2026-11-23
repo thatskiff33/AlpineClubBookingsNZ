@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { expectDefaultInvalidJsonAnswer, MALFORMED_JSON_BODY } from "./helpers/invalid-json-body";
 
 // Issue hoppers99/AlpineClubBookingsNZ#27 (LTV-002): route-level behaviour of the display pairing surface —
 // the full pairing lifecycle, the heartbeat auth matrix (a rejected token
@@ -149,6 +150,21 @@ describe("POST /api/display/pair", () => {
     const { POST } = await import("@/app/api/display/pair/route");
     const res = await POST(await pairRequest({ action: "steal-tokens" }));
     expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid request" });
+  });
+
+  it("answers a body that is not JSON with the shared invalid-JSON 400 (#5407)", async () => {
+    const { NextRequest } = await import("next/server");
+    const { POST } = await import("@/app/api/display/pair/route");
+    const res = await POST(
+      new NextRequest("http://localhost/api/display/pair", {
+        method: "POST",
+        body: MALFORMED_JSON_BODY,
+        headers: { "content-type": "application/json", "x-forwarded-for": uniqueIp() },
+      }),
+    );
+    await expectDefaultInvalidJsonAnswer(res);
+    expect(res.headers.getSetCookie()).toEqual([]);
   });
 });
 
