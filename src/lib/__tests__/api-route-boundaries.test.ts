@@ -27,18 +27,26 @@ function routeContents(filePath: string) {
   return fs.readFileSync(path.join(process.cwd(), filePath), "utf8");
 }
 
-// `request.json()` on the incoming request, however the call is awaited.
-const DIRECT_REQUEST_JSON_READ = /\b(?:request|req)\s*\??\.\s*json\(\)/;
+// `request.json()` on the incoming request, or on its `clone()`, however the
+// call is awaited.
+const DIRECT_REQUEST_JSON_READ =
+  /\b(?:request|req)\s*\??\.\s*(?:clone\(\)\s*\??\.\s*)?json\(\)/;
 // Receivers of a `.json()` call that a route file may contain: the incoming
 // request (the two names routes use) and a provider's `response`.
 const JSON_RECEIVER_NAMES = new Set(["request", "req", "response"]);
-// The body read as text, or as bytes, on the incoming request.
+// The body read as text, or as bytes, on the incoming request or its clone.
 const DIRECT_REQUEST_RAW_READ =
-  /\b(?:request|req)\s*\??\.\s*(?:text|arrayBuffer|blob)\(\)/;
-// Receivers of a `.text()` call that a route file may contain: a provider's
-// answer. Uploaded files call `arrayBuffer()` on a `File`, which is not the
-// request.
-const TEXT_RECEIVER_NAMES = new Set(["upstream", "response"]);
+  /\b(?:request|req)\s*\??\.\s*(?:clone\(\)\s*\??\.\s*)?(?:text|arrayBuffer|blob)\(\)/;
+// A body read on a clone of anything: a route never needs one.
+const CLONED_BODY_READ =
+  /\.\s*clone\(\)\s*\??\.\s*(?:json|text|arrayBuffer|blob|formData)\(\)/;
+// Receivers a route may call `text()`, `arrayBuffer()` or `blob()` on, none of
+// them the request. Each needs a reason; a new name fails the census.
+const RAW_READ_RECEIVERS: Record<string, string> = {
+  upstream: "skifield-conditions reads the upstream provider's answer as text",
+  response: "a provider's answer, the same receiver name the JSON census allows",
+  file: "an uploaded File taken from formData(); its bytes are the upload, not a JSON body",
+};
 
 /**
  * Route files that still call `request.json()` themselves instead of the shared
@@ -59,13 +67,17 @@ const TEXT_RECEIVER_NAMES = new Set(["upstream", "response"]);
  * read does not keep an entry alive.
  *
  * The optional reader reads `text()`, so the second census below fails any
- * route that reads the request as text or bytes itself: a route cannot parse a
- * body by hand beside the shared readers. The signed-webhook routes (Stripe,
- * Xero, SES SNS, ServerNZ posts) read the raw bounded text on purpose, because
- * the signature covers the exact bytes, through `readBoundedWebhookText`;
- * `mcp` and `mcp/oauth/register` use the same bounded reader. `formData()`
- * and streams are not covered. `JSON_RECEIVER_NAMES` and
- * `TEXT_RECEIVER_NAMES` fail on a new receiver name.
+ * route that reads the request, or a clone of it, as text or bytes itself: a
+ * route cannot parse a body by hand beside the shared readers. A body read on
+ * any `clone()` fails too. The signed-webhook routes (Stripe, Xero, SES SNS,
+ * ServerNZ posts) read the raw bounded text on purpose, because the signature
+ * covers the exact bytes, through `readBoundedWebhookText`; `mcp` and
+ * `mcp/oauth/register` use the same bounded reader. `JSON_RECEIVER_NAMES` and
+ * `RAW_READ_RECEIVERS` fail on a new receiver name.
+ *
+ * Stated limits: `formData()` on the request (the upload routes use it on
+ * purpose) and stream readers (`request.body`, `getReader()`) are not
+ * matched, and neither is a read through a helper defined outside the route.
  */
 const directJsonReadAllowlist: Record<
   string,
@@ -652,17 +664,20 @@ describe("API route boundary metadata", () => {
     const rawReaders = routes.filter((routePath) =>
       DIRECT_REQUEST_RAW_READ.test(code(routePath)),
     );
+    const clonedReaders = routes.filter((routePath) =>
+      CLONED_BODY_READ.test(code(routePath)),
+    );
     // A request parameter under another name would slip past the pattern above.
-    const otherTextReceivers = routes.flatMap((routePath) =>
-      [...code(routePath).matchAll(/\b(\w+)\s*\??\.\s*text\(\)/g)]
-        .map((match) => match[1] ?? "")
-        .filter((name) => !TEXT_RECEIVER_NAMES.has(name))
-        .map((name) => `${routePath}: ${name}.text()`),
+    const otherRawReceivers = routes.flatMap((routePath) =>
+      [...code(routePath).matchAll(/\b(\w+)\s*\??\.\s*(text|arrayBuffer|blob)\(\)/g)]
+        .filter((match) => !Object.hasOwn(RAW_READ_RECEIVERS, match[1] ?? ""))
+        .map((match) => `${routePath}: ${match[1]}.${match[2]}()`),
     );
 
-    expect({ rawReaders, otherTextReceivers }).toEqual({
+    expect({ rawReaders, clonedReaders, otherRawReceivers }).toEqual({
       rawReaders: [],
-      otherTextReceivers: [],
+      clonedReaders: [],
+      otherRawReceivers: [],
     });
   });
 
