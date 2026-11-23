@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { BookingRequestType } from "@prisma/client";
 import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
@@ -60,9 +61,9 @@ export async function POST(
   // plus the optional map-to-existing-contact decision (issue #1255). The body
   // is empty for general requests and for school approvals that keep the
   // submitted numbers, so parse defensively.
-  const raw: unknown = await req.json().catch(() => null);
-  // Anything but a JSON object (none, `null`, an array) is the empty body.
-  const body = (raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as ApproveBody;
+  const jsonBody = await parseOptionalJsonRequestBody(req, { whenAbsent: {}, objectOnly: true });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body as ApproveBody;
 
   // The map target is an existing non-login Organisation/School contact id. The
   // authoritative guard (canLogin:false, role, not archived) runs inside the

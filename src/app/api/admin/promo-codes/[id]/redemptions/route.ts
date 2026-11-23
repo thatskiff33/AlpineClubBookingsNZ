@@ -1,4 +1,5 @@
 import { bookingOwner } from "@/lib/booking-owner";
+import { formatBookingReference } from "@/lib/booking-reference";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -32,13 +33,6 @@ const EXPORT_MAX_ROWS = 10_000;
 
 function memberName(member: { firstName: string; lastName: string }): string {
   return `${member.firstName} ${member.lastName}`.trim();
-}
-
-// Human-friendly booking reference derived from the cuid (bookings carry no
-// separate reference column). Uppercased tail, matching the shortId convention
-// used elsewhere in the admin surface; the link always uses the full id.
-function bookingReference(id: string): string {
-  return id.slice(-8).toUpperCase();
 }
 
 // checkIn/checkOut are `@db.Date` values (stored at UTC midnight), so the night
@@ -261,7 +255,7 @@ export async function GET(
     },
     booking: {
       id: r.booking.id,
-      reference: bookingReference(r.booking.id),
+      reference: formatBookingReference(r.booking.id), // the site's one short reference (#5407)
       lodgeId: r.booking.lodge.id,
       lodgeName: r.booking.lodge.name,
       checkIn: formatDateOnly(r.booking.checkIn),

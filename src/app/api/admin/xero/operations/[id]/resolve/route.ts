@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import { createAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
@@ -42,7 +43,9 @@ export async function POST(
   });
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  const body = await request.json().catch(() => ({}));
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = resolveSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

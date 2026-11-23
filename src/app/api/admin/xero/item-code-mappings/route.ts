@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
@@ -369,10 +369,7 @@ export async function PUT(request: NextRequest) {
     });
     return NextResponse.json(buildResponseBody(rows));
   } catch (error) {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002"
-    ) {
+    if (isPrismaKnownUniqueConstraintError(error)) {
       return NextResponse.json(
         { error: "Duplicate hut fee mapping for the same membership type, season, and age tier." },
         { status: 400 }

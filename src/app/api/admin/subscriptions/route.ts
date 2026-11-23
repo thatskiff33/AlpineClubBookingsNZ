@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
+import { Prisma, type Role } from "@prisma/client";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
@@ -84,7 +84,7 @@ type SubscriptionCandidate = {
 
 function isNotRequiredMember(
   member: {
-    role: string;
+    role: Role;
     ageTier: string;
     seasonalMembershipAssignments?: Array<{
       membershipType: { subscriptionBehavior: string };

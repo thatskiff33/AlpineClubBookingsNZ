@@ -1,5 +1,6 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import { otherLodgeChoiceLabel, type OwnedCentralLodge } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
 import {
@@ -261,7 +262,7 @@ export async function saveCentralLodgeLinks(
       return { ok: true, before };
     }, SERVERNZ_TRANSACTION_OPTIONS);
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+    if (isPrismaKnownUniqueConstraintError(error)) {
       return { ok: false, reason: "already-linked", holderName: await linkHolderName(wanted, changes) };
     }
     throw error;

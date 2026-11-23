@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -56,7 +57,9 @@ export async function PUT(req: NextRequest) {
   });
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  const body = await req.json();
+  const jsonBody = await parseJsonRequestBody(req);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = groupDiscountBodySchema.safeParse(body);
 
   if (!parsed.success) {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { BookingStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
@@ -63,13 +64,11 @@ export async function POST(
   const session = guard.session;
   const { id: bookingId } = await params;
 
-  const body = await request.json().catch(() => ({}));
-  const parsed = adminExclusiveHoldBodySchema.safeParse(body);
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = adminExclusiveHoldBodySchema.safeParse(jsonBody.body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten().fieldErrors },
-      { status: 422 },
-    );
+    return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten().fieldErrors }, { status: 422 });
   }
   const { hold } = parsed.data;
   const auditRequest = getAuditRequestContext(request);

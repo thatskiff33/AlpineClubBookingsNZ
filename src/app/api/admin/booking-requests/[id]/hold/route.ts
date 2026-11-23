@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseOptionalJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { adminBookingRequestHoldBodySchema } from "@/lib/admin-bookings-schemas/requests";
 import {
@@ -45,12 +46,9 @@ export async function POST(
   const session = guard.session;
 
   const { id } = await params;
-  let body: unknown = {};
-  try {
-    body = await req.json();
-  } catch {
-    body = {};
-  }
+  const jsonBody = await parseOptionalJsonRequestBody(req, { whenAbsent: {} });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = adminBookingRequestHoldBodySchema.safeParse(body);
   if (!parsed.success) {

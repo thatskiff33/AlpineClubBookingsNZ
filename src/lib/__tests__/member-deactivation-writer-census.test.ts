@@ -4,11 +4,10 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { enclosingFunction } from "./support/function-scope";
 import {
+  MEMBER_ADDRESS_FIELDS,
   MEMBER_PHONE_FIELDS,
   pickMemberAddressValues,
   pickMemberPhoneValues,
-  POSTAL_ADDRESS_FIELDS,
-  STREET_ADDRESS_FIELDS,
   type MemberAddressField,
 } from "@/lib/member-address";
 
@@ -217,7 +216,7 @@ describe("Member deactivation writers record the departure in the same write (#4
   it("the pickers carry no lifecycle field", () => {
     const lifecycle = { active: false, cancelledAt: new Date(0), leavingDate: new Date(0) };
     const address = Object.fromEntries(
-      [...STREET_ADDRESS_FIELDS, ...POSTAL_ADDRESS_FIELDS].map((field) => [field, "x"]),
+      MEMBER_ADDRESS_FIELDS.map((field) => [field, "x"]),
     ) as Record<MemberAddressField, string>;
     const source = {
       ...lifecycle,
@@ -226,10 +225,10 @@ describe("Member deactivation writers record the departure in the same write (#4
       phoneAreaCode: "27",
       phoneNumber: "123",
     };
-    expect(Object.keys(pickMemberAddressValues(source)).sort()).toEqual([...STREET_ADDRESS_FIELDS, ...POSTAL_ADDRESS_FIELDS].sort());
+    expect(Object.keys(pickMemberAddressValues(source)).sort()).toEqual([...MEMBER_ADDRESS_FIELDS].sort());
     expect(Object.keys(pickMemberPhoneValues(source)).sort()).toEqual([...MEMBER_PHONE_FIELDS].sort());
     for (const field of Object.keys(lifecycle)) {
-      expect([...STREET_ADDRESS_FIELDS, ...POSTAL_ADDRESS_FIELDS, ...MEMBER_PHONE_FIELDS] as string[]).not.toContain(field);
+      expect([...MEMBER_ADDRESS_FIELDS, ...MEMBER_PHONE_FIELDS] as string[]).not.toContain(field);
     }
   });
 

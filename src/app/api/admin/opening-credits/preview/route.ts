@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 
 import logger from "@/lib/logger";
@@ -24,7 +25,9 @@ export async function POST(request: NextRequest) {
   const limited = await applyRateLimit({ id: "opening-credit-preview", limit: 30, windowSeconds: 60 * 60 }, request);
   if (limited) return limited;
 
-  const parsed = previewSchema.safeParse(await request.json().catch(() => null));
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = previewSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Upload a CSV file to preview" }, { status: 400 });
   }

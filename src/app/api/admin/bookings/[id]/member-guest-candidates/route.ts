@@ -19,7 +19,7 @@ import {
   searchMemberGuestCandidatesByName,
 } from "@/lib/member-guest-find-service";
 import {
-  MEMBER_GUEST_SEARCH_AUDIT_Q_MAX_CHARS,
+  MEMBER_GUEST_SEARCH_Q_MAX_CHARS,
   normalizeMemberGuestEmail,
 } from "@/lib/member-guest-find";
 import { requireAdmin } from "@/lib/session-guards";
@@ -220,7 +220,7 @@ export async function GET(
   });
   const rawQ = ((query.success ? query.data.q : undefined) ?? "").slice(
     0,
-    MEMBER_GUEST_SEARCH_AUDIT_Q_MAX_CHARS * 4,
+    MEMBER_GUEST_SEARCH_Q_MAX_CHARS,
   );
 
   try {

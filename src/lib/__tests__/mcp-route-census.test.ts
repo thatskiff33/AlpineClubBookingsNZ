@@ -33,8 +33,9 @@ const HTTP_METHODS: ReadonlySet<string> = new Set(STEP_UP_HTTP_METHODS);
 
 /**
  * The only `POST`s that may run as a `read` (`preview: true`): each changes
- * nothing, which a reviewer checked against the route. A view-only connection
- * runs them and no audit row is written, so adding one here is a decision.
+ * no member's data, which a reviewer checked against the route. A view-only
+ * connection runs them and the dispatcher writes no `MCP_ACTION_CALLED` audit
+ * row, so adding one here is a decision.
  */
 const PREVIEW_ROUTE_KEYS: readonly string[] = [
   // ALP-719: bed allocation's move and removal previews, and the member-link
@@ -42,6 +43,9 @@ const PREVIEW_ROUTE_KEYS: readonly string[] = [
   "POST src/app/api/admin/bed-allocation/allocations/move/route.ts",
   "POST src/app/api/admin/bed-allocation/allocations/removal/route.ts",
   "POST src/app/api/admin/booking-requests/[id]/link-conflicts/route.ts",
+  // ALP-795: looks a member up by exact email; writes only its own audit row
+  // and its rate-limit counters.
+  "POST src/app/api/members/guest-candidates/resolve/route.ts",
 ];
 
 /** The HTTP methods a route file exports, however it spells the export. */
@@ -472,6 +476,20 @@ describe("AI app action census (ALP-653, INV-MCP-006)", { timeout: CENSUS_TIMEOU
     expect(mcpPermanentExclusion("src/app/api/notices/[id]/acknowledge/route.ts", "DELETE")).toBeNull();
     expect(mcpPermanentExclusion("src/app/api/contact/route.ts", "POST")).toBe("public-visitor");
     expect(mcpPermanentExclusion("src/app/api/contact/extra/route.ts", "POST")).toBeNull();
+    // ALP-795: confirming a partnership is the member's own; reading and ending one are actions.
+    expect(mcpPermanentExclusion("src/app/api/members/partner-link/route.ts", "PUT")).toBe("declaration");
+    expect(classifyMcpRoute("src/app/api/members/partner-link/route.ts", "DELETE").kind).toBe("action");
+    expect(mcpPermanentExclusion("src/app/api/member/membership-cancellation-requests/route.ts", "POST")).toBe(
+      "declaration",
+    );
+    expect(
+      mcpPermanentExclusion("src/app/api/member/membership-cancellation-requests/confirm/route.ts", "POST"),
+    ).toBe("needs-browser");
+  });
+
+  it("leaves nothing under the member family and cancellation routes undecided", () => {
+    // ALP-795 removed their not-yet rule: a new route there fails the census until decided.
+    expect(classifyMcpRoute("src/app/api/members/brand-new/route.ts", "GET")).toEqual({ kind: "unclassified" });
   });
 
   it("keeps the lodge door codes website-only for good", () => {

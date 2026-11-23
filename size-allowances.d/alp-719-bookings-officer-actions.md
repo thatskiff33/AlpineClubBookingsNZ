@@ -1,7 +1,7 @@
 # Size allowances for ALP-719 (Bookings & Beds AI app actions)
 
 file: src/app/api/admin/booking-policies/minimum-stay/[id]/route.ts
-lines: 291
+lines: 290
 reason: the route is now also a Bookings & Beds AI app action (ALP-719).
   It gains the imports of its shared schema and connection shape and answers
   through `connectionJson`, so a connection receives only the named fields
@@ -17,7 +17,7 @@ reason: the route is now also a Bookings & Beds AI app action (ALP-719).
   is a refactor of its own, not part of this change.
 
 file: src/app/api/admin/bookings/[id]/exclusive-hold/route.ts
-lines: 436
+lines: 435
 reason: the route is now also a Bookings & Beds AI app action (ALP-719).
   It gains the imports of its shared schema and connection shape and answers
   through `connectionJson`, so a connection receives only the named fields
@@ -25,7 +25,7 @@ reason: the route is now also a Bookings & Beds AI app action (ALP-719).
   is a refactor of its own, not part of this change.
 
 file: src/app/api/admin/bookings/[id]/force-confirm/route.ts
-lines: 382
+lines: 381
 reason: the route is now also a Bookings & Beds AI app action (ALP-719).
   It gains the imports of its shared schema and connection shape and answers
   through `connectionJson`, so a connection receives only the named fields
@@ -46,30 +46,6 @@ reason: the route is now also a Bookings & Beds AI app action (ALP-719).
   It gains the imports of its shared schema and connection shape and answers
   through `connectionJson`, so a connection receives only the named fields
   (`INV-MCP-006`). The route was already at or over its limit; splitting it
-  is a refactor of its own, not part of this change.
-
-file: src/app/api/admin/promo-codes/[id]/redemptions/route.ts
-lines: 402
-reason: the route is now also a Bookings & Beds AI app action (ALP-719).
-  It gains the imports of its shared schema and connection shape and answers
-  through `connectionJson`, so a connection receives only the named fields
-  (`INV-MCP-006`). The route was already at or over its limit; splitting it
-  is a refactor of its own, not part of this change.
-
-function: src/app/api/admin/bookings/[id]/exclusive-hold/route.ts#POST
-lines: 382
-reason: the route is now also a Bookings & Beds AI app action (ALP-719).
-  It gains the imports of its shared schema and connection shape and answers
-  through `connectionJson`, so a connection receives only the named fields
-  (`INV-MCP-006`). The handler was already at or over its limit; splitting it
-  is a refactor of its own, not part of this change.
-
-function: src/app/api/admin/bookings/[id]/force-confirm/route.ts#POST
-lines: 335
-reason: the route is now also a Bookings & Beds AI app action (ALP-719).
-  It gains the imports of its shared schema and connection shape and answers
-  through `connectionJson`, so a connection receives only the named fields
-  (`INV-MCP-006`). The handler was already at or over its limit; splitting it
   is a refactor of its own, not part of this change.
 
 function: src/app/api/admin/promo-codes/[id]/redemptions/route.ts#GET

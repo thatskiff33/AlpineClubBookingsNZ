@@ -62,12 +62,12 @@ type McpNotYetAdminArea = Exclude<AdminPermissionArea, McpDecidedAdminArea>;
 
 /**
  * The task that will bring each remaining group of routes into the catalogue.
- * The member keys are the four follow-ons ALP-718 split its member routes
- * into; the rest are the officer areas not yet decided.
+ * The member keys are the follow-ons ALP-718 split its member routes into,
+ * less those that have shipped (ALP-795, family and membership); the rest are
+ * the officer areas not yet decided.
  */
 export const MCP_NOT_YET_TASKS = {
   memberBookings: "ALP-794",
-  memberFamilyAndMembership: "ALP-795",
   memberLodgeLife: "ALP-796",
   memberGroupsAndWholeLodge: "ALP-797",
   membership: "ALP-720",
@@ -84,7 +84,6 @@ function isNotYetAdminArea(area: AdminPermissionArea): area is McpNotYetAdminAre
 
 type MemberNotYetGroup =
   | "memberBookings"
-  | "memberFamilyAndMembership"
   | "memberLodgeLife"
   | "memberGroupsAndWholeLodge";
 
@@ -158,6 +157,11 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "POST /api/notices/[id]/acknowledge",
       "POST /api/member/onboarding/confirm",
       "POST /api/member/request-deletion",
+      // ALP-795: joining a family group, confirming a partnership and asking
+      // for memberships to be cancelled are the member's own decisions.
+      "PUT /api/members/family/invitations",
+      "PUT /api/members/partner-link",
+      "POST /api/member/membership-cancellation-requests",
     ],
   },
   {
@@ -180,8 +184,15 @@ const PERMANENT_ROUTES: ReadonlyArray<{
   // app could only overwrite or clear what the kitchen relies on unseen.
   { reason: "unread-value", routes: ["PATCH /api/admin/bookings/[id]/guest-dietary"] },
   { reason: "public-visitor", routes: ["POST /api/contact", "POST /api/applications"] },
-  // The nominee confirms through a link emailed to them.
-  { reason: "needs-browser", routes: ["POST /api/applications/nominate"] },
+  // The nominee confirms through a link emailed to them, as does each member
+  // named in a membership cancellation request.
+  {
+    reason: "needs-browser",
+    routes: [
+      "POST /api/applications/nominate",
+      "POST /api/member/membership-cancellation-requests/confirm",
+    ],
+  },
 ];
 
 /**
@@ -196,10 +207,6 @@ const MEMBER_NOT_YET_PREFIXES: Readonly<Record<MemberNotYetGroup, readonly strin
     "/api/booking-policies",
     "/api/bookings",
     "/api/promo-codes",
-  ],
-  memberFamilyAndMembership: [
-    "/api/member/membership-cancellation-requests",
-    "/api/members",
   ],
   memberLodgeLife: [
     "/api/calendar",

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { parseJsonRequestBody } from "@/lib/api-json"
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation"
 import { syncOwnOtherLodgesFromFees } from "@/lib/other-lodge-fees-sync"
 import { requireAdmin } from "@/lib/session-guards";
@@ -48,7 +49,9 @@ export async function PUT(
   if (!guard.ok) return guard.response;
   const session = guard.session;
   const { id } = await params
-  const body = await req.json()
+  const jsonBody = await parseJsonRequestBody(req)
+  if (!jsonBody.ok) return jsonBody.response
+  const body = jsonBody.body
   const parsed = seasonUpdateBodySchema.safeParse(body)
 
   if (!parsed.success) {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { parseJsonRequestBody } from "@/lib/api-json"
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
@@ -56,8 +57,10 @@ export async function POST(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
   const session = guard.session;
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    const body = await request.json()
+    const body = jsonBody.body
     const data = minimumStayCreateBodySchema.parse(body)
 
     const startDate = parseDateOnly(data.startDate)

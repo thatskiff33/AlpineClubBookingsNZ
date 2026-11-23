@@ -308,7 +308,23 @@ describe("the dispatcher as a process", () => {
     expect(garbage.stderr).toContain("internal error, call allowed");
   });
 
-  it("still enforces when reached through a symlinked checkout", () => {
+  it("still enforces when reached through a symlinked checkout directory", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "agent-hooks-link-"));
+    try {
+      // A linked DIRECTORY, so `argv[1]` is not the real path. A junction on
+      // Windows, which needs no privilege; elsewhere the type is ignored.
+      const linkedDir = path.join(dir, "agent-hooks");
+      symlinkSync(path.dirname(DISPATCH), linkedDir, process.platform === "win32" ? "junction" : "dir");
+      const link = path.join(linkedDir, path.basename(DISPATCH));
+      expect(run(JSON.stringify(bash("npx x")), [], link).status).toBe(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Skipped on Windows only: creating a FILE symlink there needs a privilege
+  // most hosts lack (EPERM), and a junction cannot point at a file (#5407).
+  it.skipIf(process.platform === "win32")("still enforces when reached through a symlinked file", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "agent-hooks-link-"));
     try {
       const link = path.join(dir, "dispatch.mjs");

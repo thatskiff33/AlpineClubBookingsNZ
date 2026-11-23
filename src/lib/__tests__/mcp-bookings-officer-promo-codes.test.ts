@@ -459,7 +459,7 @@ describe("get_promo_code_redemptions", () => {
           member: { id: "member-1", name: "Ana Reid" },
           booking: {
             id: "booking-abcdefgh12345678",
-            reference: "12345678",
+            reference: "BOOKING-",
             lodgeId: "lodge-1",
             lodgeName: "Ruapehu Lodge",
             checkIn: "2026-07-10",

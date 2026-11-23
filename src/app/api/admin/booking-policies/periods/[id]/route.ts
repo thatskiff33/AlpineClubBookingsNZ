@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -55,8 +56,10 @@ export async function PUT(
   if (!guard.ok) return guard.response;
   const { id } = await params;
 
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    const body = await request.json();
+    const body = jsonBody.body;
     const data = bookingPeriodUpdateBodySchema.parse(body);
 
     const existing = await prisma.bookingPeriod.findUnique({ where: { id } });

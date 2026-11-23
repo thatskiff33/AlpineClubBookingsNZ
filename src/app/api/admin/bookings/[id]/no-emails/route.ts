@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminNoEmailsBodySchema } from "@/lib/admin-bookings-schemas/bookings";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   ADMIN_NO_EMAILS_CONNECTION_SHAPE,
   type AdminNoEmailsAnswer,
@@ -40,7 +41,9 @@ export async function POST(
   const session = guard.session;
   const { id: bookingId } = await params;
 
-  const body = await request.json().catch(() => ({}));
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = adminNoEmailsBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

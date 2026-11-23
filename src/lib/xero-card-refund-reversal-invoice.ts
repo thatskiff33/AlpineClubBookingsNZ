@@ -24,6 +24,7 @@
  * the outbox claim, the same claim every other queue type uses.
  */
 import { Invoice, type LineItem } from "xero-node";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import type { Prisma } from "@prisma/client";
 import { addCalendarDays, isCalendarDate, requireCalendarDate } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
@@ -78,12 +79,12 @@ export function cardRefundReversalDocumentDate(
 }
 
 export function cardRefundReversalDescription(bookingId: string): string {
-  return `Failed card refund's money returned to the Stripe account — booking ${bookingId.slice(0, 8)}`;
+  return `Failed card refund's money returned to the Stripe account — booking ${storedShortBookingId(bookingId)}`;
 }
 
 /** The close day stays here even when the invoice is dated the next open day. */
 export function cardRefundReversalReference(bookingId: string, closedOn: string): string {
-  return `Failed card refund back in Stripe, booking ${bookingId.slice(0, 8)}, closed ${closedOn}`;
+  return `Failed card refund back in Stripe, booking ${storedShortBookingId(bookingId)}, closed ${closedOn}`;
 }
 
 export function cardRefundReversalInvoiceKey(paymentId: string, closeTaskId: string): string {

@@ -18,6 +18,7 @@ import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import {
   copyStreetAddressToPostal,
+  MEMBER_ADDRESS_FIELDS,
   MEMBER_PHONE_FIELDS,
   POSTAL_ADDRESS_FIELDS,
   STREET_ADDRESS_FIELDS,
@@ -64,8 +65,7 @@ const PROFILE_AUDIT_FIELDS = [
   ...MEMBER_PHONE_FIELDS,
   "dateOfBirth",
   "ageTier",
-  ...STREET_ADDRESS_FIELDS,
-  ...POSTAL_ADDRESS_FIELDS,
+  ...MEMBER_ADDRESS_FIELDS,
   "occupation",
   "lodgeScreenPhoneOptIn",
   "profileCompletedAt",
@@ -162,7 +162,7 @@ export async function PUT(req: NextRequest) {
   }
 
   // Address fields
-  for (const f of [...STREET_ADDRESS_FIELDS, ...POSTAL_ADDRESS_FIELDS]) {
+  for (const f of MEMBER_ADDRESS_FIELDS) {
     if (data[f] !== undefined) {
       updateData[f] = data[f]?.trim() || null;
     }
@@ -376,10 +376,7 @@ export async function PUT(req: NextRequest) {
             fieldGroups: {
               name: hasAnyField(changedFields, ["firstName", "lastName"]),
               phone: hasAnyField(changedFields, MEMBER_PHONE_FIELDS),
-              address: hasAnyField(changedFields, [
-                ...STREET_ADDRESS_FIELDS,
-                ...POSTAL_ADDRESS_FIELDS,
-              ]),
+              address: hasAnyField(changedFields, MEMBER_ADDRESS_FIELDS),
               dateOfBirth: changedFields.includes("dateOfBirth"),
               ageTier: changedFields.includes("ageTier"),
               occupation: changedFields.includes("occupation"),

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import type { Prisma } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { logAudit } from "@/lib/audit";
@@ -78,7 +79,9 @@ export async function PATCH(
   const { id } = await params;
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  const body = await req.json();
+  const jsonBody = await parseJsonRequestBody(req);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = reviewSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
