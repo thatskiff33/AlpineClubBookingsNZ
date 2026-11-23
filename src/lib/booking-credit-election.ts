@@ -1,5 +1,6 @@
 import { BookingStatus, PaymentStatus, type Prisma } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
+import { buildBookingAppliedCreditDescription } from "@/lib/member-credit-booking-rows";
 import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import {
@@ -277,7 +278,7 @@ export async function consumeStoredCreditElection(
       tx,
       format,
       {
-        description: `Applied to booking ${bookingId.slice(0, 8)}; price source ${moneyBuildUpSelection.source} (${moneyBuildUpSelection.reason})`,
+        description: `${buildBookingAppliedCreditDescription(bookingId)}; price source ${moneyBuildUpSelection.source} (${moneyBuildUpSelection.reason})`,
       },
     );
   }

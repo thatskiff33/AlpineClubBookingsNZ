@@ -35,6 +35,7 @@ import {
   PaymentStatus,
   Prisma,
 } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import { bookingOwner } from "@/lib/booking-owner";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import {
@@ -232,7 +233,7 @@ export function normaliseJoinCode(raw: string): string {
  * conflict rather than burn five attempts regenerating a code that was fine.
  */
 function isJoinCodeCollision(err: unknown): boolean {
-  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== "P2002") {
+  if (!isPrismaKnownUniqueConstraintError(err)) {
     return false;
   }
   return describeUniqueConstraintTarget(err)?.includes("joincode") ?? false;
@@ -352,10 +353,7 @@ export async function createGroupBooking(
       }
       // A non-code unique violation here is the organiserBookingId guard losing
       // a race with a concurrent create for the same booking.
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
-      ) {
+      if (isPrismaKnownUniqueConstraintError(err)) {
         throw new GroupBookingError("This booking already has a group", 409);
       }
       throw err;

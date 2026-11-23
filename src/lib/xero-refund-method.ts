@@ -27,6 +27,7 @@
 
 import { PaymentSource } from "@prisma/client";
 import type { AccountMappingKey } from "@/lib/xero-account-mapping-keys";
+import { storedShortBookingId } from "@/lib/booking-reference";
 
 export const REFUND_METHODS = ["card", "internet-banking", "account-credit"] as const;
 
@@ -292,11 +293,6 @@ export function refundSettlementMappingKey(
   return method === "card" ? "stripeBankAccount" : "bankTransferRefundAccount";
 }
 
-/** The short booking reference every Xero booking document already uses. */
-function bookingRef(bookingId: string): string {
-  return bookingId.slice(0, 8);
-}
-
 /**
  * The line-item description of a refund or credit document. `stay` is the
  * lodge-night range already formatted for the document (the builder owns the
@@ -309,9 +305,9 @@ export function buildRefundDocumentDescription(params: {
   stay?: { checkIn: string; checkOut: string } | null;
   modificationId?: string | null;
 }): string {
-  const head = `${describeCreditDocumentWording(params.method)} - Booking ${bookingRef(params.bookingId)}`;
+  const head = `${describeCreditDocumentWording(params.method)} - Booking ${storedShortBookingId(params.bookingId)}`;
   if (params.modificationId) {
-    return `${head} - booking change ${bookingRef(params.modificationId)}`;
+    return `${head} - booking change ${params.modificationId.slice(0, 8)}`;
   }
   if (params.stay) {
     return `${head} (${params.stay.checkIn} - ${params.stay.checkOut})`;
@@ -324,7 +320,7 @@ export function buildRefundDocumentReference(params: {
   method: CreditDocumentWording;
   bookingId: string;
 }): string {
-  return `${describeCreditDocumentWording(params.method)} - Booking ${bookingRef(params.bookingId)}`;
+  return `${describeCreditDocumentWording(params.method)} - Booking ${storedShortBookingId(params.bookingId)}`;
 }
 
 /**
