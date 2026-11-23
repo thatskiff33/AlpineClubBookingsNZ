@@ -1,4 +1,9 @@
-type EnvMap = Record<string, string | undefined>;
+import {
+  readEnv,
+  readTransportTimeouts,
+  type EmailTransportTimeouts,
+  type EnvMap,
+} from "@/lib/email-transport-timeouts";
 
 /**
  * The three transports, and why the third one exists (#3035).
@@ -250,7 +255,7 @@ export function classifyCaptureHost(
   return "public-address";
 }
 
-interface EmailTransportOptions {
+interface EmailTransportOptions extends EmailTransportTimeouts {
   host: string;
   port: number;
   secure: boolean;
@@ -277,11 +282,6 @@ export interface ResolvedEmailDeliveryConfig {
   issues: string[];
   warnings: string[];
   transportOptions: EmailTransportOptions | null;
-}
-
-function readEnv(env: EnvMap, name: string): string | undefined {
-  const value = env[name]?.trim();
-  return value ? value : undefined;
 }
 
 function parseBooleanFlag(
@@ -360,6 +360,8 @@ export function resolveEmailDeliveryConfigFromEnv(
     issues.push("EMAIL_FROM is missing");
   }
 
+  const timeouts = readTransportTimeouts(env, warnings);
+
   if (mode === "aws-ses") {
     const host =
       readEnv(env, "SMTP_HOST") ?? "email-smtp.ap-southeast-2.amazonaws.com";
@@ -394,6 +396,7 @@ export function resolveEmailDeliveryConfigFromEnv(
               port,
               secure: false,
               auth: { user, pass },
+              ...timeouts,
             }
           : null,
     };
@@ -483,6 +486,7 @@ export function resolveEmailDeliveryConfigFromEnv(
               port,
               secure: false,
               auth: { user, pass },
+              ...timeouts,
             }
           : null,
     };

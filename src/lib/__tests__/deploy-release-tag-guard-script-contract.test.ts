@@ -260,11 +260,14 @@ describe("one definition of a release tag (INV-SSOT)", () => {
   ];
 
   it("accepts and refuses exactly the names release:cut does", () => {
+    // The names go in on stdin, one a line, not as arguments: a Windows Git
+    // Bash expands an argument such as `v*` against the files in its working
+    // directory before the script sees it (#5407 item 35).
     const harness = [
       shellFunctionSource(SCRIPT, "is_release_tag_name"),
-      'for name in "$@"; do if is_release_tag_name "$name"; then echo "yes"; else echo "no"; fi; done',
+      'while IFS= read -r name; do if is_release_tag_name "$name"; then echo "yes"; else echo "no"; fi; done',
     ].join("\n");
-    const output = execFileSync("bash", ["-c", harness, "harness", ...names], { encoding: "utf8" });
+    const output = execFileSync("bash", ["-c", harness], { encoding: "utf8", input: `${names.join("\n")}\n` });
     const shell = output.trim().split("\n");
     // `parseReleaseTag` trims its input; the deploy reads tag names that git
     // never pads, so only untrimmed names are compared.
