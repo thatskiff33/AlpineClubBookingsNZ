@@ -3,6 +3,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { functionCalls, manualRefundTaskCreationSites, namedFunction } from "./support/manual-refund-task-creation-scan";
 import { productionSourceFiles } from "./support/prisma-delegate-read-scan";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * THE TASK-CREATION-SITE CENSUS (#5185, Ledger M4d). Every place production code creates a `ManualRefundTask` row
@@ -75,7 +76,7 @@ describe("#5185 task-creation-site census: every ManualRefundTask raise is class
     // Sixteen calls under src/ (#5185's re-count): each key's last part is how many its function makes.
     expect(Object.keys(SITES).filter((key) => key.startsWith("src/")).reduce((sum, key) => sum + Number(key.split("|").at(-1)), 0)).toBe(16);
     for (const entry of Object.values(SITES)) expect(entry.reason.length).toBeGreaterThan(20);
-  }, 15_000);
+  }, CENSUS_TIMEOUT_MS);
 
   it("a site that posts R05 calls postHandBackObligation in its own function; another step's site calls the step it names", () => {
     const found = census();
@@ -86,7 +87,7 @@ describe("#5185 task-creation-site census: every ManualRefundTask raise is class
       expect(enclosing, key).toBeTruthy();
       expect(functionCalls(enclosing!, callee), `${key} must call ${callee}`).toBe(true);
     }
-  }, 15_000);
+  }, CENSUS_TIMEOUT_MS);
 
   it("a site recorded by another step names that step, and each step it names elsewhere makes its journal call", () => {
     for (const [key, entry] of Object.entries(SITES)) {
