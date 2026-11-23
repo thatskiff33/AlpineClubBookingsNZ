@@ -353,9 +353,10 @@ the columns again, and they still exist.
 liability rule as **Not chosen**, which keeps who is billed and who may book as
 they were. The admin members list, its export and the subscriptions list now
 show billing's answer, so some active members who have a saved "Not required"
-record for the season, but whom billing treats as owing, now carry the note
-"Marked not required, but billing treats this member as owing". The members
-export puts the same note in a new **Subscription Note** column. Two kinds of
+record for the season, but whom billing treats as owing, now show as **Not
+invoiced** (and sit under that filter and count) with the note "Marked not
+required, but billing treats this member as owing". The members export shows
+the same status and puts the note in a new last column, **Subscription Note**. Two kinds of
 member usually get it: a child on an always-required membership type, and a
 member on an age-based type whose age tier now owes.
 

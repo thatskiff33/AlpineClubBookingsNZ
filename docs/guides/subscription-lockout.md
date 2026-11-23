@@ -284,8 +284,12 @@ member now owes. Before choosing, ask for the impact list, which names every
 member the choice would newly charge or stop charging:
 `GET /api/admin/membership-lockout-settings/liability-impact?requiredTypeAgeRule=ALWAYS_OWES&liabilityAgeSource=SEASON_START`
 (membership view; the numbers of any unpaid invoices it lists are shown only to
-an officer who also has finance view). The screen for this choice arrives in a later release; until
-then it is made through the settings API or a configuration import. A chosen
+an officer who also has finance view). Choosing, or changing, the rule needs
+both **Membership edit** and **Finance edit**, because it changes who is
+invoiced; an officer with Membership edit alone can still change the other
+lockout settings. The screen for this choice arrives in a later release; until
+then it is made through the settings API or a configuration import (which only
+a full admin can run). A chosen
 rule cannot be set back to *Not chosen*, and *age today* is not available yet.
 
 A member covered by a no-invoice fee (for example a Life fee set up with no
@@ -294,9 +298,11 @@ were never sent an invoice, so they could never have paid one.
 
 The admin members list, its export and the subscriptions list show billing's
 answer until the club chooses. An active member with a saved "Not required"
-record whom billing treats as owing keeps the "Not required" badge with the note
-"Marked not required, but billing treats this member as owing" (the export puts
-it in the **Subscription Note** column). If that member should not pay, move
+record whom billing treats as owing shows as **Not invoiced**, as billing sees
+them, with the note "Marked not required, but billing treats this member as
+owing". The "Not invoiced" filters and counts include them, and the "Not
+required" ones do not. The export shows the same status and puts the note in the
+**Subscription Note** column, its last. If that member should not pay, move
 them to a membership type whose subscription is not required; if they should,
 leave them and the next billing run bills them as their fee says. For the
 current season the note goes once the club chooses, because the member then
@@ -316,8 +322,8 @@ marked paid, never gets the note.
 | Subscription item code (optional) | Finance | A Xero item that also counts (the *fallback* code when look-through is on) | none | Requires Xero connected |
 | Item code matching | Membership | Single item code, or look-through to every fee-schedule item code | Single item code | Look-through resolves codes from [fee configuration](fees.md); overlap with other fee codes is warned |
 | Age-tier requirement | Bookings | Which age tiers must have a paid subscription | (read-only here) | Edit on [Age Groups](age-tier-settings.md) |
-| Required-type age rule | Membership | Whether an exempt age tier exempts a member on an always-required type | Not chosen | Chosen with the age source; cannot return to Not chosen (#5190) |
-| Liability age source | Membership | Which age decides a member's tier for liability | Not chosen | Season start or season end; age today not yet available (#5190) |
+| Required-type age rule | Membership and Finance (edit) | Whether an exempt age tier exempts a member on an always-required type | Not chosen | Chosen with the age source; cannot return to Not chosen (#5190) |
+| Liability age source | Membership and Finance (edit) | Which age decides a member's tier for liability | Not chosen | Season start or season end; age today not yet available (#5190) |
 
 ## Troubleshooting
 

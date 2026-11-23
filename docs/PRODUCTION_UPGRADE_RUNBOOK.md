@@ -57,7 +57,7 @@ invoice to pay. The admin members list, its export and the subscriptions list
 now follow billing until a rule is chosen: a member on an always-required type
 with an exempt age tier counts as owing there, though booking still lets them
 book. An active member with a saved "Not required" record whom billing treats
-as owing keeps the "Not required" badge with the note "Marked not required, but
+as owing shows as "Not invoiced", with the note "Marked not required, but
 billing treats this member as owing" (export column **Subscription Note**);
 after the upgrade an officer checks those rows and moves anyone who should be
 exempt to a membership type whose subscription is not required

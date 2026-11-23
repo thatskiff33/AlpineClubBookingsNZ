@@ -138,7 +138,9 @@ deeper reference for what each category contains and the import safety model.
   Its subscription-liability pair, `requiredTypeAgeRule` and
   `liabilityAgeSource` (#5190, `INV-CONFIG-009`), travels too, but only whole
   and chosen: a bundle naming `NOT_CHOSEN`, or only one of the two, carries
-  nothing for them, so it never moves a chosen target back. A bundle naming
+  nothing for them, so it never moves a chosen target back. Choosing the pair
+  needs membership edit and finance edit (owner, 23 Nov 2026); import is
+  full-admin only, and a full admin holds both, so it needs no check of its own. A bundle naming
   `CURRENT_AGE` fails the dry-run. An import that changes the singleton runs the
   stale-row clear-up in its own transaction once the import commits; when it
   moves any row it writes a `configuration.imported.liability_clear_up` audit

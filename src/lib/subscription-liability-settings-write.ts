@@ -1,6 +1,11 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 
 import {
+  hasAdminAreaAccess,
+  type AdminAccessRequirement,
+} from "@/lib/admin-permissions";
+
+import {
   clearStaleNotRequiredRows,
   type StaleNotRequiredClearUp,
 } from "@/lib/member-subscription-defaults";
@@ -53,6 +58,44 @@ export function liabilityChoiceError(
     return "Age today cannot be chosen yet: it needs part-season subscription invoices.";
   }
   return null;
+}
+
+/**
+ * Who may choose the liability rule (#5190, owner decision 23 Nov 2026,
+ * https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5190#issuecomment-7088835754):
+ * membership edit AND finance edit, because the choice changes who the billing
+ * run invoices. Other lockout settings keep membership edit alone.
+ */
+export const LIABILITY_RULE_CHOICE_PERMISSIONS = [
+  { area: "membership", level: "edit" },
+  { area: "finance", level: "edit" },
+] as const satisfies readonly AdminAccessRequirement[];
+
+/** Whether `user` holds every {@link LIABILITY_RULE_CHOICE_PERMISSIONS}. */
+export function mayChooseLiabilityRule(
+  user: Parameters<typeof hasAdminAreaAccess>[0],
+): boolean {
+  return LIABILITY_RULE_CHOICE_PERMISSIONS.every((requirement) =>
+    hasAdminAreaAccess(user, requirement),
+  );
+}
+
+/**
+ * Whether a save names a liability answer that differs from the stored one,
+ * valid or not, so the permission check fails closed before
+ * {@link liabilityChoiceError} judges it. An unchanged echo of the stored pair
+ * is not a change.
+ */
+export function namesLiabilityRuleChange(
+  requested: RequestedLiability,
+  stored: SubscriptionLiabilitySettings,
+): boolean {
+  return (
+    (requested.requiredTypeAgeRule !== undefined &&
+      requested.requiredTypeAgeRule !== stored.requiredTypeAgeRule) ||
+    (requested.liabilityAgeSource !== undefined &&
+      requested.liabilityAgeSource !== stored.liabilityAgeSource)
+  );
 }
 
 /**

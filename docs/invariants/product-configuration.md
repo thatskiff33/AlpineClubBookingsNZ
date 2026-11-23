@@ -492,7 +492,7 @@ home for that explanation and is not repeated here.
 ## INV-CONFIG-009
 
 - **Who owes a subscription is one rule the club chooses, read by billing and
-  booking access alike** (#5190; owner decisions 18, 20 and 22 Nov 2026).
+  booking access alike** (#5190, owner decisions).
   `MembershipLockoutSettings` holds two answers:
   `requiredTypeAgeRule` (does an exempt age tier exempt a member on a
   `REQUIRED` type: `ALWAYS_OWES` or `AGE_TIER_EXEMPTS`) and
@@ -502,23 +502,22 @@ home for that explanation and is not repeated here.
   [`policies/subscription.ts`](../../src/lib/policies/subscription.ts) is the
   rule; only `liabilityRuleFor(side, settings)` picks a side.
 - **`NOT_CHOSEN` changes nobody.** Both columns default to it, reproducing the
-  pre-#5190 rules: billing charges
-  any `REQUIRED`-type member from the season-start tier and ignores the season
-  row; access lets an exempt stored tier exempt any type and honours a
-  `BASED_ON_AGE_TIER` member's saved `NOT_REQUIRED` row. Only then may the sides
-  differ. Once chosen, both read the club's pair and a saved
-  row exempts nobody (age wins).
+  pre-#5190 rules. Billing: a `REQUIRED` type owes whatever the tier; only a
+  `BASED_ON_AGE_TIER` type is gated, by the season-start tier; the season row
+  is ignored. Access: an exempt stored tier exempts any type, and a
+  `BASED_ON_AGE_TIER` member's saved `NOT_REQUIRED` row is honoured. Only then
+  may the sides differ. Once chosen, a saved row exempts nobody.
 - **The admin lists follow billing** (Q2): the members list, its export, the
-  subscriptions list and their SQL filter read `ADMIN_LIST_LIABILITY_SIDE`; an
-  active member's saved `NOT_REQUIRED` row whose member billing treats as owing carries a note
-  (`hasNotRequiredRowBillingNote`).
-- **The pair is chosen whole and never returns to `NOT_CHOSEN`.** The settings
-  `PUT` refuses a half pair, a move back and `CURRENT_AGE` (age today waits for
-  part-season invoices); config import ignores a half or `NOT_CHOSEN` pair and
-  fails the dry run on `CURRENT_AGE`. An omitted pair is never written.
-  A save or import leaving the club chosen runs `clearStaleNotRequiredRows`
-  under the billing season key, then the liability-rule key, and audits who
-  moved; read the impact list
-  (`GET /api/admin/membership-lockout-settings/liability-impact`) first.
+  subscriptions list and their filters read `ADMIN_LIST_LIABILITY_SIDE`. An
+  active member's untouched `NOT_REQUIRED` row whose member billing treats as
+  owing shows `NOT_INVOICED` with a note (`hasNotRequiredRowBillingNote`).
+- **The pair is chosen whole, needs membership and finance edit (owner,
+  23 Nov 2026), and never returns to `NOT_CHOSEN`.** The settings `PUT`
+  refuses a change without both, a half pair, a move back and `CURRENT_AGE`;
+  config import (full admin) ignores a half or `NOT_CHOSEN` pair and fails the
+  dry run on `CURRENT_AGE`. An omitted pair is never written. A save or import
+  leaving the club chosen runs `clearStaleNotRequiredRows`, which takes the
+  liability-rule key after the billing season key, and audits who moved
+  (preview: the `liability-impact` list).
 - **A no-invoice fee settles its member for booking** (every club): an active coverage claim on a `NO_INVOICE` charge counts as paid
-  whatever the row status (no invoice is sent).
+  whatever the row status.

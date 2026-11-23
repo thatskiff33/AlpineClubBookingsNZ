@@ -274,10 +274,15 @@ describe("membership lockout settings route guards (#1940)", () => {
   });
 });
 
+// #5190 (owner decision 23 Nov 2026): choosing the rule needs both areas.
+const liabilitySession = {
+  user: { id: "admin-1", adminPermissionMatrix: { membership: "edit", finance: "edit" } },
+};
+
 describe("membership lockout settings route: the subscription liability rule (#5190)", () => {
   beforeEach(() => {
     setUpMocks();
-    mocks.requireAdmin.mockResolvedValue({ ok: true, session });
+    mocks.requireAdmin.mockResolvedValue({ ok: true, session: liabilitySession });
     mocks.findUnique.mockResolvedValue(null);
     mocks.upsert.mockImplementation(async (args: { update: object }) => ({
       id: "default",
@@ -355,5 +360,58 @@ describe("membership lockout settings route: the subscription liability rule (#5
     expect(response.status).toBe(200);
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.clearStale).not.toHaveBeenCalled();
+  });
+});
+
+describe("membership lockout settings route: who may choose the liability rule (#5190)", () => {
+  beforeEach(setUpMocks);
+
+  const chosen = { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_START" };
+  const asAdmin = (membership: string, finance: string) =>
+    mocks.requireAdmin.mockResolvedValue({
+      ok: true,
+      session: { user: { id: "admin-1", adminPermissionMatrix: { membership, finance } } },
+    });
+
+  it.each([
+    ["membership edit only", "edit", "view"],
+    ["membership edit, no finance", "edit", "none"],
+    ["finance edit with membership view", "view", "edit"],
+  ])("refuses a rule change for %s, writing nothing", async (_label, membership, finance) => {
+    asAdmin(membership, finance);
+    // The route's own guard is membership edit; a finance-only caller stops there.
+    if (membership !== "edit") {
+      mocks.requireAdmin.mockResolvedValueOnce({
+        ok: false,
+        response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+      });
+    }
+    const response = await putLockoutSettings(request(chosen));
+    expect(response.status).toBe(403);
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.auditLogCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses even an invalid half-change from a membership-only admin (fails closed)", async () => {
+    asAdmin("edit", "view");
+    const response = await putLockoutSettings(request({ requiredTypeAgeRule: "ALWAYS_OWES" }));
+    expect(response.status).toBe(403);
+  });
+
+  it("lets an admin with membership edit and finance edit choose the rule", async () => {
+    asAdmin("edit", "edit");
+    mocks.upsert.mockImplementation(async (args: { update: object }) => ({ id: "default", ...args.update }));
+    const response = await putLockoutSettings(request(chosen));
+    expect(response.status).toBe(200);
+    expect(mocks.upsert.mock.calls[0]?.[0]?.update).toMatchObject(chosen);
+  });
+
+  it("a membership-only admin may still save other settings, echoing the stored pair", async () => {
+    asAdmin("edit", "view");
+    mocks.findUnique.mockResolvedValue({ id: "default", mode: "HARD_BLOCK", ...chosen });
+    const response = await putLockoutSettings(request({ mode: "NO_BLOCK", ...chosen }));
+    expect(response.status).toBe(200);
+    expect(mocks.upsert.mock.calls[0]?.[0]?.update).toMatchObject({ mode: "NO_BLOCK" });
   });
 });

@@ -32,6 +32,8 @@ import {
 import {
   liabilityChoiceError,
   liabilityChoiceToWrite,
+  mayChooseLiabilityRule,
+  namesLiabilityRuleChange,
   saveLockoutSettings,
 } from "@/lib/subscription-liability-settings-write";
 
@@ -148,6 +150,20 @@ export async function PUT(request: NextRequest) {
     where: { id: MEMBERSHIP_LOCKOUT_SETTINGS_ID },
   });
   const stored = normalizeMembershipLockoutSettings(before);
+  // #5190 (owner decision 23 Nov 2026): changing the liability rule changes
+  // who is invoiced, so it needs finance edit as well as membership edit.
+  if (
+    namesLiabilityRuleChange(parsed.data, stored) &&
+    !mayChooseLiabilityRule(session.user)
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Choosing the subscription liability rule needs both Membership edit and Finance edit access.",
+      },
+      { status: 403 }
+    );
+  }
   const liabilityError = liabilityChoiceError(parsed.data, stored);
   if (liabilityError) {
     return NextResponse.json({ error: liabilityError }, { status: 400 });
