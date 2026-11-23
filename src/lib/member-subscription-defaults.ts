@@ -86,12 +86,13 @@ type LiabilityReadDb = Pick<
 >;
 
 /**
- * Whether the member owes a subscription for the season under the club's CHOSEN
- * liability rule (#5190), read through the caller's transaction. Once chosen the
- * rule is the same on both sides, so this is the answer billing and booking
- * access both act on.
+ * Whether the member owes a subscription for the season on the billing side of
+ * the shared liability rule (#5190), read through the caller's transaction.
+ * Once the club has chosen, the rule is the same on both sides, so this is the
+ * answer billing and booking access both act on; while it is NOT_CHOSEN it is
+ * the annual-fee sweep's answer.
  */
-async function owesUnderChosenRule(
+async function owesOnBillingSide(
   db: LiabilityReadDb,
   params: {
     memberId: string;
@@ -110,7 +111,8 @@ async function owesUnderChosenRule(
   return resolveMemberSubscriptionLiability({
     subscriptionBehavior: params.subscriptionBehavior,
     member,
-    // The row being reconciled is the NOT_REQUIRED one; a chosen rule ignores it.
+    // The row being reconciled is the NOT_REQUIRED one; billing's side of the
+    // rule ignores it, chosen or not.
     seasonRowStatus: "NOT_REQUIRED",
     seasonYear: params.seasonYear,
     rule: liabilityRuleFor("billing", params.settings),
@@ -189,9 +191,18 @@ export async function reconcileSeasonSubscriptionForAssignment(
   }
   await lockSubscriptionLiabilityRuleShared(db);
   const settings = await loadMembershipLockoutSettingsStrict(db);
-  const owes = hasChosenLiabilityRule(settings)
-    ? await owesUnderChosenRule(db, { ...params, settings })
-    : params.subscriptionBehavior === "REQUIRED";
+  // Deliberate scope rule while NOT_CHOSEN (#2041, see above): a
+  // BASED_ON_AGE_TIER member's NOT_REQUIRED row is the season-start exemption
+  // booking access still honours, so it is never flipped, whatever billing says.
+  if (
+    !hasChosenLiabilityRule(settings) &&
+    params.subscriptionBehavior === "BASED_ON_AGE_TIER"
+  ) {
+    return { reconciled: false };
+  }
+  // Otherwise the billing side of the shared rule decides (#5190 review), as
+  // the annual-fee sweep and the clear-up read it.
+  const owes = await owesOnBillingSide(db, { ...params, settings });
   if (!owes) {
     return { reconciled: false };
   }

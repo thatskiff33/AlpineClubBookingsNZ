@@ -350,7 +350,7 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
     } = {},
   ) {
     return {
-      // #5190: the billing season key, taken before the liability rule is read.
+      // #5190: the liability-rule key (shared), taken before the rule is read.
       $executeRaw: vi.fn().mockResolvedValue(1),
       memberSubscription: {
         findUnique: vi.fn().mockResolvedValue(existing),
@@ -464,6 +464,23 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
     expect(db.memberSubscription.updateMany).not.toHaveBeenCalled();
   });
 
+  it("while NOT_CHOSEN, takes billing's answer: a REQUIRED-type child owes, so the row flips", async () => {
+    const db = makeReconcileDb(untouchedSeedRow, 1, {
+      member: { ageTier: "CHILD", dateOfBirth: null },
+    });
+    const result = await reconcileSeasonSubscriptionForAssignment(db as never, {
+      memberId: "m1",
+      seasonYear: 2026,
+      subscriptionBehavior: "REQUIRED",
+    });
+
+    expect(result).toEqual({ reconciled: true });
+    // The answer came from the shared rule, which read the member's tier.
+    expect(db.member.findUnique).toHaveBeenCalled();
+  });
+
+  // The BASED_ON_AGE_TIER carve-out is a deliberate scope rule: the member
+  // here is ADULT, whom billing says owes, and the row still stays.
   it("while NOT_CHOSEN, leaves BASED_ON_AGE_TIER rows untouched (#2041 dominance)", async () => {
     const db = makeReconcileDb(untouchedSeedRow);
     const result = await reconcileSeasonSubscriptionForAssignment(db as never, {
