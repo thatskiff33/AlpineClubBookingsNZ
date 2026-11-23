@@ -34,7 +34,7 @@ reason: the new bulk dialog's open state, options hook and mount sit beside the
   own refactor.
 
 function: src/app/(admin)/admin/membership/members/_components/member-filter-toolbar.tsx#MemberFilterToolbar
-lines: 325
+lines: 323
 reason: the category select is its own component; what the toolbar gains is its
   placement in the primary row and the chip label for a category id, both of
   which belong with the other filters' chips and placement.

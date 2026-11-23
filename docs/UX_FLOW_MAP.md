@@ -445,7 +445,7 @@ Screen: `/admin/members`.
 
 Shows: A searchable member list and individual membership records.
 
-Journey: Search, filter or bulk-select members, open a profile, and use its permitted membership actions. A Full Admin answers an access request from a profile's Lifecycle & Deletion section: download that member's subject access report, or find someone else by email or a non-member guest by name. Merge preview and execution failures take focus and scroll into view.
+Journey: Search, filter or bulk-select members, open a profile, and use its permitted actions. A Full Admin answers an access request from a profile's Lifecycle & Deletion section: download that member's subject access report, or find someone else by email or a non-member guest by name. Merge preview and execution failures take focus and scroll into view.
 
 [Guide](guides/members.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
