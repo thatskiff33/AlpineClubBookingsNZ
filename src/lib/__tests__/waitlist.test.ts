@@ -198,6 +198,12 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: (...args: unknown[]) => mockOwedNoticeClaim(...args),
       deleteMany: async () => ({ count: 1 }),
     },
+    // #5433 review L: the officers' offer alert goes once the offer email's row
+    // says it went (every fixture's send succeeds).
+    emailLog: {
+      findUnique: async () => ({ status: "SENT", attempts: 1 }),
+      count: async () => 1,
+    },
   },
 }));
 
@@ -1998,6 +2004,61 @@ describe("the offer's and the lapse's owed notices (#5433)", () => {
 
     expect(mockOwedNoticeClaim).not.toHaveBeenCalled();
     expect(mockWaitlistNoticeUnsentAlert).not.toHaveBeenCalled();
+    expect(sendWaitlistOfferExpiredEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe("the lapse notices go after the re-offer passes (#5433 review F)", () => {
+  const nights = { checkIn: new Date("2026-07-20"), checkOut: new Date("2026-07-22") };
+  const lapsed = {
+    id: "told",
+    lodgeId: "lodge-1",
+    waitlistOfferedLodgeId: null,
+    waitlistOfferedAt: new Date("2026-06-28T00:00:00.000Z"),
+    ...nights,
+    createdAt: new Date("2026-04-01"),
+    member: { email: "told@test.com", firstName: "Told", lastName: "Doe" },
+  };
+
+  it("sends the offer-expired email only after every re-offer pass has run", async () => {
+    const { expireStaleOffers } = await import("@/lib/waitlist");
+    const { sendWaitlistOfferExpiredEmail } = await import("@/lib/email");
+    mockTxBookingFindMany.mockResolvedValueOnce([lapsed]).mockResolvedValue([]);
+
+    await expireStaleOffers(CLUB_FORMAT_TEST);
+
+    // The revert's transaction, then the re-offer pass's, then the email.
+    expect(mockPrismaTransaction).toHaveBeenCalledTimes(2);
+    expect(sendWaitlistOfferExpiredEmail).toHaveBeenCalledTimes(1);
+    expect(mockPrismaTransaction.mock.invocationCallOrder[1]!).toBeLessThan(
+      vi.mocked(sendWaitlistOfferExpiredEmail).mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("sends no lapse notice to a member the re-offer pass offered the place again (a queue of one)", async () => {
+    const { expireStaleOffers } = await import("@/lib/waitlist");
+    const { sendWaitlistOfferExpiredEmail, sendWaitlistOfferEmail } = await import("@/lib/email");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
+    (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
+    mockTxBookingFindMany
+      .mockResolvedValueOnce([lapsed]) // the lapsed offers
+      .mockResolvedValueOnce([]) // the revert's queue read
+      .mockResolvedValueOnce([
+        {
+          ...lapsed,
+          memberId: "m-told",
+          member: { id: "m-told", email: "told@test.com", firstName: "Told", lastName: "Doe" },
+          guests: [{ id: "g1" }],
+          waitlistAlternateLodges: [],
+          promoRedemptions: [],
+        },
+      ]) // the pass's candidates: the same booking, on its own
+      .mockResolvedValue([]);
+
+    const result = await expireStaleOffers(CLUB_FORMAT_TEST);
+
+    expect(result.reofferedCount).toBe(1);
+    expect(sendWaitlistOfferEmail).toHaveBeenCalledTimes(1);
     expect(sendWaitlistOfferExpiredEmail).not.toHaveBeenCalled();
   });
 });

@@ -37,7 +37,11 @@ const result = (sent: number, notDelivered = 0): AdminAlertSendResult => ({
 });
 
 const send = vi.fn<() => Promise<AdminAlertSendResult>>();
-const alertAt = (now: Date) => alertOfficersOncePastCutoff(marker, { label: "test past-cut-off alert", send, now });
+/** The calling kind's wait: a claim younger than this may still be in flight (#5433 review E). */
+const IN_FLIGHT_MS = 30 * 60 * 1000;
+const alertAt = (now: Date, target = marker) =>
+  alertOfficersOncePastCutoff(target, { label: "test past-cut-off alert", send, inFlightMs: IN_FLIGHT_MS, now });
+const later = (ms: number) => new Date(NOW.getTime() + ms);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -46,11 +50,12 @@ beforeEach(() => {
 });
 
 describe("alertOfficersOncePastCutoff", () => {
-  it("sends once and settles; a rerun for the same marker settles without sending again", async () => {
+  it("sends once and settles; a rerun for the same marker sends nothing, retrying while the claim may be in flight and settling once it is kept", async () => {
     send.mockResolvedValue(result(1));
 
     await expect(alertAt(NOW)).resolves.toBe("settled");
-    await expect(alertAt(new Date(NOW.getTime() + 60_000))).resolves.toBe("settled");
+    await expect(alertAt(later(60_000))).resolves.toBe("threw");
+    await expect(alertAt(later(IN_FLIGHT_MS + 1))).resolves.toBe("settled");
 
     expect(send).toHaveBeenCalledTimes(1);
     expect(cooldown.rows.has(pastCutoffAlertKey(marker))).toBe(true);
@@ -61,7 +66,7 @@ describe("alertOfficersOncePastCutoff", () => {
     const other = owedNoticeMarker({ kind: "booking-bump-member", subjectId: "b2", eventAt: marker.eventAt });
 
     await alertAt(NOW);
-    await expect(alertOfficersOncePastCutoff(other, { label: "test", send, now: NOW })).resolves.toBe("settled");
+    await expect(alertAt(NOW, other)).resolves.toBe("settled");
 
     expect(send).toHaveBeenCalledTimes(2);
   });
@@ -86,7 +91,7 @@ describe("alertOfficersOncePastCutoff", () => {
 
     await expect(alertAt(NOW)).resolves.toBe("unreached");
     expect(cooldown.rows.size).toBe(0);
-    await expect(alertAt(new Date(NOW.getTime() + 60_000))).resolves.toBe("settled");
+    await expect(alertAt(later(60_000))).resolves.toBe("settled");
     expect(send).toHaveBeenCalledTimes(2);
   });
 
@@ -95,5 +100,40 @@ describe("alertOfficersOncePastCutoff", () => {
 
     await expect(alertAt(NOW)).resolves.toBe("threw");
     expect(send).not.toHaveBeenCalled();
+  });
+
+  describe("a claim another attempt holds (#5433 review E: two markers share one claim)", () => {
+    it("retries, sending nothing, while the holder's claim is younger than its wait, and settles once the claim is kept", async () => {
+      send.mockResolvedValue(result(1));
+      await expect(alertAt(NOW)).resolves.toBe("settled");
+
+      vi.setSystemTime(later(5 * 60_000));
+      await expect(alertAt(later(5 * 60_000))).resolves.toBe("threw");
+      vi.setSystemTime(later(IN_FLIGHT_MS + 1));
+      await expect(alertAt(later(IN_FLIGHT_MS + 1))).resolves.toBe("settled");
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not settle on a holder whose send then reached nobody: the loser waits for it and tries again", async () => {
+      // The holder claims; while its send runs, the loser reads the claim.
+      let loser: Promise<unknown> | undefined;
+      send.mockImplementationOnce(async () => {
+        loser = alertAt(later(1_000));
+        await loser;
+        return result(0, 1);
+      });
+      await expect(alertAt(NOW)).resolves.toBe("unreached");
+      await expect(loser).resolves.toBe("threw");
+
+      // A wait later the holder's claim is the day-long hold nobody received: still not settled.
+      vi.setSystemTime(later(IN_FLIGHT_MS + 1));
+      await expect(alertAt(later(IN_FLIGHT_MS + 1))).resolves.toBe("unreached");
+      // A day on, the claim is free again and the alert goes.
+      send.mockResolvedValue(result(1));
+      const dayLater = later(ALERT_NOBODY_ELIGIBLE_RETRY_MS + 1);
+      vi.setSystemTime(dayLater);
+      await expect(alertAt(dayLater)).resolves.toBe("settled");
+      expect(send).toHaveBeenCalledTimes(2);
+    });
   });
 });

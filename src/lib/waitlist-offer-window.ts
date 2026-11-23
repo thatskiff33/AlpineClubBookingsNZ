@@ -11,6 +11,14 @@
  */
 import { calendarDateOfDateOnlyInstant, startOfClubDay, type ClubTimeZone } from "@/lib/club-time";
 
+/**
+ * How long a waitlist notice's owed marker waits after its stamp before a
+ * sweep takes it, so the attempt right after the change goes first. Also the
+ * floor of a window worth telling a member about: a deadline closer than this
+ * could pass before the email's row exists (#5433 review D).
+ */
+export const WAITLIST_NOTICE_SWEEP_AFTER_MS = 30 * 60 * 1000;
+
 /** Hours a member has to accept a waitlist offer. */
 export const WAITLIST_OFFER_HOURS = Number(process.env.WAITLIST_OFFER_HOURS) || 48;
 

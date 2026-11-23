@@ -39,6 +39,19 @@ vi.mock("@/lib/session-guards", () => ({
   requireAdmin: vi.fn(async () => ({ ok: false })),
   requireSession: vi.fn(async () => ({ ok: false })),
 }));
+// The real message renderer, made to throw while `outage.down` is set: a send
+// that fails before its EmailLog row exists (#5433 review C).
+const outage = vi.hoisted(() => ({ down: false }));
+vi.mock("@/lib/email-message-renderer", async (importOriginal) => {
+  const real = (await importOriginal()) as typeof import("@/lib/email-message-renderer");
+  return {
+    ...real,
+    prepareEmailMessage: async (...args: Parameters<typeof real.prepareEmailMessage>) => {
+      if (outage.down) throw new Error("render failed");
+      return real.prepareEmailMessage(...args);
+    },
+  };
+});
 // The real senders, wrapped so a case can count and filter their calls.
 vi.mock("@/lib/email", async (importOriginal) => {
   const real = (await importOriginal()) as typeof import("@/lib/email");
@@ -53,6 +66,9 @@ const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 
 const LODGE_ID = "race-5433w-lodge";
+/** The lodge a cross-lodge offer is made at (review A); it prices the case's nights. */
+const OFFERED_LODGE_ID = "race-5433w-lodge-b";
+const OFFERED_SEASON_ID = "race-5433w-season";
 const HOUR = 60 * 60 * 1000;
 const WINDOW_MS = 48 * HOUR;
 
@@ -82,6 +98,13 @@ const CASES = {
   told: caseIds("tld", 1 + 31),
   lapseRecovered: caseIds("lrc", 4 + 31),
   alreadyAlerted: caseIds("aal", 7 + 31),
+  crossLodge: caseIds("xlc", 10 + 31),
+  retrying: caseIds("rty", 13 + 31),
+  exhausted: caseIds("exh", 16 + 31),
+  bounced: caseIds("bnc", 19 + 31),
+  lapseFailed: caseIds("lfl", 22 + 31),
+  resend: caseIds("rsn", 25 + 31),
+  floor: caseIds("flr", 28 + 31),
 };
 
 const ADMIN_ID = "race-5433w-admin";
@@ -108,7 +131,34 @@ let harnessRole: { restore: () => void } | undefined;
       await prisma.bookingEvent.deleteMany({ where: { bookingId: ids.bookingId } });
       await prisma.bedAllocation.deleteMany({ where: { bookingId: ids.bookingId } });
       await prisma.bookingGuest.deleteMany({ where: { bookingId: ids.bookingId } });
+      await prisma.bookingWaitlistAlternateLodge.deleteMany({ where: { bookingId: ids.bookingId } });
       await prisma.booking.deleteMany({ where: { id: ids.bookingId } });
+    }
+
+    /**
+     * The cross-lodge confirm's replacement booking (review A), at the offered
+     * lodge, owned by the case's member: best effort over the rows a confirmed
+     * booking can carry, so a later run starts clean.
+     */
+    async function deleteReplacementBookings() {
+      const replacements = await prisma.booking.findMany({
+        where: { lodgeId: OFFERED_LODGE_ID, memberId: CASES.crossLodge.ownerId },
+        select: { id: true },
+      });
+      for (const { id } of replacements) {
+        try {
+          await prisma.auditLog.deleteMany({ where: { targetId: id } });
+          await prisma.emailLog.deleteMany({ where: { bookingId: id } });
+          await prisma.owedNotice.deleteMany({ where: { subjectId: id } });
+          await prisma.bookingEvent.deleteMany({ where: { bookingId: id } });
+          await prisma.bedAllocation.deleteMany({ where: { bookingId: id } });
+          await prisma.bookingGuestNight.deleteMany({ where: { bookingGuest: { bookingId: id } } });
+          await prisma.bookingGuest.deleteMany({ where: { bookingId: id } });
+          await prisma.booking.delete({ where: { id } });
+        } catch {
+          // A row this suite does not know of; the race database is disposable.
+        }
+      }
     }
 
     async function deleteFixtures() {
@@ -117,8 +167,11 @@ let harnessRole: { restore: () => void } | undefined;
       await prisma.memberAccessRole.deleteMany({ where: { memberId: ADMIN_ID } });
       await prisma.member.deleteMany({ where: { id: ADMIN_ID } });
       await prisma.member.deleteMany({ where: { id: { in: Object.values(CASES).map((ids) => ids.ownerId) } } });
-      await prisma.lodgeSettings.deleteMany({ where: { id: LODGE_ID } });
-      await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
+      await deleteReplacementBookings();
+      await prisma.membershipTypeSeasonRate.deleteMany({ where: { seasonId: OFFERED_SEASON_ID } });
+      await prisma.season.deleteMany({ where: { id: OFFERED_SEASON_ID } });
+      await prisma.lodgeSettings.deleteMany({ where: { id: { in: [LODGE_ID, OFFERED_LODGE_ID] } } });
+      await prisma.lodge.deleteMany({ where: { id: { in: [LODGE_ID, OFFERED_LODGE_ID] } } });
     }
 
     async function setCapacity(capacity: number) {
@@ -246,6 +299,7 @@ let harnessRole: { restore: () => void } | undefined;
 
     beforeEach(async () => {
       resetStripeRaceHooks();
+      outage.down = false;
       vi.mocked(email.sendWaitlistOfferEmail).mockClear();
       vi.mocked(email.sendWaitlistOfferExpiredEmail).mockClear();
       // Capacity 0 unless a case sets it: a re-offer pass after a lapse offers nothing.
@@ -360,7 +414,9 @@ let harnessRole: { restore: () => void } | undefined;
       expect(await readBooking(ids)).toEqual(moved);
       expect(await rows(ids)).toEqual({ offerEmails: [], expiredEmails: [], markers: [] });
       // The restart itself, handed the stale offer, claims nothing.
-      await expect(restartWaitlistOfferWindow({ bookingId: ids.bookingId, offeredAt, zone: "Pacific/Auckland" as never })).resolves.toMatchObject({ kind: "moved-on" });
+      await expect(
+        restartWaitlistOfferWindow({ bookingId: ids.bookingId, offeredAt, zone: "Pacific/Auckland" as never, now: new Date() }),
+      ).resolves.toMatchObject({ kind: "moved-on" });
       expect(await readBooking(ids)).toEqual(moved);
     });
 
@@ -467,6 +523,173 @@ let harnessRole: { restore: () => void } | undefined;
       const recorded = await rows(ids);
       expect(recorded.expiredEmails).toEqual([]);
       expect(recorded.markers.map((marker) => marker.id)).not.toContainEqual(expect.stringMatching(/^waitlist-offer-lapsed-untold:/));
+    });
+
+    /** An offer email's row, as the email core or the retry cron would leave it. */
+    async function offerEmailRow(ids: CaseIds, offeredAt: Date, status: "FAILED" | "BOUNCED", attempts: number) {
+      await prisma.emailLog.create({
+        data: {
+          id: offerEmailId(ids, offeredAt),
+          to: `${ids.ownerId}@example.test`,
+          subject: "Spot Available!",
+          templateName: "waitlist-offer",
+          status,
+          attempts,
+          bookingId: ids.bookingId,
+          bookingRetryHtmlBody: "<p>the offer</p>",
+        },
+      });
+    }
+
+    it("leaves a FAILED offer email the retry cron can still replay to the cron: no restart, no send, the notice kept (review B)", async () => {
+      const ids = CASES.retrying;
+      const offeredAt = new Date(Date.now() - 3 * HOUR);
+      await commitOfferThenStop(ids, offeredAt);
+      await offerEmailRow(ids, offeredAt, "FAILED", 1);
+
+      await drainOwedNotices(new Date(), { deliverers: memberDeliverer() });
+
+      expect(offerSendsFor(ids)).toHaveLength(0);
+      expect((await readBooking(ids)).waitlistOfferExpiresAt).toEqual(new Date(offeredAt.getTime() + WINDOW_MS));
+      expect((await rows(ids)).markers.map((marker) => marker.id)).toContain(memberMarkerId(ids, offeredAt));
+      expect(await unsentAlertsFor(ids)).toBe(0);
+    });
+
+    it.each([
+      ["an exhausted FAILED", "exhausted", "FAILED", 3],
+      ["a BOUNCED", "bounced", "BOUNCED", 1],
+    ] as const)("alerts the officers once for %s offer email instead of clearing it silently, restarting and sending nothing (review B)", async (_label, key, status, attempts) => {
+      const ids = CASES[key];
+      const offeredAt = new Date(Date.now() - 3 * HOUR);
+      await commitOfferThenStop(ids, offeredAt);
+      await offerEmailRow(ids, offeredAt, status, attempts);
+
+      await drainOwedNotices(new Date(), { deliverers: memberDeliverer() });
+
+      expect(offerSendsFor(ids)).toHaveLength(0);
+      expect((await readBooking(ids)).waitlistOfferExpiresAt).toEqual(new Date(offeredAt.getTime() + WINDOW_MS));
+      expect(await unsentAlertsFor(ids)).toBe(1);
+      expect((await rows(ids)).markers.map((marker) => marker.id)).not.toContain(memberMarkerId(ids, offeredAt));
+    });
+
+    it("counts a lapsed offer whose email row is FAILED as never told: no offer-expired email, one officers' alert (review B, D5)", async () => {
+      const ids = CASES.lapseFailed;
+      const offeredAt = new Date(Date.now() - WINDOW_MS - 2 * HOUR);
+      await commitOfferThenStop(ids, offeredAt);
+      await offerEmailRow(ids, offeredAt, "FAILED", 2);
+
+      await waitlist.expireStaleOffers(CLUB_FORMAT_TEST);
+
+      expect((await readBooking(ids)).status).toBe("WAITLISTED");
+      expect((await rows(ids)).expiredEmails).toEqual([]);
+      expect(await unsentAlertsFor(ids)).toBe(1);
+    });
+
+    it("restarts a window once: a send that fails again leaves the restarted deadline, which a later sweep states unmoved (review C)", async () => {
+      const ids = CASES.resend;
+      const offeredAt = new Date(Date.now() - 3 * HOUR);
+      await commitOfferThenStop(ids, offeredAt);
+
+      outage.down = true;
+      await drainOwedNotices(new Date(), { deliverers: memberDeliverer() });
+      outage.down = false;
+      const restarted = (await readBooking(ids)).waitlistOfferExpiresAt!;
+      expect(restarted.getTime()).toBeGreaterThan(offeredAt.getTime() + WINDOW_MS);
+      expect((await rows(ids)).offerEmails).toEqual([]);
+
+      await drainOwedNotices(new Date(Date.now() + HOUR), { deliverers: memberDeliverer() });
+
+      expect((await readBooking(ids)).waitlistOfferExpiresAt).toEqual(restarted);
+      expect((await rows(ids)).offerEmails).toEqual([{ id: offerEmailId(ids, offeredAt) }]);
+      expect(offerSendsFor(ids).at(-1)![6]).toEqual(restarted);
+      expect(await prisma.auditLog.count({ where: { targetId: ids.bookingId, action: "waitlist.offer_window_restarted" } })).toBe(1);
+    });
+
+    it("sends no offer email, and alerts the officers instead, when less than the waitlist wait would remain (review D)", async () => {
+      const ids = CASES.floor;
+      // Its original deadline is ten minutes away, and its check-in date has
+      // begun at the club, so a restart has nothing to give.
+      const offeredAt = new Date(Date.now() - WINDOW_MS + 10 * 60 * 1000);
+      await seedWaitlisted(ids);
+      await prisma.booking.update({
+        where: { id: ids.bookingId },
+        data: { checkIn: new Date("2026-07-01T00:00:00.000Z"), checkOut: new Date("2026-07-03T00:00:00.000Z") },
+      });
+      await prisma.$transaction(async (tx) => {
+        await tx.booking.update({
+          where: { id: ids.bookingId },
+          data: { status: "WAITLIST_OFFERED", waitlistOfferedAt: offeredAt, waitlistOfferExpiresAt: new Date(offeredAt.getTime() + WINDOW_MS) },
+        });
+        await notices.recordWaitlistOfferNoticesOwed(tx, { bookingId: ids.bookingId, offeredAt, position: 1 });
+      });
+
+      await drainOwedNotices(new Date(), { deliverers: memberDeliverer() });
+
+      expect(offerSendsFor(ids)).toHaveLength(0);
+      expect((await readBooking(ids)).waitlistOfferExpiresAt).toEqual(new Date(offeredAt.getTime() + WINDOW_MS));
+      expect(await unsentAlertsFor(ids)).toBe(1);
+    });
+
+    it("a window restart between the cross-lodge confirm's first and last phases is the same offer: the confirm completes and strands no entry (review A)", async () => {
+      const ids = CASES.crossLodge;
+      await prisma.lodge.upsert({
+        where: { id: OFFERED_LODGE_ID },
+        create: { id: OFFERED_LODGE_ID, name: "Race 5433 offered lodge", slug: OFFERED_LODGE_ID, active: true },
+        update: { active: true },
+      });
+      await prisma.lodgeSettings.upsert({
+        where: { id: OFFERED_LODGE_ID },
+        create: { id: OFFERED_LODGE_ID, lodgeId: OFFERED_LODGE_ID, capacity: 10 },
+        update: { capacity: 10 },
+      });
+      const nonMember = await prisma.membershipType.findUniqueOrThrow({ where: { key: "NON_MEMBER" } });
+      await prisma.season.upsert({
+        where: { id: OFFERED_SEASON_ID },
+        create: {
+          id: OFFERED_SEASON_ID,
+          name: "Race 5433 cross-lodge",
+          type: "WINTER",
+          startDate: new Date(ids.checkIn.getTime() - 5 * 86_400_000),
+          endDate: new Date(ids.checkOut.getTime() + 5 * 86_400_000),
+          active: true,
+          lodgeId: OFFERED_LODGE_ID,
+          membershipTypeRates: {
+            create: [
+              { membershipTypeId: nonMember.id, ageTier: "ADULT", pricePerNightCents: 5000 },
+              { membershipTypeId: nonMember.id, ageTier: null, pricePerNightCents: 5000 },
+            ],
+          },
+        },
+        update: {},
+      });
+      await seedWaitlisted(ids);
+      await prisma.bookingWaitlistAlternateLodge.create({ data: { bookingId: ids.bookingId, lodgeId: OFFERED_LODGE_ID } });
+
+      // The offer pass makes a cross-lodge offer at the offered lodge, at its quote.
+      const pass = await waitlist.processWaitlistForDates({ checkIn: ids.checkIn, checkOut: ids.checkOut, lodgeId: OFFERED_LODGE_ID }, CLUB_FORMAT_TEST);
+      expect(pass.offeredBookingId).toBe(ids.bookingId);
+      // Three hours on, so a restart from now moves its deadline.
+      const offeredAt = new Date(Date.now() - 3 * HOUR);
+      await prisma.booking.update({
+        where: { id: ids.bookingId },
+        data: { waitlistOfferedAt: offeredAt, waitlistOfferExpiresAt: new Date(offeredAt.getTime() + WINDOW_MS) },
+      });
+
+      // Forced order: the confirm's first phase, then the restart, then its later phases.
+      const holder = await holdLock1();
+      const confirm = waitlist.confirmWaitlistOffer(ids.bookingId, ids.ownerId, CLUB_FORMAT_TEST);
+      await untilWaiting(holder.pid, 1);
+      const restart = restartWaitlistOfferWindow({ bookingId: ids.bookingId, offeredAt, zone: "Pacific/Auckland" as never, now: new Date() });
+      await untilWaiting(holder.pid, 2);
+      holder.release();
+      const [, confirmed, restarted] = await Promise.all([holder.held, confirm, restart]);
+
+      expect(restarted).toMatchObject({ kind: "in-force", restarted: true });
+      expect(confirmed).toMatchObject({ success: true });
+      expect(confirmed.newBookingId).toBeTruthy();
+      // Not stranded: the entry was cancelled and linked, not left a live offer.
+      const entry = await prisma.booking.findUniqueOrThrow({ where: { id: ids.bookingId }, select: { status: true, waitlistOfferedAt: true } });
+      expect(entry).toEqual({ status: "CANCELLED", waitlistOfferedAt: null });
     });
   },
 );

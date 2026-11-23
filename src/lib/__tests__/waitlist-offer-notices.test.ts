@@ -12,13 +12,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const db = vi.hoisted(() => ({
   bookingFindUnique: vi.fn(),
   emailLogFindUnique: vi.fn(),
+  emailLogCount: vi.fn(),
   owedNoticeUpdateMany: vi.fn(),
   owedNoticeDeleteMany: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUnique: db.bookingFindUnique },
-    emailLog: { findUnique: db.emailLogFindUnique },
+    emailLog: { findUnique: db.emailLogFindUnique, count: db.emailLogCount },
     bookingGuest: { findMany: async () => [] },
     owedNotice: { updateMany: db.owedNoticeUpdateMany, deleteMany: db.owedNoticeDeleteMany },
   },
@@ -53,6 +54,8 @@ vi.mock("@/lib/owed-notice/past-cutoff-once", async (importOriginal) => ({
   },
 }));
 vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
+const audit = vi.hoisted(() => ({ log: vi.fn() }));
+vi.mock("@/lib/audit", () => ({ logAudit: audit.log }));
 
 import { requireClubTimeZone } from "@/lib/club-time";
 import { sweepOwedNotice, type OwedNoticeRef } from "@/lib/owed-notice/deliver";
@@ -61,11 +64,11 @@ import {
   deliverWaitlistOfferNotices,
   findNeverToldWaitlistOffers,
   recordWaitlistOfferNoticesOwed,
-  WAITLIST_NOTICE_SWEEP_AFTER_MS,
   WAITLIST_OFFER_NOTICE_DELIVERERS,
   waitlistOfferEmailKey,
   type WaitlistOfferNotice,
 } from "@/lib/waitlist-offer-notices";
+import { WAITLIST_NOTICE_SWEEP_AFTER_MS } from "@/lib/waitlist-offer-window";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const [MEMBER, OFFICERS] = WAITLIST_OFFER_NOTICE_DELIVERERS;
@@ -143,16 +146,22 @@ function ref(marker: OwedNoticeMarker, claimed: boolean = true) {
 const sweep = (deliverer: typeof MEMBER, handle: OwedNoticeRef, now = NOW) =>
   sweepOwedNotice(deliverer, handle, new Date(now.getTime() - WAITLIST_NOTICE_SWEEP_AFTER_MS), now, "test-sweep");
 
+/** The offer email's row, as `readOfferEmailState` reads it; `replayable` is the retry cron's body check. */
+function emailRow(status: string | null, attempts = 1, replayable = true) {
+  db.emailLogFindUnique.mockResolvedValue(status === null ? null : { status, attempts });
+  db.emailLogCount.mockResolvedValue(replayable ? 1 : 0);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   db.bookingFindUnique.mockResolvedValue(bookingRow());
-  db.emailLogFindUnique.mockResolvedValue(null);
+  emailRow(null);
   db.owedNoticeUpdateMany.mockResolvedValue({ count: 1 });
   db.owedNoticeDeleteMany.mockResolvedValue({ count: 1 });
   send.offer.mockResolvedValue({ status: "sent", emailLogId: "row", messageId: null });
   send.officers.mockResolvedValue(SENT);
   send.unsent.mockResolvedValue(SENT);
-  send.restart.mockResolvedValue({ kind: "in-force", expiresAt: RESTARTED_TO, restarted: true });
+  send.restart.mockResolvedValue({ kind: "in-force", expiresAt: RESTARTED_TO, restarted: true, previousExpiresAt: EXPIRES_AT });
 });
 
 describe("recording the offer's notices (#5433 WL-1)", () => {
@@ -171,7 +180,9 @@ describe("recording the offer's notices (#5433 WL-1)", () => {
 });
 
 describe("the first attempt, straight after the offer commits", () => {
-  it("sends the offer email with the offer's own window and its event key, never restarts it, alerts the officers, and clears both markers", async () => {
+  it("sends the offer email with the offer's own window and its event key, never restarts it, alerts the officers once it went, and clears both markers", async () => {
+    // The email's row exists once the member's send has run.
+    db.emailLogFindUnique.mockImplementation(async () => (send.offer.mock.calls.length > 0 ? { status: "SENT", attempts: 1 } : null));
     await deliverWaitlistOfferNotices(notice(), owed);
 
     expect(send.restart).not.toHaveBeenCalled();
@@ -195,35 +206,80 @@ describe("the first attempt, straight after the offer commits", () => {
     expect(db.owedNoticeDeleteMany).not.toHaveBeenCalled();
   });
 
-  it("keeps the member's marker for the sweep when the send throws", async () => {
+  it("keeps both markers when the member's send throws before its row: the officers' alert waits for the email (review L)", async () => {
     send.offer.mockRejectedValue(new Error("render failed"));
     await deliverWaitlistOfferNotices(notice(), owed);
-    // Only the officers' marker is cleared.
-    expect(db.owedNoticeDeleteMany.mock.calls.map(([args]) => args.where.id)).toEqual([officersMarker.id]);
+    expect(send.officers).not.toHaveBeenCalled();
+    expect(db.owedNoticeDeleteMany).not.toHaveBeenCalled();
   });
 });
 
-describe("the sweep's offer email (owner decision D2)", () => {
-  it("restarts the window first, then sends once with the deadline the restart left in force, and clears the marker", async () => {
+describe("the sweep's offer email (owner decision D2; the told rule, review B)", () => {
+  it("restarts the window on the sweep's clock first, audits it, then sends once with the deadline in force, and clears the marker", async () => {
     const handle = ref(memberMarker);
-    await expect(sweep(MEMBER, handle)).resolves.toBe("delivered");
+    // The sweep's own instant, not the process clock (frozen at NOW in tests).
+    const sweepAt = new Date(NOW.getTime() + 5 * 60 * 1000);
+    await expect(sweep(MEMBER, handle, sweepAt)).resolves.toBe("delivered");
 
-    expect(send.restart).toHaveBeenCalledWith({ bookingId: "booking1", offeredAt: OFFERED_AT, zone: "Pacific/Auckland" });
+    expect(send.restart).toHaveBeenCalledWith({ bookingId: "booking1", offeredAt: OFFERED_AT, zone: "Pacific/Auckland", now: sweepAt });
     expect(send.offer).toHaveBeenCalledTimes(1);
     expect(send.offer.mock.calls[0]![6]).toBe(RESTARTED_TO);
     expect(send.offer.mock.calls[0]![0]).toMatchObject({ idempotencyKey: waitlistOfferEmailKey("booking1", OFFERED_AT) });
     expect(send.restart.mock.invocationCallOrder[0]).toBeLessThan(send.offer.mock.invocationCallOrder[0]!);
     expect(handle.settle).toHaveBeenCalledTimes(1);
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "waitlist.offer_window_restarted",
+        category: "booking",
+        targetId: "booking1",
+        metadata: { previousExpiresAt: EXPIRES_AT.toISOString(), expiresAt: RESTARTED_TO.toISOString() },
+      }),
+    );
   });
 
-  it("neither restarts nor sends when the offer email's row is already recorded (a stop after the send), and clears the marker", async () => {
-    db.emailLogFindUnique.mockResolvedValue({ id: "email:waitlist-offer:x" });
+  it("writes no audit row when the deadline in force was not moved", async () => {
+    send.restart.mockResolvedValue({ kind: "in-force", expiresAt: EXPIRES_AT, restarted: false });
+    await expect(sweep(MEMBER, ref(memberMarker))).resolves.toBe("delivered");
+    expect(send.offer.mock.calls[0]![6]).toBe(EXPIRES_AT);
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it.each([["SENT"], ["QUEUED"], ["SKIPPED_NO_EMAILS"], ["SKIPPED_NON_PRODUCTION"]])(
+    "clears without restarting or sending when the offer email's row is %s (told)",
+    async (status) => {
+      emailRow(status);
+      const handle = ref(memberMarker);
+      await expect(sweep(MEMBER, handle)).resolves.toBe("delivered");
+      expect(db.emailLogFindUnique).toHaveBeenCalledWith({
+        where: { id: `email:waitlist-offer:booking1:${OFFERED_AT.getTime()}` },
+        select: { status: true, attempts: true },
+      });
+      expect(send.restart).not.toHaveBeenCalled();
+      expect(send.offer).not.toHaveBeenCalled();
+      expect(send.unsent).not.toHaveBeenCalled();
+      expect(handle.settle).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("waits, restarting and sending nothing, while the email retry cron can still replay a FAILED row", async () => {
+    emailRow("FAILED", 1, true);
+    const handle = ref(memberMarker);
+    await expect(sweep(MEMBER, handle)).resolves.toBe("kept");
+    expect(send.restart).not.toHaveBeenCalled();
+    expect(send.offer).not.toHaveBeenCalled();
+    expect(send.unsent).not.toHaveBeenCalled();
+    expect(handle.settle).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an exhausted FAILED row", "FAILED", 3, true],
+    ["a FAILED row with no body to replay", "FAILED", 1, false],
+    ["a BOUNCED row", "BOUNCED", 1, true],
+  ])("alerts the officers once, sending and restarting nothing, for %s, and clears the marker", async (_case, status, attempts, replayable) => {
+    emailRow(status, attempts, replayable);
     const handle = ref(memberMarker);
     await expect(sweep(MEMBER, handle)).resolves.toBe("delivered");
-    expect(db.emailLogFindUnique).toHaveBeenCalledWith({
-      where: { id: `email:waitlist-offer:booking1:${OFFERED_AT.getTime()}` },
-      select: { id: true },
-    });
+    expect(send.unsent).toHaveBeenCalledWith(expect.objectContaining({ notice: "offer", bookingId: "booking1" }));
     expect(send.restart).not.toHaveBeenCalled();
     expect(send.offer).not.toHaveBeenCalled();
     expect(handle.settle).toHaveBeenCalledTimes(1);
@@ -234,15 +290,29 @@ describe("the sweep's offer email (owner decision D2)", () => {
     const handle = ref(memberMarker);
     await expect(sweep(MEMBER, handle)).resolves.toBe("delivered");
     expect(send.offer).not.toHaveBeenCalled();
+    expect(send.unsent).not.toHaveBeenCalled();
     expect(handle.settle).toHaveBeenCalledTimes(1);
   });
 
-  it("sends nothing and keeps the marker when no window is left to give", async () => {
+  it("sends no offer email and alerts the officers instead when too little window is left (review D)", async () => {
     send.restart.mockResolvedValue({ kind: "no-window" });
     const handle = ref(memberMarker);
-    await expect(sweep(MEMBER, handle)).resolves.toBe("kept");
+    await expect(sweep(MEMBER, handle)).resolves.toBe("delivered");
     expect(send.offer).not.toHaveBeenCalled();
-    expect(handle.settle).not.toHaveBeenCalled();
+    expect(send.unsent).toHaveBeenCalledWith(expect.objectContaining({ notice: "offer" }));
+    expect(handle.settle).toHaveBeenCalledTimes(1);
+  });
+
+  it("restarts once, then on a send that fails again sends a later sweep with the deadline in force (review C)", async () => {
+    send.offer.mockRejectedValueOnce(new Error("render failed"));
+    const handle = ref(memberMarker);
+    await expect(sweep(MEMBER, handle)).resolves.toBe("kept");
+    // The real restart answers the restarted deadline unmoved on the second sweep.
+    send.restart.mockResolvedValue({ kind: "in-force", expiresAt: RESTARTED_TO, restarted: false });
+    await expect(sweep(MEMBER, ref(memberMarker), new Date(NOW.getTime() + HOUR))).resolves.toBe("delivered");
+    expect(send.offer).toHaveBeenCalledTimes(2);
+    expect(send.offer.mock.calls[1]![6]).toBe(RESTARTED_TO);
+    expect(audit.log).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the marker when the restart throws (contention), sending nothing", async () => {
@@ -271,17 +341,36 @@ describe("the sweep's offer email (owner decision D2)", () => {
     expect(send.officers).not.toHaveBeenCalled();
   });
 
-  it("past its cut-off (the check-in date and the offer's deadline both passed) alerts the officers once instead, and clears the marker", async () => {
+  describe("past its cut-off (the check-in date and the offer's deadline both passed)", () => {
     const later = new Date("2026-09-02T00:00:00.000Z");
     const offeredAt = new Date("2026-08-30T00:00:00.000Z");
-    db.bookingFindUnique.mockResolvedValue(bookingRow({ waitlistOfferedAt: offeredAt, waitlistOfferExpiresAt: new Date("2026-08-31T00:00:00.000Z") }));
     const marker = owedNoticeMarker({ kind: "waitlist-offer-member", subjectId: "booking1", eventAt: offeredAt });
-    const handle = ref(marker);
-    await expect(sweep(MEMBER, handle, later)).resolves.toBe("expired");
-    expect(send.unsent).toHaveBeenCalledWith(expect.objectContaining({ notice: "offer", bookingId: "booking1", memberName: "Ada Proof" }));
-    expect(send.restart).not.toHaveBeenCalled();
-    expect(send.offer).not.toHaveBeenCalled();
-    expect(handle.settle).toHaveBeenCalledTimes(1);
+    beforeEach(() => {
+      db.bookingFindUnique.mockResolvedValue(bookingRow({ waitlistOfferedAt: offeredAt, waitlistOfferExpiresAt: new Date("2026-08-31T00:00:00.000Z") }));
+    });
+
+    it("alerts the officers once instead, and clears the marker", async () => {
+      const handle = ref(marker);
+      await expect(sweep(MEMBER, handle, later)).resolves.toBe("expired");
+      expect(send.unsent).toHaveBeenCalledWith(expect.objectContaining({ notice: "offer", bookingId: "booking1", memberName: "Ada Proof" }));
+      expect(send.restart).not.toHaveBeenCalled();
+      expect(send.offer).not.toHaveBeenCalled();
+      expect(handle.settle).toHaveBeenCalledTimes(1);
+    });
+
+    it("alerts nobody when the offer email did reach the member after all (review G)", async () => {
+      emailRow("SENT");
+      const handle = ref(marker);
+      await expect(sweep(MEMBER, handle, later)).resolves.toBe("expired");
+      expect(send.unsent).not.toHaveBeenCalled();
+      expect(handle.settle).toHaveBeenCalledTimes(1);
+    });
+
+    it("still alerts when the email's row is FAILED at the cut-off, even one the cron could replay", async () => {
+      emailRow("FAILED", 1, true);
+      await expect(sweep(MEMBER, ref(marker), later)).resolves.toBe("expired");
+      expect(send.unsent).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("still sends while the offer's own deadline stands even after the check-in date began (an offer made close to it)", async () => {
@@ -295,13 +384,34 @@ describe("the sweep's offer email (owner decision D2)", () => {
   });
 });
 
-describe("the sweep's officers' alert", () => {
-  it("quotes the position the offer's transaction worked out", async () => {
+describe("the sweep's officers' alert (it says the offer email has been sent: review L)", () => {
+  it("quotes the position the offer's transaction worked out, once the offer email is told", async () => {
+    emailRow("SENT");
     await expect(sweep(OFFICERS, ref(officersMarker))).resolves.toBe("delivered");
     expect(send.officers).toHaveBeenCalledWith(expect.objectContaining({ position: 3, guestCount: 2 }));
   });
 
+  it.each([["never sent", null], ["the retry cron's", "FAILED"]])(
+    "waits, sending nothing, while the offer email is %s",
+    async (_case, status) => {
+      emailRow(status, 1, true);
+      const handle = ref(officersMarker);
+      await expect(sweep(OFFICERS, handle)).resolves.toBe("kept");
+      expect(send.officers).not.toHaveBeenCalled();
+      expect(handle.settle).not.toHaveBeenCalled();
+    },
+  );
+
+  it("gives way to the not-sent alert, sending nothing, when the offer email is undeliverable", async () => {
+    emailRow("BOUNCED");
+    const handle = ref(officersMarker);
+    await expect(sweep(OFFICERS, handle)).resolves.toBe("delivered");
+    expect(send.officers).not.toHaveBeenCalled();
+    expect(handle.settle).toHaveBeenCalledTimes(1);
+  });
+
   it("holds the marker a day when nobody received the alert and nothing will replay it", async () => {
+    emailRow("SENT");
     send.officers.mockResolvedValue(NOBODY);
     const handle = ref(officersMarker);
     await expect(sweep(OFFICERS, handle)).resolves.toBe("kept");
@@ -316,11 +426,14 @@ describe("the sweep's officers' alert", () => {
   });
 });
 
-describe("findNeverToldWaitlistOffers (D2: no offer-expired email for an offer never told)", () => {
+describe("findNeverToldWaitlistOffers (D2: no offer-expired email for an offer never told; review B)", () => {
   const offers = [
     { bookingId: "owed", offeredAt: OFFERED_AT },
     { bookingId: "sent", offeredAt: OFFERED_AT },
     { bookingId: "crashed-after-send", offeredAt: OFFERED_AT },
+    { bookingId: "failed", offeredAt: OFFERED_AT },
+    { bookingId: "bounced", offeredAt: OFFERED_AT },
+    { bookingId: "withheld", offeredAt: OFFERED_AT },
     { bookingId: "past-cutoff", offeredAt: OFFERED_AT },
     { bookingId: "legacy", offeredAt: OFFERED_AT },
     { bookingId: "no-offer-time", offeredAt: null },
@@ -328,14 +441,26 @@ describe("findNeverToldWaitlistOffers (D2: no offer-expired email for an offer n
   const memberId = (bookingId: string) => `waitlist-offer-member:${bookingId}:${OFFERED_AT.getTime()}`;
   const emailId = (bookingId: string) => `email:waitlist-offer:${bookingId}:${OFFERED_AT.getTime()}`;
 
-  it("counts as never told an offer with no email row whose notice is still owed or passed its cut-off unsent, and as told every other", async () => {
+  it("counts as never told an offer whose email is not told (none, FAILED, BOUNCED) and whose notice is still owed or passed its cut-off unsent", async () => {
     const tx = {
-      owedNotice: { findMany: vi.fn().mockResolvedValue([{ id: memberId("owed") }, { id: memberId("crashed-after-send") }]) },
-      emailLog: { findMany: vi.fn().mockResolvedValue([{ id: emailId("sent") }, { id: emailId("crashed-after-send") }]) },
+      owedNotice: {
+        findMany: vi.fn().mockResolvedValue(
+          ["owed", "crashed-after-send", "failed", "bounced", "withheld"].map((id) => ({ id: memberId(id) })),
+        ),
+      },
+      emailLog: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: emailId("sent"), status: "SENT" },
+          { id: emailId("crashed-after-send"), status: "QUEUED" },
+          { id: emailId("failed"), status: "FAILED" },
+          { id: emailId("bounced"), status: "BOUNCED" },
+          { id: emailId("withheld"), status: "SKIPPED_NO_EMAILS" },
+        ]),
+      },
       alertCooldown: { findMany: vi.fn().mockResolvedValue([{ key: `owed-notice-past-cutoff:${memberId("past-cutoff")}` }]) },
     };
     const neverTold = await findNeverToldWaitlistOffers(tx as never, offers);
-    expect([...neverTold].sort()).toEqual(["owed", "past-cutoff"]);
+    expect([...neverTold].sort()).toEqual(["bounced", "failed", "owed", "past-cutoff"]);
   });
 
   it("reads nothing when no lapsed offer has an offer time", async () => {

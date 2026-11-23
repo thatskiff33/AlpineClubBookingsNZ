@@ -419,23 +419,37 @@ you want both reworded; editing only one leaves the other on its built-in text.
 > offer gets a full window from when it arrives, up to the start of the
 > check-in date in the club's time zone (owner decisions, 23 and 24 Nov 2026),
 > and the email states that new deadline. The booking page shows the same
-> deadline. If an offer lapses before its email could be sent at all, the
-> member is not sent a **Waitlist Offer Expired** email for it: they were never
-> told about the offer. Their booking goes back on the waitlist as with any
-> lapsed offer: they keep their place, but that turn has passed.
+> deadline. The window is restarted once per offer: if that late email also
+> fails and goes out on a later run, it states the deadline already set, so the
+> member has what is left of that window. When too little of a window would be
+> left to be worth telling them (less than half an hour), no offer email goes;
+> the officers are alerted instead. If an offer lapses before its email could
+> be sent at all, or after it failed and was never delivered, the member is
+> not sent a **Waitlist Offer Expired** email for it: they were never told
+> about the offer. Their booking goes back on the waitlist as with any lapsed
+> offer: they keep their place, but for that place everyone else waiting for
+> the same nights is considered before them.
 >
 > What an officer can notice: a new alert, **Waitlist email not sent**
-> (`admin-waitlist-notice-unsent`), sent once when one of these member emails
-> could not be sent before it stopped being useful (for the offer, the later
-> of the check-in date and the offer's own deadline; otherwise after seven
-> days), and when an offer lapses before its email could ever be sent, so a
-> person can step in for the turn the member missed (owner decision, 24 Nov
-> 2026). Officers get it once per offer, never once for the unsent email and
-> again for the lapse. It names the member and the booking so an officer can
-> contact them.
-> It goes to officers who receive waitlist offer alerts, and its wording is
-> editable like the others. Its `{{noticeNote}}` token holds the whole
-> instruction for that email.
+> (`admin-waitlist-notice-unsent`). It is sent once when a member's offer email
+> could not be sent, or failed and could not be retried, before it stopped
+> being useful (the later of the start of the check-in date and the offer's
+> own deadline, and at most seven days after the offer); when a member's
+> **Waitlist Offer Expired** email could not be sent within seven days; and
+> when an offer lapses before its email could ever be sent, so a person can
+> step in for the place the member missed (owner decision, 24 Nov 2026).
+> Officers get it once per offer, never once for the unsent email and again
+> for the lapse. It names the member and the booking so an officer can contact
+> them. It goes to officers who receive waitlist offer alerts (the **Waitlist
+> offers** preference, which mutes both), and its wording is editable like the
+> others. Its `{{noticeNote}}` token holds the whole instruction for that
+> email. The **Admin Waitlist Offer** alert, which says the offer email has
+> been sent, now goes only once it has.
+>
+> During the switch to this version, a server still running the version
+> before it that expires an offer this version made and never sent sends the
+> member the **Waitlist Offer Expired** email as before, and no officers'
+> alert is raised for it.
 
 ## Settings reference
 

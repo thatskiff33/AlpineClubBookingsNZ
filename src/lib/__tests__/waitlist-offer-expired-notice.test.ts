@@ -15,6 +15,8 @@ const db = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUnique: db.bookingFindUnique },
+    // The offer email's row, read by the offer email's past-cut-off step: none (never sent).
+    emailLog: { findUnique: async () => null, count: async () => 0 },
     owedNotice: { updateMany: db.owedNoticeUpdateMany, deleteMany: db.owedNoticeDeleteMany },
   },
 }));
@@ -50,11 +52,8 @@ import {
   recordWaitlistLapseNoticesOwed,
   WAITLIST_LAPSE_NOTICE_DELIVERERS,
 } from "@/lib/waitlist-offer-expired-notice";
-import {
-  WAITLIST_NOTICE_SWEEP_AFTER_MS,
-  WAITLIST_OFFER_NOTICE_DELIVERERS,
-  waitlistOfferMemberMarker,
-} from "@/lib/waitlist-offer-notices";
+import { WAITLIST_OFFER_NOTICE_DELIVERERS, waitlistOfferMemberMarker } from "@/lib/waitlist-offer-notices";
+import { WAITLIST_NOTICE_SWEEP_AFTER_MS } from "@/lib/waitlist-offer-window";
 
 const [EXPIRED, UNTOLD] = WAITLIST_LAPSE_NOTICE_DELIVERERS as [
   (typeof WAITLIST_LAPSE_NOTICE_DELIVERERS)[number],
@@ -198,7 +197,10 @@ describe("a never-told lapse alerts the officers once (#5433 owner decision D5)"
   };
   /** What the offer email's own past-cut-off step does for this offer (its member marker). */
   const offerEmailPastCutoff = () =>
-    WAITLIST_OFFER_NOTICE_DELIVERERS[0]!.pastCutoff!(notice as never, waitlistOfferMemberMarker("booking1", OFFERED_AT));
+    WAITLIST_OFFER_NOTICE_DELIVERERS[0]!.pastCutoff!(notice as never, waitlistOfferMemberMarker("booking1", OFFERED_AT), {
+      job: "test-sweep",
+      now: NOW,
+    });
 
   it("records the officers' kind, with the offer's time in its payload, in place of the member's email, in the same insert", async () => {
     const createMany = vi.fn().mockResolvedValue({ count: 2 });

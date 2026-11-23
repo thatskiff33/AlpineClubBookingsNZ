@@ -1258,23 +1258,6 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
   let reofferedCount = 0;
 
   for (const offer of staleOffers) {
-    const owner = bookingOwner(offer);
-    await deliverWaitlistLapseNotice(
-      {
-        bookingId: offer.id,
-        status: BookingStatus.WAITLISTED,
-        checkIn: offer.checkIn,
-        checkOut: offer.checkOut,
-        recipientMemberId: owner.memberId,
-        email: owner.member.email,
-        firstName: owner.member.firstName,
-        memberName: `${owner.member.firstName} ${owner.member.lastName}`,
-        lodgeId: offer.lodgeId,
-        position: offer.newPosition,
-      },
-      offer.lapse,
-    );
-
     logAudit({
       action: "waitlist.offer_expired",
       memberId: null,
@@ -1305,16 +1288,45 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
     .sort((a, b) => compareWaitlistJoinOrder(a.key, b.key));
   const run = lapses.map(({ key }) => key);
   let failedReofferCount = 0;
+  const reofferedIds = new Set<string>();
   for (const { offer, key } of lapses) {
     const freed = { checkIn: offer.checkIn, checkOut: offer.checkOut, lodgeId: key.offeredLodgeId };
     try {
       const pass = await processWaitlistForDates(freed, format, { key, run });
-      if (pass.offeredBookingId) reofferedCount++;
+      if (pass.offeredBookingId) {
+        reofferedCount++;
+        reofferedIds.add(pass.offeredBookingId);
+      }
       if (pass.failed) failedReofferCount++;
     } catch (err) {
       failedReofferCount++;
       logger.error({ err, bookingId: offer.id, lodgeId: key.offeredLodgeId }, "Failed to re-offer a lapsed waitlist place; continuing with the next");
     }
+  }
+
+  // #5433: each lapse's owed notice, after the re-offer passes (review F): a
+  // stop during these sends loses nothing (the markers stand for the sweep),
+  // and a stop before them no longer costs the re-offers. A lapsed member the
+  // passes offered a place again is told by that offer; their lapse notice is
+  // left for the sweep, which clears it as moved on.
+  for (const offer of staleOffers) {
+    if (reofferedIds.has(offer.id)) continue;
+    const owner = bookingOwner(offer);
+    await deliverWaitlistLapseNotice(
+      {
+        bookingId: offer.id,
+        status: BookingStatus.WAITLISTED,
+        checkIn: offer.checkIn,
+        checkOut: offer.checkOut,
+        recipientMemberId: owner.memberId,
+        email: owner.member.email,
+        firstName: owner.member.firstName,
+        memberName: `${owner.member.firstName} ${owner.member.lastName}`,
+        lodgeId: offer.lodgeId,
+        position: offer.newPosition,
+      },
+      offer.lapse,
+    );
   }
   return { expiredCount: staleOffers.length, reofferedCount, failedReofferCount };
 }

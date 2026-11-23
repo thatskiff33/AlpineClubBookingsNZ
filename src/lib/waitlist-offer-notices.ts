@@ -31,14 +31,19 @@
  * full window from when the email really goes, capped at the check-in date.
  * The attempt right after the commit sends with the window the offer was made
  * with and never moves it (`MEMBER_RIGHT_AFTER_OFFER`). The sweep's send
- * (`sendOfferEmailFromSweep`), in order:
- * 1. if the offer email's `EmailLog` row exists, the email went (or is the
- *    retry cron's): clear, with no restart and no send;
- * 2. restart the window in its own locked transaction
- *    (`restartWaitlistOfferWindow`); a lost claim sends nothing;
- * 3. send, stating the deadline that restart left in force.
- * A stop between 2 and 3 leaves the window restarted and the marker claimed;
- * the next sweep restarts it again from its own send, a little later.
+ * (`sendOfferEmailFromSweep`) first reads the offer email's state
+ * (`OfferEmailState`, review B): told, it clears; the email retry cron's, it
+ * waits; undeliverable, it alerts the officers. Only an email that never
+ * reached its row is sent by the sweep, in order:
+ * 1. restart the window in its own locked transaction
+ *    (`restartWaitlistOfferWindow`): once per offer, and not at all when too
+ *    little window would be left (the officers are alerted instead); a lost
+ *    claim sends nothing;
+ * 2. send, stating the deadline in force.
+ * A stop between 1 and 2 leaves the window restarted and the marker claimed;
+ * the next sweep finds the restarted deadline and sends with it as it stands,
+ * so the member then has the remainder of the restarted window, not a fresh
+ * one (stated limit, review C).
  *
  * "No offer expired email for an offer the member was never told about" is
  * `findNeverToldWaitlistOffers`, which `expireStaleOffers` reads in its own
@@ -50,9 +55,10 @@
  * the commit with no advisory key, except the restart, which is its own
  * registered transaction.
  */
-import { BookingStatus, Prisma } from "@prisma/client";
+import { BookingStatus, EmailLogStatus, Prisma } from "@prisma/client";
 
 import { ALERT_NOBODY_ELIGIBLE_RETRY_MS } from "@/lib/alert-cooldown";
+import { logAudit } from "@/lib/audit";
 import { bookingOwner } from "@/lib/booking-owner";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
@@ -62,6 +68,7 @@ import { sendAdminWaitlistOfferAlert, sendWaitlistOfferEmail } from "@/lib/email
 import { adminAlertNeedsResend } from "@/lib/email/admin-alert-send-result";
 import { sendAdminWaitlistNoticeUnsentAlert } from "@/lib/email/admin-alerts-waitlist-notice-unsent";
 import { durableEmailLogId } from "@/lib/email/attempt-log";
+import { EMAIL_RETRY_MAX_ATTEMPTS, RETAINS_REPLAYABLE_EMAIL_BODY } from "@/lib/email/retry-selection";
 import { WAITLIST_OFFER_TEMPLATE_NAME } from "@/lib/email/waitlist";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import logger from "@/lib/logger";
@@ -76,18 +83,21 @@ import {
 } from "@/lib/owed-notice/deliver";
 import type { OwedNoticeKind } from "@/lib/owed-notice/kinds";
 import { alertOfficersOncePastCutoff, pastCutoffAlertKey } from "@/lib/owed-notice/past-cutoff-once";
-import { owedNoticeId, owedNoticeMarker, recordOwedNotices, type OwedNoticeMarker } from "@/lib/owed-notice/store";
+import {
+  owedNoticeEventKey,
+  owedNoticeId,
+  owedNoticeMarker,
+  recordOwedNotices,
+  type OwedNoticeMarker,
+} from "@/lib/owed-notice/store";
 import { prisma } from "@/lib/prisma";
 import {
   evaluateNonMemberPricingRequirements,
   toSubscriptionLockoutParticipants,
 } from "@/lib/subscription-lockout-enforcement";
 import type { WaitlistNoticeUnsent } from "@/lib/waitlist-notice-unsent-note";
-import { waitlistOfferRestartCap } from "@/lib/waitlist-offer-window";
+import { WAITLIST_NOTICE_SWEEP_AFTER_MS, waitlistOfferRestartCap } from "@/lib/waitlist-offer-window";
 import { restartWaitlistOfferWindow } from "@/lib/waitlist-offer-window-restart";
-
-/** How long a waitlist marker waits after its stamp before a sweep takes it: the attempt right after the change goes first. */
-export const WAITLIST_NOTICE_SWEEP_AFTER_MS = 30 * 60 * 1000;
 
 /** A member's waitlist notice older than this is past its cut-off, whatever its own cut-off says. */
 export const WAITLIST_MEMBER_NOTICE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -97,7 +107,7 @@ const OFFICERS_KIND: OwedNoticeKind = "waitlist-offer-officers";
 
 /** The offer email's event key: one `EmailLog` row per offer, however often it is sent. */
 export function waitlistOfferEmailKey(bookingId: string, offeredAt: Date): string {
-  return `${bookingId}:${offeredAt.getTime()}`;
+  return owedNoticeEventKey(bookingId, offeredAt);
 }
 
 /** One offer's owed notices: the booking, the offer's time, and the position the officers' alert quotes. */
@@ -282,18 +292,75 @@ async function sendOfferEmail(
   }
 }
 
-/** Whether the offer email's `EmailLog` row exists: it was sent, is being sent, or is the retry cron's. */
-async function offerEmailRecorded(marker: OwedNoticeMarker): Promise<boolean> {
-  const row = await prisma.emailLog.findUnique({
-    where: { id: durableEmailLogId(WAITLIST_OFFER_TEMPLATE_NAME, waitlistOfferEmailKey(marker.subjectId, marker.eventAt)) },
-    select: { id: true },
+/**
+ * Whether the member was told of the offer, by its email's own `EmailLog` row
+ * (#5433 review B). One definition, read by the sweep's send, the past-cut-off
+ * step, the officers' offer alert and the lapse (`findNeverToldWaitlistOffers`):
+ * - `told`: the row says the email went or is going (`SENT`; `QUEUED`, the
+ *   stated crash-during-the-provider-call limit) or was withheld by design (the
+ *   booking's "No emails", or a non-production copy holding mail back);
+ * - `retrying`: `FAILED`, and the email retry cron can still replay it (below
+ *   its attempt ceiling, body kept): the retry cron's, not the sweep's;
+ * - `undeliverable`: `FAILED` with nothing left to replay it, or `BOUNCED`. It
+ *   cannot be sent again under the same event key, so officers are told;
+ * - `not-sent`: no row; the first attempt never reached it.
+ * At the lapse, only `told` is told: a `FAILED` row is never told at the time
+ * of the decision.
+ */
+export type OfferEmailState = "told" | "retrying" | "undeliverable" | "not-sent";
+
+const TOLD_STATUSES: ReadonlySet<EmailLogStatus> = new Set<EmailLogStatus>([
+  EmailLogStatus.SENT,
+  EmailLogStatus.QUEUED,
+  EmailLogStatus.SKIPPED_NO_EMAILS,
+  EmailLogStatus.SKIPPED_NON_PRODUCTION,
+]);
+
+/** The offer email's durable `EmailLog` id. */
+function offerEmailLogId(bookingId: string, offeredAt: Date): string {
+  return durableEmailLogId(WAITLIST_OFFER_TEMPLATE_NAME, waitlistOfferEmailKey(bookingId, offeredAt));
+}
+
+/** The offer email's state, read outside any transaction. */
+export async function readOfferEmailState(bookingId: string, offeredAt: Date): Promise<OfferEmailState> {
+  const id = offerEmailLogId(bookingId, offeredAt);
+  const row = await prisma.emailLog.findUnique({ where: { id }, select: { status: true, attempts: true } });
+  if (!row) return "not-sent";
+  if (TOLD_STATUSES.has(row.status)) return "told";
+  if (row.status !== EmailLogStatus.FAILED || row.attempts >= EMAIL_RETRY_MAX_ATTEMPTS) return "undeliverable";
+  const replayable = await prisma.emailLog.count({ where: { id, ...RETAINS_REPLAYABLE_EMAIL_BODY } });
+  return replayable === 1 ? "retrying" : "undeliverable";
+}
+
+/** The marker's offer email state: its subject is the booking and its event the offer. */
+const offerEmailStateOf = (marker: OwedNoticeMarker) => readOfferEmailState(marker.subjectId, marker.eventAt);
+
+/**
+ * #5433 review I: the restart is a change to the offer an officer may look
+ * for, so it leaves an audit row with both deadlines (`waitlist.offer_sent`
+ * keeps the one the offer was made with).
+ */
+function auditWindowRestart(notice: WaitlistOfferNotice, previousExpiresAt: Date, expiresAt: Date): void {
+  logAudit({
+    action: "waitlist.offer_window_restarted",
+    memberId: null,
+    targetId: notice.bookingId,
+    subjectMemberId: notice.recipientMemberId,
+    entityType: "Booking",
+    entityId: notice.bookingId,
+    category: "booking",
+    outcome: "success",
+    summary: "Waitlist offer window restarted",
+    details: "The offer email was first sent by a later run, so the offer's window was restarted from that send (#5433 D2)",
+    metadata: { previousExpiresAt: previousExpiresAt.toISOString(), expiresAt: expiresAt.toISOString() },
   });
-  return row !== null;
 }
 
 /**
- * The sweep's send (D2): no restart for an email already recorded, then the
- * restart, then the send with the deadline in force. Never throws.
+ * The sweep's send (D2), by the offer email's state: told, nothing to do;
+ * the retry cron's, wait for it; undeliverable, tell the officers; never sent,
+ * restart the window (once per offer) and send with the deadline in force, or
+ * tell the officers when too little window is left. Never throws.
  */
 async function sendOfferEmailFromSweep(
   notice: WaitlistOfferNotice,
@@ -302,21 +369,36 @@ async function sendOfferEmailFromSweep(
 ): Promise<OwedNoticeOutcome> {
   const log = { bookingId: notice.bookingId, key: marker.id, job: context.job };
   try {
-    if (await offerEmailRecorded(marker)) {
+    const state = await offerEmailStateOf(marker);
+    if (state === "told") {
       logger.info(log, "The waitlist offer email was already recorded; clearing its owed notice without restarting the window");
       return "settled";
     }
-    const restart = await restartWaitlistOfferWindow({ bookingId: marker.subjectId, offeredAt: marker.eventAt, zone: notice.zone });
+    if (state === "retrying") {
+      logger.info(log, "The email retry cron holds this waitlist offer email; the owed notice waits for it");
+      return "threw";
+    }
+    if (state === "undeliverable") {
+      logger.warn(log, "The waitlist offer email cannot be sent again under its key; alerting the officers instead");
+      return alertOfficersWaitlistNoticeUnsent(notice, marker, "offer", context);
+    }
+    const restart = await restartWaitlistOfferWindow({
+      bookingId: marker.subjectId,
+      offeredAt: marker.eventAt,
+      zone: notice.zone,
+      now: context.now,
+    });
     if (restart.kind === "moved-on") {
       logger.warn({ ...log, why: restart.why }, "The waitlist offer moved on before its window could restart; nothing sent");
       return "settled";
     }
     if (restart.kind === "no-window") {
-      logger.warn(log, "No offer window is left to restart; the next sweep takes the past-cut-off step");
-      return "threw";
+      logger.warn(log, "Too little of the offer's window is left to tell the member; alerting the officers instead");
+      return alertOfficersWaitlistNoticeUnsent(notice, marker, "offer", context);
     }
     if (restart.restarted) {
       logger.info({ ...log, expiresAt: restart.expiresAt.toISOString() }, "Restarted a waitlist offer's window from its first real send (#5433 D2)");
+      auditWindowRestart(notice, restart.previousExpiresAt, restart.expiresAt);
     }
     return sendOfferEmail(notice, restart.expiresAt, context);
   } catch (err) {
@@ -333,7 +415,13 @@ function payloadPosition(marker: OwedNoticeMarker): number | null {
   return typeof position === "number" && Number.isSafeInteger(position) ? position : null;
 }
 
-/** The officers' alert. Settled once an officer has it or nobody is meant to; unreached when nobody got it and nothing replays it. Never throws. */
+/**
+ * The officers' alert, which says the offer email "has been sent": sent only
+ * once the member's offer email is told (review L), kept while it is not yet,
+ * and dropped once it cannot be (the "not sent" alert tells the officers
+ * instead). Settled once an officer has it or nobody is meant to; unreached
+ * when nobody got it and nothing replays it. Never throws.
+ */
 async function alertOfficersOfOffer(notice: WaitlistOfferNotice, marker: OwedNoticeMarker, { job }: OwedNoticeRun): Promise<OwedNoticeOutcome> {
   const position = payloadPosition(marker);
   if (position === null) {
@@ -341,6 +429,12 @@ async function alertOfficersOfOffer(notice: WaitlistOfferNotice, marker: OwedNot
     return "settled";
   }
   try {
+    const state = await offerEmailStateOf(marker);
+    if (state === "undeliverable") {
+      logger.info({ bookingId: notice.bookingId, job }, "The offer email cannot be sent; the officers' offer alert gives way to the not-sent alert");
+      return "settled";
+    }
+    if (state !== "told") return "threw";
     const result = await sendAdminWaitlistOfferAlert({
       memberName: notice.memberName,
       checkIn: notice.checkIn,
@@ -360,14 +454,23 @@ async function alertOfficersOfOffer(notice: WaitlistOfferNotice, marker: OwedNot
   }
 }
 
-/** Past a member's waitlist notice's cut-off: alert the officers, once per notice (owner decision D1's rule, #5433). */
+/**
+ * Alert the officers that a member was not told (#5433: D1's rule for a member
+ * notice past its cut-off, and D5's never-told lapse), once per claim key: the
+ * offer email's marker for both of an offer's alerts, so they go once between
+ * them. A claim another attempt took less than the waitlist wait ago may still
+ * be in flight, so this then retries rather than settling (review E).
+ */
 export function alertOfficersWaitlistNoticeUnsent(
   notice: Pick<WaitlistOfferNotice, "bookingId" | "memberName" | "checkIn" | "checkOut">,
   marker: OwedNoticeMarker,
   which: WaitlistNoticeUnsent,
+  run: OwedNoticeRun,
 ): Promise<OwedNoticeOutcome> {
   return alertOfficersOncePastCutoff(marker, {
-    label: `waitlist ${which} email past its cut-off`,
+    label: `waitlist ${which} email not sent`,
+    inFlightMs: WAITLIST_NOTICE_SWEEP_AFTER_MS,
+    now: run.now,
     send: () =>
       sendAdminWaitlistNoticeUnsentAlert({
         notice: which,
@@ -377,6 +480,20 @@ export function alertOfficersWaitlistNoticeUnsent(
         checkOut: notice.checkOut,
       }),
   });
+}
+
+/**
+ * Past the offer email's cut-off: alert the officers once, unless the email
+ * did reach the member after all (review G).
+ */
+async function offerEmailPastCutoff(notice: WaitlistOfferNotice, marker: OwedNoticeMarker, run: OwedNoticeRun): Promise<OwedNoticeOutcome> {
+  try {
+    if ((await offerEmailStateOf(marker)) === "told") return "settled";
+  } catch (err) {
+    logger.error({ err, key: marker.id, job: run.job }, "Failed to read the waitlist offer email's state past its cut-off");
+    return "threw";
+  }
+  return alertOfficersWaitlistNoticeUnsent(notice, marker, "offer", run);
 }
 
 const OFFER_KIND_COMMON = {
@@ -397,7 +514,7 @@ const MEMBER: OwedNoticeDeliverer<WaitlistOfferNotice> = {
   // or the offer's own deadline has not passed, whichever is later.
   sendBy: (notice) =>
     new Date(Math.max(waitlistOfferRestartCap(notice.checkIn, notice.zone).getTime(), notice.expiresAt?.getTime() ?? 0)),
-  pastCutoff: (notice, marker) => alertOfficersWaitlistNoticeUnsent(notice, marker, "offer"),
+  pastCutoff: offerEmailPastCutoff,
   idempotencyKey: (marker) => waitlistOfferEmailKey(marker.subjectId, marker.eventAt),
   deliver: sendOfferEmailFromSweep,
 };
@@ -437,8 +554,9 @@ export async function deliverWaitlistOfferNotices(notice: WaitlistOfferNotice, o
 }
 
 /**
- * Of these offers, the ones whose member was never told: no `EmailLog` row for
- * the offer email, and its owed notice still stands or passed its cut-off
+ * Of these offers, the ones whose member was never told: the offer email's row
+ * is not `told` (`OfferEmailState`; a `FAILED` row at the time of the decision
+ * is never told), and its owed notice still stands or passed its cut-off
  * unsent (the once-ever alert's claim records that). An offer made before
  * #5433, which wrote no marker, counts as told, as every offer did before.
  * Read inside `expireStaleOffers`'s transaction, through its client, after its
@@ -451,26 +569,24 @@ export async function findNeverToldWaitlistOffers(
   const made = offers.flatMap(({ bookingId, offeredAt }) => {
     if (!offeredAt) return [];
     const markerId = owedNoticeId(MEMBER_KIND, bookingId, offeredAt);
-    return [{
-      bookingId,
-      markerId,
-      emailLogId: durableEmailLogId(WAITLIST_OFFER_TEMPLATE_NAME, waitlistOfferEmailKey(bookingId, offeredAt)),
-      pastCutoffKey: pastCutoffAlertKey({ id: markerId }),
-    }];
+    return [{ bookingId, markerId, emailLogId: offerEmailLogId(bookingId, offeredAt), pastCutoffKey: pastCutoffAlertKey({ id: markerId }) }];
   });
   if (made.length === 0) return new Set();
   // One after another: they share the transaction's one connection.
   const markers = await db.owedNotice.findMany({ where: { id: { in: made.map((offer) => offer.markerId) } }, select: { id: true } });
-  const emails = await db.emailLog.findMany({ where: { id: { in: made.map((offer) => offer.emailLogId) } }, select: { id: true } });
+  const emails = await db.emailLog.findMany({
+    where: { id: { in: made.map((offer) => offer.emailLogId) } },
+    select: { id: true, status: true },
+  });
   const pastCutoff = await db.alertCooldown.findMany({
     where: { key: { in: made.map((offer) => offer.pastCutoffKey) } },
     select: { key: true },
   });
   const owed = new Set([...markers.map((row) => row.id), ...pastCutoff.map((row) => row.key)]);
-  const recorded = new Set(emails.map((row) => row.id));
+  const told = new Set(emails.filter((row) => TOLD_STATUSES.has(row.status)).map((row) => row.id));
   return new Set(
     made
-      .filter((offer) => !recorded.has(offer.emailLogId) && (owed.has(offer.markerId) || owed.has(offer.pastCutoffKey)))
+      .filter((offer) => !told.has(offer.emailLogId) && (owed.has(offer.markerId) || owed.has(offer.pastCutoffKey)))
       .map((offer) => offer.bookingId),
   );
 }

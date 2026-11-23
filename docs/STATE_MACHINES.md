@@ -3383,43 +3383,73 @@ it; they keep their place.
 `INV-CAP-043`, owner decision D2).** The offer pass records the member's offer
 email and the officers' alert as owed notices in the offer's own transaction,
 and sends them after the commit; the lapse records its "offer expired" email
-the same way (Email Retry Lifecycle, below). When the email retry job's sweep,
-not that first attempt, sends the offer email, it restarts the window first:
-a full window from the send, capped at the start of the check-in date in the
-club's time zone (owner decision D6) and never earlier than the deadline in
-force, in its own lock(1)
-and lodge-key transaction whose claim is guarded on the status, the offer's
-`waitlistOfferedAt` and the deadline it read. Then it sends, stating the new
-deadline. An offer whose deadline passed unread but which the expiry has not
-yet reverted is revived this way. The restart moves only
-`waitlistOfferExpiresAt`, so the offer keeps its identity and its one email.
+the same way (Email Retry Lifecycle, below). Whether the member was told is
+read from the offer email's own row, one definition everywhere
+(`OfferEmailState`): `SENT`, `QUEUED` and a withhold by design ("No emails",
+a non-production copy) are told; a `FAILED` row the retry cron can still
+replay is the cron's; an exhausted `FAILED` row or a `BOUNCED` one is
+undeliverable; no row is never sent. When the email retry job's sweep, not
+that first attempt, sends the offer email (only when it was never sent), it
+restarts the window first: a full window from the sweep's own clock, capped
+at the start of the check-in date in the club's time zone (owner decision D6)
+and never earlier than the deadline in force, in its own lock(1) and
+lodge-key transaction whose claim is guarded on the status, the offer's
+`waitlistOfferedAt` and its original deadline. So each offer is restarted at
+most once; a later sweep sends with the deadline then in force. Then it sends,
+stating that deadline. An offer whose deadline passed unread but which the
+expiry has not yet reverted is revived this way. The restart moves only
+`waitlistOfferExpiresAt`, so the offer keeps its identity and its one email,
+and the cross-lodge confirm's later phases treat it as the same offer. When
+less than the waitlist wait (`WAITLIST_NOTICE_SWEEP_AFTER_MS`) would remain,
+or no email can go (the booking's "No emails", or an owner with no address
+or a placeholder one), nothing is restarted; with too little left, no offer
+email goes either and the officers are alerted instead.
 
 ```text
 WAITLIST_OFFERED, offer email owed -> first attempt sends -> window unchanged
-WAITLIST_OFFERED, offer email owed -> sweep: email row exists -> cleared, window unchanged
-WAITLIST_OFFERED, offer email owed -> sweep: restart (lock(1) + lodge, guarded) -> send with the new deadline
+WAITLIST_OFFERED, offer email owed -> sweep: email told -> cleared, window unchanged
+WAITLIST_OFFERED, offer email owed -> sweep: email the retry cron's -> kept, window unchanged
+WAITLIST_OFFERED, offer email owed -> sweep: email undeliverable -> officers alerted once, window unchanged
+WAITLIST_OFFERED, offer email owed -> sweep: never sent -> restart once (lock(1) + lodge, guarded) -> send with the deadline in force
+WAITLIST_OFFERED, offer email owed -> sweep: under the waitlist wait left -> officers alerted once, nothing sent
 WAITLIST_OFFERED, offer email owed -> sweep: restart claim lost (confirmed, expired, re-offered) -> nothing sent
-WAITLIST_OFFERED, offer email never sent -> expires -> WAITLISTED, no "offer expired" email, one officers' alert
+WAITLIST_OFFERED, offer email never told -> expires -> WAITLISTED, no "offer expired" email, one officers' alert
 ```
 
-A stop between the restart and its send leaves the window restarted and the
-marker claimed; the next sweep, at least 30 minutes on, restarts it again from
-its own send. Restarts stop at the cap, and once the member notice passes its
-cut-off (the later of the cap and the offer's own deadline, or seven days
-after the offer), when officers are alerted once instead. The expiry and the
-restart both take lock(1) and re-read: whichever goes second finds the other's
-result, so an offer is either restarted and told, or lapsed untold. A lapsed
-offer counts as never told when no offer email row exists for it and its
-notice still stands or passed its cut-off unsent; an offer made before #5433
-counts as told. Such a lapse sends no "offer expired" email; the revert, the
+A stop between the restart and its send, or a send that fails before its
+row, leaves the window restarted and the marker claimed; the next sweep, at
+least the waitlist wait on, finds the restarted deadline and sends with it.
+**Stated limit:** a member told on such a later attempt has the remainder of
+the restarted window, not a fresh one. The bound is exact: one restart, at a
+sweep no later than the member notice's cut-off (the later of the cap and the
+offer's own deadline, or seven days after the offer), so no deadline is ever
+later than the offer's original one or `min(cap, offer + seven days + one
+window)`, whichever is later. The expiry and the restart both take lock(1)
+and re-read, so they never both act on one offer: whichever goes second finds
+the other's result. That leaves a gap, stated as a limit: a restart commits,
+and its email then fails before its row, or a confirm or cancel commits
+between the restart and the send. The first leaves a restarted offer
+untold until the next sweep; the second sends an offer email for an offer
+that has just moved on (the "No emails" switch is set without lock(1) too, so
+the restart's read of it can be stale by a moment; the only effect is an
+extended window for an email then withheld). A lapsed offer counts as never
+told when its offer email is not told (a `FAILED` row at that moment is never
+told) and its notice still stands or passed its cut-off unsent; an offer made
+before #5433 counts as told. **Blue-green limit:** if a release before #5433
+expires an offer this release made and never sent, it sends "offer expired"
+inline as before, and no officers' alert is raised. Such a lapse sends no "offer expired" email; the revert, the
 re-offer pass and its rotation are unchanged (`INV-CAP-042`), so the member
 keeps their place and number and is considered last for that one re-offer.
 Instead the officers are owed one alert (owner decision D5, 24 Nov 2026),
-written in the revert's transaction in place of the member's email and
-delivered after the commit or by the sweep, so a person can step in. It is
-`admin-waitlist-notice-unsent`, sent through the once-ever claim of the offer
-email's own marker: if that email's past-cut-off step already alerted the
-officers, the lapse sends nothing, and the other way round.
+written in the revert's transaction in place of the member's email, so a
+person can step in. The lapse notices are delivered after the re-offer passes
+(a stop during the sends costs no re-offer, and the markers cover a lost
+send), and not at all to a lapsed member those passes offered the place again.
+It is `admin-waitlist-notice-unsent`, sent through the once-ever claim of the
+offer email's own marker: if that email's past-cut-off step already alerted
+the officers, the lapse sends nothing, and the other way round. A claim
+another attempt took less than the waitlist wait ago may still be in flight,
+so that attempt retries later rather than counting it as sent.
 The member's booking page shows the live offer and its deadline whether or
 not the email went.
 
@@ -4384,20 +4414,24 @@ no longer `WAITLIST_OFFERED`, or a different offer, for the offer; no longer
 is the later of the start of the check-in date in the club's time zone and the
 offer's own deadline, the
 offer-expired email's seven days; past it officers are alerted once with
-`admin-waitlist-notice-unsent` (`alertOfficersOncePastCutoff`). The officers'
-offer alert and the lapsed-untold alert last seven days, with no alert past
-it; the lapsed-untold alert shares the offer email's once-ever claim, so one
-offer alerts the officers once. The sweep's offer email restarts the offer
-window before it sends (Waitlist Lifecycle).
+`admin-waitlist-notice-unsent` (`alertOfficersOncePastCutoff`), unless the
+offer email was told after all. The officers' offer alert, which says the
+offer email "has been sent", goes only once that email is told, waits while
+it is not yet, and gives way to the "not sent" alert when it cannot be; it
+and the lapsed-untold alert last seven days, with no alert past it. The
+lapsed-untold alert shares the offer email's once-ever claim, so one offer
+alerts the officers once. The sweep's offer email restarts the offer window
+before it sends (Waitlist Lifecycle).
 
 **Stated limit: a failed offer email is replayed with the deadline it was
 rendered with.** A provider failure after the offer email's row was written is
 the retry cron's to replay, and the restart applies only to an email that
-never reached its row. The deadline this can cost the member is small: the
-retry cron makes at most `EMAIL_RETRY_MAX_ATTEMPTS` attempts,
-`EMAIL_RETRY_BACKOFF_MS` apart (`src/lib/email/retry-selection.ts`), so a
-replayed offer arrives within that span of its first attempt, with the rest of
-its window intact.
+never reached its row. The deadline this can cost the member is small when
+the replay succeeds: the retry cron makes at most `EMAIL_RETRY_MAX_ATTEMPTS`
+attempts, `EMAIL_RETRY_BACKOFF_MS` apart (`src/lib/email/retry-selection.ts`).
+It does not always succeed: a row that exhausts those attempts, or bounces,
+was never told. The sweep then alerts the officers once instead of clearing
+the notice silently, and a lapse of that offer counts as never told.
 
 ```text
 change commits + markers -> claim -> send settled -> marker cleared

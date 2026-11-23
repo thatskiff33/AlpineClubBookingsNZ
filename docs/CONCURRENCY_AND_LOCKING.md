@@ -239,20 +239,42 @@ committed, and a retried sweep would find nothing left to re-offer.
 (`INV-LOCK-006`). The owed offer notice's sweep runs it after the commit it
 recovers, just before it sends an offer email the first attempt never sent.
 It takes `lock(1)` because every writer of an offer's lifecycle does (the
-offer pass, `expireStaleOffers`, the confirm and its revert, the past-date
-cancel, the admin force-confirm and return to the waitlist), then the
-booking's own lodge key through `acquireLodgeCapacityLock`, the key the expiry
-and the confirm take for the same offer (`INV-LOCK-002`). It re-reads the
-offer after both and claims with one `updateMany` guarded on
-`WAITLIST_OFFERED`, the offer's `waitlistOfferedAt` and the deadline it read,
-writing only `waitlistOfferExpiresAt`. A lost claim writes and sends nothing.
-The club's timezone is read before it opens; no settings read, provider call
-or new key.
+offer pass, `expireStaleOffers`, the same-lodge confirm and its revert, the
+cross-lodge confirm's three phases and its reverts, the past-date cancel, the
+admin force-confirm and return to the waitlist), then the booking's own lodge
+key through `acquireLodgeCapacityLock`, the key the expiry and the confirm take
+for the same offer (`INV-LOCK-002`). It re-reads the offer after both and
+claims with one `updateMany` guarded on `WAITLIST_OFFERED`, the offer's
+`waitlistOfferedAt` and its original deadline (`waitlistOfferExpiresAt` of the
+offer time), so it moves a deadline at most once per offer, writing only
+`waitlistOfferExpiresAt` (and Prisma's `updatedAt`). A lost claim writes and
+sends nothing. The club's timezone and the sweep's clock are passed in; no
+settings read, provider call or new key. The "No emails" switch is set
+without `lock(1)`, so the re-read of it can be stale by a moment: the only
+effect is an extended window for an email then withheld.
 
-Racing the expiry: both take `lock(1)` first and re-read. The expiry selects
-stale offers after taking it, so a restart that committed first leaves nothing
-stale to revert; an expiry that committed first leaves a `WAITLISTED` booking,
-and the restart's claim is lost. The waitlist's owed markers themselves join
+The cross-lodge confirm claims the entry in its second and third transactions
+on the row its first one read, `updatedAt` and the deadline included, so a
+restart between the phases would make those claims match nothing and strand
+the entry beside the new booking. Each later phase therefore re-reads the row
+under its locks and, when every other column still equals the first phase's
+read, claims on the two columns the restart writes as they now stand
+(`offerSnapshotAcrossWindowRestart`, `waitlist-offer-epoch.ts`). Any other
+change still fails the claim, as before. The same-lodge confirm and the admin
+force-confirm and return-to-waitlist routes claim inside the transaction that
+re-read the row, so a restart cannot fall between their read and their claim.
+
+Racing the expiry: both take `lock(1)` first and re-read, so they never both
+act on one offer. The expiry selects stale offers after taking it, so a
+restart that committed first leaves nothing stale to revert; an expiry that
+committed first leaves a `WAITLISTED` booking, and the restart's claim is
+lost. The restart leaves at least the waitlist wait
+(`WAITLIST_NOTICE_SWEEP_AFTER_MS`) on the deadline it sends, or sends nothing,
+so the email's row normally exists before the expiry can select the offer.
+What locks cannot close, stated as a limit: the send runs after the restart
+commits, so a confirm or cancel committing in between leaves an offer email
+for an offer that has just moved on, and a send failing before its row leaves
+a restarted offer untold until the next sweep. The waitlist's owed markers themselves join
 the offer pass's and the expiry's transactions under the keys they already
 hold: one primary-key insert each, with `skipDuplicates`, never a caught
 unique-key error. The expiry also reads, through its own client, which lapsed

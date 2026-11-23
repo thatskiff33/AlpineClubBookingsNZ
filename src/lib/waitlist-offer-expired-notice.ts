@@ -45,7 +45,6 @@ import { BookingStatus, Prisma } from "@prisma/client";
 
 import { ALERT_NOBODY_ELIGIBLE_RETRY_MS } from "@/lib/alert-cooldown";
 import { bookingOwner } from "@/lib/booking-owner";
-import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { sendWaitlistOfferExpiredEmail } from "@/lib/email";
 import logger from "@/lib/logger";
@@ -57,14 +56,15 @@ import {
   type OwedNoticeRun,
 } from "@/lib/owed-notice/deliver";
 import type { OwedNoticeKind } from "@/lib/owed-notice/kinds";
-import { owedNoticeMarker, recordOwedNotices, type OwedNoticeMarker } from "@/lib/owed-notice/store";
+import { owedNoticeEventKey, owedNoticeMarker, recordOwedNotices, type OwedNoticeMarker } from "@/lib/owed-notice/store";
 import { prisma } from "@/lib/prisma";
 import {
   alertOfficersWaitlistNoticeUnsent,
   WAITLIST_MEMBER_NOTICE_MAX_AGE_MS,
-  WAITLIST_NOTICE_SWEEP_AFTER_MS,
   waitlistOfferMemberMarker,
 } from "@/lib/waitlist-offer-notices";
+import { WAITLIST_NOTICE_SWEEP_AFTER_MS } from "@/lib/waitlist-offer-window";
+import { clubTodayAsStoredDate, waitlistStayHasEnded } from "@/lib/waitlist-stay-ended";
 import { getWaitlistPositionOf } from "@/lib/waitlist-queue";
 
 const KIND: OwedNoticeKind = "waitlist-offer-expired";
@@ -155,8 +155,8 @@ async function loadExpiredNotice(marker: { subjectId: string }): Promise<Waitlis
 /** True to send; otherwise why not: no longer waitlisted, or the stay has ended at the club. */
 async function expiredNoticeStillOwed(notice: WaitlistOfferExpiredNotice): Promise<true | string> {
   if (notice.status !== BookingStatus.WAITLISTED) return `the booking is ${notice.status}`;
-  const today = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
-  return notice.checkOut.getTime() > today.getTime() ? true : "the stay has ended";
+  const today = clubTodayAsStoredDate(await readClubTimeZoneOutsideRequest());
+  return waitlistStayHasEnded(notice.checkOut, today) ? "the stay has ended" : true;
 }
 
 /** The member's email, with the lapse's event key. Never throws. */
@@ -191,8 +191,8 @@ const EXPIRED: OwedNoticeDeliverer<WaitlistOfferExpiredNotice> = {
   load: loadExpiredNotice,
   stillOwed: expiredNoticeStillOwed,
   sendBy: (_notice, marker) => new Date(marker.eventAt.getTime() + WAITLIST_MEMBER_NOTICE_MAX_AGE_MS),
-  pastCutoff: (notice, marker) => alertOfficersWaitlistNoticeUnsent(notice, marker, "offer-expired"),
-  idempotencyKey: (marker) => `${marker.subjectId}:${marker.eventAt.getTime()}`,
+  pastCutoff: (notice, marker, run) => alertOfficersWaitlistNoticeUnsent(notice, marker, "offer-expired", run),
+  idempotencyKey: (marker) => owedNoticeEventKey(marker.subjectId, marker.eventAt),
   deliver: (notice, _marker, context) => sendExpiredEmail(notice, context),
 };
 
@@ -212,14 +212,14 @@ function untoldOfferedAt(marker: OwedNoticeMarker): Date | null {
 async function alertOfficersOfUntoldLapse(
   notice: WaitlistOfferExpiredNotice,
   marker: OwedNoticeMarker,
-  { job }: OwedNoticeRun,
+  run: OwedNoticeRun,
 ): Promise<OwedNoticeOutcome> {
   const offeredAt = untoldOfferedAt(marker);
   if (!offeredAt) {
-    logger.error({ key: marker.id, job }, "A never-told lapse's officer alert has no readable offer time; cleared without sending it");
+    logger.error({ key: marker.id, job: run.job }, "A never-told lapse's officer alert has no readable offer time; cleared without sending it");
     return "settled";
   }
-  return alertOfficersWaitlistNoticeUnsent(notice, waitlistOfferMemberMarker(notice.bookingId, offeredAt), "offer-lapsed-untold");
+  return alertOfficersWaitlistNoticeUnsent(notice, waitlistOfferMemberMarker(notice.bookingId, offeredAt), "offer-lapsed-untold", run);
 }
 
 const UNTOLD: OwedNoticeDeliverer<WaitlistOfferExpiredNotice> = {

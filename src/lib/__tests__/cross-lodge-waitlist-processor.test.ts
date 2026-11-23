@@ -36,6 +36,9 @@ vi.mock("@/lib/prisma", () => ({
     // #5433: the offer's owed notices are claimed and cleared on this client
     // after the commit.
     owedNotice: { updateMany: async () => ({ count: 1 }), deleteMany: async () => ({ count: 1 }) },
+    // #5433 review L: the officers' offer alert goes once the offer email's row
+    // says it went (every fixture's send succeeds).
+    emailLog: { findUnique: async () => ({ status: "SENT", attempts: 1 }), count: async () => 1 },
   },
 }));
 vi.mock("@/lib/lodges", () => ({
