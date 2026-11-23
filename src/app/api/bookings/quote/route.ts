@@ -61,7 +61,7 @@ import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * The price of a stay before it is booked. Also the AI app preview
- * `quote_booking` (ALP-794), which changes nothing and acts as the member
+ * `quote_booking` (ALP-794), which changes no booking and acts as the member
  * only: the on-behalf check and every officer branch read the member-only
  * user, so a connection's `forMemberId` is refused (403).
  */

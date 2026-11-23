@@ -48,7 +48,7 @@ import { connectionJson, memberOnlySessionUser } from "@/lib/mcp-connection-requ
 
 /**
  * What a promo code takes off a stay. Also the AI app preview
- * `check_promo_code` (ALP-794), which changes nothing and acts as the member
+ * `check_promo_code` (ALP-794), which changes no booking and acts as the member
  * only: the on-behalf check and the edit preview's role read the member-only
  * user, so a connection's `forMemberId` is refused (403) and the officer
  * re-rates are never applied for it.

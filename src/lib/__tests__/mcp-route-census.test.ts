@@ -29,13 +29,19 @@ const HTTP_METHODS: ReadonlySet<string> = new Set(STEP_UP_HTTP_METHODS);
 
 /**
  * The only `POST`s that may run as a `read` (`preview: true`): each changes
- * nothing, which a reviewer checked against the route. A view-only connection
- * runs them and no audit row is written, so adding one here is a decision.
+ * none of the member's bookings, which a reviewer checked against the route.
+ * A view-only connection runs them and the dispatcher writes no audit row, so
+ * adding one here is a decision.
  */
 const PREVIEW_ROUTE_KEYS: readonly string[] = [
-  // ALP-794: prices and checks, which read and write nothing but, on a
-  // refused cross-family guest, the member-guest probe throttle and its audit
-  // row (#2388), the same as the website's own call.
+  // ALP-794: prices and checks. They change none of the member's bookings.
+  // What they do write, as the website's own call does:
+  // - a RateLimitCounter upsert on every call: `mcpCall` for the connection
+  //   (src/app/api/mcp/route.ts), and `bookingQuery` on quote, the
+  //   change-request quote and promo validate;
+  // - on quote, modify-quote and promo validate, when a member guest outside
+  //   the family is named: the `memberGuestAddProbe` and daily probe counters,
+  //   and on a refusal the probe's audit row (#2388).
   "POST src/app/api/bookings/quote/route.ts",
   "POST src/app/api/bookings/[id]/modify-quote/route.ts",
   "POST src/app/api/bookings/[id]/change-requests/quote/route.ts",

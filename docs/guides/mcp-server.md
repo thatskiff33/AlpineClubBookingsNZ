@@ -226,10 +226,10 @@ booking, even an officer's, and never sends an officer's on-behalf fields.
 | `list_lodge_rooms` | The rooms a member can ask for at one lodge (its id from `list_lodges`), with bed counts. The cross-lodge listing stays for callers outside this repository (`INV-INT-016`) | read | `GET /api/bookings/rooms` |
 | `list_requestable_rooms` | The rooms the member can request on one of their bookings | read | `GET /api/bookings/[id]/requested-room/options` |
 | `list_my_promo_codes` | The promo codes the club has given the member | read | `GET /api/promo-codes/available` |
-| `quote_booking` | What a stay would cost, guest by guest. Changes nothing | read (preview) | `POST /api/bookings/quote` |
-| `check_promo_code` | What a promo code or working bee would take off a stay. Changes nothing | read (preview) | `POST /api/promo-codes/validate` |
-| `quote_booking_change` | What changing a booking would cost or give back, and whether it can be made. Changes nothing | read (preview) | `POST /api/bookings/[id]/modify-quote` |
-| `quote_booking_change_request` | An estimate for the guests a change request would add. Changes nothing | read (preview) | `POST /api/bookings/[id]/change-requests/quote` |
+| `quote_booking` | What a stay would cost, guest by guest. Changes none of the member's bookings | read (preview) | `POST /api/bookings/quote` |
+| `check_promo_code` | What a promo code or working bee would take off a stay. Changes none of the member's bookings | read (preview) | `POST /api/promo-codes/validate` |
+| `quote_booking_change` | What changing a booking would cost or give back, and whether it can be made. Changes none of the member's bookings | read (preview) | `POST /api/bookings/[id]/modify-quote` |
+| `quote_booking_change_request` | An estimate for the guests a change request would add. Changes none of the member's bookings | read (preview) | `POST /api/bookings/[id]/change-requests/quote` |
 | `set_my_booking_note` | Saves or clears the booking's note | write | `PUT /api/bookings/[id]/notes` |
 | `set_my_arrival_time`, `clear_my_arrival_time` | Sets or clears the expected arrival time | write | `PUT`, `DELETE /api/bookings/[id]/arrival-time` |
 | `set_my_requested_room`, `clear_my_requested_room` | Asks for a room, or withdraws the request | write | `PUT`, `DELETE /api/bookings/[id]/requested-room` |
@@ -241,14 +241,24 @@ booking, even an officer's, and never sends an officer's on-behalf fields.
 | `withdraw_booking_exception_request`, `withdraw_booking_change_exception_request` | Withdraws an open exception request. Cannot be undone | destructive | `PATCH /api/bookings/exception-requests/[id]`, `PATCH /api/bookings/[id]/exception-requests/[requestId]` |
 | `list_my_refund_reviews` | The refund reviews on a cancelled booking | read | `GET /api/bookings/[id]/refund-request` |
 | `request_refund_review` | Asks the club to review a refund. No money moves: an officer decides | write | `POST /api/bookings/[id]/refund-request` |
-| `accept_waitlist_offer` | Accepts a place the club offered. If payment is needed, the app tells the member to pay on the website | write | `POST /api/bookings/[id]/waitlist-confirm` |
+| `accept_waitlist_offer` | Accepts a place the club offered at the booking's own lodge; an offer at another lodge is accepted on the website. If payment is needed, the app tells the member to pay on the website | write | `POST /api/bookings/[id]/waitlist-confirm` |
 | `delete_my_draft_booking` | Deletes one of the member's drafts. Never a confirmed booking | destructive | `DELETE /api/bookings/[id]` |
 
-A preview is a `read`: a view-only connection may run it. A connection may not
-raise an officer's promo correction on an exception request (#4533), and the
-officer-only parts of each route stay officer-only. The routes' request schemas
-live in `src/lib` modules the catalogue shares, so the app is offered exactly
-what the route accepts (`INV-SSOT`).
+A preview is a `read`: a view-only connection may run it. It changes none of
+the member's bookings, but it is not write-free: each call counts against the
+connection's rate limits, and a member guest from outside the family spends
+the member-guest probe limit and, if refused, writes its audit row (#2388), as
+on the website. A connection may not raise an officer's promo correction on a
+change request (#4533), and the officer-only parts of each route stay
+officer-only. The routes' request schemas live in `src/lib` modules the
+catalogue shares, so the app is offered exactly what the route accepts
+(`INV-SSOT`).
+
+`accept_waitlist_offer` accepts only an offer at the booking's own lodge. An
+offer at another lodge cancels the waitlist place and books that lodge at a
+price the app cannot show, so a connection is refused it (409, nothing
+written, the offer stands) and the member accepts it on the website, where the
+button names the lodge and the price (ADR-004).
 
 Changing a booking's dates or guests, confirming a draft and sending a guest a
 payment link can take or refund money, so they stay on the website: the

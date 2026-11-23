@@ -5,11 +5,13 @@
   changing anything. On the member's own bookings it can set the note, the
   expected arrival time and a room request, ask an officer for a change to a
   stay under way, ask to book or change outside the rules (and withdraw that
-  request), ask for a refund review, accept a waitlist offer and delete a
-  draft. Changes still need a connection approved for **View and change**, and
+  request), ask for a refund review, accept a waitlist offer at the booking's
+  own lodge and delete a draft. Changes still need a connection approved for **View and change**, and
   each one is recorded in the audit log. A connection always acts as the member,
   never with an officer's powers.
 
   Changing a booking's dates or guests, confirming a draft and sending a guest
   a payment link can move money, so they stay on the website; so do agreeing
-  to be someone's guest, invoice PDFs and the booking's calendar entry.
+  to be someone's guest, invoice PDFs, the booking's calendar entry and
+  accepting a waitlist offer at another lodge, where the website shows the
+  lodge and the price.

@@ -116,7 +116,7 @@ export const MCP_BOOKING_ACTIONS: readonly McpAction[] = [
     id: "quote_booking",
     title: "Price a stay",
     summary:
-      "What a stay would cost the signed-in member, guest by guest, before anything is booked. Changes nothing. Dates are `YYYY-MM-DD`. Each guest gives `ageTier` and `isMember`, a member guest their `memberId` from `get_my_family_group`, and optionally their own `stayStart` and `stayEnd` or `nights`. `availableCreditCents` is the member's account credit.",
+      "What a stay would cost the signed-in member, guest by guest, before anything is booked. Changes none of the member's bookings. Dates are `YYYY-MM-DD`. Each guest gives `ageTier` and `isMember`, a member guest their `memberId` from `get_my_family_group`, and optionally their own `stayStart` and `stayEnd` or `nights`. `availableCreditCents` is the member's account credit.",
     method: "POST",
     path: "/api/bookings/quote",
     body: bookingQuoteConnectionRequestSchema,
@@ -129,7 +129,7 @@ export const MCP_BOOKING_ACTIONS: readonly McpAction[] = [
     id: "check_promo_code",
     title: "Check a promo code",
     summary:
-      "What a promo code (`code`), several codes (`codes`) or a working bee (`workPartyEventId`, with `lodgeId`) would take off a stay, without applying it. Changes nothing. Send the stay and party as for `quote_booking`; for a change to an existing booking, also its `bookingId`.",
+      "What a promo code (`code`), several codes (`codes`) or a working bee (`workPartyEventId`, with `lodgeId`) would take off a stay, without applying it. Changes none of the member's bookings. Send the stay and party as for `quote_booking`; for a change to an existing booking, also its `bookingId`.",
     method: "POST",
     path: "/api/promo-codes/validate",
     body: promoValidateConnectionRequestSchema,
@@ -156,7 +156,7 @@ export const MCP_BOOKING_ACTIONS: readonly McpAction[] = [
     id: "quote_booking_change_request",
     title: "Price guests for a change request",
     summary:
-      "An estimate for the guests a change request on a stay already under way would add, before the request is sent. Changes nothing. Member guests are counted but not priced. `editorChanges` is the rest of the request, as `request_booking_change` takes it.",
+      "An estimate for the guests a change request on a stay already under way would add, before the request is sent. Changes none of the member's bookings. Member guests are counted but not priced. `editorChanges` is the rest of the request, as `request_booking_change` takes it.",
     method: "POST",
     path: "/api/bookings/[id]/change-requests/quote",
     params: bookingIdParamsSchema,
@@ -342,7 +342,7 @@ export const MCP_BOOKING_ACTIONS: readonly McpAction[] = [
     id: "accept_waitlist_offer",
     title: "Accept a waitlist offer",
     summary:
-      "Accepts the place the club has offered on one of the signed-in member's waitlisted bookings. If `requiresPayment` is true the member must pay on the website to keep it; an offer at another lodge becomes a new booking, `newBookingId`.",
+      "Accepts the place the club has offered on one of the signed-in member's waitlisted bookings. If `requiresPayment` is true the member must pay on the website to keep it. An offer at another lodge is refused (409): the member accepts it on the website, which shows the lodge and price.",
     method: "POST",
     path: "/api/bookings/[id]/waitlist-confirm",
     params: bookingIdParamsSchema,
