@@ -1,4 +1,5 @@
 import { Prisma, type MemberMoneyAccount, type MemberMoneyExportDocumentRole } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 import type { LineItem } from "xero-node";
 import { prisma } from "../../prisma";
 import logger from "../../logger";
@@ -222,7 +223,7 @@ async function recordSafely(role: MemberMoneyExportDocumentRole, context: Record
   try {
     await run();
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+    if (isPrismaKnownUniqueConstraintError(error)) {
       logger.info({ ...context, role }, "Another run recorded this refund document's manifest first; the first row stands");
       return;
     }

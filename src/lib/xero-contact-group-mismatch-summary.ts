@@ -66,6 +66,50 @@ export function describeContactGroupMismatchTotal(counts: {
   });
 }
 
+/** What a Refresh re-synced, as the mismatch route's POST reports it. */
+export interface ContactGroupResyncCounts {
+  /** Distinct contacts this Refresh asked Xero for (at most the limit per kind). */
+  requestedContacts: number;
+  /** Contacts Xero returned and whose cache rows were rewritten. */
+  resyncedContacts: number;
+  /** Contacts Xero no longer has; their stale cache rows were removed. */
+  removedContacts: number;
+  /**
+   * Distinct contacts flagged across both full lists, before the per-kind
+   * {@link CONTACT_GROUP_MISMATCH_LIMIT} cap; more than `requestedContacts`
+   * means this Refresh left some contacts un-fetched. Counted like
+   * `requestedContacts`, so members sharing a contact count once. An older
+   * server omits it (blue-green).
+   */
+  flaggedContacts?: number;
+}
+
+/**
+ * The line the group and link mismatch panels show after a Refresh. Past the
+ * limit it counts out of the true total and names the full refresh that
+ * reaches the rest: a genuine mismatch stays flagged in the same order, so
+ * another Refresh re-fetches the same first contacts and never gets past the
+ * limit. The link route sends no `flaggedContacts`, so its line never
+ * carries the hint.
+ * `at` is the club-time the re-sync ran, already formatted.
+ */
+export function describeContactResync(resync: ContactGroupResyncCounts, at: string): string {
+  if (resync.requestedContacts === 0) {
+    return `Nothing was flagged to re-sync; audit recomputed at ${at}.`;
+  }
+  const total = Math.max(resync.flaggedContacts ?? 0, resync.requestedContacts);
+  const removed =
+    resync.removedContacts > 0
+      ? ` (${resync.removedContacts} no longer exist in Xero; their stale cache entries were removed)`
+      : "";
+  const notFetched = total - resync.requestedContacts;
+  const rest =
+    notFetched > 0
+      ? ` The other ${notFetched} were not re-fetched; Refresh Xero Groups on the members list (or Refresh from Xero on Xero member grouping) re-reads every contact's groups.`
+      : "";
+  return `Re-synced ${resync.resyncedContacts} of ${total} flagged contact${total === 1 ? "" : "s"} from Xero at ${at}${removed}.${rest}`;
+}
+
 /** Why an information-only entry is left to a person. */
 export const REVIEW_BY_HAND_REASON =
   "Members to review by hand match no grouping rule, so the re-sync never changes them.";

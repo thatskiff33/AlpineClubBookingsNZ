@@ -125,7 +125,7 @@ function latch() {
     await clean();
     const { encryptCredential } = await import("@/lib/integration-crypto");
     await prisma.serverNzSettings.create({ data: {
-      id: "default", baseUrl: OLD_URL, serverVersion: SERVERNZ_EXPECTED_SERVER_VERSION, otherLodgesOwnedNames: ["Old lodge"],
+      id: "default", baseUrl: OLD_URL, serverVersion: SERVERNZ_EXPECTED_SERVER_VERSION, otherLodgesOwnedLodges: [{ id: "old-central-id", name: "Old lodge" }],
     } });
     await prisma.integrationCredential.create({ data: {
       provider: "servernz", key: "api_key",
@@ -574,7 +574,7 @@ function latch() {
       expect(fetchMock).not.toHaveBeenCalled();
       expect(await prisma.integrationCredential.count({ where: { provider: "servernz", key: "api_key" } })).toBe(0);
       expect(await prisma.serverNzSettings.findUnique({ where: { id: "default" } })).toMatchObject({
-        baseUrl: NEW_URL, serverVersion: null, otherLodgesOwnedNames: null,
+        baseUrl: NEW_URL, serverVersion: null, otherLodgesOwnedLodges: null,
       });
     } finally {
       resumeWriter.release();

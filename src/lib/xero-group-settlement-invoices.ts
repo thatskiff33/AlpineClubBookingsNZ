@@ -14,6 +14,7 @@
  */
 
 import { Invoice } from "xero-node";
+import { storedShortBookingId } from "@/lib/booking-reference";
 import { GroupBookingStatus, type Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
@@ -391,7 +392,7 @@ export async function createXeroInvoiceForGroupSettlement(
     lineItems,
     date: issueDate,
     dueDate,
-    reference: `Group settlement ${settlement.groupBooking.id.slice(0, 8)}`,
+    reference: `Group settlement ${storedShortBookingId(settlement.groupBooking.id)}`,
     status: Invoice.StatusEnum.AUTHORISED,
     lineAmountTypes: taxRendering.lineAmountTypes,
   });

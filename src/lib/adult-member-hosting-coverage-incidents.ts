@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { Prisma, type PrismaClient } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
@@ -329,9 +330,7 @@ export async function openOrUpdateHostingCoverageIncident(
 
 /** Prisma's unique-constraint failure on the one-active-incident index. */
 function isActiveIncidentConflict(err: unknown): boolean {
-  return (
-    err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002"
-  );
+  return isPrismaKnownUniqueConstraintError(err);
 }
 
 /**

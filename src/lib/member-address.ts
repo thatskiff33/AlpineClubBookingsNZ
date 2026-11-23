@@ -26,7 +26,8 @@ const POSTAL_ADDRESS_MATERIAL_FIELDS = [
   "postalPostalCode",
 ] as const;
 
-const MEMBER_ADDRESS_FIELDS = [
+/** All twelve address columns, street then postal: the one list (#5398, #5407). */
+export const MEMBER_ADDRESS_FIELDS = [
   ...STREET_ADDRESS_FIELDS,
   ...POSTAL_ADDRESS_FIELDS,
 ] as const;

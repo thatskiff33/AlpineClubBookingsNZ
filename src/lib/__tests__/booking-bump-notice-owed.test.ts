@@ -1,10 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createAlertCooldownStore } from "./support/alert-cooldown-store";
+import { createOwedNoticeStore } from "./support/owed-notice-store";
 
 /*
  * #5407 item 13: the bump notices' owed markers, their delivery after the
- * bump commits, and the sweep each confirm-pending run makes. The table is an
- * in-memory `AlertCooldown`; the member's email is a double of the email core
+ * bump commits, and the sweep each confirm-pending run makes. Since #5433 the
+ * markers are written to an in-memory `OwedNotice` table, and the sweep cases
+ * that seed an in-memory `AlertCooldown` prove the drain of the markers a
+ * release before #5433 left there (same claim, same event key); the member's
+ * email is a double of the email core
  * that answers `already_recorded` for an event key it has recorded, which is
  * what `recordEmailAttempt` does against the EmailLog primary key
  * (durable-email-idempotency.test.ts). The sweep against PostgreSQL is in
@@ -20,11 +24,15 @@ const mocks = vi.hoisted(() => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 const cooldown = createAlertCooldownStore();
+const owedTable = createOwedNoticeStore();
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     get alertCooldown() {
       return cooldown.delegate;
+    },
+    get owedNotice() {
+      return owedTable.delegate;
     },
     booking: { findUnique: (...args: unknown[]) => mocks.bookingFindUnique(...args) },
     bookingEvent: { findFirst: (...args: unknown[]) => mocks.bookingEventFindFirst(...args) },
@@ -47,12 +55,15 @@ import {
 import {
   BUMP_NOTICE_MAX_AGE_MS,
   BUMP_NOTICE_SWEEP_AFTER_MS,
+  bumpNoticeId,
   bumpNoticeIdempotencyKey,
-  bumpNoticeOwedKey,
+  legacyBumpNoticeKey,
+  legacyBumpMarkerSource,
+  BUMP_NOTICE_DELIVERERS,
   deliverBumpNotice,
-  drainOwedBumpNotices,
   recordBumpNoticesOwed,
 } from "@/lib/booking-bump-notice-owed";
+import { drainOwedNotices } from "@/lib/owed-notice/drain";
 
 const BUMPED_AT = new Date("2026-07-01T00:00:00.000Z");
 const at = (ms: number) => new Date(BUMPED_AT.getTime() + ms);
@@ -76,8 +87,24 @@ function cancelledBooking(overrides: Record<string, unknown> = {}) {
 /** The descriptor `recordBumpNoticesOwed` hands the delivery. */
 const owedAt = (bumpedAt: Date, flagged: boolean) => ({ bookingId: "b1", bumpedAt, flagged });
 
-const memberKey = (flagged = false) => bumpNoticeOwedKey("member", "b1", BUMPED_AT, flagged);
-const officerKey = (flagged = false) => bumpNoticeOwedKey("officers", "b1", BUMPED_AT, flagged);
+/** The legacy `AlertCooldown` keys a release before #5433 wrote. */
+const memberKey = (flagged = false) => legacyBumpNoticeKey("member", "b1", BUMPED_AT, flagged);
+const officerKey = (flagged = false) => legacyBumpNoticeKey("officers", "b1", BUMPED_AT, flagged);
+/** The `OwedNotice` ids this release writes. */
+const memberId = (flagged = false) => bumpNoticeId("member", "b1", BUMPED_AT, flagged);
+const officerId = (flagged = false) => bumpNoticeId("officers", "b1", BUMPED_AT, flagged);
+
+/** Seed a table marker as the bump's transaction writes it. */
+function seedTable(kind: "member" | "officers", flagged: boolean, stampedAt: Date = BUMPED_AT, bumpedAt: Date = BUMPED_AT) {
+  owedTable.seed({
+    id: bumpNoticeId(kind, "b1", bumpedAt, flagged),
+    kind: kind === "member" ? "booking-bump-member" : "booking-bump-officers",
+    subjectId: "b1",
+    eventAt: bumpedAt,
+    variant: flagged ? "g" : "b",
+    stampedAt,
+  });
+}
 
 type StoredEvent = { type: string; reason: string | null; occurredAt: Date };
 type EventWhere = {
@@ -100,6 +127,7 @@ let transportSends = 0;
 beforeEach(() => {
   vi.clearAllMocks();
   cooldown.rows.clear();
+  owedTable.rows.clear();
   transportSends = 0;
   const recorded = new Set<string>();
   const emailCore = async (context: { idempotencyKey: string }) => {
@@ -117,40 +145,41 @@ beforeEach(() => {
 
 describe("recordBumpNoticesOwed", () => {
   it("records both notices, stamped at the bump, and leaves an existing marker as it is", async () => {
-    const tx = { alertCooldown: cooldown.delegate } as never;
+    const tx = { owedNotice: owedTable.delegate } as never;
     await expect(recordBumpNoticesOwed(tx, { bookingId: "b1", bumpedAt: BUMPED_AT, flagged: false })).resolves.toEqual(
       owedAt(BUMPED_AT, false),
     );
 
-    expect([...cooldown.rows]).toEqual([
-      [`booking-bump-member-owed:b1:${BUMPED_AT.getTime()}:b`, BUMPED_AT],
-      [`booking-bump-officers-owed:b1:${BUMPED_AT.getTime()}:b`, BUMPED_AT],
+    expect([...owedTable.rows.values()].map(({ id, stampedAt }) => [id, stampedAt])).toEqual([
+      [`booking-bump-member:b1:${BUMPED_AT.getTime()}:b`, BUMPED_AT],
+      [`booking-bump-officers:b1:${BUMPED_AT.getTime()}:b`, BUMPED_AT],
     ]);
-    expect(cooldown.delegate.upsert).toHaveBeenCalledWith({
-      where: { key: memberKey() },
-      create: { key: memberKey(), lastAlertedAt: BUMPED_AT },
-      update: {},
-    });
-    // Upsert only: a caught unique-key error would abort the transaction.
-    expect(cooldown.delegate.create).not.toHaveBeenCalled();
+    // One insert that skips a marker already there (ON CONFLICT DO NOTHING):
+    // a caught unique-key error would abort the transaction.
+    expect(owedTable.delegate.createMany).toHaveBeenCalledTimes(1);
+    expect(owedTable.delegate.createMany.mock.calls[0]![0]).toMatchObject({ skipDuplicates: true });
+    owedTable.rows.get(memberId())!.stampedAt = at(5);
+    await recordBumpNoticesOwed(tx, { bookingId: "b1", bumpedAt: BUMPED_AT, flagged: false });
+    expect(owedTable.rows.get(memberId())!.stampedAt).toEqual(at(5));
   });
 
   it("takes the bump time once, on the clock, and hands it back for the delivery", async () => {
-    const tx = { alertCooldown: cooldown.delegate } as never;
+    const tx = { owedNotice: owedTable.delegate } as never;
     const owed = await recordBumpNoticesOwed(tx, { bookingId: "b1", flagged: false });
     expect(owed.bumpedAt).toEqual(new Date());
-    expect(cooldown.rows.get(bumpNoticeOwedKey("member", "b1", owed.bumpedAt, false))).toEqual(owed.bumpedAt);
+    expect(owedTable.rows.get(bumpNoticeId("member", "b1", owed.bumpedAt, false))!.stampedAt).toEqual(owed.bumpedAt);
   });
 
   it("keys each bump of a reinstated booking apart", () => {
-    expect(bumpNoticeOwedKey("member", "b1", at(1), false)).not.toBe(memberKey());
-    expect(memberKey(true)).not.toBe(memberKey(false));
+    expect(bumpNoticeId("member", "b1", at(1), false)).not.toBe(memberId());
+    expect(memberId(true)).not.toBe(memberId(false));
+    expect(memberId()).not.toBe(officerId());
   });
 });
 
 describe("deliverBumpNotice, right after the commit", () => {
   it("sends the member's email with the bump's event key and clears its marker", async () => {
-    cooldown.rows.set(memberKey(), BUMPED_AT);
+    seedTable("member", false);
 
     await deliverBumpNotice("member", cancelledBooking() as never, owedAt(BUMPED_AT, false));
 
@@ -165,46 +194,46 @@ describe("deliverBumpNotice, right after the commit", () => {
       true,
     );
     expect(bumpNoticeIdempotencyKey("b1", BUMPED_AT)).toBe(`b1:${BUMPED_AT.getTime()}`);
-    expect(cooldown.rows.size).toBe(0);
+    expect(owedTable.rows.size).toBe(0);
   });
 
   it("sends the guests-cancelled email for a flagged booking", async () => {
-    cooldown.rows.set(memberKey(true), BUMPED_AT);
+    seedTable("member", true);
 
     await deliverBumpNotice("member", cancelledBooking() as never, owedAt(BUMPED_AT, true));
 
     expect(mocks.sendGuestsCancelled).toHaveBeenCalledTimes(1);
     expect(mocks.sendBumped).not.toHaveBeenCalled();
-    expect(cooldown.rows.size).toBe(0);
+    expect(owedTable.rows.size).toBe(0);
   });
 
   it("leaves the marker, claimed, when the send throws", async () => {
-    cooldown.rows.set(officerKey(), BUMPED_AT);
+    seedTable("officers", false);
     mocks.alertOfficers.mockResolvedValue("threw");
 
     await deliverBumpNotice("officers", cancelledBooking() as never, owedAt(BUMPED_AT, false));
 
     expect(mocks.alertOfficers).toHaveBeenCalledTimes(1);
     // Stamped at the claim, so the sweep waits from this attempt.
-    expect(cooldown.rows.get(officerKey())!.getTime()).toBeGreaterThan(BUMPED_AT.getTime());
+    expect(owedTable.rows.get(officerId())!.stampedAt.getTime()).toBeGreaterThan(BUMPED_AT.getTime());
   });
 
   // INV-SSOT-002: the claim's bound is the stamp the transaction wrote, never
   // the clock or the run's start.
   it("claims with the stamp it is handed when that differs from the clock", async () => {
     const stampedAt = new Date(Date.now() - 90 * 60 * 1000);
-    cooldown.rows.set(bumpNoticeOwedKey("officers", "b1", stampedAt, false), stampedAt);
+    seedTable("officers", false, stampedAt, stampedAt);
 
     await deliverBumpNotice("officers", cancelledBooking() as never, owedAt(stampedAt, false));
 
     expect(mocks.alertOfficers).toHaveBeenCalledTimes(1);
-    expect(cooldown.rows.size).toBe(0);
+    expect(owedTable.rows.size).toBe(0);
   });
 
   it("sends nothing when a sweep already holds the marker", async () => {
     // A sweep claimed it after the bump; the delivery runs later still, so a
     // bound taken from the clock rather than the stamp would win it back.
-    cooldown.rows.set(officerKey(), at(5));
+    seedTable("officers", false, at(5));
     vi.setSystemTime(at(60_000));
     try {
       await deliverBumpNotice("officers", cancelledBooking() as never, owedAt(BUMPED_AT, false));
@@ -213,25 +242,25 @@ describe("deliverBumpNotice, right after the commit", () => {
     }
 
     expect(mocks.alertOfficers).not.toHaveBeenCalled();
-    expect(cooldown.rows.get(officerKey())).toEqual(at(5));
+    expect(owedTable.rows.get(officerId())!.stampedAt).toEqual(at(5));
   });
 
   it("sends nothing, and never throws, when the claim cannot be written", async () => {
-    cooldown.rows.set(officerKey(), BUMPED_AT);
-    cooldown.delegate.updateMany.mockRejectedValueOnce(new Error("db down"));
+    seedTable("officers", false);
+    owedTable.delegate.updateMany.mockRejectedValueOnce(new Error("db down"));
 
     await expect(deliverBumpNotice("officers", cancelledBooking() as never, owedAt(BUMPED_AT, false))).resolves.toBeUndefined();
 
     expect(mocks.alertOfficers).not.toHaveBeenCalled();
-    expect(cooldown.rows.get(officerKey())).toEqual(BUMPED_AT);
+    expect(owedTable.rows.get(officerId())!.stampedAt).toEqual(BUMPED_AT);
   });
 });
 
-describe("drainOwedBumpNotices, the sweep", () => {
+describe("drainOwedNotices, the sweep of the legacy AlertCooldown bump markers", () => {
   it("sends an owed member email with the bump's event key, then clears it", async () => {
     cooldown.rows.set(memberKey(), BUMPED_AT);
 
-    const result = await drainOwedBumpNotices(DUE);
+    const result = await drainOwedNotices(DUE);
 
     expect(result).toEqual({ checked: 1, delivered: 1, cleared: 0, expired: 0 });
     expect(mocks.sendBumped.mock.calls[0]![0]).toEqual(
@@ -244,9 +273,10 @@ describe("drainOwedBumpNotices, the sweep", () => {
   it("sends an owed officers' alert with the booking it read again", async () => {
     cooldown.rows.set(officerKey(true), BUMPED_AT);
 
-    await drainOwedBumpNotices(DUE);
+    await drainOwedNotices(DUE);
 
-    expect(mocks.alertOfficers).toHaveBeenCalledWith(cancelledBooking(), true);
+    // #5433 review: with the job running the sweep, for its logs.
+    expect(mocks.alertOfficers).toHaveBeenCalledWith(cancelledBooking(), true, "owed-notice-sweep");
     expect(cooldown.rows.size).toBe(0);
   });
 
@@ -254,11 +284,11 @@ describe("drainOwedBumpNotices, the sweep", () => {
     cooldown.rows.set(memberKey(), BUMPED_AT);
     // The first sweep sends, then cannot clear its marker (as if it crashed).
     cooldown.delegate.deleteMany.mockRejectedValueOnce(new Error("connection lost"));
-    await drainOwedBumpNotices(DUE);
+    await drainOwedNotices(DUE);
     expect(transportSends).toBe(1);
     expect(cooldown.rows.has(memberKey())).toBe(true);
 
-    const second = await drainOwedBumpNotices(at(2 * BUMP_NOTICE_SWEEP_AFTER_MS + 1));
+    const second = await drainOwedNotices(at(2 * BUMP_NOTICE_SWEEP_AFTER_MS + 1));
 
     expect(second.delivered).toBe(1);
     expect(mocks.sendBumped).toHaveBeenCalledTimes(2);
@@ -269,7 +299,7 @@ describe("drainOwedBumpNotices, the sweep", () => {
   it("waits until the marker's last attempt is a full wait old", async () => {
     cooldown.rows.set(officerKey(), BUMPED_AT);
 
-    await expect(drainOwedBumpNotices(at(BUMP_NOTICE_SWEEP_AFTER_MS - 1))).resolves.toEqual({
+    await expect(drainOwedNotices(at(BUMP_NOTICE_SWEEP_AFTER_MS - 1))).resolves.toEqual({
       checked: 0,
       delivered: 0,
       cleared: 0,
@@ -279,10 +309,10 @@ describe("drainOwedBumpNotices, the sweep", () => {
 
     // A send that throws waits a full period again from that attempt.
     mocks.alertOfficers.mockResolvedValue("threw");
-    await drainOwedBumpNotices(DUE);
-    await drainOwedBumpNotices(at(2 * BUMP_NOTICE_SWEEP_AFTER_MS - 1));
+    await drainOwedNotices(DUE);
+    await drainOwedNotices(at(2 * BUMP_NOTICE_SWEEP_AFTER_MS - 1));
     expect(mocks.alertOfficers).toHaveBeenCalledTimes(1);
-    await drainOwedBumpNotices(at(2 * BUMP_NOTICE_SWEEP_AFTER_MS));
+    await drainOwedNotices(at(2 * BUMP_NOTICE_SWEEP_AFTER_MS));
     expect(mocks.alertOfficers).toHaveBeenCalledTimes(2);
     expect(cooldown.rows.has(officerKey())).toBe(true);
   });
@@ -291,7 +321,7 @@ describe("drainOwedBumpNotices, the sweep", () => {
     const tooOld = at(BUMP_NOTICE_MAX_AGE_MS + 1);
     cooldown.rows.set(officerKey(), at(BUMP_NOTICE_MAX_AGE_MS - BUMP_NOTICE_SWEEP_AFTER_MS));
 
-    const result = await drainOwedBumpNotices(tooOld);
+    const result = await drainOwedNotices(tooOld);
 
     expect(result).toEqual({ checked: 1, delivered: 0, cleared: 0, expired: 1 });
     expect(mocks.alertOfficers).not.toHaveBeenCalled();
@@ -306,7 +336,7 @@ describe("drainOwedBumpNotices, the sweep", () => {
   it("clears a marker it cannot read, sending nothing", async () => {
     cooldown.rows.set("booking-bump-member-owed:b1:not-a-time:b", BUMPED_AT);
 
-    const result = await drainOwedBumpNotices(DUE);
+    const result = await drainOwedNotices(DUE);
 
     expect(result.expired).toBe(1);
     expect(mocks.sendBumped).not.toHaveBeenCalled();
@@ -321,7 +351,7 @@ describe("drainOwedBumpNotices, the sweep", () => {
     cooldown.rows.set(officerKey(), BUMPED_AT);
     mocks.bookingFindUnique.mockResolvedValue(booking);
 
-    const result = await drainOwedBumpNotices(DUE);
+    const result = await drainOwedNotices(DUE);
 
     expect(result).toEqual({ checked: 2, delivered: 0, cleared: 2, expired: 0 });
     expect(mocks.sendBumped).not.toHaveBeenCalled();
@@ -337,7 +367,7 @@ describe("drainOwedBumpNotices, the sweep", () => {
       cooldown.rows.set(memberKey(), BUMPED_AT);
       mocks.bookingEventFindFirst.mockResolvedValue({ type });
 
-      const result = await drainOwedBumpNotices(DUE);
+      const result = await drainOwedNotices(DUE);
 
       expect(result).toEqual({ checked: 1, delivered: 0, cleared: 1, expired: 0 });
       expect(mocks.sendBumped).not.toHaveBeenCalled();
@@ -361,7 +391,7 @@ describe("drainOwedBumpNotices, the sweep", () => {
   it("still sends when no later event moved the booking on", async () => {
     cooldown.rows.set(officerKey(), BUMPED_AT);
 
-    await drainOwedBumpNotices(DUE);
+    await drainOwedNotices(DUE);
 
     expect(mocks.bookingEventFindFirst).toHaveBeenCalledTimes(1);
     expect(mocks.alertOfficers).toHaveBeenCalledTimes(1);
@@ -373,16 +403,16 @@ describe("drainOwedBumpNotices, the sweep", () => {
     cooldown.rows.set(officerKey(), BUMPED_AT);
     mocks.alertOfficers.mockResolvedValue("unreached");
 
-    const result = await drainOwedBumpNotices(DUE);
+    const result = await drainOwedNotices(DUE);
 
     expect(result.delivered).toBe(0);
     expect(cooldown.rows.has(officerKey())).toBe(true);
     // Not offered again an hour later, nor until a day after that attempt.
-    await drainOwedBumpNotices(at(2 * BUMP_NOTICE_SWEEP_AFTER_MS));
-    await drainOwedBumpNotices(new Date(DUE.getTime() + ALERT_NOBODY_ELIGIBLE_RETRY_MS - 1));
+    await drainOwedNotices(at(2 * BUMP_NOTICE_SWEEP_AFTER_MS));
+    await drainOwedNotices(new Date(DUE.getTime() + ALERT_NOBODY_ELIGIBLE_RETRY_MS - 1));
     expect(mocks.alertOfficers).toHaveBeenCalledTimes(1);
     mocks.alertOfficers.mockResolvedValue("settled");
-    await drainOwedBumpNotices(new Date(DUE.getTime() + ALERT_NOBODY_ELIGIBLE_RETRY_MS));
+    await drainOwedNotices(new Date(DUE.getTime() + ALERT_NOBODY_ELIGIBLE_RETRY_MS));
     expect(mocks.alertOfficers).toHaveBeenCalledTimes(2);
     expect(cooldown.rows.size).toBe(0);
   });
@@ -391,8 +421,8 @@ describe("drainOwedBumpNotices, the sweep", () => {
     cooldown.rows.set(memberKey(), BUMPED_AT);
     mocks.sendBumped.mockRejectedValueOnce(new Error("SMTP down"));
 
-    await drainOwedBumpNotices(DUE);
-    await drainOwedBumpNotices(at(2 * BUMP_NOTICE_SWEEP_AFTER_MS));
+    await drainOwedNotices(DUE);
+    await drainOwedNotices(at(2 * BUMP_NOTICE_SWEEP_AFTER_MS));
 
     expect(mocks.sendBumped).toHaveBeenCalledTimes(2);
     expect(cooldown.rows.size).toBe(0);
@@ -412,7 +442,7 @@ describe("drainOwedBumpNotices, the sweep", () => {
       return events.find((event) => matchesEventWhere(event, where)) ?? null;
     });
 
-    const result = await drainOwedBumpNotices(DUE);
+    const result = await drainOwedNotices(DUE);
 
     expect(result.delivered).toBe(1);
     expect(mocks.sendBumped).toHaveBeenCalledTimes(1);
@@ -420,7 +450,7 @@ describe("drainOwedBumpNotices, the sweep", () => {
     for (const reason of [null, "Cancelled by the member"]) {
       cooldown.rows.set(memberKey(), BUMPED_AT);
       events.push({ type: "CANCELLED", reason, occurredAt: at(120_000) });
-      await expect(drainOwedBumpNotices(DUE)).resolves.toMatchObject({ cleared: 1 });
+      await expect(drainOwedNotices(DUE)).resolves.toMatchObject({ cleared: 1 });
       events.pop();
     }
     expect(mocks.sendBumped).toHaveBeenCalledTimes(1);
@@ -429,7 +459,7 @@ describe("drainOwedBumpNotices, the sweep", () => {
   it("sends the officers' alert once when two runs sweep at the same moment", async () => {
     cooldown.rows.set(officerKey(), BUMPED_AT);
 
-    const results = await Promise.all([drainOwedBumpNotices(DUE), drainOwedBumpNotices(DUE)]);
+    const results = await Promise.all([drainOwedNotices(DUE), drainOwedNotices(DUE)]);
 
     expect(mocks.alertOfficers).toHaveBeenCalledTimes(1);
     expect(results.map((result) => result.delivered).sort()).toEqual([0, 1]);
@@ -438,10 +468,10 @@ describe("drainOwedBumpNotices, the sweep", () => {
 
   it("carries on past a marker that fails, and never throws", async () => {
     cooldown.rows.set(officerKey(), BUMPED_AT);
-    cooldown.rows.set(bumpNoticeOwedKey("officers", "b2", BUMPED_AT, false), at(1));
+    cooldown.rows.set(legacyBumpNoticeKey("officers", "b2", BUMPED_AT, false), at(1));
     mocks.bookingFindUnique.mockRejectedValueOnce(new Error("db down"));
 
-    const result = await drainOwedBumpNotices(at(BUMP_NOTICE_SWEEP_AFTER_MS + 1));
+    const result = await drainOwedNotices(at(BUMP_NOTICE_SWEEP_AFTER_MS + 1));
 
     expect(result).toEqual({ checked: 2, delivered: 1, cleared: 0, expired: 0 });
     expect(mocks.alertOfficers).toHaveBeenCalledTimes(1);
@@ -449,11 +479,21 @@ describe("drainOwedBumpNotices, the sweep", () => {
     expect(cooldown.rows.has(officerKey())).toBe(true);
   });
 
+  // #5433 review (INV-SSOT-002): the legacy source lists by the bound the drain hands it, not one of its own.
+  it("lists legacy markers by the due bound it is given", async () => {
+    cooldown.rows.set(officerKey(), BUMPED_AT);
+    const deliverer = BUMP_NOTICE_DELIVERERS[1]!;
+    const list = (dueBefore: Date) => legacyBumpMarkerSource.listDue(deliverer, { dueBefore, now: at(10 * BUMP_NOTICE_SWEEP_AFTER_MS) });
+
+    await expect(list(at(-1))).resolves.toEqual([]);
+    await expect(list(BUMPED_AT)).resolves.toMatchObject([{ key: officerKey() }]);
+  });
+
   it("answers zero, and never throws, when the markers cannot be read", async () => {
     // One failed read per notice kind.
     cooldown.delegate.findMany.mockRejectedValueOnce(new Error("db down")).mockRejectedValueOnce(new Error("db down"));
 
-    await expect(drainOwedBumpNotices(DUE)).resolves.toEqual({ checked: 0, delivered: 0, cleared: 0, expired: 0 });
+    await expect(drainOwedNotices(DUE)).resolves.toEqual({ checked: 0, delivered: 0, cleared: 0, expired: 0 });
     expect(cooldown.delegate.findMany).toHaveBeenCalledTimes(2);
   });
 });

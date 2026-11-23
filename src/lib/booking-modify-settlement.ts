@@ -33,6 +33,7 @@ import { giveBackPaidReductionCredit } from "@/lib/booking-modify-credit-give-ba
 import type { PaidReductionCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
 import { NO_FOLDED_WAITING_ASKS, type FoldedWaitingAsks } from "@/lib/unpaid-ask-offset-marker";
 import { getNonMemberHoldPolicy } from "@/lib/cancellation";
+import { nonMemberHoldEnd } from "@/lib/non-member-hold-end";
 import {
   queueSupersededPrimaryIntentCancellations,
   type SupersededPrimaryPaymentIntent,
@@ -548,9 +549,7 @@ export async function applyLifecycleTransitions(
     });
 
     if (holdDecision.shouldBePending) {
-      newNonMemberHoldUntil = new Date(
-        newCheckIn.getTime() - holdPolicy.holdDays * 24 * 60 * 60 * 1000,
-      );
+      newNonMemberHoldUntil = nonMemberHoldEnd(newCheckIn, holdPolicy.holdDays);
     } else {
       newNonMemberHoldUntil = null;
       if (booking.status === "PENDING") {

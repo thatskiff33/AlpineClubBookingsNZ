@@ -2,6 +2,7 @@ import { releaseSavedCardChargeClaim, runSavedCardClaimRelease } from "@/lib/sav
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { handOffSupersededCaptureAfterRefusal } from "@/lib/superseded-paid-intent";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
@@ -129,14 +130,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
     }
 
-    const body = await request.json();
-    const parsed = ChargeSavedMethodSchema.safeParse(body);
+    const jsonBody = await parseJsonRequestBody(request);
+    if (!jsonBody.ok) return jsonBody.response;
+    const parsed = ChargeSavedMethodSchema.safeParse(jsonBody.body);
 
     if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid input", details: parsed.error.flatten() },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
     }
 
     const { bookingId } = parsed.data;

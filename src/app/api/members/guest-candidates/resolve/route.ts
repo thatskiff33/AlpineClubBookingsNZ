@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import logger from "@/lib/logger";
 import {
@@ -13,6 +12,9 @@ import {
 } from "@/lib/member-guest-probe-guard";
 import { applyMemberScopedRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { requireActiveSession } from "@/lib/session-guards";
+import { memberGuestResolveBodySchema } from "@/lib/member-guest-find";
+import { connectionJson } from "@/lib/mcp-connection-request";
+import { MEMBER_GUEST_CANDIDATES_CONNECTION_SHAPE } from "@/lib/connection-shapes";
 
 /**
  * `POST /api/members/guest-candidates/resolve` — MG3's exact-email member
@@ -37,11 +39,13 @@ import { requireActiveSession } from "@/lib/session-guards";
  * several a populated answer runs downstream — and the uniform envelope would be
  * defeated by a stopwatch. It narrows the channel rather than closing it, and
  * says so where it is defined.
+ *
+ * Also the AI app action `find_member_by_email` (ALP-795), run as a read: it
+ * changes no member's data, writing only its own audit row and its rate-limit
+ * counters. The per-member limits are shared
+ * with the member's browser, the address backstop counts per connection, and
+ * a connection is sent the candidate fields only.
  */
-const resolveSchema = z.object({
-  email: z.string().trim().min(1).max(320).email(),
-});
-
 export async function POST(request: NextRequest) {
   const startedAt = startMemberGuestRefusalClock();
 
@@ -63,7 +67,7 @@ export async function POST(request: NextRequest) {
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
 
-  const parsed = resolveSchema.safeParse(json.body);
+  const parsed = memberGuestResolveBodySchema.safeParse(json.body);
   const attemptedEmail =
     typeof (json.body as { email?: unknown } | null)?.email === "string"
       ? ((json.body as { email: string }).email.trim().slice(0, 320))
@@ -128,7 +132,7 @@ export async function POST(request: NextRequest) {
     });
 
     await equaliseMemberGuestRefusalTiming(startedAt);
-    return NextResponse.json(result);
+    return connectionJson(request, result, MEMBER_GUEST_CANDIDATES_CONNECTION_SHAPE);
   } catch (err) {
     logger.error({ err }, "Failed to resolve member-guest candidates by email");
     // Even the failure keeps the envelope: a 500 on the "member exists" path and

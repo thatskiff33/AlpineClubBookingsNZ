@@ -443,4 +443,43 @@ describe("POST refresh from the stored config", () => {
     );
     expect(mocks.upsert).toHaveBeenCalledTimes(1);
   });
+
+  // #5407 item 28: POST reads its optional body through the shared optional
+  // reader, as PUT and PATCH read theirs through the required one, so the file
+  // no longer parses a body by hand. An empty or whitespace-only body refreshes
+  // from the stored config; a body that is not JSON keeps this route's own
+  // invalid-JSON wording and neither fetches nor writes.
+  it.each([
+    ["an empty body", ""],
+    ["a whitespace-only body", " \n"],
+  ])("refreshes from the stored config for %s", async (_label, raw) => {
+    mocks.findUnique.mockResolvedValue(storedRow({}));
+    mocks.fetchWhakapapaCurlData.mockResolvedValue(cachedReport());
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/admin/mountain-conditions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: raw,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers a body that is not JSON with its own invalid-JSON 400 and neither fetches nor writes", async () => {
+    const response = await POST(
+      new NextRequest("http://localhost/api/admin/mountain-conditions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{not json",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe(JSON.stringify({ error: "Invalid JSON" }));
+    expect(mocks.fetchWhakapapaCurlData).not.toHaveBeenCalled();
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
 });

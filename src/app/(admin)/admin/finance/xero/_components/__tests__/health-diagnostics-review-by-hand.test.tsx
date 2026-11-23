@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest"
-import { render, screen, within } from "@/lib/__tests__/support/club-time-render"
+import { fireEvent, render, screen, within } from "@/lib/__tests__/support/club-time-render"
 import type { ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { adminHref } from "@/lib/admin-hubs"
+import { CONTACT_GROUP_MISMATCH_LIMIT } from "@/lib/xero-contact-group-mismatch-summary"
 import { HealthAndDiagnosticsPanels } from "../health-diagnostics-panel"
 import { xeroSectionId, type ContactGroupMismatchResponse } from "../types"
 
@@ -137,5 +138,59 @@ describe("an information-only contact-group entry (#5234)", () => {
     expect(
       panel.getByText("Remove the contact from group-adults in Xero, or add a grouping rule that covers this member."),
     ).toBeInTheDocument()
+  })
+})
+
+// A Refresh re-syncs at most CONTACT_GROUP_MISMATCH_LIMIT flagged contacts.
+// With 340 flagged it once read "Re-synced 200 of 200", telling the officer
+// everything was done when 140 were never fetched.
+describe("the contact-group Refresh line", () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  async function refreshWith(resync: NonNullable<ContactGroupMismatchResponse["resync"]>) {
+    mocks.postJson.mockResolvedValue({ ...groupMismatches, resync })
+    renderPanel()
+    await screen.findByText("Ridge Outdoor Trust")
+    const panel = within(document.getElementById(xeroSectionId("contactGroupMismatches")) as HTMLElement)
+    fireEvent.click(panel.getByRole("button", { name: "Refresh" }))
+    return panel.findByText(/^Re-synced /)
+  }
+
+  it("counts out of the true total and names the full refresh when the limit left contacts out", async () => {
+    const line = await refreshWith({
+      requestedContacts: CONTACT_GROUP_MISMATCH_LIMIT,
+      resyncedContacts: CONTACT_GROUP_MISMATCH_LIMIT,
+      removedContacts: 0,
+      flaggedContacts: 340,
+      resyncedAt: "2026-07-01T00:00:00.000Z",
+    })
+    expect(line).toHaveTextContent(
+      /^Re-synced 200 of 340 flagged contacts from Xero at .+\. The other 140 were not re-fetched; Refresh Xero Groups on the members list \(or Refresh from Xero on Xero member grouping\) re-reads every contact's groups\.$/
+    )
+  })
+
+  it("is unchanged at or under the limit", async () => {
+    const line = await refreshWith({
+      requestedContacts: CONTACT_GROUP_MISMATCH_LIMIT,
+      resyncedContacts: CONTACT_GROUP_MISMATCH_LIMIT,
+      removedContacts: 0,
+      flaggedContacts: CONTACT_GROUP_MISMATCH_LIMIT,
+      resyncedAt: "2026-07-01T00:00:00.000Z",
+    })
+    expect(line).toHaveTextContent(/^Re-synced 200 of 200 flagged contacts from Xero at [^.]+\.$/)
+    expect(line).not.toHaveTextContent("were not re-fetched")
+  })
+
+  // Blue-green: a server from before this fix sends no flaggedContacts.
+  it("keeps the old line when an older server answers", async () => {
+    const line = await refreshWith({
+      requestedContacts: 3,
+      resyncedContacts: 2,
+      removedContacts: 1,
+      resyncedAt: "2026-07-01T00:00:00.000Z",
+    })
+    expect(line).toHaveTextContent(
+      /^Re-synced 2 of 3 flagged contacts from Xero at .+ \(1 no longer exist in Xero; their stale cache entries were removed\)\.$/,
+    )
   })
 })

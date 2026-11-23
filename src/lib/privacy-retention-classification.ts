@@ -84,6 +84,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   RateLimitCounter: "personal",
   LoginThrottle: "personal",
   AlertCooldown: "personal",
+  OwedNotice: "personal",
   PaymentRecoveryOperation: "personal",
   PromoCode: "non-personal",
   PromoRedemption: "personal",

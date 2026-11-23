@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { parseJsonRequestBody } from "@/lib/api-json"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
@@ -32,7 +33,9 @@ export async function PUT(
   });
   if (!guard.ok) return guard.response;
   const { id } = await params
-  const body = await req.json()
+  const jsonBody = await parseJsonRequestBody(req)
+  if (!jsonBody.ok) return jsonBody.response
+  const body = jsonBody.body
   const parsed = updateSchema.safeParse(body)
   if (!parsed.success) {
     return NextResponse.json(

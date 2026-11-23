@@ -33,7 +33,7 @@ import {
 } from "../email-message-notes";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
-import { adminAlertSendOutcome, type AdminAlertSendOutcome, type AdminAlertSendResult } from "./admin-alert-send-result";
+import { adminAlertSendOutcome, type AdminAlertRecipientsResult, type AdminAlertSendOutcome, type AdminAlertSendResult } from "./admin-alert-send-result";
 import { applyXeroOrgShortCode } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { stampXeroOrganisation } from "./admin-alert-xero-links";
@@ -378,28 +378,34 @@ export async function sendAdminManualSettlementConflictAlert(data: {
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}${adminHref("payments")}`;
-  const xeroInvoiceUrl = await stampXeroOrganisation(data.xeroInvoiceUrl);
 
+  // #5407: built only once someone can receive it, so the live Xero read in
+  // the organisation stamp is not made for an alert switched off.
   await sendToAdmins({
-    subject: `Cash settlement vs Xero payment — reconcile: ${data.memberName}`,
-    html: await renderEmailHtml(() => adminManualSettlementConflictTemplate({
-      ...data,
-      xeroInvoiceUrl,
-      reviewUrl,
-    }, format)),
     templateName: "admin-manual-settlement-conflict",
-    templateData: {
-      memberName: data.memberName,
-      checkIn: emailCalendarDay(data.checkIn),
-      checkOut: emailCalendarDay(data.checkOut),
-      amount: formatMoneyCents(data.amountCents, format),
-      bookingId: data.bookingId,
-      status: data.bookingStatus,
-      xeroInvoiceNumber: data.xeroInvoiceNumber ?? "",
-      xeroObjectUrl: xeroInvoiceUrl ?? "",
-      reviewUrl,
-    },
     preferenceKey: "adminPaymentFailure",
+    build: async () => {
+      const xeroInvoiceUrl = await stampXeroOrganisation(data.xeroInvoiceUrl);
+      return {
+        subject: `Cash settlement vs Xero payment — reconcile: ${data.memberName}`,
+        html: await renderEmailHtml(() => adminManualSettlementConflictTemplate({
+          ...data,
+          xeroInvoiceUrl,
+          reviewUrl,
+        }, format)),
+        templateData: {
+          memberName: data.memberName,
+          checkIn: emailCalendarDay(data.checkIn),
+          checkOut: emailCalendarDay(data.checkOut),
+          amount: formatMoneyCents(data.amountCents, format),
+          bookingId: data.bookingId,
+          status: data.bookingStatus,
+          xeroInvoiceNumber: data.xeroInvoiceNumber ?? "",
+          xeroObjectUrl: xeroInvoiceUrl ?? "",
+          reviewUrl,
+        },
+      };
+    },
   });
 }
 
@@ -487,47 +493,54 @@ export async function sendAdminXeroRepeatedFailureAlert(data: {
   xeroObjectUrl: string | null;
   latestErrorMessage: string | null;
   timestamp: Date;
-}) {
-  // #2314: the operation's stored `xeroObjectUrl` is organisation-agnostic, so
-  // the club's organisation is stamped on here, at send time.
-  const xeroObjectUrl = await stampXeroOrganisation(data.xeroObjectUrl);
-  const stamped = { ...data, xeroObjectUrl };
-
-  await sendToAdmins({
-    subject: data.subject,
-    html: await renderEmailHtml(() => adminXeroRepeatedFailureTemplate(stamped)),
+}): Promise<AdminAlertRecipientsResult> {
+  // #5407: built only once someone can receive it, so the live Xero read in
+  // the organisation stamp is not made for an alert switched off or with
+  // nobody opted in. The wider result carries `failedBeforeLogged`, which the
+  // caller's claim settles on.
+  return sendToAdmins({
     templateName: "admin-xero-repeated-failure",
-    templateData: {
-      ...stamped,
-      localModel: data.localModel ?? "",
-      localId: data.localId ?? "",
-      latestErrorMessage: data.latestErrorMessage ?? "",
-      // #2268: pre-composed optional lines. Every one of these five values is
-      // nullable, and the flat body has no conditional syntax, so each whole
-      // line is built here or omitted entirely — the body used to carry
-      // "OR Unavailable" and bare unclickable "Open local record" labels.
-      localRecordNote: composeOptionalEmailLine(
-        "Local Record",
-        [data.localModel, data.localId].filter(Boolean).join(" "),
-        { trailing: "\n" },
-      ),
-      latestErrorNote: composeOptionalEmailLine(
-        "Latest Error",
-        data.latestErrorMessage,
-        { trailing: "\n" },
-      ),
-      xeroLinksNote: composeOptionalEmailLine(
-        null,
-        composeOptionalEmailLine("Open local record", data.localUrl, {
-          trailing: "\n",
-        }) +
-          composeOptionalEmailLine("Open Xero object", xeroObjectUrl, {
-            trailing: "\n",
-          }),
-      ),
-      timestamp: data.timestamp.toISOString(),
-    },
     preferenceKey: "adminXeroSyncError",
+    build: async () => {
+      // #2314: the operation's stored `xeroObjectUrl` is organisation-agnostic, so
+      // the club's organisation is stamped on here, at send time.
+      const xeroObjectUrl = await stampXeroOrganisation(data.xeroObjectUrl);
+      const stamped = { ...data, xeroObjectUrl };
+      return {
+        subject: data.subject,
+        html: await renderEmailHtml(() => adminXeroRepeatedFailureTemplate(stamped)),
+        templateData: {
+          ...stamped,
+          localModel: data.localModel ?? "",
+          localId: data.localId ?? "",
+          latestErrorMessage: data.latestErrorMessage ?? "",
+          // #2268: pre-composed optional lines. Every one of these five values is
+          // nullable, and the flat body has no conditional syntax, so each whole
+          // line is built here or omitted entirely — the body used to carry
+          // "OR Unavailable" and bare unclickable "Open local record" labels.
+          localRecordNote: composeOptionalEmailLine(
+            "Local Record",
+            [data.localModel, data.localId].filter(Boolean).join(" "),
+            { trailing: "\n" },
+          ),
+          latestErrorNote: composeOptionalEmailLine(
+            "Latest Error",
+            data.latestErrorMessage,
+            { trailing: "\n" },
+          ),
+          xeroLinksNote: composeOptionalEmailLine(
+            null,
+            composeOptionalEmailLine("Open local record", data.localUrl, {
+              trailing: "\n",
+            }) +
+              composeOptionalEmailLine("Open Xero object", xeroObjectUrl, {
+                trailing: "\n",
+              }),
+          ),
+          timestamp: data.timestamp.toISOString(),
+        },
+      };
+    },
   });
 }
 
@@ -568,25 +581,30 @@ async function stampXeroOrganisationOnReport(
 export async function sendAdminXeroReconciliationReportAlert(
   reportInput: XeroReconciliationReportEmail,
 ) {
-  const report = await stampXeroOrganisationOnReport(reportInput);
-  const subject =
-    report.summary.issueCategoryCount === 0
-      ? "Xero Reconciliation Report - clean"
-      : `Xero Reconciliation Report - action needed: ${report.summary.issueCategoryCount} categor${report.summary.issueCategoryCount === 1 ? "y" : "ies"}, ${report.summary.issueTotalCount} item${report.summary.issueTotalCount === 1 ? "" : "s"}`;
-
+  // #5407: built only once someone can receive it (see the repeated-failure
+  // alert above), so a switched-off report makes no live Xero read.
   await sendToAdmins({
-    subject,
-    html: await renderEmailHtml(() => adminXeroReconciliationReportTemplate(report)),
     templateName: "admin-xero-reconciliation-report",
-    templateData: {
-      generatedAt: report.generatedAt.toISOString(),
-      lookbackHours: report.lookbackHours,
-      stalePendingMinutes: report.stalePendingMinutes,
-      issueCategoryCount: report.summary.issueCategoryCount,
-      issueTotalCount: report.summary.issueTotalCount,
-      count: report.summary.issueTotalCount,
-    },
     preferenceKey: "adminXeroSyncError",
+    build: async () => {
+      const report = await stampXeroOrganisationOnReport(reportInput);
+      const subject =
+        report.summary.issueCategoryCount === 0
+          ? "Xero Reconciliation Report - clean"
+          : `Xero Reconciliation Report - action needed: ${report.summary.issueCategoryCount} categor${report.summary.issueCategoryCount === 1 ? "y" : "ies"}, ${report.summary.issueTotalCount} item${report.summary.issueTotalCount === 1 ? "" : "s"}`;
+      return {
+        subject,
+        html: await renderEmailHtml(() => adminXeroReconciliationReportTemplate(report)),
+        templateData: {
+          generatedAt: report.generatedAt.toISOString(),
+          lookbackHours: report.lookbackHours,
+          stalePendingMinutes: report.stalePendingMinutes,
+          issueCategoryCount: report.summary.issueCategoryCount,
+          issueTotalCount: report.summary.issueTotalCount,
+          count: report.summary.issueTotalCount,
+        },
+      };
+    },
   });
 }
 
@@ -602,32 +620,37 @@ export async function sendAdminCreditSyncDriftAlert(
   report: CreditSyncDriftReportEmail,
   format: ClubFormat,
 ) {
-  const shortCode = await getXeroOrgShortCode({ confirmLive: true });
-  const stampedReport: CreditSyncDriftReportEmail = {
-    ...report,
-    drifts: report.drifts.map((drift) => ({
-      ...drift,
-      invoiceUrl: applyXeroOrgShortCode(drift.invoiceUrl, { shortCode }),
-    })),
-  };
-
-  const driftCount = stampedReport.drifts.length;
-  const subject = `Xero Credit Sync Drift — ${driftCount} booking${driftCount === 1 ? "" : "s"}, ${formatMoneyCents(stampedReport.totalDriftCents, format)} — ${CLUB_BOOKINGS_NAME}`;
-
+  // #5407: built only once someone can receive it (see the repeated-failure
+  // alert above), so a switched-off warning makes no live Xero read.
   await sendToAdmins({
-    subject,
-    html: await renderEmailHtml(() => adminCreditSyncDriftTemplate(stampedReport, format)),
     templateName: "admin-credit-sync-drift",
-    templateData: {
-      generatedAt: stampedReport.generatedAt.toISOString(),
-      scannedBookings: String(stampedReport.scannedBookings),
-      checkedBookings: String(stampedReport.checkedBookings),
-      deferredBookings: String(stampedReport.deferredBookings),
-      driftCount: String(driftCount),
-      totalDrift: formatMoneyCents(stampedReport.totalDriftCents, format),
-      count: String(driftCount),
-    },
     preferenceKey: "adminXeroSyncError",
+    build: async () => {
+      const shortCode = await getXeroOrgShortCode({ confirmLive: true });
+      const stampedReport: CreditSyncDriftReportEmail = {
+        ...report,
+        drifts: report.drifts.map((drift) => ({
+          ...drift,
+          invoiceUrl: applyXeroOrgShortCode(drift.invoiceUrl, { shortCode }),
+        })),
+      };
+
+      const driftCount = stampedReport.drifts.length;
+      const subject = `Xero Credit Sync Drift — ${driftCount} booking${driftCount === 1 ? "" : "s"}, ${formatMoneyCents(stampedReport.totalDriftCents, format)} — ${CLUB_BOOKINGS_NAME}`;
+      return {
+        subject,
+        html: await renderEmailHtml(() => adminCreditSyncDriftTemplate(stampedReport, format)),
+        templateData: {
+          generatedAt: stampedReport.generatedAt.toISOString(),
+          scannedBookings: String(stampedReport.scannedBookings),
+          checkedBookings: String(stampedReport.checkedBookings),
+          deferredBookings: String(stampedReport.deferredBookings),
+          driftCount: String(driftCount),
+          totalDrift: formatMoneyCents(stampedReport.totalDriftCents, format),
+          count: String(driftCount),
+        },
+      };
+    },
   });
 }
 

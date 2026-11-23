@@ -38,7 +38,7 @@ import addSkifieldWhakapapaModule from "./20261221010000_add_skifield_whakapapa_
 import rewriteStarterPrivacyRecipients from "./20261222030000_rewrite_starter_privacy_recipients";
 import clubTaxSchedule from "./20261223020000_club_tax_schedule";
 import addAiAppsToStarterPrivacy from "./20270101020000_add_ai_apps_to_starter_privacy";
-import memberMoneyExportCoverageRelease from "./20270104100100_member_money_export_coverage_release";
+import memberMoneyExportCoverageRelease from "./20270105100100_member_money_export_coverage_release";
 import type { DataMigrationVerification } from "./types";
 
 /**
