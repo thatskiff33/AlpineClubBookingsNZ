@@ -887,14 +887,15 @@ check the others.
   member's saved `NOT_REQUIRED` row (the sweep writes it for a member tier-exempt
   at season start) stays authoritative through a mid-season tier promotion. Once
   the club chooses, its pair decides and the row exempts nobody.
-  Booking (`findUnpaidMemberGuests` and the owner gate), notices,
-  `/api/member/subscription-status` and the Xero sync (`checkMembershipStatus`)
-  all resolve paid-up through that rule and the settlement loader, never a copy.
+  Booking (`findUnpaidMemberGuests` and the owner gate), notices and
+  `/api/member/subscription-status` resolve paid-up through that rule and the
+  settlement loader; the Xero sync (`checkMembershipStatus`) asks the rule's
+  access side for one member through `owesSubscriptionForAccess`. Never a copy.
   The admin members list and export and the subscriptions list call the same
   rule on its billing side, so while `NOT_CHOSEN` the two pre-#5190 access facts
   above do not exempt anyone there (#5190 Q2). An active member's untouched
-  saved `NOT_REQUIRED` row whose member billing treats as owing keeps its badge with a note,
-  from the same rule (`hasNotRequiredRowBillingNote`).
+  saved `NOT_REQUIRED` row whose member billing treats as owing shows
+  `NOT_INVOICED` with a note, from the same rule (`hasNotRequiredRowBillingNote`).
   Nomination deliberately honours ONLY the membership-type `NOT_REQUIRED` rule,
   NOT the junior age-tier exemption (`requiresPaidSubscriptionForAgeTier`):
   nominating is an adult-member act and widening it to un-subscribed junior

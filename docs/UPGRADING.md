@@ -360,13 +360,25 @@ the same status and puts the note in a new last column, **Subscription Note**. T
 member usually get it: a child on an always-required membership type, and a
 member on an age-based type whose age tier now owes.
 
+A second group changes with **no note**: an active member on an
+always-required membership type whose age tier is exempt (a child on a Full
+type, or an organisation or school account) and who has no saved record for the
+season, or a "Not invoiced" one. The lists used to show them as "Not required";
+they now show them as owing (no status, or **Not invoiced**), because billing
+invoices them. Booking is unchanged: they can still book. To find them, filter
+the members list by **Not invoiced** and by no subscription record, and look at
+the age tier and membership type.
+
 **What to do, once, after the upgrade.** Open the admin members list (or
 export the list and filter the **Subscription Note** column) and look at each
-noted row. If the member should not pay a subscription, move them to a
+noted row, and at each member of the second group. If the member should not pay a subscription, move them to a
 membership type whose subscription is not required. If they should pay, leave
 them; the next billing run bills them as their fee says (a no-invoice fee, or
 a family fee billed through another member, sends them no invoice of their
-own). Nothing is billed or blocked by the upgrade itself.
+own). If a whole class of them should not pay (say, every child on an
+always-required type), the club can instead choose the liability rule *Age
+tier exempts them*, after reading its impact list. Nothing is billed or
+blocked by the upgrade itself.
 
 **How to check it worked.** Reload the list: a member you moved shows "Not
 required" with no note. Any note left is a member you decided should pay. For
