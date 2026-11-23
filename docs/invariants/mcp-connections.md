@@ -152,37 +152,46 @@ only the rules.
 
 - **Every method of every route under `src/app/api` is a catalogue
   action or has a stated exclusion reason.** `classifyMcpRoute` in
-  [`exclusions.ts`](../../src/lib/mcp/exclusions.ts) answers;
+  [`exclusions.ts`](../../src/lib/mcp/exclusions.ts) answers for each;
   [`mcp-route-census.test.ts`](../../src/lib/__tests__/mcp-route-census.test.ts)
   fails on anything unclassified, a catalogue entry whose route method is
   missing, and an action on a permanently excluded route.
-- **Permanent reasons say a route is never an action**: `fresh-proof` (read
-  from `STEP_UP_ROUTES`, never copied), `auth-flow`, `provider`, `cron`,
-  `kiosk`, `needs-browser`, `infrastructure`, `moves-money`, `declaration`,
-  `public-visitor`, `website-flow`, `access-secrets`, `site-helper`,
-  `privacy-posture`. A member route's reason names its exact method and path. A permanent exclusion beats
-  a catalogue entry.
+- **A permanent reason says a route is never an action.** The reasons are
+  the keys of `MCP_PERMANENT_EXCLUSION_REASONS`. `fresh-proof` is read from
+  `STEP_UP_ROUTES`, never copied. A member or officer route's reason names
+  its exact method and path. A permanent exclusion beats a catalogue entry.
 - **A `not-yet:` reason names the follow-on task** from `MCP_NOT_YET_TASKS`;
   that task adds its entries and removes its rule in one change. A route in
-  an undecided area, or a new route in a `MCP_DECIDED_ADMIN_AREAS` area, is
-  unclassified.
+  an undecided or finished area stays unclassified and fails the census.
 - **The catalogue adds no behaviour or permission.** An action's request
   schemas and `returns` shape are its route's, imported from lib modules
-  (`INV-SSOT-001`).
+  ([`connection-shapes.ts`](../../src/lib/connection-shapes.ts) for shapes,
+  `INV-SSOT-001`).
 - **A connection is sent only what its action returns.** A route the website
-  also reads answers the principal header through `connectionJson` or
-  `projectForConnection`, keeping only the shape's fields at every depth; a
-  refusal passes unchanged. Only a `POST` the census pins as side-effect free
-  may run as a `preview` read.
-- **A member action acts as a member.** A route with an officer branch
-  decides with `memberOnlySessionUser` (role `USER`, empty permission matrix)
-  and refuses an on-behalf target or officer override flag from a
-  connection. A reused member page keeps its audience, as privacy register
-  row `ai-apps` discloses.
-- **An officer action is one whose route resolves to an admin area**
-  (`mcpActionAdminRequirement`: the handler's own `requireAdmin` permission,
-  census-pinned as `requires`, else `getAdminRouteRequirement`). Only someone
-  holding it is offered or can run it; its route decides and must project.
+  also reads answers a request carrying the principal header through
+  `connectionJson` or `projectForConnection`, keeping only the shape's fields
+  at every depth; a refusal passes unchanged. Only a `POST` the census pins
+  as side-effect free may run as a `preview` read.
+- **A member action acts as a member, never as an officer.** A route with an
+  officer branch decides with `memberOnlySessionUser`: role `USER`, no other
+  access role, an empty permission matrix. An on-behalf target or officer
+  override flag from a connection is refused. A reused member page keeps its
+  audience, as privacy register row `ai-apps` discloses: committee-role
+  notices (`notices.ts`) and the person's own account history.
+
+## INV-MCP-009
+
+- **An officer action runs only on a route its admin area gates, and is
+  offered only to someone holding what the route's guard demands.**
+  `mcpActionAdminRequirement` in
+  [`catalogue.ts`](../../src/lib/mcp/catalogue.ts) reads the requirement from
+  the admin route map, or from the entry's `requires` where the handler's
+  `requireAdmin` names its own permission; the census holds `requires` to
+  that guard. The tool list, `find_actions`, `describe_action` and
+  `run_action` all ask it.
+- **The route runs with the officer's real permissions** and its own guard
+  decides, as for the browser, and answers through the projection. A
+  step-up route stays website-only (`fresh-proof`, `INV-MCP-006`).
 
 ## INV-MCP-007
 

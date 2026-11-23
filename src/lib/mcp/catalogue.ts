@@ -456,7 +456,8 @@ export function mcpActionRouteFile(action: Pick<McpAction, "path">): string {
  * The admin area and level an officer action needs, or null for a member
  * action: what the route itself demands. That is the route's explicit
  * `requireAdmin` permission where it names one (`requires`, pinned to the
- * handler by the census), else the path's rule in `admin-permissions.ts`.
+ * handler by the census), else the path's rule in `admin-permissions.ts`
+ * (`INV-MCP-009`).
  */
 export function mcpActionAdminRequirement(
   action: Pick<McpAction, "path" | "method" | "requires">,
