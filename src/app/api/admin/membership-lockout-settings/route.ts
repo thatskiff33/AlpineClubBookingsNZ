@@ -22,8 +22,6 @@ import {
   getSubscriptionItemCodes,
 } from "@/lib/xero-mappings";
 import { prisma } from "@/lib/prisma";
-import { isSingletonUpsertContention } from "@/lib/prisma-errors";
-import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
@@ -32,11 +30,9 @@ import {
   SUBSCRIPTION_REQUIRED_TYPE_AGE_RULES,
 } from "@/lib/policies/subscription";
 import {
-  liabilityChoiceError,
+  liabilityChoiceRefusal,
   liabilityChoiceToWrite,
-  mayChooseLiabilityRule,
-  namesLiabilityRuleChange,
-  saveLockoutSettings,
+  saveLockoutSettingsUnlessBusy,
 } from "@/lib/subscription-liability-settings-write";
 
 const settingsSchema = z
@@ -152,23 +148,11 @@ export async function PUT(request: NextRequest) {
     where: { id: MEMBERSHIP_LOCKOUT_SETTINGS_ID },
   });
   const stored = normalizeMembershipLockoutSettings(before);
-  // #5190 (owner decision 23 Nov 2026): changing the liability rule changes
-  // who is invoiced, so it needs finance edit as well as membership edit.
-  if (
-    namesLiabilityRuleChange(parsed.data, stored) &&
-    !mayChooseLiabilityRule(session.user)
-  ) {
-    return NextResponse.json(
-      {
-        error:
-          "Choosing the subscription liability rule needs both Membership edit and Finance edit access.",
-      },
-      { status: 403 }
-    );
-  }
-  const liabilityError = liabilityChoiceError(parsed.data, stored);
-  if (liabilityError) {
-    return NextResponse.json({ error: liabilityError }, { status: 400 });
+  // #5190: a rule change needs membership and finance edit (owner decision
+  // 23 Nov 2026), and the pair is chosen whole.
+  const refusal = liabilityChoiceRefusal(parsed.data, stored, session.user);
+  if (refusal) {
+    return NextResponse.json({ error: refusal.error }, { status: refusal.status });
   }
 
   // #2543. A save that does not name a mode must PRESERVE the stored one, so
@@ -198,22 +182,12 @@ export async function PUT(request: NextRequest) {
   // #5190: a save that leaves the club on a chosen rule also runs the stale-row
   // clear-up, in the same transaction (`saveLockoutSettings`).
   const seasonYear = clubSeasonYear(await clubTimeZone());
-  let saved: Awaited<ReturnType<typeof saveLockoutSettings>>;
-  try {
-    saved = await saveLockoutSettings(prisma, {
-      data,
-      liabilityAfterSave: liabilityChoice ?? stored,
-      seasonYear,
-    });
-  } catch (error) {
-    // P2002 counts as contention for this writer: the save writes the
-    // constant-id settings row (whose create arm loses to a concurrent save's
-    // create) and, in its transaction, only status updates to season rows,
-    // which no unique constraint covers. P2028/P2034: the transaction waited
-    // out its budget on the season key or the settings row, or deadlocked. In
-    // every case nothing was committed, so the caller may simply retry.
-    if (!isSingletonUpsertContention(error)) throw error;
-    logger.warn({ err: error }, "Membership lockout settings save hit write contention");
+  const saved = await saveLockoutSettingsUnlessBusy(prisma, {
+    data,
+    liabilityAfterSave: liabilityChoice ?? stored,
+    seasonYear,
+  });
+  if (saved === null) {
     return NextResponse.json(
       { error: "Another update is in progress — try again shortly." },
       { status: 503 }

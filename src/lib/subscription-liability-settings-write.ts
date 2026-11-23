@@ -1,5 +1,8 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 
+import logger from "@/lib/logger";
+import { isSingletonUpsertContention } from "@/lib/prisma-errors";
+
 import {
   hasAdminAreaAccess,
   type AdminAccessRequirement,
@@ -32,7 +35,7 @@ type RequestedLiability = Partial<SubscriptionLiabilitySettings>;
  * `CURRENT_AGE` waits for part-season invoices (#5190's third pull request), so
  * it is refused until then.
  */
-export function liabilityChoiceError(
+function liabilityChoiceError(
   requested: RequestedLiability,
   stored: SubscriptionLiabilitySettings,
 ): string | null {
@@ -65,13 +68,13 @@ export function liabilityChoiceError(
  * membership edit AND finance edit, because the choice changes who the billing
  * run invoices. Other lockout settings keep membership edit alone.
  */
-export const LIABILITY_RULE_CHOICE_PERMISSIONS = [
+const LIABILITY_RULE_CHOICE_PERMISSIONS = [
   { area: "membership", level: "edit" },
   { area: "finance", level: "edit" },
 ] as const satisfies readonly AdminAccessRequirement[];
 
 /** Whether `user` holds every {@link LIABILITY_RULE_CHOICE_PERMISSIONS}. */
-export function mayChooseLiabilityRule(
+function mayChooseLiabilityRule(
   user: Parameters<typeof hasAdminAreaAccess>[0],
 ): boolean {
   return LIABILITY_RULE_CHOICE_PERMISSIONS.every((requirement) =>
@@ -85,7 +88,7 @@ export function mayChooseLiabilityRule(
  * {@link liabilityChoiceError} judges it. An unchanged echo of the stored pair
  * is not a change.
  */
-export function namesLiabilityRuleChange(
+function namesLiabilityRuleChange(
   requested: RequestedLiability,
   stored: SubscriptionLiabilitySettings,
 ): boolean {
@@ -95,6 +98,28 @@ export function namesLiabilityRuleChange(
     (requested.liabilityAgeSource !== undefined &&
       requested.liabilityAgeSource !== stored.liabilityAgeSource)
   );
+}
+
+/**
+ * Why the settings `PUT` refuses a save's liability answers, as the status and
+ * message to answer with, or null when they may be saved: a rule change by a
+ * caller without {@link LIABILITY_RULE_CHOICE_PERMISSIONS} (403, checked first
+ * so it fails closed), then {@link liabilityChoiceError} (400).
+ */
+export function liabilityChoiceRefusal(
+  requested: RequestedLiability,
+  stored: SubscriptionLiabilitySettings,
+  user: Parameters<typeof hasAdminAreaAccess>[0],
+): { status: 400 | 403; error: string } | null {
+  if (namesLiabilityRuleChange(requested, stored) && !mayChooseLiabilityRule(user)) {
+    return {
+      status: 403,
+      error:
+        "Choosing the subscription liability rule needs both Membership edit and Finance edit access.",
+    };
+  }
+  const error = liabilityChoiceError(requested, stored);
+  return error === null ? null : { status: 400, error };
 }
 
 /**
@@ -161,4 +186,27 @@ export async function saveLockoutSettings(
     // The season key may be held by a billing confirm for its whole budget.
     timeout: SUBSCRIPTION_BILLING_SEASON_WAITER_TIMEOUT_MS,
   });
+}
+
+/**
+ * {@link saveLockoutSettings}, answering lock contention with null so the
+ * route can say "busy, try again" (503) instead of a 500. Anything else throws.
+ */
+export async function saveLockoutSettingsUnlessBusy(
+  db: PrismaClient,
+  input: Parameters<typeof saveLockoutSettings>[1],
+): Promise<Awaited<ReturnType<typeof saveLockoutSettings>> | null> {
+  try {
+    return await saveLockoutSettings(db, input);
+  } catch (error) {
+    // P2002 counts as contention for this writer: the save writes the
+    // constant-id settings row (whose create arm loses to a concurrent save's
+    // create) and, in its transaction, only status updates to season rows,
+    // which no unique constraint covers. P2028/P2034: the transaction waited
+    // out its budget on the season key or the settings row, or deadlocked. In
+    // every case nothing was committed, so the caller may simply retry.
+    if (!isSingletonUpsertContention(error)) throw error;
+    logger.warn({ err: error }, "Membership lockout settings save hit write contention");
+    return null;
+  }
 }

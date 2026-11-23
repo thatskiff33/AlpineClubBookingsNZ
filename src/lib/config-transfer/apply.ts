@@ -486,7 +486,7 @@ export async function applyConfigImport(
  * import itself committed but the clear-up did not; the officer is warned and
  * the next lockout-settings save re-runs it.
  */
-export type LiabilityClearUpOutcome = "not-run" | "done" | "failed";
+type LiabilityClearUpOutcome = "not-run" | "done" | "failed";
 
 /**
  * #5190: an import that changed the lockout settings may have opted the club in
