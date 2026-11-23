@@ -1855,7 +1855,7 @@ describe("after-deploy steps: filed by prepare, opened as a checklist by publish
     expect(plan.version).toBe("0.13.3");
     const guide = read(repo, "docs/UPGRADING.md");
     const section = guide.slice(guide.indexOf("## v0.13.2 → v0.13.3"), guide.indexOf("## v0.13.1 → v0.13.2"));
-    expect(section).toMatch(/^## v0\.13\.2 → v0\.13\.3\n\n### Reconnect Xero once \(#4400\)[\s\S]*\n### After deploying this release\n\n.*\n\n<!-- deploy-steps:start -->\n/);
+    expect(section).toMatch(/^## v0\.13\.2 → v0\.13\.3\n\n### Reconnect Xero once \(#4400\)[\s\S]*\n### After deploying this release\n\n.*\n\n<!-{2} deploy-steps:start -->\n/);
     expect(section).toContain(
       [
         "- [ ] **Officer:** Open the finance queue.",
@@ -1870,7 +1870,7 @@ describe("after-deploy steps: filed by prepare, opened as a checklist by publish
     expect(section.trimEnd().endsWith("<!-- deploy-steps:end -->\n\n---")).toBe(true);
     const notes = read(repo, "docs/releases/v0.13.3.md");
     expect(notes).toContain(RELEASE_NOTES_UNFINISHED_MARKER);
-    expect(notes).toMatch(/## After deploying this release\n\n.*\n\n<!-- deploy-steps:start -->\n- \[ \] \*\*Officer:\*\*/);
+    expect(notes).toMatch(/## After deploying this release\n\n.*\n\n<!-{2} deploy-steps:start -->\n- \[ \] \*\*Officer:\*\*/);
     expect(git(repo, "show", "--name-status", "--format=", "HEAD").split("\n")).toEqual(
       expect.arrayContaining(["D\tchangelog.d/5275-finance-queue.deploy.md", "D\tchangelog.d/5309-stuck-report.deploy.md"]),
     );
@@ -1933,7 +1933,7 @@ describe("after-deploy steps: filed by prepare, opened as a checklist by publish
       const order = ["**Officer:** Open the finance queue.", "**Owner:** Run `pnpm", "**Operator:** Watch one main run."].map((item) => text.indexOf(item));
       expect(order.every((at) => at > 0), relative).toBe(true);
       expect([...order].sort((a, b) => a - b), relative).toEqual(order);
-      expect(text.match(/<!-- deploy-steps:start -->/g), relative).toHaveLength(1);
+      expect(text.match(/<!-{2} deploy-steps:start -->/g), relative).toHaveLength(1);
     }
     expect(read(repo, "docs/UPGRADING.md").match(/### After deploying this release/g)).toHaveLength(1);
   });
@@ -1961,7 +1961,7 @@ describe("after-deploy steps: filed by prepare, opened as a checklist by publish
     const at = order.map((text) => section.indexOf(text));
     expect(at.every((index) => index > 0), section).toBe(true);
     expect([...at].sort((a, b) => a - b), section).toEqual(at);
-    expect(section.match(/<!-- deploy-steps:start -->/g)).toHaveLength(1);
+    expect(section.match(/<!-{2} deploy-steps:start -->/g)).toHaveLength(1);
     expect(section.trimEnd().endsWith("<!-- deploy-steps:end -->\n\n---")).toBe(true);
   });
 
