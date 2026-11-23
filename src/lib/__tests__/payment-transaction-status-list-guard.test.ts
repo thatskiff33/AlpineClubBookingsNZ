@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * Every tree that holds production code a captured-status copy could be
@@ -297,7 +298,7 @@ describe("INV-SSOT: captured Payment and PaymentTransaction status guard (#3606,
       (subtree) => !scanned.some((file) => file.startsWith(`${subtree}/`)),
     );
     expect(unreached).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("rejects handwritten captured triples and unregistered aggregate authority readers", () => {
     const files = productionSourceFiles();

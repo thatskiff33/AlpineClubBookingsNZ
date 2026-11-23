@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripCssComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // #2257 (D7/D12) — "Greyed out text as Example text looks like a field is
 // already filled in."
@@ -76,7 +77,7 @@ const discoveredSites = sourceFiles()
   .filter((path) => STYLES_PLACEHOLDER.test(source(path)))
   .sort();
 
-describe("#2257 placeholder text never reads as content", () => {
+describe("#2257 placeholder text never reads as content", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("discovers exactly the known placeholder-styling sites", () => {
     // Not an allow-list re-read: the tree is scanned, so a SIXTH hand-copy in a
     // file nobody listed shows up here as an unexpected entry.

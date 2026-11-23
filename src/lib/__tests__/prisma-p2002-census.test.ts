@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { moduleImports, productionSourceFiles } from "./support/static-import-graph";
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #5407 item 6 (`INV-SSOT-001`): a unique-constraint failure is recognised by
@@ -66,7 +67,7 @@ function read(file: string): string {
   return readFileSync(path.join(process.cwd(), file), "utf8");
 }
 
-describe("Prisma P2002 census (#5407 item 6)", () => {
+describe("Prisma P2002 census (#5407 item 6)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const files = productionSourceFiles();
 
   it("reads the production tree", () => {

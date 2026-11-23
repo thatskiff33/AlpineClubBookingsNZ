@@ -49,6 +49,7 @@ import {
   fenceMemberFindMany,
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const CLUB_ON = {
   id: "policy-club",
@@ -806,7 +807,7 @@ describe("split-pair reconciliation (#2364 review finding)", () => {
   });
 });
 
-describe("source contract: no booking path may skip the hosting review (#2364)", () => {
+describe("source contract: no booking path may skip the hosting review (#2364)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   // These two contracts generalise a review finding rather than re-pinning the
   // one call site that had it. The finding was that four all-non-member
   // creation paths (the booking-request approval, both school approvals, the

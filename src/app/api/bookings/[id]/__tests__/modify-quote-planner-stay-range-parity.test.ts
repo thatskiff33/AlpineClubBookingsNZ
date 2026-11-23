@@ -221,6 +221,7 @@ import {
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { GUEST_NIGHT_INVALID_MESSAGE } from "@/lib/booking-guest-stay-range-input";
 import { resolvePromoPreviewStays } from "@/lib/promo-preview-stay-ranges";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 
 const D = (s: string) => parseDateOnly(s);
@@ -2004,7 +2005,7 @@ describe("#2563 exactly one stay-range resolution exists, and the route calls it
     // generic date helpers several unrelated modules declare for themselves; what
     // must not exist twice is THIS envelope.)
     expect(sourceFilesNaming("const unionEnvelope")).toEqual([RESOLVER_FILE]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the route boundary maps the resolver's error without restating the rule", () => {
     const source = readRepoFile(ROUTE_FILE);

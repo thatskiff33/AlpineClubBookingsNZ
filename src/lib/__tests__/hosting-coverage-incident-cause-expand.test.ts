@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { describeHostingCoverageIncidentCause } from "@/lib/adult-member-hosting-incident-causes";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * `INV-HOST-052` — a two-release enum addition, and what is left to hold once
@@ -234,7 +235,7 @@ describe("INV-HOST-052: the declined-linked-move cause, registered one release b
       namers,
       `only ${DECLARING_MODULE} may name ${DECLINED_CAUSE} without writing it`,
     ).toEqual([DECLARING_MODULE]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("would notice a writer — the detector is not blind", () => {
     // Both assertions above turn on this regex, and one of them is an exact-list

@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * NO npm COMMAND IS PUBLISHED AS THE WAY TO DO SOMETHING HERE (#3673).
@@ -147,7 +148,7 @@ describe("the npm-command pattern itself", () => {
   });
 });
 
-describe("published commands name pnpm, not npm (#3673)", () => {
+describe("published commands name pnpm, not npm (#3673)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const files = trackedFilesInScope();
 
   it("found the files it is meant to sweep", () => {

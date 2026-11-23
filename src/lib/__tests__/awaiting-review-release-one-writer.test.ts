@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { activeLifecycleEditRefusal } from "@/lib/booking-edit-policy";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3500: ONLY THE OFFICER REVIEW ROUTE RELEASES `AWAITING_REVIEW` TO
@@ -171,7 +172,7 @@ describe("#3500: AWAITING_REVIEW -> PAYMENT_PENDING has one writer (INV-MOD-013)
       hits,
       "only the officer review route may release AWAITING_REVIEW to PAYMENT_PENDING (#3500, INV-MOD-013) — an edit door cannot reach that status, so a release arm there is fiction",
     ).toEqual([`${OFFICER_REVIEW_ROUTE}: bound flag \`parkedForReview\``]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the releaseFromReview flag is gone from every former carrier", () => {
     for (const relative of FORMER_RELEASE_ARMS) {

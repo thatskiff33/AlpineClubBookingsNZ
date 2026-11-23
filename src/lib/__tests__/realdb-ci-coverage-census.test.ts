@@ -8,6 +8,7 @@ import {
   realdbFilesToRun,
 } from "../../../scripts/ci/realdb-files.mjs";
 import { jobBlock, stepBlock } from "./helpers/ci-workflow";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #4458: every real-PostgreSQL suite runs in CI, or is named in the quarantine.
@@ -54,7 +55,7 @@ const job = withoutComments(jobBlock(ci, JOB));
 describe("every real-PostgreSQL suite runs in CI (#4458)", () => {
   it("finds the realdb files (the walk is not vacuous)", () => {
     expect(realdbFilesOnDisk().length).toBeGreaterThan(50);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("runs every realdb file on disk, or names it in the quarantine", () => {
     const covered = new Set([...realdbFilesToRun(), ...readQuarantine()]);
@@ -63,7 +64,7 @@ describe("every real-PostgreSQL suite runs in CI (#4458)", () => {
       missing,
       `These realdb files are not run by the ${JOB} job (scripts/ci/realdb-files.mjs) and are not in ${QUARANTINE_FILE}. A realdb file that no job runs is green in CI and proves nothing; fix scripts/ci/realdb-files.mjs, or quarantine the file with its issue.`,
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("only quarantines files that exist, and never runs a quarantined file", () => {
     const onDisk = new Set(realdbFilesOnDisk());
@@ -71,7 +72,7 @@ describe("every real-PostgreSQL suite runs in CI (#4458)", () => {
     expect(quarantined.filter((file) => !onDisk.has(file)), "stale quarantine entries").toEqual([]);
     const toRun = new Set(realdbFilesToRun());
     expect(quarantined.filter((file) => toRun.has(file))).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("has a job that sets RUN_CONCURRENCY_RACE_TESTS=1 and a database", () => {
     expect(job, `ci.yml has no \`${JOB}\` job`).not.toBe("");
