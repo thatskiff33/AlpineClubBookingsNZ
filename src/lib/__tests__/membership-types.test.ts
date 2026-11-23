@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import path from "path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   BUILT_IN_MEMBERSHIP_TYPES,
   DEFAULT_MEMBERSHIP_TYPE_AGE_TIERS,
@@ -8,6 +8,7 @@ import {
   backfillCurrentSeasonMembershipAssignments,
   buildUniqueMembershipTypeKey,
   defaultMembershipTypeKeyForRole,
+  defaultMembershipTypeNameForRole,
   effectiveSubscriptionBehavior,
   ensureBuiltInMembershipTypes,
   isSubscriptionNotRequiredForMembershipType,
@@ -17,6 +18,7 @@ import {
   validateMembershipTypeRuleConfiguration,
 } from "@/lib/membership-types";
 import { ROLE_VALUES } from "@/lib/member-roles";
+import { Role as RoleEnum, type Role } from "@prisma/client";
 
 function readRepoFile(relativePath: string) {
   // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
@@ -177,12 +179,38 @@ describe("built-in membership type seed helpers", () => {
 
   it("keeps role-to-type defaults separate from access role semantics", () => {
     expect(defaultMembershipTypeKeyForRole("USER")).toBe("FULL");
-    expect(defaultMembershipTypeKeyForRole("MEMBER")).toBe("FULL");
     // #2149: operational roles fall back to their own NOT_REQUIRED types.
     expect(defaultMembershipTypeKeyForRole("ADMIN")).toBe("ADMIN");
     expect(defaultMembershipTypeKeyForRole("LODGE")).toBe("LODGE");
     expect(defaultMembershipTypeKeyForRole("SCHOOL")).toBe("SCHOOL");
     expect(defaultMembershipTypeKeyForRole("NON_MEMBER")).toBe("NON_MEMBER");
+  });
+
+  it("accepts only a Role, so an unknown string cannot fall through to the billable FULL type (#5407)", () => {
+    // Type-level: `pnpm run typecheck` checks these. Widening any of the three
+    // back to `Role | string` fails them.
+    expectTypeOf(defaultMembershipTypeKeyForRole).parameter(0).toEqualTypeOf<Role>();
+    expectTypeOf(defaultMembershipTypeNameForRole).parameter(0).toEqualTypeOf<Role>();
+    expectTypeOf(effectiveSubscriptionBehavior).parameter(1).toEqualTypeOf<Role>();
+    // @ts-expect-error a membership-type key is not a Role
+    expect(defaultMembershipTypeKeyForRole("MEMBER")).toBe("FULL");
+  });
+
+  it("maps every Role explicitly, so a new one cannot default to the billable FULL type (#5407)", () => {
+    // The switch's `never` check fails `pnpm run typecheck` when a Role has no
+    // case; this pins today's answer for each, and its key list fails at run
+    // time if the generated enum grows.
+    const expected: Record<Role, string> = {
+      USER: "FULL",
+      ADMIN: "ADMIN",
+      LODGE: "LODGE",
+      NON_MEMBER: "NON_MEMBER",
+      SCHOOL: "SCHOOL",
+    };
+    expect(Object.values(RoleEnum).sort()).toEqual(Object.keys(expected).sort());
+    for (const role of Object.values(RoleEnum)) {
+      expect(defaultMembershipTypeKeyForRole(role)).toBe(expected[role]);
+    }
   });
 
   describe("shared subscription-required derivation (#2149)", () => {

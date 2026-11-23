@@ -1,6 +1,7 @@
 import type {
   AgeTier,
   MembershipTypeSubscriptionBehavior,
+  Role,
   SubscriptionStatus,
 } from "@prisma/client";
 
@@ -24,7 +25,7 @@ import {
 
 export function isSubscriptionsListMemberNotRequired(
   member: {
-    role: string;
+    role: Role;
     ageTier: AgeTier;
     dateOfBirth: Date | null;
     seasonalMembershipAssignments?: Array<{

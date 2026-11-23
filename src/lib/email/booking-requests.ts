@@ -12,6 +12,7 @@ import {
   composeOptionalEmailLine,
 } from "../email-message-notes";
 import { CLUB_NAME } from "@/config/club-identity";
+import { formatBookingReference } from "@/lib/booking-reference";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { sendEmail, type EmailSendOutcome } from "./core";
 import {
@@ -87,7 +88,11 @@ export async function sendBookingRequestApprovedEmail(params: {
    * token and the "Amount due" row. Read through `readBookingAmountOwed`.
    */
   amountDueCents: number;
-  bookingReference: string;
+  /**
+   * The booking the email is about. The email shows its short reference
+   * (`formatBookingReference`), as every member email does, never the raw id (#5407).
+   */
+  bookingId: string;
   expiresAt: Date;
   // Lodge the request is for (multi-lodge): overlays that lodge's
   // identity via prepareEmailMessage; null keeps club-wide identity.
@@ -126,7 +131,7 @@ export async function sendBookingRequestApprovedEmail(params: {
       price: formatMoneyCents(params.priceCents, format),
       amountDueCents: params.amountDueCents,
       amountDue: formatMoneyCents(params.amountDueCents, format),
-      bookingReference: params.bookingReference,
+      bookingReference: formatBookingReference(params.bookingId),
       // PERSISTED zone, matching the HTML body two blocks up (#2870, CT-4).
       // A saved body override re-renders the WHOLE email from this object
       // (`email-message-renderer.ts` -> `prepareEmailMessage`), and the shipped
@@ -195,7 +200,11 @@ export async function sendSplitGuestPaymentLinkEmail(params: {
    * token and the "Amount due" row. Read through `readBookingAmountOwed`.
    */
   amountDueCents: number;
-  bookingReference: string;
+  /**
+   * The booking the email is about. The email shows its short reference
+   * (`formatBookingReference`), as every member email does, never the raw id (#5407).
+   */
+  bookingId: string;
   expiresAt: Date;
   lodgeId?: string | null;
 },
@@ -230,7 +239,7 @@ export async function sendSplitGuestPaymentLinkEmail(params: {
       price: formatMoneyCents(params.priceCents, format),
       amountDueCents: params.amountDueCents,
       amountDue: formatMoneyCents(params.amountDueCents, format),
-      bookingReference: params.bookingReference,
+      bookingReference: formatBookingReference(params.bookingId),
       // PERSISTED zone — see the identical note on `booking-request-approved`
       // above. Same value, same override branch, same defect.
       expiresAt: emailClubDateTime(params.expiresAt),

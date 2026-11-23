@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import {
   createMemberDeleteRequest,
@@ -23,8 +24,10 @@ export async function POST(
   let body: z.infer<typeof deleteRequestSchema>;
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    body = deleteRequestSchema.parse(await request.json());
+    body = deleteRequestSchema.parse(jsonBody.body);
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }

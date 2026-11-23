@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { expectDefaultInvalidJsonAnswer, MALFORMED_JSON_BODY } from "./helpers/invalid-json-body";
 import {
   contentAdminSession,
   readOnlyAdminSession,
@@ -1621,6 +1622,70 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       expect(mocks.refundRequestUpdateMany).not.toHaveBeenCalled();
       expect(mocks.sendEmail).not.toHaveBeenCalled();
       expect(mocks.createAuditLog).not.toHaveBeenCalled();
+    });
+  });
+
+  // #5407 item 26: the body is read after the refund request is found PENDING,
+  // with no handling of its own, so a malformed body used to be a 500. It is
+  // now the shared invalid-JSON 400, before any claim, refund or email.
+  describe("malformed body (#5407)", () => {
+    function pendingRefundRequest() {
+      return {
+        id: "refund_1",
+        status: "PENDING",
+        booking: {
+          id: "booking_1",
+          checkIn: new Date("2026-07-01"),
+          checkOut: new Date("2026-07-03"),
+          payment: {
+            id: "payment_1",
+            stripePaymentIntentId: "pi_1",
+            amountCents: 10000,
+            refundedAmountCents: 0,
+            status: "SUCCEEDED",
+          },
+          member: { email: "member@example.com" },
+        },
+        member: {
+          id: "member_1",
+          firstName: "Alice",
+          lastName: "Example",
+          email: "member@example.com",
+        },
+      };
+    }
+
+    function putWithBody(body: string) {
+      return new NextRequest("http://localhost/api/admin/refund-requests/refund_1", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+    }
+
+    it("answers the shared invalid-JSON 400 and claims, refunds and emails nothing", async () => {
+      mocks.refundRequestFindUnique.mockResolvedValue(pendingRefundRequest());
+
+      const response = await PUT(putWithBody(MALFORMED_JSON_BODY), {
+        params: Promise.resolve({ id: "refund_1" }),
+      });
+
+      await expectDefaultInvalidJsonAnswer(response);
+      expect(mocks.refundRequestUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mocks.sendEmail).not.toHaveBeenCalled();
+    });
+
+    it("keeps the schema answer for a well-formed body of the wrong shape", async () => {
+      mocks.refundRequestFindUnique.mockResolvedValue(pendingRefundRequest());
+
+      const response = await PUT(putWithBody(JSON.stringify({ status: "MAYBE" })), {
+        params: Promise.resolve({ id: "refund_1" }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: "Validation failed" });
+      expect(mocks.refundRequestUpdateMany).not.toHaveBeenCalled();
     });
   });
 });

@@ -1,5 +1,6 @@
 import "server-only";
 import { Prisma, type ManualRefundTaskDirection } from "@prisma/client";
+import { isPrismaKnownUniqueConstraintError } from "@/lib/prisma-known-errors";
 
 import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -395,9 +396,7 @@ export type FencedNightWrite = {
 
 /** Is this the `(bookingGuestId, stayDate)` unique constraint refusing a create? */
 function isNightRowAlreadyPresent(err: unknown): boolean {
-  return (
-    err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002"
-  );
+  return isPrismaKnownUniqueConstraintError(err);
 }
 
 /**

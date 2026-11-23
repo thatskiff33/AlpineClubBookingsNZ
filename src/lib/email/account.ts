@@ -19,10 +19,6 @@ import {
   CLUB_NAME,
 } from "@/config/club-identity";
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "../member-setup-invite";
-import {
-  EMAIL_CHANGE_TTL_MS,
-  EMAIL_VERIFICATION_TTL_MS,
-} from "@/lib/verification-tokens";
 import { sendEmail } from "./core";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailClubDateTime } from "@/lib/email-templates-club-time";
@@ -131,14 +127,15 @@ export async function sendTwoFactorCodeEmail(params: {
   });
 }
 
+/** `expiresAt` is the stored token's own expiry (#5407), as for an email change. */
 export async function sendVerificationEmail(
   email: string,
   firstName: string,
   token: string,
+  expiresAt: Date,
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const verifyUrl = `${baseUrl}/verify-email?token=${token}`;
-  const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TTL_MS);
 
   await sendEmail({
     to: email,
@@ -158,13 +155,18 @@ export async function sendVerificationEmail(
   });
 }
 
+/**
+ * `expiresAt` is the stored token's own expiry (#5407): the request route
+ * computes it once from `EMAIL_CHANGE_TTL_MS` and writes it, and the email
+ * states that instant rather than working the boundary out a second time.
+ */
 export async function sendEmailChangeVerification(
   newEmail: string,
   token: string,
+  expiresAt: Date,
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const verifyUrl = `${baseUrl}/confirm-email-change?token=${token}`;
-  const expiresAt = new Date(Date.now() + EMAIL_CHANGE_TTL_MS);
 
   await sendEmail({
     to: newEmail,

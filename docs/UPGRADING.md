@@ -313,7 +313,7 @@ shows the database role as `under_provisioned` with the blocker
 credential is missing one or more required read-only grants, so no tool was
 run." Re-run the same command, with the same settings, from the old release.
 
-### Three unused columns leave the app's queries (#5396)
+### Four unused columns leave the app's queries (#5396, #5407)
 
 **What changes.** No migration runs and nothing administrators or members see
 changes. The app stops naming `ClubModuleSettings.multiLodge`,
@@ -325,11 +325,22 @@ preferences. All three columns stay in the database with their defaults
 (`false`, `true` and `false`), so the previous release keeps working while it
 drains.
 
-**Why it matters for a later upgrade.** A later release drops these columns.
-That drop is safe during a blue-green deploy only when the release it replaces
-is this one or newer: an older release names the columns in its INSERTs, so its
-settings saves would fail between the migration and cutover. Deploy this release
-before the one that drops them, as the tag-to-tag rule above already requires.
+`ServerNzSettings.otherLodgesOwnedNames` (#5407), the lodge-name list older
+central-server versions sent, goes the same way. v0.14.0 already stopped
+reading it, but still cleared it when an administrator removed or replaced the
+central-server key or moved its address. This release neither reads nor writes
+it. The column is nullable with no default and stays in the database, so a new
+row simply leaves it empty, and v0.14.0 clearing it while it drains is
+harmless.
+
+**Why it matters for a later upgrade.** A later release (#5415) drops these
+columns. That drop is safe during a blue-green deploy only when the release it
+replaces is this one or newer: an older release names the first three columns
+in its INSERTs, so its settings saves would fail between the migration and
+cutover, and v0.14.0's central-server settings writes (upserts with no
+`select`) name `otherLodgesOwnedNames` in the columns they return, so they
+would fail the same way. Deploy this release before the one that drops them,
+as the tag-to-tag rule above already requires.
 
 **Do not drop any of these columns yourself.** Earlier code comments said that
 dropping `multiLodge` was blue-green safe because every query selects named
