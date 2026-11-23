@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { delegateUsesBeyondReads, productionSourceFiles } from "./support/prisma-delegate-read-scan";
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = process.cwd();
 const DELEGATE = "xeroTaxCategoryMapping";
@@ -28,7 +29,7 @@ describe("the Xero tax category mappings have one writer (#5209)", () => {
       .flatMap(({ file, text }) =>
         delegateUsesBeyondReads(text, file, (name) => name === DELEGATE).map(({ line, text: code }) => `${file}:${line} ${code}`));
     expect(offenders, `a production path other than ${WRITER} writes XeroTaxCategoryMapping`).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("are written by no raw SQL in source", () => {
     expect(naming.filter(({ text }) => SQL_WRITE.test(stripComments(text))).map(({ file }) => file)).toEqual([]);

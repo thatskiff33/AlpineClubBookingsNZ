@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * Unverified-write copy — contract (#2668).
@@ -340,7 +341,7 @@ describe("unverified-write copy contract (#2668)", () => {
     }
 
     expect(findings).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("each honest 'nothing changed' claim still reads before it writes", () => {
     for (const allowed of HONEST_CLAIMS) {

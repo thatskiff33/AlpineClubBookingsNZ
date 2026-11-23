@@ -79,6 +79,7 @@ import {
   REVIEWED_SITE_RECORDS,
   UNCATEGORISED_AUDIT_WRITERS,
 } from "../../../scripts/audit/audit-writer-census-manifest";
+import { AST_CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * One scan for the whole file. Parsing `src/`, `scripts/` and `prisma/` costs
@@ -179,7 +180,7 @@ function currentAuditCensusClaims(): CurrentCensusClaim[] {
   return claims.sort((left, right) => left.file.localeCompare(right.file));
 }
 
-describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
+describe("audit writer census (#2581)", { timeout: AST_CENSUS_TIMEOUT_MS }, () => {
   it("actually scanned the tree, so a broken walk cannot pass as a clean census", () => {
     // The failure mode this catches is the worst one available: a path change or a
     // bad exclusion makes `listSourceFiles` return nothing, every "no offenders"

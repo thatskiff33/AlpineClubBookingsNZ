@@ -3,6 +3,7 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminHubPage } from "@/lib/admin-hubs/define";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // ---------------------------------------------------------------------------
 // `revalidateAdminPage(id)` (epic #4468, C3 #4800): which path each page is
@@ -262,20 +263,20 @@ describe("no production code revalidates an admin page by path", () => {
   it("finds the calls it polices", () => {
     // Not vacuous: the tree still revalidates the root layout and the finance portal.
     expect(scan().calls).toBeGreaterThan(10);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("refuses a literal admin path", () => {
     expect(scan().literalAdmin).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("refuses an unreviewed non-literal argument", () => {
     expect(scan().unreviewed).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("uses revalidateAdminPage at the sites that refresh admin pages", () => {
     const users = productionFiles("src").filter((file) =>
       /\brevalidateAdminPage\(\s*"/.test(fs.readFileSync(path.join(ROOT, file), "utf8")),
     );
     expect(users.length).toBeGreaterThanOrEqual(10);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

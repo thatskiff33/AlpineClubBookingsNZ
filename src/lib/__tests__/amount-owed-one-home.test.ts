@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { bookingAmountOwedCents, bookingWorthCents, savedCardChargeCents } from "@/lib/booking-payment-state";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3750 (owner decision, 7 Oct 2026, "Add fee to amount owed"): what an unpaid
@@ -270,7 +271,7 @@ describe("the amount an unpaid booking owes has one home (#3750)", () => {
       file.split("/").slice(-2).join("/").replace(/^lib\//, ""),
     ).sort();
     expect(named, "booking-amount-owed.ts's docblock names exactly the known composers").toEqual(expected);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   // #3991 review: the booking page reads ledger credit ONCE, in the history
   // loader through `readBookingAmountOwed`; nothing else on the page derives it
@@ -326,7 +327,7 @@ describe("the amount an unpaid booking owes has one home (#3750)", () => {
     expect(read("src/components/admin/confirm-pending-guests-button.tsx")).not.toMatch(/\bfinalPriceCents\b/);
     expect(savedCardChargeCents({ finalPriceCents: 10_000, payment: { changeFeeCents: 2_500 } })).toBe(12_500);
     expect(savedCardChargeCents({ finalPriceCents: 10_000, payment: null })).toBe(10_000);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   // #4399: the two pending-guest doors that confirm a booking worth $0 write its
   // Payment row through one helper, on their claim's transaction client - one
@@ -351,7 +352,7 @@ describe("the amount an unpaid booking owes has one home (#3750)", () => {
     expect(read("src/app/api/payments/charge-saved-method/route.ts"), "charge-saved-method refuses worth $0 under its locks").toMatch(
       /if \(savedCardChargeCents\(locked\) === 0\)/,
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   // #3991: the narrative quotes "$X is due" from what it is handed, so every
   // file that resolves one reads the one home, and none hands it the bare price.
@@ -368,7 +369,7 @@ describe("the amount an unpaid booking owes has one home (#3750)", () => {
     }
     const bareDue = sourceFiles(path.join(REPO, "src")).filter((file) => BARE_PRICE_DUE.test(read(file)));
     expect(bareDue, "INV-PAY-119: the narrative's dueCents comes from bookingAmountOwedCents").toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("no source file subtracts credit from the bare price any more", () => {
     const offenders = sourceFiles(path.join(REPO, "src")).flatMap((file) => {
@@ -378,7 +379,7 @@ describe("the amount an unpaid booking owes has one home (#3750)", () => {
         .map((match) => `${file}: ${match}`);
     });
     expect(offenders, "INV-PAY-119: read it through bookingAmountOwedCents").toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("every allowed expression is still there, exactly once", () => {
     for (const [file, allowed] of Object.entries(ALLOWED_EXPRESSIONS)) {
@@ -394,7 +395,7 @@ describe("the amount an unpaid booking owes has one home (#3750)", () => {
         .map((match) => `${file}: ${match}`);
     });
     expect(offenders, "INV-PAY-119: compare credit with bookingWorthCents, not the bare price").toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("every allowed comparison is still there, exactly once", () => {
     for (const [file, allowed] of Object.entries(ALLOWED_COMPARISONS)) {
@@ -407,7 +408,7 @@ describe("the amount an unpaid booking owes has one home (#3750)", () => {
       quotesIn(read(file)).map((match) => `${file}: ${match}`),
     );
     expect(offenders, "INV-PAY-119: quote it through readBookingAmountOwed").toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("every send that quotes what is owed reads it through readBookingAmountOwed (#4058)", () => {
     const callers = sourceFiles(path.join(REPO, "src")).filter(
@@ -429,7 +430,7 @@ describe("the amount an unpaid booking owes has one home (#3750)", () => {
         .map((match) => `${file}: ${match}`);
     });
     expect(offenders, "INV-PAY-119: read it through readBookingAmountOwed, or pin it by text").toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("every allowed amount-due property is still there, exactly once", () => {
     for (const [file, allowed] of Object.entries(ALLOWED_DUE_PROPERTIES)) {

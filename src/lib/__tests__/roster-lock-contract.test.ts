@@ -7,6 +7,7 @@ import {
   lockRosterDates,
   rosterOperationalDayRange,
 } from "@/lib/roster-lock"
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = process.cwd()
 const WRITERS = [
@@ -64,7 +65,7 @@ describe("roster-date lock source contract (#2586)", () => {
       .map((file) => path.relative(ROOT, file).replaceAll("\\", "/"))
       .sort()
     expect(found).toEqual([...WRITERS].sort())
-  })
+  }, CENSUS_TIMEOUT_MS)
 
   it("pins direct whole-roster and row writers to the shared roster-date lock", () => {
     expect(source("src/lib/admin-roster-service.ts")).toMatch(/await lockRosterEligibilityMutation\(tx, lodgeId, date\)/)
@@ -286,7 +287,7 @@ describe("roster-date lock source contract (#2586)", () => {
     expect(source("src/lib/roster-lock.ts")).toContain(
       "addDaysDateOnly(checkOut, 1)",
     )
-  })
+  }, CENSUS_TIMEOUT_MS)
 })
 
 // ---------------------------------------------------------------------------

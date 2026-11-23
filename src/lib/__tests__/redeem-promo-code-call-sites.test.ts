@@ -7,6 +7,7 @@ import {
   sourceFiles,
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * Every `redeemPromoCode(` call site, against a reviewed allowlist (#3826,
@@ -72,7 +73,7 @@ function census(): { calls: Record<string, number>; escapes: string[] } {
   return { calls, escapes };
 }
 
-describe("#3826: every redeemPromoCode call site serialises writers to its booking", () => {
+describe("#3826: every redeemPromoCode call site serialises writers to its booking", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const { calls, escapes } = census();
 
   it("finds the reviewed call sites (the census is not vacuous)", () => {

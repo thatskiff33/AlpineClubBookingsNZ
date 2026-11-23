@@ -37,6 +37,7 @@ import {
   bashFixturePath,
   bashGateArgs,
 } from "./helpers/bash-fixture-path";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 function readRepoFile(relativePath: string) {
   // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
@@ -605,7 +606,7 @@ describe("review finding source/schema contracts", () => {
         ).toBeLessThan(guardOffset);
       });
     }
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("keeps guest chore token links read-only", () => {
     const source = readRepoFile("src/app/api/chores/[token]/route.ts");

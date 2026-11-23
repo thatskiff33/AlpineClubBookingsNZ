@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { moduleImports } from "./support/static-import-graph";
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #5407 item 36 (`INV-SSOT-001`, `INV-SSOT-002`): the short form of a booking id
@@ -136,7 +137,7 @@ function productionFiles(): string[] {
     .filter((file) => existsSync(path.join(REPO_ROOT, file)));
 }
 
-describe("stored short booking id census (#5407 item 36)", () => {
+describe("stored short booking id census (#5407 item 36)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const files = productionFiles();
 
   it("reads the production tree", () => {

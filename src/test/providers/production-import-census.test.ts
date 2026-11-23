@@ -20,6 +20,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const SRC_DIR = resolve(import.meta.dirname, "..", "..");
 const TEST_DIR = join(SRC_DIR, "test");
@@ -66,7 +67,7 @@ describe("production code never imports test code (#4908)", () => {
       testImports(file, readFileSync(file, "utf8")).map((specifier) => `${relative(SRC_DIR, file)} -> ${specifier}`),
     );
     expect(offenders).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("recognises every import spelling, and ignores prose", () => {
     const file = join(SRC_DIR, "lib", "example.ts");

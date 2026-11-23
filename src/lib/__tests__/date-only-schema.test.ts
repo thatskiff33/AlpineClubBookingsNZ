@@ -11,6 +11,7 @@ import {
   dateOnlyStringSchema,
   parsedDateOnlySchema,
 } from "@/lib/date-only-schema";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #4931: a date-only request field is validated by ONE schema. Only the
@@ -93,7 +94,7 @@ const sites = (pattern: RegExp) =>
     return Array.from(code.matchAll(pattern), () => file);
   });
 
-describe("census: no file declares its own date-only refine (#4931)", () => {
+describe("census: no file declares its own date-only refine (#4931)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   /**
    * The files allowed to refine with `isDateOnlyString` themselves, each with
    * its reason. Shrinks only; a new entry needs a reason a reviewer accepts.
@@ -126,7 +127,7 @@ describe("census: no file declares its own date-only refine (#4931)", () => {
   });
 });
 
-describe("census: no date field checks the YYYY-MM-DD shape only (ALP-574)", () => {
+describe("census: no date field checks the YYYY-MM-DD shape only (ALP-574)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   /**
    * The files allowed a bare `z.string().regex(/^\d{4}-\d{2}-\d{2}$/)`, each
    * with its reason. The shape alone lets through a day that does not exist,
@@ -185,7 +186,7 @@ describe("census: no hand-written date-only pattern outside the allowed files (A
 
   it("finds the shape home's own pattern, so the scan is not blind", () => {
     expect(handSites().filter((file) => file === SHAPE_HOME)).toEqual([SHAPE_HOME]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("counts both spellings it refuses and skips the one ALP-574 owns", () => {
     const count = (code: string) => Array.from(code.matchAll(HAND_PATTERN)).length;
@@ -197,9 +198,9 @@ describe("census: no hand-written date-only pattern outside the allowed files (A
 
   it("finds no hand-written pattern outside the allowed files", () => {
     expect(handSites().filter((file) => !(file in ALLOWED))).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("finds every allowed file still spelling it, so a stale entry is removed", () => {
     expect([...new Set(handSites())].sort()).toEqual(Object.keys(ALLOWED).sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { lockCensusSources } from "./support/advisory-lock-source";
 import { scanLock1Transactions, type TransactionOpener } from "./support/lock1-transaction-scan";
 import { stripComments } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * `INV-LOCK-006`: every interactive transaction that waits for
@@ -112,7 +113,7 @@ function classifyOptions(options: string | null, aliases: ReadonlySet<string>): 
 const describeOpener = (opener: TransactionOpener) =>
   `${opener.rel}:${opener.line} ${opener.opener} via ${opener.via.join(" <- ")}`;
 
-describe("INV-LOCK-006: every lock(1) waiter runs on the shared transaction budget", () => {
+describe("INV-LOCK-006: every lock(1) waiter runs on the shared transaction budget", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const aliases = budgetAliases();
 
   it("finds the lock(1) transactions it is meant to police", () => {

@@ -3,6 +3,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 import { relativeSource, sourceFiles } from "./support/booking-guest-night-writer-scan";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /*
  * #4993 (`INV-PAY-158`): every saved-card PENDING -> CONFIRMED claim stamps
@@ -113,5 +114,5 @@ describe("INV-PAY-158: every saved-card claim stamps the durable claim marker (#
         expect(claim.stampsMarker, `${relative}:${claim.line} claims CONFIRMED without savedCardClaimAt`).toBe(true);
       }
     }
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

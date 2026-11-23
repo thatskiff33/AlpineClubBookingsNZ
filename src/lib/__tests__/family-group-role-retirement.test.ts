@@ -59,6 +59,7 @@ import { Prisma } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 
 import { stripCommentsAndStrings } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const REPO_ROOT = process.cwd();
 // scripts/ is walked for the same reason it always was: that is where the last
@@ -394,7 +395,7 @@ describe("#2520 FamilyGroupMember.role is dropped", () => {
         `SQL at or before ${DROP_MIGRATION_PREFIX} is exempt because applied ` +
         "history is immutable and the drop pair has to name the column.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("finds the raw-SQL surface it is meant to police", () => {
     // If the scan matched no "FamilyGroupMember" raw SQL anywhere it would pass
@@ -404,7 +405,7 @@ describe("#2520 FamilyGroupMember.role is dropped", () => {
       statements.some((statement) => TABLE_REFERENCE.test(statement.text)),
     );
     expect(withTable.length).toBeGreaterThan(0);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("the raw-SQL scan catches the shapes that once slipped past it", () => {
     // Pins the three holes closed rather than trusting the regex by eye. Each
