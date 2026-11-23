@@ -182,8 +182,12 @@ export const XERO_CONTACT_GROUP_MISMATCHES_CONNECTION_SHAPE =
 
 /** `POST /api/admin/xero/contact-group-mismatches`: the review after the resync, and what it re-read. */
 export const XERO_CONTACT_GROUP_MISMATCHES_RESYNCED_CONNECTION_SHAPE = connectionShapeFor<
-  MemberGroupingSnapshot & { resync: XeroContactResyncSummary }
->({ ...CONTACT_GROUP_MISMATCH_FIELDS, resync: RESYNC_SUMMARY_FIELDS });
+  MemberGroupingSnapshot & { resync: XeroContactResyncSummary & { flaggedContacts: number } }
+>({
+  ...CONTACT_GROUP_MISMATCH_FIELDS,
+  // `flaggedContacts` past `requestedContacts` means this Refresh left some unfetched.
+  resync: { ...RESYNC_SUMMARY_FIELDS, flaggedContacts: true },
+});
 
 /** Each member whose name differs from their linked Xero contact's, by name and reason. */
 const CONTACT_LINK_MISMATCH_FIELDS = {

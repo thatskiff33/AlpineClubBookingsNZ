@@ -61,7 +61,9 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const before = await getXeroMemberGroupingSnapshot(parsed.data);
+    // Uncapped, so the total below covers every flagged contact; the
+    // re-sync itself is still capped per kind just after.
+    const before = await getXeroMemberGroupingSnapshot();
     if (!before.cacheReady) {
       return NextResponse.json(
         {
@@ -73,19 +75,27 @@ export async function POST(request: NextRequest) {
     }
 
     // #5234: information-only entries too, so a contact removed from a
-    // managed group in Xero drops off the panel on Refresh. Both lists are
-    // capped by `limit` (sent, or CONTACT_GROUP_MISMATCH_LIMIT).
+    // managed group in Xero drops off the panel on Refresh. Each list is
+    // capped at `limit` (sent, or CONTACT_GROUP_MISMATCH_LIMIT).
+    const { limit } = parsed.data;
     const resync = await resyncXeroContactCachesByIds(
       [
-        ...before.mismatches.map((mismatch) => mismatch.xeroContactId),
-        ...before.informational.map((entry) => entry.xeroContactId),
+        ...before.mismatches.slice(0, limit).map((mismatch) => mismatch.xeroContactId),
+        ...before.informational.slice(0, limit).map((entry) => entry.xeroContactId),
       ],
       "adminXeroContactGroupMismatchResync"
     );
+    // Distinct contacts across both full lists, counted the same way as
+    // `requestedContacts` (members sharing a contact count once), so the
+    // panel counts out of the true total and names the full groups refresh
+    // for the rest (another Refresh would re-fetch the same first contacts).
+    const flaggedContacts = new Set(
+      [...before.mismatches, ...before.informational].map((entry) => entry.xeroContactId)
+    ).size;
     const snapshot = await getXeroMemberGroupingSnapshot(parsed.data);
     return connectionJson(
       request,
-      { ...snapshot, resync },
+      { ...snapshot, resync: { ...resync, flaggedContacts } },
       XERO_CONTACT_GROUP_MISMATCHES_RESYNCED_CONNECTION_SHAPE,
     );
   } catch (error) {

@@ -485,7 +485,9 @@ describe("contact group mismatches", () => {
       args: { limit: 25 },
     });
     expect(JSON.stringify(connection)).not.toMatch(/@example\.org|xero-contact-uuid|xero-group-uuid/);
-    expect(browser).toEqual({ ...SNAPSHOT, resync: RESYNC });
+    // Both lists flag two distinct contacts in all, which the answer counts.
+    expect(browser).toEqual({ ...SNAPSHOT, resync: { ...RESYNC, flaggedContacts: 2 } });
+    expect(connection).toMatchObject({ resync: { flaggedContacts: 2 } });
     // The resync is asked about both kinds of flagged contact, as on the website.
     expect(h.resyncXeroContactCachesByIds).toHaveBeenCalledWith(
       ["xero-contact-uuid-1", "xero-contact-uuid-2"],
