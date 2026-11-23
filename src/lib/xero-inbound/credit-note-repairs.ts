@@ -22,7 +22,7 @@ import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credi
 import { getClubFormat } from "@/lib/club-format-settings";
 import { formatCents } from "@/lib/utils";
 import { decideLinkedRefundedTotalCents } from "./linked-refunded-total";
-import { capOrganiserChildMirrorAtStripeRefunds } from "@/lib/organiser-child-refund";
+import { capCardRefundedTotalAtStripeRefunds } from "@/lib/organiser-child-refund";
 
 /** #3792: the operator alert, and the audit action, for a refused change. */
 const RESTORED_BOOKING_ALLOCATION_CHANGE_ERROR_TYPE =
@@ -217,10 +217,10 @@ export async function repairRefundedPaymentBusinessState(input: {
 
   type RepairedPayment = (typeof payments)[number];
   const repairOne = async (payment: RepairedPayment): Promise<"updated" | "unchanged" | "lost" | "recount"> => {
-    const currentDirectRefundContributionCents =
-      currentDirectRefundPaymentId === payment.id ? currentCreditNoteAmountCents(payment.id) ?? 0 : 0;
-    const currentModificationRefundContributionCents =
-      includesCurrentCreditNoteContribution(payment.id)
+    const countedDirectRefundCents = currentDirectRefundPaymentId === payment.id ? currentCreditNoteAmountCents(payment.id) : null;
+    const currentDirectRefundContributionCents = countedDirectRefundCents ?? 0;
+    const currentModificationRefundContributionCents = // #4444: a note counted above as the payment's own (amount read) is not counted again by its allocation
+      includesCurrentCreditNoteContribution(payment.id) && countedDirectRefundCents === null
         ? input.modificationRefundAmountsByPaymentId.get(payment.id) ?? 0
         : 0;
 
@@ -279,10 +279,10 @@ export async function repairRefundedPaymentBusinessState(input: {
       });
       effectiveRefundedTotalCents = payment.refundedAmountCents;
     }
-    // #3653 (`INV-PAY-114`): a Xero note never raises an organiser child's cash
-    // mirror past the refunds Stripe recorded for it.
-    if (isStripePayment && payment.booking.organiserSettled) {
-      effectiveRefundedTotalCents = await capOrganiserChildMirrorAtStripeRefunds(prisma, payment, effectiveRefundedTotalCents);
+    // #3653 (`INV-PAY-114`), #4444 (`INV-PAY-126`, owner decision 23 Nov 2026): a Xero note never raises a card
+    // payment's total past the refunds Stripe recorded for it, so two notes for one refund cannot.
+    if (isStripePayment) {
+      effectiveRefundedTotalCents = await capCardRefundedTotalAtStripeRefunds(prisma, payment, effectiveRefundedTotalCents);
     }
     // #4449 (`INV-SSOT`): the clamp, the bank-transfer floor (#4162, `INV-ADDPAY-021`: never below a bank
     // transfer's own refund detail; less is alerted, not applied) and the status rule (F5 #1353: never
