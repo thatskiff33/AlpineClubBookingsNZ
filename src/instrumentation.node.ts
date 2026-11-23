@@ -1451,7 +1451,7 @@ export async function register() {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         reportCronError({ tag: "email-retry", err, message: "Error in email retry" });
-        await recordCronRun("email-retry", startedAt, "FAILURE", undefined, message);
+        await recordCronRun("email-retry", startedAt, "FAILURE", (err as { resultSummary?: Record<string, unknown> } | null)?.resultSummary, message);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "email-retry", status: "error" });
       } finally {
         isEmailRetryRunning = false;

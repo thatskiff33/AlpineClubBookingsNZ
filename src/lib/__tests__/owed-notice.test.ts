@@ -30,7 +30,8 @@ import {
   type OwedNoticeOutcome,
   type OwedNoticeSource,
 } from "@/lib/owed-notice/deliver";
-import { drainOwedNotices } from "@/lib/owed-notice/drain";
+import { drainOwedNotices, UNKNOWN_KIND_REPORT_AFTER_MS, type OwedNoticeDrainOptions } from "@/lib/owed-notice/drain";
+import type { OwedNoticeKind } from "@/lib/owed-notice/kinds";
 import {
   claimOwedNotice,
   deferOwedNotice,
@@ -51,7 +52,7 @@ const CUTOFF = 3 * 24 * HOUR;
 type Subject = { id: string; open: boolean };
 
 /** A test kind's deliverer, every part a spy. */
-function testDeliverer(kind: string, audience: "member" | "officers" = "member", { withPastCutoff = false } = {}) {
+function testDeliverer(kind: OwedNoticeKind, audience: "member" | "officers" = "member", { withPastCutoff = false } = {}) {
   const spies = {
     load: vi.fn(async (): Promise<Subject | null> => ({ id: "s1", open: true })),
     stillOwed: vi.fn(async (subject: Subject): Promise<true | string> => (subject.open ? true : "closed")),
@@ -77,20 +78,25 @@ function testDeliverer(kind: string, audience: "member" | "officers" = "member",
           idempotencyKey: (marker) => `${marker.subjectId}:${marker.eventAt.getTime()}`,
           deliver: (subject, marker, context) => spies.deliver(subject, marker, context),
         }
-      : { ...common, audience, deliver: (subject, marker) => spies.deliver(subject, marker) };
+      : { ...common, audience, deliver: (subject, marker, context) => spies.deliver(subject, marker, context) };
   return { deliverer, spies };
 }
 
-const KIND = "test-kind";
+// A kind of the test's own, outside `OWED_NOTICE_KINDS`: the drain is handed its deliverer directly.
+const KIND = "test-kind" as OwedNoticeKind;
 const markerFor = (subjectId = "s1", eventAt = EVENT_AT, kind = KIND) => owedNoticeMarker({ kind, subjectId, eventAt });
 
-function seed(subjectId = "s1", stampedAt = EVENT_AT, kind = KIND) {
-  table.seed({ id: owedNoticeId(kind, subjectId, EVENT_AT), kind, subjectId, eventAt: EVENT_AT, stampedAt });
+function seed(subjectId = "s1", stampedAt = EVENT_AT, kind: string = KIND, createdAt = EVENT_AT) {
+  table.seed({ id: owedNoticeId(kind, subjectId, EVENT_AT), kind, subjectId, eventAt: EVENT_AT, stampedAt, createdAt });
   return owedNoticeId(kind, subjectId, EVENT_AT);
 }
 
-const drainWith = (deliverer: OwedNoticeDeliverer<Subject>, now: Date, sources: OwedNoticeSource[] = [owedNoticeTableSource]) =>
-  drainOwedNotices(now, { deliverers: [deliverer as OwedNoticeDeliverer], sources });
+const drainWith = (
+  deliverer: OwedNoticeDeliverer<Subject>,
+  now: Date,
+  sources: OwedNoticeSource[] = [owedNoticeTableSource],
+  options: OwedNoticeDrainOptions = {},
+) => drainOwedNotices(now, { job: "test-sweep", ...options, deliverers: [deliverer as OwedNoticeDeliverer], sources });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -119,13 +125,22 @@ describe("recordOwedNotices, inside the change's transaction", () => {
     expect(table.rows.get(markers[0]!.id)!.stampedAt).toEqual(at(5));
   });
 
-  it("refuses a payload number that is not a whole number, and writes nothing for an empty list", async () => {
+  it("refuses a payload that is not ids and whole numbers, and writes nothing for an empty list", async () => {
     const tx = { owedNotice: table.delegate } as never;
-    await expect(recordOwedNotices(tx, [{ kind: KIND, subjectId: "s1", eventAt: EVENT_AT, payload: { cents: 1.5 } }])).rejects.toThrow(
-      "whole number",
-    );
+    const write = (payload: Record<string, string | number>) => recordOwedNotices(tx, [{ kind: KIND, subjectId: "s1", eventAt: EVENT_AT, payload }]);
+    await expect(write({ cents: 1.5 })).rejects.toThrow("whole number or an id");
+    // Free text, an email address, a too-long id, an empty string: never an id.
+    for (const text of ["Jane Doe", "jane@example.org", "x".repeat(65), ""]) {
+      await expect(write({ name: text }), text).rejects.toThrow("whole number or an id");
+    }
+    await expect(write({ "not a key": 1 })).rejects.toThrow("not an identifier");
+    await expect(write(Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`f${i}`, i])))).rejects.toThrow("at most 8 fields");
     await expect(recordOwedNotices(tx, [])).resolves.toEqual([]);
+    // Every refusal, and the empty list, wrote nothing.
     expect(table.delegate.createMany).not.toHaveBeenCalled();
+    // Eight fields of ids and whole numbers are accepted.
+    await expect(write(Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`f${i}`, i % 2 ? i : `id_${i}-x`])))).resolves.toHaveLength(1);
+    expect(table.delegate.createMany).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -179,15 +194,18 @@ describe("deliverOwedNotice, right after the commit", () => {
       vi.setSystemTime(EVENT_AT);
     }
 
-    expect(spies.deliver).toHaveBeenCalledWith({ id: "s1", open: true }, markerFor(), { idempotencyKey: `s1:${EVENT_AT.getTime()}` });
+    expect(spies.deliver).toHaveBeenCalledWith({ id: "s1", open: true }, markerFor(), {
+      idempotencyKey: `s1:${EVENT_AT.getTime()}`,
+      job: "test",
+    });
     expect(table.rows.size).toBe(0);
   });
 
-  it("hands an officers' kind no event key", async () => {
+  it("hands an officers' kind no event key, only the job", async () => {
     seed();
     const { deliverer, spies } = testDeliverer(KIND, "officers");
     await deliverOwedNotice(deliverer, markerFor(), { id: "s1", open: true });
-    expect(spies.deliver.mock.calls[0]).toHaveLength(2);
+    expect(spies.deliver.mock.calls[0]![2]).toEqual({ job: "test" });
   });
 
   it("sends nothing when a sweep already holds the marker", async () => {
@@ -219,7 +237,8 @@ describe("drainOwedNotices, the sweep", () => {
     expect(spies.deliver).not.toHaveBeenCalled();
 
     await expect(drainWith(deliverer, at(WAIT))).resolves.toEqual({ checked: 1, delivered: 1, cleared: 0, expired: 0 });
-    expect(spies.deliver.mock.calls[0]![2]).toEqual({ idempotencyKey: `s1:${EVENT_AT.getTime()}` });
+    // The sweep's own job, not the job that committed the change.
+    expect(spies.deliver.mock.calls[0]![2]).toEqual({ idempotencyKey: `s1:${EVENT_AT.getTime()}`, job: "test-sweep" });
     expect(table.rows.size).toBe(0);
   });
 
@@ -336,5 +355,84 @@ describe("drainOwedNotices, the sweep", () => {
     const broken: OwedNoticeSource = { name: "broken", listDue: vi.fn(async () => Promise.reject(new Error("db down"))) };
 
     await expect(drainWith(deliverer, at(WAIT), [broken, owedNoticeTableSource])).resolves.toMatchObject({ delivered: 1 });
+  });
+});
+
+describe("the cut-off step is never skipped by the age check (#5433 review)", () => {
+  it("takes a kind's past-cut-off step for a marker past its maximum age, rather than clearing it unread", async () => {
+    seed("s1", at(MAX_AGE));
+    const { deliverer, spies } = testDeliverer(KIND, "member", { withPastCutoff: true });
+
+    await expect(drainWith(deliverer, at(MAX_AGE + WAIT + 1))).resolves.toMatchObject({ expired: 1 });
+
+    expect(spies.load).toHaveBeenCalledTimes(1);
+    expect(spies.pastCutoff).toHaveBeenCalledTimes(1);
+    expect(spies.deliver).not.toHaveBeenCalled();
+    expect(table.rows.size).toBe(0);
+  });
+
+  it("still clears without the step a marker past its maximum age whose subject has moved on", async () => {
+    seed("s1", at(MAX_AGE));
+    const { deliverer, spies } = testDeliverer(KIND, "member", { withPastCutoff: true });
+    spies.load.mockResolvedValue({ id: "s1", open: false });
+
+    await expect(drainWith(deliverer, at(MAX_AGE + WAIT + 1))).resolves.toMatchObject({ cleared: 1 });
+    expect(spies.pastCutoff).not.toHaveBeenCalled();
+  });
+});
+
+describe("a kind nobody delivers is reported, never deleted (#5433 review)", () => {
+  it("logs once per run how many markers of unknown kinds are older than the report age, and leaves them", async () => {
+    const now = at(UNKNOWN_KIND_REPORT_AFTER_MS + WAIT);
+    seed("old-1", EVENT_AT, "a-kind-nobody-delivers", EVENT_AT);
+    seed("old-2", EVENT_AT, "another-unknown-kind", EVENT_AT);
+    seed("young", EVENT_AT, "a-kind-nobody-delivers", at(UNKNOWN_KIND_REPORT_AFTER_MS + 1));
+    const { deliverer } = testDeliverer(KIND);
+
+    await drainWith(deliverer, now);
+
+    const reports = mocks.logger.error.mock.calls.filter(([, message]) => String(message).includes("kind this release does not deliver"));
+    expect(reports).toHaveLength(1);
+    expect(reports[0]![0]).toMatchObject({ count: 2, job: "test-sweep" });
+    expect(table.rows.size).toBe(3);
+  });
+
+  it("says nothing when every unknown-kind marker is younger than the report age", async () => {
+    seed("young", EVENT_AT, "a-kind-nobody-delivers", EVENT_AT);
+    const { deliverer } = testDeliverer(KIND);
+
+    await drainWith(deliverer, at(UNKNOWN_KIND_REPORT_AFTER_MS - 1));
+
+    expect(mocks.logger.error.mock.calls.some(([, message]) => String(message).includes("kind this release does not deliver"))).toBe(false);
+  });
+});
+
+describe("a capped run (#5433 review)", () => {
+  it("stops offering markers at its row cap and leaves the rest owed for the next run", async () => {
+    for (const subject of ["a", "b", "c"]) seed(subject);
+    const { deliverer, spies } = testDeliverer(KIND);
+
+    const first = await drainWith(deliverer, at(WAIT), [owedNoticeTableSource], { maxRows: 2 });
+    expect(first).toEqual({ checked: 2, delivered: 2, cleared: 0, expired: 0, capped: true });
+    expect(table.rows.size).toBe(1);
+
+    const second = await drainWith(deliverer, at(WAIT), [owedNoticeTableSource], { maxRows: 2 });
+    expect(second).toEqual({ checked: 1, delivered: 1, cleared: 0, expired: 0 });
+    expect(spies.deliver).toHaveBeenCalledTimes(3);
+  });
+
+  it("stops offering markers once its time budget is spent", async () => {
+    for (const subject of ["a", "b"]) seed(subject);
+    const { deliverer, spies } = testDeliverer(KIND);
+    let elapsed = 0;
+    spies.deliver.mockImplementation(async () => {
+      elapsed += 1_000;
+      return "settled";
+    });
+
+    const result = await drainWith(deliverer, at(WAIT), [owedNoticeTableSource], { budgetMs: 1_000, elapsedMs: () => elapsed });
+
+    expect(result).toMatchObject({ checked: 1, capped: true });
+    expect(table.rows.size).toBe(1);
   });
 });

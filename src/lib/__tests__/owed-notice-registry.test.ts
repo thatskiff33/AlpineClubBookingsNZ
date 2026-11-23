@@ -1,0 +1,69 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+/*
+ * #5433 review: the owed-notice registry.
+ *
+ * - Every kind a marker can be written with (`OWED_NOTICE_KINDS`, the type
+ *   `recordOwedNotices` takes) has exactly one registered deliverer, and every
+ *   registered deliverer's kind is in that list. A kind written but never
+ *   registered would sit in a table no sweep reads; this, with the type, is
+ *   what stops it.
+ * - Every registered kind has a positive wait, a maximum age longer than it,
+ *   and, for a member kind, an event key. Its maximum age cannot hide its
+ *   cut-off step: a cut-off depends on the subject (the end of a check-in day
+ *   months away), so no static comparison is possible, and the sweep instead
+ *   sends an over-age marker of a kind with a past-cut-off step to that step
+ *   (owed-notice.test.ts). Only a kind without such a step is cleared by age.
+ * - The registry reads its deliverers on first use, never at import, so a
+ *   deliverer module that imports the drain (which imports the registry) is
+ *   no load-order hazard.
+ */
+
+afterEach(() => {
+  vi.doUnmock("@/lib/booking-bump-notice-owed");
+  vi.resetModules();
+});
+
+describe("the registered kinds", () => {
+  it("delivers exactly the kinds a marker can be written with, each once", async () => {
+    const { owedNoticeRegistry } = await import("@/lib/owed-notice/registry");
+    const { OWED_NOTICE_KINDS } = await import("@/lib/owed-notice/kinds");
+    const registered = owedNoticeRegistry().deliverers.map((deliverer) => deliverer.kind);
+
+    expect([...registered].sort()).toEqual([...OWED_NOTICE_KINDS].sort());
+    expect(new Set(registered).size).toBe(registered.length);
+  });
+
+  it("gives every member kind an event key and every kind a positive wait and maximum age", async () => {
+    const { owedNoticeRegistry } = await import("@/lib/owed-notice/registry");
+    for (const deliverer of owedNoticeRegistry().deliverers) {
+      expect(deliverer.sweepAfterMs, deliverer.kind).toBeGreaterThan(0);
+      expect(deliverer.maxAgeMs, deliverer.kind).toBeGreaterThan(deliverer.sweepAfterMs);
+      if (deliverer.audience === "member") expect(typeof deliverer.idempotencyKey, deliverer.kind).toBe("function");
+    }
+  });
+});
+
+describe("the registry is built on first use", () => {
+  it("reads no deliverer export when the registry module loads, only when a drain asks", async () => {
+    let reads = 0;
+    vi.doMock("@/lib/booking-bump-notice-owed", () => ({
+      get BUMP_NOTICE_DELIVERERS() {
+        reads += 1;
+        return [];
+      },
+      get legacyBumpMarkerSource() {
+        reads += 1;
+        return { name: "legacy", listDue: async () => [] };
+      },
+    }));
+    vi.resetModules();
+    const { owedNoticeRegistry } = await import("@/lib/owed-notice/registry");
+    expect(reads).toBe(0);
+
+    owedNoticeRegistry();
+    expect(reads).toBe(2);
+    owedNoticeRegistry();
+    expect(reads).toBe(2);
+  });
+});

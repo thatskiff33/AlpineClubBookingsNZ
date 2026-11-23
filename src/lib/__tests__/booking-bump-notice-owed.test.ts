@@ -58,6 +58,8 @@ import {
   bumpNoticeId,
   bumpNoticeIdempotencyKey,
   legacyBumpNoticeKey,
+  legacyBumpMarkerSource,
+  BUMP_NOTICE_DELIVERERS,
   deliverBumpNotice,
   recordBumpNoticesOwed,
 } from "@/lib/booking-bump-notice-owed";
@@ -273,7 +275,8 @@ describe("drainOwedNotices, the sweep of the legacy AlertCooldown bump markers",
 
     await drainOwedNotices(DUE);
 
-    expect(mocks.alertOfficers).toHaveBeenCalledWith(cancelledBooking(), true);
+    // #5433 review: with the job running the sweep, for its logs.
+    expect(mocks.alertOfficers).toHaveBeenCalledWith(cancelledBooking(), true, "owed-notice-sweep");
     expect(cooldown.rows.size).toBe(0);
   });
 
@@ -474,6 +477,16 @@ describe("drainOwedNotices, the sweep of the legacy AlertCooldown bump markers",
     expect(mocks.alertOfficers).toHaveBeenCalledTimes(1);
     // The failed one stays owed, under the sweep's claim.
     expect(cooldown.rows.has(officerKey())).toBe(true);
+  });
+
+  // #5433 review (INV-SSOT-002): the legacy source lists by the bound the drain hands it, not one of its own.
+  it("lists legacy markers by the due bound it is given", async () => {
+    cooldown.rows.set(officerKey(), BUMPED_AT);
+    const deliverer = BUMP_NOTICE_DELIVERERS[1]!;
+    const list = (dueBefore: Date) => legacyBumpMarkerSource.listDue(deliverer, { dueBefore, now: at(10 * BUMP_NOTICE_SWEEP_AFTER_MS) });
+
+    await expect(list(at(-1))).resolves.toEqual([]);
+    await expect(list(BUMPED_AT)).resolves.toMatchObject([{ key: officerKey() }]);
   });
 
   it("answers zero, and never throws, when the markers cannot be read", async () => {

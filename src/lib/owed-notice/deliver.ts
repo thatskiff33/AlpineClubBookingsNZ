@@ -40,6 +40,7 @@
  * base client.
  */
 import logger from "@/lib/logger";
+import type { OwedNoticeKind } from "@/lib/owed-notice/kinds";
 import {
   claimOwedNotice,
   deferOwedNotice,
@@ -61,14 +62,19 @@ export type OwedNoticeOutcome = "settled" | "unreached" | "threw";
 
 interface OwedNoticeDelivererBase<S> {
   /** The marker's `kind`. A sweep reads only kinds it has a deliverer for. */
-  kind: string;
-  /** Logged with every line about this kind. */
+  kind: OwedNoticeKind;
+  /** The job that commits this kind's change, logged by the delivery right after the commit (a sweep logs its own job). */
   job: string;
   /** How long after its stamp (the event, or the last attempt) a sweep may claim a marker. */
   sweepAfterMs: number;
   /** How long a marker is held after an attempt that reached nobody (`unreached`). */
   unreachedRetryAfterMs: number;
-  /** A marker older than this, or one that cannot be read, is cleared with an error log and nothing is sent. */
+  /**
+   * A marker older than this is past its cut-off whatever `sendBy` says: with
+   * `pastCutoff` it takes that step (so the step can never be skipped by the
+   * age check), and without one it is cleared with an error log, unsent and
+   * unread. A marker that cannot be read is always cleared.
+   */
   maxAgeMs: number;
   /** The subject as it stands now, read outside any transaction; null when it is gone. */
   load(marker: OwedNoticeMarker): Promise<S | null>;
@@ -88,19 +94,24 @@ interface OwedNoticeDelivererBase<S> {
   pastCutoff?(subject: S, marker: OwedNoticeMarker): Promise<OwedNoticeOutcome>;
 }
 
+/** What a send is told about the run it is part of: the job, for its logs. */
+export interface OwedNoticeRun {
+  job: string;
+}
+
 /** A member's notice carries an event key, so the member can never receive it twice. */
 interface MemberAudience<S> {
   audience: "member";
   /** The event key the email core turns into the `EmailLog` row id. */
   idempotencyKey(marker: OwedNoticeMarker): string;
   /** Send the notice with that key. Never throws: a failure is logged and answered `threw`. */
-  deliver(subject: S, marker: OwedNoticeMarker, context: { idempotencyKey: string }): Promise<OwedNoticeOutcome>;
+  deliver(subject: S, marker: OwedNoticeMarker, context: OwedNoticeRun & { idempotencyKey: string }): Promise<OwedNoticeOutcome>;
 }
 
 interface OfficersAudience<S> {
   audience: "officers";
   /** Send the alert. Never throws: a failure is logged and answered `threw`. */
-  deliver(subject: S, marker: OwedNoticeMarker): Promise<OwedNoticeOutcome>;
+  deliver(subject: S, marker: OwedNoticeMarker, context: OwedNoticeRun): Promise<OwedNoticeOutcome>;
 }
 
 export type OwedNoticeDeliverer<S = unknown> = OwedNoticeDelivererBase<S> & (MemberAudience<S> | OfficersAudience<S>);
@@ -145,10 +156,10 @@ export const owedNoticeTableSource: OwedNoticeSource = {
 };
 
 /** Send through the deliverer; a member's notice always with its event key. */
-function send<S>(deliverer: OwedNoticeDeliverer<S>, subject: S, marker: OwedNoticeMarker): Promise<OwedNoticeOutcome> {
+function send<S>(deliverer: OwedNoticeDeliverer<S>, subject: S, marker: OwedNoticeMarker, run: OwedNoticeRun): Promise<OwedNoticeOutcome> {
   return deliverer.audience === "member"
-    ? deliverer.deliver(subject, marker, { idempotencyKey: deliverer.idempotencyKey(marker) })
-    : deliverer.deliver(subject, marker);
+    ? deliverer.deliver(subject, marker, { ...run, idempotencyKey: deliverer.idempotencyKey(marker) })
+    : deliverer.deliver(subject, marker, run);
 }
 
 /**
@@ -189,7 +200,7 @@ export async function deliverOwedNotice<S>(
       logger.info({ key: ref.key, job: deliverer.job }, "Another run holds this owed notice; not sending it here");
       return;
     }
-    await settleByOutcome(deliverer, ref, claimedAt, await send(deliverer, subject, marker));
+    await settleByOutcome(deliverer, ref, claimedAt, await send(deliverer, subject, marker, { job: deliverer.job }));
   } catch (err) {
     logger.error(
       { err, key: ref.key, job: deliverer.job },
@@ -201,23 +212,26 @@ export async function deliverOwedNotice<S>(
 export type OwedNoticeSweepOutcome = "delivered" | "kept" | "cleared" | "expired" | "claim-lost";
 
 /**
- * One due marker, for the sweep: claim it on the sweep's bound before
- * anything else, then apply the maximum age, the subject's current state and
- * the cut-off, and send what is still owed. Throws only when a database read
- * or write fails, which the drain logs; the marker then stays owed.
+ * One due marker, for the sweep run by `job`: claim it on the sweep's bound
+ * before anything else, then apply the subject's current state and the
+ * cut-off (the kind's `sendBy`, or its maximum age, whichever comes first),
+ * and send what is still owed. Throws only when a database read or write
+ * fails, which the drain logs; the marker then stays owed.
  */
 export async function sweepOwedNotice(
   deliverer: OwedNoticeDeliverer,
   ref: OwedNoticeRef,
   dueBefore: Date,
   now: Date,
+  job: string,
 ): Promise<OwedNoticeSweepOutcome> {
   const claimedAt = await ref.claim(dueBefore, now);
   if (!claimedAt) return "claim-lost";
   const { marker } = ref;
-  if (!marker || now.getTime() - marker.eventAt.getTime() > deliverer.maxAgeMs) {
+  const overAge = marker !== null && now.getTime() - marker.eventAt.getTime() > deliverer.maxAgeMs;
+  if (!marker || (overAge && !deliverer.pastCutoff)) {
     logger.error(
-      { key: ref.key, kind: deliverer.kind, job: deliverer.job },
+      { key: ref.key, kind: deliverer.kind, job },
       "An owed notice was still owed past its maximum age, or its marker could not be read; cleared without sending it",
     );
     await ref.settle(claimedAt);
@@ -227,16 +241,16 @@ export async function sweepOwedNotice(
   const owed = subject === null ? "gone" : await deliverer.stillOwed(subject, marker);
   if (owed !== true || subject === null) {
     logger.warn(
-      { key: ref.key, kind: deliverer.kind, subjectId: marker.subjectId, why: owed, job: deliverer.job },
+      { key: ref.key, kind: deliverer.kind, subjectId: marker.subjectId, why: owed, job },
       "An owed notice's subject is gone or has moved on; cleared without sending it",
     );
     await ref.settle(claimedAt);
     return "cleared";
   }
-  if (now > deliverer.sendBy(subject, marker)) {
+  if (overAge || now > deliverer.sendBy(subject, marker)) {
     if (!deliverer.pastCutoff) {
       logger.error(
-        { key: ref.key, kind: deliverer.kind, subjectId: marker.subjectId, job: deliverer.job },
+        { key: ref.key, kind: deliverer.kind, subjectId: marker.subjectId, job },
         "An owed notice passed its cut-off unsent; cleared without sending it",
       );
       await ref.settle(claimedAt);
@@ -245,5 +259,5 @@ export async function sweepOwedNotice(
     const outcome = await deliverer.pastCutoff(subject, marker);
     return (await settleByOutcome(deliverer, ref, claimedAt, outcome)) === "delivered" ? "expired" : "kept";
   }
-  return settleByOutcome(deliverer, ref, claimedAt, await send(deliverer, subject, marker));
+  return settleByOutcome(deliverer, ref, claimedAt, await send(deliverer, subject, marker, { job }));
 }

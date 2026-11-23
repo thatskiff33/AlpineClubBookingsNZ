@@ -76,6 +76,7 @@ import {
   type OwedNoticeRef,
   type OwedNoticeSource,
 } from "@/lib/owed-notice/deliver";
+import type { OwedNoticeKind } from "@/lib/owed-notice/kinds";
 import { owedNoticeId, owedNoticeMarker, recordOwedNotices, type OwedNoticeMarker } from "@/lib/owed-notice/store";
 import { prisma } from "@/lib/prisma";
 
@@ -95,7 +96,7 @@ export type BumpNoticeKind = "member" | "officers";
 const KINDS: readonly BumpNoticeKind[] = ["member", "officers"];
 
 /** The `OwedNotice.kind` of each notice. */
-const KIND: Record<BumpNoticeKind, string> = {
+const KIND: Record<BumpNoticeKind, OwedNoticeKind> = {
   member: "booking-bump-member",
   officers: "booking-bump-officers",
 };
@@ -172,7 +173,7 @@ export type BumpNoticeBooking = Prisma.BookingGetPayload<{ select: typeof BUMP_N
 async function sendBumpedMemberNotice(
   booking: BumpNoticeBooking,
   flagged: boolean,
-  idempotencyKey: string,
+  { idempotencyKey, job }: { idempotencyKey: string; job: string },
 ): Promise<OwedNoticeOutcome> {
   const owner = bookingOwner(booking);
   const context = { bookingId: booking.id, recipientMemberId: owner.memberId, idempotencyKey };
@@ -210,7 +211,7 @@ async function sendBumpedMemberNotice(
     }
     return "settled";
   } catch (err) {
-    logger.error({ err, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to send bumped email");
+    logger.error({ err, bookingId: booking.id, job }, "Failed to send bumped email");
     return "threw";
   }
 }
@@ -263,13 +264,13 @@ const BUMP_DELIVERER: Record<BumpNoticeKind, OwedNoticeDeliverer<BumpNoticeBooki
     kind: KIND.member,
     audience: "member",
     idempotencyKey: (marker) => bumpNoticeIdempotencyKey(marker.subjectId, marker.eventAt),
-    deliver: (booking, marker, { idempotencyKey }) => sendBumpedMemberNotice(booking, isFlagged(marker), idempotencyKey),
+    deliver: (booking, marker, context) => sendBumpedMemberNotice(booking, isFlagged(marker), context),
   },
   officers: {
     ...BUMP_KIND_COMMON,
     kind: KIND.officers,
     audience: "officers",
-    deliver: (booking, marker) => alertOfficersOfBump(booking, isFlagged(marker)),
+    deliver: (booking, marker, { job }) => alertOfficersOfBump(booking, isFlagged(marker), job),
   },
 };
 
@@ -304,7 +305,7 @@ export async function deliverBumpNotices(booking: BumpNoticeBooking, owed: OwedB
 // ---------------------------------------------------------------------------
 
 /** The `AlertCooldown` prefix each kind's markers carried before #5433. */
-const LEGACY_PREFIX: Readonly<Record<string, string>> = {
+const LEGACY_PREFIX: Readonly<Partial<Record<OwedNoticeKind, string>>> = {
   [KIND.member]: "booking-bump-member-owed:",
   [KIND.officers]: "booking-bump-officers-owed:",
 };
@@ -315,7 +316,7 @@ export function legacyBumpNoticeKey(kind: BumpNoticeKind, bookingId: string, bum
 }
 
 /** A legacy key read as the marker it stands for, or null when it cannot be read. */
-function parseLegacyBumpNoticeKey(kind: string, key: string): OwedNoticeMarker | null {
+function parseLegacyBumpNoticeKey(kind: OwedNoticeKind, key: string): OwedNoticeMarker | null {
   const [bookingId, bumpedAtMs, variant, ...rest] = key.slice(LEGACY_PREFIX[kind]!.length).split(":");
   const bumpedAt = new Date(Number(bumpedAtMs));
   if (!bookingId || rest.length > 0 || Number.isNaN(bumpedAt.getTime())) return null;
@@ -323,7 +324,7 @@ function parseLegacyBumpNoticeKey(kind: string, key: string): OwedNoticeMarker |
   return owedNoticeMarker({ kind, subjectId: bookingId, eventAt: bumpedAt, variant });
 }
 
-function legacyRef(kind: string, key: string): OwedNoticeRef {
+function legacyRef(kind: OwedNoticeKind, key: string): OwedNoticeRef {
   return {
     key,
     marker: parseLegacyBumpNoticeKey(kind, key),
@@ -336,10 +337,11 @@ function legacyRef(kind: string, key: string): OwedNoticeRef {
 /** The legacy `AlertCooldown` bump markers, for the two bump kinds only. */
 export const legacyBumpMarkerSource: OwedNoticeSource = {
   name: "AlertCooldown (bump markers before #5433)",
-  async listDue(deliverer, { now }) {
+  async listDue(deliverer, { dueBefore }) {
     const prefix = LEGACY_PREFIX[deliverer.kind];
     if (!prefix) return [];
-    const keys = await listOwedAlertKeys({ prefix, now, retryAfterMs: deliverer.sweepAfterMs });
+    // The drain's own bound, as given (`INV-SSOT-002`): stamped no later than `dueBefore`.
+    const keys = await listOwedAlertKeys({ prefix, now: dueBefore, retryAfterMs: 0 });
     return keys.map((key) => legacyRef(deliverer.kind, key));
   },
 };

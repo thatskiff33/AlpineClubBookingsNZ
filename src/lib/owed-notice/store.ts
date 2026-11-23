@@ -7,19 +7,27 @@
  */
 import type { Prisma } from "@prisma/client";
 
+import type { OwedNoticeKind } from "@/lib/owed-notice/kinds";
 import { claimByStamp, deferredStamp } from "@/lib/owed-notice/stamp";
 import { prisma } from "@/lib/prisma";
 
 /**
  * Facts the change worked out in its transaction that cannot be rebuilt
  * reliably later. Ids and whole numbers only, never personal data: the row is
- * operational and sits outside the subject-access export.
+ * operational and sits outside the subject-access export. Enforced on write
+ * (`assertPayload`): at most `OWED_NOTICE_PAYLOAD_MAX_KEYS` keys, each a short
+ * identifier, each value a safe whole number or an id (`OWED_NOTICE_PAYLOAD_ID`).
  */
 export type OwedNoticePayload = Readonly<Record<string, string | number>>;
 
-/** One owed notice, as the change describes it. */
+export const OWED_NOTICE_PAYLOAD_MAX_KEYS = 8;
+const PAYLOAD_KEY = /^[A-Za-z][A-Za-z0-9]{0,31}$/;
+/** The shape a payload string must have: an id, never free text. */
+export const OWED_NOTICE_PAYLOAD_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** One owed notice, as the change describes it. Only a kind this release delivers can be written. */
 export interface OwedNoticeInput {
-  kind: string;
+  kind: OwedNoticeKind;
   subjectId: string;
   /** Taken once inside the transaction: part of the identity, and the first stamp. */
   eventAt: Date;
@@ -46,15 +54,25 @@ export function owedNoticeId(kind: string, subjectId: string, eventAt: Date, var
   return variant ? `${base}:${variant}` : base;
 }
 
+/**
+ * Refuse a payload that is not ids and whole numbers. It throws before any
+ * write, so inside the change's transaction it rolls the change back: a
+ * programming error a test catches, never a runtime state.
+ */
 function assertPayload(kind: string, payload: OwedNoticePayload): void {
-  for (const [field, value] of Object.entries(payload)) {
-    if (typeof value === "number" && !Number.isSafeInteger(value)) {
-      throw new Error(`Owed notice ${kind}: payload field ${field} must be a whole number`);
+  const entries = Object.entries(payload);
+  if (entries.length > OWED_NOTICE_PAYLOAD_MAX_KEYS) {
+    throw new Error(`Owed notice ${kind}: a payload holds at most ${OWED_NOTICE_PAYLOAD_MAX_KEYS} fields`);
+  }
+  for (const [field, value] of entries) {
+    if (!PAYLOAD_KEY.test(field)) throw new Error(`Owed notice ${kind}: payload field name ${JSON.stringify(field)} is not an identifier`);
+    if (typeof value === "number" ? !Number.isSafeInteger(value) : typeof value !== "string" || !OWED_NOTICE_PAYLOAD_ID.test(value)) {
+      throw new Error(`Owed notice ${kind}: payload field ${field} must be a whole number or an id`);
     }
   }
 }
 
-/** The stored marker for an input, as `recordOwedNotices` writes it. */
+/** The stored marker for an input, as `recordOwedNotices` writes it (`kind` is the stored text, which may be one this release does not know). */
 export function owedNoticeMarker(input: OwedNoticeInput): OwedNoticeMarker {
   return {
     id: owedNoticeId(input.kind, input.subjectId, input.eventAt, input.variant),
@@ -159,6 +177,23 @@ export async function deferOwedNotice({
     where: { id, stampedAt: claimedAt },
     data: { stampedAt: deferredStamp(claimedAt, waitMs, retryAfterMs) },
   });
+}
+
+/**
+ * How many markers of a kind none of `knownKinds` names were created before
+ * `createdBefore`. They are never deleted here: a newer release running beside
+ * this one may own them. The drain only reports them.
+ */
+export async function countStaleUnknownOwedNotices({
+  knownKinds,
+  createdBefore,
+  store = prisma,
+}: {
+  knownKinds: readonly string[];
+  createdBefore: Date;
+  store?: OwedNoticeStore;
+}): Promise<number> {
+  return store.owedNotice.count({ where: { kind: { notIn: [...knownKinds] }, createdAt: { lt: createdBefore } } });
 }
 
 /** How many markers of one kind one sweep offers, oldest stamp first. */

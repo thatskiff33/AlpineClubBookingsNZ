@@ -25,7 +25,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { OwedNoticeDeliverer } from "@/lib/owed-notice/deliver";
+import type { OwedNoticeKind } from "@/lib/owed-notice/kinds";
 
+import { listingTogether } from "./support/owed-notice-listing-barrier";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { resetStripeRaceHooks } from "./support/stripe-race-double";
 
@@ -53,15 +55,15 @@ let deliver: typeof import("@/lib/owed-notice/deliver");
 let drainOwedNotices: (typeof import("@/lib/owed-notice/drain"))["drainOwedNotices"];
 
 (RUN ? describe : describe.skip)("the owed-notice table - real PostgreSQL (#5433)", { timeout: 60_000 }, () => {
-  /** A case's own kind, so it asserts on its own rows only. */
-  const kindOf = (tag: string) => `${PREFIX}${tag}`;
+  /** A case's own kind, so it asserts on its own rows only (outside `OWED_NOTICE_KINDS`; the drain is handed its deliverer). */
+  const kindOf = (tag: string) => `${PREFIX}${tag}` as OwedNoticeKind;
 
   async function deleteOwnRows() {
     await prisma.owedNotice.deleteMany({ where: { kind: { startsWith: PREFIX } } });
   }
 
   /** A spy deliverer for one kind: it always finds its subject still owed, and settles. */
-  function spyDeliverer(kind: string) {
+  function spyDeliverer(kind: OwedNoticeKind) {
     const sent: string[] = [];
     const deliverer: OwedNoticeDeliverer<{ id: string }> = {
       kind,
@@ -75,8 +77,6 @@ let drainOwedNotices: (typeof import("@/lib/owed-notice/drain"))["drainOwedNotic
       sendBy: () => new Date(EVENT_AT.getTime() + 3650 * 24 * HOUR),
       deliver: async (_subject, marker) => {
         sent.push(marker.id);
-        // Long enough that the two drains overlap on this marker.
-        await new Promise((resolve) => setTimeout(resolve, 50));
         return "settled";
       },
     };
@@ -178,13 +178,16 @@ let drainOwedNotices: (typeof import("@/lib/owed-notice/drain"))["drainOwedNotic
       ]),
     );
     const { deliverer, sent } = spyDeliverer(mine);
-    const options = { deliverers: [deliverer as OwedNoticeDeliverer], sources: [deliver.owedNoticeTableSource] };
+    // Both drains list the marker before either claims it, so they truly overlap.
+    const options = { deliverers: [deliverer as OwedNoticeDeliverer], sources: [listingTogether(deliver.owedNoticeTableSource)] };
     const sweepAt = new Date(EVENT_AT.getTime() + 2 * HOUR);
 
     const results = await Promise.all([drainOwedNotices(sweepAt, options), drainOwedNotices(sweepAt, options)]);
 
     expect(sent).toEqual([store.owedNoticeId(mine, "s1", EVENT_AT)]);
     expect(results.map((result) => result.delivered).sort()).toEqual([0, 1]);
+    // Both runs listed it: run one after the other, the second would have checked none.
+    expect(results.map((result) => result.checked)).toEqual([1, 1]);
     expect(await prisma.owedNotice.count({ where: { kind: mine } })).toBe(0);
     expect(await prisma.owedNotice.findMany({ where: { kind: other }, select: { stampedAt: true, attempts: true } })).toEqual([
       { stampedAt: EVENT_AT, attempts: 0 },

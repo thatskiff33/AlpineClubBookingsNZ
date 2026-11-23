@@ -34,6 +34,7 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { listingTogether } from "./support/owed-notice-listing-barrier";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { resetStripeRaceHooks } from "./support/stripe-race-double";
 
@@ -110,6 +111,7 @@ const CASES = {
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let owed: typeof import("@/lib/booking-bump-notice-owed");
 let drainOwedNotices: (typeof import("@/lib/owed-notice/drain"))["drainOwedNotices"];
+let owedNoticeTableSource: (typeof import("@/lib/owed-notice/deliver"))["owedNoticeTableSource"];
 let email: typeof import("@/lib/email");
 let formatBookingReference: (typeof import("@/lib/booking-reference"))["formatBookingReference"];
 let SETTLEMENT_MARKER_EVENT_REASONS: (typeof import("@/lib/manual-settlement-reversal-event"))["SETTLEMENT_MARKER_EVENT_REASONS"];
@@ -207,6 +209,7 @@ let harnessRole: { restore: () => void } | undefined;
       harnessRole = declareEnvironmentRoleForSuite("non-production");
       owed = await import("@/lib/booking-bump-notice-owed");
       ({ drainOwedNotices } = await import("@/lib/owed-notice/drain"));
+      ({ owedNoticeTableSource } = await import("@/lib/owed-notice/deliver"));
       email = await import("@/lib/email");
       ({ formatBookingReference } = await import("@/lib/booking-reference"));
       ({ SETTLEMENT_MARKER_EVENT_REASONS } = await import("@/lib/manual-settlement-reversal-event"));
@@ -307,7 +310,12 @@ let harnessRole: { restore: () => void } | undefined;
       const { bumpedAt } = await commitBump(ids);
 
       const sweepAt = new Date(bumpedAt.getTime() + WAIT_PAST);
-      await Promise.all([drainOwedNotices(sweepAt), drainOwedNotices(sweepAt)]);
+      // Each drain lists a kind's markers only once both have, so they truly overlap.
+      const sources = [listingTogether(owedNoticeTableSource), owed.legacyBumpMarkerSource];
+      const results = await Promise.all([drainOwedNotices(sweepAt, { sources }), drainOwedNotices(sweepAt, { sources })]);
+      // Both runs listed both of this case's markers: run one after the other,
+      // the second would have found none of them.
+      for (const result of results) expect(result.checked).toBeGreaterThanOrEqual(2);
 
       const alertsForThisBooking = vi
         .mocked(email.sendAdminBookingBumpedAlert)

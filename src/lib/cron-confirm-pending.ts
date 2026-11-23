@@ -1153,7 +1153,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
     cancelledBookingIds: [],
     partialBumpedBookingIds: [],
     failedBookingIds: [...recovery.failedBookingIds],
-    owedNotices: await drainOwedNotices(now),
+    owedNotices: await drainOwedNotices(now, { job: "confirmPendingBookings" }),
   };
 
   for (const candidate of pendingBookings) {
