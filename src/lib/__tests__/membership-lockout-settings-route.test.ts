@@ -323,11 +323,14 @@ describe("membership lockout settings route: the subscription liability rule (#5
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
-  it("opts in inside one transaction: season lock, then the rule lock, then the settings, then the clear-up", async () => {
+  it("opts in inside one transaction: season lock, then the settings, then the clear-up", async () => {
     const response = await putLockoutSettings(request(chosen));
     expect(response.status).toBe(200);
-    // The frozen test clock is 1 July 2026: season 2026.
-    expect(mocks.order).toEqual(["lock:2026", "rule-lock", "upsert", "clear:2026"]);
+    // The frozen test clock is 1 July 2026: season 2026. The save takes no
+    // rule key of its own (#5190 review): the clear-up takes it, after the
+    // upsert, so the save never holds it while waiting on the settings row.
+    expect(mocks.order).toEqual(["lock:2026", "upsert", "clear:2026"]);
+    expect(mocks.lockRule).not.toHaveBeenCalled();
     // The save waits on the season key, which a billing confirm may hold for
     // its whole budget, so its transaction outlasts confirm's (P2028 otherwise).
     expect(mocks.transaction.mock.calls[0]?.[1]).toEqual({
@@ -352,7 +355,7 @@ describe("membership lockout settings route: the subscription liability rule (#5
     const update = mocks.upsert.mock.calls[0]?.[0]?.update as Record<string, unknown>;
     expect(update).not.toHaveProperty("requiredTypeAgeRule");
     expect(update).not.toHaveProperty("liabilityAgeSource");
-    expect(mocks.order).toEqual(["lock:2026", "rule-lock", "upsert", "clear:2026"]);
+    expect(mocks.order).toEqual(["lock:2026", "upsert", "clear:2026"]);
   });
 
   it("a save on a NOT_CHOSEN club runs no clear-up and opens no transaction", async () => {

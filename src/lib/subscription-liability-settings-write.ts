@@ -19,7 +19,6 @@ import {
   SUBSCRIPTION_BILLING_SEASON_WAITER_TIMEOUT_MS,
   lockSubscriptionBillingSeason,
 } from "@/lib/subscription-billing-season-lock";
-import { lockSubscriptionLiabilityRuleExclusive } from "@/lib/subscription-liability-rule-lock";
 
 /** The liability answers a settings save may name; either may be omitted. */
 type RequestedLiability = Partial<SubscriptionLiabilitySettings>;
@@ -118,10 +117,11 @@ export function liabilityChoiceToWrite(
 /**
  * Upsert the lockout settings row. A save that leaves the club on a chosen
  * liability rule also clears the season's stale `NOT_REQUIRED` rows, in ONE
- * transaction under the billing season key, then the liability-rule key
- * (season lock -> rule lock -> settings -> clear-up), so a billing confirm
+ * transaction under the billing season key (season lock -> settings ->
+ * clear-up, which takes the liability-rule key itself), so a billing confirm
  * sees the rule and the rows from before the save or after it, never half of
- * each, and a seasonal-assignment reconcile runs wholly before or after it. The caller resolves the club's
+ * each, and a seasonal-assignment reconcile runs wholly before or after the
+ * clear-up. The caller resolves the club's
  * `seasonYear` before the transaction opens. `clearedStaleRows` is null when no
  * clear-up ran.
  */
@@ -148,9 +148,11 @@ export async function saveLockoutSettings(
   const { seasonYear } = input;
   return db.$transaction(async (tx) => {
     await lockSubscriptionBillingSeason(tx, seasonYear);
-    // Rule key after the season key (never before): a reconcile holding
-    // `lock(1)` then waits only for this save, never for a billing confirm.
-    await lockSubscriptionLiabilityRuleExclusive(tx);
+    // No liability-rule key here (#5190 review): the upsert may wait on the
+    // settings row behind a config import's transaction, and holding the rule
+    // key through that wait would queue every reconcile (a `lock(1)` holder)
+    // behind it. The clear-up takes the rule key exclusive itself, before it
+    // reads the rule this upsert wrote.
     const record = await tx.membershipLockoutSettings.upsert(upsert);
     const clearedStaleRows: StaleNotRequiredClearUp | null =
       await clearStaleNotRequiredRows(tx, seasonYear);

@@ -10,9 +10,10 @@ import type { Prisma } from "@prisma/client";
  *
  *  - the seasonal-assignment reconcile (`reconcileSeasonSubscriptionForAssignment`)
  *    takes it SHARED, after the global, lodge and member keys its callers hold;
- *  - the liability clear-up (`clearStaleNotRequiredRows`) and the settings save
- *    (`saveLockoutSettings`) take it EXCLUSIVE, always AFTER the billing season
- *    key, so they never hold it while they wait for a billing confirm.
+ *  - the liability clear-up (`clearStaleNotRequiredRows`, run by the settings
+ *    save and after a config import) takes it EXCLUSIVE, always AFTER the
+ *    billing season key, so it never holds it while it waits for a billing
+ *    confirm or, in the save, for the settings row.
  *
  * So a reconcile runs wholly before an opt-in's clear-up (which then sees its
  * row) or wholly after it (and reads the chosen rule), yet waits only for the
