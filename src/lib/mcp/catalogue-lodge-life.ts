@@ -4,6 +4,7 @@
  * spreads them in. The same rules apply: request schemas and answer shapes
  * are the routes' own (`INV-SSOT`), and the route's guards decide.
  */
+import { BOOKING_HORIZON_DAYS } from "@/lib/booking-horizon";
 import {
   CALENDAR_EVENT_LIST_DEFAULT_DAYS_AHEAD,
   CALENDAR_EVENT_LIST_DEFAULT_DAYS_BACK,
@@ -158,7 +159,7 @@ export const MCP_LODGE_LIFE_ACTIONS: readonly McpAction[] = [
     id: "find_work_parties_for_stay",
     title: "Find work parties during a stay",
     summary:
-      "Open work parties that overlap a stay from `checkIn` to `checkOut` (`YYYY-MM-DD`, check-out after check-in), at `lodgeId` or club-wide: what a booking for that stay can say it is attending.",
+      `Open work parties that overlap a stay from \`checkIn\` to \`checkOut\` (\`YYYY-MM-DD\`, check-out after check-in), at \`lodgeId\` or club-wide: what a booking for that stay can say it is attending. Members only: anyone else gets an empty list. Nights more than ${BOOKING_HORIZON_DAYS} days after the club's today are not looked at.`,
     method: "GET",
     path: "/api/work-parties/active",
     query: workPartiesForStayQuerySchema,

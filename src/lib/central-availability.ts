@@ -1,10 +1,11 @@
 import "server-only";
 import { getLodgeCapacity, getMonthAvailability } from "@/lib/capacity";
+import { BOOKING_HORIZON_DAYS } from "@/lib/booking-horizon";
 import { eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
 
 /** The longest stay the central server may ask about, and how far ahead it may start. */
 export const CENTRAL_AVAILABILITY_MAX_NIGHTS = 30;
-export const CENTRAL_AVAILABILITY_MAX_DAYS_AHEAD = 730;
+export const CENTRAL_AVAILABILITY_MAX_DAYS_AHEAD = BOOKING_HORIZON_DAYS;
 
 /** One night's free beds as the central server is told them (triyder/AlpineClubBookingsNZ#79). */
 export interface CentralNightAvailability {

@@ -20,3 +20,8 @@
   codes stay on the website. If you named what an AI app receives in your
   privacy notice, the recipient register's `ai-apps` row now lists the new
   information, including other members' names on message-board posts.
+
+  **Book a Stay offers work parties to members only.** The "I am attending a
+  working bee" choice, like the rest of work parties, is now shown only to
+  members: a non-member login or an organisation account sees no work party to
+  choose and books as before. It lists work parties up to two years ahead.

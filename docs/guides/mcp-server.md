@@ -272,7 +272,7 @@ is on the committee, a hut leader or an admin.
 | `get_induction` | One of the member's own inductions; another member's answers Not Found | read | `GET /api/inductions/[id]` |
 | `list_work_parties` | Upcoming open work parties, as the dashboard card lists them, with the stay to book to join each | read | `GET /api/work-parties` (new) |
 | `get_work_party` | One open work party | read | `GET /api/work-parties/[id]` |
-| `find_work_parties_for_stay` | The open work parties a stay overlaps, as the booking form offers them | read | `GET /api/work-parties/active` |
+| `find_work_parties_for_stay` | The open work parties a stay overlaps, as the booking form offers them: members only (anyone else gets an empty list), and no further ahead than the booking horizon | read | `GET /api/work-parties/active` |
 | `get_maintenance_report_form` | The club's maintenance questions and the lodges to report against | read | `GET /api/maintenance-reports` |
 | `report_maintenance_issue` | Sends the club a maintenance report without a photo; the officers are emailed it. The route refuses a connection that sends a photo | destructive | `POST /api/maintenance-reports` |
 
