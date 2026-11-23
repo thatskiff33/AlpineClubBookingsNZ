@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { blankLiterals, stripComments } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * CT-6 (#2991) — the final escape-hatch census, as a RATCHET.
@@ -203,13 +204,6 @@ const PRODUCTION_FILES = walk(path.join(ROOT, "src")).filter(
 const ADAPTER_MODULES = new Set(["src/lib/date-only.ts"]);
 
 /** A file's CODE, with its prose removed. See {@link stripComments}. */
-/**
- * Each tree-wide test reads every production file: a few seconds on an idle
- * machine and several times that on a busy CI runner, which the 5s default
- * does not cover (the same budget as `mcp-route-census.test.ts`).
- */
-const CENSUS_TIMEOUT_MS = 90_000;
-
 const read = (file: string): string =>
   stripComments(fs.readFileSync(path.join(ROOT, file), "utf8"));
 
@@ -485,7 +479,7 @@ describe("the escape-hatch census is exact, and only ever revised downward", { t
       (file) => !ADAPTER_MODULES.has(file) && importsAdapter(read(file), "nzst-date"),
     );
     expect(nzst, nzst.join("\n")).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 describe("the classes CT-6 closed are at zero, and stay there", { timeout: CENSUS_TIMEOUT_MS }, () => {
@@ -497,14 +491,14 @@ describe("the classes CT-6 closed are at zero, and stay there", { timeout: CENSU
       (file) => findHostClockReads(read(file)) > 0,
     );
     expect(offenders).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("no production file outside the kernel imports Temporal", () => {
     const offenders = PRODUCTION_FILES.filter(
       (file) => findTemporalUse(read(file)) > 0,
     );
     expect(offenders).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("no production file outside the kernel names the environment zone, in ANY spelling", () => {
     // Only the seed reader, excluded above as a kernel sibling, is structurally
@@ -545,7 +539,7 @@ describe("the classes CT-6 closed are at zero, and stay there", { timeout: CENSU
     // stored zone as an argument. Nothing outside the kernel names the
     // environment zone now, so any file this finds is a new leak.
     expect(naming, naming.join("\n")).toHaveLength(0);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("counts the local-midnight constructions no selector can reach", () => {
     const offenders = PRODUCTION_FILES.map((file) => ({
@@ -565,5 +559,5 @@ describe("the classes CT-6 closed are at zero, and stay there", { timeout: CENSU
     expect(
       offenders.reduce((sum, entry) => sum + entry.count, 0),
     ).toBe(CENSUS_CEILING.localMidnightConstructions);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

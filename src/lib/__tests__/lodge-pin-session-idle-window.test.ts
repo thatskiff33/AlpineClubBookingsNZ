@@ -20,6 +20,7 @@ import {
   HUT_LEADER_PIN_SESSION_MAX_TOTAL_SECONDS,
 } from "../lodge-pin-session-timing";
 import { NO_STORE_HEADER_NAME, NO_STORE_HEADER_VALUE } from "../lodge-cache-headers";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3228 — A HUT LEADER'S PIN MUST NOT LEAVE A SHARED SCREEN PRIVILEGED ALL DAY.
@@ -917,7 +918,7 @@ function relative(file: string) {
   return path.relative(process.cwd(), file).split(path.sep).join("/");
 }
 
-describe("hut-leader PIN session: only one place can extend it (#3228)", () => {
+describe("hut-leader PIN session: only one place can extend it (#3228)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const files = everySourceFile(SRC).map((file) => ({
     file: relative(file),
     contents: readFileSync(file, "utf8"),

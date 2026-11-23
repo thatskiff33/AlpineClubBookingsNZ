@@ -24,6 +24,7 @@ import { describe, expect, it } from "vitest";
 
 import { balancedBrackets } from "./support/balanced-brackets";
 import { blankLiterals } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = join(__dirname, "..", "..", "..");
 
@@ -71,5 +72,5 @@ describe("only a review's give-back marks an applied-credit row with its source 
       // The give-back writer itself, which sets it only when handed one.
       "src/lib/member-credit.ts giveBackAppliedCredit memberCredit.create",
     ]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });

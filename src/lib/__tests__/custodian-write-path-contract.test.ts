@@ -3,6 +3,7 @@ import path from "path";
 import { describe, expect, it } from "vitest";
 import { balancedBrackets } from "./support/balanced-brackets";
 import { blankLiterals } from "./support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * Custodian occupancy — write-path contract (#2286).
@@ -445,7 +446,7 @@ describe("custodian write-path contract (#2286)", () => {
         "database constraint behind it. Add the guard, then list the site in " +
         "GUARDED_WRITE_SITES with the mechanism that protects it.",
     ).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("counts them per SITE, so a second write in a declared file fails too", () => {
     // The gap this closes (#2688 review F3): the test above compares a SET of
@@ -475,7 +476,7 @@ describe("custodian write-path contract (#2286)", () => {
         occurrences: site.occurrences,
       })),
     );
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("MUTATION PROBE: the detector sees a second statement and a long one", () => {
     // Pins the two properties the fix depends on, so a later "simplification"
@@ -695,7 +696,7 @@ describe("custodian write-path contract (#2286)", () => {
       "A module outside SELF_WRAPPED_WRITERS derives the per-lodge capacity " +
         "lock key. Declare its writers there so their lock order is checked too.",
     ).toEqual([...SELF_WRAPPED_WRITER_FILES].sort());
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("rebuilds and writes the auto-allocation plan only under global then lodge", () => {
     // runAutoBedAllocation was transaction-free and lock-free before #2286. The

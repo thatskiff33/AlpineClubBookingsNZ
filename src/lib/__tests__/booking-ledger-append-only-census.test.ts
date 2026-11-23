@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 // that mis-reads a regex literal deletes the rest of the line, and a census
 // whose stripper under-reports goes FALSELY GREEN.
 import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3580 (programme #3527): THE LEDGER IS APPEND-ONLY, AND THIS IS WHAT HOLDS IT.
@@ -110,7 +111,7 @@ function scanWriteSites(): Hit[] {
   return hits;
 }
 
-describe("the booking ledger is append-only (#3580, INV-MONEY-032)", () => {
+describe("the booking ledger is append-only (#3580, INV-MONEY-032)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("has exactly one module that writes the table", () => {
     const writers = [...new Set(writeSites().map((hit) => hit.file))].sort();
     expect(writers).toEqual([THE_ONE_DOOR]);

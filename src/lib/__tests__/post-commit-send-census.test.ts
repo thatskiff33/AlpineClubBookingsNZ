@@ -72,6 +72,7 @@ import {
   type PostCommitSite,
 } from "@/lib/__tests__/support/post-commit-send-scan";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * One listed site: how many calls, the commit each call is about (one name for
@@ -485,7 +486,7 @@ function compare(sites: ReadonlyMap<string, PostCommitSite>, reasons: Readonly<R
   };
 }
 
-describe("#5433: every notice sent after a commit is owed, or has a recorded reason (INV-INT-004)", () => {
+describe("#5433: every notice sent after a commit is owed, or has a recorded reason (INV-INT-004)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const sites = scanTree();
   const result = compare(sites, POST_COMMIT_SEND_REASONS);
 

@@ -11,6 +11,7 @@ import { ADMIN_PAGES, adminPageRoutePath, getAdminPage } from "@/lib/admin-hubs"
 import { MODULE_KEYS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 import { requireCalendarDate } from "@/lib/club-time";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // All modules on; derived so it covers every module key without drifting.
 const allOn: FeatureFlags = Object.fromEntries(
@@ -210,7 +211,7 @@ describe("feature-aware navigation", () => {
         true,
       );
     }
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("preserves old booking request deep-link params on the combined page", () => {
     expect(

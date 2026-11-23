@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { blankLiterals, stripComments } from "./support/strip-comments";
 import { balancedBrackets } from "./support/balanced-brackets";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 /**
  * #3123, the SIGNATURE-RESHAPE group: seven modules whose civil-day authority
@@ -189,7 +190,7 @@ function argumentCount(args: string): number {
   return balancedBrackets(`(${args})`, 0).parts.length;
 }
 
-describe("#3123 reshaped seams keep their required club day", () => {
+describe("#3123 reshaped seams keep their required club day", { timeout: CENSUS_TIMEOUT_MS }, () => {
   it("no reshaped module reads a zone-defaulting date-only helper any more", () => {
     const offenders: string[] = [];
     for (const file of RESHAPED_MODULES) {

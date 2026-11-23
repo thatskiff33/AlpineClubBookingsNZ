@@ -68,6 +68,7 @@ import {
 } from "../../../scripts/audit/audit-writer-census-manifest";
 import { stripSqlComments } from "../../../prisma/migration-verification/split-statements";
 import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
+import { AST_CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const BACKFILL_MIGRATION = "20260923010000_backfill_historical_audit_categories";
 
@@ -197,7 +198,7 @@ function census(): AuditWriterCensus {
   return cachedCensus;
 }
 
-describe("the #2581 historical null-category backfill (INV-OPS-012, INV-PRIV-012)", () => {
+describe("the #2581 historical null-category backfill (INV-OPS-012, INV-PRIV-012)", { timeout: AST_CENSUS_TIMEOUT_MS }, () => {
   it("rewrites exactly the pairs the reviewed map records, in the block the map assigns", () => {
     const arms = pairsTheMigrationRewrites();
     expect(
@@ -380,7 +381,7 @@ describe("the #2581 historical null-category backfill (INV-OPS-012, INV-PRIV-012
       history: 3,
       "superseded-writer": 2,
     });
-  }, 180_000);
+  });
 
   it("partitions the crossing rows the way the owner decided them", () => {
     // 13 Sep 2026: 3 officer-only LOSES (Xero), 206 GAINS of which 5 reach a
@@ -608,7 +609,7 @@ describe("the #2581 historical null-category backfill (INV-OPS-012, INV-PRIV-012
         expect(literalCategory(site), `${site.id} records a different category from the correction`).toBe(to);
       }
     }
-  }, 180_000);
+  });
 
   it("records what it did, and only when something moved", () => {
     expect(sqlWithoutComments).toContain("'AUDIT_CATEGORY_BACKFILLED'");

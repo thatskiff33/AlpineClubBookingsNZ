@@ -2,6 +2,7 @@ import type { AgeTier } from "@prisma/client"
 import type { XeroAccount, XeroItem } from "@/lib/xero-admin-cache"
 import type { XeroMappingWritableKey } from "@/lib/xero-account-mapping-keys"
 import type { XeroReentryCause } from "@/lib/xero-token-store"
+import type { ContactGroupResyncCounts } from "@/lib/xero-contact-group-mismatch-summary"
 
 export interface XeroStatus {
   connected: boolean
@@ -321,6 +322,11 @@ interface ContactCacheResyncSummary {
   resyncedAt: string
 }
 
+// The group endpoint also says how many distinct contacts are flagged in all.
+interface ContactGroupResyncSummary extends ContactGroupResyncCounts {
+  resyncedAt: string
+}
+
 // Information-only residue: a member no rule matches who still sits in
 // managed-universe group(s). Never written to by any sync path.
 interface ContactGroupInformationalEntry {
@@ -347,7 +353,7 @@ export interface ContactGroupMismatchResponse {
   mismatches: ContactGroupMismatch[]
   informationalCount: number
   informational: ContactGroupInformationalEntry[]
-  resync?: ContactCacheResyncSummary
+  resync?: ContactGroupResyncSummary
 }
 
 interface ContactLinkMismatch {

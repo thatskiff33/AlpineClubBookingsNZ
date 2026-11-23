@@ -42,6 +42,7 @@ import { describe, expect, it } from "vitest";
 
 import { relativeSource, sourceFiles } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
 import { REFUND_NOTE_SNAPSHOT_AT_KEY } from "@/lib/xero-refund-note-status";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const BUILDER = "xeroCreditNoteSnapshotMetadata";
 const BUILDER_HOME = "src/lib/xero-refund-note-status.ts";
@@ -148,7 +149,7 @@ const undeclaredStatuses = (findings: Finding[]) =>
     .filter((finding) => finding.kind === "status" && !NOT_A_XERO_READING[`${finding.file}:${finding.text}`])
     .map((finding) => `${finding.file}:${finding.line} records status ${finding.text} without its UpdatedDateUTC - spread ${BUILDER}(...) instead`);
 
-describe("every credit-note link that records a Xero status stamps its UpdatedDateUTC (#4288, INV-ADDPAY-041)", () => {
+describe("every credit-note link that records a Xero status stamps its UpdatedDateUTC (#4288, INV-ADDPAY-041)", { timeout: CENSUS_TIMEOUT_MS }, () => {
   const { findings, stampKeyFiles } = scan();
 
   it("names a status only through the one builder; every other named status is declared, with its reason", () => {

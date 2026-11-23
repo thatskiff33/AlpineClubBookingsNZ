@@ -12,6 +12,7 @@ import {
   type PasswordHashWriterKind,
   type PasswordHashWriterSite,
 } from "./support/password-hash-writer-scan";
+import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 // Census of every `passwordHash` writer (#4610, INV-AUTH-006).
 //
@@ -314,7 +315,7 @@ describe("passwordHash writer census (#4610, INV-AUTH-006)", () => {
     expect(files).toContain("src/app/api/auth/change-password/route.ts");
     expect(sites.length).toBeGreaterThan(0);
     expect(allSites.some((site) => site.kind === "sql")).toBe(true);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("covers raw-SQL writers in each exempt directory, and nothing else there", () => {
     for (const dir of REVIEWED_SQL_WRITER_DIRECTORIES) {
@@ -328,7 +329,7 @@ describe("passwordHash writer census (#4610, INV-AUTH-006)", () => {
       /(?:\bfrom\s*|\bimport\s*\(?|\brequire\s*\()\s*["'](?:bcryptjs|bcrypt|@node-rs\/bcrypt)["']/.test(fs.readFileSync(file, "utf8")),
     );
     expect(forbidden).toEqual([]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("lists each manifest entry once", () => {
     expect(reviewed.size).toBe(REVIEWED_PASSWORD_HASH_WRITERS.length);
@@ -438,7 +439,7 @@ describe("passwordHash writer census (#4610, INV-AUTH-006)", () => {
         /\bupgradePasswordHashAfterProof\s*\(/.test(fs.readFileSync(file, "utf8")),
     );
     expect(callers.sort()).toEqual(["src/lib/auth.ts", "src/lib/session-reauth.ts"]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("allows an untraced exempt value only for the local demo seed", () => {
     const untraced = REVIEWED_PASSWORD_HASH_WRITERS.filter((w) => w.untracedValue).map((w) =>
