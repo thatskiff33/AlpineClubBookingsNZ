@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
+import { expectDefaultInvalidJsonAnswer, MALFORMED_JSON_BODY } from "./helpers/invalid-json-body";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -461,5 +462,56 @@ describe("DELETE /api/admin/members/[id]/partner-link", () => {
       params: Promise.resolve({ id: "member-a" }),
     });
     expect(res.status).toBe(404);
+  });
+
+  // #5407 item 27: a bodyless or empty-bodied DELETE still means "no choice"
+  // (the silent pending removal); a body that is present but not JSON used to
+  // be swallowed as an empty one and now answers the shared invalid-JSON 400.
+  it("treats an empty body with a JSON content type as no body", async () => {
+    vi.mocked(adminRemovePartnerLink).mockResolvedValue({
+      ok: true,
+      linkId: "link-1",
+      status: "REMOVED",
+      message: "removed",
+    });
+
+    const res = await adminDeletePartnerLink(
+      new NextRequest("http://localhost/api/admin/members/member-a/partner-link?id=link-1", {
+        method: "DELETE",
+        body: "",
+        headers: { "Content-Type": "application/json" },
+      }),
+      { params: Promise.resolve({ id: "member-a" }) }
+    );
+    expect(res.status).toBe(200);
+    expect(adminRemovePartnerLink).toHaveBeenCalledWith(
+      expect.objectContaining({ linkId: "link-1", notifyMember: undefined })
+    );
+  });
+
+  it("refuses a JSON null body with the schema 422 and removes nothing (#5407)", async () => {
+    const res = await adminDeletePartnerLink(
+      new NextRequest("http://localhost/api/admin/members/member-a/partner-link?id=link-1", {
+        method: "DELETE",
+        body: "null",
+        headers: { "Content-Type": "application/json" },
+      }),
+      { params: Promise.resolve({ id: "member-a" }) }
+    );
+    expect(res.status).toBe(422);
+    expect(adminRemovePartnerLink).not.toHaveBeenCalled();
+  });
+
+  it("refuses a body that is not JSON and removes nothing (#5407)", async () => {
+    const res = await adminDeletePartnerLink(
+      new NextRequest("http://localhost/api/admin/members/member-a/partner-link?id=link-1", {
+        method: "DELETE",
+        body: MALFORMED_JSON_BODY,
+        headers: { "Content-Type": "application/json" },
+      }),
+      { params: Promise.resolve({ id: "member-a" }) }
+    );
+    await expectDefaultInvalidJsonAnswer(res);
+    expect(adminRemovePartnerLink).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import {
@@ -63,8 +64,10 @@ export async function POST(request: NextRequest) {
   }
 
   let parsed: z.infer<typeof confirmationSchema>;
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    parsed = confirmationSchema.parse(await request.json());
+    parsed = confirmationSchema.parse(jsonBody.body);
   } catch {
     return NextResponse.json(
       { error: "Invalid cancellation confirmation payload" },

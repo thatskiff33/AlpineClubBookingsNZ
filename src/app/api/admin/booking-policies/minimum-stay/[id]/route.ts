@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { parseJsonRequestBody } from "@/lib/api-json"
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation"
 import { requireAdmin } from "@/lib/session-guards"
 import { prisma } from "@/lib/prisma"
@@ -60,8 +61,10 @@ export async function PUT(
   const session = guard.session
   const { id } = await params
 
+  const jsonBody = await parseJsonRequestBody(request)
+  if (!jsonBody.ok) return jsonBody.response
   try {
-    const data = updateSchema.parse(await request.json())
+    const data = updateSchema.parse(jsonBody.body)
     const outcome = await prisma.$transaction(async (tx) => {
       // The global policy-set lock is acquired before the first read. The DB
       // statement trigger takes this same key for draining old-colour DML.
@@ -194,10 +197,7 @@ export async function PUT(
     }
     if (error instanceof PolicyVersionConflictError) return versionConflict(error)
     if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Validation failed", details: error.issues },
-        { status: 400 },
-      )
+      return NextResponse.json({ error: "Validation failed", details: error.issues }, { status: 400 })
     }
     return NextResponse.json(
       { error: "Failed to update minimum stay policy" },
@@ -217,8 +217,10 @@ export async function DELETE(
   const session = guard.session
   const { id } = await params
 
+  const jsonBody = await parseJsonRequestBody(request)
+  if (!jsonBody.ok) return jsonBody.response
   try {
-    const data = deleteSchema.parse(await request.json())
+    const data = deleteSchema.parse(jsonBody.body)
     const outcome = await prisma.$transaction(async (tx) => {
       await lockMinimumStayPolicySet(tx)
       const existing = await tx.minimumStayPolicy.findUnique({ where: { id } })
@@ -271,10 +273,7 @@ export async function DELETE(
     }
     if (error instanceof PolicyVersionConflictError) return versionConflict(error)
     if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Validation failed", details: error.issues },
-        { status: 400 },
-      )
+      return NextResponse.json({ error: "Validation failed", details: error.issues }, { status: 400 })
     }
     return NextResponse.json(
       { error: "Failed to delete minimum stay policy" },

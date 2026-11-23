@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import {
   AdditionalAskChangedDuringReductionError,
@@ -81,7 +82,9 @@ export async function POST(
 
   const { id: bookingId, guestId } = await params;
 
-  const body = (await request.json().catch(() => null)) as {
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body as {
     action?: unknown;
   } | null;
   const action = body?.action;

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import type { AgeTier } from "@prisma/client";
@@ -71,13 +72,11 @@ export async function PUT(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  const body = await request.json();
-  const parsed = putSchema.safeParse(body);
+  const jsonBody = await parseJsonRequestBody(request);
+  if (!jsonBody.ok) return jsonBody.response;
+  const parsed = putSchema.safeParse(jsonBody.body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
 
   const settings: AgeTierSettingInput[] = parsed.data.settings.map((setting) => ({
