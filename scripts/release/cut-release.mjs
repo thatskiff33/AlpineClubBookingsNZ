@@ -162,7 +162,7 @@ export const RELEASE_PREP_PATHS = Object.freeze([
  * which reads the issue at once; a title search goes through GitHub's search
  * index, which can lag behind a just-opened issue and so open a second one.
  */
-export const CHECKLIST_LABEL = "post-deploy-checklist";
+const CHECKLIST_LABEL = "post-deploy-checklist";
 
 /** A GitHub login, or `@me` (whoever `gh` is signed in as). */
 const ASSIGNEE_PATTERN = /^(?:@me|[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})$/;
