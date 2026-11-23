@@ -3,7 +3,7 @@ import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { BookingStatus, type AgeTier, type Prisma } from "@prisma/client";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "./capacity";
 import { bookingOwner } from "@/lib/booking-owner";
-import { addDaysDateOnly } from "@/lib/date-only";
+import { nonMemberHoldEnd } from "@/lib/non-member-hold-end";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { isMemberEligibleToBookLodge } from "@/lib/lodge-access";
 import {
@@ -1093,8 +1093,8 @@ export async function confirmWaitlistOffer(
       };
 
       if (newStatus === BookingStatus.PENDING) {
-        // INV-DATE-014: calendar arithmetic, never the host's clock face.
-        const holdDate = addDaysDateOnly(booking.checkIn, -holdPolicy.holdDays);
+        // INV-DATE-014: whole 24-hour (UTC-day) spans, never the host's clock face.
+        const holdDate = nonMemberHoldEnd(booking.checkIn, holdPolicy.holdDays);
         updateData.nonMemberHoldUntil = holdDate;
       }
 

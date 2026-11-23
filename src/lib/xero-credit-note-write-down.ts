@@ -12,6 +12,7 @@
  * `gatherAppliedCreditLots` and the repair subtract the net (`INV-SSOT`).
  */
 import { CreditType, Prisma } from "@prisma/client";
+import { storedShortBookingId } from "@/lib/booking-reference";
 
 export const CREDIT_NOTE_WRITE_DOWN_TYPE = CreditType.ADMIN_ADJUSTMENT;
 
@@ -104,11 +105,11 @@ export async function writtenDownCentsByMemberAndNote(
 }
 
 export function creditNoteWriteDownDescription(bookingId: string): string {
-  return `Automatic adjustment: credit used in Xero outside the app, removed (booking ${bookingId.slice(0, 8)})`;
+  return `Automatic adjustment: credit used in Xero outside the app, removed (booking ${storedShortBookingId(bookingId)})`;
 }
 
 export function creditNoteReleaseDescription(bookingId: string): string {
-  return `Automatic adjustment: credit no longer applied to booking ${bookingId.slice(0, 8)} because it was used in Xero outside the app`;
+  return `Automatic adjustment: credit no longer applied to booking ${storedShortBookingId(bookingId)} because it was used in Xero outside the app`;
 }
 
 /** The write-down the inbound mirror makes when it finds the note spent in Xero (#4270); no booking is involved. */
