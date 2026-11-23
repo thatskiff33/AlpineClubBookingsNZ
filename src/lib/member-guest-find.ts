@@ -1,4 +1,5 @@
 import type { AgeTier } from "@prisma/client";
+import { z } from "zod";
 import { BOOKABLE_AGE_TIER_VALUES } from "@/lib/age-tier-schema";
 
 /**
@@ -61,6 +62,23 @@ export const MEMBER_GUEST_SEARCH_RESULT_CAP = 10;
 
 /** The longest `q` fragment stored on an audit row (see `member-guest-find` auditing). */
 export const MEMBER_GUEST_SEARCH_AUDIT_Q_MAX_CHARS = 64;
+
+/**
+ * The longest `q` the name search reads. Anything past it is dropped before
+ * the query is audited or matched, so an unbounded query string is never
+ * stored or sent to an index.
+ */
+export const MEMBER_GUEST_SEARCH_Q_MAX_CHARS = MEMBER_GUEST_SEARCH_AUDIT_Q_MAX_CHARS * 4;
+
+/** `GET /api/members/guest-candidates/search`, as the AI app action `search_members_for_guest` sends it (ALP-795). */
+export const memberGuestSearchQuerySchema = z.object({
+  q: z.string().max(MEMBER_GUEST_SEARCH_Q_MAX_CHARS),
+});
+
+/** `POST /api/members/guest-candidates/resolve`: one exact email address. */
+export const memberGuestResolveBodySchema = z.object({
+  email: z.string().trim().min(1).max(320).email(),
+});
 
 /**
  * The tiers the club treats as under-18 for the open-search sub-setting (D-20).

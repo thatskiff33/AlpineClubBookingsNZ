@@ -58,14 +58,14 @@ export type McpPermanentExclusionReason = keyof typeof MCP_PERMANENT_EXCLUSION_R
 
 /**
  * The task that will bring each remaining group of routes into the catalogue.
- * The member keys are the four follow-ons ALP-718 split its member routes
- * into; the rest are the officer areas. An area whose task has finished has
- * no key: each of its routes is an action or has a permanent reason, and a
- * new one fails the census until someone decides about it.
+ * The member keys are the follow-ons ALP-718 split its member routes into,
+ * less those that have shipped (ALP-795, family and membership); the rest are
+ * the officer areas. An area whose task has finished has no key: each of its
+ * routes is an action or has a permanent reason, and a new one fails the
+ * census until someone decides about it.
  */
 export const MCP_NOT_YET_TASKS = {
   memberBookings: "ALP-794",
-  memberFamilyAndMembership: "ALP-795",
   memberLodgeLife: "ALP-796",
   memberGroupsAndWholeLodge: "ALP-797",
   bookings: "ALP-719",
@@ -81,7 +81,6 @@ const NOT_YET_TASK_BY_GROUP: Partial<Record<AdminPermissionArea | MemberNotYetGr
 
 type MemberNotYetGroup =
   | "memberBookings"
-  | "memberFamilyAndMembership"
   | "memberLodgeLife"
   | "memberGroupsAndWholeLodge";
 
@@ -155,6 +154,11 @@ const PERMANENT_ROUTES: ReadonlyArray<{
       "POST /api/notices/[id]/acknowledge",
       "POST /api/member/onboarding/confirm",
       "POST /api/member/request-deletion",
+      // ALP-795: joining a family group, confirming a partnership and asking
+      // for memberships to be cancelled are the member's own decisions.
+      "PUT /api/members/family/invitations",
+      "PUT /api/members/partner-link",
+      "POST /api/member/membership-cancellation-requests",
     ],
   },
   {
@@ -171,8 +175,15 @@ const PERMANENT_ROUTES: ReadonlyArray<{
   { reason: "access-secrets", routes: ["GET /api/lodge-instructions"] },
   { reason: "site-helper", routes: ["POST /api/help/chat"] },
   { reason: "public-visitor", routes: ["POST /api/contact", "POST /api/applications"] },
-  // The nominee confirms through a link emailed to them.
-  { reason: "needs-browser", routes: ["POST /api/applications/nominate"] },
+  // The nominee confirms through a link emailed to them, as does each member
+  // named in a membership cancellation request.
+  {
+    reason: "needs-browser",
+    routes: [
+      "POST /api/applications/nominate",
+      "POST /api/member/membership-cancellation-requests/confirm",
+    ],
+  },
 
   // --- Membership (ALP-720) ------------------------------------------------
   // Settings screens and the club's membership structure: types, their
@@ -273,10 +284,6 @@ const MEMBER_NOT_YET_PREFIXES: Readonly<Record<MemberNotYetGroup, readonly strin
     "/api/booking-policies",
     "/api/bookings",
     "/api/promo-codes",
-  ],
-  memberFamilyAndMembership: [
-    "/api/member/membership-cancellation-requests",
-    "/api/members",
   ],
   memberLodgeLife: [
     "/api/calendar",

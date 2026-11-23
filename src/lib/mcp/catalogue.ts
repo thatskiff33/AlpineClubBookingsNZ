@@ -36,6 +36,11 @@ import {
   CANCEL_PREVIEW_CONNECTION_SHAPE,
   COMMITTEE_CONNECTION_SHAPE,
   CREDIT_BALANCE_CONNECTION_SHAPE,
+  FAMILY_GROUP_CREATE_CONNECTION_SHAPE,
+  FAMILY_INVITATIONS_CONNECTION_SHAPE,
+  FAMILY_INVITE_CONNECTION_SHAPE,
+  FAMILY_MEMBER_DETAILS_CONNECTION_SHAPE,
+  FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE,
   LODGE_LIST_CONNECTION_SHAPE,
   LODGE_ROSTER_CONNECTION_SHAPE,
   MEMBER_ACCOUNT_ACTIVITY_CONNECTION_SHAPE,
@@ -44,30 +49,54 @@ import {
   MEMBER_DRAFT_LIST_CONNECTION_SHAPE,
   MEMBER_DRAFT_SUMMARY_CONNECTION_SHAPE,
   MEMBER_FAMILY_CONNECTION_SHAPE,
+  MEMBER_GUEST_CANDIDATES_CONNECTION_SHAPE,
+  MEMBER_GUEST_OPTIONS_CONNECTION_SHAPE,
   MEMBER_NOTICE_CONNECTION_SHAPE,
   MEMBER_NOTICE_LIST_CONNECTION_SHAPE,
   MEMBER_NOTIFICATION_PREFERENCES_CONNECTION_SHAPE,
   MEMBER_PROFILE_CONNECTION_SHAPE,
   MEMBER_PROFILE_UPDATE_CONNECTION_SHAPE,
+  MEMBERSHIP_CANCELLATION_OPTIONS_CONNECTION_SHAPE,
   NOTICE_READ_CONNECTION_SHAPE,
+  PARTNER_LINK_MESSAGE_CONNECTION_SHAPE,
+  PARTNER_LINK_REQUEST_CONNECTION_SHAPE,
+  PARTNER_LINK_STATE_CONNECTION_SHAPE,
   SKIFIELD_REPORT_CONNECTION_SHAPE,
   SUBSCRIPTION_STATUS_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes";
 import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
+import {
+  delegatedFamilyDetailsSchema,
+  familyAdultRequestSchema,
+  familyChildRequestSchema,
+  familyGroupCreateSchema,
+  familyGroupInviteSchema,
+  familyJoinRequestSchema,
+  familyMemberIdParamsSchema,
+  familyRemovalRequestSchema,
+} from "@/lib/family-group-request-schemas";
 import { ROSTER_WINDOW_DAYS } from "@/lib/lodge-roster-window";
 import { memberAuditLogQuerySchema } from "@/lib/member-audit-log-query";
+import {
+  MEMBER_GUEST_SEARCH_MIN_CHARS,
+  MEMBER_GUEST_SEARCH_RESULT_CAP,
+  memberGuestResolveBodySchema,
+  memberGuestSearchQuerySchema,
+} from "@/lib/member-guest-find";
 import { memberNotificationPreferencesConnectionUpdateSchema } from "@/lib/member-notification-preferences";
 import { memberProfileConnectionUpdateSchema } from "@/lib/member-profile-update-schema";
 import { noticeIdParamsSchema } from "@/lib/notices-shared";
+import { partnerLinkDeleteQuerySchema, partnerLinkRequestSchema } from "@/lib/partner-link-request-schemas";
 import type { StepUpHttpMethod } from "@/lib/step-up-routes";
 
 import { MEMBERSHIP_MCP_ACTIONS } from "./catalogue/membership";
 
 /**
  * `read` changes none of the member's own data. A read may still touch shared
- * housekeeping: the rate-limit counter its route applies, or a public cache
- * (`get_skifield_report` refreshes the ski field report's). `write` changes
- * something the member can undo.
+ * housekeeping: the rate-limit counter its route applies, a public cache
+ * (`get_skifield_report` refreshes the ski field report's), or its route's own
+ * audit row (a lookup of other members records every query, blocked ones
+ * included). `write` changes something the member can undo.
  * `destructive` cannot be undone from the app. A view-only connection runs
  * `read` actions only.
  */
@@ -92,8 +121,9 @@ export interface McpAction {
   readonly fixedBody?: Readonly<Record<string, unknown>>;
   readonly kind: McpActionKind;
   /**
-   * A `POST` that changes nothing, such as a quote, run as a `read`. The
-   * census pins every route allowed to be one.
+   * A `POST` that changes no member's data, such as a quote, run as a `read`;
+   * like any read it may touch housekeeping (see `McpActionKind`). The census
+   * pins every route allowed to be one.
    */
   readonly preview?: true;
   /**
@@ -177,7 +207,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     id: "get_my_family_group",
     title: "Read my family group",
     summary:
-      "The signed-in member and the active members of their family groups, with the member ids a booking's guest list takes.",
+      "The signed-in member and the active members of their family groups, with the member ids a booking's guest list takes, the `familyGroupIds` the family actions take, each person's groups, whether they have their own login, and whether the member may confirm their details (`confirm_family_member_details`).",
     method: "GET",
     path: "/api/members/family",
     kind: "read",
@@ -399,6 +429,185 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/skifield-whakapapa",
     kind: "read",
     returns: SKIFIELD_REPORT_CONNECTION_SHAPE,
+    core: false,
+  },
+  // --- Family and membership (ALP-795) ---
+  {
+    id: "list_my_family_invitations",
+    title: "List my family group invitations",
+    summary:
+      "Invitations to join another member's family group that are waiting for the signed-in member: who sent each, the group and when. The member accepts or declines on their profile page on the website.",
+    method: "GET",
+    path: "/api/members/family/invitations",
+    kind: "read",
+    returns: FAMILY_INVITATIONS_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "invite_to_family_group",
+    title: "Invite a member to my family group",
+    summary:
+      "Invites an adult who is already a member, by their email address, to one of the signed-in member's family groups (`familyGroupId` from `get_my_family_group`). The person accepts or declines from their own profile. Only an adult in the group can invite.",
+    method: "POST",
+    path: "/api/members/family/invite",
+    body: familyGroupInviteSchema,
+    kind: "write",
+    returns: FAMILY_INVITE_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "request_family_group",
+    title: "Ask for a new family group",
+    summary:
+      "Asks the club to create a family group for a signed-in adult who is not in one: an optional group name, an optional partner by email (`declarePartnerLink` also asks them to confirm the partnership), and up to six children with their dates of birth (`YYYY-MM-DD`). An officer reviews the request; the answer is the same whether or not the partner's email belongs to a member.",
+    method: "POST",
+    path: "/api/members/family/create-group",
+    body: familyGroupCreateSchema,
+    kind: "write",
+    returns: FAMILY_GROUP_CREATE_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "request_to_join_family_group",
+    title: "Ask to join a family group",
+    summary:
+      "Asks to join the family group of another member, by that member's email address. An officer reviews the request. A member with a request already waiting cannot send another.",
+    method: "POST",
+    path: "/api/members/family/request-join",
+    body: familyJoinRequestSchema,
+    kind: "write",
+    returns: FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "request_family_child",
+    title: "Ask to add a child to my family group",
+    summary:
+      "Asks the club to add an infant, child or youth (anyone not in the club's adult age group, see `get_age_groups`) to one of the signed-in member's family groups. `dateOfBirth` is `YYYY-MM-DD`. An officer reviews the request. Only an adult in the group can ask.",
+    method: "POST",
+    path: "/api/members/family/request-child",
+    body: familyChildRequestSchema,
+    kind: "write",
+    returns: FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "request_family_adult",
+    title: "Ask to add an adult without their own login",
+    summary:
+      "Asks the club to add an adult who shares the signed-in member's email address and has no login of their own to one of the member's family groups. `dateOfBirth` is `YYYY-MM-DD`. An officer reviews the request. To add an adult who has their own login, use `invite_to_family_group`.",
+    method: "POST",
+    path: "/api/members/family/request-adult",
+    body: familyAdultRequestSchema,
+    kind: "write",
+    returns: FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "request_family_member_removal",
+    title: "Ask to remove someone from my family group",
+    summary:
+      "Asks the club to remove a person who should not be in one of the signed-in member's family groups (`memberId` and `familyGroupId` from `get_my_family_group`). An officer reviews the request; nobody is removed until then.",
+    method: "POST",
+    path: "/api/members/family/request-removal",
+    body: familyRemovalRequestSchema,
+    kind: "write",
+    returns: FAMILY_REQUEST_SUBMITTED_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "confirm_family_member_details",
+    title: "Confirm a family member's details",
+    summary:
+      "Saves and confirms the name and date of birth (`YYYY-MM-DD`) of a family member who has no login of their own (`memberId` from `get_my_family_group`, where `canCurrentUserConfirmDetails` is true). Their phone number and addresses are copied from the signed-in member's own profile, which must be complete. The date of birth sets their age group, and so what they pay.",
+    method: "PUT",
+    path: "/api/members/family/[memberId]/details",
+    params: familyMemberIdParamsSchema,
+    body: delegatedFamilyDetailsSchema.omit({ inheritContactFromSelf: true }),
+    fixedBody: { inheritContactFromSelf: true },
+    kind: "write",
+    returns: FAMILY_MEMBER_DETAILS_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "get_member_guest_options",
+    title: "Read how members are found as guests",
+    summary:
+      "Whether the club lets members add other members as guests on a booking and, if so, whether members can be found by name (`openSearchEnabled`, for `search_members_for_guest`) or only by exact email address (`find_member_by_email`), and whether the guest must approve first.",
+    method: "GET",
+    path: "/api/members/guest-candidates",
+    kind: "read",
+    returns: MEMBER_GUEST_OPTIONS_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "search_members_for_guest",
+    title: "Search members by name to add as a guest",
+    summary: `Members whose first or last name starts with \`q\` (at least ${MEMBER_GUEST_SEARCH_MIN_CHARS} characters), to add as a guest on a booking: each one's \`memberId\`, name and age group, never contact details or dates of birth. At most ${MEMBER_GUEST_SEARCH_RESULT_CAP}; \`truncated\` means there are more, so narrow the search. Only where the club has name search switched on; each search is recorded.`,
+    method: "GET",
+    path: "/api/members/guest-candidates/search",
+    query: memberGuestSearchQuerySchema,
+    kind: "read",
+    returns: MEMBER_GUEST_CANDIDATES_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "find_member_by_email",
+    title: "Find a member by email to add as a guest",
+    summary:
+      "The member with exactly this email address, or each member of a household who share it, to add as a guest on a booking: each one's `memberId`, name and age group. An empty list says nothing about why. Changes no member's data; each lookup is recorded and rate limited.",
+    method: "POST",
+    path: "/api/members/guest-candidates/resolve",
+    body: memberGuestResolveBodySchema,
+    kind: "read",
+    preview: true,
+    returns: MEMBER_GUEST_CANDIDATES_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "get_my_partner_link",
+    title: "Read my partner link",
+    summary:
+      "The signed-in member's confirmed partner, the partner requests they sent and received, the family members without a login they may declare as their partner in one step (on the website, not through `request_partner_link`), and any emailed partner invitation nobody has claimed (its id and expiry). A request addressed to the member is confirmed on the website.",
+    method: "GET",
+    path: "/api/members/partner-link",
+    kind: "read",
+    returns: PARTNER_LINK_STATE_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "request_partner_link",
+    title: "Declare my partner",
+    summary:
+      "Asks another member to confirm they are the signed-in member's partner: by `email` (a registered adult with a login) or by `memberId` (an adult with a login in the signed-in member's own family group). Send exactly one. They confirm from their own profile. Once a request by email is accepted, the reply is the same whether or not a request was created. A family member without a login of their own is declared on the website, because that confirms the partnership at once.",
+    method: "POST",
+    path: "/api/members/partner-link",
+    body: partnerLinkRequestSchema,
+    kind: "write",
+    returns: PARTNER_LINK_REQUEST_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "end_partner_link",
+    title: "End or withdraw a partner link",
+    summary:
+      "With `id` (from `get_my_partner_link`), withdraws the signed-in member's own pending partner request or ends their confirmed partnership; the other person is told. With `inviteTokenId`, cancels an emailed partner invitation nobody has claimed. Send exactly one. Cannot be undone from the app.",
+    method: "DELETE",
+    path: "/api/members/partner-link",
+    query: partnerLinkDeleteQuerySchema,
+    kind: "destructive",
+    returns: PARTNER_LINK_MESSAGE_CONNECTION_SHAPE,
+    core: false,
+  },
+  {
+    id: "get_membership_cancellation_options",
+    title: "Read my membership cancellation options",
+    summary:
+      "Whose memberships the signed-in member may ask the club to cancel (themselves and family members), and why any cannot be; the club's warning and how to rejoin; and their cancellation requests so far. No email addresses. The request itself is made on the member's profile page on the website.",
+    method: "GET",
+    path: "/api/member/membership-cancellation-requests",
+    kind: "read",
+    returns: MEMBERSHIP_CANCELLATION_OPTIONS_CONNECTION_SHAPE,
     core: false,
   },
   // Officer areas (ALP-719 onwards): shown only to an officer holding the area.

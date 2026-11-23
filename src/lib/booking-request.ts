@@ -1270,7 +1270,7 @@ export async function declineBookingRequest(input: {
   // (request.contactEmail) is always present, so decline always sends unless
   // the admin opted out — the suppression is recorded in the audit log.
   notifyMember?: boolean;
-  ipAddress?: string;
+  ipAddress: string; // Required (#5407): the release audit never records an empty IP.
 }) {
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
@@ -1449,7 +1449,7 @@ export async function declineBookingRequest(input: {
         request.heldBookingId,
         input.adminMemberId,
         "ADMIN",
-        input.ipAddress ?? "",
+        input.ipAddress,
         format,
         "card",
         {
@@ -2677,7 +2677,7 @@ export async function approveBookingRequest(input: {
         // A new Payment row (no recorded fee) on a booking no credit election
         // has reached yet, so what is owed is the price (#4058).
         amountDueCents: priceCents,
-        bookingReference: conversion.bookingId,
+        bookingId: conversion.bookingId,
         expiresAt: paymentLinkExpiresAt,
       }, format);
     } catch (err) {

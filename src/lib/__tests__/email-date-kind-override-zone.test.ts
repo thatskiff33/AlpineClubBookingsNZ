@@ -322,7 +322,7 @@ const SENDERS: readonly Sender[] = [
         guestCount: 2,
         priceCents: 12_000,
         amountDueCents: 12_000,
-        bookingReference: "bk_1",
+        bookingId: "bk_1",
         expiresAt: INSTANT,
       }, CLUB_FORMAT_TEST),
     days: [
@@ -346,7 +346,7 @@ const SENDERS: readonly Sender[] = [
         guestCount: 2,
         priceCents: 12_000,
         amountDueCents: 12_000,
-        bookingReference: "bk_1",
+        bookingId: "bk_1",
         expiresAt: INSTANT,
       }, CLUB_FORMAT_TEST),
     days: [
