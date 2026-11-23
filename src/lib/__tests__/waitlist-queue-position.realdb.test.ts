@@ -168,6 +168,9 @@ async function setCrossLodgeOrder(order: WaitlistCrossLodgeOrder) {
 async function cleanBookings() {
   const owned = { startsWith: PREFIX };
   await prisma.auditLog.deleteMany({ where: { targetId: owned } });
+  // #5433: the offers and lapses this suite makes leave owed-notice markers
+  // (its mocked officer alert reports nothing, so that marker stays).
+  await prisma.owedNotice.deleteMany({ where: { subjectId: owned } });
   await prisma.bookingEvent.deleteMany({ where: { bookingId: owned } });
   await prisma.bookingGuest.deleteMany({ where: { bookingId: owned } });
   await prisma.bookingWaitlistAlternateLodge.deleteMany({ where: { bookingId: owned } });
