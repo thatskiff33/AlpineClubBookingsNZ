@@ -400,6 +400,7 @@ import { classifyDoubleBedSharingFacts } from "@/lib/double-bed-sharing";
 import { classifyMemberGuestConsent } from "@/lib/member-guest-consent";
 
 import { defuseRoleLabels, foldUntrustedText } from "../../untrusted-text";
+import { SHORT_BOOKING_ID_LENGTH } from "@/lib/booking-reference";
 import { defineDiagnosticsTool, type DiagnosticsToolEntry } from "../define";
 import {
   AID6B_ALLOCATION_ROW_LIMIT,
@@ -575,7 +576,7 @@ export function lodgeLabelOrNull(value: unknown): string | null {
  */
 const BOOKING_SUMMARY_SQL = `SELECT
   b."id" AS booking_ref,
-  pg_catalog.upper(pg_catalog.left(b."id", 8)) AS booking_reference,
+  pg_catalog.upper(pg_catalog.left(b."id", ${SHORT_BOOKING_ID_LENGTH})) AS booking_reference,
   b."memberId" AS owner_member_ref,
   b."lodgeId" AS lodge_ref,
   b."status"::text AS booking_status,
@@ -667,7 +668,7 @@ const BOOKING_LINKED_STATE_SQL = `SELECT
     ELSE 'child'
   END AS relation_type,
   related."id" AS booking_ref,
-  pg_catalog.upper(pg_catalog.left(related."id", 8)) AS booking_reference,
+  pg_catalog.upper(pg_catalog.left(related."id", ${SHORT_BOOKING_ID_LENGTH})) AS booking_reference,
   related."status"::text AS booking_status,
   ${dateOnly('related."checkIn"')} AS check_in,
   ${dateOnly('related."checkOut"')} AS check_out,

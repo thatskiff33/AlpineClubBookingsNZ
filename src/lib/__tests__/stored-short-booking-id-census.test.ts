@@ -17,18 +17,33 @@ import { stripComments } from "./support/strip-comments";
  *
  * ## What it matches
  *
- * Every `.slice(0, 8)`, `.substring(0, 8)`, `.substr(0, 8)` and `.slice(-8)`
- * in production code under `src/`, `scripts/` and `prisma/`, keyed by
- * `file :: receiver`. It does not try to tell a booking id from any other id:
- * it reports every match (`INV-SSOT-004`: the broader instrument), and the list
- * below names each one that is reviewed. A new one anywhere, even a second one
- * with a listed receiver in a listed file, fails until it is reviewed here.
+ * Every `.slice(0, 8)`, `.substring(0, 8)`, `.substr(0, 8)` and `.slice(-8)`,
+ * and the same calls with `SHORT_BOOKING_ID_LENGTH` for the 8, in production
+ * code under `src/`, `scripts/` and `prisma/`, keyed by `file :: receiver`. It
+ * does not try to tell a booking id from any other id: it reports every match
+ * (`INV-SSOT-004`: the broader instrument), and the list below names each one
+ * that is reviewed. A new one anywhere, even a second one with a listed
+ * receiver in a listed file, fails until it is reviewed here.
+ *
+ * A second leg reads the same files for SQL: no `left(<expression>, 8)`
+ * anywhere. The AI Diagnostics packs build their booking reference with
+ * `pg_catalog.left(<id>, ${SHORT_BOOKING_ID_LENGTH})`, so the length reaches
+ * the SQL from the one constant as an integer, never as typed text.
+ *
+ * ## Why a census and not a type
+ *
+ * A branded `BookingId` type whose only short form is the helper was
+ * considered and rejected (`INV-SSOT-001` prefers a structural remedy). Ids
+ * reach this code as plain strings from Prisma rows, route parameters, JSON
+ * payloads and fixtures, so the brand would have to be applied far beyond
+ * these sites, and a plain `string` would still slice: the type would not stop
+ * the drift this census exists to catch.
  *
  * ## It strips comments, not strings
  *
  * Docblocks describe the short form, so raw text would fire on them; the
  * tree's one stripper removes them. Strings stay, because most of these sites
- * sit inside a template literal's `${...}`.
+ * sit inside a template literal's `${...}` and the SQL sits inside one.
  *
  * ## READS THE TREE FROM DISK
  *
@@ -36,10 +51,15 @@ import { stripComments } from "./support/strip-comments";
  *
  * ## What it does not see
  *
- * A short form spelled another way (a regular expression, a loop, a length
- * held in a variable) and anything under `e2e/` or in tests, which assert the
- * stored text literally on purpose: an independent pin, not a second writer.
- */
+ * - A short form spelled another way: a regular expression, a loop, a length
+ *   held in some other variable, a swapped `id.substring(8, 0)` (which
+ *   `substring` reorders to the same result), or a borrowed call such as
+ *   `String.prototype.slice.call(id, 0, 8)`.
+ * - Raw SQL spelled other than `left(..., 8)`: `substr(id, 1, 8)`,
+ *   `substring(id from 1 for 8)` or a `LIKE` on a prefix.
+ * - Anything under `e2e/` or in tests, which assert the stored text literally
+ *   on purpose: an independent pin, not a second writer.
+  */
 
 const REPO_ROOT = path.resolve(__dirname, "../../..");
 const HOME = "src/lib/booking-reference.ts";
@@ -78,7 +98,10 @@ const REVIEWED_SHORT_FORMS: string[] = [
   "src/app/(admin)/admin/membership/membership-cancellations/page.tsx :: request.id",
 ];
 
-const SHORT_FORM = /\.\s*(?:slice|substring|substr)\(\s*(?:0\s*,\s*8|-\s*8)\s*\)/g;
+const SHORT_FORM =
+  /\.\s*(?:slice|substring|substr)\(\s*(?:0\s*,\s*(?:8|SHORT_BOOKING_ID_LENGTH)|-\s*(?:8|SHORT_BOOKING_ID_LENGTH))\s*\)/g;
+/** A SQL `left(<expression>, 8)`, in any case. */
+const SQL_LEFT_EIGHT = /\bleft\(\s*[^,()]+,\s*8\s*\)/gi;
 const RECEIVER = /([A-Za-z_$][\w$]*(?:\s*\??\.\s*[A-Za-z_$][\w$]*)*)\s*$/;
 
 /**
@@ -135,6 +158,15 @@ describe("stored short booking id census (#5407 item 36)", () => {
     ).toEqual([...REVIEWED_SHORT_FORMS].sort());
   });
 
+  it("finds no SQL left(<expression>, 8) anywhere", () => {
+    const offenders = files.flatMap((file) =>
+      [...stripComments(readFileSync(path.join(REPO_ROOT, file), "utf8")).matchAll(SQL_LEFT_EIGHT)].map(
+        (match) => `${file} :: ${match[0]}`,
+      ),
+    );
+    expect(offenders, "build a SQL short id with left(<id>, ${SHORT_BOOKING_ID_LENGTH}) from booking-reference.ts").toEqual([]);
+  });
+
   it("keeps the home import-free, so browser code and leaf modules can import it", () => {
     const code = stripComments(readFileSync(path.join(REPO_ROOT, HOME), "utf8"));
     expect(moduleImports(HOME, code)).toEqual([]);
@@ -152,6 +184,7 @@ describe("stored short booking id census (#5407 item 36)", () => {
       ["rows[0].id.slice(0, 8)", ["<expression>"]],
       ["booking!.id.slice(0, 8)", ["<expression>"]],
       ["(a ?? b).slice(0, 8)", ["<expression>"]],
+      ["bookingId.slice(0, SHORT_BOOKING_ID_LENGTH)", ["bookingId"]],
     ])("reports %j as %j", (code, expected) => {
       expect(shortFormReceivers(code)).toEqual(expected);
     });
@@ -164,6 +197,15 @@ describe("stored short booking id census (#5407 item 36)", () => {
       "date.slice(0, 10)",
     ])("ignores %j", (code) => {
       expect(shortFormReceivers(code)).toEqual([]);
+    });
+
+    it.each([
+      ['pg_catalog.left(b."id", 8)', 1],
+      ["LEFT(p.\"bookingId\",8)", 1],
+      ['pg_catalog.left(b."id", ${SHORT_BOOKING_ID_LENGTH})', 0],
+      ['pg_catalog.left(b."id", 12)', 0],
+    ])("counts SQL left-eight in %j as %i", (code, expected) => {
+      expect([...code.matchAll(SQL_LEFT_EIGHT)]).toHaveLength(expected);
     });
 
     it("ignores a short form named only in a comment once comments are stripped", () => {

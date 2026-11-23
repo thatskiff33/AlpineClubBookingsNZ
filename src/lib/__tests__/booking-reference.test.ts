@@ -4,7 +4,12 @@ import {
   buildGroupSettlementPaymentReference,
   buildInternetBankingPaymentReference,
 } from "@/lib/booking-payment-methods";
-import { formatBookingReference, storedShortBookingId } from "@/lib/booking-reference";
+import {
+  BOOKING_REFERENCE_SHAPE,
+  formatBookingReference,
+  SHORT_BOOKING_ID_LENGTH,
+  storedShortBookingId,
+} from "@/lib/booking-reference";
 import { buildBookingAppliedCreditDescription } from "@/lib/member-credit-booking-rows";
 
 // #5407 item 36: the stored short forms of a booking id are written into Xero,
@@ -62,5 +67,26 @@ describe("formatBookingReference, the display handle", () => {
     ["ABCdef123456", "ABCDEF12"],
   ])("upper-cases the stored short id of %j: %j", (id, expected) => {
     expect(formatBookingReference(id)).toBe(expected);
+  });
+});
+
+describe("the length and the typed-reference shape", () => {
+  it("keeps eight characters, the length every stored record carries", () => {
+    expect(SHORT_BOOKING_ID_LENGTH).toBe(8);
+  });
+
+  it.each([
+    ["CMB7X2K9", true],
+    ["cmb7x2k9", true],
+    ["CMB7X2K", false],
+    ["CMB7X2K9Q", false],
+    ["CMB-X2K9", false],
+    ["", false],
+  ])("treats %j as a booking reference: %s", (reference, expected) => {
+    expect(BOOKING_REFERENCE_SHAPE.test(reference)).toBe(expected);
+  });
+
+  it("accepts what formatBookingReference produces for a cuid", () => {
+    expect(BOOKING_REFERENCE_SHAPE.test(formatBookingReference(CUID))).toBe(true);
   });
 });

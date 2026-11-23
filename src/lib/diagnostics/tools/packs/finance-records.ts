@@ -92,6 +92,7 @@ import { z } from "zod";
 
 import { auditCategoriesForCorrelationDomain } from "@/lib/audit-categories";
 
+import { SHORT_BOOKING_ID_LENGTH } from "@/lib/booking-reference";
 import { defineDiagnosticsTool, type DiagnosticsToolEntry } from "../define";
 import {
   RECOVERY_SCENARIO_GLOSS,
@@ -186,7 +187,7 @@ const paymentIdInputSchema = {
 const PAYMENT_SUMMARY_SQL = `SELECT
   p."id" AS payment_ref,
   p."bookingId" AS booking_id,
-  pg_catalog.upper(pg_catalog.left(p."bookingId", 8)) AS booking_reference,
+  pg_catalog.upper(pg_catalog.left(p."bookingId", ${SHORT_BOOKING_ID_LENGTH})) AS booking_reference,
   p."status"::text AS payment_status,
   p."source"::text AS payment_source,
   p."amountCents" AS amount_cents,
