@@ -256,6 +256,8 @@ describe("the sweep's offer email (owner decision D2)", () => {
     ["confirmed", bookingRow({ status: "PAYMENT_PENDING", waitlistOfferedAt: null, waitlistOfferExpiresAt: null })],
     ["expired", bookingRow({ status: "WAITLISTED", waitlistOfferedAt: null, waitlistOfferExpiresAt: null })],
     ["re-offered", bookingRow({ waitlistOfferedAt: new Date(NOW.getTime() - HOUR) })],
+    // A cancel that leaves the offer's fields as they were: only the status says it moved on.
+    ["cancelled", bookingRow({ status: "CANCELLED" })],
     ["gone", null],
   ])("clears a %s offer without restarting or sending", async (_case, row) => {
     db.bookingFindUnique.mockResolvedValue(row);
