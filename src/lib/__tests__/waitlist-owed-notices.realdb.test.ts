@@ -183,7 +183,7 @@ let harnessRole: { restore: () => void } | undefined;
     async function holdLock1() {
       let release = () => {};
       const released = new Promise<void>((resolve) => (release = resolve));
-      let reportPid = (_pid: number) => {};
+      let reportPid: (pid: number) => void = () => {};
       const pid = new Promise<number>((resolve) => (reportPid = resolve));
       const held = prisma.$transaction(
         async (tx) => {

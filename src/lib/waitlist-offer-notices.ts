@@ -154,10 +154,10 @@ export interface WaitlistOfferNotice {
   /** Set only for a cross-lodge offer (ADR-004): the lodge offered, and its name. */
   offeredLodgeId: string | null;
   offeredLodgeName: string | null;
+  /** The club's settings, resolved outside any transaction: by the offer pass before its own, by a sweep when it reads the offer. */
   zone: ClubTimeZone;
-  /** Resolved by the offer pass before its transaction; a sweep resolves its own. */
-  format?: ClubFormat;
-  lockoutMode?: SubscriptionLockoutMode;
+  format: ClubFormat;
+  lockoutMode: SubscriptionLockoutMode;
 }
 
 const OFFER_NOTICE_SELECT = Prisma.validator<Prisma.BookingSelect>()({
@@ -200,6 +200,8 @@ async function loadWaitlistOfferNotice(marker: OwedNoticeMarker): Promise<Waitli
     offeredLodgeId: booking.waitlistOfferedLodgeId,
     offeredLodgeName: booking.waitlistOfferedLodge?.name ?? null,
     zone: await readClubTimeZoneOutsideRequest(),
+    format: await clubFormatValues(),
+    lockoutMode: await resolveSubscriptionLockoutMode(),
   };
 }
 
@@ -245,8 +247,7 @@ async function sendOfferEmail(
   { idempotencyKey, job }: OwedNoticeRun & { idempotencyKey: string },
 ): Promise<OwedNoticeOutcome> {
   try {
-    const format = notice.format ?? (await clubFormatValues());
-    const rateNotice = await offerRateNotice(notice, notice.lockoutMode ?? (await resolveSubscriptionLockoutMode()));
+    const rateNotice = await offerRateNotice(notice, notice.lockoutMode);
     await sendWaitlistOfferEmail(
       { bookingId: notice.bookingId, recipientMemberId: notice.recipientMemberId, idempotencyKey },
       notice.email,
@@ -258,7 +259,7 @@ async function sendOfferEmail(
       notice.bookingId,
       // The price the member pays on confirmation (upstream #1035).
       notice.priceCents,
-      format,
+      notice.format,
       // A cross-lodge offer speaks with the offered lodge's identity and names
       // it (ADR-004 owner decision 2).
       notice.offeredLodgeId ?? notice.lodgeId,
