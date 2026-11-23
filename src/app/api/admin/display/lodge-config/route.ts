@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -84,8 +85,10 @@ export async function PUT(req: NextRequest) {
   if (!guard.ok) return guard.response;
 
   let body: z.infer<typeof putSchema>;
+  const jsonBody = await parseJsonRequestBody(req);
+  if (!jsonBody.ok) return jsonBody.response;
   try {
-    body = putSchema.parse(await req.json());
+    body = putSchema.parse(jsonBody.body);
   } catch {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
