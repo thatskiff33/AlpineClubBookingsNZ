@@ -16,10 +16,7 @@ import { sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
 import { decideXeroRefundedColumns } from "./xero-refunded-columns";
 import { createAuditLog } from "@/lib/audit";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
-import {
-  buildBookingAppliedCreditDescription,
-  isBookingAppliedCreditDescription,
-} from "@/lib/member-credit-booking-rows";
+import { buildBookingAppliedCreditDescription, isBookingAppliedCreditDescription } from "@/lib/member-credit-booking-rows";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
 import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
 import { getClubFormat } from "@/lib/club-format-settings";
@@ -693,11 +690,6 @@ export async function repairAccountCreditAllocationBusinessState(
     matchedPayments += 1;
     const expectedAmountCents = -target.amountCents;
     const expectedDescription = buildBookingAppliedCreditDescription(payment.bookingId);
-    // #5407 item 40: a row already carrying an applied-credit description for
-    // this booking (the built one, or the credit election's with its price
-    // source note) is left as it is; only any other description is rewritten.
-    const hasStaleDescription = (credit: { description: string }) =>
-      !isBookingAppliedCreditDescription(credit.description, payment.bookingId);
     // Serialize each payment's applied-credit repair on the PER-MEMBER credit
     // ledger lock (#1881) so the existing-credit read, the create/link, the
     // aggregate, and the creditAppliedCents write commit atomically AND mutually
@@ -771,7 +763,7 @@ export async function repairAccountCreditAllocationBusinessState(
           description?: string;
         } = {};
 
-        if (hasStaleDescription(appliedCredit) && appliedCredit.outsideSpendConvergedAt === null) {
+        if (!isBookingAppliedCreditDescription(appliedCredit.description, payment.bookingId) && appliedCredit.outsideSpendConvergedAt === null) {
           updates.description = expectedDescription;
         }
 
@@ -789,7 +781,7 @@ export async function repairAccountCreditAllocationBusinessState(
         // intentional append-only record. The precise slice reconciler below,
         // not destructive rewrites of those rows, determines provider truth.
         // #4219: a row the credit-note convergence wrote keeps the description that says why.
-        const staleDescriptions = linkedAppliedCredits.filter((credit) => hasStaleDescription(credit) && credit.outsideSpendConvergedAt === null);
+        const staleDescriptions = linkedAppliedCredits.filter((credit) => !isBookingAppliedCreditDescription(credit.description, payment.bookingId) && credit.outsideSpendConvergedAt === null);
         if (staleDescriptions.length > 0) {
           await tx.memberCredit.updateMany({
             where: { id: { in: staleDescriptions.map((credit) => credit.id) } },
@@ -813,7 +805,7 @@ export async function repairAccountCreditAllocationBusinessState(
             },
             data: {
               xeroCreditNoteId: creditNoteId,
-              ...(hasStaleDescription(onlyUnlinkedCredit) ? { description: expectedDescription } : {}),
+              ...(isBookingAppliedCreditDescription(onlyUnlinkedCredit.description, payment.bookingId) ? {} : { description: expectedDescription }),
             },
           });
           updatedAppliedCredits += 1;

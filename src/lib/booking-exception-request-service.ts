@@ -1183,18 +1183,9 @@ function freezeProposal(
   };
 }
 
-/**
- * Whether a unique violation from a request create is the one-open-request
- * slot (`openStateKey`), which the caller answers as an already-open request.
- *
- * The constraint is read with `describeUniqueConstraintTarget` (#5407 item
- * 39), which reads the shape the database driver in use really reports. This
- * used to read only `meta.target`, which that driver never fills, so the
- * narrowing never fired and every unique violation counted as the open slot.
- * A violation naming another column is rethrown; one whose constraint cannot
- * be read still counts as the open slot, as it always did, because the slot is
- * the only unique key a request create can realistically collide on.
- */
+// The open slot (`openStateKey`) collided, or the constraint is unreadable. Read
+// with describeUniqueConstraintTarget: the driver never fills meta.target (#5407
+// item 39), so a check on that alone counted every unique violation as the slot.
 function isOpenSlotUniqueViolation(error: unknown): boolean {
   if (isPrismaKnownUniqueConstraintError(error)) {
     const target = describeUniqueConstraintTarget(error);
