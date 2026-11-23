@@ -537,9 +537,10 @@ describe("provider-aware inbound applied-credit repair", () => {
     });
 
     it.each([
-      ["keeps the election's description", ELECTION, {}],
-      ["rewrites a stale description", "stale", { description: BUILT }],
-    ])("links an unlinked exact row to the note and %s", async (_label, description, descriptionWrite) => {
+      // The election's text is written back exactly as it was.
+      ["keeps the election's description", ELECTION, ELECTION],
+      ["rewrites a stale description", "stale", BUILT],
+    ])("links an unlinked exact row to the note and %s", async (_label, description, written) => {
       h.allocationAggregate.mockResolvedValue({ _sum: { amountCents: 3000 } });
       h.memberCreditAggregate.mockReset();
       h.memberCreditAggregate.mockResolvedValue({ _sum: { amountCents: -3000 } });
@@ -551,7 +552,7 @@ describe("provider-aware inbound applied-credit repair", () => {
 
       expect(h.memberCreditUpdate).toHaveBeenCalledWith({
         where: { id: "unlinked" },
-        data: { xeroCreditNoteId: "cn-1", ...descriptionWrite },
+        data: { xeroCreditNoteId: "cn-1", description: written },
       });
     });
   });

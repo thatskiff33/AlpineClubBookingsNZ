@@ -805,7 +805,7 @@ export async function repairAccountCreditAllocationBusinessState(
             },
             data: {
               xeroCreditNoteId: creditNoteId,
-              ...(isBookingAppliedCreditDescription(onlyUnlinkedCredit.description, payment.bookingId) ? {} : { description: expectedDescription }),
+              description: isBookingAppliedCreditDescription(onlyUnlinkedCredit.description, payment.bookingId) ? onlyUnlinkedCredit.description : expectedDescription,
             },
           });
           updatedAppliedCredits += 1;
