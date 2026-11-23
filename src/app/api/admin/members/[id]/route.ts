@@ -16,8 +16,6 @@ import { recordIdParamsSchema } from "@/lib/route-id-params";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { MEMBER_DETAIL_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-members";
 
-const paramsSchema = recordIdParamsSchema;
-
 function unauthorizedResponse() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 }
@@ -43,7 +41,7 @@ export async function GET(
   });
   if (!guard.ok) return guard.response;
 
-  const parsed = paramsSchema.safeParse(await params);
+  const parsed = recordIdParamsSchema.safeParse(await params);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid route parameters", details: parsed.error.flatten() },
@@ -79,7 +77,7 @@ export async function PUT(
 
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
-  const parsedParams = paramsSchema.safeParse(await params);
+  const parsedParams = recordIdParamsSchema.safeParse(await params);
   if (!parsedParams.success) {
     return NextResponse.json(
       { error: "Invalid route parameters", details: parsedParams.error.flatten() },

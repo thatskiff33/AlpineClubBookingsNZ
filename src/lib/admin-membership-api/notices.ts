@@ -16,7 +16,7 @@ import { NOTICE_BODY_MAX_LENGTH, NOTICE_TITLE_MAX_LENGTH } from "@/lib/notices-s
 // ---------------------------------------------------------------------------
 
 /** One audience rule of a notice: everyone, or one member, membership type, lodge or committee role. */
-export const noticeAudienceSchema = z.discriminatedUnion("kind", [
+const noticeAudienceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("ALL_MEMBERS") }).strict(),
   z.object({ kind: z.literal("MEMBER"), memberId: z.string().min(1) }).strict(),
   z

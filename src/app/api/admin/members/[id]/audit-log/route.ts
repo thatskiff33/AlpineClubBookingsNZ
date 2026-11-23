@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-import { adminMemberAuditLogQuerySchema } from "@/lib/admin-membership-api/members";
+import { memberAuditLogQuerySchema } from "@/lib/member-audit-log-query";
 import { connectionJson } from "@/lib/mcp-connection-request";
 import { MEMBER_AUDIT_TIMELINE_CONNECTION_SHAPE } from "@/lib/connection-shapes/membership-members";
 import {
@@ -24,7 +24,7 @@ export async function GET(
   if (!guard.ok) return guard.response;
   const { id } = await params;
   const { searchParams } = new URL(request.url);
-  const parsed = adminMemberAuditLogQuerySchema.safeParse({
+  const parsed = memberAuditLogQuerySchema.safeParse({
     category: searchParams.get("category") ?? undefined,
     page: searchParams.get("page") ?? undefined,
     pageSize: searchParams.get("pageSize") ?? undefined,

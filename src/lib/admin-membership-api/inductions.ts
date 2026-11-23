@@ -38,7 +38,7 @@ export const createInductionSchema = z.object({
 });
 
 /** `PATCH /api/admin/inductions/[id]` `OVERRIDE_COMPLETE`: completes it without the sign-offs. */
-export const overrideCompleteInductionSchema = z.object({
+const overrideCompleteInductionSchema = z.object({
   action: z.literal("OVERRIDE_COMPLETE"),
   comments: z.string().trim().max(2000).optional().nullable(),
 });

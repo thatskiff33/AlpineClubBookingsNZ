@@ -67,7 +67,7 @@ export const familyGroupMemberSearchQuerySchema = z.object({
   prospectiveParentMemberId: z.string().trim().min(1).optional(),
 });
 
-/** `POST /api/admin/family-groups/requests`. */
+/** `PUT /api/admin/family-groups/requests`. */
 export const reviewFamilyGroupRequestSchema = z.object({
   requestId: z.string().min(1),
   action: z.enum(["approve", "reject"]),

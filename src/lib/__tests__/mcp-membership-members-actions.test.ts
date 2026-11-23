@@ -169,7 +169,7 @@ describe("list_members", () => {
     const { connection, browser } = await expectActionContract({
       actionId: "list_members",
       handler: listMembers,
-      args: { q: " Hale ", contactability: "unreachable" },
+      args: { q: " Hale ", contactability: "unreachable", page: 2, pageSize: 10 },
     });
 
     expect(connection).toEqual({
@@ -191,7 +191,7 @@ describe("list_members", () => {
     });
     // The route reads every field its schema names: `contactability` used to be dropped.
     expect(h.listAdminMembers).toHaveBeenCalledWith(
-      expect.objectContaining({ trimmedQuery: "Hale", contactability: "unreachable", page: 1, pageSize: 25 }),
+      expect.objectContaining({ trimmedQuery: "Hale", contactability: "unreachable", page: 2, pageSize: 10 }),
     );
   });
 

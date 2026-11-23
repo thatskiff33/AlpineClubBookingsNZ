@@ -237,7 +237,7 @@ anyway. All are reached through `find_actions` except `list_members` and
 | `get_member_lodge_access` | Read a member's lodge access | read | `GET /api/admin/members/[id]/lodge-access` |
 | `set_member_lodge_access` | Set a member's lodge access | write | `PUT /api/admin/members/[id]/lodge-access` |
 | `get_member_partner_links` | Read a member's partner links | read | `GET /api/admin/members/[id]/partner-link` |
-| `link_member_partner` | Records two members as confirmed partners; both are always emailed | write | `POST /api/admin/members/[id]/partner-link` |
+| `link_member_partner` | Records two members as confirmed partners; both are always emailed | destructive | `POST /api/admin/members/[id]/partner-link` |
 | `remove_member_partner_link` | Removes a pending or confirmed partner link; a confirmed one emails both members | destructive | `DELETE /api/admin/members/[id]/partner-link` |
 | `link_member_dependant` | Links a dependant to a parent. Never turns off the dependant's sign-in; no one is emailed | write | `POST /api/admin/members/[id]/dependents/link` |
 | `unlink_member_dependant` | Unlink a dependant from a parent | destructive | `DELETE /api/admin/members/[id]/dependents/[dependentId]` |
@@ -256,7 +256,7 @@ anyway. All are reached through `find_actions` except `list_members` and
 | `list_family_groups` | List family groups | read | `GET /api/admin/family-groups` |
 | `get_family_group` | Read a family group | read | `GET /api/admin/family-groups/[id]` |
 | `create_family_group` | Create a family group | write | `POST /api/admin/family-groups` |
-| `update_family_group` | Rename a family group or change its members | write | `PUT /api/admin/family-groups/[id]` |
+| `update_family_group` | Rename a family group or change its members | destructive | `PUT /api/admin/family-groups/[id]` |
 | `delete_family_group` | Delete a family group | destructive | `DELETE /api/admin/family-groups/[id]` |
 | `search_family_group_members` | Find members for a family group | read | `GET /api/admin/family-groups/member-search` |
 | `list_partner_invites` | List partner invitations | read | `GET /api/admin/family-groups/partner-invites` |
@@ -266,7 +266,7 @@ anyway. All are reached through `find_actions` except `list_members` and
 | `list_family_suggestions` | List suggested family groups | read | `GET /api/admin/family-suggestions` |
 | `create_family_group_from_suggestion` | Create a family group from a suggestion | write | `POST /api/admin/family-suggestions` |
 | `hide_family_suggestion` | Hide a suggested family group | write | `POST /api/admin/family-suggestions/hide` |
-| `reset_hidden_family_suggestions` | Show hidden family suggestions again | write | `POST /api/admin/family-suggestions/reset` |
+| `reset_hidden_family_suggestions` | Show hidden family suggestions again | destructive | `POST /api/admin/family-suggestions/reset` |
 | **Notices, sent email and the message board** | | | |
 | `list_admin_notices` | List all club notices | read | `GET /api/admin/notices` |
 | `get_admin_notice` | Read a club notice | read | `GET /api/admin/notices/[id]` |

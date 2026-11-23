@@ -8,7 +8,6 @@
 import { z } from "zod";
 
 import { ADMIN_LIST_DEFAULT_PAGE_SIZE, ADMIN_LIST_MAX_PAGE_SIZE } from "@/lib/admin-list-page";
-import { memberAuditLogQuerySchema } from "@/lib/member-audit-log-query";
 import { recordIdParamsSchema } from "@/lib/route-id-params";
 
 const optionalSearchParam = z.string().optional();
@@ -92,13 +91,6 @@ export const adminMembersQuerySchema = z
   });
 
 export type AdminMembersQuery = z.infer<typeof adminMembersQuerySchema>;
-
-/**
- * `GET /api/admin/members/[id]/audit-log`: the same query as a member's own
- * timeline (`GET /api/member/audit-log`); the route also refuses a category
- * that is not an audit timeline category.
- */
-export const adminMemberAuditLogQuerySchema = memberAuditLogQuerySchema;
 
 /** `PUT /api/admin/members/[id]/lodge-access`: both lists are always replaced. */
 export const memberLodgeAccessUpdateSchema = z

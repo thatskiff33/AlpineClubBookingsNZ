@@ -8,7 +8,6 @@ import {
   ADMIN_MEMBER_LIFECYCLE_FILTERS,
   ADMIN_MEMBER_SORT_FIELDS,
   ADMIN_MEMBER_SUBSCRIPTION_FILTERS,
-  adminMemberAuditLogQuerySchema,
   adminMembersQuerySchema,
   assignPartnerLinkSchema,
   dependentRouteParamsSchema,
@@ -16,7 +15,7 @@ import {
   memberLodgeAccessUpdateSchema,
   removePartnerLinkQuerySchema,
 } from "@/lib/admin-membership-api/members";
-import { ADMIN_LIST_DEFAULT_PAGE_SIZE, ADMIN_LIST_MAX_PAGE_SIZE } from "@/lib/admin-list-page";
+import { ADMIN_LIST_DEFAULT_PAGE_SIZE, ADMIN_LIST_MAX_PAGE_SIZE, adminListPageQueryFields } from "@/lib/admin-list-page";
 import { AGE_TIER_VALUES } from "@/lib/age-tier-schema";
 import { AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
 import {
@@ -31,7 +30,11 @@ import {
   PARTNER_LINK_ASSIGNED_CONNECTION_SHAPE,
   PARTNER_LINK_REMOVED_CONNECTION_SHAPE,
 } from "@/lib/connection-shapes/membership-members";
-import { MEMBER_AUDIT_LOG_DEFAULT_PAGE_SIZE, MEMBER_AUDIT_LOG_MAX_PAGE_SIZE } from "@/lib/member-audit-log-query";
+import {
+  MEMBER_AUDIT_LOG_DEFAULT_PAGE_SIZE,
+  MEMBER_AUDIT_LOG_MAX_PAGE_SIZE,
+  memberAuditLogQuerySchema,
+} from "@/lib/member-audit-log-query";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
 import { recordIdParamsSchema } from "@/lib/route-id-params";
 
@@ -49,8 +52,6 @@ const MEMBER_LIST_APP_SORT_FIELDS = ADMIN_MEMBER_SORT_FIELDS.filter((field) => f
 const memberListActionQuerySchema = adminMembersQuerySchema.in
   .pick({
     q: true,
-    page: true,
-    pageSize: true,
     sortBy: true,
     sortDir: true,
     lifecycleStatus: true,
@@ -64,6 +65,8 @@ const memberListActionQuerySchema = adminMembersQuerySchema.in
     partnerLinkEligibleFor: true,
   })
   .extend({
+    // Numbers, as every other list action takes them; the route clamps the string it is sent.
+    ...adminListPageQueryFields,
     sortBy: z.enum(MEMBER_LIST_APP_SORT_FIELDS).optional(),
     sortDir: z.enum(["asc", "desc"]).optional(),
     lifecycleStatus: z.enum(ADMIN_MEMBER_LIFECYCLE_FILTERS).optional(),
@@ -104,7 +107,7 @@ export const MEMBERSHIP_MEMBER_MCP_ACTIONS: readonly McpAction[] = [
     method: "GET",
     path: "/api/admin/members/[id]/audit-log",
     params: recordIdParamsSchema,
-    query: adminMemberAuditLogQuerySchema,
+    query: memberAuditLogQuerySchema,
     kind: "read",
     returns: MEMBER_AUDIT_TIMELINE_CONNECTION_SHAPE,
     core: false,
@@ -156,7 +159,7 @@ export const MEMBERSHIP_MEMBER_MCP_ACTIONS: readonly McpAction[] = [
     params: recordIdParamsSchema,
     body: assignPartnerLinkSchema.omit({ notifyMember: true }),
     fixedBody: { notifyMember: true },
-    kind: "write",
+    kind: "destructive",
     returns: PARTNER_LINK_ASSIGNED_CONNECTION_SHAPE,
     core: false,
   },
