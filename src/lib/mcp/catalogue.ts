@@ -14,7 +14,7 @@
  *
  * `mcp-route-census.test.ts` holds every route method in `src/app/api` to
  * either an entry here or a reasoned exclusion (`exclusions.ts`).
- *
+ * Officer areas' actions live under `catalogue/` (gate: `officer-actions.ts`).
  */
 import { z } from "zod";
 
