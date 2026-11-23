@@ -26,16 +26,12 @@ export async function GET(request: Request) {
     return inactiveResponse;
   }
 
-  // Get or create default preferences
-  let prefs = await prisma.notificationPreference.findUnique({
+  // A read never writes (ALP-801): with no saved row the member reads the
+  // defaults, and only the PUT creates one. Creating it here let two first
+  // reads race on the unique `memberId` and answer 500.
+  const prefs = await prisma.notificationPreference.findUnique({
     where: { memberId: session.user.id },
   });
-
-  if (!prefs) {
-    prefs = await prisma.notificationPreference.create({
-      data: { memberId: session.user.id },
-    });
-  }
 
   return connectionJson(
     request,
