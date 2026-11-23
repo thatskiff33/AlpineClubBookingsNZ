@@ -658,7 +658,10 @@ Four rules follow, and a new spec must satisfy all four:
   (`cancelMemberBookingsOnDate`, `deactivateMinimumStayPolicies`,
   `cancelOpenExceptionRequests`, `resetXeroSetupWizard`); they drive the product's
   own admin API, so no spec needs direct database access and no test-only
-  endpoint is added. A clean first attempt is a no-op.
+  endpoint is added. A clean first attempt is a no-op. The one exception is
+  state no admin route can rewind: `resetSeededMembershipApplication` and
+  `resetSeededMappingApplication` put the seeded membership applications back
+  through `E2E_DATABASE_URL`, as the pre-setup project does (#5407).
 
   `bed-allocation.spec.ts` now carries that repair in its serial setup (#2594,
   #2595):
