@@ -361,9 +361,9 @@ member usually get it: a child on an always-required membership type, and a
 member on an age-based type whose age tier now owes.
 
 A second group changes with **no note**: an active member on an
-always-required membership type whose age tier is exempt (a child on a Full
-type, or an organisation or school account) and who has no saved record for the
-season, or a "Not invoiced" one. The lists used to show them as "Not required";
+always-required membership type whose stored age tier is exempt (say, a child
+on a Full type) and who has no saved record for the season, or a "Not invoiced"
+one. The lists used to show them as "Not required";
 they now show them as owing (no status, or **Not invoiced**), because billing
 invoices them. Booking is unchanged: they can still book. To find them, filter
 the members list by **Not invoiced** and by no subscription record, and look at
