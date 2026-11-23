@@ -26,6 +26,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { escapeRegExp } from "@/lib/escape-regexp";
 import { CENSUS_TIMEOUT_MS } from "@/test/census-timeout";
 
 const ROOT = process.cwd();
@@ -142,7 +143,7 @@ function selfRecursiveReaddir(text: string): boolean {
     const name = match[1] ?? match[2]!;
     // The walker's body: up to the next top-level definition, bounded.
     const body = text.slice(match.index! + match[0].length, match.index! + match[0].length + 1500);
-    if (READDIR.test(body) && new RegExp(`\\b${name.replace(/\$/g, "\\$")}\\(`).test(body)) return true;
+    if (READDIR.test(body) && new RegExp(`\\b${escapeRegExp(name)}\\(`).test(body)) return true;
   }
   return false;
 }
