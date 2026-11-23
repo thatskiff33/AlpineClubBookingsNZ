@@ -136,8 +136,10 @@ member presses **Allow**, and again on every use (`INV-MCP-002`).
   is told to have the member reconnect with view and change.
 - **View and change** also runs actions that change something. Each change
   action is marked for the app as either undoable (`write`) or not
-  (`destructive`). Actions marked destructive carry a hint telling the app to
-  confirm with the member first.
+  (`destructive`). An action that notifies other people, or overwrites
+  another person's record, is `destructive` too. Actions marked destructive
+  carry a hint telling the app to confirm with the member first, and their
+  calls are logged as important.
 
 A connection's effective level is always the lesser of what the member chose
 and what the club allows now.
@@ -276,6 +278,13 @@ ask them to prove who they are again and the switch that opens member search
   on the website.
 - **Only `search_bookings` is listed as its own tool**; the rest are reached
   through `find_actions` and `run_action`, so the tool list stays short.
+- **Asks first.** Every action that emails or notifies a member, guest or
+  officer, or changes a member's booking, booking request, waitlist place,
+  bed or promo code, is `destructive`: the app confirms with the officer
+  before running it, and the call is logged as important (owner decision,
+  [#5305](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5305#issuecomment-7092977781)).
+  Only club setup (seasons, policies, age groups, settings, rooms and beds)
+  and the member email lookup stay `write`.
 - **Previews.** `preview_bed_allocation_move`, `preview_bed_allocation_removal`
   and `check_booking_request_member_links` are `POST` routes that change
   nothing; they run as reads on a view-only connection.
@@ -315,9 +324,9 @@ party or removing it from one.
 | `set_exclusive_lodge_hold` | Set or clear a whole-lodge hold | destructive | edit | `POST /api/admin/bookings/[id]/exclusive-hold` |
 | `force_confirm_waitlisted_booking` | Confirm a waitlisted booking | destructive | edit | `POST /api/admin/bookings/[id]/force-confirm` |
 | `send_fresh_booking_email_copy` | Send a fresh copy of a booking email | destructive | edit | `POST /api/admin/bookings/[id]/fresh-email-copy` |
-| `set_booking_no_emails` | Turn a booking's No emails switch on or off | write | edit | `POST /api/admin/bookings/[id]/no-emails` |
-| `set_booking_requested_room` | Set the room a booking asks for | write | edit | `PUT /api/admin/bookings/[id]/requested-room` |
-| `clear_booking_requested_room` | Clear the room a booking asks for | write | edit | `DELETE /api/admin/bookings/[id]/requested-room` |
+| `set_booking_no_emails` | Turn a booking's No emails switch on or off | destructive | edit | `POST /api/admin/bookings/[id]/no-emails` |
+| `set_booking_requested_room` | Set the room a booking asks for | destructive | edit | `PUT /api/admin/bookings/[id]/requested-room` |
+| `clear_booking_requested_room` | Clear the room a booking asks for | destructive | edit | `DELETE /api/admin/bookings/[id]/requested-room` |
 | `return_booking_to_waitlist` | Return a stranded free booking to the waitlist | destructive | edit | `POST /api/admin/bookings/[id]/return-to-waitlist` |
 
 #### Group, school and whole-lodge requests
@@ -330,7 +339,7 @@ party or removing it from one.
 | `get_booking_request_hold_conflicts` | Check a whole-lodge request's nights | read | view | `GET /api/admin/booking-requests/[id]/hold-conflicts` |
 | `check_booking_request_member_links` | Check member links on a booking request for clashes | read | edit | `POST /api/admin/booking-requests/[id]/link-conflicts` |
 | `preview_booking_request_school_record` | Check which school record a name matches | read | view | `GET /api/admin/booking-requests/[id]/school-record` |
-| `price_booking_request` | Price a booking request | write | edit | `POST /api/admin/booking-requests/[id]/price` |
+| `price_booking_request` | Price a booking request | destructive | edit | `POST /api/admin/booking-requests/[id]/price` |
 | `save_booking_request_quote` | Save a quote for a booking request | destructive | edit | `POST /api/admin/booking-requests/[id]/quote` |
 | `send_booking_request_quote` | Send a booking request's quote | destructive | edit | `POST /api/admin/booking-requests/[id]/send-quote` |
 | `hold_booking_request_beds` | Hold a booking request's beds | destructive | edit | `POST /api/admin/booking-requests/[id]/hold` |
@@ -351,9 +360,9 @@ party or removing it from one.
 | `list_waitlist` | List the waitlist | read | view | `GET /api/admin/waitlist` |
 | `list_promo_codes` | List promo codes | read | view | `GET /api/admin/promo-codes` |
 | `get_promo_code` | Read a promo code | read | view | `GET /api/admin/promo-codes/[id]` |
-| `create_promo_code` | Create a promo code | write | edit | `POST /api/admin/promo-codes` |
-| `update_promo_code` | Change a promo code | write | edit | `PUT /api/admin/promo-codes/[id]` |
-| `restore_promo_code` | Restore an archived promo code | write | edit | `PATCH /api/admin/promo-codes/[id]` |
+| `create_promo_code` | Create a promo code | destructive | edit | `POST /api/admin/promo-codes` |
+| `update_promo_code` | Change a promo code | destructive | edit | `PUT /api/admin/promo-codes/[id]` |
+| `restore_promo_code` | Restore an archived promo code | destructive | edit | `PATCH /api/admin/promo-codes/[id]` |
 | `delete_promo_code` | Delete a promo code | destructive | edit | `DELETE /api/admin/promo-codes/[id]` |
 | `get_promo_code_redemptions` | Read a promo code's uses | read | view | `GET /api/admin/promo-codes/[id]/redemptions` |
 
@@ -362,12 +371,12 @@ party or removing it from one.
 | Action | What it does | Kind | Needs | Route |
 | --- | --- | --- | --- | --- |
 | `get_bed_allocation_board` | Read the bed allocation board | read | view | `GET /api/admin/bed-allocation` |
-| `allocate_guest_bed_night` | Put a guest in a bed for one night | write | edit | `POST /api/admin/bed-allocation/allocations` |
-| `allocate_guest_bed_nights` | Put a guest in a bed for several nights | write | edit | `POST /api/admin/bed-allocation/allocations/bulk` |
+| `allocate_guest_bed_night` | Put a guest in a bed for one night | destructive | edit | `POST /api/admin/bed-allocation/allocations` |
+| `allocate_guest_bed_nights` | Put a guest in a bed for several nights | destructive | edit | `POST /api/admin/bed-allocation/allocations/bulk` |
 | `assign_guest_bed_range` | Put a guest in a bed for a range of nights | destructive | edit | `POST /api/admin/bed-allocation/allocations/range` |
 | `preview_bed_allocation_move` | Preview moving a guest to another bed | read | view | `POST /api/admin/bed-allocation/allocations/move` |
-| `move_bed_allocation` | Move a guest to another bed | write | edit | `PATCH /api/admin/bed-allocation/allocations` |
-| `auto_allocate_beds` | Suggest beds automatically | write | edit | `POST /api/admin/bed-allocation/auto-allocate` |
+| `move_bed_allocation` | Move a guest to another bed | destructive | edit | `PATCH /api/admin/bed-allocation/allocations` |
+| `auto_allocate_beds` | Suggest beds automatically | destructive | edit | `POST /api/admin/bed-allocation/auto-allocate` |
 | `approve_bed_allocations` | Approve bed allocations | destructive | edit | `POST /api/admin/bed-allocation/approve` |
 | `preview_bed_allocation_removal` | Preview removing bed allocations | read | view | `POST /api/admin/bed-allocation/allocations/removal` |
 | `remove_bed_allocations` | Remove bed allocations | destructive | edit | `PUT /api/admin/bed-allocation/allocations/removal` |

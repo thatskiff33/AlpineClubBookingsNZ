@@ -291,9 +291,9 @@ describe("the booking actions", () => {
       set_exclusive_lodge_hold: "destructive",
       force_confirm_waitlisted_booking: "destructive",
       send_fresh_booking_email_copy: "destructive",
-      set_booking_no_emails: "write",
-      set_booking_requested_room: "write",
-      clear_booking_requested_room: "write",
+      set_booking_no_emails: "destructive",
+      set_booking_requested_room: "destructive",
+      clear_booking_requested_room: "destructive",
       return_booking_to_waitlist: "destructive",
     });
   });

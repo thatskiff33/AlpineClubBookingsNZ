@@ -297,7 +297,8 @@ const ONE_BOOKING_TOOLS: readonly McpAction[] = [
     path: "/api/admin/bookings/[id]/no-emails",
     params: bookingIdParamsSchema,
     body: adminNoEmailsBodySchema,
-    kind: "write",
+    // Owner decision #5305 item 2: changes a member's booking.
+    kind: "destructive",
     returns: ADMIN_NO_EMAILS_CONNECTION_SHAPE,
     core: false,
   },
@@ -310,7 +311,8 @@ const ONE_BOOKING_TOOLS: readonly McpAction[] = [
     path: "/api/admin/bookings/[id]/requested-room",
     params: bookingIdParamsSchema,
     body: adminRequestedRoomBodySchema,
-    kind: "write",
+    // Owner decision #5305 item 2: changes a member's booking.
+    kind: "destructive",
     returns: ADMIN_REQUESTED_ROOM_CONNECTION_SHAPE,
     core: false,
   },
@@ -322,7 +324,8 @@ const ONE_BOOKING_TOOLS: readonly McpAction[] = [
     method: "DELETE",
     path: "/api/admin/bookings/[id]/requested-room",
     params: bookingIdParamsSchema,
-    kind: "write",
+    // Owner decision #5305 item 2: changes a member's booking.
+    kind: "destructive",
     returns: ADMIN_REQUESTED_ROOM_CLEARED_CONNECTION_SHAPE,
     core: false,
   },

@@ -6,11 +6,10 @@
  * releasing a request's held beds) are not here: they stay website-only
  * (`STEP_UP_ROUTES`). The settings route is in `bookings-setup.ts`.
  *
- * Kinds: setting the officer price is `write` (it can be priced again).
- * Saving a quote is `destructive`: it withdraws a quote already sent to the
- * requester and replaces the request's member links. Holding beds is
- * `destructive` because releasing them is website-only, and so is every step
- * that emails the requester or creates the booking. Checking member links
+ * Kinds: every change here is `destructive`: each changes a requester's
+ * booking request or emails them (owner decision, #5305 item 2). Saving a
+ * quote also withdraws a quote already sent to the requester and replaces the
+ * request's member links, and releasing held beds is website-only. Checking member links
  * changes nothing and runs as a read (`preview`).
  */
 import { adminRecordIdParamsSchema } from "@/lib/admin-bookings-schemas/record-id";
@@ -141,7 +140,8 @@ const OFFICER_STEPS: readonly McpAction[] = [
     path: "/api/admin/booking-requests/[id]/price",
     params: adminRecordIdParamsSchema,
     body: adminBookingRequestPriceBodySchema,
-    kind: "write",
+    // Owner decision #5305 item 2: changes a requester's booking request.
+    kind: "destructive",
     returns: ADMIN_BOOKING_REQUEST_CONNECTION_SHAPE,
     core: false,
   },

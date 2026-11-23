@@ -98,7 +98,11 @@ import { BOOKINGS_SETUP_MCP_ACTIONS } from "./catalogue/bookings-setup";
  * (`get_skifield_report` refreshes the ski field report's), or its route's own
  * audit row (a lookup of other members records every query, blocked ones
  * included). `write` changes something the member can undo.
- * `destructive` cannot be undone from the app. A view-only connection runs
+ * `destructive` cannot be undone from the app, or notifies other people, or
+ * overwrites another person's record (owner decision, #5305 item 2): for an
+ * officer, anything that emails or notifies someone or changes a member's
+ * booking, request, waitlist place, bed or promo code. The app asks first and
+ * the call is audited as important. A view-only connection runs
  * `read` actions only.
  */
 export type McpActionKind = "read" | "write" | "destructive";

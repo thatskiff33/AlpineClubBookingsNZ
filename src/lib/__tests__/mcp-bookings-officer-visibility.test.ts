@@ -142,3 +142,54 @@ describe("Bookings & Beds officer actions: who is offered them", () => {
     expect(run).toHaveBeenCalledWith(expect.objectContaining({ id: first?.id }), {}, ctx.caller);
   });
 });
+
+// Owner decision, #5305 item 2 (23 Nov 2026): an action that notifies other
+// people, or overwrites another person's record, is `destructive`, so the app
+// asks first and the call is audited as important. What stays `write` is club
+// setup (or a lookup that changes nothing); a new change action on a Bookings &
+// Beds route is `destructive` unless it is reviewed onto this list.
+const CLUB_SETUP_WRITES = [
+  // A POST lookup: changes no record and notifies no one.
+  "find_member_guest_by_email",
+  // Bed allocation settings and the lodge's rooms and beds.
+  "update_bed_allocation_settings",
+  "create_lodge_room",
+  "create_lodge_rooms_in_bulk",
+  "import_rooms_and_beds_from_config",
+  "update_lodge_room",
+  "create_lodge_bed",
+  "update_lodge_bed",
+  // Seasons, booking policies, age groups and booking-request settings.
+  "create_season",
+  "update_season",
+  "update_cancellation_policy",
+  "create_booking_period",
+  "update_booking_period",
+  "create_minimum_stay_policy",
+  "update_minimum_stay_policy",
+  "update_group_discount_policy",
+  "update_age_tier_settings",
+  "update_booking_request_settings",
+].sort();
+
+describe("Bookings & Beds officer actions: kinds", () => {
+  it("keeps `write` only for club setup that notifies no one and overwrites no one's record", () => {
+    const writes = AREA_ROUTE_ACTIONS.filter((action) => action.kind === "write").map((action) => action.id);
+    expect(writes.sort()).toEqual(CLUB_SETUP_WRITES);
+  });
+
+  it("marks every action that changes a member's booking, request, bed or promo code, or notifies someone, destructive", () => {
+    const kindOf = new Map(AREA_ROUTE_ACTIONS.map((action) => [action.id, action.kind]));
+    for (const id of [
+      "allocate_guest_bed_night", "allocate_guest_bed_nights", "assign_guest_bed_range", "move_bed_allocation",
+      "auto_allocate_beds", "approve_bed_allocations", "remove_bed_allocations",
+      "set_booking_no_emails", "set_booking_requested_room", "clear_booking_requested_room",
+      "force_confirm_waitlisted_booking", "return_booking_to_waitlist", "send_fresh_booking_email_copy",
+      "send_additional_payment_reminder", "price_booking_request", "send_booking_request_quote",
+      "create_promo_code", "update_promo_code", "restore_promo_code", "delete_promo_code",
+      "update_adult_member_hosting_policy",
+    ]) {
+      expect(kindOf.get(id), id).toBe("destructive");
+    }
+  });
+});

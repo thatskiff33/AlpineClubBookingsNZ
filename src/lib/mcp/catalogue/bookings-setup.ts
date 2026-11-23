@@ -2,9 +2,10 @@
  * Booking setup: seasons, booking policies, age groups, member-guest and booking-request settings.
  * Part of the Bookings & Beds officer actions (ALP-719): spread into `MCP_ACTIONS`.
  *
- * Kinds: a setting or record the officer can set back from the admin screens
+ * Kinds: club configuration the officer can set back from the admin screens
  * is `write`, seasons and hut rates included (the Hut Fees and Seasons
- * screens edit them). A delete, the minimum-stay "delete" that deactivates,
+ * screens edit them): none of it notifies anyone or overwrites another
+ * person's record (owner decision, #5305 item 2). A delete, the minimum-stay "delete" that deactivates,
  * and the adult-member hosting save (it can email booking owners whose bookings
  * lose cover) are `destructive`. The member-guest save is website-only
  * (`privacy-posture` in `exclusions.ts`).

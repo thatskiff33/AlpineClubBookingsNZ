@@ -301,7 +301,7 @@ describe("the booking-request actions", () => {
       get_booking_request_hold_conflicts: "read",
       check_booking_request_member_links: "read+preview",
       preview_booking_request_school_record: "read",
-      price_booking_request: "write",
+      price_booking_request: "destructive",
       save_booking_request_quote: "destructive",
       send_booking_request_quote: "destructive",
       hold_booking_request_beds: "destructive",

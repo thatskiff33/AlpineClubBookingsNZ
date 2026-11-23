@@ -8,9 +8,10 @@
  * are read so an officer can see what waits. A waitlisted booking's own steps
  * are booking actions (`bookings-bookings.ts`).
  *
- * Kinds: creating, changing and restoring a promo code are `write` (each can
- * be changed back from the app). Deleting is `destructive`: a code never
- * applied is deleted outright, and one that was is archived.
+ * Kinds: every promo code change is `destructive`: a code can be assigned to
+ * members, so a change can overwrite what a member was given (owner decision,
+ * #5305 item 2). Deleting also cannot be taken back: a code never applied is
+ * deleted outright, and one that was is archived.
  */
 import { adminOccupancyQuerySchema } from "@/lib/admin-bookings-schemas/occupancy";
 import {
@@ -170,7 +171,8 @@ export const BOOKINGS_REVIEW_QUEUE_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/promo-codes",
     body: promoCodeCreateBodySchema,
-    kind: "write",
+    // Owner decision #5305 item 2: a promo code can be assigned to members.
+    kind: "destructive",
     returns: ADMIN_PROMO_CODE_CONNECTION_SHAPE,
     core: false,
   },
@@ -183,7 +185,8 @@ export const BOOKINGS_REVIEW_QUEUE_MCP_ACTIONS: readonly McpAction[] = [
     path: "/api/admin/promo-codes/[id]",
     params: adminRecordIdParamsSchema,
     body: promoCodeUpdateBodySchema,
-    kind: "write",
+    // Owner decision #5305 item 2: a promo code can be assigned to members.
+    kind: "destructive",
     returns: ADMIN_PROMO_CODE_CONNECTION_SHAPE,
     core: false,
   },
@@ -195,7 +198,8 @@ export const BOOKINGS_REVIEW_QUEUE_MCP_ACTIONS: readonly McpAction[] = [
     method: "PATCH",
     path: "/api/admin/promo-codes/[id]",
     params: adminRecordIdParamsSchema,
-    kind: "write",
+    // Owner decision #5305 item 2: a promo code can be assigned to members.
+    kind: "destructive",
     returns: ADMIN_PROMO_CODE_RESTORED_CONNECTION_SHAPE,
     core: false,
   },

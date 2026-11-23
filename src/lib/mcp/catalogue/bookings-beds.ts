@@ -5,11 +5,12 @@
  * Every route here answers 404 while the club has bed allocation switched
  * off; the routes' own module check decides, as it does for the admin screen.
  *
- * Kinds: placing, moving and auto-suggesting beds is `write` (a removal or
- * another move takes it back), as are settings and room and bed edits.
- * Approving is `destructive`, as is a range placement (approved at once): there is no un-approve, and it locks the member
- * out of changing their requested room. So are removing allocations and
- * deleting a room or bed. The two previews change nothing and run as reads.
+ * Kinds: every action that places, moves, suggests, approves or removes a
+ * guest's bed is `destructive`, because it changes a member's bed (owner
+ * decision, #5305 item 2); approving also has no un-approve. Deleting a room
+ * or bed is `destructive` too. Settings and room and bed edits are club setup,
+ * no one's own record, and stay `write`. The two previews change nothing and
+ * run as reads.
  */
 import { adminRecordIdParamsSchema } from "@/lib/admin-bookings-schemas/record-id";
 import {
@@ -88,7 +89,8 @@ export const BOOKINGS_BEDS_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/bed-allocation/allocations",
     body: bedAllocationManualBodySchema,
-    kind: "write",
+    // Owner decision #5305 item 2: changes a member's bed.
+    kind: "destructive",
     returns: ADMIN_BED_ALLOCATION_CONNECTION_SHAPE,
     core: false,
   },
@@ -100,7 +102,8 @@ export const BOOKINGS_BEDS_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/bed-allocation/allocations/bulk",
     body: bedAllocationBulkBodySchema,
-    kind: "write",
+    // Owner decision #5305 item 2: changes a member's bed.
+    kind: "destructive",
     returns: ADMIN_BED_ALLOCATION_BULK_CONNECTION_SHAPE,
     core: false,
   },
@@ -141,7 +144,8 @@ export const BOOKINGS_BEDS_MCP_ACTIONS: readonly McpAction[] = [
     // The route also takes an older same-night move by allocation ids, which
     // the board no longer sends; this is its previewed half.
     body: bedAllocationMoveApplyBodySchema,
-    kind: "write",
+    // Owner decision #5305 item 2: changes a member's bed.
+    kind: "destructive",
     returns: ADMIN_BED_ALLOCATION_MOVE_CONNECTION_SHAPE,
     core: false,
   },
@@ -153,7 +157,8 @@ export const BOOKINGS_BEDS_MCP_ACTIONS: readonly McpAction[] = [
     method: "POST",
     path: "/api/admin/bed-allocation/auto-allocate",
     body: bedAllocationAutoAllocateBodySchema,
-    kind: "write",
+    // Owner decision #5305 item 2: changes members' beds.
+    kind: "destructive",
     returns: ADMIN_BED_ALLOCATION_AUTO_ALLOCATE_CONNECTION_SHAPE,
     core: false,
   },
