@@ -13,6 +13,7 @@ import { prepareDestination } from "next/dist/shared/lib/router/utils/prepare-de
 import { getPathMatch } from "next/dist/shared/lib/router/utils/path-match";
 import { ASSET_NOT_FOUND_PATH, ASSET_NOT_FOUND_REWRITES } from "@/lib/asset-url-404";
 import { ADMIN_PAGES, ADMIN_RETIRED_PAGES, isInexactAdminPagePath } from "@/lib/admin-hubs";
+import { toPosix } from "../../../scripts/audit/ts-call-site-scan";
 
 // ---------------------------------------------------------------------------
 // `next.config.ts` and the admin hub URLs (epic #4468, C3 #4800).
@@ -760,7 +761,7 @@ describe("next.config.ts's own import graph", () => {
         else packages.add(specifier);
       }
     }
-    return { files: [...seen].map((file) => path.relative(ROOT, file)).sort(), packages };
+    return { files: [...seen].map((file) => toPosix(path.relative(ROOT, file))).sort(), packages };
   }
 
   it("reaches the hub registry", () => {
